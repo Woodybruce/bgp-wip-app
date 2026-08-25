@@ -89,6 +89,16 @@ function formatDate(d: string | Date | null | undefined): string {
   return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
 }
 
+/** Phone-card date: "23 Aug", year only when it isn't this year (§15). */
+function formatCardDate(d: string | Date | null | undefined): string {
+  if (!d) return "—";
+  const date = typeof d === "string" ? new Date(d) : d;
+  if (isNaN(date.getTime())) return "—";
+  const opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "short" };
+  if (date.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return date.toLocaleDateString("en-GB", opts);
+}
+
 /** Pull the most relevant upcoming date from the matter row for the table. */
 function nextKeyDate(m: PlaMatter): { label: string; date: Date } | null {
   const candidates: Array<{ label: string; date: Date | null }> = [
@@ -215,6 +225,44 @@ function MatterListView() {
           </CardContent></Card>
         ) : (
           <Card>
+            {/* Phone: one card per instruction (§7) — the table never ships below md. */}
+            <div className="md:hidden divide-y divide-border">
+              {filtered.map((m) => {
+                const next = nextKeyDate(m);
+                return (
+                  <div
+                    key={m.id}
+                    className="px-4 py-3 cursor-pointer"
+                    onClick={() => navigate(`/pla/matters/${m.id}`)}
+                  >
+                    <div className="flex items-start gap-2 min-w-0">
+                      <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                      <Link to={`/properties/${m.propertyId}`} className="text-sm font-medium truncate hover:underline" onClick={(e) => e.stopPropagation()}>
+                        {m.propertyId.slice(0, 8)}…
+                      </Link>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{typeLabel(m.matterType)}</p>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      {statusBadge(m.status)}
+                      {m.actingFor && (
+                        <Badge variant="outline" className="capitalize whitespace-nowrap">{m.actingFor}</Badge>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1.5">
+                      {next ? (
+                        <span className="inline-flex items-center gap-1">
+                          <CalendarIcon className="h-3 w-3" />
+                          {next.label} · {formatCardDate(next.date)}
+                        </span>
+                      ) : null}
+                      {next ? " · " : null}
+                      Updated {formatCardDate(m.updatedAt)}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="hidden md:block overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -264,6 +312,7 @@ function MatterListView() {
                 })}
               </TableBody>
             </Table>
+            </div>
           </Card>
         )}
       </div>

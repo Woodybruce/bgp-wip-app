@@ -379,7 +379,50 @@ export default function ExpensesRevolut() {
                 No cards found yet — issue cards in the Revolut Business console, then click Reload.
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              {/* Phone: one card per Revolut card (§7) — the table never ships below md. */}
+              <div className="md:hidden divide-y border-t border-border">
+                {cards.map((c) => (
+                  <div key={c.id} className="px-4 py-3 space-y-1.5">
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-medium text-sm">{c.label || c.id.slice(0, 8)}</span>
+                          <Badge variant="outline" className={`whitespace-nowrap ${c.state === "active" ? "text-emerald-600 border-emerald-600/30" : "text-muted-foreground"}`}>
+                            {c.state || "—"}
+                          </Badge>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {c.assignedUserName ? `Assigned to ${c.assignedUserName}` : "Unassigned"}
+                        </div>
+                      </div>
+                      <span className="font-mono tabular-nums text-sm shrink-0">•••• {c.last_digits || "—"}</span>
+                    </div>
+                    <select
+                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs disabled:opacity-50"
+                      value={c.assignedUserId || ""}
+                      disabled={mapMutation.isPending}
+                      onChange={(e) => {
+                        const userId = e.target.value;
+                        if (!userId) return;
+                        const u = users.find(x => String(x.id) === userId);
+                        if (confirm(`Assign this card (•••• ${c.last_digits || "?"}) to ${u?.name || "this user"}?`)) {
+                          mapMutation.mutate({ revolutCardId: c.id, userId, holderId: c.holder_id, label: c.label });
+                        } else {
+                          e.target.value = c.assignedUserId || "";
+                        }
+                      }}
+                      data-testid={`revolut-card-assign-${c.id}`}
+                    >
+                      <option value="">{c.assignedUserName ? "" : "— unassigned —"}</option>
+                      {users.map((u) => (
+                        <option key={u.id} value={String(u.id)}>{u.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
                 {/* Auto-assigned by email — no manual override needed. If a
                     Revolut card has no matching BGP user, fix the user's
                     email in Team and click Auto-assign by email again.
@@ -408,6 +451,7 @@ export default function ExpensesRevolut() {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </CardContent>
         </Card>

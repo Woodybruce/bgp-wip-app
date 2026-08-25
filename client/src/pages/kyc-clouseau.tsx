@@ -330,7 +330,23 @@ function PropertiesOwnedSection({ propertiesOwned }: { propertiesOwned: any }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
+        {/* Phone: one card per property (§7) — the table never ships below md. */}
+        <div className="md:hidden divide-y divide-border">
+          {properties.map((prop: any, i: number) => (
+            <div key={i} className="py-3 first:pt-0 last:pb-0">
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-sm font-medium min-w-0">{prop.address || prop.property_address || "Unknown"}</span>
+                <Badge variant="outline" className="text-xs whitespace-nowrap shrink-0">
+                  {prop.tenure || prop.tenure_type || "Unknown"}
+                </Badge>
+              </div>
+              <p className="text-[11px] text-muted-foreground font-mono mt-0.5">
+                {prop.title_number || prop.titleNumber || "-"}
+              </p>
+            </div>
+          ))}
+        </div>
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b">

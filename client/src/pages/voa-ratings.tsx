@@ -498,6 +498,21 @@ function StatsView({ stats, loading }: { stats: StatsResponse | undefined; loadi
           <CardTitle className="text-sm font-medium">By Property Type</CardTitle>
         </CardHeader>
         <CardContent>
+          {/* Phone: one row per type (docs/DESIGN.md §7) — the table below is desktop-only. */}
+          <div className="md:hidden divide-y divide-border">
+            {stats.byType.map((t) => (
+              <div key={t.descriptionCode} className="py-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="min-w-0 text-sm font-medium truncate">{t.descriptionText}</span>
+                  <Badge variant="outline" className="shrink-0 text-xs whitespace-nowrap font-mono">{Number(t.count).toLocaleString()}</Badge>
+                </div>
+                <p className="text-[11px] text-muted-foreground font-mono tabular-nums mt-0.5">
+                  {t.descriptionCode} · Avg RV {formatCurrency(Number(t.avgRv))}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -524,6 +539,7 @@ function StatsView({ stats, loading }: { stats: StatsResponse | undefined; loadi
               ))}
             </TableBody>
           </Table>
+          </div>
         </CardContent>
       </Card>
     </div>

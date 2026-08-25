@@ -6,6 +6,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -162,7 +163,42 @@ function PortfolioDetailView({ id }: { id: string }) {
           No runs in this portfolio yet. Open a Property Pathway run and use "Add to portfolio", or add runs from the pathway list.
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-border">
+        <>
+        {/* Phone: one card per run (docs/DESIGN.md §7) — the table below is desktop-only. */}
+        <div className="md:hidden space-y-2">
+          {items.map((r) => (
+            <div key={r.runId} className={`rounded-2xl bg-card border border-border p-3 shadow-sm ${r.enabled ? "" : "opacity-45"}`} data-testid={`portfolio-run-${r.runId}-card`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium flex items-center gap-1.5">
+                    <span className="truncate">{r.address}</span>
+                    <Link href={`/property-pathway?runId=${r.runId}`} className="text-muted-foreground hover:text-foreground shrink-0"><ExternalLink className="w-3 h-3" /></Link>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">{r.postcode ? `${r.postcode} · ` : ""}stage {r.currentStage}/9</div>
+                </div>
+                <span className="shrink-0 text-sm font-mono tabular-nums font-semibold">{fmtMoney(r.targetPurchasePrice)}</span>
+              </div>
+              {r.strategy && <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{r.strategy}</p>}
+              <div className="text-[11px] font-mono tabular-nums text-muted-foreground mt-1">
+                NIY {fmtPct(r.targetNIY)} · IRR {fmtPct(r.targetIRR)} · MOIC {fmtX(r.targetMOIC)}
+              </div>
+              <div className="flex items-center justify-between mt-1.5">
+                <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Switch
+                    checked={r.enabled}
+                    onCheckedChange={(v) => toggleMutation.mutate({ runId: r.runId, enabled: v })}
+                    data-testid={`toggle-${r.runId}-card`}
+                  />
+                  Include
+                </label>
+                <button onClick={() => removeMutation.mutate(r.runId)} className="text-muted-foreground hover:text-red-600 p-1" title="Remove from portfolio" data-testid={`remove-${r.runId}-card`}>
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="hidden md:block overflow-x-auto rounded-xl border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-muted/60 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
@@ -212,6 +248,7 @@ function PortfolioDetailView({ id }: { id: string }) {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       <PortfolioProperties id={id} />
@@ -334,7 +371,35 @@ function PortfolioProperties({ id }: { id: string }) {
               ))}
             </div>
           )}
-          <div className="overflow-x-auto rounded-xl border border-border">
+          {/* Phone: one card per property (docs/DESIGN.md §7) — the table below is desktop-only. */}
+          <div className="md:hidden space-y-2">
+            {props.map(p => (
+              <div key={p.id} className="rounded-2xl bg-card border border-border p-3 shadow-sm" data-testid={`portfolio-property-${p.id}-card`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <Link href={`/properties/${p.id}`} className="block text-sm font-medium hover:underline truncate">{p.name}</Link>
+                    <div className="text-[11px] text-muted-foreground">
+                      {[
+                        p.postcode,
+                        p.currentRent ? `${fmtMoney(p.currentRent)} rent PA` : null,
+                        p.sqft ? `${p.sqft.toLocaleString("en-GB")} sq ft` : null,
+                      ].filter(Boolean).join(" · ") || "—"}
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-sm font-mono tabular-nums font-semibold">{p.guidePrice ? fmtMoney(p.guidePrice) : "—"}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  <Badge variant="outline" className="text-[10px] whitespace-nowrap">{p.trackerStatus || "Not on tracker"}</Badge>
+                  {Number(p.lettingUnits) ? <span className="text-[10px] text-muted-foreground whitespace-nowrap">{p.lettingUnits} letting unit{Number(p.lettingUnits) === 1 ? "" : "s"}</span> : null}
+                  {Number(p.pathwayRuns) ? <span className="text-[10px] text-muted-foreground whitespace-nowrap">{p.pathwayRuns} pathway{Number(p.pathwayRuns) === 1 ? "" : "s"}</span> : null}
+                  <button onClick={() => removeMutation.mutate(p.id)} className="ml-auto text-muted-foreground hover:text-red-600 p-1" title="Remove from portfolio" data-testid={`remove-property-${p.id}-card`}>
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-border">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-muted/60 text-left text-[11px] uppercase tracking-wider text-muted-foreground">

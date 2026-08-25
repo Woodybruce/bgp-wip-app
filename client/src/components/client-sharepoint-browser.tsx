@@ -123,6 +123,52 @@ export function ClientSharePointBrowser() {
       </div>
 
       <div className="border rounded-lg overflow-hidden">
+        {/* Phone: one card per item (§7) — the table never ships below md.
+            Folder cards tap to descend; file cards keep the Open download. */}
+        <div className="md:hidden divide-y divide-border">
+          {listLoading && (
+            <div className="px-4 py-3"><Skeleton className="h-6 w-full" /></div>
+          )}
+          {!listLoading && items.length === 0 && (
+            <p className="text-center py-10 text-muted-foreground text-sm">This folder is empty.</p>
+          )}
+          {items.map(item => (
+            <div
+              key={item.id}
+              className={`px-4 py-3 ${item.isFolder ? "cursor-pointer hover:bg-muted/40" : ""}`}
+              onClick={item.isFolder ? () => setTrail([...trail, { id: item.id, name: item.name }]) : undefined}
+              data-testid={`sp-card-${item.id}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="inline-flex items-center gap-2 min-w-0 font-medium text-sm">
+                  {item.isFolder
+                    ? <Folder className="w-4 h-4 text-amber-500 shrink-0" />
+                    : <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" />}
+                  <span className="truncate">{item.name}</span>
+                  {item.isFolder && item.childCount != null && (
+                    <span className="text-[10px] text-muted-foreground shrink-0">({item.childCount})</span>
+                  )}
+                </span>
+                {!item.isFolder && (
+                  <span className="text-xs text-muted-foreground font-mono tabular-nums shrink-0">{formatSize(item.size)}</span>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-2 mt-0.5 pl-6">
+                <span className="text-[11px] text-muted-foreground">
+                  {item.lastModified ? `Modified ${new Date(item.lastModified).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}
+                </span>
+                {!item.isFolder && (
+                  <Button asChild variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1">
+                    <a href={`/api/client/sharepoint/content?itemId=${encodeURIComponent(item.id)}`} target="_blank" rel="noopener noreferrer">
+                      <Download className="w-3.5 h-3.5" /> Open
+                    </a>
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="hidden md:block overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -184,6 +230,7 @@ export function ClientSharePointBrowser() {
             ))}
           </TableBody>
         </Table>
+        </div>
       </div>
     </div>
   );

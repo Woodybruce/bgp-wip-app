@@ -344,7 +344,39 @@ export default function EnrichmentHub() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <ScrollArea className="w-full">
+              {/* Phone: one card per contact (§7) — the table never ships below md. */}
+              <div className="md:hidden divide-y divide-border">
+                {stats?.staleContacts?.length === 0 && (
+                  <div className="text-center py-8 text-sm text-muted-foreground">
+                    <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-emerald-500" />
+                    All contacts are up to date!
+                  </div>
+                )}
+                {stats?.staleContacts?.map(contact => (
+                  <div key={contact.id} className="px-4 py-3" data-testid={`card-stale-contact-${contact.id}`}>
+                    <Link href={`/contacts/${contact.id}`}>
+                      <span className="text-blue-600 hover:underline cursor-pointer font-medium text-sm" data-testid={`link-contact-card-${contact.id}`}>{contact.name}</span>
+                    </Link>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {[contact.company_name, contact.email].filter(Boolean).join(" · ") || "—"}
+                    </p>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {contact.role && <Badge variant="outline" className="text-[10px] whitespace-nowrap">{contact.role}</Badge>}
+                      {contact.last_enriched_at ? (
+                        <Badge variant="outline" className="text-[10px] border-amber-300 whitespace-nowrap">
+                          <Clock className="w-2.5 h-2.5 mr-0.5" />
+                          {new Date(contact.last_enriched_at).toLocaleDateString("en-GB")}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] border-red-300 text-red-600 whitespace-nowrap">Never</Badge>
+                      )}
+                      {contact.enrichment_source && <Badge variant="outline" className="text-[10px] whitespace-nowrap">{contact.enrichment_source}</Badge>}
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">Pending</Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <ScrollArea className="w-full hidden md:block">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -411,7 +443,37 @@ export default function EnrichmentHub() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <ScrollArea className="w-full">
+              {/* Phone: one card per company (§7) — the table never ships below md. */}
+              <div className="md:hidden divide-y divide-border">
+                {stats?.staleCompanies?.length === 0 && (
+                  <div className="text-center py-8 text-sm text-muted-foreground">
+                    <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-emerald-500" />
+                    All companies are up to date!
+                  </div>
+                )}
+                {stats?.staleCompanies?.map(company => (
+                  <div key={company.id} className="px-4 py-3" data-testid={`card-stale-company-${company.id}`}>
+                    <Link href={`/companies/${company.id}`}>
+                      <span className="text-blue-600 hover:underline cursor-pointer font-medium text-sm" data-testid={`link-company-card-${company.id}`}>{company.name}</span>
+                    </Link>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {[company.domain, company.industry].filter(Boolean).join(" · ") || "—"}
+                    </p>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {company.last_enriched_at ? (
+                        <Badge variant="outline" className="text-[10px] border-amber-300 whitespace-nowrap">
+                          <Clock className="w-2.5 h-2.5 mr-0.5" />
+                          {new Date(company.last_enriched_at).toLocaleDateString("en-GB")}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] border-red-300 text-red-600 whitespace-nowrap">Never</Badge>
+                      )}
+                      {company.enrichment_source && <Badge variant="outline" className="text-[10px] whitespace-nowrap">{company.enrichment_source}</Badge>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <ScrollArea className="w-full hidden md:block">
                 <Table>
                   <TableHeader>
                     <TableRow>

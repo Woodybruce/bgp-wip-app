@@ -1194,7 +1194,188 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
         />
       )}
 
-      <div className="overflow-x-auto border rounded-lg">
+      {/* Phone: one card per unit (§7) — the banded sheet never ships below
+          md. Fixed core set regardless of the desktop column picker: unit +
+          tenant up top, passing rent in mono, floor · use context line,
+          lease-date + status chips, every row link/action kept reachable. */}
+      <div className="md:hidden border rounded-lg divide-y divide-border">
+        {sortedRows.filter(unit => !(readOnly && unit.is_vacant)).length === 0 && (
+          <p className="py-8 text-center text-sm text-muted-foreground">No units match the current filters.</p>
+        )}
+        {sortedRows.filter(unit => !(readOnly && unit.is_vacant)).map(unit => {
+          const deal = matchDeal(unit);
+          const letting = matchLetting(unit);
+          const isVacant = unit.status === "Vacant" || unit.is_vacant;
+          const statusValue = unit.status === "Not Vacant" ? "Occupied" : unit.status;
+          const tenantId = unit.resolved_tenant_company_id || null;
+          const tenantLabel = unit.tenant_name || unit.trading_name || "";
+
+          if (unit.is_vacant) {
+            return (
+              <div key={unit.id} className="px-3 py-3 bg-amber-50/40 dark:bg-amber-900/10" data-testid={`tenancy-card-${unit.id}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-medium text-amber-700 dark:text-amber-400 min-w-0">
+                    VACANT — {unit.unit_number || unit.premises || "—"}
+                  </span>
+                  <span className="font-mono tabular-nums text-sm shrink-0">
+                    {unit.erv_pa ? `${fmtCurrency(unit.erv_pa)} asking` : "—"}
+                  </span>
+                </div>
+                {unit.nia_sqft ? (
+                  <p className="text-[11px] text-muted-foreground mt-0.5">{fmtNum(unit.nia_sqft)} sq ft</p>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  {!readOnly && (
+                    <button
+                      onClick={() => promoteMutation.mutate()}
+                      disabled={promoteMutation.isPending}
+                      className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50 whitespace-nowrap"
+                      title="Add this unit to the schedule as an editable row"
+                      data-testid={`promote-vacant-card-${unit.id}`}
+                    >
+                      <Plus className="w-2.5 h-2.5" />{promoteMutation.isPending ? "Adding…" : "Add to schedule"}
+                    </button>
+                  )}
+                  {unit.deal_id && (
+                    <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open deal${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
+                      <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap">
+                        <Link2 className="w-2.5 h-2.5" />
+                        {unit.deal_ref ? `#${unit.deal_ref}` : "Deal"}
+                      </Badge>
+                    </a>
+                  )}
+                  {!readOnly && unit.available_unit_id && (
+                    <button
+                      onClick={() => {
+                        const label = unit.unit_number || unit.premises || "this unit";
+                        if (confirm(`Delete "${label}" from the Letting Tracker?\n\nThis removes the tracker unit (and its stub deal if it never progressed). Real rent-roll rows are unaffected.`)) {
+                          deleteTrackerUnitMutation.mutate(String(unit.available_unit_id));
+                        }
+                      }}
+                      className="inline-flex items-center text-amber-700/60 hover:text-red-600 ml-auto"
+                      title="Delete this Letting Tracker unit"
+                      data-testid={`delete-vacant-card-${unit.id}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={unit.id} className="px-3 py-3" data-testid={`tenancy-card-${unit.id}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <span className="text-sm font-medium">{unit.unit_number || unit.premises || "—"}</span>
+                  {tenantLabel && (
+                    tenantId ? (
+                      <Link href={`/companies/${tenantId}`} title={`Open ${unit.resolved_tenant_company_name || tenantLabel} board`}>
+                        <span className="ml-1.5 text-sm text-primary cursor-pointer" data-testid={`tenancy-tenant-link-card-${unit.id}`}>{tenantLabel}</span>
+                      </Link>
+                    ) : (
+                      <span className={`ml-1.5 text-sm ${isVacant ? "text-amber-600 font-medium" : ""}`}>{tenantLabel}</span>
+                    )
+                  )}
+                </div>
+                <span className="font-mono tabular-nums text-sm font-semibold shrink-0">{fmtCurrency(unit.passing_rent_pa)}</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                {[unit.floor_level, unit.permitted_use].filter(Boolean).join(" · ") || "—"}
+              </p>
+              <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                {readOnly ? (
+                  <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}>
+                    {statusValue || "—"}
+                  </span>
+                ) : (
+                  <select
+                    value={statusValue || ""}
+                    onChange={(e) => inlineUpdate(unit.id, "status", e.target.value)}
+                    className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}
+                    data-testid={`tenancy-status-card-${unit.id}`}
+                    aria-label="Status"
+                  >
+                    {!SCHEDULE_STATUSES.includes(statusValue as any) && statusValue && (
+                      <option value={statusValue}>{statusValue}</option>
+                    )}
+                    {SCHEDULE_STATUSES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                )}
+                {unit.lease_start && (
+                  <Badge variant="outline" className="text-[9px] whitespace-nowrap font-mono">Start {fmtDate(unit.lease_start)}</Badge>
+                )}
+                {unit.lease_expiry && (
+                  <Badge variant="outline" className="text-[9px] whitespace-nowrap font-mono">Exp {fmtDate(unit.lease_expiry)}</Badge>
+                )}
+                {unit.break_date && (
+                  <Badge variant="outline" className="text-[9px] whitespace-nowrap font-mono">
+                    Break {fmtDate(unit.break_date)}{unit.break_type ? ` (${unit.break_type})` : ""}
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 mt-1.5">
+                {deal && (
+                  <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-card-${unit.id}`}>
+                    <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
+                  </a>
+                )}
+                {letting ? (
+                  <a href="/deals/letting" title={`On the Letting Tracker (${letting.marketing_status || "listed"})`} data-testid={`tenancy-on-tracker-card-${unit.id}`}>
+                    <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50 whitespace-nowrap">LT</Badge>
+                  </a>
+                ) : (!readOnly && (
+                  <button
+                    onClick={() => sendToTrackerMutation.mutate(unit)}
+                    disabled={sendToTrackerMutation.isPending}
+                    className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 whitespace-nowrap"
+                    title="Create a Letting Tracker listing for this unit"
+                    data-testid={`tenancy-to-tracker-card-${unit.id}`}
+                  >
+                    <Plus className="w-2.5 h-2.5" />{sendToTrackerMutation.isPending ? "Adding…" : "Tracker"}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const label = unit.unit_number || unit.premises || "";
+                    if (!label) return;
+                    window.location.hash = `plan-unit-${encodeURIComponent(label)}`;
+                    const target = document.querySelector('[data-testid="toggle-plans"]')
+                      || document.querySelector('[data-testid="property-plans-panel"]');
+                    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                  className="inline-flex items-center"
+                  title="Highlight this unit on the property plan"
+                  data-testid={`tenancy-plan-link-card-${unit.id}`}
+                >
+                  <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap">
+                    <MapPinIcon className="w-2.5 h-2.5" />Plan
+                  </Badge>
+                </button>
+                {!readOnly && (
+                  <button
+                    onClick={() => {
+                      const label = unit.unit_number || unit.tenant_name || "this unit";
+                      if (confirm(`Delete ${label}? This removes the tenancy row — undo by re-importing.`)) deleteMutation.mutate(unit.id);
+                    }}
+                    className="ml-auto text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 p-1 rounded transition-colors"
+                    title="Delete tenancy row"
+                    data-testid={`tenancy-delete-card-${unit.id}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden md:block overflow-x-auto border rounded-lg">
         {selectedForDelete.size > 0 && (
           <div className="flex items-center gap-3 rounded-md border bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900 px-3 py-1.5 mb-2 text-xs sticky left-0">
             <span className="font-medium">{selectedForDelete.size} row{selectedForDelete.size === 1 ? "" : "s"} ticked</span>

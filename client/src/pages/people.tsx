@@ -913,7 +913,60 @@ function LendersTab({
       </div>
 
       <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Phone: one card per lender (§7) — the table never ships below md. */}
+        <div className="md:hidden divide-y divide-border">
+          {filtered.map((company) => {
+            const compContacts = contactsByCompany[company.id] || [];
+            const propCount = propertiesByLender[company.id] || 0;
+            const lendingActive = (company as any).lendingActive;
+            const typicalLtvMax = (company as any).typicalLtvMax;
+            const loanMin = (company as any).typicalLoanSizeMinM;
+            const loanMax = (company as any).typicalLoanSizeMaxM;
+            const loanRange = loanMin != null && loanMax != null
+              ? `£${loanMin}m – £${loanMax}m`
+              : loanMin != null
+              ? `£${loanMin}m+`
+              : loanMax != null
+              ? `up to £${loanMax}m`
+              : null;
+            return (
+              <div
+                key={company.id}
+                className="flex items-start gap-3 px-4 py-3 cursor-pointer active:bg-muted/50"
+                onClick={() => navigate(`/companies/${company.id}`)}
+                data-testid={`card-lender-${company.id}`}
+              >
+                <CompanyLogo company={company} size="sm" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-medium text-sm truncate">{company.name}</span>
+                    {typicalLtvMax != null && (
+                      <span className="text-sm font-mono tabular-nums shrink-0">{typicalLtvMax}% LTV</span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground truncate">
+                    {[company.companyType, loanRange].filter(Boolean).join(" · ") || "—"}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    <Badge
+                      variant={lendingActive ? "default" : "secondary"}
+                      className={`whitespace-nowrap ${lendingActive ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : ""}`}
+                    >
+                      {lendingActive ? "Active" : "Paused"}
+                    </Badge>
+                    <span className="text-[11px] text-muted-foreground">
+                      {countLabel(propCount, "property", "properties")} · {countLabel(compContacts.length, "contact")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {filtered.length === 0 && (
+            <p className="py-8 text-center text-sm text-muted-foreground">No lenders found</p>
+          )}
+        </div>
+        <div className="hidden md:block overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>

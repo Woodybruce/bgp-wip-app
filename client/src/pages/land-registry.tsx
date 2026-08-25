@@ -1704,7 +1704,27 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="overflow-x-auto">
+                      {/* Phone: one card per sale (§7) — the table never ships below md. */}
+                      <div className="md:hidden divide-y divide-border">
+                        {soldRows.slice(0, 15).map((s: any, si: number) => (
+                          <div key={si} className="py-3" data-testid={`sold-card-${si}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="text-sm font-medium min-w-0 truncate">{s.address || s.full_address || "—"}</span>
+                              <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{formatPrice(s.price || s.amount)}</span>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground mt-0.5">{s.date || s.sold_date || "—"}</p>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                              <Badge variant="outline" className="text-[10px] whitespace-nowrap">
+                                {s.type || s.property_type || "—"}
+                              </Badge>
+                              {s.tenure && (
+                                <Badge variant="outline" className="text-[10px] whitespace-nowrap">{s.tenure}</Badge>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="hidden md:block overflow-x-auto">
                         <Table>
                           <TableHeader>
                             <TableRow>
@@ -1836,6 +1856,35 @@ function PricePaidSearch() {
             <SummaryStats transactions={data.items} />
           )}
 
+          {/* Phone: one card per transaction (§7) — the table never ships below md. */}
+          <div className="md:hidden divide-y divide-border border-t border-border">
+            {data.items.map((tx) => (
+              <div key={tx.id} className="py-3" data-testid={`card-transaction-${tx.id}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-medium min-w-0">{formatAddress(tx.address)}</span>
+                  <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{formatPrice(tx.pricePaid)}</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(tx.date)}</p>
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  <Badge variant="secondary" className="text-[10px] capitalize whitespace-nowrap">
+                    {tx.propertyType || "—"}
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px] capitalize whitespace-nowrap">
+                    {tx.estateType || "—"}
+                  </Badge>
+                  {tx.newBuild && (
+                    <Badge variant="outline" className="text-[10px] whitespace-nowrap">New build</Badge>
+                  )}
+                </div>
+              </div>
+            ))}
+            {data.items.length === 0 && (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No transactions found. Try adjusting your search.
+              </p>
+            )}
+          </div>
+          <div className="hidden md:block">
           <ScrollableTable minWidth={900}>
             <Table>
               <TableHeader>
@@ -1891,6 +1940,7 @@ function PricePaidSearch() {
               </TableBody>
             </Table>
           </ScrollableTable>
+          </div>
         </>
       )}
 
@@ -2103,7 +2153,23 @@ function HousePriceIndex() {
             <CardTitle className="text-sm font-semibold">Monthly Trend</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
+            {/* Phone: one card per month (§7) — the table never ships below md. */}
+            <div className="md:hidden divide-y divide-border">
+              {[...data.data].reverse().map((row) => (
+                <div key={row.month} className="py-3" data-testid={`card-ukhpi-${row.month}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-sm font-medium">{row.month}</span>
+                    <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{formatPrice(row.averagePrice)}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-muted-foreground">
+                    <span className="whitespace-nowrap">HPI <span className="font-mono tabular-nums text-foreground">{row.housePriceIndex?.toFixed(1) || "—"}</span></span>
+                    <span className="flex items-center gap-1 whitespace-nowrap">Annual <ChangeIndicator value={row.annualChange} /></span>
+                    <span className="flex items-center gap-1 whitespace-nowrap">Monthly <ChangeIndicator value={row.monthlyChange} /></span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>

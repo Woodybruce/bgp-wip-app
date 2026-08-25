@@ -2575,6 +2575,41 @@ function CompanyList() {
             </Card>
           ) : (
             <Card className="flex-1 min-h-0 flex flex-col">
+              {/* Phone: one card per company (§7) — the 1800px table never ships below md. */}
+              <div className="md:hidden divide-y divide-border">
+                {filteredCompanies.map((company) => {
+                  const address = company.headOfficeAddress as Record<string, string> | null;
+                  const city = address?.city || address?.country || null;
+                  const contactCount = contactCountsByCompany[company.id] || 0;
+                  const bgpContacts = getCompanyBgpContacts(company);
+                  return (
+                    <Link key={company.id} href={`/companies/${company.id}`}>
+                      <div className="flex items-start gap-3 px-4 py-3 cursor-pointer active:bg-muted/50" data-testid={`card-company-${company.id}`}>
+                        <CompanyLogoImg domain={company.domainUrl || company.domain} name={company.name} size={32} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-sm font-medium truncate" data-testid={`text-company-card-name-${company.id}`}>{company.name}</span>
+                            {company.companyType && (
+                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 whitespace-nowrap shrink-0">{company.companyType}</Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-muted-foreground truncate">
+                            {[city, contactCount > 0 ? `${contactCount} contact${contactCount === 1 ? "" : "s"}` : null].filter(Boolean).join(" · ") || "—"}
+                          </p>
+                          {bgpContacts.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {bgpContacts.map((n) => (
+                                <Badge key={n} variant="outline" className="text-[9px] py-0 px-1.5 whitespace-nowrap">{n}</Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+              <div className="hidden md:block">
               <ScrollableTable minWidth={1800}>
                 <Table>
                   <TableHeader>
@@ -2741,6 +2776,7 @@ function CompanyList() {
                   </TableBody>
                 </Table>
               </ScrollableTable>
+              </div>
             </Card>
           )}
         </>

@@ -309,7 +309,44 @@ function FeeCheckTab() {
         {data.length} deal{data.length === 1 ? "" : "s"} where the recorded fee doesn't match the net invoiced in Xero.
         The WIP and commission both use the <strong>recorded fee</strong>, so fix these on the Deals page to bring them in line with Xero.
       </p>
-      <div className="bg-card border border-border rounded-lg overflow-x-auto">
+      <div className="bg-card border border-border rounded-lg overflow-hidden">
+        {/* Phone: one card per discrepancy (§7) — the table never ships below md. */}
+        <div className="md:hidden divide-y divide-border">
+          {data.map((r) => (
+            <div key={r.dealId} className="px-4 py-3" data-testid={`fee-check-card-${r.dealId}`}>
+              <div className="flex items-start justify-between gap-2">
+                <Link href={`/deals/${r.dealId}`}>
+                  <span className="text-sm font-medium text-primary cursor-pointer">
+                    {r.dealRef ? `${r.dealRef} · ` : ""}{r.name || "—"}
+                  </span>
+                </Link>
+                <span className={`text-sm font-mono tabular-nums font-semibold shrink-0 ${r.diff < 0 ? "text-red-600" : "text-amber-600"}`}>
+                  {r.diff >= 0 ? "+" : "-"}{money(Math.abs(r.diff))}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                {r.team || "—"}{r.agents ? ` · ${r.agents}` : ""}
+              </p>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[11px] text-muted-foreground">
+                <span className="whitespace-nowrap">Recorded <span className="font-mono tabular-nums text-foreground">{money(r.fee)}</span></span>
+                <span className="whitespace-nowrap">Xero net <span className="font-mono tabular-nums text-foreground">{money(r.xeroNet)}</span></span>
+                <span className="whitespace-nowrap">Gross <span className="font-mono tabular-nums">{money(r.xeroGross)}</span></span>
+              </div>
+              <div className="flex items-center justify-between gap-2 mt-1.5">
+                <span className="text-[11px] text-muted-foreground truncate">{r.invoiceNumbers || "—"}</span>
+                <button
+                  onClick={() => matchToXero(r)}
+                  disabled={savingId === r.dealId}
+                  className="text-xs px-2 py-1 rounded border border-border hover:bg-muted disabled:opacity-50 whitespace-nowrap shrink-0"
+                  data-testid={`fee-check-match-card-${r.dealId}`}
+                >
+                  {savingId === r.dealId ? "Saving…" : `Set → ${money(r.xeroNet)}`}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="hidden md:block overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-left">
             <tr>
@@ -357,6 +394,7 @@ function FeeCheckTab() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );
@@ -485,6 +523,39 @@ function AgentSummaryTab() {
           <span className="text-sm font-semibold text-muted-foreground">Agent Summary</span>
           <span className="text-xs text-muted-foreground">{agents.length} agents</span>
         </div>
+        {/* Phone: one card per agent (§7) — tap selects the agent, same as the table rows. */}
+        <div className="md:hidden divide-y divide-border">
+          {agents.map((a) => {
+            const total = a.wip + a.invoiced;
+            const pct = grandTotal > 0 ? ((total / grandTotal) * 100).toFixed(1) : "0.0";
+            const isSelected = selectedAgent === a.agent;
+            return (
+              <div
+                key={a.agent}
+                className={`px-4 py-3 cursor-pointer ${isSelected ? "bg-green-50" : ""}`}
+                onClick={() => setSelectedAgent(isSelected ? null : a.agent)}
+                data-testid={`agent-card-${a.agent}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-medium min-w-0 truncate">{a.agent}</span>
+                  <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{formatFullCurrency(total)}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-muted-foreground">
+                  <span className="whitespace-nowrap">WIP <span className="font-mono tabular-nums text-foreground">{formatFullCurrency(a.wip)}</span></span>
+                  <span className="whitespace-nowrap">Invoiced <span className="font-mono tabular-nums text-green-700">{formatFullCurrency(a.invoiced)}</span></span>
+                  <span className="whitespace-nowrap"><span className="font-mono tabular-nums">{pct}%</span> of total</span>
+                </div>
+              </div>
+            );
+          })}
+          {agents.length > 0 && (
+            <div className="px-4 py-3 flex items-center justify-between text-sm font-semibold bg-muted/50">
+              <span>Total</span>
+              <span className="font-mono tabular-nums">{formatFullCurrency(grandTotal)}</span>
+            </div>
+          )}
+        </div>
+        <div className="hidden md:block">
         <ScrollableTable minWidth={700}>
           <table className="w-full">
             <thead className="bg-muted/50 border-b sticky top-0 z-10 text-sm">
@@ -536,6 +607,7 @@ function AgentSummaryTab() {
             </tfoot>
           </table>
         </ScrollableTable>
+        </div>
       </div>
 
       {/* Agent Drilldown */}
@@ -564,6 +636,40 @@ function AgentSummaryTab() {
           ) : !drilldownData || drilldownData.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">No deals found for this agent</div>
           ) : (
+            <>
+            {/* Phone: one card per deal (§7) — the table never ships below md. */}
+            <div className="md:hidden divide-y divide-border">
+              {drilldownData.map((d) => (
+                <div key={d.dealId} className="px-4 py-3" data-testid={`agent-drilldown-card-${d.dealId}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <Link href={`/deals/${d.dealId}`}>
+                      <span className="text-sm font-medium text-primary cursor-pointer">{d.name}</span>
+                    </Link>
+                    <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{formatFullCurrency(d.totalFee)}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                    {d.property || "—"}{d.dealType ? ` · ${d.dealType}` : ""}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    {d.stage === "invoiced" ? (
+                      <Badge className="text-[10px] bg-green-100 text-green-800 whitespace-nowrap">Invoiced</Badge>
+                    ) : d.stage === "wip" ? (
+                      <Badge className="text-[10px] bg-yellow-100 text-yellow-800 whitespace-nowrap">WIP</Badge>
+                    ) : d.stage ? (
+                      <span className="text-[10px] text-muted-foreground whitespace-nowrap">{d.stage}</span>
+                    ) : null}
+                    <span className="text-[11px] text-muted-foreground ml-auto whitespace-nowrap">
+                      Allocated <span className="font-mono tabular-nums text-foreground">{formatFullCurrency(d.allocatedAmount)}</span>
+                    </span>
+                  </div>
+                </div>
+              ))}
+              <div className="px-4 py-3 flex items-center justify-between text-sm font-semibold bg-muted/50">
+                <span>Total</span>
+                <span className="font-mono tabular-nums">{formatFullCurrency(drilldownData.reduce((s, d) => s + d.allocatedAmount, 0))}</span>
+              </div>
+            </div>
+            <div className="hidden md:block">
             <ScrollableTable minWidth={900}>
               <table className="w-full">
                 <thead className="bg-muted/50 border-b sticky top-0 z-10 text-sm">
@@ -641,6 +747,8 @@ function AgentSummaryTab() {
                 </tfoot>
               </table>
             </ScrollableTable>
+            </div>
+            </>
           )}
         </div>
       )}
