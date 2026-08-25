@@ -61,6 +61,9 @@ On phones these record pages show a row of section pills under the page title an
 ### Client portal (Landsec etc.)
 Client logins see a scoped version: Portfolio home, letting tracker, their deals/tasks/news, brand slice = hospitality/leisure/fitness categories + brands they self-add, activity analyses scoped to their account. Compliance & KYC stays visible; staff-only action buttons are hidden. Clients can never be added to chat threads.
 
+### WhatsApp (the BGP business number)
+Staff can text the BGP WhatsApp number directly — it's ChatBGP on WhatsApp. A contact/brand lookup text ("does anyone have Roland from WatchHouse direct?", "who reps Wingstop?") gets an instant contact card back — name, role, mobile, email, plus acting agents — pulled live from the CRM. Anything else (questions, files, brochures, receipts) goes to the full ChatBGP. Works only from phone numbers registered on a staff profile. If someone asks "how do I get a contact quickly on my phone": app → Brands → search box, or text the BGP WhatsApp number.
+
 ### Weekly BGP Insights
 Automated Friday-afternoon job: ChatBGP compiles "BGP Insights — Leasing Week in Review" as a designed PDF (Bordeaux house style, scope 'bgp_insights' in document_design_preferences) and emails it to Woody to forward.
 
