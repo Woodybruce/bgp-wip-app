@@ -73,14 +73,37 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r372 · 2026-08-25 ~09:00 UTC · ROUND IN PROGRESS (provisional)
-- LIGHT round (r371 was FULL). Reconciled r371 first: commit 921a9887 is
-  complete AND its ROLLING-LOG entry was finalized in the same commit (the
-  parent session's "no final entry" note was wrong — nothing to revert).
-  tsc clean, FRESH_BUILD smoke GREEN 42/0 with the fix in place.
-- Triage: nothing to triage from smoke.
-- Plan: fix r371's deferred real()-cap schemas (insertAvailableUnitSchema,
-  insertCrmDealSchema), two-bot round after.
+### r372 · 2026-08-25 · LIGHT (r371 was FULL — no journey)
+- Reconciled r371 first: commit 921a9887 complete and sound, and its
+  ROLLING-LOG entry WAS finalized in that same commit (the parent session's
+  "no final entry" note was wrong — nothing reverted). tsc clean,
+  FRESH_BUILD smoke GREEN 42/0 with it in place.
+- Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1
+  before and after this round's fixes). Two-bot round 383: exit 0, all
+  scenarios ok; 3 issues all listed noise (rocketreach-400, 2× keyless-AI
+  503 — see qa/logs/round-383.jsonl).
+- Bugs fixed (2, both r371 deferrals — same drizzle-zod 2^23-1 real() cap):
+  insertAvailableUnitSchema (askingRent/ratesPa/serviceChargePa/fee — unit
+  add AND pencil edit 400'd above £8.39m) and insertCrmDealSchema
+  (pricing/fee/rentPa/capitalContribution — a £25m deal price, the normal
+  investment case, was rejected on create). zod-only overrides in
+  shared/schema.ts, no tables/migrations touched. API-verified: unit £9m
+  POST + £10.5m PATCH persist and read back; deal £25m/£9m/£9m/£8.5m
+  create 200 + readback correct. Deal PUT path doesn't zod-validate, so
+  only POST was capped.
+- Harness growth: agent-unit-deal-big-figures in two-bot-round.mjs
+  (£9m unit POST + £10.5m PATCH + £25m deal create, all cleaned up
+  in-scenario; green in round 383). run-round.sh purges QA-BIGNUM% units;
+  QA-RCAP deals already covered by the QA-R% sweep.
+- Deferred (still): retail leasing comps + crm_requirements_leasing real()
+  money columns (crm_comps rentPa/premium etc.) — same one-line override
+  pattern; a global drizzle-zod fix stays architectural, Woody's call.
+- Suggestions added: none. New flakes: none. tsc clean.
+- Note for parent: fresh container needed full DB provisioning (role bgp,
+  restore fixture, r249 schema grant) — r205 notes still accurate.
+- Next journey: r372 was LIGHT → r373 is FULL, rotation #1 staff desktop.
+  Candidate: Investment Tracker offers on desktop (big-figure fixes just
+  landed there; surface uncovered in recent rounds).
 
 ### r371 · 2026-08-25 · FULL (rotation #4 staff mobile 390px)
 - Regression: run-smoke.sh GREEN ×3 (42 checks, 0 failures; FRESH_BUILD=1
