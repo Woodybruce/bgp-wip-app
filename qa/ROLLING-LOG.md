@@ -76,6 +76,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r376 · 2026-08-25 · ROUND IN PROGRESS (heartbeat)
+- Reconciled r375: parent flagged "no final log entry", but commit d8d116bd
+  contains the fix AND the final r375 log — r375 was complete. Verified on
+  this head: tsc clean, FRESH_BUILD smoke GREEN (42/0).
+- Two-bot sweep running; triage to follow. r375 was FULL → this is a LIGHT
+  round (no journey). No deferred bugs from r375.
+
 ### r375 · 2026-08-25 · FULL (rotation #2 client desktop)
 - Reconciled r374: parent flagged "no final log entry", but commit 673280e3
   contains the fix AND the final r374 log — r374 was complete. Verified
