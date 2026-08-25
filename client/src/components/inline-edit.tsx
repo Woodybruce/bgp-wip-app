@@ -171,6 +171,17 @@ export function InlineNumber({ value, onSave, placeholder = "—", className = "
     setEditing(false);
   };
 
+  // Commit a pending edit if the input is unmounted mid-edit. Inside a
+  // popover (e.g. the deals list Fee cell) clicking outside closes the
+  // popover and removes the input before blur can fire, so the typed value
+  // was silently lost. Escape/Enter set editing=false first, so cancelled
+  // or already-saved edits don't re-commit here.
+  const unmountCommitRef = useRef<{ editing: boolean; save: () => void }>({ editing: false, save: () => {} });
+  unmountCommitRef.current = { editing, save };
+  useEffect(() => () => {
+    if (unmountCommitRef.current.editing) unmountCommitRef.current.save();
+  }, []);
+
   const cancel = () => {
     setDraft(value?.toString() || "");
     setEditing(false);
