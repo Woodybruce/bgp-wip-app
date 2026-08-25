@@ -7077,22 +7077,25 @@ These terms are indicative only and do not constitute a binding agreement.`;
   app.post("/api/investment-tracker", requireAuth, async (req, res) => {
     try {
       const body = { ...req.body };
-      if (!body.propertyId && body.assetName) {
-        const [existing] = await db.select().from(crmProperties).where(eq(crmProperties.name, body.assetName)).limit(1);
+      // Validate before touching the DB so a bad payload can't strand an
+      // orphan crm_properties row; propertyId is derived below, checked last.
+      const base = insertInvestmentTrackerSchema.omit({ propertyId: true }).parse(body);
+      if (!body.propertyId && base.assetName) {
+        const [existing] = await db.select().from(crmProperties).where(eq(crmProperties.name, base.assetName)).limit(1);
         if (existing) {
           body.propertyId = existing.id;
         } else {
           const [newProp] = await db.insert(crmProperties).values({
-            name: body.assetName,
-            address: body.address ? { street: body.address } : null,
-            assetClass: body.assetType || null,
-            tenure: body.tenure || null,
+            name: base.assetName,
+            address: base.address ? { street: base.address } : null,
+            assetClass: base.assetType || null,
+            tenure: base.tenure || null,
           }).returning();
           body.propertyId = newProp.id;
         }
       }
-      const parsed = insertInvestmentTrackerSchema.parse(body);
-      const [row] = await db.insert(investmentTracker).values(parsed).returning();
+      const propertyId = insertInvestmentTrackerSchema.shape.propertyId.parse(body.propertyId);
+      const [row] = await db.insert(investmentTracker).values({ ...base, propertyId }).returning();
 
       // Auto-create a backing CRM deal
       if (!row.dealId) {

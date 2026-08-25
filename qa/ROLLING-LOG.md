@@ -73,14 +73,31 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r374 · 2026-08-25 · ROUND IN PROGRESS (provisional)
-- Reconciled r373: parent flagged "no final log entry", but commit 49d7e7f2
-  contains both the fix AND the final r373 log entry — r373 is complete.
-  Verified: tsc clean, FRESH_BUILD smoke GREEN (42 checks, 0 failures) on
-  r373's head. Two-bot 385 running.
-- LIGHT round (r373 was FULL). Working r373's deferred bug: tracker POST
-  orphan crm_properties on validation 400 — validate-before-create reorder
-  done in routes.ts, tsc clean, verification pending.
+### r374 · 2026-08-25 · LIGHT (r373 was FULL — no journey)
+- Reconciled r373 first: parent flagged "no final log entry", but commit
+  49d7e7f2 contains both the fix AND the final r373 log — r373 was complete.
+  Verified sound: tsc clean, FRESH_BUILD smoke GREEN (42/0) on r373's head,
+  two-bot 385 exit 0 all scenarios ok (incl. the new
+  agent-investment-dated-activity); 3 issues all listed noise (rocketreach
+  400, 2× keyless 503).
+- Bug fixed (1, r373's deferral): POST /api/investment-tracker auto-created
+  the backing crm_properties row BEFORE zod validation, stranding an orphan
+  property on any 400. Reordered in routes.ts: parse schema.omit(propertyId)
+  first, resolve/create the property, then parse propertyId — invalid
+  payload now 400s with zero DB writes. API-verified both paths (invalid →
+  400 + orphan-count 0; valid → 200, property + backing deal created, £25m
+  guide persists; verify rows cleaned up).
+- Harness growth: agent-tracker-invalid-no-orphan in two-bot-round.mjs
+  (invalid tracker POST must 400 and leave no QA-ORPHAN property; API
+  sequence dry-run green). run-round.sh purges QA-ORPHAN Tracker% rows in
+  investment_tracker + crm_properties.
+- Regression after fix: FRESH_BUILD smoke GREEN (42/0), tsc clean, two-bot
+  file node --check ok. Deferred: none. Suggestions: none new. Flakes: none
+  new (login API is username+password fields, not email — trips up curl
+  probes, smoke.mjs:88 is the reference).
+- Next journey: r374 was LIGHT → r375 FULL, rotation #2 client desktop.
+  Candidate from r373: Landsec client must NOT see the investment tracker /
+  investment activity (client-side visibility sweep).
 
 ### r373 · 2026-08-25 · FULL (rotation #1 staff desktop)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; before fixes and

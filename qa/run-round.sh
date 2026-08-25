@@ -52,7 +52,8 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM investment_offers WHERE company LIKE 'QA-OFFER-INV%' OR company LIKE 'QA-INVDATE%';
   DELETE FROM investment_viewings WHERE company LIKE 'QA-INVDATE%';
   DELETE FROM investment_distributions WHERE company_name LIKE 'QA-INVDATE%';
-  DELETE FROM investment_tracker WHERE asset_name LIKE 'QA-RCAP Tracker%';
+  DELETE FROM investment_tracker WHERE asset_name LIKE 'QA-RCAP Tracker%' OR asset_name LIKE 'QA-ORPHAN Tracker%';
+  DELETE FROM crm_properties WHERE name LIKE 'QA-ORPHAN Tracker%';
   DELETE FROM available_units WHERE unit_name LIKE 'QA-BIGNUM%';
   -- The team-board scenario adds a member then removes it; if a round dies
   -- mid-way the row survives, so sweep anyone not in the account contacts.

@@ -1374,6 +1374,23 @@ async function victoriaRound(page, cross) {
     if (!r.skipped && !r.persisted) throw new Error('investment dated activity saved but values did not persist');
   });
 
+  // Tracker create validates BEFORE auto-creating the backing CRM property
+  // (r374): a payload that fails zod must 400 without stranding an orphan
+  // crm_properties row. QA-ORPHAN% properties also purged by run-round.sh.
+  await step(page, p, 'agent-tracker-invalid-no-orphan', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const name = `QA-ORPHAN Tracker R${round}`;
+      const bad = await fetch('/api/investment-tracker', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ assetName: name, boardType: 'Sales', guidePrice: 'not-a-number' }) });
+      if (bad.ok) return { ok: false, why: 'invalid tracker POST unexpectedly succeeded' };
+      const props = await (await fetch('/api/crm/properties', { headers: auth })).json().catch(() => []);
+      const orphan = Array.isArray(props) && props.some(pr => pr.name === name);
+      return { ok: !orphan, why: orphan ? 'orphan crm_properties row stranded by validation 400' : undefined };
+    }, ROUND);
+    if (!r.ok) throw new Error(`tracker orphan guard failed (${r.why})`);
+  });
+
   // Tenancy re-import must not duplicate the tracker (r217): the schedule
   // import's clearExisting and bulk-delete unlink the mirror rows first, so
   // the fan-out re-adopts them by name instead of spawning a second listing
