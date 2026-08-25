@@ -73,6 +73,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r374 · 2026-08-25 · ROUND IN PROGRESS (provisional)
+- Reconciled r373: parent flagged "no final log entry", but commit 49d7e7f2
+  contains both the fix AND the final r373 log entry — r373 is complete.
+  Verified: tsc clean, FRESH_BUILD smoke GREEN (42 checks, 0 failures) on
+  r373's head. Two-bot 385 running.
+- LIGHT round (r373 was FULL). Working r373's deferred bug: tracker POST
+  orphan crm_properties on validation 400 — validate-before-create reorder
+  done in routes.ts, tsc clean, verification pending.
+
 ### r373 · 2026-08-25 · FULL (rotation #1 staff desktop)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; before fixes and
   FRESH_BUILD=1 after; pg_hba trust fix needed, r205 note). Two-bot round
