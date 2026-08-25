@@ -134,7 +134,7 @@ function MatterListView() {
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
 
-  const { data: matters = [], isLoading } = useQuery<PlaMatter[]>({
+  const { data: matters = [], isLoading } = useQuery<(PlaMatter & { propertyName?: string | null })[]>({
     queryKey: ["/api/pla/matters", statusFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -238,7 +238,7 @@ function MatterListView() {
                     <div className="flex items-start gap-2 min-w-0">
                       <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
                       <Link to={`/properties/${m.propertyId}`} className="text-sm font-medium truncate hover:underline" onClick={(e) => e.stopPropagation()}>
-                        {m.propertyId.slice(0, 8)}…
+                        {m.propertyName || `${m.propertyId.slice(0, 8)}…`}
                       </Link>
                     </div>
                     <p className="text-[11px] text-muted-foreground mt-0.5">{typeLabel(m.matterType)}</p>
@@ -287,7 +287,7 @@ function MatterListView() {
                         <div className="flex items-center gap-2 min-w-0">
                           <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                           <Link to={`/properties/${m.propertyId}`} className="truncate hover:underline" onClick={(e) => e.stopPropagation()}>
-                            {m.propertyId.slice(0, 8)}…
+                            {m.propertyName || `${m.propertyId.slice(0, 8)}…`}
                           </Link>
                         </div>
                       </TableCell>
@@ -464,7 +464,7 @@ function NewMatterDialog({
 // ─── Matter detail view ──────────────────────────────────────────────────────
 
 type MatterDetailResponse = {
-  matter: PlaMatter;
+  matter: PlaMatter & { propertyName?: string | null };
   comps: Array<{ matterId: string; compId: string; weight: number; notes: string | null; addedBy: string | null; addedAt: string }>;
   events: Array<{ id: string; matterId: string; eventKind: string; eventDate: string; description: string | null; done: boolean; doneAt: string | null }>;
   workbooks: Array<{ id: string; matterId: string; kind: string; sharepointUrl: string | null; generatedAt: string }>;
@@ -618,7 +618,7 @@ function MatterDetailView({ id }: { id: string }) {
           <div className="text-xs text-muted-foreground mb-1">Property</div>
           <Link to={`/properties/${matter.propertyId}`} className="font-medium hover:underline flex items-center gap-1.5">
             <MapPin className="h-4 w-4 text-muted-foreground" />
-            {matter.propertyId.slice(0, 8)}…
+            {matter.propertyName || `${matter.propertyId.slice(0, 8)}…`}
           </Link>
         </CardContent></Card>
 
