@@ -46,7 +46,16 @@ export async function fetchApolloOrganization(domain: string): Promise<any | nul
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Apollo ${res.status}: ${text.slice(0, 200)}`);
+    // Apollo's error bodies are JSON with embedded HTML links — never show
+    // that raw. Out-of-credits is an account state, not a fault: say so
+    // plainly (the red "500: Apollo 422 {...<a href=..." toast, 2026-08-25).
+    if (/insufficient credits/i.test(text)) {
+      throw new Error("Apollo is out of credits — firmographics are paused until the Apollo plan is topped up (app.apollo.io → Settings → Plans & Billing).");
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error("Apollo rejected our API key — check APOLLO_API_KEY in Subscriptions & APIs.");
+    }
+    throw new Error(`Apollo lookup failed (${res.status}) — try again shortly.`);
   }
   const data = (await res.json()) as any;
   return data?.organization || null;

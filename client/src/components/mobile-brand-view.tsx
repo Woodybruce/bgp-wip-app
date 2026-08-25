@@ -48,6 +48,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   const [section, setSection] = useState<"chat" | "contacts" | "intel" | "stores" | "social" | "compliance">("chat");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const [newsShowAllM, setNewsShowAllM] = useState(false);
+  const [storesShowAll, setStoresShowAll] = useState(false);
   const sec = (k: typeof section) => (section === k ? "space-y-3" : "hidden");
   const { toast } = useToast();
   const { data: mbvUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -181,8 +182,6 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </a>
         )}
       </div>
-      {c.description && <p className="text-sm leading-snug text-foreground/85">{c.description}</p>}
-
       <div className="flex flex-wrap gap-1.5" data-testid="company-phone-sections">
         <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Chat</Pill>
         <Pill active={section === "contacts"} onClick={() => setSection("contacts")} data-testid="company-section-contacts">Contacts</Pill>
@@ -193,8 +192,10 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
 
       <div className={sec("chat")}>
-      {/* BGP take + one-tap topic reads — same components as desktop */}
-      <BgpTakeStrip companyId={companyId} tab="brand" />
+      {/* Who they are + BGP take in ONE card (description as the opening
+          paragraph, the AI read under it) — they read as one brief, not two
+          blocks (Woody, 2026-08-25). */}
+      <BgpTakeStrip companyId={companyId} tab="brand" intro={c.description} />
       <AskChatBGPInline brandName={c.name} />
       {/* Chat — same thread as desktop and the main chat panel */}
       <div className="h-[320px]">
@@ -537,20 +538,36 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
               <div className="text-xs text-muted-foreground border border-dashed rounded-lg px-3 py-6 text-center">
                 Researching UK stores — the map appears here when the scan finishes (can take a couple of minutes)…
               </div>
-            ) : mappableStores.length > 0 ? (
-              <div className="rounded-lg overflow-hidden border border-border/50">
-                <BrandPortfolioMap stores={mappableStores as any} height={240} />
-              </div>
             ) : ukStores.length > 0 ? (
-              <div className="space-y-1">
-                {ukStores.slice(0, 6).map((s: any) => (
-                  <div key={s.id} className="text-xs px-2 py-1.5 rounded border bg-card min-w-0">
-                    <span className="font-medium">{s.name}</span>
-                    {s.address && <span className="text-muted-foreground"> — {s.address}</span>}
+              <div className="space-y-2">
+                {mappableStores.length > 0 && (
+                  <div className="rounded-lg overflow-hidden border border-border/50">
+                    <BrandPortfolioMap stores={mappableStores as any} height={240} />
                   </div>
-                ))}
-                {ukStores.length > 6 && (
-                  <div className="text-[11px] text-muted-foreground px-1">+{ukStores.length - 6} more (not yet geocoded — no map until they are)</div>
+                )}
+                {/* List under the map — every store, addressable and scannable
+                    (Woody, 2026-08-25: "can you do list as well as map"). */}
+                <div className="divide-y divide-border/60">
+                  {(storesShowAll ? ukStores : ukStores.slice(0, 5)).map((s: any) => (
+                    <div key={s.id} className="text-xs py-1.5 min-w-0 flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium truncate">{s.name}</div>
+                        {s.address && <div className="text-[11px] text-muted-foreground truncate">{s.address}</div>}
+                      </div>
+                      {s.status === "closed" && (
+                        <Badge variant="outline" className="text-[9px] shrink-0 text-red-600 border-red-200">Closed</Badge>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {ukStores.length > 5 && !storesShowAll && (
+                  <button
+                    onClick={() => setStoresShowAll(true)}
+                    className="text-[11px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                    data-testid="btn-stores-show-all"
+                  >
+                    Show all {ukStores.length}
+                  </button>
                 )}
               </div>
             ) : (
