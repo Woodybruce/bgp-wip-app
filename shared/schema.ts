@@ -999,7 +999,15 @@ export const crmDeals = pgTable("crm_deals", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertCrmDealSchema = createInsertSchema(crmDeals)
+// Same drizzle-zod 2^23-1 real() ceiling as insertUnitOfferSchema — deal
+// pricing is routinely well above £8.4m on investment deals, and rents,
+// fees and capital contributions can be too. Lift it on the money fields.
+export const insertCrmDealSchema = createInsertSchema(crmDeals, {
+  pricing: z.number().nullable().optional(),
+  fee: z.number().nullable().optional(),
+  rentPa: z.number().nullable().optional(),
+  capitalContribution: z.number().nullable().optional(),
+})
   .omit({ id: true, createdAt: true, updatedAt: true })
   // Date fields arrive from the HTML <input type="date"> as ISO date
   // strings ("2026-05-05") or as null when blank. Drizzle's generated
@@ -1824,7 +1832,15 @@ export const availableUnits = pgTable("available_units", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertAvailableUnitSchema = createInsertSchema(availableUnits).omit({ id: true, createdAt: true, updatedAt: true });
+// drizzle-zod caps real() columns at 2^23-1 (8,388,607) — big-ticket rents,
+// rates, service charges and fees are legitimate above that and float4
+// stores them fine, so lift the ceiling on the money fields.
+export const insertAvailableUnitSchema = createInsertSchema(availableUnits, {
+  askingRent: z.number().nullable().optional(),
+  ratesPa: z.number().nullable().optional(),
+  serviceChargePa: z.number().nullable().optional(),
+  fee: z.number().nullable().optional(),
+}).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertAvailableUnit = z.infer<typeof insertAvailableUnitSchema>;
 export type AvailableUnit = typeof availableUnits.$inferSelect;
 

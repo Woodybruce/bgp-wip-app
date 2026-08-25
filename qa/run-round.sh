@@ -50,6 +50,7 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM chat_threads WHERE title LIKE 'QA-CHATDEL%' OR title LIKE 'QA Thread%';
   DELETE FROM unit_offers WHERE company_name LIKE 'QA-AOFFER-%' OR company_name LIKE 'QA-ODEL-%' OR company_name LIKE 'QA-OFFER-%' OR company_name LIKE 'QA-RIVAL-%';
   DELETE FROM investment_offers WHERE company LIKE 'QA-OFFER-INV%';
+  DELETE FROM available_units WHERE unit_name LIKE 'QA-BIGNUM%';
   -- The team-board scenario adds a member then removes it; if a round dies
   -- mid-way the row survives, so sweep anyone not in the account contacts.
   DELETE FROM crm_client_team_members m

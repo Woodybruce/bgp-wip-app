@@ -1290,6 +1290,40 @@ async function victoriaRound(page, cross) {
     if (!inv.skipped && !inv.persisted) throw new Error('investment offer saved but £25m price did not persist');
   });
 
+  // Same real() cap on the unit and deal schemas (r372): a £9m asking rent on
+  // a tracker unit and a £25m deal price must save. Rows created + deleted
+  // in-scenario; QA-BIGNUM% units and QA-R% deals are also purged.
+  await step(page, p, 'agent-unit-deal-big-figures', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const propertyId = Array.isArray(units) && units[0] ? units[0].propertyId : null;
+      if (!propertyId) return { ok: false, why: 'no available unit to borrow a propertyId from' };
+      const mk = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ propertyId, unitName: `QA-BIGNUM Unit R${round}`, askingRent: 9000000, fee: 9500000 }) });
+      if (!mk.ok) return { ok: false, why: `big-rent unit POST ${mk.status}` };
+      const unit = await mk.json();
+      let unitOk = false;
+      try {
+        const pa = await fetch(`/api/available-units/${unit.id}`, { method: 'PATCH', credentials: 'include', headers: auth,
+          body: JSON.stringify({ askingRent: 10500000 }) });
+        if (!pa.ok) return { ok: false, why: `big-rent unit PATCH ${pa.status}` };
+        const row = await pa.json();
+        unitOk = row.askingRent === 10500000;
+      } finally {
+        await fetch(`/api/available-units/${unit.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }
+      const dk = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-RCAP Deal R${round}`, status: 'INS', pricing: 25000000, rentPa: 9000000 }) });
+      if (!dk.ok) return { ok: false, why: `big-price deal POST ${dk.status}` };
+      const deal = await dk.json();
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, persisted: unitOk && deal.pricing === 25000000 && deal.rentPa === 9000000 };
+    }, ROUND);
+    if (!r.ok) throw new Error(`big-figure unit/deal failed (${r.why}) — real() 8,388,607 cap regression`);
+    if (!r.persisted) throw new Error('big-figure unit/deal saved but values did not persist');
+  });
+
   // Tenancy re-import must not duplicate the tracker (r217): the schedule
   // import's clearExisting and bulk-delete unlink the mirror rows first, so
   // the fan-out re-adopts them by name instead of spawning a second listing
