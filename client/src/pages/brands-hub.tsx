@@ -616,7 +616,14 @@ function BrandExplorer() {
     enabled: quickActive,
     staleTime: 60_000,
   });
+  // Phone lands clean every visit — All Brands, no remembered category or
+  // search, market view only after a tap (Woody, 2026-08-25: "Brands from
+  // the dashboard" should always look the same). Desktop keeps the memory.
+  // window check mirrors BrandsHub's initialTab — useIsMobile's first
+  // render can't be trusted inside a useState initializer.
+  const landsClean = typeof window !== "undefined" && window.innerWidth < 768;
   const [activeCat, setActiveCat] = useState<string | null>(() => {
+    if (landsClean) return null;
     // Saved selections may reference a retired category (e.g. "national") —
     // fall back to All rather than silently applying no filter.
     try {
@@ -625,12 +632,14 @@ function BrandExplorer() {
     } catch { return null; }
   });
   const [activeSub, setActiveSub] = useState<string | null>(() => {
+    if (landsClean) return null;
     try {
       const saved = localStorage.getItem("brand-explorer-sub") || null;
       return saved && BRAND_CATEGORIES.some(c => c.subs.some(s => s.key === saved)) ? saved : null;
     } catch { return null; }
   });
   const [search, setSearch] = useState(() => {
+    if (landsClean) return "";
     try { return localStorage.getItem("brand-explorer-search") || ""; } catch { return ""; }
   });
   const [relFilter, setRelFilter] = useState<string>("all");
@@ -929,8 +938,10 @@ function BrandExplorer() {
         );
       })()}
 
-      {/* Search + relationship filters + count */}
+      {/* Search + relationship filters + count. The grid filter input is
+          desktop-only — the phone already leads with the quick-search box. */}
       <div className="flex items-center gap-3 flex-wrap">
+        {!isMobileExplorer && (
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -940,6 +951,7 @@ function BrandExplorer() {
             className="pl-9 h-9"
           />
         </div>
+        )}
         {!isClientExplorer && (
           <>
             <div className="flex gap-1.5 flex-wrap">
