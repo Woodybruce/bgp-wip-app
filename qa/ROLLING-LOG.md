@@ -73,6 +73,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r369 · 2026-08-25 · ROUND IN PROGRESS (provisional)
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
+  pg_hba trust fix needed, r205 note). Two-bot round 378: exit 0, all
+  scenarios ok, 3 issues all listed noise (rocketreach-400, live-intel 503,
+  commentary-regen 503).
+- FULL round, rotation #3 Landsec client mobile 390px — phone brand Intel
+  journey (Amorino) under way. Triage so far: client phone Intel section
+  shows NO UK-stores map / Competition / Instagram cards despite Amorino
+  having 34 geocoded stores + ai_competitors (investigating — suspect
+  /api/brand/:id/profile client payload lacks stores/competitors).
+
 ### r368 · 2026-08-24 · LIGHT (r367 was FULL)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
   before and after the fix; pg_hba trust fix needed, r205 note). Two-bot
