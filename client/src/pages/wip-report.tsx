@@ -1598,8 +1598,16 @@ export default function WipReport() {
                         )}
                       </td>
                       {colVisible("dealRef") && (
-                      <td className="px-2 py-1.5 text-xs font-mono text-muted-foreground/70 whitespace-nowrap">
-                        {e.dealRef ? `#${e.dealRef}` : "—"}
+                      <td className="px-2 py-1.5 text-xs font-mono whitespace-nowrap">
+                        {e.dealRef && e.dealId ? (
+                          <Link href={`/deals/${e.dealId}`}>
+                            <span className="text-blue-600 hover:underline cursor-pointer" data-testid={`link-deal-ref-${e.dealId}`}>#{e.dealRef}</span>
+                          </Link>
+                        ) : e.dealRef ? (
+                          <span className="text-muted-foreground/70">#{e.dealRef}</span>
+                        ) : (
+                          <span className="text-muted-foreground/70">—</span>
+                        )}
                       </td>
                       )}
                       {colVisible("ref") && (
