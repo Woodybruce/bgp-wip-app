@@ -73,6 +73,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r370 · 2026-08-25 · LIGHT — ROUND IN PROGRESS (provisional heartbeat)
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
+  pg_hba trust fix needed, r205 note). Two-bot round 380 running; first
+  logged issues so far are listed noise (rocketreach-400, live-intel 503).
+- Triage list: pending two-bot completion. Final entry replaces this one.
+
 ### r369 · 2026-08-25 · FULL (rotation #3 Landsec client mobile 390px)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
   before and after the merge+fix; pg_hba trust fix needed, r205 note).
