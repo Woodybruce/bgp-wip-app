@@ -8114,8 +8114,29 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               ORDER BY a.name ASC LIMIT 8`, [like]);
 
       const [brands, contacts, agents] = await Promise.all([brandsQ, contactsQ, agentsQ]);
+
+      // Key contacts ride along on matched brand cards (Woody, 2026-08-25:
+      // "at this point can you offer up the contact details?") — top three
+      // brands, up to three contacts each, so a brand-name search answers
+      // the "who do I call?" question without another tap.
+      const topBrandIds = brands.rows.slice(0, 3).map((b: any) => b.id);
+      let brandContactRows: any[] = [];
+      if (topBrandIds.length) {
+        brandContactRows = await pool.query(
+          `SELECT id, name, role, email,
+                  COALESCE(NULLIF(phone_mobile, ''), phone) AS phone,
+                  company_id
+             FROM crm_contacts
+            WHERE company_id = ANY($1)
+            ORDER BY name ASC`, [topBrandIds]).then(r => r.rows);
+      }
+      const brandRows = brands.rows.map((b: any) => ({
+        ...b,
+        contacts: brandContactRows.filter(ct => ct.company_id === b.id).slice(0, 3),
+      }));
+
       res.json({
-        brands: brands.rows,
+        brands: brandRows,
         contacts: contacts.rows,
         agents: (agents as any).rows,
       });

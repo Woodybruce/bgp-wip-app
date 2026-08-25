@@ -788,19 +788,43 @@ function BrandExplorer() {
             <div className="space-y-1.5">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-1">Brands</div>
               {quick!.brands.map((b: any) => (
-                <Link key={b.id} href={`/companies/${b.id}`} className="flex items-center gap-3 rounded-2xl bg-card border border-border p-3 min-w-0">
-                  <BrandLogo name={b.name} domain={b.domain} size={32} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate">{b.name}</div>
-                    <div className="text-[11px] text-muted-foreground truncate">
-                      {(b.company_type || "").replace(/^Tenant\s*-?\s*/i, "") || "Brand"}
+                <div key={b.id} className="rounded-2xl bg-card border border-border min-w-0">
+                  <Link href={`/companies/${b.id}`} className="flex items-center gap-3 p-3 min-w-0">
+                    <BrandLogo name={b.name} domain={b.domain} size={32} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{b.name}</div>
+                      <div className="text-[11px] text-muted-foreground truncate">
+                        {(b.company_type || "").replace(/^Tenant\s*-?\s*/i, "") || "Brand"}
+                      </div>
                     </div>
-                  </div>
-                  {b.store_count != null && (
-                    <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">{b.store_count} stores</span>
+                    {b.store_count != null && (
+                      <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">{b.store_count} stores</span>
+                    )}
+                    <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                  </Link>
+                  {(b.contacts?.length ?? 0) > 0 && (
+                    <div className="border-t border-border/50">
+                      {b.contacts.map((ct: any) => (
+                        <div key={ct.id} className="flex items-center gap-3 px-3 py-2 min-w-0 border-b border-border/30 last:border-b-0">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13px] font-medium truncate">{ct.name}</div>
+                            {ct.role && <div className="text-[11px] text-muted-foreground truncate">{ct.role}</div>}
+                          </div>
+                          {ct.phone && (
+                            <a href={`tel:${String(ct.phone).replace(/[^\d+]/g, "")}`} className="w-9 h-9 rounded-full border border-border flex items-center justify-center shrink-0" aria-label={`Call ${ct.name}`}>
+                              <Phone className="w-4 h-4" />
+                            </a>
+                          )}
+                          {ct.email && (
+                            <a href={`mailto:${ct.email}`} className="w-9 h-9 rounded-full border border-border flex items-center justify-center shrink-0" aria-label={`Email ${ct.name}`}>
+                              <Mail className="w-4 h-4" />
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   )}
-                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                </Link>
+                </div>
               ))}
             </div>
           )}
