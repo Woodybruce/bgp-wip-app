@@ -76,13 +76,62 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r377 · 2026-08-25 · ROUND IN PROGRESS (provisional heartbeat)
-- JOGQK merged into staging clean (through 3f30ce1a, Contacts board tap
-  actions batch). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD).
-- Two-bot 377 running; triage pending. Planned journey: FULL rotation #3
-  client mobile 390px — phone /brands quick-search probe (per r376 note).
-- Pre-triage code check: /api/brands/search IS client-slice-scoped server-side
-  (brands+contacts filtered, agents empty for clients) — no r344-class leak.
+### r377 · 2026-08-25 · FULL (rotation #3 client mobile 390px)
+- JOGQK merged into staging clean (through 3f30ce1a). tsc clean. Smoke GREEN
+  42/0 ×3 (FRESH_BUILD before fixes, after fix 1, after fix 2). Two-bot 377:
+  4 noise issues + 3 flow-failures, all root-caused (below); validation
+  two-bot 378 after fix 1 + harness fixes: only noise + the stale tenancy
+  scenario remained, then that scenario was fixed too (verified standalone).
+- Journey: Mark Warne @ 390px iPhone hasTouch — "between meetings: portfolio,
+  find a brand via the new /brands quick-search, who do I call, check its
+  profile, glance at my tracker": "/" Portfolio landing (bottom nav correct)
+  → /brands (clean landing, category tiles, 9 client-slice brands) →
+  search "Starbucks" (result card carries inline key contact = a6103c08
+  holds for clients) → profile → all pills (Chat/Contacts/Intel/Stores/
+  Social/Compliance) render; Stores map 257 stores; Compliance & KYC panel
+  visible per the 2026-08-01 decision → /deals (2 deals + letting-tracker
+  subtitle). No h-overflow anywhere. "Gail" search "No matches" is correct —
+  fixture has no Gail's crm_companies row.
+- Bug fixed 1: client phone brand profile mounted the staff-only
+  ActivitySummary feed → guaranteed /api/activity-summary 403 on EVERY brand
+  open (r344 class; server only allows a client's own companyId).
+  mobile-brand-view.tsx now gates the feed to staff / own-company. Same
+  commit: /api/brand/:id/profile leaked bgpSummary.totalFees to clients
+  while per-deal fees are deliberately stripped — now null for bpScope.
+  Verified in browser (0×403, pills clean) + API both roles.
+- Bug fixed 2: DELETE /api/available-units/:id orphaned the tenancy-spine
+  stub that unit-create mirrors (ensureTenancyRowForAvailableUnit) — every
+  client-add-delete-unit round left a QA-UNIT-R% ghost row on the Bluewater
+  tenancy schedule (R377+R378 ghosts found live; users hit this deleting a
+  mistaken tracker unit). routes.ts now deletes the stub BEFORE
+  storage.deleteAvailableUnit (that path nulls letting_tracker_unit_id) and
+  only when it's still the untouched mirror (status Marketing, no
+  tenant/rent/lease); adopted/edited spine rows survive. Verified by API
+  create→delete cycle (spine count 0). tsc clean.
+- Harness fixes (test wrong, app right): (a) two-bot now aborts requests to
+  external hosts — no external net here, so google-favicon fallbacks HUNG
+  12-28s and starved networkidle (this was the whole client-add-contact +
+  part of the staff-property-tenancy-mobile "flakes"); (b)
+  client-mobile-brand-intel-cards: UK-stores check moved to the Stores pill
+  (416bc9d1 split) + new zero-403 assertion on the client profile; (c)
+  staff-property-tenancy-mobile: 6819e38e ships phone CARD LISTS below md —
+  scenario now asserts tenancy-card-* visible + banded sheet hidden at 390px
+  (old td.sticky wait failed r377+r378; NOTE locator.count() counts HIDDEN
+  nodes — the sheet is still in the DOM, use visibility); (d)
+  client-add-delete-unit now asserts no spine ghost after delete; (e)
+  run-round.sh purge sweeps QA-UNIT-R%/QA-GHOST% from
+  tenancy/available/leasing tables.
+- Bugs deferred: none. Suggestions added: UX-NOTES #95 (client phone brand
+  profile lands on the Chat pill — internal-feeling; land clients on
+  Contacts/Intel).
+- New flakes: none real — the two "flakes" above were deterministic once
+  understood. Setup notes: kill/pgrep patterns containing "server/index.ts"
+  match your own shell and kill it (exit 144); restart check: `ps -eo
+  pid,lstart,cmd` for process age — a failed restart leaves the OLD server
+  holding :5000 and your fix silently untested.
+- Next journey: rotation #4 staff mobile 390px (r377 had the journey → r378
+  may be LIGHT; good staff-mobile task: /brands quick-search → contact-row
+  call/email buttons → Stores/Social pills, per the JOGQK batch).
 
 ### r376 · 2026-08-25 · LIGHT (r375 was FULL — no journey)
 - Reconciled r375: parent flagged "no final log entry", but commit d8d116bd

@@ -790,19 +790,19 @@ async function victoriaRound(page, cross) {
         }
       }
       await mobGoto(mob, `${BASE}/tenancy-schedule/${BLUEWATER}`, nav);
-      await mob.locator('table tbody td.sticky').first().waitFor({ timeout: 30000 });
+      // JOGQK 6819e38e (2026-08-25): phones get one card per unit — the
+      // banded sheet (sticky Unit column) never ships below md. Assert the
+      // card list renders and the desktop table stays hidden at 390px.
+      await mob.locator('[data-testid^="tenancy-card-"]').first().waitFor({ timeout: 30000 });
       const m = await mob.evaluate(() => {
         const sticky = document.querySelector('table tbody td.sticky');
-        const scroller = sticky ? sticky.closest('.overflow-x-auto') : null;
         return {
-          stickyW: sticky ? Math.round(sticky.getBoundingClientRect().width) : null,
-          scrollerW: scroller ? scroller.clientWidth : null,
+          cards: document.querySelectorAll('[data-testid^="tenancy-card-"]').length,
+          tableVisible: !!(sticky && sticky.getBoundingClientRect().width > 0),
         };
       });
-      if (!m.stickyW || !m.scrollerW) throw new Error('tenancy sticky column / scroller not found at 390px');
-      if (m.scrollerW - m.stickyW < 80) {
-        throw new Error(`tenancy pinned Unit column covers the sheet at 390px (sticky ${m.stickyW}px of ${m.scrollerW}px window)`);
-      }
+      if (!m.cards) throw new Error('tenancy phone card list empty at 390px');
+      if (m.tableVisible) throw new Error('desktop banded sheet visible at 390px alongside the phone card list');
     } finally {
       await mob.close();
       await mobCtx.close();
@@ -4059,12 +4059,19 @@ async function markRound(page, cross) {
       const outOfScope = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ propertyId: 'aaaa1111-0000-0000-0000-00000000dead', unitName: name + '-X' }) });
       const del = await fetch(`/api/available-units/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
-      return { ok: true, madeId: made.id, outOfScopeStatus: outOfScope.status, delOk: del.ok, delStatus: del.status };
+      // r378: unit create mirrors a stub row onto the tenancy spine — the
+      // delete must clean that stub too, not leave a ghost on the schedule.
+      const sched = await fetch(`/api/tenancy-schedule/property/${list[0].id}`, { headers: auth });
+      const schedRows = sched.ok ? await sched.json() : [];
+      const ghost = (Array.isArray(schedRows) ? schedRows : (schedRows?.units || []))
+        .some((u) => ((u.unit_number || u.unitNumber || '').trim() === name));
+      return { ok: true, madeId: made.id, outOfScopeStatus: outOfScope.status, delOk: del.ok, delStatus: del.status, ghost };
     }, stamp);
     if (r.skip) return;
     if (!r.ok) throw new Error(`client unit create failed (${r.why}) on their own property`);
     if (r.outOfScopeStatus >= 200 && r.outOfScopeStatus < 300) throw new Error('client created a unit on an out-of-scope property');
     if (!r.delOk) throw new Error(`client could not delete their own unit (${r.delStatus})`);
+    if (r.ghost) throw new Error('deleted unit left a ghost row on the tenancy schedule (spine stub not cleaned)');
   });
 
   // Summarise scope mirrors feed visibility (r207): the deal-linked Gail's

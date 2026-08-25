@@ -4673,6 +4673,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (await assertUnitInClientScope(req, unitRow?.propertyId)) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
+      // Add Unit also mirrors a stub row onto the tenancy spine
+      // (ensureTenancyRowForAvailableUnit). Remove that stub too — but only
+      // when it's still clearly the untouched mirror (points back at this
+      // unit, status 'Marketing', no tenant/rent/lease data); an adopted or
+      // since-edited spine row is real schedule data and stays (it just
+      // loses its dead tracker link inside deleteAvailableUnit). Must run
+      // BEFORE the unit delete — that path nulls letting_tracker_unit_id.
+      const tenancyId = (unitRow as any)?.tenancyUnitId;
+      if (tenancyId) {
+        try {
+          await pool.query(
+            `DELETE FROM tenancy_schedule_units
+              WHERE id = $1 AND letting_tracker_unit_id = $2
+                AND status = 'Marketing'
+                AND tenant_name IS NULL AND passing_rent_pa IS NULL AND lease_expiry IS NULL`,
+            [tenancyId, unitId]
+          );
+        } catch (e: any) {
+          console.warn(`[available-units DELETE] tenancy stub cleanup failed for ${tenancyId}:`, e?.message);
+        }
+      }
       await storage.deleteAvailableUnit(unitId);
       if (unitRow?.dealId) {
         try {

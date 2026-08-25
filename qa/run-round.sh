@@ -55,6 +55,11 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM investment_tracker WHERE asset_name LIKE 'QA-RCAP Tracker%' OR asset_name LIKE 'QA-ORPHAN Tracker%';
   DELETE FROM crm_properties WHERE name LIKE 'QA-ORPHAN Tracker%';
   DELETE FROM available_units WHERE unit_name LIKE 'QA-BIGNUM%';
+  -- client-add-delete-unit ghosts: pre-r378 the unit DELETE left the
+  -- mirrored spine stub behind; sweep any survivors from older rounds.
+  DELETE FROM tenancy_schedule_units WHERE unit_number LIKE 'QA-UNIT-R%' OR unit_number LIKE 'QA-GHOST%';
+  DELETE FROM available_units WHERE unit_name LIKE 'QA-UNIT-R%' OR unit_name LIKE 'QA-GHOST%';
+  DELETE FROM leasing_schedule_units WHERE unit_name LIKE 'QA-UNIT-R%' OR unit_name LIKE 'QA-GHOST%';
   -- The team-board scenario adds a member then removes it; if a round dies
   -- mid-way the row survives, so sweep anyone not in the account contacts.
   DELETE FROM crm_client_team_members m
