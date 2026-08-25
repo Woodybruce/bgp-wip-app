@@ -73,16 +73,45 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r369 · 2026-08-25 · ROUND IN PROGRESS (provisional)
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
-  pg_hba trust fix needed, r205 note). Two-bot round 378: exit 0, all
-  scenarios ok, 3 issues all listed noise (rocketreach-400, live-intel 503,
-  commentary-regen 503).
-- FULL round, rotation #3 Landsec client mobile 390px — phone brand Intel
-  journey (Amorino) under way. Triage so far: client phone Intel section
-  shows NO UK-stores map / Competition / Instagram cards despite Amorino
-  having 34 geocoded stores + ai_competitors (investigating — suspect
-  /api/brand/:id/profile client payload lacks stores/competitors).
+### r369 · 2026-08-25 · FULL (rotation #3 Landsec client mobile 390px)
+- Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
+  before and after the merge+fix; pg_hba trust fix needed, r205 note).
+  Two-bot rounds 378 + 379: both exit 0, all scenarios ok, 3 issues each all
+  listed noise (rocketreach-400, live-intel 503, commentary-regen 503).
+- MERGE: pulled JOGQK into staging (24d67122 — only 2 commits: b9b9678e phone
+  brand Intel cards + fe931966 InlineNumber unmount commit). The r368
+  candidate journey targeted b9b9678e, which was NOT yet in staging — first
+  journey pass showed a bare Intel section (Portfolio Activity + Signals
+  only); post-merge everything renders. tsc clean, smoke + round 379 green
+  on the merged tree.
+- Journey: Mark Warne @ 390px iPhone UA — "scout Amorino: where are their UK
+  stores, who do they compete with, their Instagram, who do I contact":
+  home (Brands tile in quick trio) → /brands hub (search "Amorino", 1 result)
+  → profile → Intel pill: UK stores card (34-store map, markers render;
+  tiles grey = cartocdn blocked in container, env noise) + Competition card
+  + Menu; Instagram board absent (no handle/posts — degrades to nothing,
+  client GET /api/brand/:id/instagram is 200-allowed). Contacts pill: key
+  contact findable. 0 pageerrors, 0 h-overflow, 0 non-noise 4xx/5xx,
+  brand findable in 3 taps.
+- Bug fixed (1): phone Competition card badge counted ALL competitors (10)
+  but the list silently capped AI rows at slice(0,6) — badge/list mismatch.
+  Added "+N more in the competitor set" line (mobile-brand-view.tsx),
+  mirroring the desktop siblingBrands "+N more" pattern. Verified visually
+  at 390px ("+4 more"). tsc clean, rebuilt, smoke re-green.
+- Harness growth: client-mobile-brand-intel-cards (resolves Amorino via
+  resolveFixture intelBrand, fetches the profile payload, then asserts the
+  UK-stores card renders when geocoded stores exist, the Competition card
+  when ai_competitors exist, and the +N-more line when >6). Green in
+  round 379.
+- New env noise for the list: grey map tiles on brand store maps —
+  {s}.basemaps.cartocdn.com unreachable in the container; markers still
+  render, don't triage.
+- Bugs deferred: none. Suggestions added: UX #92 (brands-hub search tile
+  shows a blank white square for logo-less brands — fall back to the
+  lettered avatar the profile header uses).
+- Next journey: r369 was FULL → r370 may be LIGHT; then rotation #4 staff
+  mobile 390px. Candidate: staff phone Intel section on the same merged
+  cards (staff sees them too), or tracker viewing/offer pencils at 390px.
 
 ### r368 · 2026-08-24 · LIGHT (r367 was FULL)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
