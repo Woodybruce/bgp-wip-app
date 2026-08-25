@@ -1495,6 +1495,23 @@ router.get("/api/brand/:companyId/stores", requireAuth, async (req: Request, res
 // Diagnostics shape mirrors the KYC re-resolver — caller surfaces these in
 // the toast/console so a "0 stores found" result is debuggable without
 // scraping logs.
+// Trade descriptors a CRM company name often carries but the shopfront
+// doesn't ("Watchhouse Coffee" trades as "WatchHouse"; "Gymbox Fitness" as
+// "Gymbox"). Used twice in researchBrandStores: stripped from the search
+// query for an extra high-yield variant, and OPTIONAL in the listing-name
+// match gate — requiring them rejected every real store of any brand named
+// this way (WatchHouse came back "0 stores found" with 18 open sites,
+// Woody 2026-08-25).
+const TRADE_DESCRIPTORS = new Set([
+  "coffee", "cafe", "caffe", "espresso", "roasters", "roastery", "coffeehouse",
+  "bakery", "restaurant", "restaurants", "kitchen", "bar", "grill", "pizzeria",
+  "eatery", "deli", "brewing", "brewery", "taproom",
+  "gym", "fitness", "studio", "studios", "wellness", "spa",
+  "clothing", "fashion", "apparel", "jewellery", "jewelry", "opticians",
+  "store", "stores", "shop", "shops", "boutique", "supermarkets",
+  "hotel", "hotels", "books", "bookshop",
+]);
+
 export async function researchBrandStores(
   companyId: string,
   opts: { scope?: "uk" | "global" } = {},
@@ -1544,14 +1561,25 @@ export async function researchBrandStores(
     .replace(/\bT\d\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim() || company.name;
+  // Shopfront name — the CRM name minus trailing trade descriptors
+  // ("Watchhouse Coffee" trades as "WatchHouse"). Searched as an extra
+  // query when it differs; the match gate below makes the same words
+  // optional. TRADE_DESCRIPTORS is shared by both.
+  const shopfrontName = queryName
+    .split(/\s+/)
+    .filter((w: string, i: number) => i === 0 || !TRADE_DESCRIPTORS.has(w.toLowerCase().replace(/[^a-z0-9]/g, "")))
+    .join(" ")
+    .trim();
   const queries = scope === "global"
     ? [
         queryName,
+        ...(shopfrontName !== queryName ? [shopfrontName] : []),
         `${queryName} flagship store`,
         ...globalCities.map((c) => `${queryName} ${c}`),
       ]
     : [
         queryName,
+        ...(shopfrontName !== queryName ? [shopfrontName, `${shopfrontName} London`] : []),
         `${queryName} UK`,
         ...ukCities.map((c) => `${queryName} ${c}`),
       ];
@@ -1593,7 +1621,12 @@ export async function researchBrandStores(
   const allBrandWords = brandToken.split(" ").filter((w: string) => w.length > 1);
   const significantWords = allBrandWords.filter((w: string) => !STOPWORDS.has(w));
   const brandWords = significantWords.length > 0 ? significantWords : allBrandWords;
-  const brandFirstWord = brandWords[0] || brandToken;
+  // Words that MUST appear in the listing name: the brand words minus pure
+  // trade descriptors — unless that empties the list (e.g. "Coffee Shop"),
+  // in which case all words stay required.
+  const nonDescriptorWords = brandWords.filter((w: string) => !TRADE_DESCRIPTORS.has(w));
+  const requiredWords = nonDescriptorWords.length > 0 ? nonDescriptorWords : brandWords;
+  const brandFirstWord = requiredWords[0] || brandToken;
   const NOISE = new Set([
     "pizza","tyres","tyre","cars","car","hire","cleaning","plumbing",
     "gym","fitness","kebab","chicken","fried","fish","chips","pharmacy",
@@ -1611,11 +1644,12 @@ export async function researchBrandStores(
     if (!n) return false;
     // Exact match or starts-with: always accept (cheap, high precision)
     if (n === brandToken || n.startsWith(brandToken + " ")) return true;
-    // Multi-word brand: require all significant tokens to appear somewhere
-    // in the place name. Catches "BrandName - Westfield London" and
-    // "BrandName at Selfridges" without false-positives on single-token coincidence.
-    if (brandWords.length > 1) {
-      return brandWords.every((w: string) => n.includes(w));
+    // Multi-word requirement: every required token (descriptors excluded)
+    // must appear somewhere in the place name. Catches "BrandName -
+    // Westfield London" and "BrandName at Selfridges" without
+    // false-positives on single-token coincidence.
+    if (requiredWords.length > 1) {
+      return requiredWords.every((w: string) => n.includes(w));
     }
     // Single-word brand: brand must appear as a word, and no noise compound
     // immediately after (avoids "Supreme Pizza", "Coach Hire", etc.).
