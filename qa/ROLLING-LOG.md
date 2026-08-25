@@ -73,12 +73,46 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r371 · 2026-08-25 ~04:50 UTC · ROUND IN PROGRESS (provisional)
-- FULL round, rotation #4 staff mobile 390px. Regression: run-smoke.sh GREEN
-  (42 checks, 0 failures, FRESH_BUILD=1; pg_hba trust fix needed, r205 note).
-- Two-bot round 381 in progress on the dev server; journey (tracker
-  viewing/offer edit pencils at 390px, victoria) queued after it.
-- Triage so far: nothing to triage from smoke.
+### r371 · 2026-08-25 · FULL (rotation #4 staff mobile 390px)
+- Regression: run-smoke.sh GREEN ×3 (42 checks, 0 failures; FRESH_BUILD=1
+  before fixes, after fix 1, and after fix 2; pg_hba trust fix needed, r205
+  note). Two-bot rounds 381 + 382: both exit 0, all scenarios ok, 3 issues
+  each all listed noise (rocketreach-400, 2× keyless-AI 503).
+- Journey: Victoria @ 390px iPhone UA — "between viewings: fix a viewing's
+  time on U124 with the pencil, then correct an offer's rent": login → lands
+  on ChatBGP Messages (INTENDED — Woody 2026-08-18 staff-mobile cold-open
+  decision, supersedes the 2026-08-09 Dashboard-home note; don't re-flag) →
+  Deals tab → Letting Tracker → search U124 → Viewing dialog: add (date
+  defaults today), pencil edit persists, "Viewing updated" toast → Offer
+  dialog: add ok, pencil edit → PATCH 400. 0 pageerrors, 0 h-overflow.
+- Bug fixed (1): drizzle-zod caps real() columns at 2^23-1 = 8,388,607, so
+  unit-offer rents/premiums/fit-outs above £8.39m 400'd on add AND edit with
+  a cryptic toast (found when a harness fill artefact sent rentPa
+  5,000,055,000; re-verified with a clean £9m POST). insertUnitOfferSchema
+  now overrides rentPa/premium/fittingOutContribution (shared/schema.ts —
+  zod-only line, no table/migration touched). Verified visually at 390px:
+  £9m add + £10.5m pencil edit both save and render.
+- Bug fixed (2): same cap on investment_offers.offerPrice — a £25m
+  investment offer (the NORMAL case on that tracker) was rejected.
+  insertInvestmentOfferSchema override; verified via API (POST £25m 200,
+  PATCH £30m 200).
+- Harness growth: agent-offer-big-figures in two-bot-round.mjs (unit offer
+  £9m POST + £10.5m/£9.5m PATCH, green in round 382; extended after 382
+  with the £25m investment-offer probe — API sequence dry-run green);
+  run-round.sh purge sweeps QA-OFFER-INV% investment_offers rows.
+- Deferred: other real() money columns still capped where routes validate
+  via createInsertSchema — insertAvailableUnitSchema (unit rentPa/fee on
+  tracker add/edit), insertCrmDealSchema (fee/rentPa), retail leasing comps.
+  Same one-line override pattern per schema; a global fix is architectural
+  (touches shared/schema.ts broadly) — next round or Woody's call.
+- Suggestions added: UX #93 (validation toasts show raw zod text with
+  code-speak field names). Harness note: CurrencyInput .fill() appends
+  instead of replacing — click + Ctrl+A + pressSequentially to retype.
+- New flakes: none. tsc clean.
+- Next journey: r371 was FULL → r372 may be LIGHT; then rotation #1 staff
+  desktop. Candidate: Investment Tracker offers on desktop (big-figure fix
+  just landed there, surface uncovered in recent rounds), or deferred
+  real()-cap probes on unit add/edit.
 
 ### r370 · 2026-08-25 · LIGHT (r369 was FULL)
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;

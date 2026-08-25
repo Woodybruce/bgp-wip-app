@@ -1871,7 +1871,14 @@ export const unitOffers = pgTable("unit_offers", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertUnitOfferSchema = createInsertSchema(unitOffers).omit({ id: true, createdAt: true });
+// drizzle-zod caps real() columns at 2^23-1 (8,388,607) — big-ticket rents,
+// premiums and fit-out contributions are legitimate above that and float4
+// stores them fine, so lift the ceiling on the money fields.
+export const insertUnitOfferSchema = createInsertSchema(unitOffers, {
+  rentPa: z.number().nullable().optional(),
+  premium: z.number().nullable().optional(),
+  fittingOutContribution: z.number().nullable().optional(),
+}).omit({ id: true, createdAt: true });
 export type InsertUnitOffer = z.infer<typeof insertUnitOfferSchema>;
 export type UnitOffer = typeof unitOffers.$inferSelect;
 
@@ -2045,7 +2052,11 @@ export const investmentOffers = pgTable("investment_offers", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
-export const insertInvestmentOfferSchema = createInsertSchema(investmentOffers).omit({ id: true, createdAt: true, updatedAt: true });
+// Same 2^23-1 real() ceiling as insertUnitOfferSchema — investment offers
+// are routinely well above £8.4m, so lift it on the price.
+export const insertInvestmentOfferSchema = createInsertSchema(investmentOffers, {
+  offerPrice: z.number().nullable().optional(),
+}).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertInvestmentOffer = z.infer<typeof insertInvestmentOfferSchema>;
 export type InvestmentOffer = typeof investmentOffers.$inferSelect;
 

@@ -16,6 +16,14 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+93. 2026-08-25 · BGP staff / mobile 390px (QA r371) · "log an offer on a
+    tracker unit" · When server validation rejects a form, the toast shows
+    the raw zod text — e.g. 'Validation error: Number must be less than or
+    equal to 8388607 at "rentPa"' (seen before the r371 cap fix; other
+    forms still surface messages in this shape, field names in code-speak) ·
+    Map validation failures to friendly wording using the form's field
+    labels ("Rent p.a. is too large") before tossing them into the toast.
+
 92. 2026-08-25 · Landsec client / mobile 390px (QA r369) · "search Brand
     Intelligence for a brand I'm scouting (Amorino)" · The search-result
     tile shows a blank white square where the logo should be when a brand

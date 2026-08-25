@@ -1249,6 +1249,47 @@ async function victoriaRound(page, cross) {
     cross.offerStamp = `${cross.offerStamp}-EDITED`;
   });
 
+  // Big-ticket money fields (r371): drizzle-zod used to cap real() columns at
+  // 8,388,607, so a £9m rent or £12m premium 400'd on both add and edit.
+  // Offer created + deleted in-scenario; company_name QA-OFFER-% is also purged.
+  await step(page, p, 'agent-offer-big-figures', async () => {
+    if (!cross.viewingUnitId) return;
+    const r = await page.evaluate(async (args) => {
+      const [unitId, round] = args;
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const mk = await fetch(`/api/available-units/${unitId}/offers`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: `QA-OFFER-BIGNUM R${round}`, offerDate: new Date().toISOString().slice(0, 10), rentPa: 9000000, premium: 12000000 }) });
+      if (!mk.ok) return { ok: false, why: `big-rent POST ${mk.status}` };
+      const offer = await mk.json();
+      try {
+        const pa = await fetch(`/api/available-units/offers/${offer.id}`, { method: 'PATCH', credentials: 'include', headers: auth,
+          body: JSON.stringify({ rentPa: 10500000, fittingOutContribution: 9500000 }) });
+        if (!pa.ok) return { ok: false, why: `big-rent PATCH ${pa.status}` };
+        const row = await pa.json();
+        return { ok: true, persisted: row.rentPa === 10500000 && row.premium === 12000000 };
+      } finally {
+        await fetch(`/api/available-units/offers/${offer.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }
+    }, [cross.viewingUnitId, ROUND]);
+    if (!r.ok) throw new Error(`big-figure offer failed (${r.why}) — real() 8,388,607 cap regression`);
+    if (!r.persisted) throw new Error('big-figure offer saved but values did not persist');
+    // Same cap on investment offers — a £25m offerPrice must save (r371).
+    const inv = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const trackers = await (await fetch('/api/investment-tracker', { headers: auth })).json().catch(() => []);
+      const tracker = Array.isArray(trackers) ? trackers[0] : null;
+      if (!tracker) return { ok: true, skipped: true };
+      const mk = await fetch(`/api/investment-tracker/${tracker.id}/offers`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ company: `QA-OFFER-INV R${round}`, offerPrice: 25000000 }) });
+      if (!mk.ok) return { ok: false, why: `investment offer POST ${mk.status}` };
+      const row = await mk.json();
+      await fetch(`/api/investment-offers/${row.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, persisted: row.offerPrice === 25000000 };
+    }, ROUND);
+    if (!inv.ok) throw new Error(`big-figure investment offer failed (${inv.why})`);
+    if (!inv.skipped && !inv.persisted) throw new Error('investment offer saved but £25m price did not persist');
+  });
+
   // Tenancy re-import must not duplicate the tracker (r217): the schedule
   // import's clearExisting and bulk-delete unlink the mirror rows first, so
   // the fan-out re-adopts them by name instead of spawning a second listing
