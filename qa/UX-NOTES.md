@@ -16,6 +16,13 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+92. 2026-08-25 · Landsec client / mobile 390px (QA r369) · "search Brand
+    Intelligence for a brand I'm scouting (Amorino)" · The search-result
+    tile shows a blank white square where the logo should be when a brand
+    has no logo image — looks broken next to the name · Fall back to the
+    lettered avatar the brand profile header already uses (an "A" chip for
+    Amorino) instead of an empty square.
+
 91. 2026-08-24 · Landsec client / desktop 1440px (QA r367) · "catch up on
     news about my tenants" · The Brand News list shows the same story twice
     when the raw feed headline and the normalised signal differ slightly —

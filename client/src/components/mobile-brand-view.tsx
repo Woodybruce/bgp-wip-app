@@ -256,6 +256,11 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
                 {comp.reason && <p className="text-[11px] text-muted-foreground leading-snug">{comp.reason}</p>}
               </div>
             ))}
+            {aiCompetitors.length > 6 && (
+              <p className="text-[11px] text-muted-foreground">
+                +{aiCompetitors.length - 6} more in the competitor set
+              </p>
+            )}
           </CardContent>
         </Card>
       )}

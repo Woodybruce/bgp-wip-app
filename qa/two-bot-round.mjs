@@ -32,6 +32,7 @@ const LEGACY = {
 let LANDSEC = LEGACY.landsec;
 let BLUEWATER = LEGACY.bluewater;
 let BRAND = LEGACY.brand;
+let INTEL_BRAND = null; // brand with geocoded stores + AI competitors (Amorino on the smoke fixture)
 const PASSWORD = 'B@nd0077!';
 const AGENT_USER = 'victoria@brucegillinghampollard.com';
 const CLIENT_USER = 'mark.warne@landsec.com';
@@ -128,6 +129,9 @@ async function resolveFixture(token) {
   // it where absent).
   const brand = companies.find((c) => /^honi poke$/i.test(c.name || ''))
     || companies.find((c) => /restaurant|casual dining|fine dining|caf/i.test(c.companyType || '') && !/^testco/i.test(c.name || ''));
+  // Intel-cards scenario target: a brand with geocoded stores (Amorino on
+  // the smoke fixture); null lets the scenario fall back to the slice brand.
+  const intelBrand = companies.find((c) => /^amorino$/i.test(c.name || ''));
   const properties = await list('/api/crm/properties');
   const bluewater = properties.find((p) => /bluewater/i.test(p.name || '') && (!landsec || p.landlordId === landsec.id))
     || properties.find((p) => /bluewater/i.test(p.name || ''));
@@ -135,6 +139,7 @@ async function resolveFixture(token) {
     landsec: landsec?.id || LEGACY.landsec,
     bluewater: bluewater?.id || LEGACY.bluewater,
     brand: brand?.id || LEGACY.brand,
+    intelBrand: intelBrand?.id || null,
   };
 }
 
@@ -4818,6 +4823,46 @@ async function markRound(page, cross) {
     }
   });
 
+  // r369: phone brand Intel section (JOGQK b9b9678e) — UK stores map,
+  // Competition set (with the +N-more overflow line) and Instagram board.
+  // Data-driven off the profile payload so the scenario holds on any fixture:
+  // whatever the API returns geocoded stores / >6 AI competitors for must
+  // show the matching card once the Intel pill is tapped.
+  await step(page, p, 'client-mobile-brand-intel-cards', async () => {
+    const targetId = INTEL_BRAND || BRAND;
+    const pr = await fetch(`${BASE}/api/brand/${targetId}/profile`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (!pr.ok) throw new Error(`brand profile fetch ${pr.status} for intel target ${targetId}`);
+    const prof = await pr.json();
+    const stores = (prof?.stores || []).filter((s) => typeof s.lat === 'number' && typeof s.lng === 'number' && (!s.country || s.country === 'GB'));
+    const aiComps = Array.isArray(prof?.company?.ai_competitors) ? prof.company.ai_competitors : [];
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/companies/${targetId}`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(3000);
+      const intelPill = mob.locator('[data-testid="company-section-intel"]');
+      if (!await intelPill.count()) throw new Error('Intel section pill missing on client mobile brand profile');
+      await intelPill.tap().catch(() => intelPill.click());
+      await mob.waitForTimeout(3000);
+      const body = await mob.evaluate(() => document.body.innerText);
+      if (stores.length > 0 && !/UK stores/i.test(body)) throw new Error(`Intel: UK stores card missing (${stores.length} geocoded stores in payload)`);
+      if (aiComps.length > 0 && !/Competition/i.test(body)) throw new Error(`Intel: Competition card missing (${aiComps.length} AI competitors in payload)`);
+      if (aiComps.length > 6 && !/\+\d+ more in the competitor set/.test(body)) throw new Error('Intel: Competition overflow line missing with >6 AI competitors');
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // r353: a ChatBGP send whose request the server REJECTS outright (keyless
   // 503 here; validation 400s / outages in prod) must surface an assistant
   // error bubble promptly — the mobile onError used to sit in its ~6-min
@@ -5199,7 +5244,7 @@ const clientCtx = await browser.newContext({ viewport: { width: 1500, height: 95
 console.log(`── Round ${ROUND} — Victoria (agent) × Mark (Landsec client) ──`);
 const vPage = await login(agentCtx, AGENT_USER);
 const FIX = await resolveFixture(vPage.qaToken);
-LANDSEC = FIX.landsec; BLUEWATER = FIX.bluewater; BRAND = FIX.brand;
+LANDSEC = FIX.landsec; BLUEWATER = FIX.bluewater; BRAND = FIX.brand; INTEL_BRAND = FIX.intelBrand;
 console.log(`  [fixture] landsec=${LANDSEC} bluewater=${BLUEWATER} brand=${BRAND}`);
 // Every page in every context reads the resolved IDs as window.QA_FIX
 // (init script re-runs on each navigation — every scenario starts with one;
