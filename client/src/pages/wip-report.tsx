@@ -27,7 +27,7 @@ import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
-import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS, DEAL_STATUS_DOT_COLORS, type DealStatusCode } from "@shared/deal-status";
+import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
@@ -1079,48 +1079,6 @@ export default function WipReport() {
     return { client, team, agent, project, status, month };
   }, [entries]);
 
-  // Stage pills — per-stage totals over ALL entries (same basis as the
-  // dropdown fee hints). Tapping a pill toggles every raw status that maps
-  // to that stage in selectedStatuses, so the pills and the Deal Status
-  // dropdown are one filter, never two (Woody, 2026-08-23).
-  const STAGE_PILLS: Array<{ code: string; label: string }> = [
-    { code: "NEG", label: "Negotiating" },
-    { code: "SOL", label: "Solicitors" },
-    { code: "EXC", label: "Exchanged" },
-    { code: "COM", label: "Completed" },
-    { code: "INV", label: "Invoiced" },
-  ];
-  const stageAgg = useMemo(() => {
-    const agg: Record<string, { total: number; deals: Set<string> }> = {};
-    entries.forEach((e) => {
-      const code = legacyToCode(e.dealStatus);
-      if (!code) return;
-      if (!agg[code]) agg[code] = { total: 0, deals: new Set() };
-      agg[code].total += (e.amtWip || 0) + (e.amtInvoice || 0);
-      agg[code].deals.add(e.dealId || e.id || "");
-    });
-    return agg;
-  }, [entries]);
-  const statusesForStage = useCallback(
-    (code: string) => allStatuses.filter((st) => legacyToCode(st) === code),
-    [allStatuses],
-  );
-  const stageActive = (code: string) => {
-    const list = statusesForStage(code);
-    return list.length > 0 && list.every((st) => selectedStatuses.has(st));
-  };
-  const toggleStage = (code: string) => {
-    const list = statusesForStage(code);
-    if (!list.length) return;
-    setSelectedStatuses((prev) => {
-      const next = new Set(prev);
-      const active = list.every((st) => next.has(st));
-      if (active) list.forEach((st) => next.delete(st));
-      else list.forEach((st) => next.add(st));
-      return next;
-    });
-  };
-
   // The server emits one entry per agent fee-split (so agent filtering and
   // per-agent fees work), but Deal Detail should read one row per deal —
   // a split deal was showing twice. Collapse splits by dealId: sum the fee
@@ -1370,51 +1328,6 @@ export default function WipReport() {
         <HealthTab />
       ) : (
       <div className="flex flex-col gap-4">
-          {/* Stage stat cards — same anatomy as the Deals page's status card
-              row (count / label / £), and still the stage filter in one:
-              tapping a card filters the table below (synced with the Deal
-              Status dropdown). */}
-          <ScrollArea className="w-full shrink-0" data-testid="wip-stage-pills">
-            <div className="flex items-center gap-3 pb-1">
-              <Card
-                className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${selectedStatuses.size === 0 ? "border-primary" : ""}`}
-                onClick={() => setSelectedStatuses(new Set())}
-                data-testid="wip-stage-pill-all"
-              >
-                <CardContent className="p-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-primary/60" />
-                    <div>
-                      <p className="text-lg font-bold">{new Set(entries.map(e => e.dealId || e.id)).size}</p>
-                      <p className="text-xs text-muted-foreground">All Deals</p>
-                      <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(totalNetFees)}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              {STAGE_PILLS.filter(sp => stageAgg[sp.code]).map(sp => (
-                <Card
-                  key={sp.code}
-                  className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${stageActive(sp.code) ? "border-primary" : ""}`}
-                  onClick={() => toggleStage(sp.code)}
-                  data-testid={`wip-stage-pill-${sp.code.toLowerCase()}`}
-                >
-                  <CardContent className="p-3">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-2.5 h-2.5 rounded-full ${DEAL_STATUS_DOT_COLORS[sp.code as DealStatusCode] || "bg-primary/60"}`} />
-                      <div>
-                        <p className="text-lg font-bold">{stageAgg[sp.code].deals.size}</p>
-                        <p className="text-xs text-muted-foreground">{sp.label}</p>
-                        <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(stageAgg[sp.code].total)}</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
-
           {/* Filter dropdowns — one per former summary board */}
           <div className="flex flex-wrap items-center gap-2 flex-shrink-0 no-print" data-testid="wip-filters-bar">
             <div className="relative w-full sm:w-56">
@@ -1484,8 +1397,11 @@ export default function WipReport() {
               onClearAll={() => setSelectedStatuses(new Set())}
               values={filterFees.status}
               getLabel={(s) => {
+                // Expand short codes (INV → Invoiced) but keep meaningful
+                // legacy labels like "HOTs" as-is — mapping them to their
+                // canonical stage name hid the HOTs distinction.
                 const code = legacyToCode(s);
-                return code ? DEAL_STATUS_LABELS[code] : s;
+                return code && code === s ? DEAL_STATUS_LABELS[code] : s;
               }}
             />
             <FilterDropdown
