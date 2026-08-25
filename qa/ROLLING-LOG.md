@@ -76,6 +76,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r378 · 2026-08-25 · ROUND IN PROGRESS (LIGHT — r377 was FULL)
+- Provisional heartbeat ~20:45 UTC. Fresh container (pg_hba trust fix +
+  bgp role/db restore needed). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD).
+  Two-bot 378 running; triage to follow.
+
 ### r377 · 2026-08-25 · FULL (rotation #3 client mobile 390px)
 - JOGQK merged into staging clean (through 3f30ce1a). tsc clean. Smoke GREEN
   42/0 ×3 (FRESH_BUILD before fixes, after fix 1, after fix 2). Two-bot 377:
