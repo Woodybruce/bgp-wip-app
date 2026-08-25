@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 // Phone-fit brand / landlord profile — the mobile answer to the desktop
 // BrandProfilePanel, which rendered effectively blank at phone widths
 // (Woody, 2026-08-04: "how the brands reflect" on the phone app). Stacked
@@ -80,6 +80,19 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     },
     onError: (e: any) => toast({ title: "Store search failed", description: e.message, variant: "destructive" }),
   });
+  // Auto-fire on first open when a brand has no stores at all — same as
+  // desktop, so the map fills itself instead of waiting for a tap
+  // (Woody, 2026-08-25: "I don't want to ask, I need everything automated").
+  const autoScanFired = useRef(false);
+  useEffect(() => {
+    if (autoScanFired.current || !data?.company || isClientViewer) return;
+    const co = data.company;
+    if (/landlord|client/i.test(co.company_type || "")) return;
+    if ((data.stores || []).length > 0) return;
+    autoScanFired.current = true;
+    storeScan.mutate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, isClientViewer]);
 
   if (isLoading || !data?.company) {
     return (

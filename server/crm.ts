@@ -9780,9 +9780,12 @@ async function runAutoEnrichmentCycle() {
       result.brandAnalysis = { error: err.message };
     }
 
-    // Auto store research — find Google Places stores for tracked brands that
+    // Auto store research — find Google Places stores for brands that
     // either have no stores cached or were last researched >30 days ago.
-    // Skip brands with AI disabled.
+    // Skip brands with AI disabled. 20 per 6-hour cycle = 80/day (Woody,
+    // 2026-08-25: "open a board and it's filled... overnight, cheap") —
+    // clears the never-researched backlog in weeks, then it's just the
+    // 30-day refresh drip. Never-researched brands go first (NULLS FIRST).
     if (process.env.GOOGLE_API_KEY) {
       try {
         const brandsNeedingStores = await pool.query(`
@@ -9799,7 +9802,7 @@ async function runAutoEnrichmentCycle() {
             AND c.merged_into_id IS NULL
             AND (s.last_researched IS NULL OR s.last_researched < NOW() - INTERVAL '30 days')
           ORDER BY s.last_researched ASC NULLS FIRST
-          LIMIT 3
+          LIMIT 20
         `).then(r => r.rows);
 
         let researched = 0;
