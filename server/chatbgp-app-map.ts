@@ -72,4 +72,7 @@ The firm's money list, live from crm_deals. Tabs: **WIP Report** (filterable dea
 
 ### Other key pages (desktop paths)
 /wip-report (team WIP — quick search box above the filters finds a deal/client/property by name; Client, Tenant and Property cells click through to their pages; on the phone the table becomes a card list, one card per deal), /investment-tracker, /leasing-schedule, /available (letting tracker), /portfolios, /pathway-review + /pathway-portfolio (property pathway runs, Why Buy decks), /kyc-clouseau (AML board), /covenant-watch, /land-registry, /image-studio (phone: /m/images), /map & /map-bgp, /board-report, /decks, /today (day view), /diary, /calendar, /mail, /whatsapp (admin), /business-rates, /lease-events, /marketing-files, /edozo.
+
+### ChatBGP over WhatsApp (the BGP business number)
+Messaging the BGP WhatsApp number reaches the same ChatBGP as the dashboard — same AI model, full toolset (CRM, deals, email, calendar, SharePoint, document generation, web search). It understands: typed messages, voice notes (transcribed automatically — just talk), photos (it can see them), and documents/brochures (PDFs are read and can be filed into the CRM; captions like "import this brochure" trigger the import pipeline). Receipts photographed by a cardholder are matched to their pending expenses automatically.
 `;
