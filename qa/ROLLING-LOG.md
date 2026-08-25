@@ -76,19 +76,37 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r379 · 2026-08-25 · ROUND IN PROGRESS (provisional)
-- Fresh container. pg_hba trust + bgp role/db + fixture restore + per-table
-  owner transfer (REASSIGN OWNED silently fails for postgres-owned objects
-  — the r249 grant alone wasn't enough this time; loop ALTER TABLE/SEQUENCE
-  owner to bgp fixed the news_sources permission errors).
-- Smoke GREEN 42/0 (FRESH_BUILD). Triage: nothing beyond listed noise.
-- FULL round, rotation #4 staff mobile 390px: /brands quick-search →
-  contact call/email buttons → brand Stores/Social pills. Search flow good
-  (grouped results, contact email pill, brand-card ride-along contacts,
-  tap-through to profile). Investigating: Stores pill on a 0-store brand
-  shows "Researching UK stores…" forever after the scan already failed,
-  plus raw "GOOGLE_API_KEY not configured" toast (keyless env).
-- Two-bot running; final entry to follow.
+### r379 · 2026-08-25 · FULL (rotation #4 staff mobile 390px)
+- Fresh container. pg_hba trust + bgp role/db + fixture restore + PER-TABLE
+  owner transfer (REASSIGN OWNED BY postgres errors on system objects; the
+  r249 grant alone wasn't enough — loop ALTER TABLE/SEQUENCE … OWNER TO bgp
+  fixed the news_sources permission errors). Smoke GREEN 42/0 (FRESH_BUILD).
+- Journey: staff phone /brands quick-search → contact call/email buttons →
+  brand Stores/Social pills. Search flow good: grouped brand/contact
+  results, contact rows get email (and tel when a phone is on record)
+  buttons, brand cards carry ride-along key contacts, tap-through works.
+  NOTE for future rounds: the phone shell needs an iPhone userAgent in the
+  Playwright context — viewport 390px alone renders the desktop layout.
+- Bug FIXED: phone brand Social pill was a completely blank screen for
+  brands with no Instagram handle (BrandInstagramCard returns null) —
+  mobile-brand-view.tsx now shows a "No social feed yet" empty state.
+  tsc clean, verified visually, prod build clean.
+- Two-bot 379 ×2: exit 0, new scenario staff-mobile-brand-search-social ok.
+  Run 2 false-failed staff-contact-create-delete + client-contacts-deduped:
+  back-to-back two-bot runs without run-round.sh's 'QA Contact%' purge
+  leave mark's client-add-contact row behind, colliding with victoria's
+  same-named probe. Harness fixed (delete check by id; dedupe skips QA
+  probe rows) and both verified against the polluted DB. Other issues =
+  listed noise only (2×400 rocketreach/intended-tracker, 2×503 keyless AI).
+- New env noise: red "Store search failed / GOOGLE_API_KEY not configured"
+  toast on 0-store brand profiles — the profile auto-fires a store scan
+  (Woody 2026-08-25 automation note), keyless env fails it. Ignore locally.
+- Suggestions: UX-NOTES #96 (map raw config errors in the store-scan toast
+  to a friendly message). Deferred: none. Process note: heartbeat commit was
+  amended+force-with-lease pushed once (own seconds-old commit, footer fix)
+  — avoid; get the footer right first time.
+- Next: r379 was FULL → r380 LIGHT (no journey; triage + any deferred).
+  Then r381 FULL rotation #1 staff desktop.
 
 ### r378 · 2026-08-25 · LIGHT (r377 was FULL — no journey)
 - Fresh container (pg_hba trust fix, bgp role/db + fixture restore, .env

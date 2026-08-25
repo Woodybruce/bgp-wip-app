@@ -16,6 +16,14 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+96. 2026-08-25 · BGP staff / mobile 390px (QA r379) · "open a brand's Stores
+    pill on the phone" · On a 0-store brand the auto-fired store scan's
+    failure surfaces as a raw config string in a red toast ("Store search
+    failed / GOOGLE_API_KEY not configured") that covers a third of the
+    phone screen and outlives two pill switches · Map server-side config
+    errors to a friendly "Store research isn't available right now" and
+    keep the toast short — the raw error can go to the console/log instead.
+
 95. 2026-08-25 · Landsec client / mobile 390px (QA r377) · "look up Starbucks
     from the phone Brands search and see who they are / who to call" · The
     brand profile opens on the CHAT pill ("Ask anything about Starbucks — @

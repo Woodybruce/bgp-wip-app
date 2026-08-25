@@ -495,7 +495,10 @@ async function victoriaRound(page, cross) {
       if (!del.ok) return { ok: false, why: `delete ${del.status}` };
       const list = await (await fetch('/api/crm/contacts', { headers: auth })).json();
       const rows = Array.isArray(list) ? list : (list?.data || []);
-      return { ok: true, stillThere: rows.some((c) => c.name === needle) };
+      // Match by id, not name — mark's client-add-contact creates a contact
+      // with the same round name and back-to-back runs without run-round.sh's
+      // 'QA Contact%' purge left it behind, false-failing this check (r379).
+      return { ok: true, stillThere: rows.some((c) => c.id === made.id) };
     }, name);
     if (!r.ok) throw new Error(`contact lifecycle failed (${r.why})`);
     if (r.stillThere) throw new Error('deleted contact still present in the CRM list');
@@ -803,6 +806,61 @@ async function victoriaRound(page, cross) {
       });
       if (!m.cards) throw new Error('tenancy phone card list empty at 390px');
       if (m.tableVisible) throw new Error('desktop banded sheet visible at 390px alongside the phone card list');
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r379: phone Brands landing search (Woody 2026-08-25 — one box over
+  // brands, contacts at brands, acting agents) + the brand Social pill.
+  // A contact-name search must render the contact row with its call/email
+  // buttons, and the Social pill must never be a blank screen: brands with
+  // no Instagram handle get the "No social feed yet" empty state (the
+  // Instagram card returns null without a handle — r379 fix).
+  await step(page, p, 'staff-mobile-brand-search-social', async () => {
+    const pr = await fetch(`${BASE}/api/brand/${BRAND}/profile`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (!pr.ok) throw new Error(`brand profile fetch ${pr.status} for ${BRAND}`);
+    const prof = await pr.json();
+    const sr = await fetch(`${BASE}/api/brands/search?q=tom`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (!sr.ok) throw new Error(`/api/brands/search 'tom' ${sr.status}`);
+    const hits = await sr.json();
+    const contactHit = (hits.contacts || [])[0];
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      if (contactHit) {
+        await mobGoto(mob, `${BASE}/brands`, nav);
+        const box = mob.locator('[data-testid="brand-quick-search"]');
+        await box.waitFor({ timeout: 30000 });
+        await box.fill('tom');
+        await mob.waitForTimeout(2500);
+        const body = await mob.evaluate(() => document.body.innerText);
+        if (!body.includes(contactHit.name)) throw new Error(`quick-search 'tom' missing contact ${contactHit.name} at 390px`);
+        if (contactHit.email && !await mob.locator(`a[href="mailto:${contactHit.email}"]`).count())
+          throw new Error(`quick-search contact row missing mailto:${contactHit.email}`);
+        if (contactHit.phone && !await mob.locator('a[href^="tel:"]').count())
+          throw new Error('quick-search contact row missing tel: button despite phone on record');
+      }
+      await mobGoto(mob, `${BASE}/companies/${BRAND}`, nav);
+      const socialPill = mob.locator('[data-testid="company-section-social"]');
+      await socialPill.waitFor({ timeout: 30000 });
+      await socialPill.tap().catch(() => socialPill.click());
+      await mob.waitForTimeout(2500);
+      const social = await mob.evaluate(() => document.body.innerText);
+      if (prof?.company?.instagram_handle) {
+        if (!/Instagram|@/.test(social)) throw new Error('Social pill: Instagram card missing despite handle on record');
+      } else if (!/No social feed yet/i.test(social)) {
+        throw new Error('Social pill blank for a no-handle brand — empty state missing');
+      }
     } finally {
       await mob.close();
       await mobCtx.close();
@@ -2365,6 +2423,10 @@ async function markRound(page, cross) {
       const rows = Array.isArray(list) ? list : (list?.data || []);
       const seen = new Set(); const dupes = [];
       for (const c of rows) {
+        // Skip the harness's own probe contacts — back-to-back runs without
+        // run-round.sh's 'QA Contact%' purge leave same-named rows behind,
+        // which are pollution, not an app dedupe failure (r379).
+        if (/^QA Contact/i.test(String(c.name || ''))) continue;
         const key = `${String(c.name || '').trim().toLowerCase()}|${String(c.email || '').trim().toLowerCase()}`;
         if (key === '|') continue;
         if (seen.has(key)) dupes.push(c.name);

@@ -457,7 +457,14 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
 
       <div className={sec("social")}>
-      {/* Instagram board — same card as desktop (posts + follower stats) */}
+      {/* Instagram board — same card as desktop (posts + follower stats).
+          The card returns null without a handle, which left this pill a
+          blank screen on the phone (r379) — show why instead. */}
+      {!c.instagram_handle && (
+        <div className="text-xs text-muted-foreground border border-dashed rounded-lg px-3 py-6 text-center">
+          No social feed yet — no Instagram handle on file for {c.name}.
+        </div>
+      )}
       <BrandInstagramCard companyId={companyId} />
       {c.instagram_handle && (
         <a
