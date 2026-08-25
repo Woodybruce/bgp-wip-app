@@ -76,12 +76,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r376 · 2026-08-25 · ROUND IN PROGRESS (heartbeat)
+### r376 · 2026-08-25 · LIGHT (r375 was FULL — no journey)
 - Reconciled r375: parent flagged "no final log entry", but commit d8d116bd
-  contains the fix AND the final r375 log — r375 was complete. Verified on
-  this head: tsc clean, FRESH_BUILD smoke GREEN (42/0).
-- Two-bot sweep running; triage to follow. r375 was FULL → this is a LIGHT
-  round (no journey). No deferred bugs from r375.
+  contains the fix AND the final r375 log — r375 was complete (third round
+  in a row the parent's flag was a false alarm — the fix commit carries the
+  final log). Verified on this head: tsc clean, FRESH_BUILD smoke GREEN
+  (42/0).
+- Regression: smoke GREEN 42/0 (FRESH_BUILD). Two-bot 386 exit 0, all 34
+  scenarios ok (incl. r375's new client-investment-deeplink-guard). 4 issues
+  all listed noise: rocketreach 400, agent-tracker-invalid-no-orphan's own
+  intended 400, 2× keyless AI 503 (brand-gaps/live-intel,
+  bgp-commentary/regenerate).
+- Bugs fixed: none needed. Bugs deferred: none. Suggestions: none new.
+- Next journey: r376 was LIGHT → r377 FULL rotation #3 client mobile 390px
+  (probe the phone /brands quick-search, commit a44eb801).
 
 ### r375 · 2026-08-25 · FULL (rotation #2 client desktop)
 - Reconciled r374: parent flagged "no final log entry", but commit 673280e3
