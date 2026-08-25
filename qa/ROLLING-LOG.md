@@ -76,10 +76,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r378 · 2026-08-25 · ROUND IN PROGRESS (LIGHT — r377 was FULL)
-- Provisional heartbeat ~20:45 UTC. Fresh container (pg_hba trust fix +
-  bgp role/db restore needed). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD).
-  Two-bot 378 running; triage to follow.
+### r378 · 2026-08-25 · LIGHT (r377 was FULL — no journey)
+- Fresh container (pg_hba trust fix, bgp role/db + fixture restore, .env
+  recreated per setup notes). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD).
+- Two-bot 378: exit 0, ALL scenarios ok — including r377's fixed/new ones
+  (client-mobile-brand-intel-cards zero-403, client-add-delete-unit
+  no-spine-ghost, staff-property-tenancy-mobile card-list assertions) and
+  r344's deal-verdict pair. 4 issues, all listed noise: 2×400 (rocketreach
+  refresh; agent-tracker-invalid's own intended 400), 2×503 (keyless AI —
+  brand-gaps/live-intel, bgp-commentary/regenerate). 0 raw 500/502/504 in
+  the entire dev-server log for the round.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions: none
+  new. New flakes: none.
+- Next journey: r378 was LIGHT → r379 FULL rotation #4 staff mobile 390px
+  (r377's suggested task: /brands quick-search → contact-row call/email
+  buttons → Stores/Social pills, per the JOGQK batch).
 
 ### r377 · 2026-08-25 · FULL (rotation #3 client mobile 390px)
 - JOGQK merged into staging clean (through 3f30ce1a). tsc clean. Smoke GREEN
