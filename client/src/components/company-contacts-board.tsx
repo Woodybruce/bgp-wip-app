@@ -51,12 +51,12 @@ export function KeyContactRow({ contact, companyId, discovery }: { contact: any;
   const lastTouchLabel = lastTouch ? formatRelativeShort(lastTouch) : null;
 
   return (
-    <div className="flex items-start gap-2 text-xs hover:bg-muted/50 rounded p-1 -mx-1 transition-colors">
-      <Link href={`/contacts/${contact.id}`} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
+    <div className="flex items-start gap-2.5 md:gap-2 text-xs hover:bg-muted/50 rounded p-1.5 md:p-1 -mx-1 transition-colors">
+      <Link href={`/contacts/${contact.id}`} className="w-9 h-9 md:w-6 md:h-6 rounded-full bg-muted flex items-center justify-center text-[10px] md:text-[9px] font-medium shrink-0 overflow-hidden">
         {contact.avatar_url ? <img src={contact.avatar_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.currentTarget.style.display = "none"); }} /> : (contact.name?.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "?")}
       </Link>
       <div className="min-w-0 flex-1">
-        <div className="font-medium truncate flex items-center gap-1">
+        <div className="font-medium truncate flex items-center gap-1 text-[13px] md:text-xs">
           <Link href={`/contacts/${contact.id}`} className="hover:underline">{contact.name}</Link>
           {discovery?.bgp?.threadCount ? (
             <span className="text-[9px] px-1 py-0 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 shrink-0" title="BGP has real email history with this person">
