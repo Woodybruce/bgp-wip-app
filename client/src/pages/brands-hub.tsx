@@ -22,7 +22,7 @@ import {
   Flower2, Clapperboard, Tv, Gamepad2, Baby, Palette, PartyPopper,
   HeartPulse, Bath, Dumbbell, Tag, Wrench, Watch, Gem, Footprints,
   ShoppingCart, Crosshair, TrendingDown, Eye, Lightbulb, Target, ClipboardList,
-  Plus, Check, Loader2,
+  Plus, Check, Loader2, Phone, Mail,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { getAuthHeaders } from "@/lib/queryClient";
@@ -595,6 +595,27 @@ function BrandExplorer() {
   // Fashion & Retail, …) rather than showing a row of zeros.
   const { data: exUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientExplorer = exUser?.role === "Client" || !!exUser?.companyScopeId;
+  // Phone landing search — one box over brands, contacts at brands and
+  // acting agents (Woody, 2026-08-25: the category browser buried search
+  // on mobile). Typing swaps the tiles for grouped results; clearing
+  // brings the browser back.
+  const isMobileExplorer = useIsMobile();
+  const [quickQ, setQuickQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(quickQ), 250);
+    return () => clearTimeout(t);
+  }, [quickQ]);
+  const quickActive = isMobileExplorer && debouncedQ.trim().length >= 2;
+  const { data: quick, isFetching: quickLoading } = useQuery<{ brands: any[]; contacts: any[]; agents: any[] }>({
+    queryKey: ["/api/brands/search", debouncedQ],
+    queryFn: async () => {
+      const r = await apiRequest("GET", `/api/brands/search?q=${encodeURIComponent(debouncedQ.trim())}`);
+      return r.json();
+    },
+    enabled: quickActive,
+    staleTime: 60_000,
+  });
   const [activeCat, setActiveCat] = useState<string | null>(() => {
     // Saved selections may reference a retired category (e.g. "national") —
     // fall back to All rather than silently applying no filter.
@@ -726,6 +747,101 @@ function BrandExplorer() {
 
   return (
     <div className="space-y-4">
+      {/* Phone landing: search first — brands, contacts, acting agents. */}
+      {isMobileExplorer && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search brands, contacts, agents…"
+            value={quickQ}
+            onChange={e => setQuickQ(e.target.value)}
+            className="pl-9 h-11 rounded-xl"
+            data-testid="brand-quick-search"
+          />
+        </div>
+      )}
+
+      {quickActive ? (
+        <div className="space-y-4" data-testid="brand-quick-results">
+          {quickLoading && !quick && (
+            <div className="space-y-2">
+              <Skeleton className="h-14 w-full rounded-2xl" />
+              <Skeleton className="h-14 w-full rounded-2xl" />
+            </div>
+          )}
+          {quick && (quick.brands.length + quick.contacts.length + quick.agents.length) === 0 && (
+            <p className="text-sm text-muted-foreground px-1">
+              No matches for “{debouncedQ.trim()}” — try a shorter name.
+            </p>
+          )}
+
+          {(quick?.brands?.length ?? 0) > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-1">Brands</div>
+              {quick!.brands.map((b: any) => (
+                <Link key={b.id} href={`/companies/${b.id}`} className="flex items-center gap-3 rounded-2xl bg-card border border-border p-3 min-w-0">
+                  <BrandLogo name={b.name} domain={b.domain} size={32} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium truncate">{b.name}</div>
+                    <div className="text-[11px] text-muted-foreground truncate">
+                      {(b.company_type || "").replace(/^Tenant\s*-?\s*/i, "") || "Brand"}
+                    </div>
+                  </div>
+                  {b.store_count != null && (
+                    <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">{b.store_count} stores</span>
+                  )}
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {(quick?.contacts?.length ?? 0) > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-1">Contacts</div>
+              {quick!.contacts.map((ct: any) => (
+                <div key={ct.id} className="flex items-center gap-3 rounded-2xl bg-card border border-border p-3 min-w-0">
+                  <Link href={`/companies/${ct.brand_id}`} className="min-w-0 flex-1">
+                    <div className="text-sm font-medium truncate">{ct.name}</div>
+                    <div className="text-[11px] text-muted-foreground truncate">
+                      {[ct.role, ct.brand_name].filter(Boolean).join(" · ")}
+                    </div>
+                  </Link>
+                  {ct.phone && (
+                    <a href={`tel:${String(ct.phone).replace(/[^\d+]/g, "")}`} className="w-9 h-9 rounded-full border border-border flex items-center justify-center shrink-0" aria-label={`Call ${ct.name}`}>
+                      <Phone className="w-4 h-4" />
+                    </a>
+                  )}
+                  {ct.email && (
+                    <a href={`mailto:${ct.email}`} className="w-9 h-9 rounded-full border border-border flex items-center justify-center shrink-0" aria-label={`Email ${ct.name}`}>
+                      <Mail className="w-4 h-4" />
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!isClientExplorer && (quick?.agents?.length ?? 0) > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-1">Acting agents</div>
+              {quick!.agents.map((a: any) => (
+                <Link key={a.id} href={`/companies/${a.id}`} className="block rounded-2xl bg-card border border-border p-3 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Briefcase className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="text-sm font-medium truncate flex-1">{a.name}</span>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-1 truncate">
+                    Acts for {(a.brands || []).slice(0, 4).join(", ")}{(a.brands || []).length > 4 ? ` +${a.brands.length - 4} more` : ""}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+      <>
       {/* Category cards — the category browser (docs/DESIGN.md §1/§8):
           standard token cards with a small category-coloured dot, no
           gradients. Distinct from the relationship pills below (tiles
@@ -962,6 +1078,8 @@ function BrandExplorer() {
             ))}
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

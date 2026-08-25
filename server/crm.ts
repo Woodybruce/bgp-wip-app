@@ -8065,6 +8065,66 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── Brand Intelligence search — brands, contacts at brands, acting
+  //    agents in one grouped payload. Powers the phone landing search
+  //    (Woody, 2026-08-25: "easier to search for brands and contacts at
+  //    those brands including acting agents on the phone").
+  app.get("/api/brands/search", requireAuth, async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      if (q.length < 2) return res.json({ brands: [], contacts: [], agents: [] });
+      const like = `%${q.replace(/[%_\\]/g, "\\$&")}%`;
+
+      const clientScoped = await isClientRequest(req);
+      const scope = clientScoped ? await resolveCompanyScope(req) : null;
+      const sliceSql = clientScoped ? await clientBrandSliceSql(scope, "__ID__") : "";
+      const brandFilterFor = (idCol: string) => (clientScoped
+        ? sliceSql.replaceAll("__ID__", idCol)
+        : `${idCol === "id" ? "company_type" : idCol.split(".")[0] + ".company_type"} ILIKE 'Tenant%'`);
+
+      const brandsQ = pool.query(
+        `SELECT id, name, company_type, store_count, domain
+           FROM crm_companies
+          WHERE merged_into_id IS NULL AND ${brandFilterFor("id")} AND name ILIKE $1
+          ORDER BY name ASC LIMIT 10`, [like]);
+
+      const contactsQ = pool.query(
+        `SELECT ct.id, ct.name, ct.role, ct.email,
+                COALESCE(NULLIF(ct.phone_mobile, ''), ct.phone) AS phone,
+                c.id AS brand_id, c.name AS brand_name
+           FROM crm_contacts ct
+           JOIN crm_companies c ON c.id = ct.company_id
+          WHERE c.merged_into_id IS NULL AND ${brandFilterFor("c.id")} AND ct.name ILIKE $1
+          ORDER BY ct.name ASC LIMIT 10`, [like]);
+
+      // Agents are BGP-internal intel — staff only. Matches either the agent
+      // firm's name or a brand they act for ("who reps Wingstop?").
+      const agentsQ = clientScoped
+        ? Promise.resolve({ rows: [] as any[] })
+        : pool.query(
+            `SELECT a.id, a.name,
+                    array_agg(DISTINCT r.agent_type) AS agent_types,
+                    array_agg(DISTINCT b.name ORDER BY b.name) AS brands
+               FROM brand_agent_representations r
+               JOIN crm_companies a ON a.id = r.agent_company_id
+               JOIN crm_companies b ON b.id = r.brand_company_id
+              WHERE r.end_date IS NULL AND a.merged_into_id IS NULL AND b.merged_into_id IS NULL
+                AND (a.name ILIKE $1 OR b.name ILIKE $1)
+              GROUP BY a.id, a.name
+              ORDER BY a.name ASC LIMIT 8`, [like]);
+
+      const [brands, contacts, agents] = await Promise.all([brandsQ, contactsQ, agentsQ]);
+      res.json({
+        brands: brands.rows,
+        contacts: contacts.rows,
+        agents: (agents as any).rows,
+      });
+    } catch (e: any) {
+      console.error("[brands-search] failed:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Brands Hub aggregated data ───────────────────────────────────────
   app.get("/api/brands/hub", requireAuth, async (req, res) => {
     try {
