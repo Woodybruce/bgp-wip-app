@@ -27,7 +27,7 @@ import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
-import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS } from "@shared/deal-status";
+import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS, DEAL_STATUS_DOT_COLORS, type DealStatusCode } from "@shared/deal-status";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
@@ -1341,6 +1341,12 @@ export default function WipReport() {
             <Printer className="h-4 w-4 mr-1" />
             Print
           </Button>
+          <Link href="/deals/list?new=1">
+            <Button size="sm" data-testid="wip-new-deal-button">
+              <Plus className="h-4 w-4 mr-1" />
+              New Deal
+            </Button>
+          </Link>
         </div>
       </div>
 
@@ -1364,30 +1370,50 @@ export default function WipReport() {
         <HealthTab />
       ) : (
       <div className="flex flex-col gap-4">
-          {/* Stage pills — the stat strip and the stage filter in one:
-              each shows that stage's total and tapping filters the table
-              below (synced with the Deal Status dropdown). */}
-          <div className="flex flex-wrap items-center gap-1.5 shrink-0" data-testid="wip-stage-pills">
-            <Pill
-              active={selectedStatuses.size === 0}
-              onClick={() => setSelectedStatuses(new Set())}
-              data-testid="wip-stage-pill-all"
-            >
-              All <span className="opacity-70 font-mono normal-case">{formatCurrency(totalNetFees)}</span>
-            </Pill>
-            {STAGE_PILLS.filter(sp => stageAgg[sp.code]).map(sp => (
-              <Pill
-                key={sp.code}
-                active={stageActive(sp.code)}
-                onClick={() => toggleStage(sp.code)}
-                data-testid={`wip-stage-pill-${sp.code.toLowerCase()}`}
+          {/* Stage stat cards — same anatomy as the Deals page's status card
+              row (count / label / £), and still the stage filter in one:
+              tapping a card filters the table below (synced with the Deal
+              Status dropdown). */}
+          <ScrollArea className="w-full shrink-0" data-testid="wip-stage-pills">
+            <div className="flex items-center gap-3 pb-1">
+              <Card
+                className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${selectedStatuses.size === 0 ? "border-primary" : ""}`}
+                onClick={() => setSelectedStatuses(new Set())}
+                data-testid="wip-stage-pill-all"
               >
-                {sp.label}{" "}
-                <span className="opacity-70 font-mono normal-case">{formatCurrency(stageAgg[sp.code].total)}</span>
-                <span className="opacity-50">· {stageAgg[sp.code].deals.size}</span>
-              </Pill>
-            ))}
-          </div>
+                <CardContent className="p-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-primary/60" />
+                    <div>
+                      <p className="text-lg font-bold">{new Set(entries.map(e => e.dealId || e.id)).size}</p>
+                      <p className="text-xs text-muted-foreground">All Deals</p>
+                      <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(totalNetFees)}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              {STAGE_PILLS.filter(sp => stageAgg[sp.code]).map(sp => (
+                <Card
+                  key={sp.code}
+                  className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${stageActive(sp.code) ? "border-primary" : ""}`}
+                  onClick={() => toggleStage(sp.code)}
+                  data-testid={`wip-stage-pill-${sp.code.toLowerCase()}`}
+                >
+                  <CardContent className="p-3">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2.5 h-2.5 rounded-full ${DEAL_STATUS_DOT_COLORS[sp.code as DealStatusCode] || "bg-primary/60"}`} />
+                      <div>
+                        <p className="text-lg font-bold">{stageAgg[sp.code].deals.size}</p>
+                        <p className="text-xs text-muted-foreground">{sp.label}</p>
+                        <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(stageAgg[sp.code].total)}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
 
           {/* Filter dropdowns — one per former summary board */}
           <div className="flex flex-wrap items-center gap-2 flex-shrink-0 no-print" data-testid="wip-filters-bar">
