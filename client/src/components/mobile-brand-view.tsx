@@ -5,9 +5,10 @@ import { useState } from "react";
 // cards reusing the canonical components: chat, contacts board, covenant,
 // compliance, menu, portfolio activity — so the phone shows the SAME
 // intelligence as desktop, one structure everywhere.
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { getAuthHeaders, apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +45,41 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   const [section, setSection] = useState<"chat" | "contacts" | "compliance" | "intel">("chat");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const sec = (k: typeof section) => (section === k ? "space-y-3" : "hidden");
+  const { toast } = useToast();
+  const { data: mbvUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = mbvUser?.role === "Client" || !!mbvUser?.companyScopeId;
+  // Same research trigger as the desktop Stores section — POST kicks the
+  // background job, then poll /status until done (big brands take minutes).
+  const storeScan = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`, { scope: "uk" });
+      if (!res.ok && res.status !== 202) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any).error || `HTTP ${res.status}`);
+      }
+      const started = Date.now();
+      return await new Promise<any>((resolve, reject) => {
+        const poll = async () => {
+          if (Date.now() - started > 5 * 60_000) return reject(new Error("Store research is taking longer than 5 minutes — try again in a moment"));
+          try {
+            const st = await fetch(`/api/brand/${companyId}/research-stores/status?scope=uk`, { headers: getAuthHeaders(), credentials: "include" });
+            if (st.ok) {
+              const j = await st.json();
+              if (j.state === "done") return resolve(j.result || {});
+              if (j.state === "error") return reject(new Error(j.error || "Store research failed"));
+            }
+          } catch {}
+          setTimeout(poll, 5000);
+        };
+        setTimeout(poll, 5000);
+      });
+    },
+    onSuccess: (out: any) => {
+      toast({ title: "Store search complete", description: out?.found ? `${out.found} stores found` : "0 stores found" });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Store search failed", description: e.message, variant: "destructive" }),
+  });
 
   if (isLoading || !data?.company) {
     return (
@@ -264,19 +300,52 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         </Card>
       )}
 
-      {/* UK stores — same data as the desktop Stores section, map first */}
-      {!isLandlord && mappableStores.length > 0 && (
+      {/* UK stores — same data as the desktop Stores section, map first.
+          Staff see the card even at 0 stores with the same research
+          trigger desktop has; clients only once stores exist. */}
+      {!isLandlord && (mappableStores.length > 0 || ukStores.length > 0 || !isClientViewer) && (
         <Card>
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <Store className="w-3.5 h-3.5" /> UK stores
-              <Badge variant="outline" className="text-[10px] tabular-nums">{ukStores.length}</Badge>
+              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{ukStores.length}</Badge>
+              {!isClientViewer && !storeScan.isPending && (
+                <button
+                  onClick={() => storeScan.mutate()}
+                  className="ml-auto text-[10px] px-2 py-0.5 rounded-full border bg-card hover:bg-muted normal-case tracking-normal"
+                  data-testid="btn-mobile-research-stores"
+                >
+                  {ukStores.length ? "Refresh" : "Find stores"}
+                </button>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0">
-            <div className="rounded-lg overflow-hidden border border-border/50">
-              <BrandPortfolioMap stores={mappableStores as any} height={240} />
-            </div>
+            {storeScan.isPending ? (
+              <div className="text-xs text-muted-foreground border border-dashed rounded-lg px-3 py-6 text-center">
+                Researching UK stores — the map appears here when the scan finishes (can take a couple of minutes)…
+              </div>
+            ) : mappableStores.length > 0 ? (
+              <div className="rounded-lg overflow-hidden border border-border/50">
+                <BrandPortfolioMap stores={mappableStores as any} height={240} />
+              </div>
+            ) : ukStores.length > 0 ? (
+              <div className="space-y-1">
+                {ukStores.slice(0, 6).map((s: any) => (
+                  <div key={s.id} className="text-xs px-2 py-1.5 rounded border bg-card min-w-0">
+                    <span className="font-medium">{s.name}</span>
+                    {s.address && <span className="text-muted-foreground"> — {s.address}</span>}
+                  </div>
+                ))}
+                {ukStores.length > 6 && (
+                  <div className="text-[11px] text-muted-foreground px-1">+{ukStores.length - 6} more (not yet geocoded — no map until they are)</div>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No store locations on file yet — Find stores researches them from Google Places and lights up the map.
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
