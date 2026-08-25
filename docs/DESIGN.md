@@ -185,6 +185,18 @@ Remaining deliberate exemptions (encodings, not drift):
 - Chat entity-tag chips, file-type icon colours, per-person/team identity
   palettes (as dots/edges, never full fills), chart series, product tints
   on the /addins directory cards, the Board Report's print-only palette.
+- **Model Studio's cell grids** (the spreadsheet viewer, sensitivity
+  matrices, comparison/scenario grids): a cross-tabbed cell grid has no
+  card twin — they scroll inside their own containers on every device.
+  This exemption is for genuine grids only, not row-per-record tables.
+
+2026-08-25: Woody hit the raw desktop table on /expenses/approvals on his
+phone — the 77-route sweep only walked nav-listed routes, so link-only
+pages were missed. A code-level audit of every file rendering a table
+(45 files) found and fixed ~24 offenders, and the shared ViewToggle now
+hides its Table option below md. New rule of thumb: verify §6 in code
+(is the table behind `hidden md:block` / `isMobile` with a card twin?),
+not just by walking the nav.
 
 ## 15. Copy (the words, not just the pixels)
 
