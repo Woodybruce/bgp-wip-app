@@ -27,7 +27,8 @@ import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
-import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS } from "@shared/deal-status";
+import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS, DEAL_STATUS_DOT_COLORS, DEAL_PAGE_STATUSES } from "@shared/deal-status";
+import { InlineLabelSelect } from "@/components/inline-edit";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
@@ -1156,6 +1157,19 @@ export default function WipReport() {
     setFn(next);
   };
 
+  // Inline deal-status transitions from the Deal Detail table — same PUT the
+  // Deals page uses, so the senior-approval (INV/COM) and AML (SOL+) gates
+  // still apply server-side; a rejected transition surfaces as a toast.
+  const handleStatusChange = async (dealId: string, code: string) => {
+    try {
+      await apiRequest("PUT", `/api/crm/deals/${dealId}`, { status: code });
+      toast({ title: "Deal status updated" });
+      invalidateDealCaches();
+    } catch (err: any) {
+      toast({ title: "Couldn't update status", description: err?.message || "Please try again.", variant: "destructive" });
+    }
+  };
+
   const handlePrint = () => window.print();
 
   const handleExportExcel = async () => {
@@ -1699,7 +1713,23 @@ export default function WipReport() {
                       </td>
                       )}
                       {colVisible("agent") && <td className="px-2 py-1.5 text-muted-foreground">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>}
-                      {colVisible("dealStatus") && <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[100px]">{e.dealStatus || "—"}</td>}
+                      {colVisible("dealStatus") && (
+                      <td className="px-2 py-1.5">
+                        {e.dealId ? (
+                          <InlineLabelSelect
+                            value={legacyToCode(e.dealStatus) || ""}
+                            options={DEAL_PAGE_STATUSES as unknown as string[]}
+                            colorMap={DEAL_STATUS_DOT_COLORS as Record<string, string>}
+                            labelMap={DEAL_STATUS_LABELS as Record<string, string>}
+                            onSave={(v) => { if (v) handleStatusChange(e.dealId, v); }}
+                            allowClear={false}
+                            compact
+                          />
+                        ) : (
+                          <span className="text-muted-foreground truncate max-w-[100px] inline-block">{e.dealStatus || "—"}</span>
+                        )}
+                      </td>
+                      )}
                       {colVisible("stage") && (
                       <td className="px-2 py-1.5 text-xs truncate max-w-[100px]">
                         {e.stage === "pipeline" ? (
