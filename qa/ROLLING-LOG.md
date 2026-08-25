@@ -73,6 +73,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r375 · 2026-08-25 · ROUND IN PROGRESS (provisional)
+- Reconciled r374: parent flagged "no final log entry", but commit 673280e3
+  contains the fix AND the final r374 log — r374 was complete. Verified
+  sound on this head: tsc clean, FRESH_BUILD smoke GREEN (42 checks, 0
+  failures). Two-bot 386 running.
+- FULL round (r374 was LIGHT): rotation #2 client desktop — Mark Warne,
+  investment-tracker visibility sweep (r374 candidate) + portfolio journey.
+- Candidate found by code read, browser verification pending: deals-hub.tsx
+  mounts <InvestmentTracker /> without the dhUserLoading/!isClient guard
+  that wip-report has — client landing on /deals/investment may briefly
+  mount the staff tracker and fire staff-only fetches (403s).
+
 ### r374 · 2026-08-25 · LIGHT (r373 was FULL — no journey)
 - Reconciled r373 first: parent flagged "no final log entry", but commit
   49d7e7f2 contains both the fix AND the final r373 log — r373 was complete.
