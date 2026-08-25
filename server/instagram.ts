@@ -265,6 +265,42 @@ export async function importInstagramImagesIntoGallery(
   return { imported };
 }
 
+// Warm the ig-image cache for recent Instagram articles whose CDN URLs are
+// still valid — once cached, the brand boards keep the image after the
+// signed URL expires. Runs at boot (see server/index.ts).
+export async function warmIgImageCache(limit = 60): Promise<{ warmed: number; skipped: number }> {
+  const { createHash } = await import("crypto");
+  const { getFile, saveFile } = await import("./file-storage");
+  const { pool } = await import("./db");
+  const { rows } = await pool.query(
+    `SELECT DISTINCT a.image_url
+       FROM news_articles a
+       JOIN news_sources ns ON ns.id = a.source_id
+      WHERE ns.type = 'rssapp_instagram'
+        AND a.image_url IS NOT NULL
+        AND a.published_at > NOW() - INTERVAL '10 days'
+      ORDER BY a.image_url
+      LIMIT $1`, [limit]);
+  let warmed = 0, skipped = 0;
+  for (const row of rows) {
+    try {
+      const u = new URL(row.image_url);
+      if (!/(^|\.)cdninstagram\.com$|(^|\.)fbcdn\.net$/i.test(u.hostname)) { skipped++; continue; }
+      const cacheKey = `ig-cache/${createHash("sha1").update(u.hostname + u.pathname).digest("hex")}`;
+      if (await getFile(cacheKey).then(f => !!f).catch(() => false)) { skipped++; continue; }
+      const r = await fetch(u.toString(), { signal: AbortSignal.timeout(15_000) });
+      if (!r.ok) { skipped++; continue; }
+      const mime = r.headers.get("content-type") || "image/jpeg";
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (!mime.startsWith("image/") || buf.length < 1000) { skipped++; continue; }
+      await saveFile(cacheKey, buf, mime);
+      warmed++;
+    } catch { skipped++; }
+  }
+  if (warmed) console.log(`[ig-image] warmed ${warmed} cached image(s), ${skipped} skipped`);
+  return { warmed, skipped };
+}
+
 // ─── Routes ──────────────────────────────────────────────────────────────
 
 // Same-origin image proxy for Instagram CDN photos. The CDN serves these
@@ -278,11 +314,30 @@ router.get("/api/ig-image", requireAuth, async (req: Request, res: Response) => 
     if (!/(^|\.)cdninstagram\.com$|(^|\.)fbcdn\.net$/i.test(u.hostname)) {
       return res.status(400).end();
     }
+    // IG CDN URLs are signed and expire after days — older posts went
+    // caption-only on the brand boards (Woody, 2026-08-25: "only these
+    // showing"). Cache the bytes in file_storage on first successful
+    // fetch, keyed on host+path (the signature lives in the query string,
+    // so a re-signed URL for the same asset hits the same cache row).
+    const { createHash } = await import("crypto");
+    const cacheKey = `ig-cache/${createHash("sha1").update(u.hostname + u.pathname).digest("hex")}`;
+    const { getFile, saveFile } = await import("./file-storage");
+    const cached = await getFile(cacheKey).catch(() => null);
+    if (cached) {
+      res.setHeader("Content-Type", cached.contentType || "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+      return res.send(cached.data);
+    }
     const r = await fetch(u.toString(), { signal: AbortSignal.timeout(15_000) });
     if (!r.ok) return res.status(502).end();
-    res.setHeader("Content-Type", r.headers.get("content-type") || "image/jpeg");
+    const mime = r.headers.get("content-type") || "image/jpeg";
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (mime.startsWith("image/") && buf.length > 1000) {
+      saveFile(cacheKey, buf, mime).catch((e: any) => console.warn("[ig-image] cache write failed:", e?.message));
+    }
+    res.setHeader("Content-Type", mime);
     res.setHeader("Cache-Control", "public, max-age=21600");
-    res.send(Buffer.from(await r.arrayBuffer()));
+    res.send(buf);
   } catch {
     res.status(502).end();
   }

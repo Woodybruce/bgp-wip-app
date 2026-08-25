@@ -341,8 +341,10 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
           onClearAll={() => setSelectedStatuses(new Set())}
           values={filterFees.status}
           getLabel={(s) => {
+            // Expand short codes (INV → Invoiced) but keep legacy labels
+            // like "HOTs" as-is (matches the WIP report).
             const code = legacyToCode(s);
-            return code ? DEAL_STATUS_LABELS[code] : s;
+            return code && code === s ? DEAL_STATUS_LABELS[code] : s;
           }}
         />
         <FilterDropdown

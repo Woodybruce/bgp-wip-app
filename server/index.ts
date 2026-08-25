@@ -4494,6 +4494,14 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[ig-image backfill] failed:", e?.message);
         }
+        // Cache recent Instagram images while their signed CDN URLs are
+        // still valid — the boards keep them after the URLs expire.
+        try {
+          const { warmIgImageCache } = await import("./instagram");
+          await warmIgImageCache(60);
+        } catch (e: any) {
+          console.error("[ig-image warm] failed:", e?.message);
+        }
         // Real images for Google News articles (og:image via the publisher
         // page) — brand news rows rendered text-only without them.
         try {

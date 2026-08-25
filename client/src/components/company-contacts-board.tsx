@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Users, Mail, Linkedin, Loader2, RefreshCw, Plus, ChevronDown, ChevronRight } from "lucide-react";
+import { Users, Mail, Linkedin, Loader2, RefreshCw, Plus, ChevronDown, ChevronRight, Phone } from "lucide-react";
 
 function formatRelativeShort(iso: string): string {
   const then = new Date(iso).getTime();
@@ -45,20 +45,19 @@ export function KeyContactRow({ contact, companyId, discovery }: { contact: any;
 
   const hasEmail = !!contact.email;
   const hasLinkedin = !!contact.linkedin_url;
+  const hasPhone = !!contact.phone;
   const touches: number = contact.interaction_count || 0;
   const lastTouch: string | null = contact.last_interaction_at || null;
   const lastTouchLabel = lastTouch ? formatRelativeShort(lastTouch) : null;
 
   return (
-    <div className="flex items-start gap-2 text-xs hover:bg-muted/50 rounded p-1 -mx-1 transition-colors">
-      <Link href={`/contacts/${contact.id}`} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
+    <div className="flex items-start gap-2.5 md:gap-2 text-xs hover:bg-muted/50 rounded p-1.5 md:p-1 -mx-1 transition-colors">
+      <Link href={`/contacts/${contact.id}`} className="w-9 h-9 md:w-6 md:h-6 rounded-full bg-muted flex items-center justify-center text-[10px] md:text-[9px] font-medium shrink-0 overflow-hidden">
         {contact.avatar_url ? <img src={contact.avatar_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.currentTarget.style.display = "none"); }} /> : (contact.name?.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "?")}
       </Link>
       <div className="min-w-0 flex-1">
-        <div className="font-medium truncate flex items-center gap-1">
+        <div className="font-medium truncate flex items-center gap-1 text-[13px] md:text-xs">
           <Link href={`/contacts/${contact.id}`} className="hover:underline">{contact.name}</Link>
-          {hasEmail && <Mail className="w-2.5 h-2.5 text-emerald-600 shrink-0" />}
-          {hasLinkedin && <Linkedin className="w-2.5 h-2.5 text-blue-600 shrink-0" />}
           {discovery?.bgp?.threadCount ? (
             <span className="text-[9px] px-1 py-0 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 shrink-0" title="BGP has real email history with this person">
               known · {discovery.bgp.threadCount} threads
@@ -96,13 +95,35 @@ export function KeyContactRow({ contact, companyId, discovery }: { contact: any;
         ) : (
           <button
             onClick={() => setEditingRole(true)}
-            className="text-[10px] text-left truncate w-full text-muted-foreground hover:text-foreground hover:underline decoration-dotted"
+            className="text-[11px] text-left truncate w-full text-muted-foreground hover:text-foreground hover:underline decoration-dotted"
             title="Click to edit role"
           >
             {contact.role || <span className="italic text-muted-foreground/70">add role…</span>}
           </button>
         )}
       </div>
+      {/* Tap actions — call / email / LinkedIn, same anatomy as the brand
+          search results (Woody, 2026-08-25: "easily click and call or
+          email"). rounded-full exemption applies (docs/DESIGN.md §3). */}
+      {(hasPhone || hasEmail || hasLinkedin) && (
+        <div className="flex items-center gap-1.5 shrink-0 self-center">
+          {hasPhone && (
+            <a href={`tel:${String(contact.phone).replace(/[^\d+]/g, "")}`} className="w-8 h-8 rounded-full border border-border flex items-center justify-center hover:bg-muted" aria-label={`Call ${contact.name}`} onClick={(e) => e.stopPropagation()}>
+              <Phone className="w-3.5 h-3.5" />
+            </a>
+          )}
+          {hasEmail && (
+            <a href={`mailto:${contact.email}`} className="w-8 h-8 rounded-full border border-border flex items-center justify-center hover:bg-muted" aria-label={`Email ${contact.name}`} onClick={(e) => e.stopPropagation()}>
+              <Mail className="w-3.5 h-3.5" />
+            </a>
+          )}
+          {hasLinkedin && (
+            <a href={contact.linkedin_url} target="_blank" rel="noreferrer" className="w-8 h-8 rounded-full border border-border flex items-center justify-center hover:bg-muted" aria-label={`${contact.name} on LinkedIn`} onClick={(e) => e.stopPropagation()}>
+              <Linkedin className="w-3.5 h-3.5" />
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }

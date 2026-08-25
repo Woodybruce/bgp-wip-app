@@ -8065,6 +8065,87 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── Brand Intelligence search — brands, contacts at brands, acting
+  //    agents in one grouped payload. Powers the phone landing search
+  //    (Woody, 2026-08-25: "easier to search for brands and contacts at
+  //    those brands including acting agents on the phone").
+  app.get("/api/brands/search", requireAuth, async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      if (q.length < 2) return res.json({ brands: [], contacts: [], agents: [] });
+      const like = `%${q.replace(/[%_\\]/g, "\\$&")}%`;
+
+      const clientScoped = await isClientRequest(req);
+      const scope = clientScoped ? await resolveCompanyScope(req) : null;
+      const sliceSql = clientScoped ? await clientBrandSliceSql(scope, "__ID__") : "";
+      const brandFilterFor = (idCol: string) => (clientScoped
+        ? sliceSql.replaceAll("__ID__", idCol)
+        : `${idCol === "id" ? "company_type" : idCol.split(".")[0] + ".company_type"} ILIKE 'Tenant%'`);
+
+      const brandsQ = pool.query(
+        `SELECT id, name, company_type, store_count, domain
+           FROM crm_companies
+          WHERE merged_into_id IS NULL AND ${brandFilterFor("id")} AND name ILIKE $1
+          ORDER BY name ASC LIMIT 10`, [like]);
+
+      const contactsQ = pool.query(
+        `SELECT ct.id, ct.name, ct.role, ct.email,
+                COALESCE(NULLIF(ct.phone_mobile, ''), ct.phone) AS phone,
+                c.id AS brand_id, c.name AS brand_name
+           FROM crm_contacts ct
+           JOIN crm_companies c ON c.id = ct.company_id
+          WHERE c.merged_into_id IS NULL AND ${brandFilterFor("c.id")} AND ct.name ILIKE $1
+          ORDER BY ct.name ASC LIMIT 10`, [like]);
+
+      // Agents are BGP-internal intel — staff only. Matches either the agent
+      // firm's name or a brand they act for ("who reps Wingstop?").
+      const agentsQ = clientScoped
+        ? Promise.resolve({ rows: [] as any[] })
+        : pool.query(
+            `SELECT a.id, a.name,
+                    array_agg(DISTINCT r.agent_type) AS agent_types,
+                    array_agg(DISTINCT b.name ORDER BY b.name) AS brands
+               FROM brand_agent_representations r
+               JOIN crm_companies a ON a.id = r.agent_company_id
+               JOIN crm_companies b ON b.id = r.brand_company_id
+              WHERE r.end_date IS NULL AND a.merged_into_id IS NULL AND b.merged_into_id IS NULL
+                AND (a.name ILIKE $1 OR b.name ILIKE $1)
+              GROUP BY a.id, a.name
+              ORDER BY a.name ASC LIMIT 8`, [like]);
+
+      const [brands, contacts, agents] = await Promise.all([brandsQ, contactsQ, agentsQ]);
+
+      // Key contacts ride along on matched brand cards (Woody, 2026-08-25:
+      // "at this point can you offer up the contact details?") — top three
+      // brands, up to three contacts each, so a brand-name search answers
+      // the "who do I call?" question without another tap.
+      const topBrandIds = brands.rows.slice(0, 3).map((b: any) => b.id);
+      let brandContactRows: any[] = [];
+      if (topBrandIds.length) {
+        brandContactRows = await pool.query(
+          `SELECT id, name, role, email,
+                  COALESCE(NULLIF(phone_mobile, ''), phone) AS phone,
+                  company_id
+             FROM crm_contacts
+            WHERE company_id = ANY($1)
+            ORDER BY name ASC`, [topBrandIds]).then(r => r.rows);
+      }
+      const brandRows = brands.rows.map((b: any) => ({
+        ...b,
+        contacts: brandContactRows.filter(ct => ct.company_id === b.id).slice(0, 3),
+      }));
+
+      res.json({
+        brands: brandRows,
+        contacts: contacts.rows,
+        agents: (agents as any).rows,
+      });
+    } catch (e: any) {
+      console.error("[brands-search] failed:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Brands Hub aggregated data ───────────────────────────────────────
   app.get("/api/brands/hub", requireAuth, async (req, res) => {
     try {
@@ -9699,9 +9780,12 @@ async function runAutoEnrichmentCycle() {
       result.brandAnalysis = { error: err.message };
     }
 
-    // Auto store research — find Google Places stores for tracked brands that
+    // Auto store research — find Google Places stores for brands that
     // either have no stores cached or were last researched >30 days ago.
-    // Skip brands with AI disabled.
+    // Skip brands with AI disabled. 20 per 6-hour cycle = 80/day (Woody,
+    // 2026-08-25: "open a board and it's filled... overnight, cheap") —
+    // clears the never-researched backlog in weeks, then it's just the
+    // 30-day refresh drip. Never-researched brands go first (NULLS FIRST).
     if (process.env.GOOGLE_API_KEY) {
       try {
         const brandsNeedingStores = await pool.query(`
@@ -9718,7 +9802,7 @@ async function runAutoEnrichmentCycle() {
             AND c.merged_into_id IS NULL
             AND (s.last_researched IS NULL OR s.last_researched < NOW() - INTERVAL '30 days')
           ORDER BY s.last_researched ASC NULLS FIRST
-          LIMIT 3
+          LIMIT 20
         `).then(r => r.rows);
 
         let researched = 0;
