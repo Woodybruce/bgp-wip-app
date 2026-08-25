@@ -76,6 +76,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r377 · 2026-08-25 · ROUND IN PROGRESS (provisional heartbeat)
+- JOGQK merged into staging clean (through 3f30ce1a, Contacts board tap
+  actions batch). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD).
+- Two-bot 377 running; triage pending. Planned journey: FULL rotation #3
+  client mobile 390px — phone /brands quick-search probe (per r376 note).
+- Pre-triage code check: /api/brands/search IS client-slice-scoped server-side
+  (brands+contacts filtered, agents empty for clients) — no r344-class leak.
+
 ### r376 · 2026-08-25 · LIGHT (r375 was FULL — no journey)
 - Reconciled r375: parent flagged "no final log entry", but commit d8d116bd
   contains the fix AND the final r375 log — r375 was complete (third round
