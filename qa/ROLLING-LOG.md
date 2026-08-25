@@ -39,6 +39,9 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - 503 GET /api/brand/:id/ai-take/* — keyless AI-take panels on company
   profiles fire these on load; UI shows "AI take unavailable" (r269)
 - ERR_CONNECTION_RESET on google.com/s2/favicons — no external network
+- 404 GET /api/client/sharepoint/root — fixture has no SharePoint folder
+  linked; handler returns a clean "ask your BGP team" 404, files panel
+  degrades (r375)
 - "[goad datum fix] failed … relation goad_units does not exist" ~30s
   after dev-server boot — fixture has no goad_units (prod-only harvested
   table, not in the auto-migrate list); rolls back + retries next boot,
@@ -73,17 +76,40 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r375 · 2026-08-25 · ROUND IN PROGRESS (provisional)
+### r375 · 2026-08-25 · FULL (rotation #2 client desktop)
 - Reconciled r374: parent flagged "no final log entry", but commit 673280e3
   contains the fix AND the final r374 log — r374 was complete. Verified
-  sound on this head: tsc clean, FRESH_BUILD smoke GREEN (42 checks, 0
-  failures). Two-bot 386 running.
-- FULL round (r374 was LIGHT): rotation #2 client desktop — Mark Warne,
-  investment-tracker visibility sweep (r374 candidate) + portfolio journey.
-- Candidate found by code read, browser verification pending: deals-hub.tsx
-  mounts <InvestmentTracker /> without the dhUserLoading/!isClient guard
-  that wip-report has — client landing on /deals/investment may briefly
-  mount the staff tracker and fire staff-only fetches (403s).
+  sound on this head: tsc clean, FRESH_BUILD smoke GREEN (42/0).
+- Regression: smoke GREEN ×2 (42/0, FRESH_BUILD before and after fix).
+  Two-bot 386 exit 0, all 34 scenarios ok (incl. r374's new
+  agent-tracker-invalid-no-orphan); 4 issues all listed noise
+  (rocketreach-400, the orphan scenario's own intended 400, 2× keyless 503).
+- Journey: Mark Warne desktop 1440px — "how are my Bluewater lettings
+  progressing, and do I only see what I should?": portfolio dashboard (KPIs,
+  tracker widget, tasks) → /deals (tabs correctly Properties/Deals/Letting
+  Tracker only) → staff-tab deep-link probes → Letting Tracker (153 units,
+  status chips, target-tenant + deal-status columns answer "progress" at a
+  glance) → Deals list. No h-overflow anywhere; unit add/edit/delete
+  affordances for clients are BY DESIGN (client-add-delete-unit asserts it).
+- Bug fixed (1, r374's candidate confirmed): client deep-linked to
+  /deals/investment (or /investment-tracker, /deals/report) briefly mounted
+  the staff InvestmentTracker during the auth-load window — 6× staff-only
+  /api/investment-tracker* + /api/portfolio-properties 403s — then Deals
+  parsed the "investment"/"report" segment as a deal id and showed "Deal not
+  found" with a staff-jargon "Back to WIP" button. deals-hub.tsx: investment
+  mount now has the same !dhUserLoading && !isClient guard as wip-report,
+  and the client tab redirect rewrites the URL to /deals/list. Verified in
+  browser: all three deep links land on the client Deals list with ZERO
+  staff fetches; staff /deals/investment unchanged (Purchases/Sales render,
+  no 4xx).
+- Harness growth: client-investment-deeplink-guard in two-bot-round.mjs
+  (mark at /deals/investment: no /api/investment-tracker fetch, no "Deal not
+  found", URL rewritten to /deals/list); node --check ok.
+- Bugs deferred: none. Suggestions: none new (letting-tracker client
+  affordances checked against harness before noting — intended). New noise
+  listed: client sharepoint-root 404 (clean degradation). tsc clean.
+- Next journey: r375 was FULL → r376 LIGHT (no journey); then r377 FULL
+  rotation #3 client mobile 390px.
 
 ### r374 · 2026-08-25 · LIGHT (r373 was FULL — no journey)
 - Reconciled r373 first: parent flagged "no final log entry", but commit

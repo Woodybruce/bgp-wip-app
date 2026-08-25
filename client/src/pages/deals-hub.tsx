@@ -64,8 +64,11 @@ export default function DealsHub() {
     const t = getTabFromLocation(location);
     if (isClient) {
       // Clients: Deals + Letting Tracker + Properties (scoped to their own
-      // portfolio server-side); anything else → Deals.
+      // portfolio server-side); anything else → Deals. Rewrite the URL for
+      // staff-only tab segments too — Deals would otherwise parse
+      // "investment"/"report" as a deal id and show "Deal not found".
       setTab(t === "letting" || t === "properties" ? t : "deals");
+      if (t === "investment" || t === "wip-report") setLocation("/deals/list", { replace: true });
       return;
     }
     if (t) setTab(t);
@@ -133,7 +136,10 @@ export default function DealsHub() {
       <Suspense fallback={<PageLoader />}>
         {tab === "deals" && <Deals />}
         {tab === "letting" && <AvailableUnits />}
-        {tab === "investment" && <InvestmentTracker />}
+        {/* Same first-paint guard as the WIP report below — a client deep-
+            linked to /deals/investment briefly mounted the staff tracker and
+            fired its staff-only fetches (6× /api/investment-tracker 403s). */}
+        {tab === "investment" && !dhUserLoading && !isClient && <InvestmentTracker />}
         {/* Don't mount the staff WIP report until we know the viewer isn't a
             client — the default tab is wip-report, so a client's first paint
             briefly mounted it and fired staff-only /api/wip calls (403s). */}
