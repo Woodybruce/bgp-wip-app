@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords } from "lucide-react";
+import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink } from "lucide-react";
 import {
   CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard, BrandInstagramCard,
 } from "@/components/brand-profile-panel";
@@ -42,6 +42,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   // Phone section switcher (docs/DESIGN.md §16) — this view is phone-only
   // and ran 8+ boards deep in one scroll. Hook sits above the early return.
   const [section, setSection] = useState<"chat" | "contacts" | "compliance" | "intel">("chat");
+  const [signalsShowAll, setSignalsShowAll] = useState(false);
   const sec = (k: typeof section) => (section === k ? "space-y-3" : "hidden");
 
   if (isLoading || !data?.company) {
@@ -71,7 +72,18 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       : firstImg ? srcFor(firstImg) : null;
   const trackerComments: any[] = trackerData?.comments || [];
 
-  const signals: any[] = (data.signals || []).slice(0, 6);
+  // Same dedupe as the desktop Signals feed — Instagram + Google News often
+  // land the same story twice; first occurrence (newest) wins.
+  const signals: any[] = (() => {
+    const seen = new Set<string>();
+    const norm = (h: string) => (h || "").toLowerCase().replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
+    return ((data.signals || []) as any[]).filter(s => {
+      const n = norm(s.headline);
+      if (!n || seen.has(n)) return !n;
+      seen.add(n);
+      return true;
+    });
+  })();
   // Same UK slice as the desktop Stores section — the map only earns its
   // place once at least one store is geocoded.
   const ukStores: any[] = (data.stores || []).filter((s: any) => !s.country || s.country === "GB");
@@ -190,24 +202,64 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       {/* Portfolio activity — tenant at / targeted / pitched / suggested */}
       <PortfolioActivityBlock companyId={companyId} />
 
-      {/* Signals */}
+      {/* Signals — phone twin of the desktop feed: semantic type pill +
+          mono date on a meta row, clamped headline underneath, sentiment
+          as the left border (docs/DESIGN.md §7). */}
       {signals.length > 0 && (
         <Card>
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <TrendingUp className="w-3.5 h-3.5" /> Signals
-              <Badge variant="outline" className="text-[10px]">{data.signals?.length || 0}</Badge>
+              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{signals.length}</Badge>
             </CardTitle>
           </CardHeader>
-          <CardContent className="p-3 pt-0 space-y-1.5">
-            {signals.map((s: any) => (
-              <div key={s.id} className="text-xs border-l-2 border-l-muted pl-2">
-                <Badge variant="outline" className="text-[10px] mr-1.5">{(s.signal_type || "news").replace(/_/g, " ")}</Badge>
-                {s.source && s.source.startsWith("http")
-                  ? <a href={s.source} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">{s.headline}</a>
-                  : <span className="font-medium">{s.headline}</span>}
-              </div>
-            ))}
+          <CardContent className="p-3 pt-0 space-y-2.5">
+            {(signalsShowAll ? signals : signals.slice(0, 4)).map((s: any) => {
+              const typeCls: Record<string, string> = {
+                opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+                closure:     "bg-red-50 text-red-700 border-red-200",
+                funding:     "bg-violet-50 text-violet-700 border-violet-200",
+                exec_change: "bg-blue-50 text-blue-700 border-blue-200",
+                sector_move: "bg-amber-50 text-amber-700 border-amber-200",
+                rumour:      "bg-zinc-50 text-zinc-600 border-zinc-200 italic",
+                news:        "bg-zinc-50 text-zinc-700 border-zinc-200",
+              };
+              const sentCls: Record<string, string> = {
+                positive: "border-l-emerald-400",
+                negative: "border-l-red-400",
+                neutral:  "border-l-muted",
+              };
+              const body = (
+                <>
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || typeCls.news}`}>
+                      {(s.signal_type || "news").replace(/_/g, " ")}
+                    </Badge>
+                    {s.signal_date && (
+                      <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
+                        {new Date(s.signal_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                      </span>
+                    )}
+                    {s.source && s.source.startsWith("http") && <ExternalLink className="w-3 h-3 text-muted-foreground ml-auto shrink-0" />}
+                  </div>
+                  <p className="text-xs leading-snug line-clamp-2">{s.headline}</p>
+                </>
+              );
+              return s.source && s.source.startsWith("http") ? (
+                <a key={s.id} href={s.source} target="_blank" rel="noopener noreferrer" className={`block border-l-2 pl-2.5 ${sentCls[s.sentiment] || "border-l-muted"}`}>
+                  {body}
+                </a>
+              ) : (
+                <div key={s.id} className={`border-l-2 pl-2.5 ${sentCls[s.sentiment] || "border-l-muted"}`}>
+                  {body}
+                </div>
+              );
+            })}
+            {signals.length > 4 && (
+              <button onClick={() => setSignalsShowAll(v => !v)} className="text-[11px] text-primary hover:underline">
+                {signalsShowAll ? "Show less" : `Show all ${signals.length}`}
+              </button>
+            )}
           </CardContent>
         </Card>
       )}
