@@ -435,7 +435,30 @@ export function LenderPanel({ companyId, company }: { companyId: string; company
             {lrCharges.length === 0 ? (
               <p className="text-xs text-muted-foreground italic">No Land Registry charges on record.</p>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              {/* Phone: one card per charge (§7) — the table never ships below md. */}
+              <div className="md:hidden divide-y divide-border/40">
+                {lrCharges.map((ch, i) => (
+                  <div key={i} className="py-2" data-testid={`lr-charge-card-${i}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="font-mono text-[10px]">{ch.titleNumber}</span>
+                        {ch.propertyId ? (
+                          <Link href={`/properties/${ch.propertyId}`} className="ml-1.5 text-xs font-medium text-primary hover:underline">
+                            {ch.propertyName || ch.titleNumber}
+                          </Link>
+                        ) : (
+                          <span className="ml-1.5 text-xs text-muted-foreground">{ch.propertyName || "—"}</span>
+                        )}
+                      </div>
+                      <span className="font-mono tabular-nums text-xs shrink-0">{ch.amount != null ? `£${ch.amount.toLocaleString()}` : "—"}</span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">{ch.chargeDate ? ch.chargeDate.slice(0, 10) : "—"}</div>
+                    {ch.notes && <div className="text-[11px] text-muted-foreground mt-0.5">{ch.notes}</div>}
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border/40">
@@ -467,6 +490,7 @@ export function LenderPanel({ companyId, company }: { companyId: string; company
                   </tbody>
                 </table>
               </div>
+              </>
             )}
             <p className="text-[10px] text-muted-foreground mt-3">
               Charges are extracted from purchased Land Registry title registers.

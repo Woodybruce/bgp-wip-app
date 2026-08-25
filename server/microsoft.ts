@@ -818,25 +818,34 @@ export function setupMicrosoftRoutes(app: Express) {
       const endDate = new Date(now);
       endDate.setDate(endDate.getDate() + 14);
 
-      const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${mondayStart.toISOString()}&endDateTime=${endDate.toISOString()}&$top=50&$orderby=start/dateTime&$select=subject,start,end,location,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,attendees,bodyPreview,isAllDay,showAs,categories`;
+      // Follow Graph's pagination: the old single request with $top=50 silently
+      // truncated busy weeks — a 3-week window across a full team easily tops
+      // 50 events, so later days showed stale/missing meetings.
+      const events: any[] = [];
+      let url: string | null = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${mondayStart.toISOString()}&endDateTime=${endDate.toISOString()}&$top=250&$orderby=start/dateTime&$select=subject,start,end,location,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,attendees,bodyPreview,isAllDay,showAs,categories`;
+      let pageGuard = 0;
+      while (url && pageGuard < 8) {
+        pageGuard++;
+        const response: any = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Prefer: 'outlook.timezone="Europe/London"',
+          },
+        });
 
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Prefer: 'outlook.timezone="Europe/London"',
-        },
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          delete req.session.msTokens;
-          return res.status(401).json({ message: "Microsoft token expired. Please reconnect." });
+        if (!response.ok) {
+          if (response.status === 401) {
+            delete req.session.msTokens;
+            return res.status(401).json({ message: "Microsoft token expired. Please reconnect." });
+          }
+          throw new Error(`Calendar API error: ${response.status}`);
         }
-        throw new Error(`Calendar API error: ${response.status}`);
-      }
 
-      const data = await response.json();
-      res.json(data.value || []);
+        const data = await response.json();
+        events.push(...(data.value || []));
+        url = data["@odata.nextLink"] || null;
+      }
+      res.json(events);
     } catch (err: any) {
       console.error("Calendar error:", err);
       res.status(500).json({ message: "Failed to fetch calendar" });

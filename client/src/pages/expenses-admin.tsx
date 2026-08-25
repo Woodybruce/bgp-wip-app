@@ -74,6 +74,30 @@ interface ExpenseRow {
 
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
 const fmtLimit = (pence: number) => `£${(pence / 100).toFixed(0)}`;
+const fmtDate = (d: string | null) => {
+  if (!d) return "—";
+  const dt = new Date(d);
+  const sameYear = dt.getFullYear() === new Date().getFullYear();
+  return dt.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" as const }) });
+};
+
+// Phone-card state chip — outline capsule with a coloured dot (§7); the
+// pastel-filled DrilldownStatusBadge stays desktop-only.
+function StateDotChip({ status, isPersonal, hasReceipt, hasXero }: { status: string; isPersonal: boolean | null; hasReceipt: boolean; hasXero: boolean }) {
+  const conf = isPersonal ? { dot: "bg-slate-400", label: "Personal" }
+    : hasXero ? { dot: "bg-emerald-500", label: "In Xero" }
+    : status === "approved" ? { dot: "bg-emerald-500", label: "Approved" }
+    : status === "pending_approval" ? { dot: "bg-amber-500", label: "Pending approval" }
+    : status === "pending_receipt" ? { dot: "bg-orange-500", label: hasReceipt ? "Receipt added" : "Receipt needed" }
+    : status === "rejected" ? { dot: "bg-red-500", label: "Rejected" }
+    : { dot: "bg-gray-400", label: status };
+  return (
+    <span className="inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full border border-border text-muted-foreground whitespace-nowrap leading-none">
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${conf.dot}`} />
+      {conf.label}
+    </span>
+  );
+}
 
 // Purpose text: hover shows the full text (title tooltip), click toggles the
 // 2-line clamp so an approver can read the whole thing inline.
@@ -316,8 +340,88 @@ export default function ExpensesAdmin() {
       <TabsContent value="spend" className="m-0">
         {summary && summary.byCardholder.length > 0 ? (
           <CardContent className="p-0">
-            <p className="text-xs text-muted-foreground px-4 pt-3 pb-2">Click a row to see what each person bought, the category, and the approval state.</p>
-            <div className="overflow-x-auto">
+            <p className="hidden md:block text-xs text-muted-foreground px-4 pt-3 pb-2">Click a row to see what each person bought, the category, and the approval state.</p>
+            {/* Phone: one card per cardholder (§7) — tap to drill into their expenses. */}
+            <div className="md:hidden divide-y border-t border-border">
+              {summary.byCardholder.map(row => {
+                const isOpen = expandedCardholderId === row.cardholderId;
+                const startOfMonth = new Date();
+                startOfMonth.setDate(1);
+                startOfMonth.setHours(0, 0, 0, 0);
+                const myExpenses = expenses
+                  .filter(e => e.cardholderId === row.cardholderId)
+                  .filter(e => e.transactionDate && new Date(e.transactionDate) >= startOfMonth)
+                  .sort((a, b) => (b.transactionDate || "").localeCompare(a.transactionDate || ""));
+                return (
+                  <div key={row.cardholderId} className="px-4 py-3">
+                    <button
+                      type="button"
+                      className="w-full text-left space-y-1"
+                      onClick={() => setExpandedCardholderId(isOpen ? null : row.cardholderId)}
+                      data-testid={`spend-card-${row.cardholderId}`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <ChevronRight className={`w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                        <span className="font-medium text-sm min-w-0 flex-1 truncate">{row.name}</span>
+                        <span className="font-mono tabular-nums text-sm shrink-0">{fmt(row.spentPence)}</span>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground pl-[22px]">
+                        {fmtLimit(row.monthlyLimit)} limit · {row.utilisation}% used
+                      </div>
+                      <div className="flex items-center gap-2 pl-[22px]">
+                        <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className={`h-full ${row.utilisation > 90 ? "bg-red-500" : row.utilisation > 70 ? "bg-amber-500" : "bg-emerald-500"}`}
+                            style={{ width: `${Math.min(100, row.utilisation)}%` }}
+                          />
+                        </div>
+                        <Badge variant="outline" className="text-[9px] py-0 px-1.5 whitespace-nowrap">
+                          <span className="font-mono mr-1">{row.txCount}</span> transactions
+                        </Badge>
+                      </div>
+                    </button>
+                    {isOpen && (
+                      myExpenses.length === 0 ? (
+                        <p className="text-xs text-muted-foreground pl-[22px] pt-2">No expenses this month.</p>
+                      ) : (
+                        <div className="mt-2 space-y-2 pl-[22px]">
+                          {myExpenses.map(e => (
+                            <div key={e.id} className="rounded-lg border border-border bg-muted/20 px-3 py-2 space-y-1">
+                              <div className="flex items-start gap-2">
+                                <span className="font-medium text-xs min-w-0 flex-1">{e.merchant || "—"}</span>
+                                <span className="font-mono tabular-nums text-xs shrink-0">{fmt(e.amountPence)}</span>
+                              </div>
+                              <div className="text-[11px] text-muted-foreground">
+                                {fmtDate(e.transactionDate)} · {e.category || "no category"}
+                              </div>
+                              {e.businessPurpose && (
+                                <div className="text-[11px] text-muted-foreground">
+                                  <ExpandableText text={e.businessPurpose} />
+                                </div>
+                              )}
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <StateDotChip status={e.status} isPersonal={e.isPersonal} hasReceipt={!!e.receiptFilename} hasXero={!!e.xeroExpenseId} />
+                                {e.attendeeContacts && e.attendeeContacts.length > 0 && e.attendeeContacts.map(a => (
+                                  <Link
+                                    key={a.id}
+                                    href={`/contacts/${a.id}`}
+                                    className="text-[11px] text-primary hover:underline whitespace-nowrap"
+                                    onClick={(ev) => ev.stopPropagation()}
+                                  >
+                                    {a.name || "Contact"}
+                                  </Link>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/30">
                   <tr className="text-left">
@@ -450,7 +554,65 @@ export default function ExpensesAdmin() {
               No cardholders yet. Click "New Cardholder" to issue the first card.
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* Phone: one card per cardholder (§7). */}
+            <div className="md:hidden divide-y border-t border-border">
+              {cardholders.map((c) => (
+                <div key={c.id} className="px-4 py-3 space-y-1.5" data-testid={`cardholder-card-${c.id}`}>
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-medium text-sm">{c.userName}</span>
+                        {c.status === "active" ? (
+                          <Badge variant="outline" className="text-emerald-600 border-emerald-600/30 whitespace-nowrap">Active</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-amber-600 border-amber-600/30 whitespace-nowrap">Frozen</Badge>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {c.card?.virtual === false ? "Physical" : c.card?.virtual === true ? "Virtual" : "—"}
+                        {" · "}<span className="font-mono">{c.card?.last4 ? `•••• ${c.card.last4}` : "—"}</span>
+                        {" · "}{fmtLimit(c.dailyLimit)}/day
+                      </div>
+                      <div className="text-[11px] text-muted-foreground truncate">{c.email}</div>
+                    </div>
+                    <span className="font-mono tabular-nums text-sm shrink-0">{fmtLimit(c.monthlyLimit)}<span className="text-[11px] text-muted-foreground">/mo</span></span>
+                  </div>
+                  <div className="flex items-center flex-wrap -ml-2.5">
+                    <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs" onClick={() => setViewingCard(c)} data-testid={`view-card-card-${c.id}`}>
+                      <Eye className="w-3 h-3 mr-1" /> Card
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs" onClick={() => setEditing(c)} data-testid={`edit-card-${c.id}`}>
+                      <Pencil className="w-3 h-3 mr-1" /> Limits
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 px-2.5 text-xs"
+                      onClick={() => freezeMutation.mutate({ id: c.id, status: c.status === "active" ? "inactive" : "active" })}
+                      data-testid={`freeze-card-${c.id}`}
+                    >
+                      <Snowflake className={`w-3 h-3 mr-1 ${c.status === "inactive" ? "text-amber-600" : ""}`} />
+                      {c.status === "active" ? "Freeze" : "Unfreeze"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 px-2.5 text-xs text-red-600 hover:text-red-700"
+                      onClick={() => {
+                        if (confirm(`Remove ${c.userName} as cardholder?\n\nThis deletes the cardholder, card, and any expense rows from the BGP database. The Stripe card itself stays in Stripe — cancel it in the Stripe dashboard if needed.`)) {
+                          deleteMutation.mutate(c.id);
+                        }
+                      }}
+                      data-testid={`delete-card-${c.id}`}
+                    >
+                      <Trash2 className="w-3 h-3 mr-1" /> Remove
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/30">
                   <tr className="text-left">
@@ -523,6 +685,7 @@ export default function ExpensesAdmin() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </CardContent>
       </TabsContent>
@@ -536,7 +699,47 @@ export default function ExpensesAdmin() {
               No expenses yet. They'll appear here as cards are tapped.
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* Phone: one card per expense (§7). */}
+            <div className="md:hidden divide-y border-t border-border">
+              {expenses.map((e) => (
+                <div key={e.id} className="px-4 py-3 space-y-1.5" data-testid={`expense-card-${e.id}`}>
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-medium text-sm">{e.merchant || "—"}</span>
+                        <ExpenseStatusBadge status={e.status} />
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {fmtDate(e.transactionDate)} · {e.category || (e.isPersonal ? "Personal" : "no category")}
+                        {e.xeroExpenseId && <> · posted to Xero</>}
+                      </div>
+                    </div>
+                    <span className="font-mono tabular-nums text-sm shrink-0">{fmt(e.amountPence)}</span>
+                  </div>
+                  <div>
+                    {e.receiptFilename ? (
+                      <span className="text-[11px] text-emerald-600 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Receipt attached
+                      </span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs gap-1"
+                        disabled={findingId === e.id}
+                        onClick={() => findReceiptMutation.mutate(e.id)}
+                        data-testid={`find-receipt-card-${e.id}`}
+                      >
+                        {findingId === e.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mail className="w-3 h-3" />}
+                        Find in email
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/30">
                   <tr className="text-left">
@@ -593,6 +796,7 @@ export default function ExpensesAdmin() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </CardContent>
       </TabsContent>

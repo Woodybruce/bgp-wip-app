@@ -743,7 +743,43 @@ function CommissionTab({ userId }: { userId: string }) {
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
                 Your numbers this year · billed {fmtSalary(data.billedPence)}
               </div>
-              <div className="rounded-md border overflow-hidden">
+              {/* Phone: one card per band (§7) — the table never ships below md. */}
+              <div className="md:hidden rounded-md border divide-y divide-border">
+                {data.tierBreakdown.map((b) => {
+                  const active = b.billedInBand > 0;
+                  return (
+                    <div key={b.name} className={`px-3 py-2.5 ${active ? "bg-emerald-50/40 dark:bg-emerald-950/20" : ""}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-xs font-medium">{b.name}</span>
+                        <span className={`font-mono tabular-nums text-xs font-semibold shrink-0 ${active ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`}>
+                          {fmtSalary(b.commission)}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
+                        {fmtSalary(b.thresholdLow)}
+                        {b.thresholdHigh != null ? ` – ${fmtSalary(b.thresholdHigh)}` : "+"}
+                        {" · "}{(b.rate * 100).toFixed(0)}%
+                      </div>
+                      <div className="text-[11px] tabular-nums mt-0.5">
+                        Billed in band: <span className="font-mono">{fmtSalary(b.billedInBand)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="px-3 py-2.5 bg-muted/30 flex items-start justify-between gap-2 text-xs font-semibold">
+                  <span>Earned so far (paid invoices only)</span>
+                  <span className="font-mono tabular-nums shrink-0">{fmtSalary(data.commissionEarned)}</span>
+                </div>
+                {data.commissionForecast > data.commissionEarned && (
+                  <div className="px-3 py-2.5 bg-primary/5 flex items-start justify-between gap-2 text-xs text-primary">
+                    <span>+ Forecast if your WIP ({fmtSalary(data.wipTotal)}) all collects</span>
+                    <span className="font-mono tabular-nums font-semibold shrink-0">
+                      {fmtSalary(data.commissionForecast - data.commissionEarned)}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className="hidden md:block rounded-md border overflow-hidden">
                 <table className="w-full text-xs">
                   <thead className="bg-muted/40 text-[10px] uppercase tracking-wider text-muted-foreground">
                     <tr>
@@ -5752,6 +5788,23 @@ function ImportSalariesDialog({ open, onClose }: { open: boolean; onClose: () =>
               {report.sample?.length > 0 && (
                 <div>
                   <div className="text-xs font-medium text-muted-foreground mb-1">Sample of mapped rows</div>
+                  {/* Phone: one card per staff row (§7) — the table never ships below md. */}
+                  <div className="md:hidden rounded border divide-y divide-border">
+                    {report.sample.map((s: any, i: number) => (
+                      <div key={i} className="px-2.5 py-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-xs font-medium min-w-0">{s.staffName}</span>
+                          <span className="font-mono tabular-nums text-xs shrink-0">{s.salary || "—"}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-x-3 text-[11px] text-muted-foreground mt-0.5">
+                          <span>Date <span className="font-mono">{s.effectiveDate || "—"}</span></span>
+                          <span>Bonus <span className="font-mono">{s.bonus || "—"}</span></span>
+                          <span>Comm <span className="font-mono">{s.commission || "—"}</span></span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="hidden md:block overflow-x-auto">
                   <table className="w-full text-[11px] border">
                     <thead className="bg-muted/50"><tr><th className="text-left p-1">Name</th><th className="text-left p-1">Salary</th><th className="text-left p-1">Date</th><th className="text-left p-1">Bonus</th><th className="text-left p-1">Comm</th></tr></thead>
                     <tbody>
@@ -5760,6 +5813,7 @@ function ImportSalariesDialog({ open, onClose }: { open: boolean; onClose: () =>
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               )}
             </div>

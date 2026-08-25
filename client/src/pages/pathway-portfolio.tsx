@@ -166,7 +166,65 @@ export default function PathwayPortfolio() {
           description="The table fills as pathways reach Stage 6."
         />
       ) : (
-        <div className="rounded-xl border bg-card overflow-x-auto">
+        <>
+        {/* Phone: one card per run (docs/DESIGN.md §7) — the table below is desktop-only. */}
+        <div className="md:hidden space-y-2" data-testid="portfolio-mobile-cards">
+          {sorted.map((r) => {
+            const archived = r.disposition === "passed" || r.disposition === "lost";
+            return (
+              <div key={r.runId} className={`rounded-2xl bg-card border border-border p-3 shadow-sm ${archived ? "opacity-55" : ""}`} data-testid={`row-portfolio-${r.runId}-card`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <Link href={`/property-pathway?runId=${r.runId}`}>
+                      <span className="block text-sm font-medium truncate cursor-pointer">{r.propertyName || r.address}</span>
+                    </Link>
+                    <div className="text-[11px] text-muted-foreground truncate">
+                      {r.propertyName ? r.address : r.postcode || ""}
+                      {r.startedByName ? ` · ${r.startedByName}` : ""}
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-sm font-mono tabular-nums font-semibold">{money(r.price)}</span>
+                </div>
+                <div className="text-[11px] font-mono tabular-nums text-muted-foreground mt-1">
+                  NIY {pct(r.niy)} · IRR {pct(r.irr)} · MOIC {r.moic != null ? `${r.moic.toFixed(2).replace(/\.?0+$/, "")}x` : "—"}
+                </div>
+                {r.strategy && (
+                  <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{r.strategy}{r.holdPeriodYrs ? ` · ${r.holdPeriodYrs}yr` : ""}</p>
+                )}
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[10px] whitespace-nowrap">
+                    {r.completedAt ? "Complete" : `Stage ${r.currentStage}`}
+                    {r.modelAgreed ? " ✓" : r.planAgreed ? " (plan ✓)" : ""}
+                  </span>
+                  <select
+                    value={r.disposition || ""}
+                    onChange={(e) => setDisposition(r, e.target.value || null)}
+                    className="text-xs border rounded-md px-1.5 py-1 bg-card"
+                    title={r.dispositionReason || undefined}
+                    data-testid={`select-disposition-${r.runId}-card`}
+                  >
+                    <option value="">—</option>
+                    {DISPOSITIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                  </select>
+                  <span className="ml-auto flex items-center gap-1">
+                    {r.whyBuyUrl && (
+                      <a href={r.whyBuyUrl} target="_blank" rel="noreferrer" title="Why Buy deck">
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0"><FileText className="w-3.5 h-3.5" /></Button>
+                      </a>
+                    )}
+                    <Link href={`/property-pathway?runId=${r.runId}`}>
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Open run"><ExternalLink className="w-3.5 h-3.5" /></Button>
+                    </Link>
+                  </span>
+                </div>
+                {r.dispositionReason && (
+                  <p className="text-[10px] text-muted-foreground mt-1 truncate" title={r.dispositionReason}>{r.dispositionReason}</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="hidden md:block rounded-xl border bg-card overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b bg-muted/30">
               <tr>
@@ -239,6 +297,7 @@ export default function PathwayPortfolio() {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );

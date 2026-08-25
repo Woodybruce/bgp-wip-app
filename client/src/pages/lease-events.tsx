@@ -218,7 +218,94 @@ export default function LeaseEventsPage({ embedded }: { embedded?: boolean } = {
           <p className="text-xs mt-1">Log rent reviews, breaks and expiries as you spot them — or ask ChatBGP to extract them from emails/brochures</p>
         </div>
       ) : (
-        <div className="rounded-lg border overflow-x-auto bg-background">
+        <>
+        {/* Phone: one card per event (§7) — the table never ships below md. */}
+        <div className="md:hidden rounded-lg border bg-background divide-y divide-border">
+          {filtered.map(ev => {
+            const u = urgencyFor(ev.eventDate);
+            const src = normaliseSource(ev.sourceEvidence);
+            const Icon = u.icon;
+            const owner = ownerLabel(ev.assignedTo);
+            return (
+              <div key={ev.id} className="px-4 py-3" data-testid={`lease-event-card-${ev.id}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-medium min-w-0 truncate">{ev.tenant || "—"}</span>
+                  <div className="text-right shrink-0">
+                    {(ev.currentRent || ev.estimatedErv) ? (
+                      <p className="text-sm font-mono tabular-nums font-semibold">{ev.currentRent || ev.estimatedErv}</p>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">—</p>
+                    )}
+                    {ev.currentRent && ev.estimatedErv && (
+                      <p className="text-[11px] font-mono tabular-nums text-muted-foreground">ERV {ev.estimatedErv}</p>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                  {[ev.address, ev.unitRef, ev.landlord].filter(Boolean).join(" · ") || "No address"}
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border inline-flex items-center gap-1 whitespace-nowrap ${u.cls}`}>
+                    <Icon className="w-3 h-3" />
+                    {u.label}
+                  </span>
+                  {ev.eventDate && <span className="text-[11px] text-muted-foreground whitespace-nowrap">{new Date(ev.eventDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</span>}
+                  <span className="text-[11px] font-medium whitespace-nowrap">{ev.eventType}</span>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className="inline-flex items-center gap-1">
+                        {src
+                          ? <Badge variant="outline" className={`text-[10px] cursor-pointer whitespace-nowrap ${SOURCE_TYPES[src].badgeClass}`}>{SOURCE_TYPES[src].label}</Badge>
+                          : <Badge variant="outline" className="text-[10px] cursor-pointer whitespace-nowrap text-muted-foreground"><Info className="w-2.5 h-2.5 mr-0.5" />Source</Badge>}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-72 text-xs space-y-2" align="start">
+                      <div className="flex items-center gap-1.5 font-medium">
+                        <FileText className="w-3.5 h-3.5" />
+                        {src ? SOURCE_TYPES[src].label : "Unknown source"}
+                      </div>
+                      {ev.sourceTitle && <p className="text-muted-foreground">{ev.sourceTitle}</p>}
+                      {ev.notes && <p className="text-muted-foreground whitespace-pre-wrap line-clamp-4">{ev.notes}</p>}
+                      {ev.sourceUrl ? (
+                        <a href={ev.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-1">
+                          <ExternalLink className="w-3 h-3" /> Open original source
+                        </a>
+                      ) : (
+                        <p className="text-muted-foreground italic">No linked source document.</p>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="flex items-center gap-1.5 mt-2">
+                  <Select value={ev.status} onValueChange={v => quickUpdate.mutate({ id: ev.id, status: v })}>
+                    <SelectTrigger className="h-7 w-[110px] text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>{STATUS_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Select value={ev.assignedTo || "__none"} onValueChange={v => quickUpdate.mutate({ id: ev.id, assignedTo: v === "__none" ? null : v })}>
+                    <SelectTrigger className="h-7 w-[110px] text-xs border-dashed">
+                      {owner
+                        ? <span className={`inline-flex items-center text-white text-[10px] px-1.5 py-0.5 rounded-full ${owner.color}`}>{owner.name}</span>
+                        : <span className="text-muted-foreground">Unassigned</span>}
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">Unassigned</SelectItem>
+                      {users.map(usr => <SelectItem key={usr.id} value={usr.id}>{usr.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <div className="flex items-center gap-0.5 ml-auto">
+                    <Button variant="ghost" size="sm" onClick={() => setEditing(ev)} className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground" title="Edit">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => { if (confirm("Delete this event?")) delMut.mutate(ev.id); }} className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" title="Delete">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="hidden md:block rounded-lg border overflow-x-auto bg-background">
           <table className="w-full text-sm">
             <thead className="bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground">
               <tr>
@@ -334,6 +421,7 @@ export default function LeaseEventsPage({ embedded }: { embedded?: boolean } = {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       <Dialog open={!!editing} onOpenChange={v => { if (!v) setEditing(null); }}>

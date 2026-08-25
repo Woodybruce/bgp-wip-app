@@ -341,8 +341,10 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
           onClearAll={() => setSelectedStatuses(new Set())}
           values={filterFees.status}
           getLabel={(s) => {
+            // Expand short codes (INV → Invoiced) but keep legacy labels
+            // like "HOTs" as-is (matches the WIP report).
             const code = legacyToCode(s);
-            return code ? DEAL_STATUS_LABELS[code] : s;
+            return code && code === s ? DEAL_STATUS_LABELS[code] : s;
           }}
         />
         <FilterDropdown
@@ -377,7 +379,58 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
           {detailOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
         </button>
         {detailOpen && (
-          <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <>
+          {/* Phone: one card per deal (§7) — the 10-column table never ships
+              below md. Deal ref links through; totals card closes the list. */}
+          <div className="md:hidden divide-y divide-border max-h-[400px] overflow-y-auto" data-testid="wip-dash-mobile-cards">
+            {sortedDetailEntries.map((e: any, i: number) => (
+              <div key={e.id || i} className="px-3 py-2.5" data-testid={`wip-dash-card-${i}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    {e.dealId ? (
+                      <Link href={`/deals/${e.dealId}`} className="text-sm font-medium text-primary hover:underline">{e.ref || "—"}</Link>
+                    ) : (
+                      <span className="text-sm font-medium">{e.ref || "—"}</span>
+                    )}
+                    {e.client && <span className="ml-1.5 text-xs text-muted-foreground">{e.client}</span>}
+                  </div>
+                  <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{e.amtWip ? formatCurrencyFull(e.amtWip) : "—"}</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                  {[e.tenant, e.project].filter(Boolean).join(" · ") || "—"}
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  {e.month && (
+                    <span className="text-[10px] border border-border rounded px-1.5 py-0.5 whitespace-nowrap text-muted-foreground font-mono">{e.month}</span>
+                  )}
+                  {e.dealStatus && (
+                    <span className="text-[10px] border border-border rounded px-1.5 py-0.5 whitespace-nowrap text-muted-foreground">
+                      {(() => { const code = legacyToCode(e.dealStatus); return code ? DEAL_STATUS_LABELS[code] : e.dealStatus; })()}
+                    </span>
+                  )}
+                  {e.amtInvoice ? (
+                    <span className="text-[10px] border border-border rounded px-1.5 py-0.5 whitespace-nowrap text-green-700 font-mono">Invoiced {formatCurrencyFull(e.amtInvoice)}</span>
+                  ) : null}
+                  {e.agent && (
+                    <span className="text-[10px] text-muted-foreground ml-auto">
+                      {(e.agent as string).split(",").map((a: string) => a.trim()).map((a: string) => a.includes(" ") ? a.split(" ").map((p: string) => p[0]).join("").toUpperCase() : a).join(", ")}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+            <div className="px-3 py-2.5 bg-muted font-semibold text-xs space-y-0.5">
+              <div className="flex items-center justify-between">
+                <span>Total WIP</span>
+                <span className="font-mono tabular-nums">{formatCurrencyFull(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}</span>
+              </div>
+              <div className="flex items-center justify-between text-green-700">
+                <span>Total invoiced</span>
+                <span className="font-mono tabular-nums">{formatCurrencyFull(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}</span>
+              </div>
+            </div>
+          </div>
+          <div className="hidden md:block overflow-x-auto max-h-[400px] overflow-y-auto">
             <table className="w-full text-[11px]">
               <thead className="bg-muted/50 border-b sticky top-0 z-10">
                 <tr>
@@ -432,6 +485,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
               </tfoot>
             </table>
           </div>
+          </>
         )}
       </div>
     </Card>

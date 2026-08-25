@@ -27,7 +27,8 @@ import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
-import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS } from "@shared/deal-status";
+import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS, DEAL_STATUS_DOT_COLORS, DEAL_PAGE_STATUSES } from "@shared/deal-status";
+import { InlineLabelSelect } from "@/components/inline-edit";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
@@ -309,7 +310,44 @@ function FeeCheckTab() {
         {data.length} deal{data.length === 1 ? "" : "s"} where the recorded fee doesn't match the net invoiced in Xero.
         The WIP and commission both use the <strong>recorded fee</strong>, so fix these on the Deals page to bring them in line with Xero.
       </p>
-      <div className="bg-card border border-border rounded-lg overflow-x-auto">
+      <div className="bg-card border border-border rounded-lg overflow-hidden">
+        {/* Phone: one card per discrepancy (§7) — the table never ships below md. */}
+        <div className="md:hidden divide-y divide-border">
+          {data.map((r) => (
+            <div key={r.dealId} className="px-4 py-3" data-testid={`fee-check-card-${r.dealId}`}>
+              <div className="flex items-start justify-between gap-2">
+                <Link href={`/deals/${r.dealId}`}>
+                  <span className="text-sm font-medium text-primary cursor-pointer">
+                    {r.dealRef ? `${r.dealRef} · ` : ""}{r.name || "—"}
+                  </span>
+                </Link>
+                <span className={`text-sm font-mono tabular-nums font-semibold shrink-0 ${r.diff < 0 ? "text-red-600" : "text-amber-600"}`}>
+                  {r.diff >= 0 ? "+" : "-"}{money(Math.abs(r.diff))}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                {r.team || "—"}{r.agents ? ` · ${r.agents}` : ""}
+              </p>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[11px] text-muted-foreground">
+                <span className="whitespace-nowrap">Recorded <span className="font-mono tabular-nums text-foreground">{money(r.fee)}</span></span>
+                <span className="whitespace-nowrap">Xero net <span className="font-mono tabular-nums text-foreground">{money(r.xeroNet)}</span></span>
+                <span className="whitespace-nowrap">Gross <span className="font-mono tabular-nums">{money(r.xeroGross)}</span></span>
+              </div>
+              <div className="flex items-center justify-between gap-2 mt-1.5">
+                <span className="text-[11px] text-muted-foreground truncate">{r.invoiceNumbers || "—"}</span>
+                <button
+                  onClick={() => matchToXero(r)}
+                  disabled={savingId === r.dealId}
+                  className="text-xs px-2 py-1 rounded border border-border hover:bg-muted disabled:opacity-50 whitespace-nowrap shrink-0"
+                  data-testid={`fee-check-match-card-${r.dealId}`}
+                >
+                  {savingId === r.dealId ? "Saving…" : `Set → ${money(r.xeroNet)}`}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="hidden md:block overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-left">
             <tr>
@@ -357,6 +395,7 @@ function FeeCheckTab() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );
@@ -485,6 +524,39 @@ function AgentSummaryTab() {
           <span className="text-sm font-semibold text-muted-foreground">Agent Summary</span>
           <span className="text-xs text-muted-foreground">{agents.length} agents</span>
         </div>
+        {/* Phone: one card per agent (§7) — tap selects the agent, same as the table rows. */}
+        <div className="md:hidden divide-y divide-border">
+          {agents.map((a) => {
+            const total = a.wip + a.invoiced;
+            const pct = grandTotal > 0 ? ((total / grandTotal) * 100).toFixed(1) : "0.0";
+            const isSelected = selectedAgent === a.agent;
+            return (
+              <div
+                key={a.agent}
+                className={`px-4 py-3 cursor-pointer ${isSelected ? "bg-green-50" : ""}`}
+                onClick={() => setSelectedAgent(isSelected ? null : a.agent)}
+                data-testid={`agent-card-${a.agent}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-medium min-w-0 truncate">{a.agent}</span>
+                  <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{formatFullCurrency(total)}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-muted-foreground">
+                  <span className="whitespace-nowrap">WIP <span className="font-mono tabular-nums text-foreground">{formatFullCurrency(a.wip)}</span></span>
+                  <span className="whitespace-nowrap">Invoiced <span className="font-mono tabular-nums text-green-700">{formatFullCurrency(a.invoiced)}</span></span>
+                  <span className="whitespace-nowrap"><span className="font-mono tabular-nums">{pct}%</span> of total</span>
+                </div>
+              </div>
+            );
+          })}
+          {agents.length > 0 && (
+            <div className="px-4 py-3 flex items-center justify-between text-sm font-semibold bg-muted/50">
+              <span>Total</span>
+              <span className="font-mono tabular-nums">{formatFullCurrency(grandTotal)}</span>
+            </div>
+          )}
+        </div>
+        <div className="hidden md:block">
         <ScrollableTable minWidth={700}>
           <table className="w-full">
             <thead className="bg-muted/50 border-b sticky top-0 z-10 text-sm">
@@ -536,6 +608,7 @@ function AgentSummaryTab() {
             </tfoot>
           </table>
         </ScrollableTable>
+        </div>
       </div>
 
       {/* Agent Drilldown */}
@@ -564,6 +637,40 @@ function AgentSummaryTab() {
           ) : !drilldownData || drilldownData.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">No deals found for this agent</div>
           ) : (
+            <>
+            {/* Phone: one card per deal (§7) — the table never ships below md. */}
+            <div className="md:hidden divide-y divide-border">
+              {drilldownData.map((d) => (
+                <div key={d.dealId} className="px-4 py-3" data-testid={`agent-drilldown-card-${d.dealId}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <Link href={`/deals/${d.dealId}`}>
+                      <span className="text-sm font-medium text-primary cursor-pointer">{d.name}</span>
+                    </Link>
+                    <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{formatFullCurrency(d.totalFee)}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                    {d.property || "—"}{d.dealType ? ` · ${d.dealType}` : ""}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    {d.stage === "invoiced" ? (
+                      <Badge className="text-[10px] bg-green-100 text-green-800 whitespace-nowrap">Invoiced</Badge>
+                    ) : d.stage === "wip" ? (
+                      <Badge className="text-[10px] bg-yellow-100 text-yellow-800 whitespace-nowrap">WIP</Badge>
+                    ) : d.stage ? (
+                      <span className="text-[10px] text-muted-foreground whitespace-nowrap">{d.stage}</span>
+                    ) : null}
+                    <span className="text-[11px] text-muted-foreground ml-auto whitespace-nowrap">
+                      Allocated <span className="font-mono tabular-nums text-foreground">{formatFullCurrency(d.allocatedAmount)}</span>
+                    </span>
+                  </div>
+                </div>
+              ))}
+              <div className="px-4 py-3 flex items-center justify-between text-sm font-semibold bg-muted/50">
+                <span>Total</span>
+                <span className="font-mono tabular-nums">{formatFullCurrency(drilldownData.reduce((s, d) => s + d.allocatedAmount, 0))}</span>
+              </div>
+            </div>
+            <div className="hidden md:block">
             <ScrollableTable minWidth={900}>
               <table className="w-full">
                 <thead className="bg-muted/50 border-b sticky top-0 z-10 text-sm">
@@ -641,6 +748,8 @@ function AgentSummaryTab() {
                 </tfoot>
               </table>
             </ScrollableTable>
+            </div>
+            </>
           )}
         </div>
       )}
@@ -971,48 +1080,6 @@ export default function WipReport() {
     return { client, team, agent, project, status, month };
   }, [entries]);
 
-  // Stage pills — per-stage totals over ALL entries (same basis as the
-  // dropdown fee hints). Tapping a pill toggles every raw status that maps
-  // to that stage in selectedStatuses, so the pills and the Deal Status
-  // dropdown are one filter, never two (Woody, 2026-08-23).
-  const STAGE_PILLS: Array<{ code: string; label: string }> = [
-    { code: "NEG", label: "Negotiating" },
-    { code: "SOL", label: "Solicitors" },
-    { code: "EXC", label: "Exchanged" },
-    { code: "COM", label: "Completed" },
-    { code: "INV", label: "Invoiced" },
-  ];
-  const stageAgg = useMemo(() => {
-    const agg: Record<string, { total: number; deals: Set<string> }> = {};
-    entries.forEach((e) => {
-      const code = legacyToCode(e.dealStatus);
-      if (!code) return;
-      if (!agg[code]) agg[code] = { total: 0, deals: new Set() };
-      agg[code].total += (e.amtWip || 0) + (e.amtInvoice || 0);
-      agg[code].deals.add(e.dealId || e.id || "");
-    });
-    return agg;
-  }, [entries]);
-  const statusesForStage = useCallback(
-    (code: string) => allStatuses.filter((st) => legacyToCode(st) === code),
-    [allStatuses],
-  );
-  const stageActive = (code: string) => {
-    const list = statusesForStage(code);
-    return list.length > 0 && list.every((st) => selectedStatuses.has(st));
-  };
-  const toggleStage = (code: string) => {
-    const list = statusesForStage(code);
-    if (!list.length) return;
-    setSelectedStatuses((prev) => {
-      const next = new Set(prev);
-      const active = list.every((st) => next.has(st));
-      if (active) list.forEach((st) => next.delete(st));
-      else list.forEach((st) => next.add(st));
-      return next;
-    });
-  };
-
   // The server emits one entry per agent fee-split (so agent filtering and
   // per-agent fees work), but Deal Detail should read one row per deal —
   // a split deal was showing twice. Collapse splits by dealId: sum the fee
@@ -1088,6 +1155,19 @@ export default function WipReport() {
     if (next.has(item)) next.delete(item);
     else next.add(item);
     setFn(next);
+  };
+
+  // Inline deal-status transitions from the Deal Detail table — same PUT the
+  // Deals page uses, so the senior-approval (INV/COM) and AML (SOL+) gates
+  // still apply server-side; a rejected transition surfaces as a toast.
+  const handleStatusChange = async (dealId: string, code: string) => {
+    try {
+      await apiRequest("PUT", `/api/crm/deals/${dealId}`, { status: code });
+      toast({ title: "Deal status updated" });
+      invalidateDealCaches();
+    } catch (err: any) {
+      toast({ title: "Couldn't update status", description: err?.message || "Please try again.", variant: "destructive" });
+    }
   };
 
   const handlePrint = () => window.print();
@@ -1233,6 +1313,12 @@ export default function WipReport() {
             <Printer className="h-4 w-4 mr-1" />
             Print
           </Button>
+          <Link href="/deals/list?new=1">
+            <Button size="sm" data-testid="wip-new-deal-button">
+              <Plus className="h-4 w-4 mr-1" />
+              New Deal
+            </Button>
+          </Link>
         </div>
       </div>
 
@@ -1256,31 +1342,6 @@ export default function WipReport() {
         <HealthTab />
       ) : (
       <div className="flex flex-col gap-4">
-          {/* Stage pills — the stat strip and the stage filter in one:
-              each shows that stage's total and tapping filters the table
-              below (synced with the Deal Status dropdown). */}
-          <div className="flex flex-wrap items-center gap-1.5 shrink-0" data-testid="wip-stage-pills">
-            <Pill
-              active={selectedStatuses.size === 0}
-              onClick={() => setSelectedStatuses(new Set())}
-              data-testid="wip-stage-pill-all"
-            >
-              All <span className="opacity-70 font-mono normal-case">{formatCurrency(totalNetFees)}</span>
-            </Pill>
-            {STAGE_PILLS.filter(sp => stageAgg[sp.code]).map(sp => (
-              <Pill
-                key={sp.code}
-                active={stageActive(sp.code)}
-                onClick={() => toggleStage(sp.code)}
-                data-testid={`wip-stage-pill-${sp.code.toLowerCase()}`}
-              >
-                {sp.label}{" "}
-                <span className="opacity-70 font-mono normal-case">{formatCurrency(stageAgg[sp.code].total)}</span>
-                <span className="opacity-50">· {stageAgg[sp.code].deals.size}</span>
-              </Pill>
-            ))}
-          </div>
-
           {/* Filter dropdowns — one per former summary board */}
           <div className="flex flex-wrap items-center gap-2 flex-shrink-0 no-print" data-testid="wip-filters-bar">
             <div className="relative w-full sm:w-56">
@@ -1350,8 +1411,11 @@ export default function WipReport() {
               onClearAll={() => setSelectedStatuses(new Set())}
               values={filterFees.status}
               getLabel={(s) => {
+                // Expand short codes (INV → Invoiced) but keep meaningful
+                // legacy labels like "HOTs" as-is — mapping them to their
+                // canonical stage name hid the HOTs distinction.
                 const code = legacyToCode(s);
-                return code ? DEAL_STATUS_LABELS[code] : s;
+                return code && code === s ? DEAL_STATUS_LABELS[code] : s;
               }}
             />
             <FilterDropdown
@@ -1534,8 +1598,16 @@ export default function WipReport() {
                         )}
                       </td>
                       {colVisible("dealRef") && (
-                      <td className="px-2 py-1.5 text-xs font-mono text-muted-foreground/70 whitespace-nowrap">
-                        {e.dealRef ? `#${e.dealRef}` : "—"}
+                      <td className="px-2 py-1.5 text-xs font-mono whitespace-nowrap">
+                        {e.dealRef && e.dealId ? (
+                          <Link href={`/deals/${e.dealId}`}>
+                            <span className="text-blue-600 hover:underline cursor-pointer" data-testid={`link-deal-ref-${e.dealId}`}>#{e.dealRef}</span>
+                          </Link>
+                        ) : e.dealRef ? (
+                          <span className="text-muted-foreground/70">#{e.dealRef}</span>
+                        ) : (
+                          <span className="text-muted-foreground/70">—</span>
+                        )}
                       </td>
                       )}
                       {colVisible("ref") && (
@@ -1649,7 +1721,23 @@ export default function WipReport() {
                       </td>
                       )}
                       {colVisible("agent") && <td className="px-2 py-1.5 text-muted-foreground">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>}
-                      {colVisible("dealStatus") && <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[100px]">{e.dealStatus || "—"}</td>}
+                      {colVisible("dealStatus") && (
+                      <td className="px-2 py-1.5">
+                        {e.dealId ? (
+                          <InlineLabelSelect
+                            value={legacyToCode(e.dealStatus) || ""}
+                            options={DEAL_PAGE_STATUSES as unknown as string[]}
+                            colorMap={DEAL_STATUS_DOT_COLORS as Record<string, string>}
+                            labelMap={DEAL_STATUS_LABELS as Record<string, string>}
+                            onSave={(v) => { if (v) handleStatusChange(e.dealId, v); }}
+                            allowClear={false}
+                            compact
+                          />
+                        ) : (
+                          <span className="text-muted-foreground truncate max-w-[100px] inline-block">{e.dealStatus || "—"}</span>
+                        )}
+                      </td>
+                      )}
                       {colVisible("stage") && (
                       <td className="px-2 py-1.5 text-xs truncate max-w-[100px]">
                         {e.stage === "pipeline" ? (

@@ -1,24 +1,26 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 // Phone-fit brand / landlord profile — the mobile answer to the desktop
 // BrandProfilePanel, which rendered effectively blank at phone widths
 // (Woody, 2026-08-04: "how the brands reflect" on the phone app). Stacked
 // cards reusing the canonical components: chat, contacts board, covenant,
 // compliance, menu, portfolio activity — so the phone shows the SAME
 // intelligence as desktop, one structure everywhere.
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { getAuthHeaders, apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords } from "lucide-react";
+import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe } from "lucide-react";
 import {
   CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard, BrandInstagramCard,
 } from "@/components/brand-profile-panel";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
+import { ActivitySummary } from "@/components/activity-summary";
 
 export function MobileBrandView({ companyId }: { companyId: string }) {
   const { data, isLoading } = useQuery<any>({
@@ -41,8 +43,57 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
 
   // Phone section switcher (docs/DESIGN.md §16) — this view is phone-only
   // and ran 8+ boards deep in one scroll. Hook sits above the early return.
-  const [section, setSection] = useState<"chat" | "contacts" | "compliance" | "intel">("chat");
+  const [section, setSection] = useState<"chat" | "contacts" | "intel" | "stores" | "social" | "compliance">("chat");
+  const [signalsShowAll, setSignalsShowAll] = useState(false);
   const sec = (k: typeof section) => (section === k ? "space-y-3" : "hidden");
+  const { toast } = useToast();
+  const { data: mbvUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = mbvUser?.role === "Client" || !!mbvUser?.companyScopeId;
+  // Same research trigger as the desktop Stores section — POST kicks the
+  // background job, then poll /status until done (big brands take minutes).
+  const storeScan = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`, { scope: "uk" });
+      if (!res.ok && res.status !== 202) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any).error || `HTTP ${res.status}`);
+      }
+      const started = Date.now();
+      return await new Promise<any>((resolve, reject) => {
+        const poll = async () => {
+          if (Date.now() - started > 5 * 60_000) return reject(new Error("Store research is taking longer than 5 minutes — try again in a moment"));
+          try {
+            const st = await fetch(`/api/brand/${companyId}/research-stores/status?scope=uk`, { headers: getAuthHeaders(), credentials: "include" });
+            if (st.ok) {
+              const j = await st.json();
+              if (j.state === "done") return resolve(j.result || {});
+              if (j.state === "error") return reject(new Error(j.error || "Store research failed"));
+            }
+          } catch {}
+          setTimeout(poll, 5000);
+        };
+        setTimeout(poll, 5000);
+      });
+    },
+    onSuccess: (out: any) => {
+      toast({ title: "Store search complete", description: out?.found ? `${out.found} stores found` : "0 stores found" });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Store search failed", description: e.message, variant: "destructive" }),
+  });
+  // Auto-fire on first open when a brand has no stores at all — same as
+  // desktop, so the map fills itself instead of waiting for a tap
+  // (Woody, 2026-08-25: "I don't want to ask, I need everything automated").
+  const autoScanFired = useRef(false);
+  useEffect(() => {
+    if (autoScanFired.current || !data?.company || isClientViewer) return;
+    const co = data.company;
+    if (/landlord|client/i.test(co.company_type || "")) return;
+    if ((data.stores || []).length > 0) return;
+    autoScanFired.current = true;
+    storeScan.mutate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, isClientViewer]);
 
   if (isLoading || !data?.company) {
     return (
@@ -71,7 +122,18 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       : firstImg ? srcFor(firstImg) : null;
   const trackerComments: any[] = trackerData?.comments || [];
 
-  const signals: any[] = (data.signals || []).slice(0, 6);
+  // Same dedupe as the desktop Signals feed — Instagram + Google News often
+  // land the same story twice; first occurrence (newest) wins.
+  const signals: any[] = (() => {
+    const seen = new Set<string>();
+    const norm = (h: string) => (h || "").toLowerCase().replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
+    return ((data.signals || []) as any[]).filter(s => {
+      const n = norm(s.headline);
+      if (!n || seen.has(n)) return !n;
+      seen.add(n);
+      return true;
+    });
+  })();
   // Same UK slice as the desktop Stores section — the map only earns its
   // place once at least one store is geocoded.
   const ukStores: any[] = (data.stores || []).filter((s: any) => !s.country || s.country === "GB");
@@ -95,14 +157,25 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         {c.industry && <Badge variant="outline" className="text-[11px]">{c.industry}</Badge>}
         {c.store_count != null && <Badge variant="outline" className="text-[11px] tabular-nums">{c.store_count} stores</Badge>}
         {(c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
+        {(c.domain_url || c.domain) && (
+          <a
+            href={(c.domain_url || `https://${c.domain}`).startsWith("http") ? (c.domain_url || `https://${c.domain}`) : `https://${c.domain_url || c.domain}`}
+            target="_blank" rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground"
+          >
+            <Globe className="w-3 h-3" /> {String(c.domain || c.domain_url).replace(/^https?:\/\//, "").replace(/\/$/, "")}
+          </a>
+        )}
       </div>
       {c.description && <p className="text-sm leading-snug text-foreground/85">{c.description}</p>}
 
       <div className="flex flex-wrap gap-1.5" data-testid="company-phone-sections">
         <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Chat</Pill>
         <Pill active={section === "contacts"} onClick={() => setSection("contacts")} data-testid="company-section-contacts">Contacts</Pill>
-        <Pill active={section === "compliance"} onClick={() => setSection("compliance")} data-testid="company-section-compliance">Compliance</Pill>
         <Pill active={section === "intel"} onClick={() => setSection("intel")} data-testid="company-section-intel">Intel</Pill>
+        {!isLandlord && <Pill active={section === "stores"} onClick={() => setSection("stores")} data-testid="company-section-stores">Stores</Pill>}
+        {!isLandlord && <Pill active={section === "social"} onClick={() => setSection("social")} data-testid="company-section-social">Social</Pill>}
+        <Pill active={section === "compliance"} onClick={() => setSection("compliance")} data-testid="company-section-compliance">Compliance</Pill>
       </div>
 
       <div className={sec("chat")}>
@@ -120,6 +193,40 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         contacts={data.contacts || []}
         pendingSenders={data.pendingContactSuggestions || []}
       />
+
+      {/* BGP engagement — how much history the firm has with this brand
+          (Woody, 2026-08-25: "missing the summary of engagement"). */}
+      {data.bgpSummary && (
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+              <ClipboardList className="w-3.5 h-3.5" /> BGP engagement
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 space-y-2">
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Deals</div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.totalDeals}{data.bgpSummary.completedDeals ? <span className="text-muted-foreground text-[11px]"> · {data.bgpSummary.completedDeals} done</span> : null}</div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Touches</div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.interactionsTotal}<span className="text-muted-foreground text-[11px]"> · {data.bgpSummary.interactionsLast90d} in 90d</span></div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Last touch</div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.lastInteractionAt ? new Date(data.bgpSummary.lastInteractionAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}</div>
+              </div>
+            </div>
+            {(data.bgpSummary.team || []).length > 0 && (
+              <div className="text-[11px] text-muted-foreground truncate">BGP side: {data.bgpSummary.team.slice(0, 4).join(", ")}</div>
+            )}
+            <div className="max-h-[300px] overflow-y-auto pr-1">
+              <ActivitySummary companyId={companyId} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
       </div>
 
       <div className={sec("compliance")}>
@@ -149,17 +256,6 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
 
       <div className={sec("intel")}>
-      {/* Menu / best sellers (brands only) */}
-      {!isLandlord && (
-        <MenuIntelCard
-          companyId={companyId}
-          companyName={c.name}
-          industry={c.industry}
-          companyType={c.company_type}
-          intel={c.menu_intel}
-          refreshedAt={c.menu_intel_at}
-        />
-      )}
 
       {/* Tracker comments */}
       {trackerComments.length > 0 && (
@@ -190,43 +286,79 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       {/* Portfolio activity — tenant at / targeted / pitched / suggested */}
       <PortfolioActivityBlock companyId={companyId} />
 
-      {/* Signals */}
+      {/* Signals — phone twin of the desktop feed: semantic type pill +
+          mono date on a meta row, clamped headline underneath, sentiment
+          as the left border (docs/DESIGN.md §7). */}
       {signals.length > 0 && (
         <Card>
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <TrendingUp className="w-3.5 h-3.5" /> Signals
-              <Badge variant="outline" className="text-[10px]">{data.signals?.length || 0}</Badge>
+              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{signals.length}</Badge>
             </CardTitle>
           </CardHeader>
-          <CardContent className="p-3 pt-0 space-y-1.5">
-            {signals.map((s: any) => (
-              <div key={s.id} className="text-xs border-l-2 border-l-muted pl-2">
-                <Badge variant="outline" className="text-[10px] mr-1.5">{(s.signal_type || "news").replace(/_/g, " ")}</Badge>
-                {s.source && s.source.startsWith("http")
-                  ? <a href={s.source} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">{s.headline}</a>
-                  : <span className="font-medium">{s.headline}</span>}
-              </div>
-            ))}
+          <CardContent className="p-3 pt-0 space-y-2.5">
+            {(signalsShowAll ? signals : signals.slice(0, 4)).map((s: any) => {
+              const typeCls: Record<string, string> = {
+                opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+                closure:     "bg-red-50 text-red-700 border-red-200",
+                funding:     "bg-violet-50 text-violet-700 border-violet-200",
+                exec_change: "bg-blue-50 text-blue-700 border-blue-200",
+                sector_move: "bg-amber-50 text-amber-700 border-amber-200",
+                rumour:      "bg-zinc-50 text-zinc-600 border-zinc-200 italic",
+                news:        "bg-zinc-50 text-zinc-700 border-zinc-200",
+              };
+              const sentCls: Record<string, string> = {
+                positive: "border-l-emerald-400",
+                negative: "border-l-red-400",
+                neutral:  "border-l-muted",
+              };
+              const body = (
+                <>
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || typeCls.news}`}>
+                      {(s.signal_type || "news").replace(/_/g, " ")}
+                    </Badge>
+                    {s.signal_date && (
+                      <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
+                        {new Date(s.signal_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                      </span>
+                    )}
+                    {s.source && s.source.startsWith("http") && <ExternalLink className="w-3 h-3 text-muted-foreground ml-auto shrink-0" />}
+                  </div>
+                  <p className="text-xs leading-snug line-clamp-2">{s.headline}</p>
+                </>
+              );
+              return s.source && s.source.startsWith("http") ? (
+                <a key={s.id} href={s.source} target="_blank" rel="noopener noreferrer" className={`block border-l-2 pl-2.5 ${sentCls[s.sentiment] || "border-l-muted"}`}>
+                  {body}
+                </a>
+              ) : (
+                <div key={s.id} className={`border-l-2 pl-2.5 ${sentCls[s.sentiment] || "border-l-muted"}`}>
+                  {body}
+                </div>
+              );
+            })}
+            {signals.length > 4 && (
+              <button onClick={() => setSignalsShowAll(v => !v)} className="text-[11px] text-primary hover:underline">
+                {signalsShowAll ? "Show less" : `Show all ${signals.length}`}
+              </button>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {/* UK stores — same data as the desktop Stores section, map first */}
-      {!isLandlord && mappableStores.length > 0 && (
-        <Card>
-          <CardHeader className="p-3 pb-2">
-            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-              <Store className="w-3.5 h-3.5" /> UK stores
-              <Badge variant="outline" className="text-[10px] tabular-nums">{ukStores.length}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-3 pt-0">
-            <div className="rounded-lg overflow-hidden border border-border/50">
-              <BrandPortfolioMap stores={mappableStores as any} height={240} />
-            </div>
-          </CardContent>
-        </Card>
+
+      {/* Menu / best sellers (brands only) */}
+      {!isLandlord && (
+        <MenuIntelCard
+          companyId={companyId}
+          companyName={c.name}
+          industry={c.industry}
+          companyType={c.company_type}
+          intel={c.menu_intel}
+          refreshedAt={c.menu_intel_at}
+        />
       )}
 
       {/* Competition — CRM similar tenants (linkable) + AI competitor set */}
@@ -264,7 +396,63 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </CardContent>
         </Card>
       )}
+      </div>
 
+      <div className={sec("stores")}>
+      {/* UK stores — same data as the desktop Stores section, map first.
+          Staff see the card even at 0 stores with the same research
+          trigger desktop has; clients only once stores exist. */}
+      {!isLandlord && (mappableStores.length > 0 || ukStores.length > 0 || !isClientViewer) && (
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+              <Store className="w-3.5 h-3.5" /> UK stores
+              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{ukStores.length}</Badge>
+              {!isClientViewer && !storeScan.isPending && (
+                <button
+                  onClick={() => storeScan.mutate()}
+                  className="ml-auto text-[10px] px-2 py-0.5 rounded-full border bg-card hover:bg-muted normal-case tracking-normal"
+                  data-testid="btn-mobile-research-stores"
+                >
+                  {ukStores.length ? "Refresh" : "Find stores"}
+                </button>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0">
+            {storeScan.isPending ? (
+              <div className="text-xs text-muted-foreground border border-dashed rounded-lg px-3 py-6 text-center">
+                Researching UK stores — the map appears here when the scan finishes (can take a couple of minutes)…
+              </div>
+            ) : mappableStores.length > 0 ? (
+              <div className="rounded-lg overflow-hidden border border-border/50">
+                <BrandPortfolioMap stores={mappableStores as any} height={240} />
+              </div>
+            ) : ukStores.length > 0 ? (
+              <div className="space-y-1">
+                {ukStores.slice(0, 6).map((s: any) => (
+                  <div key={s.id} className="text-xs px-2 py-1.5 rounded border bg-card min-w-0">
+                    <span className="font-medium">{s.name}</span>
+                    {s.address && <span className="text-muted-foreground"> — {s.address}</span>}
+                  </div>
+                ))}
+                {ukStores.length > 6 && (
+                  <div className="text-[11px] text-muted-foreground px-1">+{ukStores.length - 6} more (not yet geocoded — no map until they are)</div>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No store locations on file yet — Find stores researches them from Google Places and lights up the map.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+
+      </div>
+
+      <div className={sec("social")}>
       {/* Instagram board — same card as desktop (posts + follower stats) */}
       <BrandInstagramCard companyId={companyId} />
       {c.instagram_handle && (
@@ -278,6 +466,9 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         </a>
       )}
 
+      </div>
+
+      <div className={sec("stores")}>
       {/* Live tenancies */}
       {(data.liveLocations || []).length > 0 && (
         <Card>

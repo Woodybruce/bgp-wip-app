@@ -3,6 +3,8 @@ import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Eye, Pencil, Inbox, Trash2 } from "lucide-react";
 import { Link } from "wouter";
+import { useEffect } from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
@@ -178,8 +180,16 @@ export function ViewToggle({
   onToggle: (view: "table" | "card" | "board") => void;
   showBoard?: boolean;
 }) {
+  // Tables never ship to the phone (DESIGN.md §6) — hide the Table option
+  // below md and snap any lingering "table" state back to cards, so no page
+  // using this toggle can leak its desktop table onto a phone.
+  const isMobile = useIsMobile();
+  useEffect(() => {
+    if (isMobile && view === "table") onToggle("card");
+  }, [isMobile, view, onToggle]);
+
   const options: { key: "table" | "card" | "board"; label: string }[] = [
-    { key: "table", label: "Table" },
+    ...(isMobile ? [] : [{ key: "table" as const, label: "Table" }]),
     { key: "card", label: "Cards" },
     ...(showBoard ? [{ key: "board" as const, label: "Board" }] : []),
   ];

@@ -1019,24 +1019,15 @@ export class DatabaseStorage implements IStorage {
     if (filters?.dealType) conditions.push(eq(crmDeals.dealType, filters.dealType));
     if (filters?.propertyId) conditions.push(eq(crmDeals.propertyId, filters.propertyId));
     if (filters?.excludeTrackerDeals) {
-      // Only hide tracker-backed deals that are still PRE-SOL on the
-      // Letting Tracker. Once a unit gets promoted to SOL+ the backing
-      // deal becomes a 'real' deal that belongs on the Deals CRM —
-      // filtering it out would orphan it from the kanban view.
-      // Match pre-SOL marketing statuses (REP / SPEC / LIVE / AVA / NEG)
-      // plus a NULL-status guard for legacy rows.
-      const trackerDealIds = await db
-        .select({ dealId: availableUnits.dealId })
-        .from(availableUnits)
-        .where(sql`${availableUnits.dealId} IS NOT NULL
-          AND (${availableUnits.marketingStatus} IS NULL
-               OR ${availableUnits.marketingStatus} IN ('REP', 'SPEC', 'LIVE', 'AVA', 'NEG',
-                                                          'Reporting', 'Speculative', 'Live',
-                                                          'Available', 'Negotiating'))`);
-      const ids = trackerDealIds.map(r => r.dealId).filter(Boolean) as string[];
-      if (ids.length > 0) {
-        conditions.push(sql`${crmDeals.id} NOT IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`);
-      }
+      // Deals CRM is SOL+ ONLY (Woody's team, 2026-08-25): the pre-Solicitors
+      // pipeline — Reporting / Available / Negotiating / HOTs, tracker-linked
+      // or not — lives on the Letting Tracker and the WIP report. The Deals
+      // board shows instructed deals from Solicitors onwards. NULL/unknown
+      // statuses stay visible rather than silently vanishing.
+      conditions.push(sql`(${crmDeals.status} IS NULL OR lower(${crmDeals.status}) NOT IN (
+        'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live',
+        'ava', 'available', 'neg', 'negotiating', 'negotiation',
+        'under negotiation', 'in negotiation', 'hot', 'hots', 'heads of terms'))`);
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     if (filters?.page && filters?.limit) {

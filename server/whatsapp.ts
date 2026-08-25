@@ -173,6 +173,142 @@ async function resolveUserIdFromPhone(fromNumber: string): Promise<{ userId: str
   return { userId: `wa:${digits}`, matched: false, userName: null };
 }
 
+// ── Fast contact-lookup lane (Woody, 2026-08-25: the team asks "does
+// anyone have Roland from Watchouse direct?" on WhatsApp instead of the
+// app). Staff texts that read like a contact/brand lookup get an instant
+// card — name, role, mobile, email, brand, acting agents — from the same
+// data as the phone Brand Intelligence search. Anything that isn't
+// lookup-shaped, comes from a non-staff number, or finds no match falls
+// through to the normal ChatBGP path unchanged.
+const LOOKUP_INTENT = /\b(number|mobile|phone|email|contact|details?)\s+(for|of|at|on)\b|\w(?:'|\u2019)s\s+(number|mobile|phone|email|contact|details?)\b|\bwho\s+(has|reps?|represents|acts?|covers?|looks?\s+after)\b|\bdirect\b|\bagents?\s+for\b|\b(anyone|we)\s+(have|got)\b/i;
+
+export async function tryWhatsAppContactLookup(
+  messageBody: string,
+  fromNumber: string,
+  sendReply: (text: string) => Promise<void>,
+): Promise<boolean> {
+  const text = messageBody.trim();
+  if (text.length < 3 || text.length > 140) return false;
+  const wordCount = text.split(/\s+/).length;
+  if (!LOOKUP_INTENT.test(text)) return false;
+  if (/^(ok|okay|thanks|thank you|yes|no|hi|hello|hey|cheers)\b/i.test(text) && wordCount <= 3) return false;
+
+  const resolved = await resolveUserIdFromPhone(fromNumber);
+  if (!resolved.matched) return false; // staff numbers only — never serve CRM data to unknown senders
+
+  // Strip the asking words down to the entity being looked for.
+  let term = text
+    .replace(/[?!.]+\s*$/g, "")
+    .replace(/^(does\s+anyone\s+have|has\s+anyone\s+got|anyone\s+(have|got)|do\s+we\s+have|have\s+we\s+got|who\s+(has|reps?|represents|acts\s+for|covers|looks\s+after)|can\s+(i|someone)\s+(get|have)|i\s+need|need|what'?s|whats)\s+/i, "")
+    .replace(/\b(the|a|an)\b/gi, " ")
+    .replace(/\b(direct|number|mobile|phone|cell|email|contact|details?|dets|line|please|pls|plz|thanks|thank\s+you|for\s+me)\b/gi, " ")
+    .replace(/(?:'|\u2019)s?\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(for|of|at|on|to)\s+/i, "")
+    .replace(/\s+(for|of|at|on|to)$/i, "")
+    .trim();
+  if (term.length < 3) return false;
+
+  let personPart = term;
+  let brandHint: string | null = null;
+  const splitMatch = term.match(/^(.*?)\s+(?:from|at|@)\s+(.+)$/i);
+  if (splitMatch && splitMatch[1].trim().length >= 2 && splitMatch[2].trim().length >= 2) {
+    personPart = splitMatch[1].trim();
+    brandHint = splitMatch[2].trim();
+  }
+
+  try {
+    const { pool } = await import("./db");
+    const esc = (s: string) => s.replace(/[%_\\]/g, "\\$&");
+    const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+    // 1. Contacts at brands whose NAME matches the person part (brand hint narrows).
+    const contactParams: any[] = [`%${esc(personPart)}%`];
+    let contactBrandClause = "";
+    if (brandHint) {
+      contactParams.push(`%${esc(brandHint)}%`, `%${squash(brandHint)}%`);
+      contactBrandClause = ` AND (c.name ILIKE $2 OR regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') LIKE $3)`;
+    }
+    let contacts = await pool.query(
+      `SELECT ct.name, ct.role, ct.email,
+              COALESCE(NULLIF(ct.phone_mobile, ''), ct.phone) AS phone,
+              c.name AS brand_name
+         FROM crm_contacts ct
+         JOIN crm_companies c ON c.id = ct.company_id
+        WHERE c.merged_into_id IS NULL AND c.company_type ILIKE 'Tenant%'
+          AND ct.name ILIKE $1${contactBrandClause}
+        ORDER BY ct.name ASC LIMIT 5`, contactParams).then(r => r.rows);
+    // Brand hint too strict (typo like "Watchouse")? Retry on name alone.
+    if (contacts.length === 0 && brandHint) {
+      contacts = await pool.query(
+        `SELECT ct.name, ct.role, ct.email,
+                COALESCE(NULLIF(ct.phone_mobile, ''), ct.phone) AS phone,
+                c.name AS brand_name
+           FROM crm_contacts ct
+           JOIN crm_companies c ON c.id = ct.company_id
+          WHERE c.merged_into_id IS NULL AND c.company_type ILIKE 'Tenant%'
+            AND ct.name ILIKE $1
+          ORDER BY ct.name ASC LIMIT 5`, [`%${esc(personPart)}%`]).then(r => r.rows);
+    }
+
+    // 2. The term as a brand — its key contacts land in one card.
+    const brandTerm = brandHint || term;
+    const brands = await pool.query(
+      `SELECT id, name, company_type
+         FROM crm_companies
+        WHERE merged_into_id IS NULL AND company_type ILIKE 'Tenant%'
+          AND (name ILIKE $1 OR regexp_replace(lower(name), '[^a-z0-9]', '', 'g') LIKE $2)
+        ORDER BY name ASC LIMIT 3`, [`%${esc(brandTerm)}%`, `%${squash(brandTerm)}%`]).then(r => r.rows);
+    let brandContacts: any[] = [];
+    if (contacts.length === 0 && brands.length > 0) {
+      brandContacts = await pool.query(
+        `SELECT ct.name, ct.role, ct.email,
+                COALESCE(NULLIF(ct.phone_mobile, ''), ct.phone) AS phone,
+                c.name AS brand_name
+           FROM crm_contacts ct
+           JOIN crm_companies c ON c.id = ct.company_id
+          WHERE c.id = $1
+          ORDER BY ct.name ASC LIMIT 4`, [brands[0].id]).then(r => r.rows);
+    }
+
+    // 3. Acting agents — firm name or a brand they act for.
+    const agents = await pool.query(
+      `SELECT a.name, array_agg(DISTINCT b.name ORDER BY b.name) AS brands
+         FROM brand_agent_representations r
+         JOIN crm_companies a ON a.id = r.agent_company_id
+         JOIN crm_companies b ON b.id = r.brand_company_id
+        WHERE r.end_date IS NULL AND a.merged_into_id IS NULL AND b.merged_into_id IS NULL
+          AND (a.name ILIKE $1 OR b.name ILIKE $1)
+        GROUP BY a.id, a.name ORDER BY a.name ASC LIMIT 4`, [`%${esc(brandTerm)}%`]).then(r => r.rows);
+
+    const cardFor = (ct: any) => {
+      const lines = [`${ct.name}${ct.role ? ` — ${ct.role}` : ""}`, ct.brand_name];
+      if (ct.phone) lines.push(`📱 ${ct.phone}`);
+      if (ct.email) lines.push(`✉️ ${ct.email}`);
+      if (!ct.phone && !ct.email) lines.push(`No direct details on file — open ${ct.brand_name} in the app and hit Refresh contacts.`);
+      return lines.join("\n");
+    };
+
+    const parts: string[] = [];
+    const primary = contacts.length ? contacts : brandContacts;
+    if (primary.length) parts.push(primary.map(cardFor).join("\n\n"));
+    else if (brands.length) parts.push(`${brands[0].name} is in the CRM but has no contacts on file yet — open it in the app and hit Refresh contacts.`);
+    if (agents.length) {
+      parts.push("Acting agents:\n" + agents.map((a: any) =>
+        `• ${a.name} — acts for ${a.brands.slice(0, 4).join(", ")}${a.brands.length > 4 ? ` +${a.brands.length - 4} more` : ""}`).join("\n"));
+    }
+    if (parts.length === 0) return false; // nothing found — let ChatBGP take it
+
+    await sendReply(parts.join("\n\n"));
+    console.log(`[whatsapp-lookup] answered "${text.slice(0, 60)}" for ${resolved.userName || fromNumber} (${primary.length} contact(s), ${agents.length} agent(s))`);
+    return true;
+  } catch (err: any) {
+    console.error("[whatsapp-lookup] failed:", err?.message);
+    return false; // never block the normal path on an error
+  }
+}
+
 async function runChatBgpWhatsAppReply(
   messageBody: string,
   fromNumber: string,
@@ -504,7 +640,24 @@ export function setupWhatsAppRoutes(app: Express) {
               // "[Media]" — the latter is filtered out of ChatBGP history, so
               // a brochure/file event would otherwise vanish and the agent
               // loses continuity on follow-up messages.
+              // Shared contact cards (msg.type === "contacts") used to fall
+              // through as the bare word "contacts" — ChatBGP saw nothing to
+              // act on (Woody, 2026-08-25). Parse the vCard payload into text
+              // with a filing instruction so the card lands in the CRM.
+              const sharedContacts: any[] | null = Array.isArray(msg.contacts) && msg.contacts.length ? msg.contacts : null;
+              const sharedContactsBody = sharedContacts
+                ? `[Shared WhatsApp contact card${sharedContacts.length > 1 ? "s" : ""}] ` +
+                  sharedContacts.slice(0, 5).map((cc: any) => {
+                    const nm = cc?.name?.formatted_name || [cc?.name?.first_name, cc?.name?.last_name].filter(Boolean).join(" ") || "Unknown";
+                    const phones = (cc?.phones || []).map((p: any) => p.phone).filter(Boolean).join(", ");
+                    const emails = (cc?.emails || []).map((e: any) => e.email).filter(Boolean).join(", ");
+                    const org = cc?.org?.company;
+                    return `${nm}${org ? ` (${org})` : ""}${phones ? ` — ${phones}` : ""}${emails ? ` — ${emails}` : ""}`;
+                  }).join(" | ") +
+                  ` — file into the CRM: create or update the contact, attach it to the matching company if the name fits one, then confirm exactly what was saved.`
+                : null;
               const messageBody = msg.text?.body
+                || sharedContactsBody
                 || (msg.document ? `[Sent file: ${msg.document.filename || "document"}]${mediaCaption ? ` — "${mediaCaption}"` : ""}` : null)
                 || (msg.image ? `[Sent an image]${mediaCaption ? ` — "${mediaCaption}"` : ""}` : null)
                 || msg.type
@@ -716,6 +869,15 @@ export function setupWhatsAppRoutes(app: Express) {
                   ? await detectAndGenerateDocument(messageBody, fromNumber, config)
                   : false;
                 if (docHandled) continue;
+
+                // Instant contact card for staff lookup texts — no-match
+                // falls straight through to ChatBGP.
+                const lookedUp = await tryWhatsAppContactLookup(
+                  messageBody,
+                  fromNumber,
+                  (text) => sendAndStoreReply(text, fromNumber, conversation.id, contactName, config),
+                ).catch((err: any) => { console.error("[whatsapp-lookup] top-level:", err?.message); return false; });
+                if (lookedUp) continue;
 
                 runChatBgpWhatsAppReply(messageBody, fromNumber, contactName, conversation.id, config).catch(
                   (err: any) => console.error("[whatsapp-ai] Top-level error:", err?.message),

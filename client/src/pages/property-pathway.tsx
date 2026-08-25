@@ -5021,7 +5021,29 @@ function PlanningDialog({ apps, open, onClose }: { apps: any[]; open: boolean; o
         <DialogHeader>
           <DialogTitle>Planning applications ({apps.length})</DialogTitle>
         </DialogHeader>
-        <div className="overflow-y-auto -mx-6 px-6">
+        {/* Phone: one card per application (§7) — the table never ships below md. */}
+        <div className="md:hidden overflow-y-auto -mx-6 px-6 divide-y">
+          {apps.map((p, i) => (
+            <div key={i} className="py-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs font-medium break-all min-w-0">{p.reference}</p>
+                {p.status && <span className={`shrink-0 whitespace-nowrap text-[9px] px-1 py-px rounded uppercase tracking-wide ${statusTone(p.status)}`}>{p.status}</span>}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10) || "No date"}
+                {p.lpa ? ` · ${p.lpa}` : ""}
+              </p>
+              {p.description && <p className="text-xs text-foreground/90 mt-1">{p.description}</p>}
+              {p.type && <p className="text-[10px] text-muted-foreground mt-0.5">{p.type}</p>}
+              {p.documentUrl && (
+                <a href={p.documentUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-1 text-[11px] mt-1">
+                  <ExternalLink className="w-3 h-3" /> View on LPA portal
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="hidden md:block overflow-y-auto -mx-6 px-6">
           <table className="w-full text-[12px]">
             <thead className="sticky top-0 bg-background border-b">
               <tr className="text-left text-muted-foreground text-[10px] uppercase tracking-wide">
@@ -5505,7 +5527,62 @@ function TenancyScheduleEditor({ runId, stage1, onReload }: { runId: string; sta
         One row per occupier. Totals feed the Stage 7 model and the deck's headline KPIs.
         Lease dates accept ISO (<code>2025-01-31</code>) or free text.
       </p>
-      <div className="overflow-x-auto border rounded">
+      {/* Phone: one card per occupier (§7/§11) — the input grid never ships below md.
+          Same per-row bindings as the table, stacked with micro-labels. */}
+      <div className="md:hidden space-y-2">
+        {rows.map((r, i) => (
+          <div key={r.id} className="rounded-2xl bg-card border border-border p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium truncate">
+                {r.name?.trim() || `Occupier ${i + 1}`}{r.unit?.trim() ? ` · ${r.unit.trim()}` : ""}
+              </p>
+              <button type="button" className="text-[10px] text-destructive hover:underline shrink-0" onClick={() => removeRow(r.id)}>Remove</button>
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 block">Occupier</label>
+              <Input value={r.name} onChange={(e) => updateRow(r.id, { name: e.target.value })} placeholder="e.g. Showcase Cinemas" />
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 block">Unit</label>
+              <Input value={r.unit || ""} onChange={(e) => updateRow(r.id, { unit: e.target.value })} placeholder="Unit / floor" />
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 block">Area sq ft</label>
+                <Input type="number" value={r.areaSqFt || ""} onChange={(e) => updateRow(r.id, { areaSqFt: e.target.value })} className="text-right font-mono tabular-nums" />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 block">Rent £ pa</label>
+                <Input type="number" value={r.passingRentPA || ""} onChange={(e) => updateRow(r.id, { passingRentPA: e.target.value })} className="text-right font-mono tabular-nums" />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 block">ERV £ pa</label>
+                <Input type="number" value={r.ervPA || ""} onChange={(e) => updateRow(r.id, { ervPA: e.target.value })} className="text-right font-mono tabular-nums" />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 block">Start</label>
+                <Input value={r.leaseStart || ""} onChange={(e) => updateRow(r.id, { leaseStart: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 block">End</label>
+                <Input value={r.leaseEnd || ""} onChange={(e) => updateRow(r.id, { leaseEnd: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 block">Break</label>
+                <Input value={r.breakDate || ""} onChange={(e) => updateRow(r.id, { breakDate: e.target.value })} />
+              </div>
+            </div>
+          </div>
+        ))}
+        <p className="text-xs text-muted-foreground text-right">
+          Totals: <span className="font-mono tabular-nums">{totals.area.toLocaleString()}</span> sq ft
+          {" · "}<span className="font-mono tabular-nums">£{totals.rent.toLocaleString()}</span> rent
+          {" · "}<span className="font-mono tabular-nums">£{totals.erv.toLocaleString()}</span> ERV
+        </p>
+      </div>
+      <div className="hidden md:block overflow-x-auto border rounded">
         <table className="w-full text-xs">
           <thead className="bg-muted/40 text-muted-foreground text-[10px] uppercase">
             <tr>

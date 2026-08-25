@@ -3356,7 +3356,96 @@ export default function Comps() {
             <p className="text-xs text-muted-foreground">Scan all sources to extract new comps from news, team emails and SharePoint files.</p>
           </div>
         ) : (
-          <div className="border rounded-lg overflow-hidden">
+          <>
+          {/* Phone: one card per lead (§7) — the table never ships below md. */}
+          <div className="md:hidden">
+            {selectedIds.size > 1 && (
+              <div className="flex justify-end mb-2">
+                <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-destructive" onClick={() => setBulkDeleteOpen(true)} data-testid="button-leads-bulk-delete-mobile">
+                  <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete All Selected ({selectedIds.size})
+                </Button>
+              </div>
+            )}
+            <div className="border rounded-lg divide-y divide-border overflow-hidden">
+              {leadComps.map(lead => {
+                const sourceColor =
+                  lead.sourceEvidence === "News Feed" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
+                  lead.sourceEvidence === "Team Email" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" :
+                  lead.sourceEvidence === "SharePoint File" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400" :
+                  "bg-muted text-muted-foreground";
+                const link = propertyLinkFor(lead);
+                return (
+                  <div key={lead.id} className={`px-3 py-3 ${selectedIds.has(lead.id) ? "bg-primary/5" : ""}`} data-testid={`lead-card-${lead.id}`}>
+                    <div className="flex items-start gap-2.5">
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={selectedIds.has(lead.id)}
+                        onCheckedChange={(checked) => {
+                          setSelectedIds(prev => {
+                            const next = new Set(prev);
+                            checked ? next.add(lead.id) : next.delete(lead.id);
+                            return next;
+                          });
+                        }}
+                        data-testid={`checkbox-lead-card-${lead.id}`}
+                      />
+                      <div className="min-w-0 flex-1">
+                        {!link.href ? (
+                          <span className="text-sm font-medium block truncate">{lead.name || "Untitled"}</span>
+                        ) : link.external ? (
+                          <a href={link.href} target="_blank" rel="noopener noreferrer" className="text-sm font-medium hover:text-primary hover:underline transition-colors block truncate">
+                            {lead.name || "Untitled"}
+                          </a>
+                        ) : (
+                          <Link href={link.href} className="text-sm font-medium hover:text-primary hover:underline transition-colors block truncate">
+                            {lead.name || "Untitled"}
+                          </Link>
+                        )}
+                        <div className="text-[11px] text-muted-foreground truncate">
+                          {lead.tenant || "—"}{lead.postcode ? ` · ${lead.postcode}` : ""}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-sm font-mono tabular-nums font-semibold">{formatSteppedRent(lead.headlineRent) || "—"}</div>
+                        {lead.zoneARate && (
+                          <div className="text-[11px] font-mono tabular-nums text-blue-600 font-semibold">ZA {formatGBP(parseNum(lead.zoneARate))}</div>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1 pl-7 truncate">
+                      {[lead.areaLocation, lead.useClass, lead.completionDate].filter(Boolean).join(" · ") || "—"}
+                    </p>
+                    <div className="flex items-center justify-between gap-2 mt-1 pl-7">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap ${sourceColor}`}>
+                        {lead.sourceEvidence || "AI"}
+                      </span>
+                      <div className="flex items-center">
+                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs" onClick={() => setConfirmLead(lead)} data-testid={`button-review-card-${lead.id}`}>
+                          Review
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 px-2.5 text-xs text-green-600"
+                          onClick={() => {
+                            updateMutation.mutate({ id: lead.id, field: "verified", value: true });
+                            toast({ title: "Lead verified", description: `${lead.name || "Lead"} moved to comps` });
+                          }}
+                          data-testid={`button-verify-card-${lead.id}`}
+                        >
+                          Verify
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-destructive" onClick={() => deleteMutation.mutate(lead.id)} data-testid={`button-discard-card-${lead.id}`}>
+                          Discard
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="hidden md:block border rounded-lg overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-xs" style={{ tableLayout: "fixed" }}>
                 <colgroup>
@@ -3496,6 +3585,7 @@ export default function Comps() {
               </table>
             </div>
           </div>
+          </>
         )}
       </TabsContent>
 

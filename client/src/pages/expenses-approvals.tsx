@@ -50,9 +50,12 @@ interface PendingExpense {
 }
 
 const fmt = (p: number) => `£${(p / 100).toFixed(2)}`;
-const fmtDate = (d: string | null) => d
-  ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
-  : "—";
+const fmtDate = (d: string | null) => {
+  if (!d) return "—";
+  const dt = new Date(d);
+  const sameYear = dt.getFullYear() === new Date().getFullYear();
+  return dt.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" as const }) });
+};
 
 // Human-readable labels for each flag reason; keep aligned with the
 // FlagReason union in server/expense-approval.ts.
@@ -226,17 +229,17 @@ export default function ExpensesApprovals() {
   const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
 
   return (
-    <div className="container mx-auto p-6 max-w-6xl space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="container mx-auto p-4 md:p-6 max-w-6xl space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Expense Approvals</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Expense Approvals</h1>
           <p className="text-sm text-muted-foreground">
             {rows.length} pending · {rows.filter(r => r.flaggedForReview).length} flagged for review
           </p>
         </div>
         <div className="flex items-center gap-3">
           <CoverToggle />
-          <label className="flex items-center gap-2 text-sm cursor-pointer select-none" data-testid="label-select-all">
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none whitespace-nowrap" data-testid="label-select-all">
             <Checkbox
               checked={allSelected}
               onCheckedChange={(v) => setSelected(v ? new Set(allIds) : new Set())}
@@ -461,7 +464,91 @@ function ExpenseTable({
   showFlags?: boolean;
 }) {
   return (
-    <div className="overflow-x-auto">
+    <>
+    {/* Phone: one card per expense (§7) — the table never ships below md. */}
+    <div className="md:hidden divide-y border-t border-border">
+      {rows.map((r) => (
+        <div key={r.id} className="px-4 py-3 space-y-1.5">
+          <div className="flex items-start gap-2.5">
+            <Checkbox
+              className="mt-0.5"
+              checked={selected.has(r.id)}
+              onCheckedChange={() => onToggle(r.id)}
+              data-testid={`checkbox-expense-card-${r.id}`}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="font-medium text-sm">{r.merchant || "—"}</span>
+                <StageChip stage={r.approvalStage} />
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {fmtDate(r.transactionDate)} · {r.category || "no category"}
+                {r.vatPence != null && <> · VAT {fmt(r.vatPence)}{r.vatReclaimable === false ? " (cost)" : ""}</>}
+              </div>
+            </div>
+            <span className="font-mono tabular-nums text-sm shrink-0">{fmt(r.amountPence)}</span>
+          </div>
+          {(r.businessPurpose || r.attendees || (r.attendeeContacts && r.attendeeContacts.length > 0)) && (
+            <div className="text-xs pl-7">
+              {r.businessPurpose && <ExpandableText text={r.businessPurpose} />}
+              {(r.attendeeContacts && r.attendeeContacts.length > 0) ? (
+                <ExpandableText className="text-muted-foreground" text={`w/ ${r.attendeeContacts.map(c => c.name).filter(Boolean).join(", ")}`} />
+              ) : r.attendees ? (
+                <ExpandableText className="text-muted-foreground" text={`w/ ${r.attendees}`} />
+              ) : null}
+            </div>
+          )}
+          {(r.allocatedToName || (r.splitCount ?? 0) > 0 || (showFlags && r.flagReasons && r.flagReasons.length > 0)) && (
+            <div className="flex flex-wrap gap-1 pl-7">
+              {r.allocatedToName && (
+                <Badge variant="outline" className="text-[9px] py-0 px-1.5 whitespace-nowrap">for {r.allocatedToName}</Badge>
+              )}
+              {(r.splitCount ?? 0) > 0 && (
+                <Badge variant="outline" className="text-[9px] py-0 px-1.5 whitespace-nowrap">{r.splitCount}-way split</Badge>
+              )}
+              {showFlags && r.flagReasons?.map((reason) => (
+                <Badge key={reason} variant="outline" className="text-[9px] py-0 px-1.5 text-amber-700 border-amber-300 dark:text-amber-400 dark:border-amber-700">
+                  {FLAG_LABELS[reason] || reason}
+                </Badge>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center justify-between pl-7">
+            {r.receiptFilename ? (
+              <button
+                type="button"
+                onClick={() => onViewReceipt(r)}
+                className="text-[11px] text-muted-foreground hover:text-foreground hover:underline flex items-center gap-1"
+                data-testid={`button-view-receipt-card-${r.id}`}
+              >
+                <Receipt className="w-3 h-3" /> View receipt
+              </button>
+            ) : (
+              <span className="text-[11px] text-amber-600 flex items-center gap-1">
+                <Receipt className="w-3 h-3" /> No receipt
+              </span>
+            )}
+            <div className="flex items-center">
+              <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs" onClick={() => onEdit(r)} data-testid={`button-edit-card-${r.id}`}>
+                Edit
+              </Button>
+              <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-emerald-700 dark:text-emerald-400" onClick={() => onApprove(r.id)} disabled={isApproving} data-testid={`button-approve-card-${r.id}`}>
+                Approve
+              </Button>
+              <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-red-600" onClick={() => onReject(r)} data-testid={`button-reject-card-${r.id}`}>
+                Reject
+              </Button>
+              {r.amountPence === 0 && (
+                <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-red-600" onClick={() => onDelete(r)} data-testid={`button-delete-card-${r.id}`}>
+                  Delete
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+    <div className="hidden md:block overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-muted/20">
           <tr className="text-left">
@@ -488,15 +575,13 @@ function ExpenseTable({
               <td className="px-3 py-2">
                 <div className="font-medium flex items-center gap-1.5">
                   {r.merchant || "—"}
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${r.approvalStage === 2 ? "bg-violet-100 text-violet-700" : "bg-blue-100 text-blue-700"}`}>
-                    {r.approvalStage === 2 ? "Sign-off" : "Info check"}
-                  </span>
+                  <StageChip stage={r.approvalStage} />
                 </div>
                 {r.receiptFilename ? (
                   <button
                     type="button"
                     onClick={() => onViewReceipt(r)}
-                    className="text-[10px] text-emerald-600 hover:text-emerald-700 hover:underline flex items-center gap-0.5 mt-0.5"
+                    className="text-[10px] text-muted-foreground hover:text-foreground hover:underline flex items-center gap-0.5 mt-0.5"
                     data-testid={`button-view-receipt-${r.id}`}
                   >
                     <Receipt className="w-2.5 h-2.5" /> View receipt
@@ -517,10 +602,10 @@ function ExpenseTable({
                     </span>
                   )}
                   {r.allocatedToName && (
-                    <span className="text-[10px] px-1 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">for {r.allocatedToName}</span>
+                    <Badge variant="outline" className="text-[9px] py-0 px-1.5 whitespace-nowrap">for {r.allocatedToName}</Badge>
                   )}
                   {(r.splitCount ?? 0) > 0 && (
-                    <span className="text-[10px] px-1 rounded bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">{r.splitCount}-way split</span>
+                    <Badge variant="outline" className="text-[9px] py-0 px-1.5 whitespace-nowrap">{r.splitCount}-way split</Badge>
                   )}
                 </div>
               </td>
@@ -591,6 +676,20 @@ function ExpenseTable({
         </tbody>
       </table>
     </div>
+    </>
+  );
+}
+
+// Approval-stage state chip — outline capsule with a stage dot, never a
+// pastel fill, never wraps (the old violet fill broke onto two lines on
+// the phone).
+function StageChip({ stage }: { stage: number | null }) {
+  const finalStage = stage === 2;
+  return (
+    <span className="inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full border border-border text-muted-foreground whitespace-nowrap leading-none">
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${finalStage ? "bg-violet-500" : "bg-blue-500"}`} />
+      {finalStage ? "Sign-off" : "Info check"}
+    </span>
   );
 }
 

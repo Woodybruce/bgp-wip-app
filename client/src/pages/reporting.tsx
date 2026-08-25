@@ -472,7 +472,20 @@ export default function Reporting() {
             {boardLoading ? (
               <Skeleton className="h-64" />
             ) : (boardReport?.topDeals || []).length > 0 ? (
-              <div className="overflow-auto max-h-[280px]">
+              <>
+              {/* Phone: one row per deal (docs/DESIGN.md §7) — the table below is desktop-only. */}
+              <div className="md:hidden divide-y divide-border max-h-[280px] overflow-y-auto">
+                {(boardReport?.topDeals || []).slice(0, 10).map((deal, i) => (
+                  <div key={i} className="py-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 text-sm font-medium truncate" title={deal.name}>{deal.name}</span>
+                      <span className="shrink-0 text-sm font-mono tabular-nums font-medium">{formatCurrency(deal.fee)}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{deal.team}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block overflow-auto max-h-[280px]">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-muted-foreground">
@@ -492,6 +505,7 @@ export default function Reporting() {
                   </tbody>
                 </table>
               </div>
+              </>
             ) : (
               <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">No deals data available</div>
             )}

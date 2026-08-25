@@ -5293,7 +5293,35 @@ function LegalDDTab() {
                       <Badge variant="outline" className="text-[10px]">{ddReconciliation.properties.length} rows</Badge>
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="overflow-x-auto">
+                  <CardContent>
+                    {/* Phone: one card per property (§7) — the table never ships below md. */}
+                    <div className="md:hidden divide-y divide-border">
+                      {ddReconciliation.properties.map((p: any, i: number) => (
+                        <div key={i} className="py-2.5 first:pt-0 last:pb-0">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-sm font-medium min-w-0">{p.address || p.fileName}</span>
+                            <span className="font-mono tabular-nums text-xs shrink-0">
+                              {p.passingRent ? `£${Number(p.passingRent).toLocaleString()}` : "—"}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            {p.tenant || "—"}
+                            {p.rateableValue ? <> · RV <span className="font-mono tabular-nums">£{Number(p.rateableValue).toLocaleString()}</span></> : null}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                            {p.tenantCompanyStatus && (
+                              <Badge variant="outline" className={`text-[10px] whitespace-nowrap ${p.tenantCompanyStatus === "active" ? "text-emerald-600" : "text-red-600"}`}>
+                                {p.tenantCompanyStatus}
+                              </Badge>
+                            )}
+                            {p.fsaRating && <Badge variant="outline" className="text-[10px] whitespace-nowrap">FHR {p.fsaRating}</Badge>}
+                            {p.landlordMismatch && <Badge variant="outline" className="text-[10px] whitespace-nowrap bg-red-50 text-red-700 border-red-200">LL mismatch</Badge>}
+                            {p.titleNumber && <span className="font-mono text-[10px] text-muted-foreground">{p.titleNumber}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="hidden md:block overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="border-b">
@@ -5324,6 +5352,7 @@ function LegalDDTab() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   </CardContent>
                 </Card>
               )}

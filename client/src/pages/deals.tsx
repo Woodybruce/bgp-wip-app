@@ -1220,7 +1220,7 @@ function DatesCell({
             <span className="text-xs font-medium">Target {target}</span>
           ) : (
             <span className="text-[11px] text-muted-foreground italic flex items-center gap-1">
-              <Plus className="w-3 h-3" /> Target date
+              <Plus className="w-3 h-3" /> Target month
             </span>
           )}
         </button>
@@ -1232,12 +1232,16 @@ function DatesCell({
           <span className="text-xs">{added || "—"}</span>
         </div>
         <div className="grid grid-cols-[110px_1fr] items-center gap-2">
-          <Label className="text-xs text-muted-foreground">Target Date</Label>
-          <InlineDateInput
-            className="text-xs border rounded px-2 py-1 cursor-pointer"
-            value={deal.targetDate}
-            onSave={(v) => onSave("targetDate", v)}
-            testId={`dates-target-input-${deal.id}`}
+          <Label className="text-xs text-muted-foreground">Target Month</Label>
+          {/* Month picker, matching the WIP report — targets are forecast by
+              month, so the deal stores the 1st of the chosen month. */}
+          <input
+            type="month"
+            key={`dates-target-${deal.id}-${deal.targetDate ?? ""}`}
+            defaultValue={deal.targetDate ? toDateInputValue(deal.targetDate).slice(0, 7) : ""}
+            className="text-xs border rounded px-2 py-1 cursor-pointer w-[150px]"
+            onChange={(e) => { const v = e.target.value; if (v) onSave("targetDate", `${v}-01`); }}
+            data-testid={`dates-target-input-${deal.id}`}
           />
         </div>
         <p className="text-[10px] text-muted-foreground leading-tight pt-1 border-t">
@@ -5303,7 +5307,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // /deals/list?status=NEG&propertyId=… lands here pre-filtered.
   const [activeGroup, setActiveGroup] = useState(() => legacyToCode(urlParams.get("status")) || savedListFilters?.activeGroup || "all");
   const [propertyIdFilter, setPropertyIdFilter] = useState<string | null>(urlParams.get("propertyId"));
-  const [createOpen, setCreateOpen] = useState(false);
+  // ?new=1 deep link — the WIP report's New Deal button lands here with the
+  // create dialog already open.
+  const [createOpen, setCreateOpen] = useState(() => urlParams.get("new") === "1");
   const [dealReportOpen, setDealReportOpen] = useState(false);
   const [rentAnalysisRunning, setRentAnalysisRunning] = useState(false);
   const [deleteListDeal, setDeleteListDeal] = useState<{ id: string; name: string } | null>(null);

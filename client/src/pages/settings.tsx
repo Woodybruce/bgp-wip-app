@@ -43,18 +43,6 @@ const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
   Landsec: ["Landsec"],
 };
 
-const teamColors: Record<string, string> = {
-  Investment: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  "London F&B": "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300",
-  "London Retail": "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
-  "Lease Advisory": "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
-  "Office / Corporate": "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300",
-  "National Leasing": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-  "Tenant Rep": "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
-  Development: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  Landsec: "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300",
-};
-
 const teamDotColors: Record<string, string> = {
   Investment: "bg-blue-500",
   "London F&B": "bg-rose-500",
@@ -187,9 +175,8 @@ export default function SettingsPage() {
           >
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
-                <Badge variant="secondary" className={`text-[10px] whitespace-nowrap ${teamColors[t.name] || ""}`}>
-                  {t.name}
-                </Badge>
+                <span className={`w-2 h-2 rounded-full shrink-0 ${teamDotColors[t.name] || "bg-muted-foreground"}`} />
+                <span className="text-xs font-medium whitespace-nowrap truncate">{t.name}</span>
                 <span className="text-lg font-bold font-mono tabular-nums ml-auto">{t.count}</span>
               </div>
             </CardContent>
@@ -899,7 +886,26 @@ function EmailIntelligenceSection() {
             {engagementLoading ? (
               <div className="space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-8 w-full" />)}</div>
             ) : engagementData?.scores.length ? (
-              <div className="max-h-96 overflow-y-auto">
+              <>
+              {/* Phone: one row per contact (docs/DESIGN.md §7) — the table below is desktop-only. */}
+              <div className="md:hidden max-h-96 overflow-y-auto divide-y divide-border">
+                {engagementData.scores.slice(0, 30).map(s => (
+                  <div key={s.contactId} className="py-2.5" data-testid={`engagement-row-${s.contactId}-card`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 text-sm font-medium truncate">{s.contactName}</span>
+                      <Badge variant={s.engagementScore > 50 ? "default" : "secondary"} className="shrink-0 text-xs">{s.engagementScore}</Badge>
+                    </div>
+                    {s.companyName && <p className="text-[11px] text-muted-foreground truncate mt-0.5">{s.companyName}</p>}
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{trendIcon(s.trend)} {s.trend}</Badge>
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{s.emailsIn + s.emailsOut} emails</Badge>
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{s.meetings} meetings</Badge>
+                      {s.bgpAgents.length > 0 && <span className="ml-auto text-[10px] text-muted-foreground truncate">{s.bgpAgents.join(", ")}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block max-h-96 overflow-y-auto overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-background">
                     <tr className="text-xs text-muted-foreground border-b">
@@ -930,6 +936,7 @@ function EmailIntelligenceSection() {
                   </tbody>
                 </table>
               </div>
+              </>
             ) : <div className="text-sm text-muted-foreground text-center py-4">No engagement data yet</div>}
           </div>
         )}
@@ -939,7 +946,29 @@ function EmailIntelligenceSection() {
             {leaderboardLoading ? (
               <div className="space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-8 w-full" />)}</div>
             ) : leaderboardData?.leaderboard.length ? (
-              <div className="max-h-96 overflow-y-auto">
+              <>
+              {/* Phone: one row per agent (docs/DESIGN.md §7) — the table below is desktop-only. */}
+              <div className="md:hidden max-h-96 overflow-y-auto divide-y divide-border">
+                {leaderboardData.leaderboard.map((a, i) => (
+                  <div key={a.agent} className="py-2.5" data-testid={`leaderboard-row-${a.agent}-card`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 text-sm font-medium capitalize truncate">
+                        {i < 3 && <span className="mr-1">{["🥇", "🥈", "🥉"][i]}</span>}
+                        {a.agent}
+                      </span>
+                      <span className="shrink-0 text-sm font-mono tabular-nums font-medium">{a.totalActivity}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{a.emailsSent} sent</Badge>
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{a.emailsReceived} received</Badge>
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{a.meetingsHeld} meetings</Badge>
+                      {a.meetingsUpcoming > 0 && <Badge variant="outline" className="text-[10px] whitespace-nowrap">{a.meetingsUpcoming} upcoming</Badge>}
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{a.uniqueContacts} contacts</Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block max-h-96 overflow-y-auto overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-background">
                     <tr className="text-xs text-muted-foreground border-b">
@@ -972,6 +1001,7 @@ function EmailIntelligenceSection() {
                   </tbody>
                 </table>
               </div>
+              </>
             ) : <div className="text-sm text-muted-foreground text-center py-4">No activity data yet</div>}
           </div>
         )}

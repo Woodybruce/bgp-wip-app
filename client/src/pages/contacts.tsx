@@ -2224,6 +2224,62 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                 </div>
               )}
               <ScrollArea className="max-h-[50vh]">
+                {/* Phone: one card per suggestion (§7) — the table never ships below md. */}
+                <div className="md:hidden divide-y divide-border">
+                  {suggestions.map((s: any) => {
+                    const isAdded = addedEmails.has(s.email);
+                    return (
+                      <div key={s.email} className={`py-3 ${isAdded ? "opacity-50" : ""}`} data-testid={`card-suggestion-${s.email}`}>
+                        <div className="flex items-start gap-2.5">
+                          <Checkbox
+                            className="mt-0.5"
+                            checked={selectedSuggestions.has(s.email)}
+                            disabled={isAdded}
+                            onCheckedChange={(checked) => {
+                              const next = new Set(selectedSuggestions);
+                              if (checked) next.add(s.email); else next.delete(s.email);
+                              setSelectedSuggestions(next);
+                            }}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-sm truncate" data-testid={`text-suggestion-card-name-${s.email}`}>{s.name}</div>
+                            <p className="text-[11px] text-muted-foreground truncate">{s.email}</p>
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {s.domain && <Badge variant="outline" className="text-[10px] whitespace-nowrap">{s.domain}</Badge>}
+                              <Badge variant="secondary" className="text-[10px] whitespace-nowrap">{s.frequency} emails</Badge>
+                              {s.bgpUsers?.slice(0, 3).map((u: string) => (
+                                <Badge key={u} variant="outline" className="text-[10px] capitalize whitespace-nowrap">{u}</Badge>
+                              ))}
+                              {s.bgpUsers?.length > 3 && (
+                                <Badge variant="outline" className="text-[10px] whitespace-nowrap">+{s.bgpUsers.length - 3}</Badge>
+                              )}
+                            </div>
+                          </div>
+                          <div className="shrink-0">
+                            {isAdded ? (
+                              <Badge variant="default" className="text-[10px] bg-green-600">
+                                <CheckCircle2 className="w-3 h-3 mr-1" />Added
+                              </Badge>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={() => addContactMutation.mutate(s)}
+                                disabled={addContactMutation.isPending}
+                                data-testid={`button-add-suggestion-card-${s.email}`}
+                              >
+                                <UserPlus className="w-3.5 h-3.5 mr-1" />
+                                Add
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="hidden md:block overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
@@ -2314,6 +2370,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                     })}
                   </TableBody>
                 </Table>
+                </div>
               </ScrollArea>
               <div className="text-xs text-muted-foreground text-center">
                 Showing top {suggestions.length} contacts with 2+ email interactions across all BGP mailboxes

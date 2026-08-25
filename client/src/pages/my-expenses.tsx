@@ -69,7 +69,12 @@ interface MyData {
 }
 
 const fmt = (p: number) => `£${(p / 100).toFixed(2)}`;
-const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—";
+const fmtDate = (d: string | null) => {
+  if (!d) return "—";
+  const dt = new Date(d);
+  const sameYear = dt.getFullYear() === new Date().getFullYear();
+  return dt.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" as const }) });
+};
 
 function StatusBadge({ status, isPersonal }: { status: string; isPersonal: boolean | null }) {
   if (isPersonal) return <Badge variant="outline" className="text-amber-600 border-amber-600/30">Personal</Badge>;
@@ -531,7 +536,140 @@ export default function MyExpenses() {
               No expenses with that status. <button onClick={() => setStatusFilter("all")} className="text-primary hover:underline">Show all</button>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* Phone: one card per expense (§7) — the table never ships below md. */}
+            <div className="md:hidden divide-y border-t border-border">
+              {filteredExpenses.map((e) => (
+                <div key={e.id} className="px-4 py-3 space-y-1.5">
+                  <div className="flex items-start gap-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-medium text-sm">{e.merchant || "—"}</span>
+                        <StatusBadge status={e.status} isPersonal={e.isPersonal} />
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {fmtDate(e.transactionDate)} · {e.category || "no category"}
+                      </div>
+                    </div>
+                    <span className="font-mono tabular-nums text-sm shrink-0">{fmt(e.amountPence)}</span>
+                  </div>
+                  {e.calendarEventId && e.businessPurpose && (
+                    <div className="flex items-start gap-1 text-[11px] text-emerald-600">
+                      <CalendarClock className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span>
+                        matched: {e.businessPurpose}
+                        {e.attendees ? <span className="text-muted-foreground"> · {e.attendees}</span> : null}
+                      </span>
+                    </div>
+                  )}
+                  {e.status === "rejected" && e.rejectedReason && (
+                    <div className="flex items-start gap-1 text-[11px] text-red-600">
+                      <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span>Rejected: {e.rejectedReason}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center flex-wrap -ml-2.5">
+                    {!e.receiptFilename && !e.isPersonal && e.status !== "posted_to_xero" && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2.5 text-xs"
+                        disabled={uploadingFor === e.id}
+                        onClick={() => {
+                          if (fileInputRef.current) {
+                            fileInputRef.current.dataset.expenseId = e.id;
+                            fileInputRef.current.click();
+                          }
+                        }}
+                        data-testid={`button-upload-receipt-card-${e.id}`}
+                      >
+                        {uploadingFor === e.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />}
+                        Receipt
+                      </Button>
+                    )}
+                    {e.status === "pending_receipt" && !e.isPersonal && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2.5 text-xs text-muted-foreground"
+                        disabled={noReceiptMutation.isPending && noReceiptMutation.variables === e.id}
+                        onClick={() => noReceiptMutation.mutate(e.id)}
+                        data-testid={`button-no-receipt-card-${e.id}`}
+                      >
+                        {noReceiptMutation.isPending && noReceiptMutation.variables === e.id
+                          ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                          : <XIcon className="w-3 h-3 mr-1" />}
+                        No receipt
+                      </Button>
+                    )}
+                    {e.receiptFilename && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2.5 text-xs text-emerald-700 dark:text-emerald-400"
+                        onClick={() => setViewingReceipt(e)}
+                        data-testid={`button-view-receipt-card-${e.id}`}
+                      >
+                        <Receipt className="w-3 h-3 mr-1" /> Receipt
+                      </Button>
+                    )}
+                    {e.status !== "posted_to_xero" && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2.5 text-xs"
+                        onClick={() => setEditing(e)}
+                        data-testid={`button-edit-expense-card-${e.id}`}
+                      >
+                        <Pencil className="w-3 h-3 mr-1" /> Edit
+                      </Button>
+                    )}
+                    {e.status === "rejected" && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2.5 text-xs text-primary"
+                        disabled={resubmitMutation.isPending && resubmitMutation.variables === e.id}
+                        onClick={() => resubmitMutation.mutate(e.id)}
+                        data-testid={`button-resubmit-card-${e.id}`}
+                      >
+                        {resubmitMutation.isPending && resubmitMutation.variables === e.id
+                          ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                          : <RefreshCw className="w-3 h-3 mr-1" />}
+                        Resubmit
+                      </Button>
+                    )}
+                    {e.status === "receipt_uploaded" && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2.5 text-xs text-primary"
+                        disabled={submitForApprovalMutation.isPending && submitForApprovalMutation.variables === e.id}
+                        onClick={() => submitForApprovalMutation.mutate(e.id)}
+                        data-testid={`button-submit-expense-card-${e.id}`}
+                      >
+                        {submitForApprovalMutation.isPending && submitForApprovalMutation.variables === e.id
+                          ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                          : <Send className="w-3 h-3 mr-1" />}
+                        Submit
+                      </Button>
+                    )}
+                    {!e.isPersonal && e.status !== "posted_to_xero" && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2.5 text-xs text-amber-600"
+                        onClick={() => markPersonalMutation.mutate(e.id)}
+                        data-testid={`button-personal-card-${e.id}`}
+                      >
+                        Personal
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/30">
                   <tr className="text-left">
@@ -672,6 +810,7 @@ export default function MyExpenses() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </CardContent>
       </Card>

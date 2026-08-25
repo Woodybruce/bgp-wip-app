@@ -164,13 +164,15 @@ export function registerPlaMattersRoutes(app: Express): void {
       }
       const where = conds.length ? and(...conds) : undefined;
 
+      // Join the property name so the UI never has to show a raw id.
       const rows = await db
-        .select()
+        .select({ matter: plaMatters, propertyName: crmProperties.name })
         .from(plaMatters)
+        .leftJoin(crmProperties, eq(plaMatters.propertyId, crmProperties.id))
         .where(where as any)
         .orderBy(desc(plaMatters.updatedAt))
         .limit(500);
-      return res.json(rows);
+      return res.json(rows.map(r => ({ ...r.matter, propertyName: r.propertyName })));
     } catch (err: any) {
       console.error("[pla-matters] list error:", err);
       return res.status(500).json({ error: err?.message || "list failed" });
@@ -183,12 +185,13 @@ export function registerPlaMattersRoutes(app: Express): void {
       const id = String(req.params.id);
       const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, id));
       if (!matter) return res.status(404).json({ error: "matter not found" });
+      const [prop] = await db.select({ name: crmProperties.name }).from(crmProperties).where(eq(crmProperties.id, matter.propertyId));
       const [comps, events, workbooks] = await Promise.all([
         db.select().from(plaMatterComps).where(eq(plaMatterComps.matterId, id)),
         db.select().from(plaMatterEvents).where(eq(plaMatterEvents.matterId, id)).orderBy(plaMatterEvents.eventDate),
         db.select().from(plaMatterWorkbooks).where(eq(plaMatterWorkbooks.matterId, id)).orderBy(desc(plaMatterWorkbooks.generatedAt)),
       ]);
-      return res.json({ matter, comps, events, workbooks });
+      return res.json({ matter: { ...matter, propertyName: prop?.name ?? null }, comps, events, workbooks });
     } catch (err: any) {
       console.error("[pla-matters] get error:", err);
       return res.status(500).json({ error: err?.message || "get failed" });
