@@ -13,13 +13,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink } from "lucide-react";
+import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe } from "lucide-react";
 import {
   CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard, BrandInstagramCard,
 } from "@/components/brand-profile-panel";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
+import { ActivitySummary } from "@/components/activity-summary";
 
 export function MobileBrandView({ companyId }: { companyId: string }) {
   const { data, isLoading } = useQuery<any>({
@@ -156,6 +157,15 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         {c.industry && <Badge variant="outline" className="text-[11px]">{c.industry}</Badge>}
         {c.store_count != null && <Badge variant="outline" className="text-[11px] tabular-nums">{c.store_count} stores</Badge>}
         {(c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
+        {(c.domain_url || c.domain) && (
+          <a
+            href={(c.domain_url || `https://${c.domain}`).startsWith("http") ? (c.domain_url || `https://${c.domain}`) : `https://${c.domain_url || c.domain}`}
+            target="_blank" rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground"
+          >
+            <Globe className="w-3 h-3" /> {String(c.domain || c.domain_url).replace(/^https?:\/\//, "").replace(/\/$/, "")}
+          </a>
+        )}
       </div>
       {c.description && <p className="text-sm leading-snug text-foreground/85">{c.description}</p>}
 
@@ -183,6 +193,40 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         contacts={data.contacts || []}
         pendingSenders={data.pendingContactSuggestions || []}
       />
+
+      {/* BGP engagement — how much history the firm has with this brand
+          (Woody, 2026-08-25: "missing the summary of engagement"). */}
+      {data.bgpSummary && (
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+              <ClipboardList className="w-3.5 h-3.5" /> BGP engagement
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 space-y-2">
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Deals</div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.totalDeals}{data.bgpSummary.completedDeals ? <span className="text-muted-foreground text-[11px]"> · {data.bgpSummary.completedDeals} done</span> : null}</div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Touches</div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.interactionsTotal}<span className="text-muted-foreground text-[11px]"> · {data.bgpSummary.interactionsLast90d} in 90d</span></div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Last touch</div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.lastInteractionAt ? new Date(data.bgpSummary.lastInteractionAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}</div>
+              </div>
+            </div>
+            {(data.bgpSummary.team || []).length > 0 && (
+              <div className="text-[11px] text-muted-foreground truncate">BGP side: {data.bgpSummary.team.slice(0, 4).join(", ")}</div>
+            )}
+            <div className="max-h-[300px] overflow-y-auto pr-1">
+              <ActivitySummary companyId={companyId} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
       </div>
 
       <div className={sec("compliance")}>
@@ -212,17 +256,6 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
 
       <div className={sec("intel")}>
-      {/* Menu / best sellers (brands only) */}
-      {!isLandlord && (
-        <MenuIntelCard
-          companyId={companyId}
-          companyName={c.name}
-          industry={c.industry}
-          companyType={c.company_type}
-          intel={c.menu_intel}
-          refreshedAt={c.menu_intel_at}
-        />
-      )}
 
       {/* Tracker comments */}
       {trackerComments.length > 0 && (
@@ -315,6 +348,18 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         </Card>
       )}
 
+
+      {/* Menu / best sellers (brands only) */}
+      {!isLandlord && (
+        <MenuIntelCard
+          companyId={companyId}
+          companyName={c.name}
+          industry={c.industry}
+          companyType={c.company_type}
+          intel={c.menu_intel}
+          refreshedAt={c.menu_intel_at}
+        />
+      )}
 
       {/* Competition — CRM similar tenants (linkable) + AI competitor set */}
       {!isLandlord && (similarTenants.length > 0 || aiCompetitors.length > 0) && (
