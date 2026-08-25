@@ -1463,7 +1463,11 @@ export default function Calendar() {
 
   const mergedEvents = useMemo(() => {
     const events: CalendarEvent[] = [];
-    if (showOutlookEvents && outlookEvents) events.push(...outlookEvents.map(e => ({
+    if (showOutlookEvents && outlookEvents) events.push(...outlookEvents
+      // Organiser-cancelled meetings linger in Outlook as "Cancelled: …" until
+      // each person removes them — dead entries that just clutter the board.
+      .filter(e => !/^cancell?ed:/i.test((e.subject || "").trim()))
+      .map(e => ({
       ...e,
       _source: "outlook" as const,
       _eventType: e._eventType || classifyOutlookEvent(e.subject, e.categories),
@@ -1507,6 +1511,7 @@ export default function Calendar() {
     }
     if (outlookEvents) {
       outlookEvents.forEach(e => {
+        if (/^cancell?ed:/i.test((e.subject || "").trim())) return;
         const type = classifyOutlookEvent(e.subject, e.categories);
         counts[type] = (counts[type] || 0) + 1;
       });
