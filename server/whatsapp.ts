@@ -640,7 +640,24 @@ export function setupWhatsAppRoutes(app: Express) {
               // "[Media]" — the latter is filtered out of ChatBGP history, so
               // a brochure/file event would otherwise vanish and the agent
               // loses continuity on follow-up messages.
+              // Shared contact cards (msg.type === "contacts") used to fall
+              // through as the bare word "contacts" — ChatBGP saw nothing to
+              // act on (Woody, 2026-08-25). Parse the vCard payload into text
+              // with a filing instruction so the card lands in the CRM.
+              const sharedContacts: any[] | null = Array.isArray(msg.contacts) && msg.contacts.length ? msg.contacts : null;
+              const sharedContactsBody = sharedContacts
+                ? `[Shared WhatsApp contact card${sharedContacts.length > 1 ? "s" : ""}] ` +
+                  sharedContacts.slice(0, 5).map((cc: any) => {
+                    const nm = cc?.name?.formatted_name || [cc?.name?.first_name, cc?.name?.last_name].filter(Boolean).join(" ") || "Unknown";
+                    const phones = (cc?.phones || []).map((p: any) => p.phone).filter(Boolean).join(", ");
+                    const emails = (cc?.emails || []).map((e: any) => e.email).filter(Boolean).join(", ");
+                    const org = cc?.org?.company;
+                    return `${nm}${org ? ` (${org})` : ""}${phones ? ` — ${phones}` : ""}${emails ? ` — ${emails}` : ""}`;
+                  }).join(" | ") +
+                  ` — file into the CRM: create or update the contact, attach it to the matching company if the name fits one, then confirm exactly what was saved.`
+                : null;
               const messageBody = msg.text?.body
+                || sharedContactsBody
                 || (msg.document ? `[Sent file: ${msg.document.filename || "document"}]${mediaCaption ? ` — "${mediaCaption}"` : ""}` : null)
                 || (msg.image ? `[Sent an image]${mediaCaption ? ` — "${mediaCaption}"` : ""}` : null)
                 || msg.type
