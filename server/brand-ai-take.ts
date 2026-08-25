@@ -38,8 +38,8 @@ function dataHash(obj: any): string {
 async function loadBrandSlice(companyId: string) {
   const { rows } = await pool.query(
     `SELECT name, description, brand_analysis, concept_pitch, store_count, rollout_status,
-            backers, employee_count, founded_year, industry, hunter_flag, is_tracked_brand,
-            tracking_reason, ai_generated_fields, parent_company_id
+            backers, employee_count, founded_year, industry, hunter_flag,
+            ai_generated_fields, parent_company_id
        FROM crm_companies WHERE id = $1`,
     [companyId]
   );

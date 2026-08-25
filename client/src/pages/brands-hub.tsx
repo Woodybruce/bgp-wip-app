@@ -535,13 +535,13 @@ const BRAND_CATEGORIES: TopCat[] = [
       { key: "books", label: "Books & Stationery", icon: BookOpen, match: ["Tenant - Books", "Tenant - Stationery", "Tenant - Books & Stationery"] },
       { key: "financial", label: "Financial Services", icon: Landmark, match: ["Tenant - Financial Services", "Tenant - Bank", "Tenant - Finance"] },
       { key: "services", label: "Services", icon: Briefcase, match: ["Tenant - Services", "Tenant - Optician", "Tenant - Travel", "Tenant - Other Services"] },
-      { key: "other-retail", label: "Other Retail", icon: Store, match: ["Tenant - Retail", "Tenant - General Retail"] },
       // "National & Regional" dissolved (Woody, 2026-08-24: "doesn't make
       // any sense") — its sub-sectors live here so no brand loses a home.
       { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
       { key: "value-retail", label: "Value & Discount", icon: Tag, match: ["Tenant - Value Retail", "Tenant - Discount", "Tenant - Pound Store"] },
       { key: "trade-diy", label: "Trade & DIY", icon: Wrench, match: ["Tenant - Trade", "Tenant - DIY", "Tenant - Hardware", "Tenant - Builders Merchants"] },
       { key: "national-other", label: "National Retail", icon: Building2, match: ["Tenant - National Retail", "Tenant - High Street"] },
+      { key: "other-retail", label: "Other Retail", icon: Store, match: ["Tenant - Retail", "Tenant - General Retail"] },
     ],
   },
   {
@@ -575,6 +575,9 @@ const BRAND_CATEGORIES: TopCat[] = [
       { key: "yoga", label: "Yoga & Pilates", icon: HeartPulse, match: ["Tenant - Yoga", "Tenant - Pilates"] },
     ],
   },
+  // "National & Regional" was retired as a top category (Woody, 2026-08-24:
+  // "doesn't make any sense") — its sub-categories (grocery, value, trade &
+  // DIY, high street) live under Fashion & Retail above.
 ];
 
 function catMatch(companyType: string, cat: TopCat): boolean {
@@ -593,13 +596,18 @@ function BrandExplorer() {
   const { data: exUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientExplorer = exUser?.role === "Client" || !!exUser?.companyScopeId;
   const [activeCat, setActiveCat] = useState<string | null>(() => {
+    // Saved selections may reference a retired category (e.g. "national") —
+    // fall back to All rather than silently applying no filter.
     try {
-      const stored = localStorage.getItem("brand-explorer-cat") || null;
-      return stored && BRAND_CATEGORIES.some(c => c.key === stored) ? stored : null;
+      const saved = localStorage.getItem("brand-explorer-cat") || null;
+      return saved && BRAND_CATEGORIES.some(c => c.key === saved) ? saved : null;
     } catch { return null; }
   });
   const [activeSub, setActiveSub] = useState<string | null>(() => {
-    try { return localStorage.getItem("brand-explorer-sub") || null; } catch { return null; }
+    try {
+      const saved = localStorage.getItem("brand-explorer-sub") || null;
+      return saved && BRAND_CATEGORIES.some(c => c.subs.some(s => s.key === saved)) ? saved : null;
+    } catch { return null; }
   });
   const [search, setSearch] = useState(() => {
     try { return localStorage.getItem("brand-explorer-search") || ""; } catch { return ""; }

@@ -925,8 +925,6 @@ import { pool } from "./db";
 
     // ── Brand Bible / deal flow — additive schema ─────────────────────────
     // crm_companies: brand fields
-    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS is_tracked_brand BOOLEAN DEFAULT false`,
-    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS tracking_reason TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_group_id VARCHAR`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS concept_pitch TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS store_count INTEGER`,
@@ -940,7 +938,6 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS stock_ticker TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS agent_type TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS ai_generated_fields JSONB`,
-    `CREATE INDEX IF NOT EXISTS idx_crm_companies_is_tracked_brand ON crm_companies(is_tracked_brand) WHERE is_tracked_brand = true`,
     `CREATE INDEX IF NOT EXISTS idx_crm_companies_brand_group_id   ON crm_companies(brand_group_id) WHERE brand_group_id IS NOT NULL`,
 
     // crm_deals: stage + solicitor leg
@@ -4196,16 +4193,6 @@ app.use("/api/branding/assets", express.static(
              WHERE regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = 'bills'
                AND merged_into_id IS NULL
                AND COALESCE(instagram_handle, '') <> 'billsrestaurant'`);
-          // Bill's had no news because Google News feeds are only created
-          // for is_tracked_brand rows and the CH-linked Bill's row lost the
-          // flag (it lived on the old duplicate). Restore it so the next
-          // ensureBrandGoogleNewsFeeds cycle creates its news feed.
-          const tb = await pool.query(`
-            UPDATE crm_companies SET is_tracked_brand = true
-             WHERE regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = 'bills'
-               AND merged_into_id IS NULL
-               AND COALESCE(is_tracked_brand, false) = false`);
-          if (tb.rowCount) console.log(`[bills-ig heal] restored is_tracked_brand on ${tb.rowCount} bills row(s)`);
           const s = await pool.query(`
             DELETE FROM news_sources ns
              USING crm_companies c
@@ -4323,14 +4310,14 @@ app.use("/api/branding/assets", express.static(
           // no news while almost every brand does (2026-08-19). Shows
           // whether a google_news source exists and is producing articles.
           const newsDiag = await pool.query(`
-            SELECT c.name, c.is_tracked_brand, ns.type, ns.url,
+            SELECT c.name, ns.type, ns.url,
                    (SELECT count(*)::int FROM news_articles a WHERE a.source_id = ns.id) AS articles
               FROM crm_companies c
               LEFT JOIN news_sources ns ON ns.category = 'brand:' || c.id AND ns.type = 'google_news'
              WHERE regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
                AND c.merged_into_id IS NULL`);
           for (const r of newsDiag.rows) {
-            console.log(`[bills-news-diag] ${r.name}: tracked=${r.is_tracked_brand} newsSource=${r.type || "NONE"} url=${String(r.url || "-").slice(0, 90)} articles=${r.articles ?? 0}`);
+            console.log(`[bills-news-diag] ${r.name}: newsSource=${r.type || "NONE"} url=${String(r.url || "-").slice(0, 90)} articles=${r.articles ?? 0}`);
           }
           // Representation rows touching Bill's or Matt Porter — Woody
           // reports the retained agent vanished and a self-referential
@@ -4421,22 +4408,6 @@ app.use("/api/branding/assets", express.static(
           if (requeued.rowCount) console.log(`[ig-requeue] ${requeued.rowCount} zero-image Instagram source(s) queued for immediate refetch`);
         } catch (e: any) {
           console.error("[ig-requeue] failed:", e?.message);
-        }
-        // is_tracked_brand is self-maintaining (Woody, 2026-08-19: "all
-        // brands are tracked brands"): every Tenant-type company gets the
-        // flag automatically, so news feeds / enrichment / AI takes never
-        // silently skip a brand again (Bill's lost its flag to the old
-        // duplicate row and had no news for weeks). The flag itself stays —
-        // it's what keeps the AI machinery off landlords/agents/clients.
-        try {
-          const flagged = await pool.query(`
-            UPDATE crm_companies SET is_tracked_brand = true
-             WHERE company_type ILIKE 'tenant%'
-               AND merged_into_id IS NULL
-               AND COALESCE(is_tracked_brand, false) = false`);
-          if (flagged.rowCount) console.log(`[tracked-brand heal] flagged ${flagged.rowCount} Tenant-type company(ies) as tracked brands`);
-        } catch (e: any) {
-          console.error("[tracked-brand heal] failed:", e?.message);
         }
         // Read-only census of brand rows with zero substance — no deals,
         // requirements, contacts, reps or signals (Woody, 2026-08-19: "we
@@ -5349,14 +5320,6 @@ app.use("/api/branding/assets", express.static(
           // import + the property-level adopt buttons.
           await addColIfMissing("crm_deals", "tenancy_unit_id", "varchar");
           await addColIfMissing("available_units", "tenancy_unit_id", "varchar");
-
-          // Auto-track all tenant companies as brands (idempotent).
-          await db.execute(sql.raw(`
-            UPDATE crm_companies
-            SET is_tracked_brand = true
-            WHERE is_tracked_brand = false
-              AND LOWER(company_type) LIKE '%tenant%'
-          `));
 
           // Clear any negative store counts left over from buggy AI enrichment.
           await db.execute(sql.raw(`UPDATE crm_companies SET store_count = NULL WHERE store_count < 0`));

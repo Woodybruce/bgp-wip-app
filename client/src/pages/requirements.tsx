@@ -1278,7 +1278,6 @@ function NewBrandDialog({ open, onOpenChange, isClientView }: { open: boolean; o
       const res = await apiRequest("POST", "/api/crm/companies", {
         name: name.trim(),
         companyType: category,
-        isTrackedBrand: true,
         domainUrl: website.trim() || undefined,
       });
       const created = await res.json();
@@ -1582,7 +1581,6 @@ function InlineCompanyPicker({
       const r = await apiRequest("POST", "/api/crm/companies", {
         name: name.trim(),
         companyType: "Tenant",
-        isTrackedBrand: true,
       });
       return r.json();
     },

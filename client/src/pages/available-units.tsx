@@ -2660,7 +2660,6 @@ export default function AvailableUnitsPage() {
                 const r = await apiRequest("POST", "/api/crm/companies", {
                   name: name.trim(),
                   companyType: "Tenant",
-                  isTrackedBrand: true,
                 });
                 const created = await r.json();
                 queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });

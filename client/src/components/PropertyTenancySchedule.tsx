@@ -1422,7 +1422,6 @@ function TenantBrandPicker({
           const r = await apiRequest("POST", "/api/crm/companies", {
             name: name.trim(),
             companyType: "Tenant",
-            isTrackedBrand: true,
           });
           const created = await r.json();
           qc.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });

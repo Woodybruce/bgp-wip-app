@@ -176,7 +176,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
             tiktok_handle, dept_store_presence, franchise_activity, hunter_flag,
             concept_pitch, description, stock_ticker
        FROM crm_companies
-      WHERE is_tracked_brand = true AND merged_into_id IS NULL`
+      WHERE company_type ILIKE 'tenant%' AND merged_into_id IS NULL`
   );
 
   const events: TriggerEvent[] = [];

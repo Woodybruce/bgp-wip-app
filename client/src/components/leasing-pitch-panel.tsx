@@ -29,7 +29,6 @@ interface Pitch {
 interface BrandMatch {
   id: string;
   name: string;
-  is_tracked_brand: boolean;
   rollout_status: string | null;
 }
 
@@ -48,7 +47,7 @@ interface RecommendedCategory {
 interface MixResponse {
   headline: string;
   recommendations: RecommendedCategory[];
-  trackedBrandCount: number;
+  matchedBrandCount: number;
 }
 
 export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
@@ -92,7 +91,7 @@ export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
     onSuccess: (r) => {
       setMix(r);
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-pitch", propertyId] });
-      toast({ title: "Tenant mix recommended", description: `${r.trackedBrandCount} matched brands` });
+      toast({ title: "Tenant mix recommended", description: `${r.matchedBrandCount} matched CRM brands` });
     },
     onError: (e: any) => toast({ title: "Recommendation failed", description: e?.message, variant: "destructive" }),
   });

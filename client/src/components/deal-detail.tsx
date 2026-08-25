@@ -452,7 +452,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       const r = await apiRequest("POST", "/api/crm/companies", {
         name: name.trim(),
         companyType,
-        isTrackedBrand: companyType.startsWith("Tenant"),
       });
       const created = await r.json();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });

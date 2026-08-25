@@ -5433,7 +5433,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         `SELECT id, name, company_type FROM crm_companies
           WHERE merged_into_id IS NULL AND company_type ILIKE 'Tenant -%'
             AND name ILIKE $1
-          ORDER BY is_tracked_brand DESC NULLS LAST, name LIMIT 25`,
+          ORDER BY (company_type ILIKE 'tenant%') DESC, name LIMIT 25`,
         [`%${search}%`]
       );
       res.json(q.rows.map((r: any) => ({

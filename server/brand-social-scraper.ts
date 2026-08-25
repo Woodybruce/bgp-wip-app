@@ -183,7 +183,7 @@ export async function runWeeklySocialScrape(): Promise<{ scanned: number; igOk: 
 
   const brands = await pool.query(
     `SELECT c.id FROM crm_companies c
-      WHERE c.is_tracked_brand = true
+      WHERE c.company_type ILIKE 'tenant%'
         AND c.merged_into_id IS NULL
         AND (c.instagram_handle IS NOT NULL OR c.tiktok_handle IS NOT NULL)
         AND NOT EXISTS (

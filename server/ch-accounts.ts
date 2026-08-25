@@ -172,7 +172,7 @@ export async function runBulkAccountsFetch(opts: { limit?: number } = {}): Promi
       WHERE merged_into_id IS NULL
         AND companies_house_number IS NOT NULL
         AND companies_house_number <> ''
-      ORDER BY is_tracked_brand DESC, name
+      ORDER BY (company_type ILIKE 'tenant%') DESC, name
       LIMIT $1`,
     [limit]
   );

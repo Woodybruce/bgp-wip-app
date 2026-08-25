@@ -365,7 +365,7 @@ export function NewsSourcesTab() {
         <CardContent>
           <p className="text-xs text-muted-foreground">
             One feed per brand, auto-seeded. Articles are linked to <code>brand_signals</code> on each fetch.
-            Use <strong>Ensure brand feeds</strong> to add feeds for any newly-added brands.
+            Use <strong>Ensure brand feeds</strong> to add feeds for any new brands.
           </p>
         </CardContent>
       </Card>

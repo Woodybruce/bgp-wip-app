@@ -3133,7 +3133,7 @@ router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, r
   try {
     const { db } = await import("./db");
     const { crmCompanies } = await import("../shared/schema");
-    const { eq, inArray } = await import("drizzle-orm");
+    const { inArray, ilike } = await import("drizzle-orm");
 
     const ids: string[] | undefined = req.body?.ids;
     const limit: number = Math.min(req.body?.limit ?? 4, 8);
@@ -3141,7 +3141,7 @@ router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, r
 
     let rows = ids?.length
       ? await db.select().from(crmCompanies).where(inArray(crmCompanies.id, ids))
-      : await db.select().from(crmCompanies).where(eq(crmCompanies.isTrackedBrand, true));
+      : await db.select().from(crmCompanies).where(ilike(crmCompanies.companyType, "tenant%"));
 
     const total = rows.length;
     rows = rows.slice(offset, offset + limit);
@@ -3298,10 +3298,10 @@ router.post("/api/companies-house/bulk-scrape-uk-entities", requireAuth, async (
         `SELECT id, name, domain, domain_url, uk_entity_name, backers
            FROM crm_companies
           WHERE merged_into_id IS NULL
-            ${onlyTracked ? "AND is_tracked_brand = true" : ""}
+            ${onlyTracked ? "AND company_type ILIKE 'tenant%'" : ""}
             ${onlyMissing ? "AND (uk_entity_name IS NULL OR uk_entity_name = '')" : ""}
             AND (domain IS NOT NULL OR domain_url IS NOT NULL)
-          ORDER BY is_tracked_brand DESC, name
+          ORDER BY (company_type ILIKE 'tenant%') DESC, name
           LIMIT $1`,
         [limit]
       );
