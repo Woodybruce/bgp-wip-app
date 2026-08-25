@@ -73,11 +73,31 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r370 · 2026-08-25 · LIGHT — ROUND IN PROGRESS (provisional heartbeat)
+### r370 · 2026-08-25 · LIGHT (r369 was FULL)
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
-  pg_hba trust fix needed, r205 note). Two-bot round 380 running; first
-  logged issues so far are listed noise (rocketreach-400, live-intel 503).
-- Triage list: pending two-bot completion. Final entry replaces this one.
+  pg_hba trust fix needed, r205 note). Two-bot round 380: exit 0, all
+  scenarios ok (incl. r368/r369 additions client-plans-write-controls-hidden
+  + client-mobile-brand-intel-cards), 3 issues all listed noise
+  (rocketreach-400, live-intel 503, commentary-regen 503). Dev-server sweep:
+  0 raw 500/502/504; 403s all harness negative probes.
+- Light-round probe (r369 candidate): STAFF phone Intel section at 390px
+  (victoria, Amorino, iPhone UA + hasTouch). Intel pill → Menu Highlights /
+  Portfolio Activity / Signals / UK stores map (34 markers) / Competition
+  (badge 10, list capped 6, "+4 more in the competitor set" = r369 fix holds
+  staff-side). 0 pageerrors, 0 h-overflow, 0 non-noise 4xx/5xx.
+- Probe gotcha for future rounds: store-map markers are L.circleMarker SVG
+  paths — count `.leaflet-container path.leaflet-interactive`, NOT
+  `.leaflet-marker-icon` (0 there looks like a bug but isn't).
+- NOT a bug (env-only): phone company header logo square renders blank
+  in-container for logo-less brands — /api/brand-logo 302s to google
+  favicons which HANGS here (no external network), img never errors so the
+  lettered fallback can't kick in; prod redirects to logo.dev (token set).
+  Same class as UX #92.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: r370 was LIGHT → r371 FULL, rotation #4 staff mobile 390px.
+  Candidate: tracker viewing/offer edit pencils at 390px (r369 candidate,
+  still uncovered).
 
 ### r369 · 2026-08-25 · FULL (rotation #3 Landsec client mobile 390px)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
