@@ -2531,7 +2531,36 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
           <div className="text-[11px] text-muted-foreground mb-2">
             AI mapped {importPreview?.rowsScanned} rows. Review before importing — you can edit rows after.
           </div>
-          <div className="overflow-auto flex-1 border rounded">
+          {/* Phone: one card per preview row (§7) — the table never ships below md. */}
+          <div className="md:hidden overflow-auto flex-1 border rounded divide-y">
+            {importPreview?.units.map((u, i) => (
+              <div key={i} className="px-3 py-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium truncate">{u.tenant_name || u.unit_name || "—"}</p>
+                    {u.tenant_name && u.unit_name && (
+                      <p className="text-[11px] text-muted-foreground font-mono truncate">{u.unit_name}</p>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-xs font-mono tabular-nums">
+                    {u.rent_pa ? "£" + Number(u.rent_pa).toLocaleString() : "—"}
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {u.sqft ? `${Number(u.sqft).toLocaleString()} sq ft` : "No sq ft"}
+                  {u.lease_expiry ? ` · Exp. ${u.lease_expiry}` : ""}
+                  {u.lease_break ? ` · Break ${u.lease_break}` : ""}
+                  {u.rent_review ? ` · Review ${u.rent_review}` : ""}
+                </p>
+                {u.status && (
+                  <span className="inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 mt-1 text-[10px] font-medium text-muted-foreground">
+                    {u.status}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block overflow-auto flex-1 border rounded">
             <table className="w-full text-[11px]">
               <thead className="bg-muted/40 sticky top-0">
                 <tr>
@@ -2789,7 +2818,36 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
           <div className="text-[11px] text-muted-foreground mb-2">
             AI mapped {importPreview?.rowsScanned} rows. Review before importing — you can edit individual rows after.
           </div>
-          <div className="overflow-auto flex-1 border rounded">
+          {/* Phone: one card per preview row (§7) — the table never ships below md. */}
+          <div className="md:hidden overflow-auto flex-1 border rounded divide-y">
+            {importPreview?.units.map((u, i) => (
+              <div key={i} className="px-3 py-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium truncate">{u.tenant_name || u.unit_name || "—"}</p>
+                    {u.tenant_name && u.unit_name && (
+                      <p className="text-[11px] text-muted-foreground font-mono truncate">{u.unit_name}</p>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-xs font-mono tabular-nums">
+                    {u.rent_pa ? "£" + Number(u.rent_pa).toLocaleString() : "—"}
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {u.sqft ? `${Number(u.sqft).toLocaleString()} sq ft` : "No sq ft"}
+                  {u.lease_expiry ? ` · Exp. ${u.lease_expiry}` : ""}
+                  {u.lease_break ? ` · Break ${u.lease_break}` : ""}
+                  {u.rent_review ? ` · Review ${u.rent_review}` : ""}
+                </p>
+                {u.status && (
+                  <span className="inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 mt-1 text-[10px] font-medium text-muted-foreground">
+                    {u.status}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block overflow-auto flex-1 border rounded">
             <table className="w-full text-[11px]">
               <thead className="bg-muted/40 sticky top-0">
                 <tr>
@@ -3264,7 +3322,15 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
               </Link>
             </button>
             {expanded && (
-              <div className="overflow-x-auto">
+              <>
+              {/* Phone: one card per unit (§7) — the table never ships below md. */}
+              <div className="md:hidden p-3 space-y-2">
+                {propUnits.slice(0, 20).map(u => <UnitPhoneCard key={u.id} unit={u} />)}
+                {propUnits.length > 20 && (
+                  <p className="text-center text-[11px] text-muted-foreground/70">+{propUnits.length - 20} more</p>
+                )}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="bg-muted/30 border-b text-left text-sm">
@@ -3300,6 +3366,7 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </div>
         );
@@ -3877,7 +3944,30 @@ export default function LeasingSchedulePage() {
                   </Select>
                 </div>
               )}
-              <div className="max-h-[300px] overflow-auto border rounded text-xs">
+              {/* Phone: one card per preview row (§7) — the table never ships below md. */}
+              <div className="md:hidden max-h-[300px] overflow-auto border rounded text-xs divide-y">
+                {importPreview.units.slice(0, 50).map((u: any, i: number) => (
+                  <div key={i} className="px-3 py-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium truncate">{u.tenant_name || u.tenant || u.unit_name || u.unit || "—"}</p>
+                        {(u.tenant_name || u.tenant) && (u.unit_name || u.unit) && (
+                          <p className="text-[11px] text-muted-foreground truncate">{u.unit_name || u.unit}</p>
+                        )}
+                      </div>
+                      <span className="shrink-0 text-xs font-mono tabular-nums">{u.rent_pa || u.rent || "—"}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      {(u.sqft || u.area) ? `${u.sqft || u.area} sq ft` : "No sq ft"}
+                      {(u.lease_expiry || u.expiry) ? ` · Exp. ${u.lease_expiry || u.expiry}` : ""}
+                    </p>
+                  </div>
+                ))}
+                {importPreview.units.length > 50 && (
+                  <p className="text-[11px] text-muted-foreground p-2">Showing first 50 of {importPreview.units.length} rows.</p>
+                )}
+              </div>
+              <div className="hidden md:block max-h-[300px] overflow-auto border rounded text-xs">
                 <table className="w-full">
                   <thead className="bg-muted/50 sticky top-0">
                     <tr>
