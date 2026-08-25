@@ -73,6 +73,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r371 · 2026-08-25 ~04:50 UTC · ROUND IN PROGRESS (provisional)
+- FULL round, rotation #4 staff mobile 390px. Regression: run-smoke.sh GREEN
+  (42 checks, 0 failures, FRESH_BUILD=1; pg_hba trust fix needed, r205 note).
+- Two-bot round 381 in progress on the dev server; journey (tracker
+  viewing/offer edit pencils at 390px, victoria) queued after it.
+- Triage so far: nothing to triage from smoke.
+
 ### r370 · 2026-08-25 · LIGHT (r369 was FULL)
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
   pg_hba trust fix needed, r205 note). Two-bot round 380: exit 0, all
