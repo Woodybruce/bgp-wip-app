@@ -73,6 +73,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r373 · 2026-08-25 · IN PROGRESS (FULL, rotation #1 staff desktop)
+- Provisional heartbeat. Regression: run-smoke.sh GREEN (42 checks, 0
+  failures; pg_hba trust fix needed, r205 note). Two-bot round 384: exit 0,
+  all scenarios ok; 3 issues all listed noise (rocketreach-400, live-intel
+  503, commentary-regen 503).
+- Confirmed via API: POST /api/investment-tracker 400s on guidePrice £25m
+  (same drizzle-zod real() cap family) — fix in progress. Journey next:
+  Investment Tracker offers on staff desktop.
+
 ### r372 · 2026-08-25 · LIGHT (r371 was FULL — no journey)
 - Reconciled r371 first: commit 921a9887 complete and sound, and its
   ROLLING-LOG entry WAS finalized in that same commit (the parent session's
