@@ -43,18 +43,6 @@ const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
   Landsec: ["Landsec"],
 };
 
-const teamColors: Record<string, string> = {
-  Investment: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  "London F&B": "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300",
-  "London Retail": "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
-  "Lease Advisory": "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
-  "Office / Corporate": "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300",
-  "National Leasing": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-  "Tenant Rep": "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
-  Development: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  Landsec: "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300",
-};
-
 const teamDotColors: Record<string, string> = {
   Investment: "bg-blue-500",
   "London F&B": "bg-rose-500",
@@ -187,9 +175,8 @@ export default function SettingsPage() {
           >
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
-                <Badge variant="secondary" className={`text-[10px] whitespace-nowrap ${teamColors[t.name] || ""}`}>
-                  {t.name}
-                </Badge>
+                <span className={`w-2 h-2 rounded-full shrink-0 ${teamDotColors[t.name] || "bg-muted-foreground"}`} />
+                <span className="text-xs font-medium whitespace-nowrap truncate">{t.name}</span>
                 <span className="text-lg font-bold font-mono tabular-nums ml-auto">{t.count}</span>
               </div>
             </CardContent>
