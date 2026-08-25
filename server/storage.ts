@@ -1027,7 +1027,7 @@ export class DatabaseStorage implements IStorage {
       conditions.push(sql`(${crmDeals.status} IS NULL OR lower(${crmDeals.status}) NOT IN (
         'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live',
         'ava', 'available', 'neg', 'negotiating', 'negotiation',
-        'under negotiation', 'in negotiation', 'hots'))`);
+        'under negotiation', 'in negotiation', 'hot', 'hots', 'heads of terms'))`);
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     if (filters?.page && filters?.limit) {

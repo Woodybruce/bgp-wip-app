@@ -89,7 +89,7 @@ async function loadRecentDeals() {
         AND (d.status IS NULL OR lower(d.status) NOT IN (
           'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live',
           'ava', 'available', 'neg', 'negotiating', 'negotiation',
-          'under negotiation', 'in negotiation', 'hots'))
+          'under negotiation', 'in negotiation', 'hot', 'hots', 'heads of terms'))
       ORDER BY d.created_at DESC`
   );
   return rows;
