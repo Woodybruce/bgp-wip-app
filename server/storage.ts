@@ -1035,7 +1035,16 @@ export class DatabaseStorage implements IStorage {
                                                           'Available', 'Negotiating'))`);
       const ids = trackerDealIds.map(r => r.dealId).filter(Boolean) as string[];
       if (ids.length > 0) {
-        conditions.push(sql`${crmDeals.id} NOT IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`);
+        // A tracker-backed deal is only "clutter" while the DEAL itself is
+        // still pre-negotiation. Once it reaches NEG (HOTs) or beyond it's a
+        // real deal that belongs on the Deals CRM — hiding it on the unit's
+        // marketing status alone made active deals vanish from the Deals
+        // page while the WIP report showed them (Masaj Richmond, plus ~43
+        // other NEG deals the Negotiating chip never counted).
+        conditions.push(sql`NOT (${crmDeals.id} IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})
+          AND (${crmDeals.status} IS NULL
+               OR ${crmDeals.status} IN ('OPP', 'REP', 'SPEC', 'LIVE', 'AVA',
+                                         'Opportunity', 'Reporting', 'Speculative', 'Live', 'Available')))`);
       }
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;

@@ -83,15 +83,21 @@ async function loadRecentDeals() {
        LEFT JOIN crm_companies vc ON vc.id = d.vendor_id
        LEFT JOIN crm_companies pc ON pc.id = d.purchaser_id
       WHERE d.created_at >= now() - interval '${REPORT_DAYS} days'
-        AND d.id NOT IN (
-          -- Same rule as the WIP table (storage.getCrmDeals excludeTrackerDeals):
-          -- hide tracker-backed deals still pre-SOL on the Letting Tracker.
-          SELECT au.deal_id FROM available_units au
-           WHERE au.deal_id IS NOT NULL
-             AND (au.marketing_status IS NULL
-                  OR au.marketing_status IN ('REP', 'SPEC', 'LIVE', 'AVA', 'NEG',
-                                             'Reporting', 'Speculative', 'Live',
-                                             'Available', 'Negotiating'))
+        AND NOT (
+          -- Same rule as the Deals list (storage.getCrmDeals excludeTrackerDeals):
+          -- hide tracker-backed deals only while the DEAL itself is still
+          -- pre-negotiation. NEG (HOTs) and beyond are real deals.
+          (d.status IS NULL
+           OR d.status IN ('OPP', 'REP', 'SPEC', 'LIVE', 'AVA',
+                           'Opportunity', 'Reporting', 'Speculative', 'Live', 'Available'))
+          AND d.id IN (
+            SELECT au.deal_id FROM available_units au
+             WHERE au.deal_id IS NOT NULL
+               AND (au.marketing_status IS NULL
+                    OR au.marketing_status IN ('REP', 'SPEC', 'LIVE', 'AVA', 'NEG',
+                                               'Reporting', 'Speculative', 'Live',
+                                               'Available', 'Negotiating'))
+          )
         )
       ORDER BY d.created_at DESC`
   );
