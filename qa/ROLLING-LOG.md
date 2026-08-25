@@ -76,6 +76,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r379 · 2026-08-25 · ROUND IN PROGRESS (provisional)
+- Fresh container. pg_hba trust + bgp role/db + fixture restore + per-table
+  owner transfer (REASSIGN OWNED silently fails for postgres-owned objects
+  — the r249 grant alone wasn't enough this time; loop ALTER TABLE/SEQUENCE
+  owner to bgp fixed the news_sources permission errors).
+- Smoke GREEN 42/0 (FRESH_BUILD). Triage: nothing beyond listed noise.
+- FULL round, rotation #4 staff mobile 390px: /brands quick-search →
+  contact call/email buttons → brand Stores/Social pills. Search flow good
+  (grouped results, contact email pill, brand-card ride-along contacts,
+  tap-through to profile). Investigating: Stores pill on a 0-store brand
+  shows "Researching UK stores…" forever after the scan already failed,
+  plus raw "GOOGLE_API_KEY not configured" toast (keyless env).
+- Two-bot running; final entry to follow.
+
 ### r378 · 2026-08-25 · LIGHT (r377 was FULL — no journey)
 - Fresh container (pg_hba trust fix, bgp role/db + fixture restore, .env
   recreated per setup notes). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD).
