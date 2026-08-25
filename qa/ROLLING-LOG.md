@@ -73,14 +73,48 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r373 · 2026-08-25 · IN PROGRESS (FULL, rotation #1 staff desktop)
-- Provisional heartbeat. Regression: run-smoke.sh GREEN (42 checks, 0
-  failures; pg_hba trust fix needed, r205 note). Two-bot round 384: exit 0,
-  all scenarios ok; 3 issues all listed noise (rocketreach-400, live-intel
-  503, commentary-regen 503).
-- Confirmed via API: POST /api/investment-tracker 400s on guidePrice £25m
-  (same drizzle-zod real() cap family) — fix in progress. Journey next:
-  Investment Tracker offers on staff desktop.
+### r373 · 2026-08-25 · FULL (rotation #1 staff desktop)
+- Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; before fixes and
+  FRESH_BUILD=1 after; pg_hba trust fix needed, r205 note). Two-bot round
+  384: exit 0, all scenarios ok; 3 issues all listed noise (rocketreach-400,
+  live-intel 503, commentary-regen 503).
+- Journey: Victoria desktop 1440px — "a £25m offer came in on The Royal
+  Exchange sale: log it, then add a new £25m-guide purchase to the tracker":
+  login form → /deals/investment → Sales board → search → Offers dialog →
+  add offer (date + £25m) → Purchases → Add Asset (£25m guide). First pass
+  caught the offer add 400ing live; both flows green + toasts after fixes.
+- Bug fixed (1): insertInvestmentTrackerSchema still had the drizzle-zod
+  2^23-1 real() cap — creating a tracker asset with guidePrice £25m (the
+  normal case) 400'd. Overrode guidePrice/currentRent/ervPa/capexRequired/
+  fee (zod-only, shared/schema.ts). PATCH path doesn't zod-validate, so
+  only create was capped. Verified via API + visually (asset renders £25m).
+- Bug fixed (2, bigger): investment viewings/offers/distributions store
+  dates as timestamp() columns, so drizzle-zod demanded Date objects while
+  the dialogs send ISO strings → a viewing or offer WITH a date always
+  400'd, and EVERY distribution add failed (sentDate unconditionally sent),
+  as did the distribution response PATCH (responseDate). Silent to the user
+  — the dialog mutations have no onError toast (→ UX #94). Fixed with
+  z.coerce.date().nullable().optional() overrides (the existing CRM-deal
+  date pattern) on the three insert schemas. Letting tracker was never
+  affected (stores dates as text). API-verified all five paths 200 +
+  visually re-ran the journey (£25m dated offer saves, renders 25/08/2026).
+- Harness growth: agent-investment-dated-activity in two-bot-round.mjs
+  (dated viewing + dated £25m offer + distribution add + response PATCH +
+  £25m-guide tracker create, all cleaned up in-scenario; API sequence
+  dry-run green). run-round.sh purges QA-INVDATE% viewings/offers/
+  distributions + QA-RCAP Tracker% rows.
+- Deferred: POST /api/investment-tracker auto-creates the backing CRM
+  property BEFORE zod validation — a validation 400 strands an orphan
+  crm_properties row (low impact now the caps are lifted; retry reuses the
+  row by name). Reorder create-after-parse next round.
+- Suggestions added: UX #94 (investment dialog mutations swallow errors —
+  no onError toast; how bug 2 stayed invisible). New flakes: none. tsc
+  clean. Housekeeping: this round's heartbeat commit footer accidentally
+  carried a model name — the final commit uses the repo's plain footer.
+- Next journey: r373 was FULL → r374 may be LIGHT; then rotation #2 client
+  desktop. Candidate: client-side investment/deals visibility (do Landsec
+  logins correctly NOT see the investment tracker?), or the deferred
+  orphan-property reorder.
 
 ### r372 · 2026-08-25 · LIGHT (r371 was FULL — no journey)
 - Reconciled r371 first: commit 921a9887 complete and sound, and its

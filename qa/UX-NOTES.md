@@ -16,6 +16,16 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+94. 2026-08-25 · BGP staff / desktop (QA r373) · "log a £25m offer on The
+    Royal Exchange from the Investment Tracker offers dialog" · When the
+    save failed (pre-fix date 400), NOTHING happened — the add form just sat
+    there: the viewing/offer/distribution dialog mutations in
+    investment-tracker.tsx have no onError toast (the page-level mutations
+    all do). The user can't tell a failed save from a slow one and may close
+    the dialog believing the offer was logged · Add the standard onError
+    destructive toast to the add/update/delete mutations inside
+    ViewingsDialog, OffersDialog and DistributionsDialog.
+
 93. 2026-08-25 · BGP staff / mobile 390px (QA r371) · "log an offer on a
     tracker unit" · When server validation rejects a form, the toast shows
     the raw zod text — e.g. 'Validation error: Number must be less than or

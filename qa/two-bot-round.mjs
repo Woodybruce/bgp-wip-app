@@ -1324,6 +1324,56 @@ async function victoriaRound(page, cross) {
     if (!r.persisted) throw new Error('big-figure unit/deal saved but values did not persist');
   });
 
+  // Investment activity dialogs send timestamps as ISO strings; the insert
+  // schemas must coerce them (r373) — before that fix a dated viewing/offer
+  // 400'd and EVERY distribution add failed. Also guards the tracker-create
+  // guidePrice real() cap lift. Rows created + deleted in-scenario;
+  // QA-INVDATE% / QA-RCAP% rows are also purged by run-round.sh.
+  await step(page, p, 'agent-investment-dated-activity', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const trackers = await (await fetch('/api/investment-tracker', { headers: auth })).json().catch(() => []);
+      const tracker = Array.isArray(trackers) ? trackers[0] : null;
+      if (!tracker) return { ok: true, skipped: true };
+      const iso = new Date().toISOString();
+      const vk = await fetch(`/api/investment-tracker/${tracker.id}/viewings`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ company: `QA-INVDATE R${round}`, viewingDate: iso }) });
+      if (!vk.ok) return { ok: false, why: `dated viewing POST ${vk.status}` };
+      const viewing = await vk.json();
+      await fetch(`/api/investment-viewings/${viewing.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      const ok2 = await fetch(`/api/investment-tracker/${tracker.id}/offers`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ company: `QA-INVDATE R${round}`, offerDate: iso, offerPrice: 25000000 }) });
+      if (!ok2.ok) return { ok: false, why: `dated offer POST ${ok2.status}` };
+      const offer = await ok2.json();
+      await fetch(`/api/investment-offers/${offer.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      const dk = await fetch(`/api/investment-tracker/${tracker.id}/distributions`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: `QA-INVDATE R${round}`, sentDate: iso }) });
+      if (!dk.ok) return { ok: false, why: `distribution POST ${dk.status}` };
+      const dist = await dk.json();
+      let respOk = false;
+      try {
+        const pr = await fetch(`/api/investment-distributions/${dist.id}`, { method: 'PATCH', credentials: 'include', headers: auth,
+          body: JSON.stringify({ response: 'Interested', responseDate: iso }) });
+        respOk = pr.ok;
+      } finally {
+        await fetch(`/api/investment-distributions/${dist.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }
+      if (!respOk) return { ok: false, why: 'distribution response PATCH failed' };
+      // £25m guide price on tracker create (real() cap, r373). Reuses an
+      // existing propertyId so no property is auto-created; the auto-created
+      // backing deal is deleted alongside the tracker row.
+      const tk = await fetch('/api/investment-tracker', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ assetName: `QA-RCAP Tracker R${round}`, propertyId: tracker.propertyId, boardType: 'Sales', guidePrice: 25000000 }) });
+      if (!tk.ok) return { ok: false, why: `£25m tracker POST ${tk.status}` };
+      const row = await tk.json();
+      if (row.dealId) await fetch(`/api/crm/deals/${row.dealId}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      await fetch(`/api/investment-tracker/${row.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, persisted: row.guidePrice === 25000000 && offer.offerPrice === 25000000 && !!offer.offerDate };
+    }, ROUND);
+    if (!r.ok) throw new Error(`investment dated activity failed (${r.why}) — timestamp coercion or real() cap regression`);
+    if (!r.skipped && !r.persisted) throw new Error('investment dated activity saved but values did not persist');
+  });
+
   // Tenancy re-import must not duplicate the tracker (r217): the schedule
   // import's clearExisting and bulk-delete unlink the mirror rows first, so
   // the fan-out re-adopts them by name instead of spawning a second listing

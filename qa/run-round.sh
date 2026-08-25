@@ -49,7 +49,10 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM chat_messages WHERE thread_id IN (SELECT id FROM chat_threads WHERE title LIKE 'QA-CHATDEL%' OR title LIKE 'QA Thread%');
   DELETE FROM chat_threads WHERE title LIKE 'QA-CHATDEL%' OR title LIKE 'QA Thread%';
   DELETE FROM unit_offers WHERE company_name LIKE 'QA-AOFFER-%' OR company_name LIKE 'QA-ODEL-%' OR company_name LIKE 'QA-OFFER-%' OR company_name LIKE 'QA-RIVAL-%';
-  DELETE FROM investment_offers WHERE company LIKE 'QA-OFFER-INV%';
+  DELETE FROM investment_offers WHERE company LIKE 'QA-OFFER-INV%' OR company LIKE 'QA-INVDATE%';
+  DELETE FROM investment_viewings WHERE company LIKE 'QA-INVDATE%';
+  DELETE FROM investment_distributions WHERE company_name LIKE 'QA-INVDATE%';
+  DELETE FROM investment_tracker WHERE asset_name LIKE 'QA-RCAP Tracker%';
   DELETE FROM available_units WHERE unit_name LIKE 'QA-BIGNUM%';
   -- The team-board scenario adds a member then removes it; if a round dies
   -- mid-way the row survives, so sweep anyone not in the account contacts.

@@ -2034,7 +2034,15 @@ export const investmentTracker = pgTable("investment_tracker", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertInvestmentTrackerSchema = createInsertSchema(investmentTracker).omit({ id: true, createdAt: true, updatedAt: true });
+// Same 2^23-1 real() ceiling as insertInvestmentOfferSchema — guide prices,
+// rents and fees on investment assets are routinely well above £8.4m.
+export const insertInvestmentTrackerSchema = createInsertSchema(investmentTracker, {
+  guidePrice: z.number().nullable().optional(),
+  currentRent: z.number().nullable().optional(),
+  ervPa: z.number().nullable().optional(),
+  capexRequired: z.number().nullable().optional(),
+  fee: z.number().nullable().optional(),
+}).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertInvestmentTracker = z.infer<typeof insertInvestmentTrackerSchema>;
 export type InvestmentTracker = typeof investmentTracker.$inferSelect;
 
@@ -2050,7 +2058,12 @@ export const investmentViewings = pgTable("investment_viewings", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
-export const insertInvestmentViewingSchema = createInsertSchema(investmentViewings).omit({ id: true, createdAt: true, updatedAt: true });
+// The dialogs send dates as ISO strings (JSON can't carry Date), but
+// drizzle-zod generates z.date() for timestamp columns — coerce like the
+// CRM deal date fields do, else any viewing with a date 400s.
+export const insertInvestmentViewingSchema = createInsertSchema(investmentViewings, {
+  viewingDate: z.coerce.date().nullable().optional(),
+}).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertInvestmentViewing = z.infer<typeof insertInvestmentViewingSchema>;
 export type InvestmentViewing = typeof investmentViewings.$inferSelect;
 
@@ -2072,6 +2085,7 @@ export const investmentOffers = pgTable("investment_offers", {
 // are routinely well above £8.4m, so lift it on the price.
 export const insertInvestmentOfferSchema = createInsertSchema(investmentOffers, {
   offerPrice: z.number().nullable().optional(),
+  offerDate: z.coerce.date().nullable().optional(),
 }).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertInvestmentOffer = z.infer<typeof insertInvestmentOfferSchema>;
 export type InvestmentOffer = typeof investmentOffers.$inferSelect;
@@ -2092,7 +2106,13 @@ export const investmentDistributions = pgTable("investment_distributions", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
-export const insertInvestmentDistributionSchema = createInsertSchema(investmentDistributions).omit({ id: true, createdAt: true, updatedAt: true });
+// sentDate is ALWAYS sent as an ISO string by the Sent To dialog, so without
+// coercion every distribution add 400s; responseDate comes the same way from
+// the response dropdown.
+export const insertInvestmentDistributionSchema = createInsertSchema(investmentDistributions, {
+  sentDate: z.coerce.date().nullable().optional(),
+  responseDate: z.coerce.date().nullable().optional(),
+}).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertInvestmentDistribution = z.infer<typeof insertInvestmentDistributionSchema>;
 export type InvestmentDistribution = typeof investmentDistributions.$inferSelect;
 
