@@ -221,9 +221,13 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
             {(data.bgpSummary.team || []).length > 0 && (
               <div className="text-[11px] text-muted-foreground truncate">BGP side: {data.bgpSummary.team.slice(0, 4).join(", ")}</div>
             )}
-            <div className="max-h-[300px] overflow-y-auto pr-1">
-              <ActivitySummary companyId={companyId} />
-            </div>
+            {/* The activity feed is staff-only for brands that aren't the
+                viewer's own company — the API 403s otherwise (r377). */}
+            {(!isClientViewer || mbvUser?.companyScopeId === companyId) && (
+              <div className="max-h-[300px] overflow-y-auto pr-1">
+                <ActivitySummary companyId={companyId} />
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

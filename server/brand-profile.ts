@@ -1124,7 +1124,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       bgpDeals: bpScope
         ? bgpDeals.rows.map((d: any) => { const { fee, team, internal_agent, ...rest } = d; return rest; })
         : bgpDeals.rows,
-      bgpSummary,
+      // totalFees stays staff-only, matching the per-deal fee strip above.
+      bgpSummary: bpScope ? { ...bgpSummary, totalFees: null } : bgpSummary,
       decisionMakers: decisionMakers.rows,
       leaseEvents: leaseEvents.rows,
       competitors: competitors.rows,

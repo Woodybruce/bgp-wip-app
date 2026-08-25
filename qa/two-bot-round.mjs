@@ -5003,6 +5003,8 @@ async function markRound(page, cross) {
     });
     await mobCtx.addCookies(await page.context().cookies());
     const mob = await mobCtx.newPage();
+    const mob403s = [];
+    mob.on('response', (r) => { if (r.status() === 403) mob403s.push(r.url().replace(BASE, '').split('?')[0]); });
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
@@ -5015,9 +5017,20 @@ async function markRound(page, cross) {
       await intelPill.tap().catch(() => intelPill.click());
       await mob.waitForTimeout(3000);
       const body = await mob.evaluate(() => document.body.innerText);
-      if (stores.length > 0 && !/UK stores/i.test(body)) throw new Error(`Intel: UK stores card missing (${stores.length} geocoded stores in payload)`);
       if (aiComps.length > 0 && !/Competition/i.test(body)) throw new Error(`Intel: Competition card missing (${aiComps.length} AI competitors in payload)`);
       if (aiComps.length > 6 && !/\+\d+ more in the competitor set/.test(body)) throw new Error('Intel: Competition overflow line missing with >6 AI competitors');
+      // UK stores moved from Intel to its own Stores pill (JOGQK 416bc9d1).
+      if (stores.length > 0) {
+        const storesPill = mob.locator('[data-testid="company-section-stores"]');
+        if (!await storesPill.count()) throw new Error(`Stores pill missing (${stores.length} geocoded stores in payload)`);
+        await storesPill.tap().catch(() => storesPill.click());
+        await mob.waitForTimeout(2000);
+        const storesBody = await mob.evaluate(() => document.body.innerText);
+        if (!/UK stores/i.test(storesBody)) throw new Error(`Stores: UK stores card missing (${stores.length} geocoded stores in payload)`);
+      }
+      // r377: the profile used to mount the staff-only activity feed for
+      // clients — a guaranteed 403 on every brand open. Zero 403s allowed.
+      if (mob403s.length) throw new Error(`client mobile brand profile fired staff-only 403s: ${[...new Set(mob403s)].join(', ').slice(0, 160)}`);
     } finally {
       await mob.close();
       await mobCtx.close();
@@ -5399,6 +5412,17 @@ async function samRound(page, cross) {
 const QA_CHROMIUM = process.env.QA_CHROMIUM
   || (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : null);
 const browser = await chromium.launch(QA_CHROMIUM ? { executablePath: QA_CHROMIUM } : {});
+// The QA container has no external network — requests to external hosts
+// (google favicon fallbacks etc.) HANG ~12-28s before resetting, which
+// starves waitForLoadState('networkidle') and randomly times out scenarios
+// (r377: client-add-contact, staff-property-tenancy-mobile). Abort anything
+// that isn't the local app so idle reflects the app alone.
+const rawNewContext = browser.newContext.bind(browser);
+browser.newContext = async (opts) => {
+  const ctx = await rawNewContext(opts);
+  await ctx.route(/^https?:\/\/(?!localhost|127\.0\.0\.1)/, (r) => r.abort());
+  return ctx;
+};
 const agentCtx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
 const clientCtx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
 

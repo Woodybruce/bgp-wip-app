@@ -16,6 +16,14 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+95. 2026-08-25 · Landsec client / mobile 390px (QA r377) · "look up Starbucks
+    from the phone Brands search and see who they are / who to call" · The
+    brand profile opens on the CHAT pill ("Ask anything about Starbucks — @
+    tags properties…"), which reads as an internal BGP tool; the client had
+    to notice and tap Contacts/Intel to get what they came for · Land client
+    logins on Contacts (or Intel) instead of Chat on the phone brand
+    profile — staff can keep Chat-first.
+
 94. 2026-08-25 · BGP staff / desktop (QA r373) · "log a £25m offer on The
     Royal Exchange from the Investment Tracker offers dialog" · When the
     save failed (pre-fix date 400), NOTHING happened — the add form just sat
