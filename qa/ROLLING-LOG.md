@@ -73,6 +73,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r372 · 2026-08-25 ~09:00 UTC · ROUND IN PROGRESS (provisional)
+- LIGHT round (r371 was FULL). Reconciled r371 first: commit 921a9887 is
+  complete AND its ROLLING-LOG entry was finalized in the same commit (the
+  parent session's "no final entry" note was wrong — nothing to revert).
+  tsc clean, FRESH_BUILD smoke GREEN 42/0 with the fix in place.
+- Triage: nothing to triage from smoke.
+- Plan: fix r371's deferred real()-cap schemas (insertAvailableUnitSchema,
+  insertCrmDealSchema), two-bot round after.
+
 ### r371 · 2026-08-25 · FULL (rotation #4 staff mobile 390px)
 - Regression: run-smoke.sh GREEN ×3 (42 checks, 0 failures; FRESH_BUILD=1
   before fixes, after fix 1, and after fix 2; pg_hba trust fix needed, r205
