@@ -76,17 +76,30 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r388 · 2026-08-26 · ROUND IN PROGRESS (provisional heartbeat)
-- LIGHT round (r387 was FULL). Merged JOGQK f6f2a2f+3bc83b4 (SharePoint
-  chip wrap; hdog→Huseyn admin) into staging, merge clean, pushed.
+### r388 · 2026-08-26 · LIGHT (r387 was FULL) + targeted checks on new JOGQK surfaces
+- Merged JOGQK f6f2a2f+3bc83b4 (SharePoint chip wrap; hdog→Huseyn admin)
+  into staging per parent note. Merge clean, tsc not needed (2-file diff,
+  build green below).
 - Smoke GREEN 42/0 (FRESH_BUILD=1 on merged code). Two-bot 388: exit 0,
-  all scenarios ok. 4 issues all listed noise (2×400 rocketreach +
+  all 34 scenarios ok. 4 issues all listed noise (2×400 rocketreach +
   tracker-invalid probe; 2×503 keyless AI). 0 raw 500/502/504 in
   dev-server log (one grep hit was "500 articles" in a news-feed line).
   requirements-leasing 404 = client cross-scope probe, intended.
-- Verified: hdog boot block seeds Huseyn admin=true on fresh restore.
-- Remaining this round: SharePoint chip-wrap assert at 390px (mocked
-  /api/microsoft/status + files), final log entry.
+- Targeted check 1: hdog boot block seeds Huseyn admin=true on fresh
+  restore ([seed] log + users row verified).
+- Targeted check 2 (per parent): SharePoint staff page at 390px with
+  mocked /api/microsoft/status {connected:true} + files — type-filter
+  chips wrap onto 2 lines (flexWrap:wrap, scrollWidth==clientWidth, no
+  chip-row scroll), document has NO horizontal overflow (390/390),
+  mocked items render, Slides chip still filters correctly when wrapped
+  (deck shown, PDF hidden). 0 pageerrors. Screenshots clean.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions: none.
+- New flakes: none. Harness growth: none (chip wrap is mocked-route
+  visual, doesn't fit two-bot's API pattern cheaply).
+- Next journey: r388 was LIGHT → r389 FULL, rotation #1 staff desktop.
+  r385's untouched pointers still open: SharePoint toolbar/New folder/
+  delete (needs M365 or stub — note the status/files mock pattern in this
+  entry works for it), Business Rates entry detail (needs VOA seed rows).
 
 ### r387 · 2026-08-26 · FULL (rotation #4 staff mobile 390px)
 - Merged JOGQK 7de822d (hdog boot-block staff login) into staging per parent
