@@ -76,11 +76,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r380 · 2026-08-26 00:37 UTC · ROUND IN PROGRESS (LIGHT — r379 was FULL)
-- Fresh container. pg_hba trust fix + bgp superuser role + fixture restored
-  as bgp (no owner-transfer loop needed when the role is superuser at
-  restore time). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1).
-- Two-bot 380 next; triage to follow.
+### r380 · 2026-08-26 · LIGHT (r379 was FULL — no journey)
+- Fresh container. pg_hba trust fix + bgp SUPERUSER role, fixture restored
+  as bgp directly (superuser-at-restore avoids the r379 per-table owner
+  loop entirely). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1).
+- Two-bot 380: exit 0, ALL 53 scenarios ok — including r379's
+  staff-mobile-brand-search-social + contact-probe fixes, r377's spine-ghost
+  and intel-card scenarios, and the r344 deal-verdict pair. 4 issues, all
+  listed noise: 2×400 (rocketreach discover; agent-tracker-invalid's own
+  intended 400), 2×503 (keyless AI — brand-gaps/live-intel,
+  bgp-commentary/regenerate). 0 raw 500/502/504 in the entire dev-server
+  log (status tally: only 2xx/3xx/expected 400/401/403/404/503).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions: none
+  new. New flakes: none.
+- Process note: heartbeat footer initially wrong, amended+force-with-lease
+  once on own seconds-old tip (r379 warned about this — checked history
+  footer style AFTER committing; check it BEFORE).
+- Next journey: r380 was LIGHT → r381 FULL rotation #1 staff desktop.
 
 ### r379 · 2026-08-25 · FULL (rotation #4 staff mobile 390px)
 - Fresh container. pg_hba trust + bgp role/db + fixture restore + PER-TABLE
