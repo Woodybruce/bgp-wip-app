@@ -76,10 +76,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r382 · 2026-08-26 · LIGHT — ROUND IN PROGRESS (provisional)
+### r382 · 2026-08-26 · LIGHT (r381 was FULL — no journey)
 - Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
-  bgp directly. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1).
-- Two-bot 382 running; triage pending. Final entry replaces this one.
+  bgp directly (r380 shortcut holds). tsc clean. Smoke GREEN 42/0
+  (FRESH_BUILD=1).
+- Two-bot 382: exit 0, ALL scenarios ok. 4 issues, all listed noise:
+  2×400 (rocketreach discover; agent-tracker-invalid's own intended 400),
+  2×503 (keyless AI — brand-gaps/live-intel, bgp-commentary/regenerate).
+  0 raw 500/502/504 in the entire dev-server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503; 403s grouped by endpoint = one-off
+  rival/client write-guard probes, no per-page polling storms).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions: none
+  new. New flakes: none.
+- Next journey: r382 was LIGHT → r383 FULL rotation #2 client desktop.
 
 ### r381 · 2026-08-26 · FULL (rotation #1 staff desktop)
 - Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
