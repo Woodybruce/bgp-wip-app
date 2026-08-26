@@ -147,7 +147,32 @@ export default function VoaRatingsPage() {
     queryKey: ["/api/voa/description-codes"],
   });
 
+  // Address finder — live suggestions from the rating list itself (Woody,
+  // 2026-08-26: "needs address finder linked to the rating list so auto
+  // fills"). Reuses the tokenised /ratings search, so "55 wells street"
+  // matches number + street across their separate columns.
+  const [suggestQ, setSuggestQ] = useState("");
+  const [showSuggest, setShowSuggest] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSuggestQ(searchInput.trim()), 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+  const { data: suggestData } = useQuery<RatingsResponse>({
+    queryKey: [`/api/voa/ratings?search=${encodeURIComponent(suggestQ)}&limit=8&sortBy=rateableValue&sortDir=desc&page=1`],
+    enabled: suggestQ.length >= 3 && showSuggest,
+    staleTime: 60_000,
+  });
+  const suggestions = (suggestQ.length >= 3 && showSuggest) ? (suggestData?.items || []) : [];
+  const pickSuggestion = (item: VoaRating) => {
+    setShowSuggest(false);
+    setSearchInput(item.firmName || [item.numberOrName, item.street].filter(Boolean).join(" "));
+    setSearch(item.firmName || [item.numberOrName, item.street].filter(Boolean).join(" "));
+    setPage(1);
+    setDetail(item);
+  };
+
   const handleSearch = () => {
+    setShowSuggest(false);
     setSearch(searchInput);
     setPage(1);
   };
@@ -211,10 +236,37 @@ export default function VoaRatingsPage() {
                     placeholder="Search properties, streets, postcodes..."
                     className="pl-9"
                     value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
+                    onChange={(e) => { setSearchInput(e.target.value); setShowSuggest(true); }}
+                    onFocus={() => setShowSuggest(true)}
+                    onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
                     onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                    autoComplete="off"
                     data-testid="input-search"
                   />
+                  {suggestions.length > 0 && (
+                    <div className="absolute top-full mt-1 left-0 right-0 bg-popover border border-border rounded-lg shadow-lg z-50 max-h-80 overflow-y-auto">
+                      {suggestions.map((sug) => (
+                        <button
+                          key={sug.uarn}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => pickSuggestion(sug)}
+                          className="w-full text-left px-3 py-2 hover:bg-accent flex items-baseline justify-between gap-2"
+                          data-testid={`voa-suggest-${sug.uarn}`}
+                        >
+                          <span className="min-w-0">
+                            <span className="text-sm font-medium block truncate">{sug.firmName || sug.numberOrName || "—"}</span>
+                            <span className="text-xs text-muted-foreground block truncate">
+                              {[sug.town, sug.postcode].filter(Boolean).join(" · ")}{sug.descriptionText ? ` · ${sug.descriptionText.toLowerCase()}` : ""}
+                            </span>
+                          </span>
+                          <span className="text-xs font-mono tabular-nums shrink-0 text-muted-foreground">
+                            {sug.rateableValue != null ? `£${Number(sug.rateableValue).toLocaleString()}` : "no RV"}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
               <Select value={baFilter} onValueChange={(v) => { setBaFilter(v); setPage(1); }}>
