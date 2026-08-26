@@ -702,28 +702,28 @@ function StaffSharePoint() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="sharepoint-page">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1 min-w-0">
           <h1 className="text-2xl font-bold tracking-tight">SharePoint & Files</h1>
-          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
             {breadcrumb.map((item, i) => (
-              <span key={item.id} className="flex items-center gap-1">
+              <span key={item.id} className="flex items-center gap-1 min-w-0">
                 {i > 0 && <span>/</span>}
                 {i < breadcrumb.length - 1 ? (
                   <button
-                    className="hover:text-foreground hover:underline"
+                    className="hover:text-foreground hover:underline truncate max-w-[10rem]"
                     onClick={() => setFolderStack(folderStack.slice(0, i))}
                   >
                     {item.name}
                   </button>
                 ) : (
-                  <span className="text-foreground">{item.name}</span>
+                  <span className="text-foreground truncate max-w-[12rem]">{item.name}</span>
                 )}
               </span>
             ))}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <Badge variant="outline" className="gap-1">
             <Cloud className="w-3 h-3" />
             Connected
@@ -767,13 +767,13 @@ function StaffSharePoint() {
         }}
       >
         <CardHeader className="flex flex-col gap-3 pb-3">
-          <div className="flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-sm font-semibold">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <CardTitle className="text-sm font-semibold truncate max-w-full">
               {folderStack.length > 0 ? folderStack[folderStack.length - 1].name : "All Files"}
             </CardTitle>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
               {sortedFiles.length > 0 && (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
                   {sortedFiles.length}{files && sortedFiles.length !== files.length ? ` of ${files.length}` : ""} items
                 </span>
               )}
