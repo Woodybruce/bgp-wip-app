@@ -870,6 +870,24 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
   const [emailSortHits, setEmailSortHits] = useState<any[] | null>(null);
   const [emailSorting, setEmailSorting] = useState(false);
 
+  const goCreateComp = () => {
+    const params = new URLSearchParams({
+      create: "1",
+      source: "Pathway",
+      sourceUrl: `/property-pathway?runId=${run.id}`,
+      sourceTitle: `Pathway: ${run.address}`,
+      name: run.address,
+    });
+    navigate(`/comps?${params.toString()}`);
+  };
+  const goCreateDocument = () => {
+    const params = new URLSearchParams();
+    if (run.propertyId) params.set("propertyId", run.propertyId);
+    params.set("propertyName", run.propertyName || run.address);
+    if (run.postcode) params.set("postcode", run.postcode);
+    navigate(`/document-briefs?${params.toString()}`);
+  };
+
   return (
     <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
       {/* Stacks on phones — the old single row pushed the action buttons
@@ -884,16 +902,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              const params = new URLSearchParams({
-                create: "1",
-                source: "Pathway",
-                sourceUrl: `/property-pathway?runId=${run.id}`,
-                sourceTitle: `Pathway: ${run.address}`,
-                name: run.address,
-              });
-              navigate(`/comps?${params.toString()}`);
-            }}
+            className="hidden sm:inline-flex"
+            onClick={goCreateComp}
             title="Create a leasing comp pre-filled with this pathway as the source"
             data-testid="button-create-comp-from-pathway"
           >
@@ -903,13 +913,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              const params = new URLSearchParams();
-              if (run.propertyId) params.set("propertyId", run.propertyId);
-              params.set("propertyName", run.propertyName || run.address);
-              if (run.postcode) params.set("postcode", run.postcode);
-              navigate(`/document-briefs?${params.toString()}`);
-            }}
+            className="hidden sm:inline-flex"
+            onClick={goCreateDocument}
             title="Open the Document Studio pre-loaded with this property"
             data-testid="button-create-document-from-pathway"
           >
@@ -961,9 +966,30 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             <FileText className="w-4 h-4 mr-1" />
             Summary PDF
           </Button>
-          <Button variant="ghost" size="sm" onClick={onDelete} className="text-muted-foreground hover:text-destructive" title="Delete investigation">
+          <Button variant="ghost" size="sm" onClick={onDelete} className="hidden sm:inline-flex text-muted-foreground hover:text-destructive" title="Delete investigation">
             <Trash2 className="w-4 h-4" />
           </Button>
+          {/* Phone overflow — Summary PDF + Refresh stay visible, the rest
+              fold here (DESIGN §4: one action row + overflow). */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="sm:hidden" aria-label="More actions" data-testid="button-pathway-more">
+                ⋯
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuItem onClick={goCreateComp}>
+                <Plus className="w-3.5 h-3.5 mr-2" /> Create comp
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={goCreateDocument}>
+                <FileText className="w-3.5 h-3.5 mr-2" /> Create document
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
+                <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete investigation
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {/* The big 'Run Stage / Generate' button is gone — every stage
               now auto-runs end-to-end on Pathway start. The 'Refresh'
               button to the left still re-fires Stage 1 (and the chain
@@ -981,8 +1007,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 const status = run.stageStatus?.[`stage${s.n}`];
                 const Icon = s.icon;
                 return (
-                  <div key={s.n} className="w-16 flex-none sm:w-auto sm:flex-1 text-center">
-                    <div className={`mx-auto w-8 h-8 rounded-full flex items-center justify-center mb-1.5 ${
+                  <div key={s.n} className="w-14 flex-none sm:w-auto sm:flex-1 text-center">
+                    <div className={`mx-auto w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center mb-1 sm:mb-1.5 ${
                       status === "completed" ? "bg-emerald-500 text-white" :
                       status === "running" ? "bg-blue-500 text-white" :
                       status === "failed" ? "bg-red-500 text-white" :
@@ -993,7 +1019,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                        status === "failed" ? <AlertCircle className="w-4 h-4" /> :
                        <Icon className="w-4 h-4" />}
                     </div>
-                    <p className="text-[10px] leading-tight">{s.label}</p>
+                    <p className="text-[9px] sm:text-[10px] leading-tight">{s.label}</p>
                   </div>
                 );
               })}
@@ -1029,26 +1055,30 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </CardHeader>
               <CardContent className="space-y-2 text-sm pb-3">
                 {/* Building image + address */}
-                <div className="flex gap-2.5">
+                <div className="flex flex-col sm:flex-row gap-2.5">
+                  {(s1.propertyImage?.streetViewUrl || s1.propertyImage?.aerialUrl) && (
+                  <div className="flex gap-2.5 shrink-0">
                   {s1.propertyImage?.streetViewUrl && (
-                    <a href={s1.propertyImage.googleMapsUrl || "#"} target="_blank" rel="noreferrer" className="shrink-0 block hover:opacity-90 transition-opacity">
+                    <a href={s1.propertyImage.googleMapsUrl || "#"} target="_blank" rel="noreferrer" className="block flex-1 sm:flex-none hover:opacity-90 transition-opacity">
                       <img
                         src={s1.propertyImage.streetViewUrl}
                         alt={`Street view of ${run.address}`}
-                        className="w-28 h-20 rounded object-cover border"
+                        className="w-full sm:w-28 h-24 sm:h-20 rounded object-cover border"
                         onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                       />
                     </a>
                   )}
                   {s1.propertyImage?.aerialUrl && (
-                    <a href={s1.propertyImage.googleMapsUrl || "#"} target="_blank" rel="noreferrer" className="shrink-0 block hover:opacity-90 transition-opacity">
+                    <a href={s1.propertyImage.googleMapsUrl || "#"} target="_blank" rel="noreferrer" className="block flex-1 sm:flex-none hover:opacity-90 transition-opacity">
                       <img
                         src={s1.propertyImage.aerialUrl}
                         alt={`Aerial view of ${run.address}`}
-                        className="w-28 h-20 rounded object-cover border"
+                        className="w-full sm:w-28 h-24 sm:h-20 rounded object-cover border"
                         onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                       />
                     </a>
+                  )}
+                  </div>
                   )}
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-sm break-words">{run.address}{run.postcode ? `, ${run.postcode}` : ""}</p>
@@ -1368,7 +1398,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {s1.sharepointHits && s1.sharepointHits.length > 0 && (
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><FolderOpen className="w-4 h-4" /> SharePoint ({s1.sharepointHits.length})</CardTitle>
+                  <CardTitle className="text-sm flex items-center gap-2"><FolderOpen className="w-4 h-4" /> SharePoint ({s1.sharepointHits.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 max-h-56 overflow-y-auto pb-2">
                   {s1.sharepointHits.slice(0, 15).map((f: any, i: number) => (
@@ -1391,7 +1421,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {/* Brochures — always show card so users know the pathway looked */}
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Brochures ({s1.brochureFiles?.length || 0})</CardTitle>
+                <CardTitle className="text-sm flex items-center gap-2"><FileText className="w-4 h-4" /> Brochures ({s1.brochureFiles?.length || 0})</CardTitle>
               </CardHeader>
               <CardContent className="text-[11px] space-y-0.5 max-h-56 overflow-y-auto pb-2">
                 {s1.brochureFiles && s1.brochureFiles.length > 0 ? (
@@ -1420,7 +1450,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {s1.crmHits?.properties && s1.crmHits.properties.length > 0 && (
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> CRM ({s1.crmHits.properties.length})</CardTitle>
+                  <CardTitle className="text-sm flex items-center gap-2"><Building2 className="w-4 h-4" /> CRM ({s1.crmHits.properties.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.crmHits.properties.map((p: any) => (
@@ -1444,7 +1474,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               return (
                 <Card>
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-base flex items-center gap-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
                       <Building2 className="w-4 h-4" /> Comps ({total})
                     </CardTitle>
                   </CardHeader>
@@ -1504,7 +1534,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {s1.rates && s1.rates.entries && s1.rates.entries.length > 0 && (
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
                     <span>Rates ({s1.rates.entries.length})</span>
                     {run.postcode && (
                       <a href={`https://www.tax.service.gov.uk/business-rates-find/search?postcode=${encodeURIComponent(run.postcode)}`} target="_blank" rel="noreferrer" className="ml-auto text-[10px] text-primary hover:underline inline-flex items-center gap-0.5 font-normal">
@@ -1548,7 +1578,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {s1.deals && s1.deals.length > 0 && (
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> Deals ({s1.deals.length})</CardTitle>
+                  <CardTitle className="text-sm flex items-center gap-2"><Building2 className="w-4 h-4" /> Deals ({s1.deals.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.deals.slice(0, 10).map((d: any) => (
@@ -1567,7 +1597,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {s1.pricePaidHistory && s1.pricePaidHistory.length > 0 && (
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><Download className="w-4 h-4" /> Street sales ({s1.pricePaidHistory.length})</CardTitle>
+                  <CardTitle className="text-sm flex items-center gap-2"><Download className="w-4 h-4" /> Street sales ({s1.pricePaidHistory.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.pricePaidHistory.slice(0, 10).map((t: any, i: number) => (
@@ -1589,7 +1619,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {s1.retailComps && s1.retailComps.length > 0 && (
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
                     <Building2 className="w-4 h-4" /> Retail leasing comps ({s1.retailComps.length})
                     <Badge variant="outline" className="text-[10px] py-0">from emails</Badge>
                   </CardTitle>
@@ -1619,7 +1649,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {s1.tenancy?.units && s1.tenancy.units.length > 0 && (
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><MapPin className="w-4 h-4" /> Units ({s1.tenancy.units.length}) <Badge variant="outline" className="text-[10px] py-0">{s1.tenancy.status}</Badge></CardTitle>
+                  <CardTitle className="text-sm flex items-center gap-2"><MapPin className="w-4 h-4" /> Units ({s1.tenancy.units.length}) <Badge variant="outline" className="text-[10px] py-0">{s1.tenancy.status}</Badge></CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.tenancy.units.slice(0, 20).map((u: any) => (
@@ -1644,7 +1674,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {s1.engagements && s1.engagements.length > 0 && (
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Engaged ({s1.engagements.length})</CardTitle>
+                  <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Engaged ({s1.engagements.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.engagements.slice(0, 10).map((e: any, i: number) => (
@@ -1670,7 +1700,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-2">
-                  <CardTitle className="text-base flex items-center gap-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
                     <Search className="w-4 h-4" /> Emails
                     {s1.emailCommentary?.generatedAt && (
                       <span className="text-[10px] text-muted-foreground font-normal">
@@ -1757,7 +1787,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
       {s2Status === "skipped" ? (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" /> Brand Intelligence — skipped</CardTitle>
+            <CardTitle className="text-sm flex items-center gap-2"><Sparkles className="w-4 h-4" /> Brand Intelligence — skipped</CardTitle>
           </CardHeader>
           <CardContent className="text-sm space-y-3">
             <p className="text-muted-foreground">
@@ -1784,7 +1814,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
       ) : s2 && !s2.skipped ? (
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2">
+            <CardTitle className="text-sm flex items-center gap-2">
               <Sparkles className="w-4 h-4" /> Brand Intelligence
               {s2.company?.name && <span className="text-muted-foreground font-normal text-sm">· {s2.company.name}</span>}
             </CardTitle>
@@ -1872,7 +1902,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
       {s4 && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
+            <CardTitle className="text-sm flex items-center gap-2">
               <Building2 className="w-4 h-4" /> Property Intelligence
               <span className="text-[10px] text-muted-foreground font-normal ml-2">Virtual — materialise to SharePoint at Investigation Board</span>
               {/* Stage 4 re-run button removed — auto-runs in the chain. */}
@@ -2253,7 +2283,7 @@ function BusinessPlanCard({ runId, stage6, onReload }: { runId: string; stage6: 
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
-        <CardTitle className="text-base flex items-center gap-2">
+        <CardTitle className="text-sm flex items-center gap-2">
           <Briefcase className="w-4 h-4" /> Business Plan
           {agreed && <Badge className="ml-1 bg-emerald-100 text-emerald-900">Agreed</Badge>}
         </CardTitle>
@@ -2335,7 +2365,7 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
-        <CardTitle className="text-base flex items-center gap-2">
+        <CardTitle className="text-sm flex items-center gap-2">
           <FileSpreadsheet className="w-4 h-4" /> Model Studio
           {modelAgreed && <Badge className="ml-1 bg-emerald-100 text-emerald-900">Agreed</Badge>}
         </CardTitle>
@@ -2495,20 +2525,20 @@ function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
       />
       <RelinkCrmDialog runId={run.id} open={relinkOpen} onOpenChange={setRelinkOpen} initialQuery={run.address} />
       <Card>
-        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <FolderOpen className="w-4 h-4" />
+        <CardHeader className="pb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <CardTitle className="text-sm flex items-center gap-2 min-w-0 flex-wrap">
+            <FolderOpen className="w-4 h-4 shrink-0" />
             <Link href={`/properties/${property.id}`}>
-              <span className="text-primary hover:underline cursor-pointer inline-flex items-center gap-1">
-                {property.name}
-                <ExternalLink className="w-3 h-3" />
+              <span className="text-primary hover:underline cursor-pointer inline-flex items-center gap-1 min-w-0">
+                <span className="truncate max-w-[14rem]">{property.name}</span>
+                <ExternalLink className="w-3 h-3 shrink-0" />
               </span>
             </Link>
             {!hasFolderTree && (
               <Badge variant="outline" className="text-[9px] py-0">No folders yet</Badge>
             )}
           </CardTitle>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Button
               variant="ghost"
               size="sm"
@@ -3046,7 +3076,7 @@ function RelatedLeaseAdvisoryMatters({ propertyId }: { propertyId: string }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2"><Briefcase className="w-4 h-4" /> Related Lease Advisory matters · {matters.length}</CardTitle>
+        <CardTitle className="text-sm flex items-center gap-2"><Briefcase className="w-4 h-4" /> Related Lease Advisory matters · {matters.length}</CardTitle>
       </CardHeader>
       <CardContent className="text-sm space-y-1">
         {matters.map((m) => (
@@ -3156,7 +3186,7 @@ function WhyBuyChartsCard({ runId, propertyId, passingRent, erv, area, tenants }
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2"><FileSpreadsheet className="w-4 h-4" /> Charts & cards</CardTitle>
+        <CardTitle className="text-sm flex items-center gap-2"><FileSpreadsheet className="w-4 h-4" /> Charts & cards</CardTitle>
       </CardHeader>
       <CardContent className="text-sm">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -3351,7 +3381,7 @@ function WhyBuyCompsCard({ runId, propertyId, whyBuyComps, onReload }: { runId: 
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
-        <CardTitle className="text-base flex items-center gap-2"><FileSpreadsheet className="w-4 h-4" /> Comps</CardTitle>
+        <CardTitle className="text-sm flex items-center gap-2"><FileSpreadsheet className="w-4 h-4" /> Comps</CardTitle>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={match} disabled={busy !== null} className="gap-1.5">
             {busy === "match" ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} AI match
@@ -3410,7 +3440,7 @@ function WhyBuyCard({
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
-        <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Why Buy</CardTitle>
+        <CardTitle className="text-sm flex items-center gap-2"><FileText className="w-4 h-4" /> Why Buy</CardTitle>
         <div className="flex items-center gap-1.5">
           {propertyId && (
             <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => setRelinkOpen(true)} title="Pick from uploads that have no property assigned and link them to this property. Fixes the empty-picker case when images were uploaded before per-property folders existed.">
@@ -4538,7 +4568,7 @@ function ImageStudioCard({ runId, stage8, onReload, propertyId, runAddress, runP
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
-        <CardTitle className="text-base flex items-center gap-2">
+        <CardTitle className="text-sm flex items-center gap-2">
           <ImageIcon className="w-4 h-4" /> Image Studio
         </CardTitle>
         <div className="flex items-center gap-2 flex-wrap">
@@ -4671,7 +4701,7 @@ function PropertyDataMarketCard({ tone }: { tone: any }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
+        <CardTitle className="text-sm flex items-center gap-2">
           <Building2 className="w-4 h-4" /> Market tone
           <Badge variant="outline" className="text-[10px] py-0">PropertyData</Badge>
         </CardTitle>
@@ -4926,13 +4956,17 @@ function PlanningDocsDialog({
   onClose: () => void;
 }) {
   const totalPdfs = planningDocs.reduce((acc, p) => acc + p.docs.length, 0);
+  const subtitle = totalPdfs > 0
+    ? `${totalPdfs} PDF${totalPdfs === 1 ? "" : "s"} across ${planningDocs.length} application${planningDocs.length === 1 ? "" : "s"}${unscraped.length ? ` · ${unscraped.length} more on the portal` : ""}`
+    : unscraped.length
+      ? `${unscraped.length} application${unscraped.length === 1 ? "" : "s"} — documents on the council portal only`
+      : "No applications found";
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
-        <DialogHeader>
-          <DialogTitle>
-            Planning documents ({totalPdfs} PDFs across {planningDocs.length} apps)
-          </DialogTitle>
+        <DialogHeader className="pr-8">
+          <DialogTitle className="truncate">Planning documents</DialogTitle>
+          <p className="text-xs text-muted-foreground">{subtitle}</p>
         </DialogHeader>
         <div className="overflow-y-auto -mx-6 px-6 space-y-3">
           {planningDocs.map((app, ai) => (
@@ -5136,6 +5170,7 @@ function EmailCommentary({
           <button
             key={`e-${keyCounter++}`}
             type="button"
+            data-no-min-touch
             disabled={disabled}
             onClick={() => handleOpen(idx)}
             title={title}
