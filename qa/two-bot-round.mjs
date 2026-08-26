@@ -1621,6 +1621,29 @@ async function victoriaRound(page, cross) {
     if (!(await page.locator('[data-testid="button-upload"]').count())) throw new Error('full studio toolbar (button-upload) did not render for non-admin staff');
   });
 
+  // Mobile Images folder lifecycle (r387): the /m/images FOLDERS row is a
+  // hand-made collection (kind null, no CRM link). Create → listed → delete.
+  await step(page, p, 'staff-image-folder-lifecycle', async () => {
+    const name = `QA Folder R${ROUND}`;
+    const r = await page.evaluate(async (nm) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const created = await (await fetch('/api/image-studio/collections', {
+        method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ name: nm }) })).json().catch(() => null);
+      const id = created?.id || null;
+      const list = id ? await (await fetch('/api/image-studio/collections', { headers: auth })).json().catch(() => []) : [];
+      const row = (Array.isArray(list) ? list : []).find((c) => c.id === id) || null;
+      const del = id ? (await fetch(`/api/image-studio/collections/${id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status : 0;
+      const after = id ? await (await fetch('/api/image-studio/collections', { headers: auth })).json().catch(() => []) : [];
+      const ghost = (Array.isArray(after) ? after : []).some((c) => c.id === id);
+      return { id, row, del, ghost };
+    }, name);
+    if (!r.id) throw new Error('folder create did not return an id');
+    if (!r.row) throw new Error('created folder missing from collections list');
+    if (r.row.kind != null || r.row.property_id || r.row.company_id) throw new Error('hand-made folder carries a system kind/CRM link — /m/images would hide it');
+    if (r.del < 200 || r.del >= 300) throw new Error(`folder delete refused (${r.del})`);
+    if (r.ghost) throw new Error('deleted folder still in collections list');
+  });
+
   // 4m. Deal comments round-trip: Victoria writes a comment on the Bluewater
   // deal and reads it back (the sidebar Comments widget rides this field).
   await step(page, p, 'staff-deal-comment', async () => {

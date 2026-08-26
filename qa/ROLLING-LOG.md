@@ -76,15 +76,40 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r387 · 2026-08-26 · ROUND IN PROGRESS (heartbeat)
+### r387 · 2026-08-26 · FULL (rotation #4 staff mobile 390px)
 - Merged JOGQK 7de822d (hdog boot-block staff login) into staging per parent
-  note. Merge clean. Smoke GREEN 42/0 (fresh build on merged code).
-- Two-bot 387: exit 0, 53 scenarios ok. 4 issues all listed noise (2×400
+  note. Merge clean, tsc clean. Smoke GREEN 42/0 (fresh build on merged code).
+- Two-bot 387: exit 0, all scenarios ok. 4 issues all listed noise (2×400
   rocketreach + tracker-invalid's intended 400; 2×503 keyless AI live-intel
   + commentary regen). 0 raw 500/502/504 in dev-server log.
-- Next: FULL journey rotation #4 staff mobile 390px (Business Rates RV
-  sort/detail/address finder, Land Registry autocomplete, PI map toolbar,
-  mobile Images folders/select) — in progress.
+- Journey: Victoria phone 390px — "what rates does a Bluewater unit pay /
+  who to look up / grab my site-visit photos": PI Business Rates tab renders
+  clean (fixture has 0 VOA rows, so RV sort + entry detail + suggest can't
+  be exercised locally — search UI + empty state fine, no errors); Land
+  Registry autocomplete resolved "Bluewater Shopping Centre … DA9 9ST",
+  picked result degrades gracefully keyless (clear "no title data" notice +
+  HMLR title-number fallback); PI map toolbar renders (tiles blank = no
+  external network, noise); /m/images empty state correct for a no-uploads
+  user, then with seeded phone-uploads + user folder (cleaned after):
+  FOLDERS row, folder open/back/remove-X, tap→edit sheet, Select mode →
+  2 SELECTED → Select all → Add-to-folder picker (New folder…) → Done all
+  work; 0 pageerrors, 0 non-noise 4xx/5xx (a /full 404 on a seeded
+  bytes-less image was a seed artifact), no h-overflow on any screen.
+  SharePoint toolbar untestable locally (no M365 tokens) — skipped.
+- Bugs fixed: 0 (nothing broken found). Deferred: none.
+- Suggestions: UX-NOTES #99 (/m/images tap opens Edit-with-AI sheet, viewing
+  the photo needs a second "Tap to zoom" — propose viewer-first with Edit
+  as an action).
+- Harness growth: staff-image-folder-lifecycle added to two-bot (create
+  hand-made collection → listed with kind null → delete → gone) + run-round
+  purge line for 'QA Folder R%'. Verified green in a full round-388 run
+  (exit 0, ledger = same 4 noise issues only).
+- Fixture note for future rounds: VOA table empty — Business Rates browse/
+  sort/detail needs a few seeded voa rows if a round wants to exercise it.
+- Next journey: r387 was FULL → r388 LIGHT (triage + any deferred). After
+  that, rotation #1 staff desktop; r385's untouched pointers still open:
+  SharePoint toolbar/New folder/delete (needs M365 or stub), Business Rates
+  entry detail (needs VOA seed rows).
 
 ### r386 · 2026-08-26 · LIGHT (r385 was FULL) + targeted checks on new JOGQK surfaces
 - Merged JOGQK fb6bbff+4046677 (pathway phone view, RBKC planning tier)

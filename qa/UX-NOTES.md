@@ -16,6 +16,16 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+99. 2026-08-26 · BGP staff / mobile 390px (QA r387) · "review the photos I
+    took on a site visit in /m/images" · Tapping a photo in Recent Captures
+    opens the Edit-with-AI sheet, where the photo itself is a small
+    thumbnail strip at the top ("Tap to zoom" for the real view) — a user
+    who just wants to LOOK at their capture gets an editing prompt and
+    suggestion pills first, and the actual photo needs a second tap ·
+    Open a full-screen viewer on tap (swipe between captures), with Edit
+    with AI as an action on that viewer; keeps the one-tap edit path but
+    makes the common "just look at it" case first-class.
+
 98. 2026-08-26 · BGP staff / mobile 390px (QA r386) · "open the Planning
     documents dialog on a pathway run from a phone" · The dialog opens and
     is legible, but each application header keeps its desktop columns
