@@ -76,6 +76,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r385 · 2026-08-26 · FULL (rotation #3 client mobile 390px) — IN PROGRESS
+- Merged JOGQK phone-UX batch (0852246b) into staging first per parent note
+  (MobileCardView tap-through, deal page phone view, mobile Images folders/
+  select mode, SharePoint toolbar, VOA/Land Registry reworks). Merge clean.
+- Smoke GREEN 42/0 (FRESH_BUILD=1) on merged code. 0 raw 500/502/504 in app
+  log; 503/401/404 all listed noise. Triage: nothing to triage.
+- Journey (client mobile 390px, targeting new phone surfaces) + two-bot
+  pending.
+
 ### r384 · 2026-08-26 · LIGHT (r383 was FULL — no journey)
 - Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
   bgp directly. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1).
