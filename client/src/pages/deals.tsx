@@ -3361,7 +3361,7 @@ export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorM
             })}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground text-center py-3">No fee allocation set — click Add Split to allocate the fee between BGP agents</p>
+          <p className="text-xs text-muted-foreground text-center py-3">No split yet — Add Split shares the fee between BGP agents</p>
         )}
       </CardContent>
     </Card>

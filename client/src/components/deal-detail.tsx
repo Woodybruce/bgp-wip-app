@@ -873,7 +873,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               deals show Vendor/Purchaser — the unused pair is clutter that
               invites mis-linking (UX #19). Already-linked slots stay visible
               either way so existing data is never hidden. */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-2">
             {(() => { const partiesInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase"; return (<>
             {(!partiesInvestment || deal.landlordId) && (
             <div className="flex flex-col gap-1">
@@ -939,7 +939,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   )}
                 </div>
               ) : (
-                <span className="text-[11px] text-muted-foreground italic">Set via Edit · Xero Contact</span>
+                <span className="text-[11px] text-muted-foreground italic">Not set — add via Edit</span>
               )}
             </div>
             )}
