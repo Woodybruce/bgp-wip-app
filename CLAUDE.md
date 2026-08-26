@@ -96,8 +96,8 @@ UI: inline `HouseStylePanel` on Pathway → Why Buy section.
 
 ## Design guidelines (Woody, 2026-08-23) — docs/DESIGN.md
 
-The app-wide design standard lives in `docs/DESIGN.md` (v1 draft, pending
-Woody's sign-off): token-only colours, typography scale, the pill standard
+The app-wide design standard lives in `docs/DESIGN.md` (v2, signed off by
+Woody 2026-08-26): token-only colours, typography scale, the pill standard
 (`client/src/components/ui/pill.tsx`), pill-row tabs, page header anatomy,
 desktop-table/phone-card-list, phone shell rules, and the deviation
 hit-list. **Convert on touch**: any commit touching a screen brings its
