@@ -85,6 +85,29 @@ export function normaliseApolloOrg(org: any): any {
   };
 }
 
+// Auto-fetch on brand open (Woody, 2026-08-26: "make apollo automatic" —
+// same no-ask rule as store research). One attempt per brand per 6h process
+// window; a stored payload counts as fresh for 30 days. Landlord-type
+// companies are skipped — the Momentum card never renders for them, so a
+// fetch would just burn Apollo credits.
+const autoKickFired = new Map<string, number>();
+export async function autoRefreshApolloIfStale(companyId: string): Promise<void> {
+  const last = autoKickFired.get(companyId);
+  if (last && Date.now() - last < 6 * 3600_000) return;
+  autoKickFired.set(companyId, Date.now());
+  await ensureTable();
+  const co = (await pool.query(
+    `SELECT company_type, domain, domain_url, website FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+  if (!co || !apolloDomainFor(co)) return;
+  const type = (co.company_type || "").toLowerCase();
+  if (["landlord", "landlord/freeholder", "investor", "reit", "developer", "fund"].includes(type)) return;
+  const row = (await pool.query(
+    `SELECT fetched_at FROM brand_apollo_data WHERE company_id = $1`, [companyId])).rows[0];
+  if (row?.fetched_at && Date.now() - new Date(row.fetched_at).getTime() < 30 * 864e5) return;
+  await refreshApolloCompany(companyId);
+  console.log(`[apollo-company] auto-fetched firmographics for ${companyId}`);
+}
+
 async function refreshApolloCompany(companyId: string): Promise<any> {
   await ensureTable();
   const co = (await pool.query(
