@@ -76,6 +76,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r384 · 2026-08-26 ~08:40 UTC · ROUND IN PROGRESS (LIGHT — r383 was FULL)
+- Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
+  bgp directly. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1).
+- Triage list: two-bot 384 pending (dev server starting next). No deferred
+  bugs from r383.
+
 ### r383 · 2026-08-26 · FULL (rotation #2 client desktop)
 - Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
   bgp directly. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 383:
