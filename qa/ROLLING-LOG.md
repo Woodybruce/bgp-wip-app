@@ -76,19 +76,32 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r390 · 2026-08-26 · LIGHT (r389 was FULL) — ROUND IN PROGRESS
-- Merged JOGQK c6c7f5a (hdog commission always-zero) into staging. Merge
-  clean (hr-routes.ts only).
-- Smoke GREEN 42/0 (FRESH_BUILD=1 on merged code).
-- Targeted check (per parent): GET /api/hr/staff/<hdog>/commission as hdog
-  → billedPence 0, billingsByYear [], wipTotal 0, topDeals/awaitingPayment
-  empty. Victoria's own commission endpoint returns the full 200 shape,
-  unaffected (fixture has 0 deal_fee_allocations rows so figures are zero
-  locally either way — shape + no-error is the check).
-- Note: hdog fixture login is username hdog / password hdog (boot-seed,
+### r390 · 2026-08-26 · LIGHT (r389 was FULL) + targeted check on new JOGQK surface
+- Merged JOGQK c6c7f5a (hdog commission always-zero) into staging per parent
+  note. Merge clean (hr-routes.ts only).
+- Smoke GREEN 42/0 (FRESH_BUILD=1 on merged code). Two-bot 390: exit 0, all
+  34 scenarios ok, 4 issues all listed noise (2×400 rocketreach +
+  tracker-invalid probe; 2×503 keyless AI live-intel + commentary regen).
+  0 raw 500/502/504 in dev-server log (one grep hit = news-feed "500
+  articles" line again).
+- Targeted check (per parent): commission endpoint as hdog → billedPence 0,
+  billingsByYear [], wipTotal 0, topDeals/awaitingPayment empty, xeroError
+  null. Browser: hdog's HR "Your profile" card shows COMMISSION £0 billed /
+  £0 WIP / forecast £0; Victoria's Commission tab renders the full tracker
+  (tiles, tier table, scenarios) — endpoint keeps its 200 shape for regular
+  staff. Note: staff→other-staff commission is admin-or-self only (403),
+  so the check must run AS hdog; hdog fixture login is hdog/hdog (boot-seed
   server/index.ts ~5484), NOT the standard fixture password.
-- Remaining this round: two-bot regression, browser render of commission
-  tab, final log entry.
+- /hr?person=<hdog id> deep-link lands on the HR overview, not a profile
+  view (hdog has no staff_profiles row / team, so he's not in the directory
+  list) — treated as intended for this special login, not a bug.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions: none.
+- Harness growth: staff-hdog-commission-zero in two-bot (login as hdog →
+  own commission all-zero + victoria's keeps tierBreakdown/scenarios shape;
+  skips if the hdog boot-seed is absent). Exact logic dry-run green vs dev.
+- New flakes: none. Next journey: r390 was LIGHT → r391 FULL, rotation #2
+  client desktop. Still-open pointer: SharePoint toolbar/New folder/delete
+  via the r388 status/files mock pattern.
 
 ### r389 · 2026-08-26 · FULL (rotation #1 staff desktop 1440px)
 - JOGQK already merged into staging (ancestor check clean, no new commits).

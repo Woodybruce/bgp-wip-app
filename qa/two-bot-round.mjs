@@ -1644,6 +1644,30 @@ async function victoriaRound(page, cross) {
     if (r.ghost) throw new Error('deleted folder still in collections list');
   });
 
+  // hdog commission (r390, Woody 2026-08-26): Huseyn's billing always shows
+  // zero — Xero/engine/allocation matching skipped for the hdog login. Other
+  // users' commission endpoint must keep its full shape.
+  await step(page, p, 'staff-hdog-commission-zero', async () => {
+    const r = await page.evaluate(async () => {
+      const login = await (await fetch('/api/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'hdog', password: 'hdog' }) })).json().catch(() => null);
+      if (!login?.token || !login?.id) return { skip: true }; // hdog boot-seed absent
+      const h = await (await fetch(`/api/hr/staff/${login.id}/commission`, {
+        headers: { Authorization: 'Bearer ' + login.token } })).json().catch(() => null);
+      const me = JSON.parse(localStorage.getItem('user') || '{}');
+      const own = await (await fetch(`/api/hr/staff/${me.id}/commission`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } })).json().catch(() => null);
+      return { h, ownOk: !!(own && Array.isArray(own.tierBreakdown) && Array.isArray(own.scenarios)) };
+    });
+    if (r.skip) return;
+    if (!r.h) throw new Error('hdog commission fetch failed');
+    if (r.h.billedPence !== 0 || (r.h.billingsByYear || []).length || r.h.wipTotal !== 0
+      || (r.h.topDeals || []).length || (r.h.awaitingPayment || []).length)
+      throw new Error(`hdog billing not zeroed: ${JSON.stringify({ billedPence: r.h.billedPence, byYear: (r.h.billingsByYear || []).length, wip: r.h.wipTotal })}`);
+    if (!r.ownOk) throw new Error('regular staff commission lost its shape (tierBreakdown/scenarios)');
+  });
+
   // 4m. Deal comments round-trip: Victoria writes a comment on the Bluewater
   // deal and reads it back (the sidebar Comments widget rides this field).
   await step(page, p, 'staff-deal-comment', async () => {
