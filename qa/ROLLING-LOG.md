@@ -76,6 +76,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r386 · 2026-08-26 · ROUND IN PROGRESS (light — r385 was FULL)
+- Merged JOGQK fb6bbff+4046677 (pathway phone view, RBKC planning tier)
+  into staging first per parent note. Merge clean, tsc clean.
+- Smoke GREEN 42/0 (FRESH_BUILD=1) on merged code. Two-bot 386: exit 0,
+  all scenarios ok. 4 issues all noise/intended (2×400 rocketreach +
+  tracker-invalid probe; 2×503 keyless AI); bulk-assign 400 = guards
+  probe's intended validation stop. 0 raw 500/502/504 in dev-server log.
+- Planning-docs unit check (scratchpad tsx, local stub server): Idox tier
+  end-to-end green (parse, classify, relative hrefs); parseRbkcDocsHtml
+  green on table + anchor layouts; docsTabUrl leaves RBKC details.aspx
+  untouched; isRbkcUrl host detection correct. Live RBKC untestable here
+  (403s sandbox; ScraperAPI key Railway-only) — prod verification pending.
+- Remaining this round: targeted 390px render check of the new pathway
+  phone view (seeded run; iPhone UA + hasTouch).
+
 ### r385 · 2026-08-26 · FULL (rotation #3 client mobile 390px)
 - Merged JOGQK phone-UX batch (0852246b) into staging first per parent note.
   Merge clean, tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1) on merged code.
