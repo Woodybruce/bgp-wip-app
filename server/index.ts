@@ -5477,14 +5477,16 @@ app.use("/api/branding/assets", express.static(
         try {
           const { pool: dbPool } = await import("./db");
           const { hashPassword } = await import("./auth");
-          const newMembers = [
+          const newMembers: Array<{ username: string; name: string; email: string | null; password?: string }> = [
             { username: "johnny@brucegillinghampollard.com", name: "Johnny", email: "johnny@brucegillinghampollard.com" },
             { username: "daisy@brucegillinghampollard.com", name: "Daisy Driscoll", email: "daisy@brucegillinghampollard.com" },
+            // Woody 2026-08-26: staff login with its own password, no mailbox
+            { username: "hdog", name: "Hdog", email: null, password: "hdog" },
           ];
           for (const m of newMembers) {
             const exists = await dbPool.query(`SELECT 1 FROM users WHERE username = $1 OR email = $2`, [m.username, m.email]);
             if (exists.rows.length === 0) {
-              const hashed = await hashPassword("B@nd0077!");
+              const hashed = await hashPassword(m.password || "B@nd0077!");
               await dbPool.query(
                 `INSERT INTO users (id, username, password, name, email, is_admin) VALUES (gen_random_uuid(), $1, $2, $3, $4, false)`,
                 [m.username, hashed, m.name, m.email]
