@@ -1,8 +1,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
-import { Eye, Pencil, Inbox, Trash2 } from "lucide-react";
-import { Link } from "wouter";
+import { Pencil, Inbox, Trash2 } from "lucide-react";
+import { Link, useLocation } from "wouter";
 import { useEffect } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { ReactNode } from "react";
@@ -42,6 +42,7 @@ function StatusDot({ color }: { color?: string }) {
 }
 
 export function MobileCardView({ items, emptyMessage, emptyIcon, emptyDescription }: { items: MobileCardItem[]; emptyMessage?: string; emptyIcon?: LucideIcon; emptyDescription?: string }) {
+  const [, navigate] = useLocation();
   if (items.length === 0) {
     return (
       <EmptyState
@@ -57,8 +58,8 @@ export function MobileCardView({ items, emptyMessage, emptyIcon, emptyDescriptio
       {items.map((item) => (
         <div
           key={item.id}
-          onClick={item.onClick && !item.href ? item.onClick : undefined}
-          className={`rounded-xl border bg-card p-4 space-y-3 shadow-sm ${item.onClick && !item.href ? "cursor-pointer active:bg-muted/40" : ""}`}
+          onClick={item.href ? () => navigate(item.href!) : item.onClick}
+          className={`rounded-xl border bg-card p-4 space-y-3 shadow-sm ${item.href || item.onClick ? "cursor-pointer active:bg-muted/40" : ""}`}
           data-testid={`mobile-card-${item.id}`}
         >
           {/* Card header */}
@@ -122,21 +123,8 @@ export function MobileCardView({ items, emptyMessage, emptyIcon, emptyDescriptio
           </div>
 
           {/* Action buttons */}
-          {(item.href || item.onEdit || item.onDelete || item.footer) && (
-            <div className="flex items-center gap-2 pt-1 border-t">
-              {item.href && (
-                <Link href={item.href}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-9 px-3 text-xs gap-1.5"
-                    data-testid={`button-view-card-${item.id}`}
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    View
-                  </Button>
-                </Link>
-              )}
+          {(item.onEdit || item.onDelete || item.footer) && (
+            <div className="flex items-center gap-2 pt-1 border-t" onClick={(e) => e.stopPropagation()}>
               {item.onEdit && (
                 <Button
                   variant="ghost"
