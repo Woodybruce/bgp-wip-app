@@ -961,7 +961,7 @@ function StaffSharePoint() {
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar -mx-1 px-1">
+            <div className="flex items-center flex-wrap gap-1">
               {FILTER_CHIPS.map(chip => (
                 <button
                   key={chip.key}
