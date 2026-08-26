@@ -76,11 +76,34 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r381 · 2026-08-26 · ROUND IN PROGRESS (heartbeat)
-- FULL round (r380 was LIGHT) — rotation #1 staff desktop journey planned.
+### r381 · 2026-08-26 · FULL (rotation #1 staff desktop)
 - Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
-  bgp directly. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1).
-- Two-bot + journey pending; final entry replaces this one.
+  bgp directly (r380 shortcut holds). tsc clean. Smoke GREEN 42/0
+  (FRESH_BUILD=1). Two-bot 381: exit 0, ALL scenarios ok; 4 issues, all
+  listed noise (2x400 rocketreach + agent-tracker-invalid's intended 400;
+  2x503 keyless AI brand-gaps/live-intel + bgp-commentary/regenerate).
+  0 raw 500/502/504 in the dev-server log for the round.
+- Journey: Victoria desktop 1440px — "prep the Landsec catch-up: tracker,
+  line up an operator for a vacant unit, log a viewing, check what the
+  client sees": dashboard → /available (156 units, KPI strip, status chips)
+  → + Target operator popover on first vacant unit (Brent Cross BX10,
+  Hammerson) → picked Amorino from directory (toast, Identified status) →
+  logged viewing via unit dialog (date/attendees/notes, "Viewing added",
+  FY strip 2→3) → as Mark: /available correctly shows 153 Landsec-only
+  units, NO BX10 row, NO Hammerson viewing, KPI strip correctly counts
+  only his units' rows. Chased the two apparent leaks to ground: Mark's
+  "Viewings 2/Offers 1" = fixture WVU04 + two-bot's QA-EDITED rows on MSU9
+  (both his own units — purged next round by design); Mark's "Amorino" hit
+  = fixture target on his own 304 Queen Street brief, and /api/unit-briefs
+  as Mark omits the Hammerson brief. Scoping verified in DB + API. 0
+  console/page errors, 0 non-noise 4xx/5xx across the journey.
+- Journey probe rows cleaned in-round (BX10 viewing + Amorino target/brief
+  — the standing purge patterns don't cover a target added outside 'QA
+  Brief%' briefs; future journeys should clean up their own target adds).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions: none
+  new. New flakes: none.
+- Next journey: r381 was FULL → r382 LIGHT (triage only). Then r383 FULL
+  rotation #2 client desktop.
 
 ### r380 · 2026-08-26 · LIGHT (r379 was FULL — no journey)
 - Fresh container. pg_hba trust fix + bgp SUPERUSER role, fixture restored
