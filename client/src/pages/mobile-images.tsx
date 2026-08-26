@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Sparkles, ChevronLeft, Search, Loader2, RotateCcw, Image as ImageIcon, X, Wand2,
-  Camera, Download, Link2, Building2, Tag, Briefcase, ZoomIn, Trash2, Folder, FolderPlus,
+  Camera, Download, Link2, Building2, Tag, Briefcase, ZoomIn, Trash2, Folder, FolderPlus, Check,
 } from "lucide-react";
 import { ToastAction } from "@/components/ui/toast";
 import { Link } from "wouter";
@@ -226,6 +226,48 @@ export default function MobileImages() {
   const capped = !search.trim() && !showAllPhotos && filtered.length > CAPTURE_CAP;
   const visiblePhotos = capped ? filtered.slice(0, CAPTURE_CAP) : filtered;
 
+  // Multi-select on the capture grid (Woody, 2026-08-26: "select all so
+  // easy to move all to a folder, also need a delete option").
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkFolderOpen, setBulkFolderOpen] = useState(false);
+  const exitSelect = () => { setSelectMode(false); setSelectedIds(new Set()); setBulkFolderOpen(false); };
+  const toggleSelected = (id: string) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  // Keep the selection honest: photos that leave the grid (filed into a
+  // folder, deleted elsewhere) drop out of it, and an emptied grid ends
+  // select mode — otherwise the mode strands with its controls unmounted.
+  useEffect(() => {
+    if (!selectMode) return;
+    if (filtered.length === 0) { setSelectMode(false); setSelectedIds(new Set()); setBulkFolderOpen(false); return; }
+    setSelectedIds((prev) => {
+      const valid = new Set(filtered.map((i) => i.id));
+      const next = new Set(Array.from(prev).filter((id) => valid.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [selectMode, filtered]);
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        const r = await fetch(`/api/image-studio/${id}/trash`, { method: "POST", credentials: "include" });
+        if (!r.ok) throw new Error(`Delete failed (${r.status})`);
+      }
+      return ids.length;
+    },
+    onSuccess: (n) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      toast({ title: `${n} photo${n === 1 ? "" : "s"} deleted` });
+      exitSelect();
+    },
+    onError: (e: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      toast({ title: "Delete stopped partway", description: e?.message, variant: "destructive" });
+    },
+  });
+
   // ─── Folders (shared Image Studio collections) ─────────────────────────
   // Only ad-hoc, user-made folders (kind === null) — pathway/property/brand
   // collections are auto-managed elsewhere and would just be noise here.
@@ -432,6 +474,7 @@ export default function MobileImages() {
 
   const handleTileClick = (img: StudioImage) => {
     if (suppressClick.current) { suppressClick.current = false; return; }
+    if (selectMode) { toggleSelected(img.id); return; }
     setSelected(img);
   };
 
@@ -674,9 +717,40 @@ export default function MobileImages() {
         </div>
       ) : (
         <>
-        <h2 className="px-4 mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {isClientViewer ? "Your imagery" : "Recent captures"}
-        </h2>
+        <div className="px-4 mb-1.5 flex items-center gap-2">
+          <h2 className="flex-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {isClientViewer ? "Your imagery" : selectMode ? `${selectedIds.size} selected` : "Recent captures"}
+          </h2>
+          {!isClientViewer && (selectMode ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set(filtered.map((i) => i.id)))}
+                className="text-xs px-2.5 py-1 rounded-full border border-border/60 text-muted-foreground active:bg-muted"
+                data-testid="mobile-images-select-all"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={exitSelect}
+                className="text-xs px-2.5 py-1 rounded-full border border-border/60 font-semibold active:bg-muted"
+                data-testid="mobile-images-select-done"
+              >
+                Done
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSelectMode(true)}
+              className="text-xs px-2.5 py-1 rounded-full border border-border/60 text-muted-foreground active:bg-muted"
+              data-testid="mobile-images-select"
+            >
+              Select
+            </button>
+          ))}
+        </div>
         <div className="px-3 grid grid-cols-2 gap-2">
           {visiblePhotos.map((img) => {
             const isDragging = dragId === img.id;
@@ -688,7 +762,7 @@ export default function MobileImages() {
               data-drop-id={img.id}
               data-drop-type="image"
               onClick={() => handleTileClick(img)}
-              onPointerDown={(e) => onTilePointerDown(e, img)}
+              onPointerDown={(e) => { if (!selectMode) onTilePointerDown(e, img); }}
               onPointerMove={onTilePointerMove}
               onPointerUp={onTilePointerUp}
               onPointerCancel={finishDrag}
@@ -711,6 +785,15 @@ export default function MobileImages() {
                 loading="lazy"
                 draggable={false}
               />
+              {selectMode && (
+                <div className={`absolute inset-0 ${selectedIds.has(img.id) ? "bg-primary/25" : ""}`}>
+                  <span className={`absolute top-1.5 right-1.5 w-6 h-6 rounded-full border-2 inline-flex items-center justify-center ${
+                    selectedIds.has(img.id) ? "bg-primary border-primary text-primary-foreground" : "border-white/90 bg-black/20"
+                  }`}>
+                    {selectedIds.has(img.id) && <Check className="w-4 h-4" />}
+                  </span>
+                </div>
+              )}
               {(img.tags || []).includes("ai-pending") ? (
                 <>
                   <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center">
@@ -776,6 +859,41 @@ export default function MobileImages() {
         </div>
       )}
 
+      {selectMode && selectedIds.size > 0 && (
+        <div
+          className="fixed bottom-0 inset-x-0 z-[120] border-t border-border/60 bg-background px-4 pt-3 flex items-center gap-2"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
+        >
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1 h-12 gap-2"
+            onClick={() => setBulkFolderOpen(true)}
+            data-testid="mobile-images-bulk-folder"
+          >
+            <FolderPlus className="w-4 h-4" /> Add to folder
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1 h-12 gap-2 text-red-600 hover:text-red-700"
+            disabled={bulkDeleteMutation.isPending}
+            onClick={() => {
+              if (window.confirm(`Delete ${selectedIds.size} photo${selectedIds.size === 1 ? "" : "s"}? Tap a deleted photo's Undo toast to bring one back.`))
+                bulkDeleteMutation.mutate(Array.from(selectedIds));
+            }}
+            data-testid="mobile-images-bulk-delete"
+          >
+            {bulkDeleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Delete
+          </Button>
+        </div>
+      )}
+      <FolderPickerSheet
+        open={bulkFolderOpen}
+        onClose={() => setBulkFolderOpen(false)}
+        imageIds={Array.from(selectedIds)}
+      />
+
       <ImageEditSheet image={selected} onClose={() => setSelected(null)} readOnly={isClientViewer} />
       <NameFolderSheet
         open={!!pendingGroup}
@@ -800,7 +918,7 @@ function NameFolderSheet({
   const submit = () => { const n = name.trim(); if (n) onCreate(n); };
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onCancel()}>
-      <SheetContent side="bottom" className="rounded-t-3xl p-0">
+      <SheetContent side="bottom" hideClose className="rounded-t-3xl p-0">
         <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border/40">
           <FolderPlus className="w-5 h-5 text-primary" />
           <h2 className="text-base font-semibold flex-1">New folder</h2>
@@ -838,7 +956,7 @@ function NameFolderSheet({
 
 // Tap-driven path to grouping (works on every device — no drag needed):
 // from an open photo, pick an existing folder or spin up a new one.
-function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose: () => void; imageId: string }) {
+function FolderPickerSheet({ open, onClose, imageIds }: { open: boolean; onClose: () => void; imageIds: string[] }) {
   const { toast } = useToast();
   const { data: collections = [] } = useQuery<Collection[]>({
     queryKey: ["/api/image-studio/collections"],
@@ -851,14 +969,14 @@ function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
 
   const addMutation = useMutation({
     mutationFn: async (folderId: string) => {
-      await apiRequest("POST", `/api/image-studio/collections/${folderId}/images`, { imageIds: [imageId] });
+      await apiRequest("POST", `/api/image-studio/collections/${folderId}/images`, { imageIds });
       return folderId;
     },
     onSuccess: (folderId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections", folderId] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/filed-image-ids"] });
-      toast({ title: "Added to folder" });
+      toast({ title: imageIds.length > 1 ? `Added ${imageIds.length} to folder` : "Added to folder" });
       onClose();
     },
     onError: (e: any) => toast({ title: "Couldn't add", description: e?.message, variant: "destructive" }),
@@ -868,7 +986,7 @@ function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
     mutationFn: async (name: string) => {
       const r = await apiRequest("POST", "/api/image-studio/collections", { name });
       const c = (await r.json()) as { id: string };
-      await apiRequest("POST", `/api/image-studio/collections/${c.id}/images`, { imageIds: [imageId] });
+      await apiRequest("POST", `/api/image-studio/collections/${c.id}/images`, { imageIds });
       return c;
     },
     onSuccess: () => {
@@ -884,7 +1002,7 @@ function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="bottom" className="h-[70dvh] p-0 rounded-t-3xl flex flex-col">
+      <SheetContent side="bottom" hideClose className="h-[70dvh] p-0 rounded-t-3xl flex flex-col">
         <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border/40 shrink-0">
           <Folder className="w-5 h-5 text-primary" />
           <h2 className="text-base font-semibold flex-1">Add to folder</h2>
@@ -1121,6 +1239,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
     <Sheet open={!!image} onOpenChange={(open) => !open && onClose()}>
       <SheetContent
         side="bottom"
+        hideClose
         className="h-[95dvh] p-0 rounded-t-3xl flex flex-col"
       >
         {image && (
@@ -1285,7 +1404,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
             <FolderPickerSheet
               open={folderPickOpen}
               onClose={() => setFolderPickOpen(false)}
-              imageId={image.id}
+              imageIds={[image.id]}
             />
             <ImageZoomLightbox
               open={zoomOpen}
@@ -1372,7 +1491,7 @@ function AttachPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="bottom" className="h-[85dvh] p-0 rounded-t-3xl flex flex-col">
+      <SheetContent side="bottom" hideClose className="h-[85dvh] p-0 rounded-t-3xl flex flex-col">
         <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border/40 shrink-0">
           <h2 className="text-base font-semibold flex-1">Attach to…</h2>
           <button type="button" onClick={onClose} className="p-2 -mr-2 rounded-full active:bg-gray-100" aria-label="Close">
