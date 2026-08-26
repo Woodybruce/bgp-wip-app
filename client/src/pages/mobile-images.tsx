@@ -232,6 +232,35 @@ export default function MobileImages() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkFolderOpen, setBulkFolderOpen] = useState(false);
   const exitSelect = () => { setSelectMode(false); setSelectedIds(new Set()); setBulkFolderOpen(false); };
+  // Long-press action menu (hold a photo, release without dragging).
+  const [menuImage, setMenuImage] = useState<StudioImage | null>(null);
+  const [menuFolderOpen, setMenuFolderOpen] = useState(false);
+  const [menuAttachOpen, setMenuAttachOpen] = useState(false);
+  const shareImage = async (img: StudioImage) => {
+    try {
+      const r = await fetch(`/api/image-studio/${img.id}/full`, { credentials: "include" });
+      if (!r.ok) throw new Error(`Couldn't fetch image (${r.status})`);
+      const blob = await r.blob();
+      const filename = `${(img.description || img.fileName || "image").replace(/[^a-z0-9-_]+/gi, "-")}.png`;
+      const file = new File([blob], filename, { type: blob.type || "image/png" });
+      const navAny = navigator as any;
+      if (navAny.canShare && navAny.canShare({ files: [file] })) {
+        await navAny.share({ files: [file], title: filename });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        toast({ title: "Downloaded — check your camera roll / Files" });
+      }
+    } catch (e: any) {
+      if (e?.name !== "AbortError") toast({ title: "Share failed", description: e?.message, variant: "destructive" });
+    }
+  };
   const toggleSelected = (id: string) => setSelectedIds((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -388,6 +417,7 @@ export default function MobileImages() {
   const dragImageRef = useRef<StudioImage | null>(null);
   const pressTimer = useRef<number | null>(null);
   const startPos = useRef<{ x: number; y: number } | null>(null);
+  const movedRef = useRef(false);
   const suppressClick = useRef(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
@@ -423,6 +453,7 @@ export default function MobileImages() {
     const { clientX, clientY, pointerId } = e;
     const target = e.currentTarget as HTMLElement;
     suppressClick.current = false;
+    movedRef.current = false;
     startPos.current = { x: clientX, y: clientY };
     clearPressTimer();
     pressTimer.current = window.setTimeout(() => {
@@ -444,6 +475,9 @@ export default function MobileImages() {
         }
       }
       return;
+    }
+    if (startPos.current && (Math.abs(e.clientX - startPos.current.x) > 10 || Math.abs(e.clientY - startPos.current.y) > 10)) {
+      movedRef.current = true;
     }
     setGhostPos({ x: e.clientX, y: e.clientY });
     const under = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
@@ -469,6 +503,10 @@ export default function MobileImages() {
       } else if (target.type === "image" && target.id !== dragged.id) {
         setPendingGroup([dragged.id, target.id]);
       }
+    } else if (wasDragging && dragged && !movedRef.current) {
+      // Held and released in place — the iOS Photos gesture. Show the
+      // photo action menu instead of doing nothing.
+      setMenuImage(dragged);
     }
   };
 
@@ -893,6 +931,73 @@ export default function MobileImages() {
         onClose={() => setBulkFolderOpen(false)}
         imageIds={Array.from(selectedIds)}
       />
+
+      {/* iOS-Photos-style long-press menu */}
+      <Sheet open={!!menuImage && !menuFolderOpen && !menuAttachOpen} onOpenChange={(o) => !o && setMenuImage(null)}>
+        <SheetContent side="bottom" hideClose className="rounded-t-3xl p-0">
+          {menuImage && (
+            <div style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.5rem)" }}>
+              <div className="px-4 pt-4 pb-3 flex items-center gap-3 border-b border-border/40">
+                <div className="w-12 h-12 rounded-lg overflow-hidden bg-muted shrink-0">
+                  <img src={`/api/image-studio/${menuImage.id}/thumb`} alt="" className="w-full h-full object-cover" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold truncate">{menuImage.description || menuImage.fileName}</div>
+                  <div className="text-[11px] text-muted-foreground">Photo actions</div>
+                </div>
+              </div>
+              <div className="py-1">
+                {[
+                  { icon: Wand2, label: "Edit with AI", testid: "menu-edit", act: () => { const img = menuImage; setMenuImage(null); setSelected(img); } },
+                  { icon: Download, label: "Share / save to phone", testid: "menu-share", act: () => { const img = menuImage; setMenuImage(null); shareImage(img); } },
+                  { icon: FolderPlus, label: "Add to folder", testid: "menu-folder", act: () => setMenuFolderOpen(true) },
+                  { icon: Link2, label: "Attach to property, brand or pathway", testid: "menu-attach", act: () => setMenuAttachOpen(true) },
+                  { icon: Check, label: "Select photos…", testid: "menu-select", act: () => { const img = menuImage; setMenuImage(null); setSelectMode(true); setSelectedIds(new Set([img.id])); } },
+                ].map(({ icon: Icon, label, testid, act }) => (
+                  <button
+                    key={testid}
+                    type="button"
+                    onClick={act}
+                    className="w-full flex items-center gap-3 px-5 py-3.5 text-left text-[15px] active:bg-muted/40"
+                    data-testid={`mobile-image-${testid}`}
+                  >
+                    <Icon className="w-5 h-5 text-muted-foreground" /> {label}
+                  </button>
+                ))}
+                <div className="border-t border-border/40 my-1" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const img = menuImage;
+                    if (window.confirm("Delete this photo? Undo is on the toast afterwards.")) {
+                      setMenuImage(null);
+                      bulkDeleteMutation.mutate([img.id]);
+                    }
+                  }}
+                  className="w-full flex items-center gap-3 px-5 py-3.5 text-left text-[15px] text-red-600 active:bg-muted/40"
+                  data-testid="mobile-image-menu-delete"
+                >
+                  <Trash2 className="w-5 h-5" /> Delete
+                </button>
+              </div>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+      {menuImage && (
+        <>
+          <FolderPickerSheet
+            open={menuFolderOpen}
+            onClose={() => { setMenuFolderOpen(false); setMenuImage(null); }}
+            imageIds={[menuImage.id]}
+          />
+          <AttachPickerSheet
+            open={menuAttachOpen}
+            onClose={() => { setMenuAttachOpen(false); setMenuImage(null); }}
+            imageId={menuImage.id}
+          />
+        </>
+      )}
 
       <ImageEditSheet image={selected} onClose={() => setSelected(null)} readOnly={isClientViewer} />
       <NameFolderSheet
