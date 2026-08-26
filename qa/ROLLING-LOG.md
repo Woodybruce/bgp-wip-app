@@ -76,11 +76,36 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r383 · 2026-08-26 · ROUND IN PROGRESS (heartbeat)
-- FULL round, rotation #2 client desktop. Fresh container, pg_hba trust +
-  bgp superuser role, fixture restored as bgp. tsc clean. Smoke GREEN 42/0
-  (FRESH_BUILD=1). Journey part 1 (portfolio/available/deals/tenancy/brands):
-  only noise (hr photo 404). Two-bot + journey part 2 pending.
+### r383 · 2026-08-26 · FULL (rotation #2 client desktop)
+- Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
+  bgp directly. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 383:
+  exit 0, 212 steps ok, 4 issues all listed noise (2×400 rocketreach +
+  agent-tracker-invalid's intended 400; 2×503 keyless AI brand-gaps/
+  live-intel + bgp-commentary/regenerate). 0 raw 500/502/504 in the entire
+  dev-server log; 403s all one-off guard probes, no polling storms.
+- Journey: Mark Warne desktop 1440px — "how are my Bluewater lettings
+  progressing, who do I chase; track a brand outside my slice": portfolio
+  dashboard (KPIs, tracker widget, degraded AI briefing fine) → Letting
+  Tracker (153 units, FY strip Viewings 1) → Deals (2 deals, inline
+  link-tenant cells verified INTENDED for clients — PUT deals/:id is
+  scope-checked + fee-stripped server-side, not an affordance leak) →
+  Brand Intelligence overview → Add-brand dialog full roundtrip with
+  Testco Jewellers: profile 403 before add → Add (toast, live KPI 8→9) →
+  profile 200 + renders via /companies/:id → Remove → 403 again; dialog
+  brand-name click opens the profile as the toast promises; Who's Hot
+  click-through to Starbucks profile clean. Extras restored to fixture
+  state in-round. 0 non-noise 4xx/5xx, 0 pageerrors, no h-overflow.
+- NOTE: /tenancy as a client silently redirects to the dashboard (unknown
+  client route) — clients reach tenancy via their property page; my route
+  guess, not a bug.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions:
+  UX-NOTES #97 (client tracker Property/Unit column repeats truncated
+  "Bluewater Sho..." headline 153×, unit name demoted to sub-line).
+- Harness growth: none needed — self-add flow already covered by
+  client-brand-slice-and-extras / client-add-brand-from-directory /
+  client-add-brand-remove-ui.
+- New flakes: none. Next journey: r383 was FULL → r384 LIGHT (triage only);
+  then r385 FULL rotation #3 client mobile 390px.
 
 ### r382 · 2026-08-26 · LIGHT (r381 was FULL — no journey)
 - Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
