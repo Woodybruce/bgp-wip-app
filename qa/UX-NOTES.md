@@ -16,6 +16,16 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+97. 2026-08-26 · Landsec client / desktop (QA r383) · "scan my Letting
+    Tracker to see how lettings are progressing" · Every row's Property/Unit
+    headline is the truncated property name ("Bluewater Sho...") repeated
+    153 times, while the distinguishing unit name sits in the small grey
+    sub-line — for a client whose whole tracker is one property the primary
+    line carries zero information and the eye has to read the sub-line on
+    every row · Flip the emphasis (unit name as the headline, property as
+    the sub-line), or at least stop truncating when the column is wide
+    enough — staff multi-property boards can keep property-first.
+
 96. 2026-08-25 · BGP staff / mobile 390px (QA r379) · "open a brand's Stores
     pill on the phone" · On a 0-store brand the auto-fired store scan's
     failure surfaces as a raw config string in a red toast ("Store search
