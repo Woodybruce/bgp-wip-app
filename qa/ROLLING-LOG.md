@@ -76,11 +76,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r384 · 2026-08-26 ~08:40 UTC · ROUND IN PROGRESS (LIGHT — r383 was FULL)
+### r384 · 2026-08-26 · LIGHT (r383 was FULL — no journey)
 - Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
   bgp directly. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1).
-- Triage list: two-bot 384 pending (dev server starting next). No deferred
-  bugs from r383.
+- Two-bot 384: exit 0, 212 steps ok, ALL scenarios ok. 4 issues, all listed
+  noise: 2×400 (rocketreach discover; agent-tracker-invalid's own intended
+  400), 2×503 (keyless AI — brand-gaps/live-intel, bgp-commentary/
+  regenerate). 0 raw 500/502/504 in the entire dev-server log (status
+  tally: only 2xx/expected 400/401/403/404/503; 403s grouped by endpoint
+  max 3 each = one-off rival/client write-guard probes, no polling storms).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions: none
+  new. New flakes: none.
+- Next journey: r384 was LIGHT → r385 FULL rotation #3 client mobile 390px
+  (staff mobile #4 after).
 
 ### r383 · 2026-08-26 · FULL (rotation #2 client desktop)
 - Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
