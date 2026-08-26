@@ -24,7 +24,9 @@ import { webshareF, isProxyConfigured, isConnectionError, type FetchLike } from 
 
 const LPA_REGISTRY: Array<{ prefixes: string[]; name: string; host: string }> = [
   { prefixes: ["W1", "SW1", "WC1", "WC2", "NW1", "NW8"], name: "Westminster", host: "idoxpa.westminster.gov.uk" },
-  { prefixes: ["SW3", "SW5", "SW7", "SW10", "W8", "W10", "W11", "W14"], name: "Kensington & Chelsea", host: "www.rbkc.gov.uk" },
+  // Kensington & Chelsea is NOT Idox — it runs an in-house search at
+  // www.rbkc.gov.uk/planning/searches. Its applications arrive via PlanIt
+  // and their documents are scraped by the RBKC tier in planning-docs.ts.
   { prefixes: ["NW3", "NW5", "N6", "N7"], name: "Camden", host: "accountforms.camden.gov.uk" },
   { prefixes: ["N1", "EC1"], name: "Islington", host: "planning.islington.gov.uk" },
   { prefixes: ["E1", "E2", "E3", "E14"], name: "Tower Hamlets", host: "development.towerhamlets.gov.uk" },

@@ -25,6 +25,14 @@
  * section, site plan, decision notice, statement etc) so the UI can group
  * them and the auto-download path can prioritise what's worth pulling into
  * the SharePoint pathway folder.
+ *
+ * RBKC (Kensington & Chelsea) is NOT Idox — it runs an in-house planning
+ * search at www.rbkc.gov.uk/planning/searches/details.aspx (refs like
+ * PP/25/06454) and 403s non-browser fetches, so its tier goes via the same
+ * proxy chain and gets its own parser (parseRbkcDocsHtml). The details page
+ * may render only the active tab server-side, so if the first fetch has no
+ * document links we sweep the page's other tab ids (bounded) and any
+ * anchor labelled "documents".
  */
 
 const SCRAPERAPI_ENDPOINT = "https://api.scraperapi.com/";
@@ -86,14 +94,15 @@ function classifyDoc(desc: string, type: string, drawingNumber?: string): { cate
     if (intent === "proposed") return { category: "floor_plan_proposed", label: "Floor Plan (Proposed)" };
     return { category: "floor_plan", label: "Floor Plan" };
   }
+  const wordIntent = /\bexisting\b/.test(s) ? "existing" : /\bproposed\b/.test(s) ? "proposed" : null;
   if (isElevation) {
-    const intent = drawingNumberIntent(drawingNumber);
+    const intent = wordIntent || drawingNumberIntent(drawingNumber);
     if (intent === "existing") return { category: "elevation_existing", label: "Elevation (Existing)" };
     if (intent === "proposed") return { category: "elevation_proposed", label: "Elevation (Proposed)" };
     return { category: "elevation", label: "Elevation" };
   }
   if (isSection) {
-    const intent = drawingNumberIntent(drawingNumber);
+    const intent = wordIntent || drawingNumberIntent(drawingNumber);
     if (intent === "existing") return { category: "section_existing", label: "Section (Existing)" };
     if (intent === "proposed") return { category: "section_proposed", label: "Section (Proposed)" };
     return { category: "section", label: "Section" };
@@ -240,6 +249,100 @@ function parseIdoxDocsHtml(html: string, baseUrl: string): PlanningDoc[] {
   return dedupeAndFilter(docs);
 }
 
+// ── RBKC tier ───────────────────────────────────────────────────────────────
+
+export function isRbkcUrl(u: string | null | undefined): boolean {
+  if (!u) return false;
+  try { return /(?:^|\.)rbkc\.gov\.uk$/i.test(new URL(u).hostname); } catch { return false; }
+}
+
+// Hrefs that count as a document on RBKC's in-house pages: direct PDFs plus
+// their scanned-document endpoints (/planning/scanning/*, acsplitdocs,
+// applicationfiles). Deliberately loose — RBKC has re-skinned before.
+const RBKC_DOC_HREF = /\.pdf(\?|$)|\/planning\/scanning\/|acsplitdocs|applicationfiles|showmedia|streamdoc|getdocument/i;
+
+export function parseRbkcDocsHtml(html: string, baseUrl: string): PlanningDoc[] {
+  const docs: PlanningDoc[] = [];
+  const seen = new Set<string>();
+
+  const pushDoc = (href: string, description: string, dateRaw: string) => {
+    let url: string;
+    try { url = new URL(href.replace(/&amp;/g, "&"), baseUrl).toString(); } catch { return; }
+    if (seen.has(url)) return;
+    seen.add(url);
+    const desc = description.trim();
+    if (!desc || /^(view|open|download|back|search|home|help)$/i.test(desc)) return;
+    const { category, label } = classifyDoc(desc, "");
+    docs.push({ url, date: parseDate(dateRaw), description: desc, type: "", category, label });
+  };
+
+  // Pass 1: table rows — date/description cells with the document link.
+  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = rowRe.exec(html)) !== null) {
+    const row = m[1];
+    const anchors = [...row.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
+    const hit = anchors.find((a) => RBKC_DOC_HREF.test(a[1]));
+    if (!hit) continue;
+    const cells = [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) => stripHtml(c[1]));
+    const pickDate = cells.find((c) => /^\d{1,2}[\s\/-][A-Za-z0-9]{2,10}[\s\/-]\d{2,4}$|^\d{4}-\d{2}-\d{2}$/.test(c.trim()));
+    const anchorText = stripHtml(hit[2]);
+    const description = cells
+      .filter((c) => c && c !== pickDate && !/^(view|open|download)$/i.test(c))
+      .sort((a, b) => b.length - a.length)[0] || anchorText;
+    pushDoc(hit[1], description, pickDate || "");
+  }
+  if (docs.length) return dedupeAndFilter(docs);
+
+  // Pass 2: bare anchor sweep for non-tabular layouts.
+  const aRe = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  while ((m = aRe.exec(html)) !== null) {
+    if (!RBKC_DOC_HREF.test(m[1])) continue;
+    pushDoc(m[1], stripHtml(m[2]), "");
+  }
+  return dedupeAndFilter(docs);
+}
+
+// RBKC details.aspx addresses a tab via ?tab=tabs-planning-N and may render
+// only the active tab server-side. Fetch the given URL first; if it has no
+// document links, retry the page's other tab ids and any anchor labelled
+// "documents" — bounded to 4 extra fetches, all through the same tier chain.
+async function fetchRbkcDocs(detailUrl: string): Promise<PlanningDoc[]> {
+  const first = await fetchDocsHtml(detailUrl);
+  if (!first) return [];
+  let docs = parseRbkcDocsHtml(first, detailUrl);
+  if (docs.length) return docs;
+
+  const tried = new Set([detailUrl]);
+  const candidates: string[] = [];
+  try {
+    const u = new URL(detailUrl);
+    const tabIds = [...new Set([...first.matchAll(/tabs-planning-\d+/g)].map((x) => x[0]))];
+    for (const t of tabIds) {
+      const v = new URL(u.toString());
+      v.searchParams.set("tab", t);
+      candidates.push(v.toString());
+    }
+  } catch {}
+  const docLink = first.match(/<a[^>]+href="([^"]+)"[^>]*>[^<]*documents?[^<]*<\/a>/i);
+  if (docLink) {
+    try { candidates.push(new URL(docLink[1].replace(/&amp;/g, "&"), detailUrl).toString()); } catch {}
+  }
+
+  let fetches = 0;
+  for (const c of candidates) {
+    if (tried.has(c)) continue;
+    if (fetches >= 4) break;
+    tried.add(c);
+    fetches++;
+    const html = await fetchDocsHtml(c);
+    if (!html) continue;
+    docs = parseRbkcDocsHtml(html, c);
+    if (docs.length) return docs;
+  }
+  return [];
+}
+
 // The planning apps list gives us a URL pointing at the summary tab (activeTab=summary
 // or no activeTab). The documents tab lives at the same endpoint with
 // activeTab=documents. Normalise whatever we have into the docs-tab URL.
@@ -272,7 +375,9 @@ async function fetchDocsHtml(docsUrl: string): Promise<string | null> {
       signal: AbortSignal.timeout(isProxyConfigured() ? 8000 : 15000),
     });
     if (res.ok) return await res.text();
-    if (res.status >= 400 && res.status < 500) return null; // auth/not-found — proxy won't help
+    // 403/429 are bot-protection (RBKC 403s all server traffic) — a
+    // residential IP fixes those, so keep escalating. Other 4xx won't improve.
+    if (res.status >= 400 && res.status < 500 && res.status !== 403 && res.status !== 429) return null;
     console.warn(`[planning-docs] direct ${res.status} for ${docsUrl}`);
   } catch (err: unknown) {
     if (!isConnectionError(err)) {
@@ -335,9 +440,14 @@ export async function fetchPlanningDocs(rawUrl: string): Promise<PlanningDoc[]> 
   }
 
   try {
-    const html = await fetchDocsHtml(docsUrl);
-    if (!html) return [];
-    const docs = parseIdoxDocsHtml(html, docsUrl);
+    let docs: PlanningDoc[];
+    if (isRbkcUrl(docsUrl)) {
+      docs = await fetchRbkcDocs(docsUrl);
+    } else {
+      const html = await fetchDocsHtml(docsUrl);
+      if (!html) return [];
+      docs = parseIdoxDocsHtml(html, docsUrl);
+    }
     docCache.set(docsUrl, { fetchedAt: Date.now(), docs });
     console.log(`[planning-docs] ${docsUrl.replace(/^https?:\/\//, "").split("?")[0]} → ${docs.length} docs`);
     return docs;
