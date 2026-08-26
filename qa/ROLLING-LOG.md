@@ -76,6 +76,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r383 · 2026-08-26 · ROUND IN PROGRESS (heartbeat)
+- FULL round, rotation #2 client desktop. Fresh container, pg_hba trust +
+  bgp superuser role, fixture restored as bgp. tsc clean. Smoke GREEN 42/0
+  (FRESH_BUILD=1). Journey part 1 (portfolio/available/deals/tenancy/brands):
+  only noise (hr photo 404). Two-bot + journey part 2 pending.
+
 ### r382 · 2026-08-26 · LIGHT (r381 was FULL — no journey)
 - Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
   bgp directly (r380 shortcut holds). tsc clean. Smoke GREEN 42/0
