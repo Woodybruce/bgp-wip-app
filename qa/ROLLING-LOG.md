@@ -76,6 +76,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r380 · 2026-08-26 00:37 UTC · ROUND IN PROGRESS (LIGHT — r379 was FULL)
+- Fresh container. pg_hba trust fix + bgp superuser role + fixture restored
+  as bgp (no owner-transfer loop needed when the role is superuser at
+  restore time). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1).
+- Two-bot 380 next; triage to follow.
+
 ### r379 · 2026-08-25 · FULL (rotation #4 staff mobile 390px)
 - Fresh container. pg_hba trust + bgp role/db + fixture restore + PER-TABLE
   owner transfer (REASSIGN OWNED BY postgres errors on system objects; the
