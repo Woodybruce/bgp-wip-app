@@ -33,6 +33,7 @@ type RecentItem = {
   id: string; kind: string; date: string; summary: string;
   subject?: string | null; ai_summary?: string | null;
   contact_id: string | null; contact_email?: string | null;
+  microsoft_id?: string | null;
   deal_id: string | null; deal_name: string | null;
 };
 
@@ -147,6 +148,18 @@ function RecentRow({ a, propertyId, summaries, setSummaries }: {
             data-testid={`activity-task-${a.id}`}
           >
             <Plus className="w-3 h-3 text-muted-foreground" />
+          </button>
+        )}
+        {a.kind === "email" && a.microsoft_id && (
+          <button
+            onClick={() => {
+              window.open(`https://outlook.office365.com/owa/?ItemID=${encodeURIComponent(a.microsoft_id!)}&exvsurl=1&viewmodel=ReadMessageItem`, "_blank", "noopener");
+            }}
+            className="shrink-0 p-0.5 rounded hover:bg-muted opacity-60 md:opacity-0 md:group-hover/row:opacity-100 transition-opacity"
+            title="Open this email in Outlook"
+            data-testid={`activity-open-email-${a.id}`}
+          >
+            <Mail className="w-3 h-3 text-muted-foreground" />
           </button>
         )}
         {!isDealMove && (

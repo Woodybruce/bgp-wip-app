@@ -917,11 +917,68 @@ export function registerLandRegistryRoutes(app: Express) {
           }
         };
 
+        // Places Autocomplete first — the same API the map's Property
+        // Resolver uses, so it's proven against this key (the FindPlace /
+        // TextSearch calls below went quiet in production without logging
+        // why — Google returns HTTP 200 with a non-OK status body, which
+        // the old code swallowed silently; all four calls now log it).
+        try {
+          const acParams = new URLSearchParams({
+            input: q,
+            key: process.env.GOOGLE_API_KEY,
+            types: "geocode|establishment",
+            components: "country:gb",
+          });
+          const acResp = await fetch(`https://maps.googleapis.com/maps/api/place/autocomplete/json?${acParams}`, { signal: AbortSignal.timeout(5000) });
+          if (acResp.ok) {
+            const acData = await acResp.json() as any;
+            if (acData.status !== "OK" && acData.status !== "ZERO_RESULTS") {
+              console.error(`[address-search] Google Autocomplete status ${acData.status}: ${acData.error_message || ""}`);
+            }
+            const preds = (acData.predictions || []).slice(0, 5);
+            await Promise.all(preds.map(async (pr: any) => {
+              try {
+                const dParams = new URLSearchParams({
+                  place_id: pr.place_id,
+                  key: process.env.GOOGLE_API_KEY!,
+                  fields: "formatted_address,geometry,name,types",
+                });
+                const dResp = await fetch(`https://maps.googleapis.com/maps/api/place/details/json?${dParams}`, { signal: AbortSignal.timeout(5000) });
+                if (!dResp.ok) return;
+                const dData = await dResp.json() as any;
+                if (dData.status !== "OK") {
+                  console.error(`[address-search] Google Details status ${dData.status}: ${dData.error_message || ""}`);
+                  return;
+                }
+                const r = dData.result || {};
+                const addr = r.formatted_address || pr.description || "";
+                const pcMatch = addr.match(/([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})/i);
+                const postcode = pcMatch ? pcMatch[1].toUpperCase() : "";
+                const lat = r.geometry?.location?.lat;
+                const lng = r.geometry?.location?.lng;
+                const types = r.types || pr.types || [];
+                const isPrecise = types.includes("premise") || types.includes("subpremise") || types.includes("street_address") || types.includes("establishment") || types.includes("point_of_interest");
+                const cleanAddr = addr.replace(/, UK$/i, "").replace(/, United Kingdom$/i, "").trim();
+                const name = r.name || "";
+                const label = name && !cleanAddr.toLowerCase().startsWith(name.toLowerCase()) ? `${name}, ${cleanAddr}` : cleanAddr;
+                if (lat && lng) addGoogleResult(label, postcode, lat, lng, isPrecise ? "address" : "place");
+              } catch (e) {
+                console.error("[address-search] Google Details error:", e);
+              }
+            }));
+          }
+        } catch (e) {
+          console.error("[address-search] Google Autocomplete error:", e);
+        }
+
         try {
           const fpUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(googleQuery)}&inputtype=textquery&fields=formatted_address,name,geometry,place_id,types&locationbias=circle:50000@51.5074,-0.1278&key=${process.env.GOOGLE_API_KEY}`;
           const fpResp = await fetch(fpUrl, { signal: AbortSignal.timeout(5000) });
           if (fpResp.ok) {
             const fpData = await fpResp.json() as any;
+            if (fpData.status && fpData.status !== "OK" && fpData.status !== "ZERO_RESULTS") {
+              console.error(`[address-search] Google FindPlace status ${fpData.status}: ${fpData.error_message || ""}`);
+            }
             for (const c of (fpData.candidates || []).slice(0, 3)) {
               const addr = c.formatted_address || "";
               const pcMatch = addr.match(/([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})/i);
@@ -945,6 +1002,9 @@ export function registerLandRegistryRoutes(app: Express) {
           const tsResp = await fetch(tsUrl, { signal: AbortSignal.timeout(5000) });
           if (tsResp.ok) {
             const tsData = await tsResp.json() as any;
+            if (tsData.status && tsData.status !== "OK" && tsData.status !== "ZERO_RESULTS") {
+              console.error(`[address-search] Google TextSearch status ${tsData.status}: ${tsData.error_message || ""}`);
+            }
             for (const place of (tsData.results || []).slice(0, 5)) {
               const addr = place.formatted_address || "";
               const pcMatch = addr.match(/([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})/i);
@@ -966,6 +1026,9 @@ export function registerLandRegistryRoutes(app: Express) {
             const gResp = await fetch(gUrl, { signal: AbortSignal.timeout(5000) });
             if (gResp.ok) {
               const gData = await gResp.json() as any;
+              if (gData.status && gData.status !== "OK" && gData.status !== "ZERO_RESULTS") {
+                console.error(`[address-search] Google Geocode status ${gData.status}: ${gData.error_message || ""}`);
+              }
               for (const place of (gData.results || []).slice(0, 5)) {
                 const addr = place.formatted_address || "";
                 const pcMatch = addr.match(/([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})/i);

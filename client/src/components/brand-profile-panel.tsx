@@ -2826,7 +2826,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   );
 }
 
-function PipnetRequirementsRow({ companyId, brandName, isClient }: { companyId: string; brandName: string; isClient?: boolean }) {
+export function PipnetRequirementsRow({ companyId, brandName, isClient }: { companyId: string; brandName: string; isClient?: boolean }) {
   const { data, isLoading, refetch, isFetching } = useQuery<{ rows: any[]; fetched_at: string | null; cached?: boolean; error?: string }>({
     queryKey: ["/api/brand", companyId, "pipnet-requirements"],
     queryFn: async () => {
@@ -3074,7 +3074,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
 // right underneath. Click X to collapse, or "Open in chat" to continue
 // the conversation in the main panel. Avoids context-switch to the full
 // chat for one-shot questions.
-function AskChatBGPInline({ brandName }: { brandName: string }) {
+export function AskChatBGPInline({ brandName }: { brandName: string }) {
   const topics: { label: string; question: string }[] = [
     { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} before a first call` },
     { label: "Covenant", question: `What's ${brandName}'s covenant risk? How should we position this to a landlord?` },
@@ -3481,7 +3481,7 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
 // Same visual family as RocketReachIntelCard above; refresh also fills
 // company gaps server-side and feeds growth/funding into brand_signals so
 // the Expansion Intelligence score picks it up.
-function ApolloIntelCard({ companyId, companyName }: { companyId: string; companyName: string }) {
+export function ApolloIntelCard({ companyId, companyName }: { companyId: string; companyName: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: apViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -3651,7 +3651,7 @@ function ContactRow({ dm }: { dm: { id: string; name: string; role: string | nul
 }
 
 // ─── Stock snapshot card (Yahoo Finance) with price chart ────────────────
-function StockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: string }) {
+export function StockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: string }) {
   const { data, isLoading } = useQuery<{ snapshot: any | null; history: Array<{ date: string; close: number }> }>({
     queryKey: ["/api/brand", companyId, "stock"],
     queryFn: async () => {

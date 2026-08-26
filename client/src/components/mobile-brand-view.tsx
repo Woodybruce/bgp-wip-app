@@ -13,10 +13,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe } from "lucide-react";
+import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe, Newspaper } from "lucide-react";
 import {
   CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard, BrandInstagramCard,
+  AskChatBGPInline, PipnetRequirementsRow, StockSnapshotCard, ApolloIntelCard,
 } from "@/components/brand-profile-panel";
+import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
@@ -45,6 +47,8 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   // and ran 8+ boards deep in one scroll. Hook sits above the early return.
   const [section, setSection] = useState<"chat" | "contacts" | "intel" | "stores" | "social" | "compliance">("chat");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
+  const [newsShowAllM, setNewsShowAllM] = useState(false);
+  const [storesShowAll, setStoresShowAll] = useState(false);
   const sec = (k: typeof section) => (section === k ? "space-y-3" : "hidden");
   const { toast } = useToast();
   const { data: mbvUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -80,6 +84,17 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
     },
     onError: (e: any) => toast({ title: "Store search failed", description: e.message, variant: "destructive" }),
+  });
+  // Expansion score — same endpoint as desktop's Expansion intelligence.
+  const { data: hunter } = useQuery<any>({
+    queryKey: ["/api/brand", companyId, "hunter-score"],
+    queryFn: async () => {
+      const r = await fetch(`/api/brand/${companyId}/hunter-score`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    staleTime: 10 * 60 * 1000,
+    retry: false,
   });
   // Auto-fire on first open when a brand has no stores at all — same as
   // desktop, so the map fills itself instead of waiting for a tap
@@ -167,8 +182,6 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </a>
         )}
       </div>
-      {c.description && <p className="text-sm leading-snug text-foreground/85">{c.description}</p>}
-
       <div className="flex flex-wrap gap-1.5" data-testid="company-phone-sections">
         <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Chat</Pill>
         <Pill active={section === "contacts"} onClick={() => setSection("contacts")} data-testid="company-section-contacts">Contacts</Pill>
@@ -179,6 +192,11 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
 
       <div className={sec("chat")}>
+      {/* Who they are + BGP take in ONE card (description as the opening
+          paragraph, the AI read under it) — they read as one brief, not two
+          blocks (Woody, 2026-08-25). */}
+      <BgpTakeStrip companyId={companyId} tab="brand" intro={c.description} />
+      <AskChatBGPInline brandName={c.name} />
       {/* Chat — same thread as desktop and the main chat panel */}
       <div className="h-[320px]">
         <CompanyMiniChat companyId={companyId} companyName={c.name} fill />
@@ -286,6 +304,76 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </CardContent>
         </Card>
       )}
+
+      {/* Expansion — score, live requirements, Pipnet asks (phone twin of
+          desktop's Expansion intelligence zone). */}
+      {!isLandlord && (
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+              <TrendingUp className="w-3.5 h-3.5" /> Expansion
+              {hunter?.expansionScore != null && (
+                <Badge variant="outline" className={`text-[10px] font-mono tabular-nums ${
+                  hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-orange-200" :
+                  hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-amber-200" :
+                  "bg-zinc-50 text-zinc-600 border-zinc-200"}`}>
+                  {hunter.expansionScore}/100
+                </Badge>
+              )}
+              {c.rollout_status && <Badge variant="outline" className="text-[10px]">{String(c.rollout_status).replace(/_/g, " ")}</Badge>}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 space-y-2">
+            {hunter?.subScores && (
+              <div className="grid grid-cols-4 gap-1 text-center">
+                {[["UK momentum", hunter.subScores.ukMomentum], ["Capacity", hunter.subScores.capacity], ["Intent", hunter.subScores.intent], ["Engagement", hunter.subScores.engagement]].map(([label, v]: any) => (
+                  <div key={label} className="rounded border border-border/60 px-1 py-1">
+                    <div className="text-sm font-mono tabular-nums">{v ?? "—"}</div>
+                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground leading-tight">{label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {(data.requirements || []).length > 0 ? (
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Live requirements</div>
+                {(data.requirements || []).slice(0, 5).map((r: any) => (
+                  <div key={r.id} className={`text-xs border-l-2 pl-2 ${String(r.status || "").toLowerCase() === "active" ? "border-l-emerald-400" : "border-l-muted"}`}>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {r.status && <Badge variant="outline" className="text-[10px]">{r.status}</Badge>}
+                      {(r.size || []).length > 0 && <span className="font-mono tabular-nums text-[11px]">{r.size.join(" / ")}</span>}
+                    </div>
+                    {(r.requirement_locations || []).length > 0 && (
+                      <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{r.requirement_locations.join(", ")}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">No live requirements on our books.</p>
+            )}
+            <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Key facts — rollout, backers, franchise, dept stores + stock/momentum */}
+      {!isLandlord && (c.backers || c.franchise_activity || c.dept_store_presence || c.stock_ticker) && (
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+              <ClipboardList className="w-3.5 h-3.5" /> Key facts
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 space-y-1.5">
+            {c.backers && <div className="text-xs"><span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-1.5">Backers</span>{c.backers}</div>}
+            {c.franchise_activity && <div className="text-xs"><span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-1.5">Franchise</span>{c.franchise_activity}</div>}
+            {c.dept_store_presence && <div className="text-xs"><span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-1.5">Dept stores</span>{c.dept_store_presence}</div>}
+            {c.stock_ticker && <StockSnapshotCard companyId={companyId} ticker={c.stock_ticker} />}
+          </CardContent>
+        </Card>
+      )}
+      {!isLandlord && !isClientViewer && <ApolloIntelCard companyId={companyId} companyName={c.name} />}
 
       {/* Portfolio activity — tenant at / targeted / pitched / suggested */}
       <PortfolioActivityBlock companyId={companyId} />
@@ -400,6 +488,37 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </CardContent>
         </Card>
       )}
+      {/* News & Media — same feed the desktop sidebar shows */}
+      {(data.news || []).length > 0 && (
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+              <Newspaper className="w-3.5 h-3.5" /> News & media
+              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{data.news.length}</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 space-y-2">
+            {(newsShowAllM ? data.news : data.news.slice(0, 5)).map((n: any) => (
+              <a key={n.id} href={n.url} target="_blank" rel="noopener noreferrer" className="flex gap-2.5 min-w-0 group">
+                {n.image_url && (
+                  <img src={n.image_url} alt="" loading="lazy" className="w-14 h-14 rounded object-cover shrink-0 bg-muted" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:underline">{n.title}</p>
+                  <div className="text-[11px] text-muted-foreground truncate">
+                    {[n.source_name, n.published_at ? new Date(n.published_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
+                  </div>
+                </div>
+              </a>
+            ))}
+            {data.news.length > 5 && (
+              <button onClick={() => setNewsShowAllM(v => !v)} className="text-[11px] text-primary hover:underline">
+                {newsShowAllM ? "Show less" : `Show all ${data.news.length}`}
+              </button>
+            )}
+          </CardContent>
+        </Card>
+      )}
       </div>
 
       <div className={sec("stores")}>
@@ -428,20 +547,36 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
               <div className="text-xs text-muted-foreground border border-dashed rounded-lg px-3 py-6 text-center">
                 Researching UK stores — the map appears here when the scan finishes (can take a couple of minutes)…
               </div>
-            ) : mappableStores.length > 0 ? (
-              <div className="rounded-lg overflow-hidden border border-border/50">
-                <BrandPortfolioMap stores={mappableStores as any} height={240} />
-              </div>
             ) : ukStores.length > 0 ? (
-              <div className="space-y-1">
-                {ukStores.slice(0, 6).map((s: any) => (
-                  <div key={s.id} className="text-xs px-2 py-1.5 rounded border bg-card min-w-0">
-                    <span className="font-medium">{s.name}</span>
-                    {s.address && <span className="text-muted-foreground"> — {s.address}</span>}
+              <div className="space-y-2">
+                {mappableStores.length > 0 && (
+                  <div className="rounded-lg overflow-hidden border border-border/50">
+                    <BrandPortfolioMap stores={mappableStores as any} height={240} />
                   </div>
-                ))}
-                {ukStores.length > 6 && (
-                  <div className="text-[11px] text-muted-foreground px-1">+{ukStores.length - 6} more (not yet geocoded — no map until they are)</div>
+                )}
+                {/* List under the map — every store, addressable and scannable
+                    (Woody, 2026-08-25: "can you do list as well as map"). */}
+                <div className="divide-y divide-border/60">
+                  {(storesShowAll ? ukStores : ukStores.slice(0, 5)).map((s: any) => (
+                    <div key={s.id} className="text-xs py-1.5 min-w-0 flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium truncate">{s.name}</div>
+                        {s.address && <div className="text-[11px] text-muted-foreground truncate">{s.address}</div>}
+                      </div>
+                      {s.status === "closed" && (
+                        <Badge variant="outline" className="text-[9px] shrink-0 text-red-600 border-red-200">Closed</Badge>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {ukStores.length > 5 && !storesShowAll && (
+                  <button
+                    onClick={() => setStoresShowAll(true)}
+                    className="text-[11px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                    data-testid="btn-stores-show-all"
+                  >
+                    Show all {ukStores.length}
+                  </button>
                 )}
               </div>
             ) : (

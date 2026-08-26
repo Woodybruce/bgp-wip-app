@@ -26,7 +26,10 @@ function friendlyTakeError(raw?: string): string {
   }
 }
 
-export function BgpTakeStrip({ companyId, tab }: { companyId: string; tab: Tab }) {
+// `intro` merges the company description into the same card as the take —
+// one continuous read instead of two stacked blocks saying similar things
+// (Woody, 2026-08-25: "the BGP take and the intro should be combined").
+export function BgpTakeStrip({ companyId, tab, intro }: { companyId: string; tab: Tab; intro?: string | null }) {
   const { toast } = useToast();
   const queryKey = ["/api/brand", companyId, "ai-take", tab];
 
@@ -62,6 +65,12 @@ export function BgpTakeStrip({ companyId, tab }: { companyId: string; tab: Tab }
 
   return (
     <div className="rounded-md border border-border bg-muted/40 p-2.5">
+      {intro && (
+        <>
+          <p className="text-sm leading-snug text-foreground/85 whitespace-pre-wrap">{intro}</p>
+          <div className="border-t border-border/60 my-2" />
+        </>
+      )}
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
           <Sparkles className="w-3 h-3 text-primary" /> {TAB_LABELS[tab]}

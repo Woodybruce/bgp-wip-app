@@ -200,17 +200,22 @@ async function loadIntelSlice(companyId: string) {
 // ─── Prompt builders ────────────────────────────────────────────────────
 
 function brandPrompt(d: any): string {
-  return `You are a senior BGP retail-property broker writing a one-paragraph internal brief on a brand for our team.
+  // The company description renders directly ABOVE this take on the profile
+  // page — a take that re-describes the brand reads as duplication (Woody,
+  // 2026-08-25: WatchHouse take repeated the blurb word-for-ideas). The
+  // take's job is the read the description can't give: trajectory, angle,
+  // next move.
+  return `You are a senior BGP retail-property broker writing a one-paragraph internal read on a brand for our team.
 
-Data:
+Data — NOTE: the "description" field is already displayed to the reader immediately above your paragraph. Treat it as context only; do NOT repeat, paraphrase or summarise it (no founding story, no positioning recap, no site count unless it's the evidence for your point):
 ${JSON.stringify(d, null, 2)}
 
-Write a single 60-90 word paragraph covering:
-- WHO this brand is (positioning, target customer, scale)
-- Where they are in their lifecycle (scaling, mature, contracting, entering UK)
-- WHY BGP should care right now (the angle for our team)
+Write a single 60-90 word paragraph that adds what the description doesn't say:
+- Their trajectory RIGHT NOW (scaling / consolidating / contracting / entering the UK) and the evidence for that call
+- The BGP angle: what we should pitch, to whom, and why the timing works (or doesn't)
+- One concrete next step for the team
 
-Tone: punchy, specific, broker-to-broker. No fluff, no generic phrases. No "this brand is" — go straight to the point. No bullet points, no headers. Plain text only.`;
+Never open by describing who they are — the reader just read that. Tone: punchy, specific, broker-to-broker. No fluff, no generic phrases. No bullet points, no headers. Plain text only.`;
 }
 
 function ukPrompt(d: any): string {

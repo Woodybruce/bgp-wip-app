@@ -5,7 +5,11 @@ import { storage } from "./storage";
 import { z } from "zod";
 import { autoProcessAndPush } from "./news-intelligence";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
+import { CHATBGP_DEFAULT_MODEL } from "./chatbgp-model-router";
 import { ingestBytes } from "./universal-ingest";
+import { db } from "./db";
+import { waMessages } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 const GRAPH_API_VERSION = "v21.0";
 const GRAPH_API_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -37,6 +41,25 @@ export async function downloadWhatsAppMedia(mediaId: string, token: string): Pro
     .replace("vnd.ms-excel", "xls") || "bin";
   const filename = `whatsapp_${mediaId}.${ext}`;
   return { bytes, filename, mimeType };
+}
+
+// WhatsApp voice notes arrive as OGG/Opus, which Whisper accepts directly —
+// no ffmpeg needed (they're capped well under the 25MB API limit).
+async function transcribeWhatsAppAudio(bytes: Buffer, mimeType: string): Promise<string | null> {
+  if (!process.env.OPENAI_API_KEY) {
+    console.warn("[whatsapp-voice] OPENAI_API_KEY not set — cannot transcribe");
+    return null;
+  }
+  const { default: OpenAI, toFile } = await import("openai");
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const ext = mimeType.includes("ogg") ? "ogg"
+    : mimeType.includes("mp4") || mimeType.includes("m4a") ? "m4a"
+    : mimeType.includes("mpeg") || mimeType.includes("mp3") ? "mp3"
+    : mimeType.includes("amr") ? "amr"
+    : "ogg";
+  const file = await toFile(bytes, `voice-note.${ext}`, { type: mimeType });
+  const resp = await openai.audio.transcriptions.create({ file, model: "whisper-1", response_format: "text" });
+  return resp as unknown as string;
 }
 
 function verifyWebhookSignature(req: Request, appSecret: string): boolean {
@@ -412,12 +435,18 @@ async function runChatBgpWhatsAppReply(
       `\nCRITICAL — TOOL ACCESS: You have the FULL ChatBGP toolset available here. send_whatsapp IS available and works — use it to send WhatsApp messages to contacts whenever asked. Do NOT claim send_whatsapp is blocked, restricted, or unavailable, and never tell the user to go to the dashboard to send one — just call the tool. HONESTY: only say a message was sent AFTER you have actually called send_whatsapp in THIS turn and seen success:true in the result. Never pre-announce "sent ✓"/"done" before calling it, and never claim it went through if the result is an error — report what actually happened. WhatsApp's rule: a free-form message only reaches someone who has messaged the BGP business number within the last 24 hours; a cold send (e.g. introducing yourself to a new contact who's never messaged us) comes back with an error — relay that error to the user plainly rather than claiming success.\n`;
 
     const completionOptions: any = {
-      model: "claude-opus-4-8",   // parity with the web ChatBGP default (was claude-sonnet-4-6)
+      // True parity with the web ChatBGP default (the model router's Fable
+      // tier — callClaude applies the refusal-fallback-to-Opus params itself).
+      // Was hardcoded to the older Opus tier, which is why WhatsApp answers
+      // felt weaker than the dashboard (Woody, 2026-08-25).
+      model: CHATBGP_DEFAULT_MODEL,
       messages: [
         { role: "system", content: whatsappSystemPrompt },
         ...historyMessages,
       ],
-      max_completion_tokens: 2048,
+      // The prompt promises up to ~12,000 characters split across messages;
+      // 2048 tokens truncated long lists mid-answer.
+      max_completion_tokens: 8192,
       tools: (allTools as any).tools?.length ? (allTools as any).tools : undefined,
     };
 
@@ -660,6 +689,7 @@ export function setupWhatsAppRoutes(app: Express) {
                 || sharedContactsBody
                 || (msg.document ? `[Sent file: ${msg.document.filename || "document"}]${mediaCaption ? ` — "${mediaCaption}"` : ""}` : null)
                 || (msg.image ? `[Sent an image]${mediaCaption ? ` — "${mediaCaption}"` : ""}` : null)
+                || (msg.audio ? "[Voice note]" : null)
                 || msg.type
                 || "[Media]";
 
@@ -669,7 +699,7 @@ export function setupWhatsAppRoutes(app: Express) {
                 messageBody
               );
 
-              await storage.createWaMessage({
+              const storedMsg = await storage.createWaMessage({
                 conversationId: conversation.id,
                 waMessageId: msg.id,
                 direction: "inbound",
@@ -748,6 +778,36 @@ export function setupWhatsAppRoutes(app: Express) {
                   } catch (err: any) {
                     console.error("[whatsapp-ingest]", err?.message);
                     await sendAndStoreReply(`❌ Couldn't import that file: ${err?.message || "unknown error"}. Try sending it via the BGP app instead.`, fromNumber, conversation.id, contactName, config).catch(() => {});
+                  }
+                })();
+                continue;
+              }
+
+              // Voice note — WhatsApp's most natural input and previously a
+              // dead end (the AI received the literal word "audio"). Download,
+              // transcribe with Whisper, store the transcript in place of the
+              // "[Voice note]" stub so follow-up turns keep continuity, then
+              // answer it like any typed message.
+              if (msg.type === "audio" && msg.audio?.id && config.token) {
+                (async () => {
+                  try {
+                    const { bytes, mimeType } = await downloadWhatsAppMedia(msg.audio.id, config.token!);
+                    const transcript = await transcribeWhatsAppAudio(bytes, mimeType);
+                    if (!transcript || !transcript.trim()) {
+                      await sendAndStoreReply("I couldn't make out that voice note — mind typing it?", fromNumber, conversation.id, contactName, config);
+                      return;
+                    }
+                    const clean = transcript.trim();
+                    try {
+                      await db.update(waMessages).set({ body: `🎤 ${clean}` }).where(eq(waMessages.id, storedMsg.id));
+                    } catch (updErr: any) {
+                      console.error(`[whatsapp-voice] transcript store failed: ${updErr?.message}`);
+                    }
+                    console.log(`[whatsapp-voice] Transcribed ${bytes.length}B voice note from ${fromNumber} (${clean.split(/\s+/).length} words)`);
+                    await runChatBgpWhatsAppReply(clean, fromNumber, contactName, conversation.id, config);
+                  } catch (err: any) {
+                    console.error(`[whatsapp-voice] failed: ${err?.message}`);
+                    await sendWhatsAppText(config, fromNumber, "I couldn't process that voice note — mind typing it?").catch(() => {});
                   }
                 })();
                 continue;

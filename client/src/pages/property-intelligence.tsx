@@ -3,9 +3,8 @@ import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
-import { Loader2, Map, ShieldCheck, Landmark, Receipt, Sparkles, ImageIcon, Globe } from "lucide-react";
+import { Loader2, Map, ShieldCheck, Landmark, Receipt, Sparkles, Globe } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 import { PropertyProvider, usePropertySetter } from "@/lib/property-context";
 
 const EdozoMap = lazy(() => import("@/pages/edozo-map"));
@@ -14,7 +13,7 @@ const LandRegistry = lazy(() => import("@/pages/land-registry"));
 const VoaRatings = lazy(() => import("@/pages/voa-ratings"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
 
-type TabId = "pathway" | "map" | "investigator" | "land-registry" | "business-rates" | "imagery";
+type TabId = "pathway" | "map" | "investigator" | "land-registry" | "business-rates";
 
 const TABS: Array<{ id: TabId; label: string; icon: any }> = [
   { id: "pathway", label: "Pathway", icon: Sparkles },
@@ -22,7 +21,6 @@ const TABS: Array<{ id: TabId; label: string; icon: any }> = [
   { id: "investigator", label: "Investigator", icon: ShieldCheck },
   { id: "land-registry", label: "Land Registry", icon: Landmark },
   { id: "business-rates", label: "Business Rates", icon: Receipt },
-  { id: "imagery", label: "Imagery", icon: ImageIcon },
 ];
 
 function readTabFromUrl(): TabId {
@@ -96,7 +94,7 @@ export default function PropertyIntelligence() {
   // so the tool can only dead-end for them). (Landsec audit.)
   const { data: piUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const piIsClient = piUser?.role === "Client" || !!(piUser as any)?.companyScopeId;
-  const CLIENT_HIDDEN_TABS: TabId[] = ["pathway", "imagery", "investigator"];
+  const CLIENT_HIDDEN_TABS: TabId[] = ["pathway", "investigator"];
   const visibleTabs = piIsClient ? TABS.filter(t => !CLIENT_HIDDEN_TABS.includes(t.id)) : TABS;
   // wouter's search string updates on every query-string change (including the
   // 'Open in Map' links from the Pathway tab, which only change ?tab/?address).
@@ -234,16 +232,6 @@ export default function PropertyIntelligence() {
             </TabsContent>
             <TabsContent value="business-rates" className="m-0">
               <VoaRatings />
-            </TabsContent>
-            <TabsContent value="imagery" className="m-0 p-4 lg:p-6">
-              {resolvedProperty ? (
-                <PropertyImageryPicker propertyId={resolvedProperty.id} />
-              ) : (
-                <Card><CardContent className="p-12 text-center text-muted-foreground">
-                  <ImageIcon className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                  <p>Resolve a property above to see and curate its imagery — heroes, internals, location plans, floor plans.</p>
-                </CardContent></Card>
-              )}
             </TabsContent>
           </Suspense>
         </div>

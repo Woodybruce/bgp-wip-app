@@ -1475,10 +1475,31 @@ export function registerImageStudioRoutes(app: Express) {
       // probe, not the UI. 404 (not 403) so existence isn't confirmed.
       if (!(await imageInScope(req, String(req.params.id)))) return res.status(404).end();
       const [row] = await db
-        .select({ thumbnailData: imageStudioImages.thumbnailData, mimeType: imageStudioImages.mimeType })
+        .select({ thumbnailData: imageStudioImages.thumbnailData, mimeType: imageStudioImages.mimeType, localPath: imageStudioImages.localPath })
         .from(imageStudioImages)
         .where(eq(imageStudioImages.id, String(req.params.id)));
-      if (!row?.thumbnailData) return res.status(404).end();
+      if (!row) return res.status(404).end();
+      if (!row.thumbnailData) {
+        // Self-heal: some harvest paths (street-view pulls, brochure pages)
+        // stored the full image without a thumbnail, so every card keyed on
+        // /thumb 404'd into a placeholder icon (pathway board, Woody
+        // 2026-08-26). Build it from the stored bytes once and keep it.
+        const buf = await readPersistedImage(row.localPath);
+        if (!buf) return res.status(404).end();
+        try {
+          const t = await generateThumbnail(buf);
+          row.thumbnailData = t.thumbnail;
+          db.update(imageStudioImages)
+            .set({ thumbnailData: t.thumbnail })
+            .where(eq(imageStudioImages.id, String(req.params.id)))
+            .catch((e: any) => console.warn("[image-studio thumb] backfill save failed:", e?.message));
+        } catch {
+          // Un-thumbnailable format — serve the full bytes rather than a 404.
+          res.setHeader("Content-Type", row.mimeType || "image/jpeg");
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.end(buf);
+        }
+      }
       // thumbnailData is stored as a full data URL ("data:image/jpeg;base64,…")
       // by generateThumbnail(). Strip the prefix + pick up the real mime so
       // the binary we send actually decodes in the browser.

@@ -198,23 +198,52 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         const row = (await pool.query(
           `SELECT name, domain, domain_url, backers, uk_entity_name, companies_house_number
              FROM crm_companies WHERE id = $1`, [sweepId])).rows[0];
-        if (!row || row.uk_entity_name || !(row.domain || row.domain_url)) return;
-        const { scrapeUkEntityFromWebsite } = await import("./companies-house");
-        const scraped = await scrapeUkEntityFromWebsite(row.domain || row.domain_url, { name: row.name, parentGroup: row.backers });
-        if (scraped.entityName) {
-          await pool.query(
-            `UPDATE crm_companies SET uk_entity_name = $1
-              WHERE id = $2 AND (uk_entity_name IS NULL OR uk_entity_name = '')`,
-            [scraped.entityName, sweepId]);
+        if (!row) return;
+        let entityName: string | null = (row.uk_entity_name || "").trim() || null;
+        let chNumber: string | null = (row.companies_house_number || "").trim() || null;
+        if (!entityName && (row.domain || row.domain_url)) {
+          const { scrapeUkEntityFromWebsite } = await import("./companies-house");
+          const scraped = await scrapeUkEntityFromWebsite(row.domain || row.domain_url, { name: row.name, parentGroup: row.backers });
+          if (scraped.entityName) {
+            entityName = scraped.entityName;
+            await pool.query(
+              `UPDATE crm_companies SET uk_entity_name = $1
+                WHERE id = $2 AND (uk_entity_name IS NULL OR uk_entity_name = '')`,
+              [scraped.entityName, sweepId]);
+          }
+          if (scraped.chNumber && !chNumber) {
+            chNumber = scraped.chNumber;
+            await pool.query(
+              `UPDATE crm_companies SET companies_house_number = $1
+                WHERE id = $2 AND (companies_house_number IS NULL OR companies_house_number = '')`,
+              [scraped.chNumber, sweepId]);
+          }
+          if (scraped.entityName || scraped.chNumber) {
+            console.log(`[brand-profile] auto-identified entity for ${row.name}: ${scraped.entityName || "?"} / ${scraped.chNumber || "no CH#"}`);
+          }
         }
-        if (scraped.chNumber && !row.companies_house_number) {
-          await pool.query(
-            `UPDATE crm_companies SET companies_house_number = $1
-              WHERE id = $2 AND (companies_house_number IS NULL OR companies_house_number = '')`,
-            [scraped.chNumber, sweepId]);
-        }
-        if (scraped.entityName || scraped.chNumber) {
-          console.log(`[brand-profile] auto-identified entity for ${row.name}: ${scraped.entityName || "?"} / ${scraped.chNumber || "no CH#"}`);
+        // Name → number bridge. Most websites state the legal entity but not
+        // its registration number, so brands stalled at "entity set, covenant
+        // parked" forever (WatchHouse, 2026-08-26). An exact match on the
+        // registered name is unambiguous — auto-link it; anything fuzzier
+        // stays a human call.
+        if (entityName && !chNumber) {
+          const { chFetch } = await import("./companies-house");
+          const canon = (s: string) => s.toLowerCase()
+            .replace(/\bltd\b\.?/g, "limited")
+            .replace(/\bplc\b\.?/g, "public limited company")
+            .replace(/[^a-z0-9]/g, "");
+          const target = canon(entityName);
+          const search = await chFetch(`/search/companies?q=${encodeURIComponent(entityName)}&items_per_page=10`);
+          const hit = (search.items || []).find((i: any) =>
+            i.company_status === "active" && i.company_number && canon(i.title || "") === target);
+          if (hit) {
+            await pool.query(
+              `UPDATE crm_companies SET companies_house_number = $1
+                WHERE id = $2 AND (companies_house_number IS NULL OR companies_house_number = '')`,
+              [hit.company_number, sweepId]);
+            console.log(`[brand-profile] auto-matched CH number for ${row.name}: ${hit.title} / ${hit.company_number}`);
+          }
         }
       })().catch(e => console.warn(`[brand-profile] entity auto-kick failed: ${e?.message}`));
       // Menu / best-sellers auto-kick, same rationale: the refresh button is
@@ -227,6 +256,13 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         await refreshMenuIntelForCompany(sweepId);
         console.log(`[brand-profile] auto-refreshed menu intel for ${m.name}`);
       })().catch(e => console.warn(`[brand-profile] menu auto-kick skipped: ${e?.message}`));
+      // Apollo firmographics auto-fetch, same no-ask rule — the card was a
+      // manual "Fetch" button until 2026-08-26. Guards + 30-day freshness
+      // live in apollo-company.ts.
+      (async () => {
+        const { autoRefreshApolloIfStale } = await import("./apollo-company");
+        await autoRefreshApolloIfStale(sweepId);
+      })().catch(e => console.warn(`[brand-profile] apollo auto-kick skipped: ${e?.message}`));
     }
 
     // AML pass self-serves on open: the nightly sweep runs oldest-first, so
@@ -1496,6 +1532,23 @@ router.get("/api/brand/:companyId/stores", requireAuth, async (req: Request, res
 // Diagnostics shape mirrors the KYC re-resolver — caller surfaces these in
 // the toast/console so a "0 stores found" result is debuggable without
 // scraping logs.
+// Trade descriptors a CRM company name often carries but the shopfront
+// doesn't ("Watchhouse Coffee" trades as "WatchHouse"; "Gymbox Fitness" as
+// "Gymbox"). Used twice in researchBrandStores: stripped from the search
+// query for an extra high-yield variant, and OPTIONAL in the listing-name
+// match gate — requiring them rejected every real store of any brand named
+// this way (WatchHouse came back "0 stores found" with 18 open sites,
+// Woody 2026-08-25).
+const TRADE_DESCRIPTORS = new Set([
+  "coffee", "cafe", "caffe", "espresso", "roasters", "roastery", "coffeehouse",
+  "bakery", "restaurant", "restaurants", "kitchen", "bar", "grill", "pizzeria",
+  "eatery", "deli", "brewing", "brewery", "taproom",
+  "gym", "fitness", "studio", "studios", "wellness", "spa",
+  "clothing", "fashion", "apparel", "jewellery", "jewelry", "opticians",
+  "store", "stores", "shop", "shops", "boutique", "supermarkets",
+  "hotel", "hotels", "books", "bookshop",
+]);
+
 export async function researchBrandStores(
   companyId: string,
   opts: { scope?: "uk" | "global" } = {},
@@ -1545,14 +1598,25 @@ export async function researchBrandStores(
     .replace(/\bT\d\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim() || company.name;
+  // Shopfront name — the CRM name minus trailing trade descriptors
+  // ("Watchhouse Coffee" trades as "WatchHouse"). Searched as an extra
+  // query when it differs; the match gate below makes the same words
+  // optional. TRADE_DESCRIPTORS is shared by both.
+  const shopfrontName = queryName
+    .split(/\s+/)
+    .filter((w: string, i: number) => i === 0 || !TRADE_DESCRIPTORS.has(w.toLowerCase().replace(/[^a-z0-9]/g, "")))
+    .join(" ")
+    .trim();
   const queries = scope === "global"
     ? [
         queryName,
+        ...(shopfrontName !== queryName ? [shopfrontName] : []),
         `${queryName} flagship store`,
         ...globalCities.map((c) => `${queryName} ${c}`),
       ]
     : [
         queryName,
+        ...(shopfrontName !== queryName ? [shopfrontName, `${shopfrontName} London`] : []),
         `${queryName} UK`,
         ...ukCities.map((c) => `${queryName} ${c}`),
       ];
@@ -1594,7 +1658,12 @@ export async function researchBrandStores(
   const allBrandWords = brandToken.split(" ").filter((w: string) => w.length > 1);
   const significantWords = allBrandWords.filter((w: string) => !STOPWORDS.has(w));
   const brandWords = significantWords.length > 0 ? significantWords : allBrandWords;
-  const brandFirstWord = brandWords[0] || brandToken;
+  // Words that MUST appear in the listing name: the brand words minus pure
+  // trade descriptors — unless that empties the list (e.g. "Coffee Shop"),
+  // in which case all words stay required.
+  const nonDescriptorWords = brandWords.filter((w: string) => !TRADE_DESCRIPTORS.has(w));
+  const requiredWords = nonDescriptorWords.length > 0 ? nonDescriptorWords : brandWords;
+  const brandFirstWord = requiredWords[0] || brandToken;
   const NOISE = new Set([
     "pizza","tyres","tyre","cars","car","hire","cleaning","plumbing",
     "gym","fitness","kebab","chicken","fried","fish","chips","pharmacy",
@@ -1612,11 +1681,12 @@ export async function researchBrandStores(
     if (!n) return false;
     // Exact match or starts-with: always accept (cheap, high precision)
     if (n === brandToken || n.startsWith(brandToken + " ")) return true;
-    // Multi-word brand: require all significant tokens to appear somewhere
-    // in the place name. Catches "BrandName - Westfield London" and
-    // "BrandName at Selfridges" without false-positives on single-token coincidence.
-    if (brandWords.length > 1) {
-      return brandWords.every((w: string) => n.includes(w));
+    // Multi-word requirement: every required token (descriptors excluded)
+    // must appear somewhere in the place name. Catches "BrandName -
+    // Westfield London" and "BrandName at Selfridges" without
+    // false-positives on single-token coincidence.
+    if (requiredWords.length > 1) {
+      return requiredWords.every((w: string) => n.includes(w));
     }
     // Single-word brand: brand must appear as a word, and no noise compound
     // immediately after (avoids "Supreme Pizza", "Coach Hire", etc.).

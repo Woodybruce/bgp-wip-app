@@ -115,7 +115,7 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
 
     // ── Recent: last 14 days of interactions in scope, sanitised ──
     const recentSelect = `SELECT i.id, i.type, i.direction, i.interaction_date,
-              i.subject, i.ai_summary,
+              i.subject, i.ai_summary, i.microsoft_id,
               COALESCE(bu.name, i.bgp_user) AS bgp_user,
               c.name AS contact_name, c.id AS contact_id, c.email AS contact_email,
               co.name AS company_name,
@@ -241,6 +241,7 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
           ai_summary: a.ai_summary || null,
           contact_id: a.contact_id,
           contact_email: a.contact_email || null,
+          microsoft_id: a.microsoft_id || null,
           deal_id: a.deal_id,
           deal_name: a.deal_name,
         })),
