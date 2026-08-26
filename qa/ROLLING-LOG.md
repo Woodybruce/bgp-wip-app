@@ -76,14 +76,37 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r385 · 2026-08-26 · FULL (rotation #3 client mobile 390px) — IN PROGRESS
-- Merged JOGQK phone-UX batch (0852246b) into staging first per parent note
-  (MobileCardView tap-through, deal page phone view, mobile Images folders/
-  select mode, SharePoint toolbar, VOA/Land Registry reworks). Merge clean.
-- Smoke GREEN 42/0 (FRESH_BUILD=1) on merged code. 0 raw 500/502/504 in app
-  log; 503/401/404 all listed noise. Triage: nothing to triage.
-- Journey (client mobile 390px, targeting new phone surfaces) + two-bot
-  pending.
+### r385 · 2026-08-26 · FULL (rotation #3 client mobile 390px)
+- Merged JOGQK phone-UX batch (0852246b) into staging first per parent note.
+  Merge clean, tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1) on merged code.
+- Two-bot 385: exit 0, 212 steps ok. 4 issues all listed noise (2×400
+  rocketreach + tracker-invalid's intended 400; 2×503 keyless AI). 0 raw
+  500/502/504 in dev-server log; 403s grouped max 3/endpoint = guard probes.
+- Journey: Mark Warne phone 390px — "how are my deals progressing; the
+  regear deal has no tenant linked, link Starbucks and read up on them":
+  portfolio home → Deals tab → NEW MobileCardView verified (0 View buttons,
+  whole-card tap navigates to /deals/:id) → deal page phone view (no back
+  arrow, one-row Image Studio/Edit actions, breadcrumb, pills) → Parties
+  link-tenant picker roundtrip WORKS on touch (opens, filters, tap fires
+  PUT, persists; restored to fixture after) → Brand pill renders
+  MobileBrandView fully with linked brand (header, Chat/Contacts/Intel/
+  Stores/Social/Compliance pills, topic reads) → News clean → /image-studio
+  in phone shell clean. KYC pill absent for clients on deal page = INTENDED
+  (deal KYC/AML is BGP-internal; clients get brand compliance via Brand →
+  Compliance). 0 pageerrors, 0 non-noise 4xx/5xx, no h-overflow anywhere.
+- Testing note: two false alarms were MY tooling, not the app — a loose
+  text locator missed the picker option (precise [data-testid^=
+  "inline-link-option-"] works), and omitting the iPhone UA renders desktop
+  layout at 390px by design (isTouchDevice checks UA; always set the UA).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions: none
+  new (deals-card title truncation is one tap from the full name; not worth
+  a note). Harness growth: none needed — client-deal-party-link-gates
+  already covers the link-tenant UI roundtrip + AML gate.
+- Next journey: r385 was FULL → r386 LIGHT; then r387 FULL rotation #4
+  staff mobile 390px — point it at the new staff phone surfaces (mobile
+  Images folders/select/long-press, SharePoint toolbar + New folder +
+  delete, Business Rates RV sort + entry detail + address finder, Land
+  Registry autocomplete, Property Intelligence map toolbar).
 
 ### r384 · 2026-08-26 · LIGHT (r383 was FULL — no journey)
 - Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
