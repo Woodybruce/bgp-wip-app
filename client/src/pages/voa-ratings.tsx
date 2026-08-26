@@ -3,7 +3,7 @@ import { usePropertyContext } from "@/lib/property-context";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -632,10 +632,10 @@ function RatingDetailSheet({ item, baNames, onClose }: { item: VoaRating | null;
   ];
   return (
     <Sheet open onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="bottom" hideClose className="max-h-[85dvh] overflow-y-auto p-0 rounded-t-3xl">
+      <SheetContent side="bottom" hideClose aria-describedby={undefined} className="max-h-[85dvh] overflow-y-auto p-0 rounded-t-3xl">
         <div className="px-4 pt-4 pb-3 flex items-start gap-2 border-b border-border/40 sticky top-0 bg-background">
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold leading-snug">{item.firmName || item.numberOrName || "Rating entry"}</h2>
+            <SheetTitle className="text-base font-semibold leading-snug">{item.firmName || item.numberOrName || "Rating entry"}</SheetTitle>
             <p className="text-xs text-muted-foreground">{item.postcode}</p>
           </div>
           <button type="button" onClick={onClose} className="p-2 -mr-2 rounded-full active:bg-muted" aria-label="Close">

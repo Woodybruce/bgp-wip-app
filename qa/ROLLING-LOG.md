@@ -76,14 +76,40 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r389 · 2026-08-26 · ROUND IN PROGRESS (provisional)
-- FULL round (r388 was LIGHT), rotation #1 staff desktop. JOGQK already
-  merged into staging (77d5026 ancestor check clean).
-- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 389 running. Triage so far:
-  nothing beyond listed noise.
-- Journey planned: Victoria desktop 1440px — Bluewater tracker, log a
-  viewing, Business Rates entry detail on seeded voa_ratings rows (open
-  pointer from r385), then Mark Warne confirms client tracker shows it.
+### r389 · 2026-08-26 · FULL (rotation #1 staff desktop 1440px)
+- JOGQK already merged into staging (ancestor check clean, no new commits).
+- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 389: exit 0, all 34 scenarios
+  ok, 4 issues all listed noise (2×400 rocketreach + tracker-invalid;
+  2×503 keyless AI). 0 raw 500/502/504 in dev-server log (one grep hit =
+  news-feed "500 articles" line again).
+- Journey: Victoria desktop 1440px — "prep the Landsec review: check
+  Bluewater on the Letting Tracker, log a viewing, look up a unit's
+  business rates; then as Mark Warne confirm the client sees the viewing":
+  tracker search → viewings dialog → add viewing (date/time/attendees/
+  notes) saves 200, FY strip bumps 2→3, dialog lists it; Business Rates
+  tab on 3 seeded voa_ratings rows (r385's open pointer — CLOSED): live
+  search-as-you-type filters the table, suggest dropdown shows firm+RV,
+  suggest click opens entry detail, RV column sort works, row click opens
+  the detail sheet with all fields + VOA deep link; client login sees the
+  staff viewing in tracker FY strip + unit dialog (cross-check pass).
+  Viewing deleted after (fixture restored); VOA seeds live only in the
+  container-local dev db, not committed. 0 pageerrors, 0 non-noise 4xx/5xx.
+- Bug fixed (1): VOA entry-detail sheet had no Radix DialogTitle/
+  aria-describedby — screen readers got an unnamed dialog + console
+  warnings on every open. h2 → SheetTitle + aria-describedby={undefined}
+  in RatingDetailSheet (voa-ratings.tsx); tsc clean, re-verified visually
+  identical with 0 warnings.
+- Deferred: none. Suggestions: UX-NOTES #100 (desktop tracker per-unit
+  Viewings/Offers buttons live in the activity column off-screen right at
+  1440px — logging a viewing needs a horizontal-scroll discovery).
+- Harness growth: none needed — agent-log-viewing + client-sees-agent-
+  viewing already cover the cross-check; VOA browse needs seeded voa rows
+  (this round's 3-row INSERT pattern is in the journey script if wanted).
+- Testing note: two-bot and browser journeys share the :5000 login rate
+  limiter — run them sequentially, not concurrently.
+- New flakes: none. Next journey: r389 was FULL → r390 LIGHT; then r391
+  FULL rotation #2 client desktop. Still-open pointer: SharePoint toolbar/
+  New folder/delete via the r388 status/files mock pattern.
 
 ### r388 · 2026-08-26 · LIGHT (r387 was FULL) + targeted checks on new JOGQK surfaces
 - Merged JOGQK f6f2a2f+3bc83b4 (SharePoint chip wrap; hdog→Huseyn admin)

@@ -16,6 +16,16 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+100. 2026-08-26 · BGP staff / desktop 1440px (QA r389) · "log a viewing on
+    a Bluewater unit from the Letting Tracker" · The per-unit Viewings /
+    Offers count buttons live in the activity column, which sits off-screen
+    to the right at 1440px — the visible Actions column only offers
+    AI/comment/edit/delete, so logging a viewing means discovering a
+    horizontal scroll first (the FY strip up top shows viewing counts,
+    which makes the missing per-row affordance more surprising) · Surface
+    a Viewing/Offer action in the always-visible Actions cluster (or its
+    ⋯ menu), or pin the activity column so it stays on-screen.
+
 99. 2026-08-26 · BGP staff / mobile 390px (QA r387) · "review the photos I
     took on a site visit in /m/images" · Tapping a photo in Recent Captures
     opens the Edit-with-AI sheet, where the photo itself is a small
