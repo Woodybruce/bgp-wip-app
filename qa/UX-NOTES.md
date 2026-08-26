@@ -16,6 +16,16 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+98. 2026-08-26 · BGP staff / mobile 390px (QA r386) · "open the Planning
+    documents dialog on a pathway run from a phone" · The dialog opens and
+    is legible, but each application header keeps its desktop columns
+    (date w-20 + LPA badge + PDF-count badge all shrink-0), leaving ~110px
+    for the reference and description — refs like PP/25/06454 break
+    mid-token onto two lines and descriptions wrap 2-3 words per line ·
+    On <sm stack the header: date + badges on one small top line, ref +
+    description full-width below (doc rows could do the same with their
+    category pill).
+
 97. 2026-08-26 · Landsec client / desktop (QA r383) · "scan my Letting
     Tracker to see how lettings are progressing" · Every row's Property/Unit
     headline is the truncated property name ("Bluewater Sho...") repeated

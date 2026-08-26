@@ -76,7 +76,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r386 · 2026-08-26 · ROUND IN PROGRESS (light — r385 was FULL)
+### r386 · 2026-08-26 · LIGHT (r385 was FULL) + targeted checks on new JOGQK surfaces
 - Merged JOGQK fb6bbff+4046677 (pathway phone view, RBKC planning tier)
   into staging first per parent note. Merge clean, tsc clean.
 - Smoke GREEN 42/0 (FRESH_BUILD=1) on merged code. Two-bot 386: exit 0,
@@ -84,12 +84,30 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   tracker-invalid probe; 2×503 keyless AI); bulk-assign 400 = guards
   probe's intended validation stop. 0 raw 500/502/504 in dev-server log.
 - Planning-docs unit check (scratchpad tsx, local stub server): Idox tier
-  end-to-end green (parse, classify, relative hrefs); parseRbkcDocsHtml
-  green on table + anchor layouts; docsTabUrl leaves RBKC details.aspx
-  untouched; isRbkcUrl host detection correct. Live RBKC untestable here
-  (403s sandbox; ScraperAPI key Railway-only) — prod verification pending.
-- Remaining this round: targeted 390px render check of the new pathway
-  phone view (seeded run; iPhone UA + hasTouch).
+  end-to-end green (parse, classify, relative hrefs — note the parser puts
+  the wording in `type` per its cell heuristic, classification correct);
+  parseRbkcDocsHtml green on table + anchor layouts; docsTabUrl leaves
+  RBKC details.aspx untouched; isRbkcUrl host detection correct. Live
+  RBKC untestable here (403s sandbox; ScraperAPI key Railway-only) —
+  prod verification pending.
+- Pathway phone view 390px (victoria, iPhone UA + hasTouch, seeded run
+  with stage1+stage4 results, cleaned after): ⋯ overflow menu renders and
+  opens with Create comp/Create document/Delete (desktop buttons hidden);
+  slim stepper clean; Initial Search stacks (2 thumbnails share the image
+  row, address below — intended); inline E1/E2 citation chips render in
+  email commentary; planning-docs dialog opens with proper header and
+  fits the viewport; 0 pageerrors, 0 non-noise 4xx/5xx, no h-overflow.
+  (Screenshots were local-only — qa/logs/ is gitignored.)
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions:
+  UX-NOTES #98 (planning-docs dialog app-header keeps desktop columns at
+  390px — refs break mid-token; stack on <sm). Harness growth: none —
+  pathway run view needs seeded stage_results, too heavy for two-bot;
+  the scratchpad seed + check pattern is in this entry if wanted again.
+- Next journey: r386 was LIGHT → r387 FULL rotation #4 staff mobile 390px
+  (r385's pointer list: mobile Images folders/select/long-press, SharePoint
+  toolbar + New folder + delete, Business Rates RV sort + entry detail +
+  address finder, Land Registry autocomplete, Property Intelligence map
+  toolbar) — pathway phone view now covered here, skip it there.
 
 ### r385 · 2026-08-26 · FULL (rotation #3 client mobile 390px)
 - Merged JOGQK phone-UX batch (0852246b) into staging first per parent note.
