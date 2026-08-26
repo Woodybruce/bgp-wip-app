@@ -76,6 +76,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r390 · 2026-08-26 · LIGHT (r389 was FULL) — ROUND IN PROGRESS
+- Merged JOGQK c6c7f5a (hdog commission always-zero) into staging. Merge
+  clean (hr-routes.ts only).
+- Smoke GREEN 42/0 (FRESH_BUILD=1 on merged code).
+- Targeted check (per parent): GET /api/hr/staff/<hdog>/commission as hdog
+  → billedPence 0, billingsByYear [], wipTotal 0, topDeals/awaitingPayment
+  empty. Victoria's own commission endpoint returns the full 200 shape,
+  unaffected (fixture has 0 deal_fee_allocations rows so figures are zero
+  locally either way — shape + no-error is the check).
+- Note: hdog fixture login is username hdog / password hdog (boot-seed,
+  server/index.ts ~5484), NOT the standard fixture password.
+- Remaining this round: two-bot regression, browser render of commission
+  tab, final log entry.
+
 ### r389 · 2026-08-26 · FULL (rotation #1 staff desktop 1440px)
 - JOGQK already merged into staging (ancestor check clean, no new commits).
 - Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 389: exit 0, all 34 scenarios
