@@ -76,6 +76,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r381 · 2026-08-26 · ROUND IN PROGRESS (heartbeat)
+- FULL round (r380 was LIGHT) — rotation #1 staff desktop journey planned.
+- Fresh container. pg_hba trust + bgp SUPERUSER role, fixture restored as
+  bgp directly. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1).
+- Two-bot + journey pending; final entry replaces this one.
+
 ### r380 · 2026-08-26 · LIGHT (r379 was FULL — no journey)
 - Fresh container. pg_hba trust fix + bgp SUPERUSER role, fixture restored
   as bgp directly (superuser-at-restore avoids the r379 per-table owner
