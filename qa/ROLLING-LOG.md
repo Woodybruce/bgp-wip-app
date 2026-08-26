@@ -76,6 +76,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r389 · 2026-08-26 · ROUND IN PROGRESS (provisional)
+- FULL round (r388 was LIGHT), rotation #1 staff desktop. JOGQK already
+  merged into staging (77d5026 ancestor check clean).
+- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 389 running. Triage so far:
+  nothing beyond listed noise.
+- Journey planned: Victoria desktop 1440px — Bluewater tracker, log a
+  viewing, Business Rates entry detail on seeded voa_ratings rows (open
+  pointer from r385), then Mark Warne confirms client tracker shows it.
+
 ### r388 · 2026-08-26 · LIGHT (r387 was FULL) + targeted checks on new JOGQK surfaces
 - Merged JOGQK f6f2a2f+3bc83b4 (SharePoint chip wrap; hdog→Huseyn admin)
   into staging per parent note. Merge clean, tsc not needed (2-file diff,
