@@ -21,6 +21,9 @@ export type MobileCardItem = {
   title: string;
   subtitle?: string;
   href?: string;
+  /** Tap anywhere on the card (used where a detail opens in-page rather
+      than at a route). Ignored when href is set. */
+  onClick?: () => void;
   status?: string;
   statusColor?: string;
   fields: MobileCardField[];
@@ -54,7 +57,8 @@ export function MobileCardView({ items, emptyMessage, emptyIcon, emptyDescriptio
       {items.map((item) => (
         <div
           key={item.id}
-          className="rounded-xl border bg-card p-4 space-y-3 shadow-sm"
+          onClick={item.onClick && !item.href ? item.onClick : undefined}
+          className={`rounded-xl border bg-card p-4 space-y-3 shadow-sm ${item.onClick && !item.href ? "cursor-pointer active:bg-muted/40" : ""}`}
           data-testid={`mobile-card-${item.id}`}
         >
           {/* Card header */}
