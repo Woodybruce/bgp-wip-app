@@ -59,6 +59,19 @@ const SYSTEM_FOLDER_NAME = /^(Pathway|Brand|Property) · /;
 function isUserFolder(c: Collection): boolean {
   return c.kind == null && !c.property_id && !c.company_id && !SYSTEM_FOLDER_NAME.test(c.name);
 }
+// Property and Pathway collections are first-class on the phone (Woody,
+// 2026-08-26: "access to properties would be great including pathway —
+// they are very much something that is live"). Brand umbrellas stay
+// desktop-only. Pathway is checked first — pathway rows also carry a
+// property_id.
+function isPathwayFolder(c: Collection): boolean {
+  return c.kind === "pathway" || /^Pathway · /.test(c.name);
+}
+function isPropertyFolder(c: Collection): boolean {
+  if (isPathwayFolder(c)) return false;
+  return c.kind === "property" || /^Property · /.test(c.name) || (!!c.property_id && c.kind !== "brand");
+}
+const folderDisplayName = (c: Collection) => c.name.replace(SYSTEM_FOLDER_NAME, "");
 
 // What a drop lands on: another photo (→ make a new folder) or an existing
 // folder tile (→ drop the photo straight in).
@@ -205,6 +218,14 @@ export default function MobileImages() {
     });
   }, [images, search, filedSet, isClientViewer]);
 
+  // Keep the loose grid tight — old captures pile up into junk (Woody,
+  // 2026-08-26: "massively reduce the amount of images"). Newest 48 by
+  // default; search and "Show all" still reach everything.
+  const [showAllPhotos, setShowAllPhotos] = useState(false);
+  const CAPTURE_CAP = 48;
+  const capped = !search.trim() && !showAllPhotos && filtered.length > CAPTURE_CAP;
+  const visiblePhotos = capped ? filtered.slice(0, CAPTURE_CAP) : filtered;
+
   // ─── Folders (shared Image Studio collections) ─────────────────────────
   // Only ad-hoc, user-made folders (kind === null) — pathway/property/brand
   // collections are auto-managed elsewhere and would just be noise here.
@@ -214,6 +235,18 @@ export default function MobileImages() {
   });
   const folders = useMemo(
     () => allCollections.filter(isUserFolder),
+    [allCollections],
+  );
+  // Live property + pathway imagery, straight from the shared library.
+  // Empty collections are noise on a phone — only show ones with photos.
+  const propertyFolders = useMemo(
+    () => allCollections.filter((c) => isPropertyFolder(c) && c.image_count > 0)
+      .sort((a, b) => folderDisplayName(a).localeCompare(folderDisplayName(b))),
+    [allCollections],
+  );
+  const pathwayFolders = useMemo(
+    () => allCollections.filter((c) => isPathwayFolder(c) && c.image_count > 0)
+      .sort((a, b) => folderDisplayName(a).localeCompare(folderDisplayName(b))),
     [allCollections],
   );
 
@@ -261,8 +294,8 @@ export default function MobileImages() {
   // Tapping a folder swaps the default (unfiled) grid for that folder's
   // contents, right here in the page — no pop-out sheet.
   const openFolder = useMemo(
-    () => folders.find((f) => f.id === openFolderId) || null,
-    [folders, openFolderId],
+    () => allCollections.find((f) => f.id === openFolderId) || null,
+    [allCollections, openFolderId],
   );
   const { data: folderData, isLoading: folderLoading } = useQuery<{ id: string; name: string; images: any[] }>({
     queryKey: ["/api/image-studio/collections", openFolderId],
@@ -419,7 +452,10 @@ export default function MobileImages() {
             >
               <ChevronLeft className="w-6 h-6" />
             </button>
-            <h1 className="text-2xl font-semibold flex-1 truncate">{openFolder.name}</h1>
+            <h1 className="text-2xl font-semibold flex-1 truncate">{folderDisplayName(openFolder)}</h1>
+            {/* Only hand-made folders are deletable — Property/Pathway
+                collections are auto-managed by the system. */}
+            {isUserFolder(openFolder) && (
             <button
               type="button"
               onClick={() => { if (window.confirm("Delete this folder? The photos stay in your library.")) deleteFolderMutation.mutate(); }}
@@ -430,6 +466,7 @@ export default function MobileImages() {
             >
               {deleteFolderMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
             </button>
+            )}
           </>
         ) : (
           <>
@@ -499,7 +536,7 @@ export default function MobileImages() {
                 >
                   <img src={`/api/image-studio/${r.id}/thumb`} alt={r.description || r.file_name} className="w-full h-full object-cover" loading="lazy" />
                 </button>
-                <button
+                {isUserFolder(openFolder) && <button
                   type="button"
                   onClick={() => removeFromFolderMutation.mutate(r.id)}
                   className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white inline-flex items-center justify-center active:bg-black/80"
@@ -507,7 +544,7 @@ export default function MobileImages() {
                   data-testid={`mobile-folder-remove-${r.id}`}
                 >
                   <X className="w-4 h-4" />
-                </button>
+                </button>}
               </div>
             ))}
           </div>
@@ -568,6 +605,44 @@ export default function MobileImages() {
         </div>
       )}
 
+      {/* Live property + pathway imagery (Woody, 2026-08-26) — read-through
+          to the same shared collections desktop Image Studio manages. */}
+      {[
+        { label: "Properties", list: propertyFolders },
+        { label: "Pathway runs", list: pathwayFolders },
+      ].map(({ label, list }) => list.length > 0 && (
+        <div key={label} className="px-3 mb-3">
+          <h2 className="px-1 mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {label}
+          </h2>
+          <div className="grid grid-cols-2 gap-2">
+            {list.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setOpenFolderId(f.id)}
+                className="flex items-center gap-2.5 rounded-xl border border-border/60 px-2.5 py-2 text-left bg-white dark:bg-card active:bg-muted/40"
+                data-testid={`mobile-folder-${f.id}`}
+              >
+                <div className="w-11 h-11 rounded-lg overflow-hidden bg-muted shrink-0 flex items-center justify-center">
+                  {f.cover_thumbnail ? (
+                    <img src={f.cover_thumbnail} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Folder className="w-5 h-5 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">{folderDisplayName(f)}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {f.image_count} {f.image_count === 1 ? "photo" : "photos"}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+
       {isLoading ? (
         <div className="flex items-center justify-center pt-16">
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -598,8 +673,12 @@ export default function MobileImages() {
           )}
         </div>
       ) : (
+        <>
+        <h2 className="px-4 mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {isClientViewer ? "Your imagery" : "Recent captures"}
+        </h2>
         <div className="px-3 grid grid-cols-2 gap-2">
-          {filtered.map((img) => {
+          {visiblePhotos.map((img) => {
             const isDragging = dragId === img.id;
             const isDropTarget = dropTarget?.type === "image" && dropTarget.id === img.id;
             return (
@@ -664,6 +743,19 @@ export default function MobileImages() {
             );
           })}
         </div>
+        {capped && (
+          <div className="px-3 mt-2">
+            <button
+              type="button"
+              onClick={() => setShowAllPhotos(true)}
+              className="w-full h-10 rounded-xl border border-border/60 text-sm text-muted-foreground active:bg-muted/40"
+              data-testid="mobile-images-show-all"
+            >
+              Show all {filtered.length}
+            </button>
+          </div>
+        )}
+        </>
       )}
       </>
       )}
@@ -1115,7 +1207,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                 variant="outline"
                 onClick={saveToDevice}
                 disabled={saving}
-                className={readOnly ? "flex-1 h-12 gap-2" : "h-12"}
+                className={readOnly ? "flex-1 h-12 gap-2" : "h-12 w-11 px-0 shrink-0"}
                 aria-label="Save to phone"
                 data-testid="mobile-image-save"
               >
@@ -1127,7 +1219,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                 type="button"
                 variant="outline"
                 onClick={() => setFolderPickOpen(true)}
-                className="h-12"
+                className="h-12 w-11 px-0 shrink-0"
                 aria-label="Add to a folder"
                 data-testid="mobile-image-folder"
               >
@@ -1137,7 +1229,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                 type="button"
                 variant="outline"
                 onClick={() => setAttachOpen(true)}
-                className="h-12"
+                className="h-12 w-11 px-0 shrink-0"
                 aria-label="Attach to property, brand or pathway"
                 data-testid="mobile-image-attach"
               >
@@ -1148,7 +1240,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                 variant="outline"
                 onClick={askDelete}
                 disabled={deleteMutation.isPending}
-                className="h-12 text-red-600 hover:text-red-700"
+                className="h-12 w-11 px-0 shrink-0 text-red-600 hover:text-red-700"
                 aria-label="Delete photo"
                 data-testid="mobile-image-delete"
               >
@@ -1160,7 +1252,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                   variant="outline"
                   onClick={() => revertMutation.mutate()}
                   disabled={revertMutation.isPending}
-                  className="h-12"
+                  className="h-12 w-11 px-0 shrink-0"
                   data-testid="mobile-image-revert"
                 >
                   {revertMutation.isPending ? (
@@ -1174,13 +1266,13 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                 type="button"
                 onClick={() => editMutation.mutate()}
                 disabled={editMutation.isPending || !prompt.trim()}
-                className="flex-1 h-12 text-base font-semibold gap-2"
+                className="flex-1 min-w-0 h-12 text-base font-semibold gap-2"
                 data-testid="mobile-image-apply"
               >
                 {editMutation.isPending ? (
-                  <><Loader2 className="w-5 h-5 animate-spin" /> AI is editing…</>
+                  <><Loader2 className="w-5 h-5 animate-spin" /> Editing…</>
                 ) : (
-                  <><Sparkles className="w-5 h-5" /> Apply with AI</>
+                  <><Sparkles className="w-5 h-5" /> Apply</>
                 )}
               </Button>
               </>}
