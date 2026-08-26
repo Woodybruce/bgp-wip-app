@@ -76,6 +76,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r387 · 2026-08-26 · ROUND IN PROGRESS (heartbeat)
+- Merged JOGQK 7de822d (hdog boot-block staff login) into staging per parent
+  note. Merge clean. Smoke GREEN 42/0 (fresh build on merged code).
+- Two-bot 387: exit 0, 53 scenarios ok. 4 issues all listed noise (2×400
+  rocketreach + tracker-invalid's intended 400; 2×503 keyless AI live-intel
+  + commentary regen). 0 raw 500/502/504 in dev-server log.
+- Next: FULL journey rotation #4 staff mobile 390px (Business Rates RV
+  sort/detail/address finder, Land Registry autocomplete, PI map toolbar,
+  mobile Images folders/select) — in progress.
+
 ### r386 · 2026-08-26 · LIGHT (r385 was FULL) + targeted checks on new JOGQK surfaces
 - Merged JOGQK fb6bbff+4046677 (pathway phone view, RBKC planning tier)
   into staging first per parent note. Merge clean, tsc clean.
