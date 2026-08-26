@@ -76,6 +76,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r388 · 2026-08-26 · ROUND IN PROGRESS (provisional heartbeat)
+- LIGHT round (r387 was FULL). Merged JOGQK f6f2a2f+3bc83b4 (SharePoint
+  chip wrap; hdog→Huseyn admin) into staging, merge clean, pushed.
+- Smoke GREEN 42/0 (FRESH_BUILD=1 on merged code). Two-bot 388: exit 0,
+  all scenarios ok. 4 issues all listed noise (2×400 rocketreach +
+  tracker-invalid probe; 2×503 keyless AI). 0 raw 500/502/504 in
+  dev-server log (one grep hit was "500 articles" in a news-feed line).
+  requirements-leasing 404 = client cross-scope probe, intended.
+- Verified: hdog boot block seeds Huseyn admin=true on fresh restore.
+- Remaining this round: SharePoint chip-wrap assert at 390px (mocked
+  /api/microsoft/status + files), final log entry.
+
 ### r387 · 2026-08-26 · FULL (rotation #4 staff mobile 390px)
 - Merged JOGQK 7de822d (hdog boot-block staff login) into staging per parent
   note. Merge clean, tsc clean. Smoke GREEN 42/0 (fresh build on merged code).
