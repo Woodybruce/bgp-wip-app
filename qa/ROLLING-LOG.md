@@ -80,6 +80,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r394 · 2026-08-27 · ROUND IN PROGRESS (provisional)
+- Merged JOGQK into staging per parent note (6e869fae UX batch I,
+  51ac9588+4c1490f6 Cashflow board). Two conflicts resolved: voa-ratings
+  detail sheet (kept aria-describedby fix + took JOGQK's sm:max-w-2xl cap —
+  this also closes UX-NOTES #103), UX-NOTES numbering (kept staging 97-105).
+- Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge. Two-bot 394 running.
+- Planned (LIGHT round, r393 was FULL): targeted checks on the new JOGQK
+  surfaces — cashflow unlock/grid 1440px + 390px month pager, /m/images
+  phone photo viewer.
+
 ### r393 · 2026-08-27 · FULL (rotation #3 Landsec client mobile 390px)
 - Merged JOGQK (a38f270 hdog non-admin) into staging per parent note; merge
   clean. hdog check PASSED both ways: fresh boot creates hdog non-admin +
