@@ -12,8 +12,16 @@ export interface CashflowXero {
   asAt?: string; orgName?: string; cashTotal: number | null;
   bankAccounts: Array<{ name: string; balance: number }>;
   monthly: Array<{ month: string; income: number; expenses: number; netProfit: number }>;
+  arByMonth?: Record<string, number>;
+  apByMonth?: Record<string, number>;
+  recurringBills?: number | null;
+  costRunRate?: number | null;
 }
-export interface CashflowData { lines: CashflowLine[]; cells: CashflowCell[]; months: string[]; xero: CashflowXero | null }
+export interface CashflowDeals {
+  byMonth: Record<string, { weighted: number; count: number }>;
+  undated: { weighted: number; count: number };
+}
+export interface CashflowData { lines: CashflowLine[]; cells: CashflowCell[]; months: string[]; xero: CashflowXero | null; deals: CashflowDeals | null }
 
 const KEY_STORE = "cashflow-key";
 export function getCashflowKey(): string {
@@ -105,4 +113,35 @@ export function xeroLabelToMonth(label: string): string | null {
   if (idx < 0) return null;
   const y = m[2].length === 2 ? `20${m[2]}` : m[2];
   return `${y}-${String(idx + 1).padStart(2, "0")}`;
+}
+
+// App-linked projection: for the current and future months, what the app
+// itself expects — weighted deal fees + Xero AR due as cash in, Xero AP due
+// + the opex run-rate as cash out — chained into its own closing line from
+// the same opening as the typed forecast. Reference only: it knows nothing
+// about VAT quarters or anything not in the deal book / Xero.
+export interface LinkedProjection {
+  byMonth: Record<string, { in: number; out: number; close: number }>;
+  months: string[];
+  hasXero: boolean;
+}
+export function buildLinkedProjection(data: CashflowData, model: CashflowModel): LinkedProjection | null {
+  if (!data.deals && !data.xero) return null;
+  const nowKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  const future = model.months.filter(m => m >= nowKey);
+  if (future.length === 0) return null;
+  const runRate = data.xero?.costRunRate ?? null;
+  const byMonth: LinkedProjection["byMonth"] = {};
+  // Start from the typed forecast's opening for the first projected month
+  // (actual basis where actuals exist, else budget).
+  const firstBasis = model.hasActual(future[0]) ? "actual" : "budget";
+  let open = model.totals[future[0]]?.[firstBasis]?.open ?? 0;
+  for (const m of future) {
+    const inflow = (data.deals?.byMonth[m]?.weighted || 0) + (data.xero?.arByMonth?.[m] || 0);
+    const outflow = (data.xero?.apByMonth?.[m] || 0) + (runRate || 0);
+    const close = open + inflow - outflow;
+    byMonth[m] = { in: Math.round(inflow), out: Math.round(outflow), close: Math.round(close) };
+    open = close;
+  }
+  return { byMonth, months: future, hasXero: !!data.xero };
 }

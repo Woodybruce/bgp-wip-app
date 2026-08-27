@@ -49,6 +49,10 @@ async function xeroSnapshot(): Promise<any | null> {
         cashTotal: fin.cashTotal ?? null,
         bankAccounts: fin.bankAccounts || [],
         monthly: fin.monthly || [],
+        arByMonth: fin.arByMonth || {},
+        apByMonth: fin.apByMonth || {},
+        recurringBills: fin.recurring?.monthlyBills ?? null,
+        costRunRate: fin.costs?.runRate ?? null,
       };
     }
   } catch (e: any) {
@@ -56,6 +60,47 @@ async function xeroSnapshot(): Promise<any | null> {
   }
   xeroSnapCache = { at: Date.now(), data };
   return data;
+}
+
+// App-linked projection (Woody, 2026-08-27: "link the forecasting to the
+// app — deals, invoices, costs"). Deal fees come from the CRM book with the
+// same stage weights as the WIP forecast, bucketed by the deal's expected
+// month (completed → exchanged → target date); COM deals that still have no
+// Xero invoice count at full weight. Everything is read-only reference —
+// the board's typed budget stays the plan of record.
+const PROJ_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9, COM: 1 };
+async function buildDealProjection(): Promise<{ byMonth: Record<string, { weighted: number; count: number }>; undated: { weighted: number; count: number } }> {
+  const { legacyToCode } = await import("../shared/deal-status");
+  const { rows } = await pool.query(`
+    SELECT d.status, d.fee::float AS fee,
+           COALESCE(d.completed_at, d.exchanged_at, d.target_date) AS dt,
+           inv.invoice_count AS ic
+      FROM crm_deals d
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS invoice_count
+          FROM xero_invoices xi
+         WHERE xi.deal_id = d.id AND COALESCE(xi.status, '') <> 'ERROR'
+      ) inv ON TRUE
+     WHERE d.fee IS NOT NULL AND d.fee > 0
+  `);
+  const byMonth: Record<string, { weighted: number; count: number }> = {};
+  const undated = { weighted: 0, count: 0 };
+  const thisMonth = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
+  for (const d of rows) {
+    const code = legacyToCode(d.status);
+    if (!code || !(code in PROJ_WEIGHTS)) continue;
+    if (code === "COM" && d.ic > 0) continue; // invoiced — already in Xero AR/actuals
+    const weighted = (Number(d.fee) || 0) * PROJ_WEIGHTS[code];
+    if (!d.dt) { undated.weighted += weighted; undated.count++; continue; }
+    const dt = new Date(d.dt);
+    let key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
+    if (key < thisMonth) key = thisMonth; // slipped deals land in the current month
+    (byMonth[key] ||= { weighted: 0, count: 0 }).weighted += weighted;
+    byMonth[key].count++;
+  }
+  for (const k of Object.keys(byMonth)) byMonth[k].weighted = Math.round(byMonth[k].weighted);
+  undated.weighted = Math.round(undated.weighted);
+  return { byMonth, undated };
 }
 
 let ensured: Promise<void> | null = null;
@@ -127,7 +172,11 @@ export function registerCashflowRoutes(app: Express): void {
       const monthSet = new Set<string>(CASHFLOW_SEED.months);
       for (const c of cells) monthSet.add(c.month);
       const xero = await xeroSnapshot();
-      res.json({ lines, cells, months: [...monthSet].sort(), xero });
+      const deals = await buildDealProjection().catch((e) => {
+        console.warn("[cashflow] deal projection failed:", e?.message);
+        return null;
+      });
+      res.json({ lines, cells, months: [...monthSet].sort(), xero, deals });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }

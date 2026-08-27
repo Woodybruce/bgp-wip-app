@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { queryClient, getAuthHeaders } from "@/lib/queryClient";
 import {
-  type CashflowData, type CashflowModel, buildCashflowModel, cashflowFetch, CashflowLocked,
+  type CashflowData, type CashflowModel, buildCashflowModel, buildLinkedProjection, cashflowFetch, CashflowLocked,
   getCashflowKey, setCashflowKey, CASHFLOW_MONTH_LABEL as ML, fmtCashflow as fmt, xeroLabelToMonth,
 } from "@/lib/cashflow-model";
 import { useToast } from "@/hooks/use-toast";
@@ -72,15 +72,17 @@ export default function CashflowPage() {
   });
 
   const model = useMemo(() => (data ? buildCashflowModel(data) : null), [data]);
+  const linked = useMemo(() => (data && model ? buildLinkedProjection(data, model) : null), [data, model]);
 
   const chartData = useMemo(() => {
     if (!model) return [];
     return model.months.map(m => {
       const row: Record<string, any> = { month: ML(m), Budget: Math.round(model.totals[m]?.budget?.close ?? 0) };
       if (model.hasActual(m)) row.Actual = Math.round(model.totals[m]?.actual?.close ?? 0);
+      if (linked?.byMonth[m]) row["App-linked"] = linked.byMonth[m].close;
       return row;
     });
-  }, [model]);
+  }, [model, linked]);
 
   // Xero cross-reference: current cash vs the forecast, and monthly
   // income/expenses vs the forecast's receipts/payments (actual basis).
@@ -142,6 +144,18 @@ export default function CashflowPage() {
       </td>
     );
   };
+
+  // Read-only app-linked rows — one figure per month (no budget/actual
+  // split), violet + italic so they can't be mistaken for typed forecast.
+  const projRow = (label: string, valueFor: (m: string) => number | undefined, testid: string) => (
+    <tr className="text-violet-700 dark:text-violet-400 italic" data-testid={testid}>
+      <td className="px-3 py-1 sticky left-0 bg-card z-10 whitespace-nowrap">→ {label}</td>
+      {model!.months.map(m => {
+        const v = valueFor(m);
+        return <td key={m} colSpan={2} className="px-2 py-1 text-right font-mono tabular-nums border-r">{v ? fmt(Math.round(v)) : ""}</td>;
+      })}
+    </tr>
+  );
 
   const totalRow = (label: string, pick: (t: any) => number, testid: string, strong = true) => (
     <tr className={`${strong ? "bg-muted/50 font-semibold" : ""} border-t`} data-testid={testid}>
@@ -240,8 +254,14 @@ export default function CashflowPage() {
                   <ReferenceLine y={0} stroke="hsl(var(--destructive))" strokeDasharray="4 4" />
                   <Line type="monotone" dataKey="Budget" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 2.5 }} />
                   <Line type="monotone" dataKey="Actual" stroke="#0d9488" strokeWidth={2} dot={{ r: 2.5 }} connectNulls />
+                  {linked && <Line type="monotone" dataKey="App-linked" stroke="#7c3aed" strokeWidth={1.5} strokeDasharray="5 4" dot={false} connectNulls />}
                 </LineChart>
               </ResponsiveContainer>
+              {linked && (
+                <p className="text-[10px] text-muted-foreground -mt-1">
+                  Dashed = app-linked projection: weighted deal fees{linked.hasXero ? " + Xero invoices due, less Xero bills due + the opex run-rate" : " (Xero not connected — deals only)"}. Reference, not the plan — it can't see VAT quarters or anything outside the deal book{linked.hasXero ? " and Xero" : ""}.
+                </p>
+              )}
             </CardContent>
           </Card>
 
@@ -277,6 +297,16 @@ export default function CashflowPage() {
                     </p>
                   </CardContent>
                 </Card>
+                {linked?.byMonth[mobileMonth] && (
+                  <Card data-testid="cf-mobile-linked">
+                    <CardContent className="p-3 grid grid-cols-3 gap-2 text-xs text-violet-700 dark:text-violet-400">
+                      <div><p className="text-[10px] uppercase tracking-wide opacity-70">App in</p><p className="font-mono tabular-nums">{fmt(linked.byMonth[mobileMonth].in)}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wide opacity-70">App out</p><p className="font-mono tabular-nums">{fmt(-linked.byMonth[mobileMonth].out)}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wide opacity-70">App close</p><p className="font-mono tabular-nums">{fmt(linked.byMonth[mobileMonth].close)}</p></div>
+                      <p className="col-span-3 text-[10px] text-muted-foreground">App-linked: deals pipeline{linked.hasXero ? " + Xero AR/AP + run-rate" : " only (Xero not connected)"}</p>
+                    </CardContent>
+                  </Card>
+                )}
                 {(["receipts", "payments"] as const).map(section => (
                   <Card key={section}>
                     <CardHeader className="py-2"><CardTitle className="text-xs uppercase tracking-widest text-muted-foreground">{section}</CardTitle></CardHeader>
@@ -336,6 +366,10 @@ export default function CashflowPage() {
                       </tr>
                     ))}
                     {totalRow("Total Receipts", t => t?.rec ?? 0, "cf-total-receipts")}
+                    {data?.deals && projRow(
+                      `Deals pipeline, weighted${data.deals.undated.count ? ` (+£${fmt(data.deals.undated.weighted)} undated)` : ""}`,
+                      m => data.deals!.byMonth[m]?.weighted, "cf-proj-deals")}
+                    {data?.xero?.arByMonth && projRow("Xero invoices due (AR)", m => data.xero!.arByMonth![m], "cf-proj-ar")}
 
                     <tr className="bg-muted/30"><td colSpan={1 + model.months.length * 2} className="px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground sticky left-0">Payments</td></tr>
                     {model.payments.map(l => (
@@ -348,6 +382,8 @@ export default function CashflowPage() {
                       </tr>
                     ))}
                     {totalRow("Total Payments", t => t?.pay ?? 0, "cf-total-payments")}
+                    {data?.xero?.apByMonth && projRow("Xero bills due (AP)", m => data.xero!.apByMonth![m] ? -data.xero!.apByMonth![m] : undefined, "cf-proj-ap")}
+                    {data?.xero?.costRunRate != null && linked && projRow("Opex run-rate (Xero)", m => (linked.byMonth[m] ? -data.xero!.costRunRate! : undefined), "cf-proj-runrate")}
 
                     {totalRow("Opening balance", t => t?.open ?? 0, "cf-opening", false)}
                     {totalRow("Closing balance", t => t?.close ?? 0, "cf-closing")}
