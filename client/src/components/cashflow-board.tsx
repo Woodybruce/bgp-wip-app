@@ -1,8 +1,10 @@
 // Cashflow forecast section on the Finance page (v3 — Woody, 2026-08-27:
 // one finance page, no password; Xero + the app are the receipts source of
 // truth; Wendy's workbook lines are costs only; a single manual LEGACY line
-// carries the pre-Xero (Sage-era) receivables — £263,604 budgeted Nov 2026
-// per Wendy's cashflow, the yellow cell, incl. five Landsec 30-Apr invoices).
+// carries the pre-Xero (Sage-era) receivables — £219,670 ex VAT budgeted
+// Nov 2026 per Wendy's cashflow yellow cell (£263,604 inc VAT), incl. five
+// Landsec 30-Apr invoices. Everything on the board is ex VAT — Woody,
+// 2026-08-27: "we don't want to see VAT").
 // Receipts rows are read-only app data; the LEGACY line and the cost lines
 // are editable in place. The balance chain anchors on Xero's live cash.
 import { useMemo, useState } from "react";
@@ -129,7 +131,7 @@ export function CashflowBoardSection() {
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2"><Banknote className="w-4 h-4" /> Cashflow forecast</CardTitle>
         <p className="text-xs text-muted-foreground">
-          Cash in comes from the app — pipeline-weighted deal fees and Xero invoices due — plus the legacy pre-Xero (Sage-era) receivables — £263,604 due November per Wendy's cashflow, editable if that moves.
+          All figures ex VAT. Cash in comes from the app — pipeline-weighted deal fees and Xero invoices due — plus the legacy pre-Xero (Sage-era) receivables, £219,670 due November per Wendy's cashflow, editable if that moves.
           Cash out is the costs plan below (Wendy's forecast). The chain starts from {unified.anchor.source === "xero" ? "Xero's live cash at bank" : "the typed opening balance (Xero not connected)"}.
         </p>
       </CardHeader>

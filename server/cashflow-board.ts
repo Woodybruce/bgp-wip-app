@@ -147,25 +147,36 @@ function ensureTables(): Promise<void> {
       console.log(`[cashflow] v3: workbook receipts lines retired; LEGACY receivables line added`);
     }
     // Wendy confirmed the Sage figure (WhatsApp, 2026-08-27): the yellow
-    // cell on her cashflow — £263,604 of pre-Xero (Sage-era) receivables
-    // ("invoiced and older than 60 days"), budgeted for November 2026 and
-    // including the five outstanding Landsec invoices dated 30 April.
-    // Seed it once as the LEGACY budget; guarded on the line having no
-    // cells so a value typed on the board is never overwritten.
+    // cell on her cashflow — pre-Xero (Sage-era) receivables ("invoiced and
+    // older than 60 days"), budgeted for November 2026 and including the
+    // five outstanding Landsec invoices dated 30 April. Her figure is
+    // £263,604 inc VAT; the board is ex-VAT (Woody, same day: "we don't
+    // want to see VAT"), so the seed is the net £219,670 (÷1.2).
+    // Seed once, guarded on the line having no cells so a value typed on
+    // the board is never overwritten.
     const legacyCells = await pool.query(
       `SELECT 1 FROM cashflow_cells c JOIN cashflow_lines l ON l.id = c.line_id WHERE l.key = 'LEGACY' LIMIT 1`,
     );
     if (legacyCells.rows.length === 0) {
       await pool.query(
         `INSERT INTO cashflow_cells (line_id, month, basis, amount)
-         SELECT id, '2026-11', 'budget', 263604 FROM cashflow_lines WHERE key = 'LEGACY'
+         SELECT id, '2026-11', 'budget', 219670 FROM cashflow_lines WHERE key = 'LEGACY'
          ON CONFLICT (line_id, month, basis) DO NOTHING`,
       );
       await pool.query(
         `UPDATE cashflow_lines SET label = 'Legacy receivables (pre-Xero, Sage era)' WHERE key = 'LEGACY'`,
       );
-      console.log(`[cashflow] LEGACY seeded from Wendy's Sage figure: 263,604 budgeted Nov 2026`);
+      console.log(`[cashflow] LEGACY seeded from Wendy's Sage figure: 219,670 ex VAT budgeted Nov 2026`);
     }
+    // Re-base the earlier gross seed to net: only touches the exact
+    // untouched 263,604 — an edited value is left alone.
+    const rebased = await pool.query(
+      `UPDATE cashflow_cells c SET amount = 219670, updated_at = now()
+        FROM cashflow_lines l
+       WHERE l.id = c.line_id AND l.key = 'LEGACY'
+         AND c.month = '2026-11' AND c.basis = 'budget' AND c.amount = 263604`,
+    );
+    if ((rebased.rowCount ?? 0) > 0) console.log(`[cashflow] LEGACY re-based ex VAT: 263,604 -> 219,670`);
   })().catch((e) => { ensured = null; throw e; });
   return ensured;
 }
