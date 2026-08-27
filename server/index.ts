@@ -4138,9 +4138,15 @@ app.use("/api/branding/assets", express.static(
       // cert/key mismatch surfaces here as the TLS agent error.
       setTimeout(async () => {
         try {
-          const { bgConnectivity } = await import("./business-gateway");
+          const { bgConnectivity, bgKeyFingerprints } = await import("./business-gateway");
           const r = await bgConnectivity();
           console.log(`[lr-bg] env=${r.env} endpoint=${r.endpoint} ok=${r.ok}${r.status != null ? ` status=${r.status}` : ""}${r.error ? ` error=${r.error}` : ""}`);
+          if (!r.ok && /mismatch/i.test(r.error || "")) {
+            // Fingerprints only — proves WHICH side is wrong without ever
+            // logging key material.
+            const fp = bgKeyFingerprints();
+            console.log(`[lr-bg] pubkey fingerprints — storedKey=${fp.keyPub || "?"} installedCert=${fp.certPub || "?"}${fp.error ? ` err=${fp.error}` : ""}`);
+          }
         } catch (e: any) {
           console.error("[lr-bg] connectivity diag failed:", e?.message);
         }
