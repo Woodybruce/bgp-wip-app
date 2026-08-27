@@ -33,7 +33,13 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM image_studio_images WHERE file_name = 'qa-unit-photo.jpg';
   DELETE FROM team_events WHERE title LIKE 'QA-VIS %' OR title LIKE 'QA-CAL-%' OR title LIKE 'QA Landsec brainstorm' OR title LIKE 'QA Other Client review';
   DELETE FROM unit_viewings WHERE attendees LIKE 'QA-VIEWING-%' OR attendees LIKE 'QA-VDEL-%';
+  DELETE FROM unit_interest WHERE company_name LIKE 'QA-PROBE%';
   DELETE FROM crm_comps    WHERE name LIKE 'QA-COMP%';
+  DELETE FROM property_plans WHERE floor = 'QA-PLAN-GATE';
+  DELETE FROM turnover_data WHERE notes LIKE 'QA-PROBE%';
+  -- client-pi-lookup-open resolves DA9 9ST each round; the resolve persists
+  -- a search-history row even when the title lookup itself comes back empty.
+  DELETE FROM land_registry_searches WHERE address IN ('DA9 9ST', 'Bluewater Shopping Centre, DA9 9ST') OR address LIKE 'QA-LR-SCOPE%';
   -- reimport-no-dup scenario cleans up after itself; sweep survivors of a
   -- mid-scenario death (tenancy + tracker rows, then the QA property).
   DELETE FROM tenancy_schedule_units WHERE unit_number = 'QA-REIMP-UNIT';
@@ -43,6 +49,17 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM chat_messages WHERE thread_id IN (SELECT id FROM chat_threads WHERE title LIKE 'QA-CHATDEL%' OR title LIKE 'QA Thread%');
   DELETE FROM chat_threads WHERE title LIKE 'QA-CHATDEL%' OR title LIKE 'QA Thread%';
   DELETE FROM unit_offers WHERE company_name LIKE 'QA-AOFFER-%' OR company_name LIKE 'QA-ODEL-%' OR company_name LIKE 'QA-OFFER-%' OR company_name LIKE 'QA-RIVAL-%';
+  DELETE FROM investment_offers WHERE company LIKE 'QA-OFFER-INV%' OR company LIKE 'QA-INVDATE%';
+  DELETE FROM investment_viewings WHERE company LIKE 'QA-INVDATE%';
+  DELETE FROM investment_distributions WHERE company_name LIKE 'QA-INVDATE%';
+  DELETE FROM investment_tracker WHERE asset_name LIKE 'QA-RCAP Tracker%' OR asset_name LIKE 'QA-ORPHAN Tracker%';
+  DELETE FROM crm_properties WHERE name LIKE 'QA-ORPHAN Tracker%';
+  DELETE FROM available_units WHERE unit_name LIKE 'QA-BIGNUM%';
+  -- client-add-delete-unit ghosts: pre-r378 the unit DELETE left the
+  -- mirrored spine stub behind; sweep any survivors from older rounds.
+  DELETE FROM tenancy_schedule_units WHERE unit_number LIKE 'QA-UNIT-R%' OR unit_number LIKE 'QA-GHOST%';
+  DELETE FROM available_units WHERE unit_name LIKE 'QA-UNIT-R%' OR unit_name LIKE 'QA-GHOST%';
+  DELETE FROM leasing_schedule_units WHERE unit_name LIKE 'QA-UNIT-R%' OR unit_name LIKE 'QA-GHOST%';
   -- The team-board scenario adds a member then removes it; if a round dies
   -- mid-way the row survives, so sweep anyone not in the account contacts.
   DELETE FROM crm_client_team_members m

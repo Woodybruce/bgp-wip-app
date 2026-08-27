@@ -669,7 +669,7 @@ export function setupHrRoutes(app: Express) {
     try {
       // Get salary and xero_tracking_name
       const profileRes = await pool.query(
-        `SELECT sp.salary_current, sp.xero_tracking_name, sp.start_date, u.name
+        `SELECT sp.salary_current, sp.xero_tracking_name, sp.start_date, u.name, u.username
          FROM users u
          LEFT JOIN staff_profiles sp ON sp.user_id = u.id
          WHERE u.id = $1`,
@@ -680,6 +680,9 @@ export function setupHrRoutes(app: Express) {
 
       const salary = profile.salary_current || 0;
       const trackingName = profile.xero_tracking_name || profile.name;
+      // Woody 2026-08-26: Huseyn's billing always shows zero — skip Xero,
+      // engine and deal-allocation matching for this login entirely.
+      const hideBillings = profile.username === "hdog";
 
       // Scheme year: 1 May to 30 April
       const now = new Date();
@@ -695,7 +698,7 @@ export function setupHrRoutes(app: Express) {
 
       try {
         const { getSystemXeroSession } = await import("./xero-system-session");
-        const session = await getSystemXeroSession();
+        const session = hideBillings ? null : await getSystemXeroSession();
         if (session) {
           // Query paid invoices for this scheme year where tracking matches the agent
           const fromDate = schemeYearStart.toISOString().split("T")[0];
@@ -758,7 +761,7 @@ export function setupHrRoutes(app: Express) {
       // gate (AUTHORISED is not paid), salary_history pro-rata for mid-year
       // rises. This endpoint keeps its legacy response shape.
       const { buildCommissionStatementForUser, tierCommission: engineTier } = await import("./commission-engine");
-      const { statement } = await buildCommissionStatementForUser(userId);
+      const statement = hideBillings ? null : (await buildCommissionStatementForUser(userId)).statement;
 
       // Effective salary: engine's salary_history-weighted figure when HR
       // has one; otherwise the legacy mid-year-starter pro-rata on
@@ -793,7 +796,7 @@ export function setupHrRoutes(app: Express) {
       let topDeals: Array<{ id: string; name: string; fee: number; status: string; date: string | null }> = [];
       let awaitingPayment: Array<{ id: string; name: string; fee: number; status: string; date: string | null; invoicedAt: string | null }> = [];
       try {
-        const { rows: dealRows } = await pool.query(
+        const { rows: dealRows } = hideBillings ? { rows: [] as any[] } : await pool.query(
           // Commission attribution is now driven entirely by
           // deal_fee_allocations rows. The legacy equal-split fallback
           // (deal.fee / internal_agent[].length when no allocation row

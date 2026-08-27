@@ -92,6 +92,12 @@ function formatDate(s: string | null | undefined): string {
 export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  // Plan upload is client-allowed on their own property (board parity),
+  // but every other plan write — delete, floor rename, polygon add/edit,
+  // auto-detect — is staff-only server-side. Hide those controls from
+  // client viewers so they don't 403.
+  const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
   const [activePlanId, setActivePlanId] = useState<string | null>(null);
   const [drawMode, setDrawMode] = useState(false);
   const [pendingPoints, setPendingPoints] = useState<[number, number][]>([]);
@@ -139,7 +145,7 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
         </CardTitle>
         <div className="flex items-center gap-1.5">
           <UploadPlanButton propertyId={propertyId} onUploaded={(p) => setActivePlanId(p.id)} />
-          {activePlan && (
+          {activePlan && !isClientViewer && (
             <>
               <AutoDetectButton plan={activePlan} />
               <Button
@@ -170,6 +176,7 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
                   key={p.id}
                   onClick={() => setActivePlanId(p.id)}
                   onDoubleClick={async () => {
+                    if (isClientViewer) return;
                     const next = prompt(`Rename floor "${p.floor}":`, p.floor);
                     if (!next || next === p.floor) return;
                     try {
@@ -184,7 +191,7 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
                   }}
                   className={`text-[11px] px-2 py-1 rounded border ${p.id === activePlan?.id ? "bg-foreground text-background border-foreground" : "bg-card hover:bg-muted"}`}
                   data-testid={`button-floor-${p.floor}`}
-                  title="Click to switch · double-click to rename"
+                  title={isClientViewer ? "Click to switch" : "Click to switch · double-click to rename"}
                 >
                   <Layers className="w-2.5 h-2.5 inline mr-1" /> {p.floor}
                 </button>
@@ -240,6 +247,7 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
             propertyId={propertyId}
             onClose={() => setSelectedUnitForDrawer(null)}
             onUpdated={() => queryClient.invalidateQueries({ queryKey: ["/api/plans", activePlan.id, "units"] })}
+            readOnly={isClientViewer}
           />
         )}
       </CardContent>
@@ -855,13 +863,14 @@ function LinkPolygonDialog({
 // ─── Click-through drawer ─────────────────────────────────────────────
 
 function UnitDetailDrawer({
-  unit, planId, propertyId, onClose, onUpdated,
+  unit, planId, propertyId, onClose, onUpdated, readOnly,
 }: {
   unit: PlanUnit;
   planId: string;
   propertyId: string;
   onClose: () => void;
   onUpdated: () => void;
+  readOnly?: boolean;
 }) {
   const { toast } = useToast();
   const [override, setOverride] = useState(unit.status_override || "");
@@ -943,7 +952,8 @@ function UnitDetailDrawer({
             </div>
           )}
 
-          {/* Status override */}
+          {/* Status override — staff-only PATCH; hidden for client viewers */}
+          {!readOnly && (
           <div>
             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Status override</Label>
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
@@ -962,6 +972,7 @@ function UnitDetailDrawer({
               "auto from schedule" derives colour from the live lease / deal data; override forces a state on this polygon only.
             </p>
           </div>
+          )}
 
           {/* Jump links */}
           <div className="flex items-center gap-2 flex-wrap pt-1 border-t">
@@ -984,9 +995,11 @@ function UnitDetailDrawer({
         </div>
 
         <DialogFooter className="justify-between">
-          <Button variant="ghost" size="sm" onClick={deletePolygon} className="text-rose-600 hover:text-rose-700">
-            <Trash2 className="w-3 h-3 mr-1" /> Remove polygon
-          </Button>
+          {!readOnly ? (
+            <Button variant="ghost" size="sm" onClick={deletePolygon} className="text-rose-600 hover:text-rose-700">
+              <Trash2 className="w-3 h-3 mr-1" /> Remove polygon
+            </Button>
+          ) : <span />}
           <Button variant="outline" onClick={onClose}>Close</Button>
         </DialogFooter>
       </DialogContent>

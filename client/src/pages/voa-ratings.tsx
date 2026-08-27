@@ -3,6 +3,7 @@ import { usePropertyContext } from "@/lib/property-context";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,8 @@ import {
   Download,
   BarChart3,
   Loader2,
+  ExternalLink,
+  X,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -111,8 +114,9 @@ export default function VoaRatingsPage() {
   const [minRv, setMinRv] = useState("");
   const [maxRv, setMaxRv] = useState("");
   const [page, setPage] = useState(1);
-  const [sortBy, setSortBy] = useState("firmName");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [detail, setDetail] = useState<VoaRating | null>(null);
+  const [sortBy, setSortBy] = useState("rateableValue");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [tab, setTab] = useState<"browse" | "stats">("browse");
 
   const params = useMemo(() => {
@@ -143,7 +147,32 @@ export default function VoaRatingsPage() {
     queryKey: ["/api/voa/description-codes"],
   });
 
+  // Address finder — live suggestions from the rating list itself (Woody,
+  // 2026-08-26: "needs address finder linked to the rating list so auto
+  // fills"). Reuses the tokenised /ratings search, so "55 wells street"
+  // matches number + street across their separate columns.
+  const [suggestQ, setSuggestQ] = useState("");
+  const [showSuggest, setShowSuggest] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSuggestQ(searchInput.trim()), 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+  const { data: suggestData } = useQuery<RatingsResponse>({
+    queryKey: [`/api/voa/ratings?search=${encodeURIComponent(suggestQ)}&limit=8&sortBy=rateableValue&sortDir=desc&page=1`],
+    enabled: suggestQ.length >= 3 && showSuggest,
+    staleTime: 60_000,
+  });
+  const suggestions = (suggestQ.length >= 3 && showSuggest) ? (suggestData?.items || []) : [];
+  const pickSuggestion = (item: VoaRating) => {
+    setShowSuggest(false);
+    setSearchInput(item.firmName || [item.numberOrName, item.street].filter(Boolean).join(" "));
+    setSearch(item.firmName || [item.numberOrName, item.street].filter(Boolean).join(" "));
+    setPage(1);
+    setDetail(item);
+  };
+
   const handleSearch = () => {
+    setShowSuggest(false);
     setSearch(searchInput);
     setPage(1);
   };
@@ -207,10 +236,37 @@ export default function VoaRatingsPage() {
                     placeholder="Search properties, streets, postcodes..."
                     className="pl-9"
                     value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
+                    onChange={(e) => { setSearchInput(e.target.value); setShowSuggest(true); }}
+                    onFocus={() => setShowSuggest(true)}
+                    onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
                     onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                    autoComplete="off"
                     data-testid="input-search"
                   />
+                  {suggestions.length > 0 && (
+                    <div className="absolute top-full mt-1 left-0 right-0 bg-popover border border-border rounded-lg shadow-lg z-50 max-h-80 overflow-y-auto">
+                      {suggestions.map((sug) => (
+                        <button
+                          key={sug.uarn}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => pickSuggestion(sug)}
+                          className="w-full text-left px-3 py-2 hover:bg-accent flex items-baseline justify-between gap-2"
+                          data-testid={`voa-suggest-${sug.uarn}`}
+                        >
+                          <span className="min-w-0">
+                            <span className="text-sm font-medium block truncate">{sug.firmName || sug.numberOrName || "—"}</span>
+                            <span className="text-xs text-muted-foreground block truncate">
+                              {[sug.town, sug.postcode].filter(Boolean).join(" · ")}{sug.descriptionText ? ` · ${sug.descriptionText.toLowerCase()}` : ""}
+                            </span>
+                          </span>
+                          <span className="text-xs font-mono tabular-nums shrink-0 text-muted-foreground">
+                            {sug.rateableValue != null ? `£${Number(sug.rateableValue).toLocaleString()}` : "no RV"}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
               <Select value={baFilter} onValueChange={(v) => { setBaFilter(v); setPage(1); }}>
@@ -279,9 +335,10 @@ export default function VoaRatingsPage() {
                 <MobileCardView
                   emptyMessage="No properties found"
                   items={(data?.items || []).map((item) => ({
-                    id: String(item.id),
+                    id: String(item.id ?? item.uarn),
                     title: item.firmName || item.numberOrName || "—",
                     subtitle: item.street || undefined,
+                    onClick: () => setDetail(item),
                     fields: [
                       { label: "Postcode", value: item.postcode },
                       { label: "Type", value: item.descriptionText || item.descriptionCode },
@@ -374,7 +431,12 @@ export default function VoaRatingsPage() {
                   </TableHeader>
                   <TableBody>
                     {(data?.items || []).map((item) => (
-                      <TableRow key={item.id} data-testid={`row-voa-${item.id}`}>
+                      <TableRow
+                        key={item.id ?? item.uarn}
+                        onClick={() => setDetail(item)}
+                        className="cursor-pointer"
+                        data-testid={`row-voa-${item.id ?? item.uarn}`}
+                      >
                         <TableCell>
                           <div className="max-w-[300px]">
                             <p className="text-sm font-medium truncate" title={item.firmName}>
@@ -446,6 +508,8 @@ export default function VoaRatingsPage() {
           </CardContent>
         </Card>
       </>)}
+
+      <RatingDetailSheet item={detail} baNames={baNames} onClose={() => setDetail(null)} />
     </div>
   );
 }
@@ -543,5 +607,68 @@ function StatsView({ stats, loading }: { stats: StatsResponse | undefined; loadi
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+
+// Full record for one rating-list entry — every stored field plus a link to
+// the official VOA summary valuation for the UARN (which also explains
+// entries with no current rateable value: deleted or altered assessments
+// keep their address in the compiled list but lose the RV).
+function RatingDetailSheet({ item, baNames, onClose }: { item: VoaRating | null; baNames: Record<string, string>; onClose: () => void }) {
+  if (!item) return null;
+  const address = [item.numberOrName, item.street, item.town, item.locality, item.county, item.postcode]
+    .filter(Boolean).join(", ");
+  const rows: Array<[string, string]> = [
+    ["Address", address || "—"],
+    ["Description", item.descriptionText || item.descriptionCode || "—"],
+    ["Rateable value", item.rateableValue != null ? `£${Number(item.rateableValue).toLocaleString()}` : "No current value"],
+    ["Billing authority", baNames[item.baCode] || item.baCode || "—"],
+    ["BA reference", item.baRef || "—"],
+    ["Effective date", item.effectiveDate || "—"],
+    ["List altered", item.listAlterationDate || "—"],
+    ["List year", item.listYear || "—"],
+    ["UARN", item.uarn || "—"],
+  ];
+  return (
+    <Sheet open onOpenChange={(o) => !o && onClose()}>
+      <SheetContent side="bottom" hideClose className="max-h-[85dvh] overflow-y-auto p-0 rounded-t-3xl sm:max-w-2xl sm:mx-auto">
+        <div className="px-4 pt-4 pb-3 flex items-start gap-2 border-b border-border/40 sticky top-0 bg-background">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold leading-snug">{item.firmName || item.numberOrName || "Rating entry"}</h2>
+            <p className="text-xs text-muted-foreground">{item.postcode}</p>
+          </div>
+          <button type="button" onClick={onClose} className="p-2 -mr-2 rounded-full active:bg-muted" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-4 space-y-2.5" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}>
+          {item.rateableValue == null && (
+            <p className="text-xs rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 text-amber-800 dark:text-amber-200 px-3 py-2">
+              This entry has no current rateable value in the compiled list — the assessment was
+              removed or altered (often a split or merge). The official VOA record below shows its
+              history and any replacement assessments.
+            </p>
+          )}
+          <dl className="divide-y divide-border/50">
+            {rows.map(([label, value]) => (
+              <div key={label} className="flex items-baseline justify-between gap-3 py-2">
+                <dt className="text-[11px] uppercase tracking-wider text-muted-foreground shrink-0">{label}</dt>
+                <dd className={`text-sm text-right break-words min-w-0 ${label === "Rateable value" ? "font-mono tabular-nums font-semibold" : ""}`}>{value}</dd>
+              </div>
+            ))}
+          </dl>
+          <a
+            href={`https://www.tax.service.gov.uk/business-rates-find/valuations/${encodeURIComponent(item.uarn)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full h-11 rounded-xl border border-border/60 text-sm font-medium inline-flex items-center justify-center gap-2 hover:bg-muted/40"
+            data-testid="voa-detail-official"
+          >
+            Full valuation on VOA <ExternalLink className="w-4 h-4" />
+          </a>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

@@ -198,23 +198,52 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         const row = (await pool.query(
           `SELECT name, domain, domain_url, backers, uk_entity_name, companies_house_number
              FROM crm_companies WHERE id = $1`, [sweepId])).rows[0];
-        if (!row || row.uk_entity_name || !(row.domain || row.domain_url)) return;
-        const { scrapeUkEntityFromWebsite } = await import("./companies-house");
-        const scraped = await scrapeUkEntityFromWebsite(row.domain || row.domain_url, { name: row.name, parentGroup: row.backers });
-        if (scraped.entityName) {
-          await pool.query(
-            `UPDATE crm_companies SET uk_entity_name = $1
-              WHERE id = $2 AND (uk_entity_name IS NULL OR uk_entity_name = '')`,
-            [scraped.entityName, sweepId]);
+        if (!row) return;
+        let entityName: string | null = (row.uk_entity_name || "").trim() || null;
+        let chNumber: string | null = (row.companies_house_number || "").trim() || null;
+        if (!entityName && (row.domain || row.domain_url)) {
+          const { scrapeUkEntityFromWebsite } = await import("./companies-house");
+          const scraped = await scrapeUkEntityFromWebsite(row.domain || row.domain_url, { name: row.name, parentGroup: row.backers });
+          if (scraped.entityName) {
+            entityName = scraped.entityName;
+            await pool.query(
+              `UPDATE crm_companies SET uk_entity_name = $1
+                WHERE id = $2 AND (uk_entity_name IS NULL OR uk_entity_name = '')`,
+              [scraped.entityName, sweepId]);
+          }
+          if (scraped.chNumber && !chNumber) {
+            chNumber = scraped.chNumber;
+            await pool.query(
+              `UPDATE crm_companies SET companies_house_number = $1
+                WHERE id = $2 AND (companies_house_number IS NULL OR companies_house_number = '')`,
+              [scraped.chNumber, sweepId]);
+          }
+          if (scraped.entityName || scraped.chNumber) {
+            console.log(`[brand-profile] auto-identified entity for ${row.name}: ${scraped.entityName || "?"} / ${scraped.chNumber || "no CH#"}`);
+          }
         }
-        if (scraped.chNumber && !row.companies_house_number) {
-          await pool.query(
-            `UPDATE crm_companies SET companies_house_number = $1
-              WHERE id = $2 AND (companies_house_number IS NULL OR companies_house_number = '')`,
-            [scraped.chNumber, sweepId]);
-        }
-        if (scraped.entityName || scraped.chNumber) {
-          console.log(`[brand-profile] auto-identified entity for ${row.name}: ${scraped.entityName || "?"} / ${scraped.chNumber || "no CH#"}`);
+        // Name → number bridge. Most websites state the legal entity but not
+        // its registration number, so brands stalled at "entity set, covenant
+        // parked" forever (WatchHouse, 2026-08-26). An exact match on the
+        // registered name is unambiguous — auto-link it; anything fuzzier
+        // stays a human call.
+        if (entityName && !chNumber) {
+          const { chFetch } = await import("./companies-house");
+          const canon = (s: string) => s.toLowerCase()
+            .replace(/\bltd\b\.?/g, "limited")
+            .replace(/\bplc\b\.?/g, "public limited company")
+            .replace(/[^a-z0-9]/g, "");
+          const target = canon(entityName);
+          const search = await chFetch(`/search/companies?q=${encodeURIComponent(entityName)}&items_per_page=10`);
+          const hit = (search.items || []).find((i: any) =>
+            i.company_status === "active" && i.company_number && canon(i.title || "") === target);
+          if (hit) {
+            await pool.query(
+              `UPDATE crm_companies SET companies_house_number = $1
+                WHERE id = $2 AND (companies_house_number IS NULL OR companies_house_number = '')`,
+              [hit.company_number, sweepId]);
+            console.log(`[brand-profile] auto-matched CH number for ${row.name}: ${hit.title} / ${hit.company_number}`);
+          }
         }
       })().catch(e => console.warn(`[brand-profile] entity auto-kick failed: ${e?.message}`));
       // Menu / best-sellers auto-kick, same rationale: the refresh button is
@@ -227,6 +256,13 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         await refreshMenuIntelForCompany(sweepId);
         console.log(`[brand-profile] auto-refreshed menu intel for ${m.name}`);
       })().catch(e => console.warn(`[brand-profile] menu auto-kick skipped: ${e?.message}`));
+      // Apollo firmographics auto-fetch, same no-ask rule — the card was a
+      // manual "Fetch" button until 2026-08-26. Guards + 30-day freshness
+      // live in apollo-company.ts.
+      (async () => {
+        const { autoRefreshApolloIfStale } = await import("./apollo-company");
+        await autoRefreshApolloIfStale(sweepId);
+      })().catch(e => console.warn(`[brand-profile] apollo auto-kick skipped: ${e?.message}`));
     }
 
     // AML pass self-serves on open: the nightly sweep runs oldest-first, so
@@ -1124,7 +1160,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       bgpDeals: bpScope
         ? bgpDeals.rows.map((d: any) => { const { fee, team, internal_agent, ...rest } = d; return rest; })
         : bgpDeals.rows,
-      bgpSummary,
+      // totalFees stays staff-only, matching the per-deal fee strip above.
+      bgpSummary: bpScope ? { ...bgpSummary, totalFees: null } : bgpSummary,
       decisionMakers: decisionMakers.rows,
       leaseEvents: leaseEvents.rows,
       competitors: competitors.rows,

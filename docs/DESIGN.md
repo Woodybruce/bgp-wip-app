@@ -1,10 +1,10 @@
-# BGP App Design Guidelines — v2 DRAFT
+# BGP App Design Guidelines — v2
 
-Status: **draft for the equity team to agree** (Woody requested a uniform
-standard, 2026-08-23: "everything has been built ad hoc and mismatches";
-v2 adds tables, phone cards, detail-page/brand anatomy, widgets, forms and
-empty states after "tables other layouts like the brand pages etc should be
-a much bigger consideration").
+Status: **signed off by Woody, 2026-08-26.** (Originated 2026-08-23:
+"everything has been built ad hoc and mismatches"; v2 added tables, phone
+cards, detail-page/brand anatomy, widgets, forms and empty states after
+"tables other layouts like the brand pages etc should be a much bigger
+consideration".)
 Once agreed: every screen a session touches must be brought to this standard
 in the same commit ("convert on touch"), and new screens conform from birth.
 No big-bang restyle — the app converges.
@@ -236,7 +236,10 @@ one section at a time. Same treatment that fixed the WIP report: the
 - Re-run the design sweep after major UI work; it should stay at zero
   h-overflow / zero blank pages / zero chip-bloat.
 
-Open taste calls awaiting Woody: ① app palette stays warm stone +
-terracotta vs moving app chrome to Bordeaux; ② pill tabs everywhere vs
-underline tabs allowed on desktop; ③ agree §9's detail-board anatomy
-before converting the brand pages.
+Taste calls resolved with the 2026-08-26 sign-off, each to this document's
+own recommendation: ① app chrome stays warm stone + terracotta (Bordeaux
+remains the DOCUMENT house style — decks, PDFs, Insights); ② pill tabs are
+the one tab pattern, phone and desktop; ③ §9/§16 detail-board anatomy is
+agreed — brand/company/deal/property pages convert to it on touch (the
+phone brand view and deal page conversions of 2026-08-26 are the reference
+implementations).

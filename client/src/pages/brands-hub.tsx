@@ -87,9 +87,10 @@ interface ActiveReq {
 }
 
 function formatTurnover(val: number): string {
-  if (val >= 1_000_000_000) return `£${(val / 1_000_000_000).toFixed(1)}bn`;
-  if (val >= 1_000_000) return `£${(val / 1_000_000).toFixed(0)}m`;
-  if (val >= 1_000) return `£${(val / 1_000).toFixed(0)}k`;
+  // Round before picking the unit so 999,999 shows as £1.0m, not £1000k.
+  if (Math.round(val / 1_000_000) >= 1_000) return `£${(val / 1_000_000_000).toFixed(1)}bn`;
+  if (Math.round(val / 1_000) >= 1_000) return `£${(val / 1_000_000).toFixed(1)}m`;
+  if (Math.round(val) >= 1_000) return `£${(val / 1_000).toFixed(0)}k`;
   return `£${val.toFixed(0)}`;
 }
 
@@ -357,10 +358,10 @@ export default function BrandsHub() {
                         </div>
                         <div className="text-right shrink-0">
                           <div className="flex items-center gap-1 justify-end">
-                            {(parseInt(b.deal_count) || 0) > 0 && <Badge variant="secondary" className="text-[9px] px-1">{b.deal_count}d</Badge>}
-                            {(parseInt(b.req_count) || 0) > 0 && <Badge className="text-[9px] px-1">{b.req_count}r</Badge>}
+                            {(parseInt(b.deal_count) || 0) > 0 && <Badge variant="secondary" className="text-[9px] px-1">{b.deal_count} deal{parseInt(b.deal_count) > 1 ? "s" : ""}</Badge>}
+                            {(parseInt(b.req_count) || 0) > 0 && <Badge className="text-[9px] px-1">{b.req_count} req</Badge>}
                           </div>
-                          <p className="text-[9px] text-muted-foreground mt-0.5">{daysAgo === 0 ? "today" : `${daysAgo}d`}</p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">{daysAgo === 0 ? "today" : `${daysAgo}d ago`}</p>
                         </div>
                       </div>
                     </Link>

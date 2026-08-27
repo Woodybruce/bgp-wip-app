@@ -64,6 +64,7 @@ import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schem
 import { buildUserColorMap, resolveDealAgents } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
+import { MobileBrandView } from "@/components/mobile-brand-view";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as STATUS_CHIP_COLORS, legacyToCode } from "@shared/deal-status";
 import { InlineLinkSelect, InlineText } from "@/components/inline-edit";
 import {
@@ -651,6 +652,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         <Button
           variant="ghost"
           size="icon"
+          className="hidden md:inline-flex"
           data-testid="button-back-deals"
           onClick={() => {
             if (typeof window !== "undefined" && window.history.length > 1) window.history.back();
@@ -782,9 +784,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             );
           })()}
         </div>
-        <div className="flex items-center gap-2 flex-wrap gap-y-1.5">
-          <Link href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address ? (typeof linkedProperty.address === 'object' && linkedProperty.address !== null ? ((linkedProperty.address as any).formatted || (linkedProperty.address as any).line1 || linkedProperty.name) : String(linkedProperty.address || linkedProperty.name)) : ((deal as any).propertyName || deal.name || ""))}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
-            <Button variant="outline" size="sm" data-testid="button-deal-image-studio">
+        <div className="flex items-center gap-2 flex-wrap gap-y-1.5 w-full md:w-auto">
+          <Link className="flex-1 md:flex-none" href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address ? (typeof linkedProperty.address === 'object' && linkedProperty.address !== null ? ((linkedProperty.address as any).formatted || (linkedProperty.address as any).line1 || linkedProperty.name) : String(linkedProperty.address || linkedProperty.name)) : ((deal as any).propertyName || deal.name || ""))}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
+            <Button variant="outline" size="sm" className="w-full md:w-auto" data-testid="button-deal-image-studio">
               <ImageIcon className="w-4 h-4 mr-2" />
               Image Studio
             </Button>
@@ -792,14 +794,14 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           {/* Document briefs are staff-only (the API 403s clients and the
               route guard bounces them home) — hide the entry point. */}
           {!isClientDeal && (
-            <Link href={`/document-briefs?propertyId=${encodeURIComponent(deal.propertyId || "")}&propertyName=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&postcode=${encodeURIComponent((linkedProperty as any)?.postcode || "")}`}>
-              <Button variant="outline" size="sm" data-testid="button-deal-create-document">
+            <Link className="flex-1 md:flex-none" href={`/document-briefs?propertyId=${encodeURIComponent(deal.propertyId || "")}&propertyName=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&postcode=${encodeURIComponent((linkedProperty as any)?.postcode || "")}`}>
+              <Button variant="outline" size="sm" className="w-full md:w-auto" data-testid="button-deal-create-document">
                 <FileText className="w-4 h-4 mr-2" />
-                Create document
+                Document
               </Button>
             </Link>
           )}
-          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-deal">
+          <Button variant="outline" size="sm" className="flex-1 md:flex-none" onClick={() => setEditOpen(true)} data-testid="button-edit-deal">
             <Pencil className="w-4 h-4 mr-2" />
             Edit
           </Button>
@@ -871,7 +873,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               deals show Vendor/Purchaser — the unused pair is clutter that
               invites mis-linking (UX #19). Already-linked slots stay visible
               either way so existing data is never hidden. */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-2">
             {(() => { const partiesInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase"; return (<>
             {(!partiesInvestment || deal.landlordId) && (
             <div className="flex flex-col gap-1">
@@ -937,7 +939,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   )}
                 </div>
               ) : (
-                <span className="text-[11px] text-muted-foreground italic">Set via Edit · Xero Contact</span>
+                <span className="text-[11px] text-muted-foreground italic">Not set — add via Edit</span>
               )}
             </div>
             )}
@@ -1125,14 +1127,23 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1 flex items-center gap-1.5">
                     <Building2 className="w-3 h-3" /> {role}: {company!.name}
                   </p>
-                  <BrandProfilePanel companyId={company!.id} />
+                  <div className="md:hidden"><MobileBrandView companyId={company!.id} /></div>
+                  <div className="hidden md:block"><BrandProfilePanel companyId={company!.id} /></div>
                 </div>
               ))}
           </div>
         </CollapsibleCard>
         </div>
       )}
-
+      {/* No party linked: the Brand pill otherwise lands on a blank screen
+          whose only content is the Delete Deal button. */}
+      {!linkedTenant && !linkedLandlord && (
+        <div className={`md:hidden border rounded-md p-4 ${phoneSection === "brand" ? "" : "hidden"}`} data-testid="deal-brand-empty">
+          <p className="text-sm text-muted-foreground">
+            No brand linked yet — link a tenant or landlord from the Parties panel under Overview.
+          </p>
+        </div>
+      )}
 
       {deal.updatedAt && (
         <p className={`text-xs text-muted-foreground items-center gap-1 ${phoneSection === "overview" ? "flex" : "hidden md:flex"}`}>
@@ -1234,7 +1245,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </div>
 
       {!isClientDeal && (
-      <div className="flex justify-start mt-6 pt-3 border-t">
+      <div className={`justify-start mt-6 pt-3 border-t ${phoneSection === "overview" ? "flex" : "hidden md:flex"}`}>
         <Button variant="outline" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteOpen(true)} data-testid="button-delete-deal">
           <Trash2 className="w-4 h-4 mr-2" />
           Delete Deal

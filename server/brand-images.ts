@@ -197,6 +197,17 @@ async function findWikipediaImages(brandName: string): Promise<FoundImage[]> {
     const title = sd?.query?.search?.[0]?.title;
     if (!title) return [];
 
+    // srsearch fuzzy-matches: a brand with no Wikipedia article still gets a
+    // "best" result, which can be a completely unrelated page (searching
+    // "Honi Poke" once landed on a wrestler's bio and his headshot became the
+    // brand's hero image). Only trust the article when its title and the
+    // brand name overlap; a false negative just means other sources fill in.
+    const norm = (s: string) =>
+      s.toLowerCase().replace(/\(.*?\)/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+    const nTitle = norm(title);
+    const nBrand = norm(brandName);
+    if (!nTitle || !nBrand || !(nTitle.includes(nBrand) || nBrand.includes(nTitle))) return [];
+
     // 2. Get all images on that article — Wikipedia returns the file titles.
     const imagesUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=images&imlimit=20&format=json&origin=*`;
     const ir = await fetch(imagesUrl, { signal: AbortSignal.timeout(8000) });

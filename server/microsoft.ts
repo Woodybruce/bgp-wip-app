@@ -1089,7 +1089,7 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "hotProperty",
           title: "Hottest Property",
-          detail: `${top[0]} — ${top[1]} viewings in 30 days${sorted.length > 1 ? `, followed by ${sorted[1][0]} (${sorted[1][1]})` : ""}`,
+          detail: `${top[0]} — ${top[1]} viewing${top[1] === 1 ? "" : "s"} in 30 days${sorted.length > 1 ? `, followed by ${sorted[1][0]} (${sorted[1][1]})` : ""}`,
           priority: 10,
         });
       }
@@ -1101,7 +1101,7 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "viewingTrend",
           title: "Viewing Momentum",
-          detail: `${thisW} viewings this week${lastW > 0 ? ` (${trend > 0 ? "↑" : trend < 0 ? "↓" : "→"} ${Math.abs(trend)}% vs last week)` : ""}`,
+          detail: `${thisW} viewing${thisW === 1 ? "" : "s"} this week${lastW > 0 ? ` (${trend > 0 ? "↑" : trend < 0 ? "↓" : "→"} ${Math.abs(trend)}% vs last week)` : ""}`,
           priority: 9,
         });
       }
@@ -1112,7 +1112,7 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "activeTenant",
           title: "Most Active Tenant",
-          detail: `${top[0]} — ${top[1]} viewings booked`,
+          detail: `${top[0]} — ${top[1]} viewing${top[1] === 1 ? "" : "s"} booked`,
           priority: 8,
         });
       }
@@ -2177,6 +2177,35 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       res.json(await r.json());
     } catch (err: any) {
       console.error("Rename/move error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Create a folder in the current location (drive root when parentId is
+  // omitted). Conflict on name returns 409 rather than silently renaming.
+  app.post("/api/microsoft/files/folder", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { driveId, parentId, name } = req.body || {};
+      const trimmed = typeof name === "string" ? name.trim() : "";
+      if (!driveId || !trimmed) return res.status(400).json({ message: "driveId and name required" });
+      const base = parentId ? `items/${parentId}` : "root";
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/${base}/children`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
+      });
+      if (!r.ok) {
+        if (r.status === 409) return res.status(409).json({ message: `A folder named "${trimmed}" already exists here` });
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph create failed (${r.status})`, detail });
+      }
+      res.json(await r.json());
+    } catch (err: any) {
+      console.error("Create folder error:", err.message);
       res.status(500).json({ error: err.message });
     }
   });

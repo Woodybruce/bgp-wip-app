@@ -4673,6 +4673,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (await assertUnitInClientScope(req, unitRow?.propertyId)) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
+      // Add Unit also mirrors a stub row onto the tenancy spine
+      // (ensureTenancyRowForAvailableUnit). Remove that stub too — but only
+      // when it's still clearly the untouched mirror (points back at this
+      // unit, status 'Marketing', no tenant/rent/lease data); an adopted or
+      // since-edited spine row is real schedule data and stays (it just
+      // loses its dead tracker link inside deleteAvailableUnit). Must run
+      // BEFORE the unit delete — that path nulls letting_tracker_unit_id.
+      const tenancyId = (unitRow as any)?.tenancyUnitId;
+      if (tenancyId) {
+        try {
+          await pool.query(
+            `DELETE FROM tenancy_schedule_units
+              WHERE id = $1 AND letting_tracker_unit_id = $2
+                AND status = 'Marketing'
+                AND tenant_name IS NULL AND passing_rent_pa IS NULL AND lease_expiry IS NULL`,
+            [tenancyId, unitId]
+          );
+        } catch (e: any) {
+          console.warn(`[available-units DELETE] tenancy stub cleanup failed for ${tenancyId}:`, e?.message);
+        }
+      }
       await storage.deleteAvailableUnit(unitId);
       if (unitRow?.dealId) {
         try {
@@ -7077,22 +7098,25 @@ These terms are indicative only and do not constitute a binding agreement.`;
   app.post("/api/investment-tracker", requireAuth, async (req, res) => {
     try {
       const body = { ...req.body };
-      if (!body.propertyId && body.assetName) {
-        const [existing] = await db.select().from(crmProperties).where(eq(crmProperties.name, body.assetName)).limit(1);
+      // Validate before touching the DB so a bad payload can't strand an
+      // orphan crm_properties row; propertyId is derived below, checked last.
+      const base = insertInvestmentTrackerSchema.omit({ propertyId: true }).parse(body);
+      if (!body.propertyId && base.assetName) {
+        const [existing] = await db.select().from(crmProperties).where(eq(crmProperties.name, base.assetName)).limit(1);
         if (existing) {
           body.propertyId = existing.id;
         } else {
           const [newProp] = await db.insert(crmProperties).values({
-            name: body.assetName,
-            address: body.address ? { street: body.address } : null,
-            assetClass: body.assetType || null,
-            tenure: body.tenure || null,
+            name: base.assetName,
+            address: base.address ? { street: base.address } : null,
+            assetClass: base.assetType || null,
+            tenure: base.tenure || null,
           }).returning();
           body.propertyId = newProp.id;
         }
       }
-      const parsed = insertInvestmentTrackerSchema.parse(body);
-      const [row] = await db.insert(investmentTracker).values(parsed).returning();
+      const propertyId = insertInvestmentTrackerSchema.shape.propertyId.parse(body.propertyId);
+      const [row] = await db.insert(investmentTracker).values({ ...base, propertyId }).returning();
 
       // Auto-create a backing CRM deal
       if (!row.dealId) {

@@ -2510,7 +2510,7 @@ export default function Comps() {
             {/* Counts reflect the table below, not rows parked on the
                 admin-only Leads tab — "12 comps" over a 1-row table read
                 as data loss (UX-NOTES #10). */}
-            <span className="flex items-center gap-1.5"><Scale className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{confirmedComps.length}</span> comps</span>
+            <span className="flex items-center gap-1.5"><Scale className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{confirmedComps.length}</span> {confirmedComps.length === 1 ? "comp" : "comps"}</span>
             <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-green-600" /> <span className="font-semibold">{stats.verified}</span> verified</span>
             {/* Admins click through to the Leads tab; non-admins get a
                 tooltip instead of a dead number (UX #26). */}
@@ -4070,7 +4070,7 @@ export default function Comps() {
       <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {selectedIds.size} comps</AlertDialogTitle>
+            <AlertDialogTitle>Delete {selectedIds.size} {selectedIds.size === 1 ? "comp" : "comps"}</AlertDialogTitle>
             <AlertDialogDescription>This will permanently remove the selected comparables.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

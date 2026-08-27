@@ -3,6 +3,7 @@
 // aged debtors. Data comes from /api/xero/financials (system Xero session,
 // cached 15 min server-side).
 import { useQuery } from "@tanstack/react-query";
+import { CashflowBoardSection } from "@/components/cashflow-board";
 import { useEffect } from "react";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
@@ -600,8 +601,10 @@ export default function FinancePage() {
             </Button>
           </CardContent>
         </Card>
-        {/* The pipeline + commission halves come from the CRM, so they work
-            regardless of the Xero connection state. */}
+        {/* The pipeline, commission and cashflow-forecast halves come from
+            the CRM / local DB, so they work regardless of the Xero
+            connection state. */}
+        <CashflowBoardSection />
         {data.wip && <WipSection wip={data.wip} />}
         {data.commissions && data.commissions.statements.length > 0 && (
           <CommissionSection commissions={data.commissions} />
@@ -649,6 +652,10 @@ export default function FinancePage() {
 
       {/* WIP pipeline + projection (CRM ⇄ Xero cross-reference) */}
       {data.wip && <WipSection wip={data.wip} projection={data.projection} />}
+
+      {/* Cashflow forecast — the app + Xero drive receipts, the typed
+          lines below are Wendy's costs plan (Woody, 2026-08-27). */}
+      <CashflowBoardSection />
 
       {/* (Data-health card removed — Woody, 2026-08-23: a weekly fix-list
           email to equity@ replaced it; see runWipHealthEmail. The live list
@@ -869,3 +876,4 @@ export default function FinancePage() {
     </div>
   );
 }
+

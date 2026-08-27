@@ -32,6 +32,7 @@ const LEGACY = {
 let LANDSEC = LEGACY.landsec;
 let BLUEWATER = LEGACY.bluewater;
 let BRAND = LEGACY.brand;
+let INTEL_BRAND = null; // brand with geocoded stores + AI competitors (Amorino on the smoke fixture)
 const PASSWORD = 'B@nd0077!';
 const AGENT_USER = 'victoria@brucegillinghampollard.com';
 const CLIENT_USER = 'mark.warne@landsec.com';
@@ -65,7 +66,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -128,6 +129,9 @@ async function resolveFixture(token) {
   // it where absent).
   const brand = companies.find((c) => /^honi poke$/i.test(c.name || ''))
     || companies.find((c) => /restaurant|casual dining|fine dining|caf/i.test(c.companyType || '') && !/^testco/i.test(c.name || ''));
+  // Intel-cards scenario target: a brand with geocoded stores (Amorino on
+  // the smoke fixture); null lets the scenario fall back to the slice brand.
+  const intelBrand = companies.find((c) => /^amorino$/i.test(c.name || ''));
   const properties = await list('/api/crm/properties');
   const bluewater = properties.find((p) => /bluewater/i.test(p.name || '') && (!landsec || p.landlordId === landsec.id))
     || properties.find((p) => /bluewater/i.test(p.name || ''));
@@ -135,6 +139,7 @@ async function resolveFixture(token) {
     landsec: landsec?.id || LEGACY.landsec,
     bluewater: bluewater?.id || LEGACY.bluewater,
     brand: brand?.id || LEGACY.brand,
+    intelBrand: intelBrand?.id || null,
   };
 }
 
@@ -171,6 +176,26 @@ async function visit(page, persona, path, label) {
 // on the target instead of swallowing the abort and asserting elsewhere.
 // r320: the same race also surfaces as Playwright's "is interrupted by
 // another navigation" wording (seen at /properties/:id) — retry that too.
+// Seed the desktop session's token into a fresh mobile context. The app can
+// navigate on mount (auth hydration redirect), destroying the evaluate's
+// execution context mid-flight — retry on that instead of failing the step.
+async function mobSeedAuth(mob, page) {
+  const tok = await page.evaluate(() => localStorage.getItem('authToken'));
+  const u = await page.evaluate(() => localStorage.getItem('user'));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await mob.evaluate(([t, usr]) => {
+        localStorage.setItem('authToken', t); localStorage.setItem('user', usr);
+      }, [tok, u]);
+      return;
+    } catch (e) {
+      if (attempt >= 2 || !/Execution context was destroyed|Cannot find context/.test(String(e))) throw e;
+      await mob.waitForLoadState('domcontentloaded').catch(() => {});
+      await mob.waitForTimeout(500);
+    }
+  }
+}
+
 async function mobGoto(pg, url, nav) {
   try {
     await pg.goto(url, nav);
@@ -427,9 +452,7 @@ async function victoriaRound(page, cross) {
       await mob.setViewportSize({ width: 390, height: 780 });
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mob.goto(`${BASE}/`, nav);
       await mob.waitForTimeout(3500);
       const { scrollW, clientW } = await mob.evaluate(() => ({
@@ -472,10 +495,43 @@ async function victoriaRound(page, cross) {
       if (!del.ok) return { ok: false, why: `delete ${del.status}` };
       const list = await (await fetch('/api/crm/contacts', { headers: auth })).json();
       const rows = Array.isArray(list) ? list : (list?.data || []);
-      return { ok: true, stillThere: rows.some((c) => c.name === needle) };
+      // Match by id, not name — mark's client-add-contact creates a contact
+      // with the same round name and back-to-back runs without run-round.sh's
+      // 'QA Contact%' purge left it behind, false-failing this check (r379).
+      return { ok: true, stillThere: rows.some((c) => c.id === made.id) };
     }, name);
     if (!r.ok) throw new Error(`contact lifecycle failed (${r.why})`);
     if (r.stillThere) throw new Error('deleted contact still present in the CRM list');
+  });
+
+  // Tracker interest lifecycle (UX #71 / r347 mobile-card fix): a manual
+  // "rang about this unit" interest logs against a unit, shows in the
+  // per-unit list and the all-interest-counts badge map, then deletes clean.
+  await step(page, p, 'staff-unit-interest-lifecycle', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = (Array.isArray(units) ? units : [])[0];
+      if (!unit) return { ok: true, skipped: true };
+      const create = await fetch(`/api/available-units/${unit.id}/interest`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: 'QA-PROBE Interest Co', notes: 'QA probe — rang about this unit' }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json();
+      const list = await (await fetch(`/api/available-units/${unit.id}/interest`, { headers: auth })).json();
+      const inList = (Array.isArray(list) ? list : []).some((i) => i.id === made.id);
+      const counts = await (await fetch('/api/available-units/all-interest-counts', { headers: auth })).json();
+      const counted = (counts?.[unit.id] || 0) > 0;
+      const del = await fetch(`/api/available-units/interest/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      if (!del.ok) return { ok: false, why: `delete ${del.status}` };
+      const after = await (await fetch(`/api/available-units/${unit.id}/interest`, { headers: auth })).json();
+      const residue = (Array.isArray(after) ? after : []).some((i) => i.id === made.id);
+      return { ok: true, inList, counted, residue };
+    });
+    if (!r.ok) throw new Error(`interest lifecycle failed (${r.why})`);
+    if (r.skipped) return;
+    if (!r.inList) throw new Error('logged interest missing from the per-unit interest list');
+    if (!r.counted) throw new Error('logged interest not reflected in all-interest-counts');
+    if (r.residue) throw new Error('deleted interest row still present');
   });
 
   // Staff task board: create → complete (PATCH) → delete round-trips, and the
@@ -607,9 +663,7 @@ async function victoriaRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/deals/${deal.id}`, nav);
       await mob.locator('[data-testid="button-edit-deal"]').waitFor({ timeout: 20000 });
       for (const id of ['button-deal-image-studio', 'button-deal-create-document', 'button-edit-deal']) {
@@ -618,6 +672,25 @@ async function victoriaRound(page, cross) {
         if (box.x < 0 || box.x + box.width > 390 + 2) {
           throw new Error(`deal action ${id} clipped at 390px (x ${Math.round(box.x)}, right ${Math.round(box.x + box.width)})`);
         }
+      }
+      // r355: the KYC incomplete banner said "Only 0 counterparty linked"
+      // when nothing was linked — assert the zero-count copy stays humane.
+      const amlBanner = mob.locator('[data-testid="deal-aml-status-incomplete"]');
+      if (await amlBanner.count()) {
+        const txt = await amlBanner.innerText();
+        if (/Only 0 counterparty/.test(txt)) throw new Error(`AML banner regressed to "Only 0 counterparty": ${txt.slice(0, 80)}`);
+      }
+      // r363: with no party linked, the Brand section pill must show its
+      // empty state instead of a blank screen, and Delete Deal is gated to
+      // the Overview section on phones.
+      if (!deal.tenantId && !deal.landlordId) {
+        await mob.locator('[data-testid="deal-section-brand"]').click();
+        await mob.waitForTimeout(600);
+        if (!(await mob.locator('[data-testid="deal-brand-empty"]').isVisible())) throw new Error('Brand pill with no linked party missing its empty state');
+        if (await mob.locator('[data-testid="button-delete-deal"]').isVisible()) throw new Error('Delete Deal visible on the Brand phone section');
+        await mob.locator('[data-testid="deal-section-overview"]').click();
+        await mob.waitForTimeout(600);
+        if (!(await mob.locator('[data-testid="button-delete-deal"]').count())) throw new Error('Delete Deal missing from the Overview phone section');
       }
     } finally {
       await mob.close();
@@ -640,9 +713,7 @@ async function victoriaRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/deals/list`, nav);
       const allChip = mob.locator('[data-testid="chip-group-all"]');
       await allChip.waitFor({ timeout: 20000 });
@@ -673,9 +744,7 @@ async function victoriaRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/tasks`, nav);
       await mob.locator('[data-testid="filter-done"]').waitFor({ timeout: 20000 });
       for (const id of ['filter-assigned-by-me', 'filter-all', 'filter-todo', 'filter-in_progress', 'filter-done']) {
@@ -713,9 +782,7 @@ async function victoriaRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/properties/${BLUEWATER}`, nav);
       await mob.locator('[data-testid="button-setup-folders"]').waitFor({ timeout: 30000 });
       for (const id of ['button-ask-ai-property', 'button-image-studio', 'button-create-document', 'button-setup-folders']) {
@@ -726,18 +793,73 @@ async function victoriaRound(page, cross) {
         }
       }
       await mobGoto(mob, `${BASE}/tenancy-schedule/${BLUEWATER}`, nav);
-      await mob.locator('table tbody td.sticky').first().waitFor({ timeout: 30000 });
+      // JOGQK 6819e38e (2026-08-25): phones get one card per unit — the
+      // banded sheet (sticky Unit column) never ships below md. Assert the
+      // card list renders and the desktop table stays hidden at 390px.
+      await mob.locator('[data-testid^="tenancy-card-"]').first().waitFor({ timeout: 30000 });
       const m = await mob.evaluate(() => {
         const sticky = document.querySelector('table tbody td.sticky');
-        const scroller = sticky ? sticky.closest('.overflow-x-auto') : null;
         return {
-          stickyW: sticky ? Math.round(sticky.getBoundingClientRect().width) : null,
-          scrollerW: scroller ? scroller.clientWidth : null,
+          cards: document.querySelectorAll('[data-testid^="tenancy-card-"]').length,
+          tableVisible: !!(sticky && sticky.getBoundingClientRect().width > 0),
         };
       });
-      if (!m.stickyW || !m.scrollerW) throw new Error('tenancy sticky column / scroller not found at 390px');
-      if (m.scrollerW - m.stickyW < 80) {
-        throw new Error(`tenancy pinned Unit column covers the sheet at 390px (sticky ${m.stickyW}px of ${m.scrollerW}px window)`);
+      if (!m.cards) throw new Error('tenancy phone card list empty at 390px');
+      if (m.tableVisible) throw new Error('desktop banded sheet visible at 390px alongside the phone card list');
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r379: phone Brands landing search (Woody 2026-08-25 — one box over
+  // brands, contacts at brands, acting agents) + the brand Social pill.
+  // A contact-name search must render the contact row with its call/email
+  // buttons, and the Social pill must never be a blank screen: brands with
+  // no Instagram handle get the "No social feed yet" empty state (the
+  // Instagram card returns null without a handle — r379 fix).
+  await step(page, p, 'staff-mobile-brand-search-social', async () => {
+    const pr = await fetch(`${BASE}/api/brand/${BRAND}/profile`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (!pr.ok) throw new Error(`brand profile fetch ${pr.status} for ${BRAND}`);
+    const prof = await pr.json();
+    const sr = await fetch(`${BASE}/api/brands/search?q=tom`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (!sr.ok) throw new Error(`/api/brands/search 'tom' ${sr.status}`);
+    const hits = await sr.json();
+    const contactHit = (hits.contacts || [])[0];
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      if (contactHit) {
+        await mobGoto(mob, `${BASE}/brands`, nav);
+        const box = mob.locator('[data-testid="brand-quick-search"]');
+        await box.waitFor({ timeout: 30000 });
+        await box.fill('tom');
+        await mob.waitForTimeout(2500);
+        const body = await mob.evaluate(() => document.body.innerText);
+        if (!body.includes(contactHit.name)) throw new Error(`quick-search 'tom' missing contact ${contactHit.name} at 390px`);
+        if (contactHit.email && !await mob.locator(`a[href="mailto:${contactHit.email}"]`).count())
+          throw new Error(`quick-search contact row missing mailto:${contactHit.email}`);
+        if (contactHit.phone && !await mob.locator('a[href^="tel:"]').count())
+          throw new Error('quick-search contact row missing tel: button despite phone on record');
+      }
+      await mobGoto(mob, `${BASE}/companies/${BRAND}`, nav);
+      const socialPill = mob.locator('[data-testid="company-section-social"]');
+      await socialPill.waitFor({ timeout: 30000 });
+      await socialPill.tap().catch(() => socialPill.click());
+      await mob.waitForTimeout(2500);
+      const social = await mob.evaluate(() => document.body.innerText);
+      if (prof?.company?.instagram_handle) {
+        if (!/Instagram|@/.test(social)) throw new Error('Social pill: Instagram card missing despite handle on record');
+      } else if (!/No social feed yet/i.test(social)) {
+        throw new Error('Social pill blank for a no-handle brand — empty state missing');
       }
     } finally {
       await mob.close();
@@ -760,9 +882,7 @@ async function victoriaRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/comps`, nav);
       await mob.locator('[data-testid="button-create-comp"]').waitFor({ timeout: 30000 });
       const addBox = await mob.locator('[data-testid="button-create-comp"]').boundingBox();
@@ -1187,6 +1307,148 @@ async function victoriaRound(page, cross) {
     cross.offerStamp = `${cross.offerStamp}-EDITED`;
   });
 
+  // Big-ticket money fields (r371): drizzle-zod used to cap real() columns at
+  // 8,388,607, so a £9m rent or £12m premium 400'd on both add and edit.
+  // Offer created + deleted in-scenario; company_name QA-OFFER-% is also purged.
+  await step(page, p, 'agent-offer-big-figures', async () => {
+    if (!cross.viewingUnitId) return;
+    const r = await page.evaluate(async (args) => {
+      const [unitId, round] = args;
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const mk = await fetch(`/api/available-units/${unitId}/offers`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: `QA-OFFER-BIGNUM R${round}`, offerDate: new Date().toISOString().slice(0, 10), rentPa: 9000000, premium: 12000000 }) });
+      if (!mk.ok) return { ok: false, why: `big-rent POST ${mk.status}` };
+      const offer = await mk.json();
+      try {
+        const pa = await fetch(`/api/available-units/offers/${offer.id}`, { method: 'PATCH', credentials: 'include', headers: auth,
+          body: JSON.stringify({ rentPa: 10500000, fittingOutContribution: 9500000 }) });
+        if (!pa.ok) return { ok: false, why: `big-rent PATCH ${pa.status}` };
+        const row = await pa.json();
+        return { ok: true, persisted: row.rentPa === 10500000 && row.premium === 12000000 };
+      } finally {
+        await fetch(`/api/available-units/offers/${offer.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }
+    }, [cross.viewingUnitId, ROUND]);
+    if (!r.ok) throw new Error(`big-figure offer failed (${r.why}) — real() 8,388,607 cap regression`);
+    if (!r.persisted) throw new Error('big-figure offer saved but values did not persist');
+    // Same cap on investment offers — a £25m offerPrice must save (r371).
+    const inv = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const trackers = await (await fetch('/api/investment-tracker', { headers: auth })).json().catch(() => []);
+      const tracker = Array.isArray(trackers) ? trackers[0] : null;
+      if (!tracker) return { ok: true, skipped: true };
+      const mk = await fetch(`/api/investment-tracker/${tracker.id}/offers`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ company: `QA-OFFER-INV R${round}`, offerPrice: 25000000 }) });
+      if (!mk.ok) return { ok: false, why: `investment offer POST ${mk.status}` };
+      const row = await mk.json();
+      await fetch(`/api/investment-offers/${row.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, persisted: row.offerPrice === 25000000 };
+    }, ROUND);
+    if (!inv.ok) throw new Error(`big-figure investment offer failed (${inv.why})`);
+    if (!inv.skipped && !inv.persisted) throw new Error('investment offer saved but £25m price did not persist');
+  });
+
+  // Same real() cap on the unit and deal schemas (r372): a £9m asking rent on
+  // a tracker unit and a £25m deal price must save. Rows created + deleted
+  // in-scenario; QA-BIGNUM% units and QA-R% deals are also purged.
+  await step(page, p, 'agent-unit-deal-big-figures', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const propertyId = Array.isArray(units) && units[0] ? units[0].propertyId : null;
+      if (!propertyId) return { ok: false, why: 'no available unit to borrow a propertyId from' };
+      const mk = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ propertyId, unitName: `QA-BIGNUM Unit R${round}`, askingRent: 9000000, fee: 9500000 }) });
+      if (!mk.ok) return { ok: false, why: `big-rent unit POST ${mk.status}` };
+      const unit = await mk.json();
+      let unitOk = false;
+      try {
+        const pa = await fetch(`/api/available-units/${unit.id}`, { method: 'PATCH', credentials: 'include', headers: auth,
+          body: JSON.stringify({ askingRent: 10500000 }) });
+        if (!pa.ok) return { ok: false, why: `big-rent unit PATCH ${pa.status}` };
+        const row = await pa.json();
+        unitOk = row.askingRent === 10500000;
+      } finally {
+        await fetch(`/api/available-units/${unit.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }
+      const dk = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-RCAP Deal R${round}`, status: 'INS', pricing: 25000000, rentPa: 9000000 }) });
+      if (!dk.ok) return { ok: false, why: `big-price deal POST ${dk.status}` };
+      const deal = await dk.json();
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, persisted: unitOk && deal.pricing === 25000000 && deal.rentPa === 9000000 };
+    }, ROUND);
+    if (!r.ok) throw new Error(`big-figure unit/deal failed (${r.why}) — real() 8,388,607 cap regression`);
+    if (!r.persisted) throw new Error('big-figure unit/deal saved but values did not persist');
+  });
+
+  // Investment activity dialogs send timestamps as ISO strings; the insert
+  // schemas must coerce them (r373) — before that fix a dated viewing/offer
+  // 400'd and EVERY distribution add failed. Also guards the tracker-create
+  // guidePrice real() cap lift. Rows created + deleted in-scenario;
+  // QA-INVDATE% / QA-RCAP% rows are also purged by run-round.sh.
+  await step(page, p, 'agent-investment-dated-activity', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const trackers = await (await fetch('/api/investment-tracker', { headers: auth })).json().catch(() => []);
+      const tracker = Array.isArray(trackers) ? trackers[0] : null;
+      if (!tracker) return { ok: true, skipped: true };
+      const iso = new Date().toISOString();
+      const vk = await fetch(`/api/investment-tracker/${tracker.id}/viewings`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ company: `QA-INVDATE R${round}`, viewingDate: iso }) });
+      if (!vk.ok) return { ok: false, why: `dated viewing POST ${vk.status}` };
+      const viewing = await vk.json();
+      await fetch(`/api/investment-viewings/${viewing.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      const ok2 = await fetch(`/api/investment-tracker/${tracker.id}/offers`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ company: `QA-INVDATE R${round}`, offerDate: iso, offerPrice: 25000000 }) });
+      if (!ok2.ok) return { ok: false, why: `dated offer POST ${ok2.status}` };
+      const offer = await ok2.json();
+      await fetch(`/api/investment-offers/${offer.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      const dk = await fetch(`/api/investment-tracker/${tracker.id}/distributions`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: `QA-INVDATE R${round}`, sentDate: iso }) });
+      if (!dk.ok) return { ok: false, why: `distribution POST ${dk.status}` };
+      const dist = await dk.json();
+      let respOk = false;
+      try {
+        const pr = await fetch(`/api/investment-distributions/${dist.id}`, { method: 'PATCH', credentials: 'include', headers: auth,
+          body: JSON.stringify({ response: 'Interested', responseDate: iso }) });
+        respOk = pr.ok;
+      } finally {
+        await fetch(`/api/investment-distributions/${dist.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }
+      if (!respOk) return { ok: false, why: 'distribution response PATCH failed' };
+      // £25m guide price on tracker create (real() cap, r373). Reuses an
+      // existing propertyId so no property is auto-created; the auto-created
+      // backing deal is deleted alongside the tracker row.
+      const tk = await fetch('/api/investment-tracker', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ assetName: `QA-RCAP Tracker R${round}`, propertyId: tracker.propertyId, boardType: 'Sales', guidePrice: 25000000 }) });
+      if (!tk.ok) return { ok: false, why: `£25m tracker POST ${tk.status}` };
+      const row = await tk.json();
+      if (row.dealId) await fetch(`/api/crm/deals/${row.dealId}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      await fetch(`/api/investment-tracker/${row.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, persisted: row.guidePrice === 25000000 && offer.offerPrice === 25000000 && !!offer.offerDate };
+    }, ROUND);
+    if (!r.ok) throw new Error(`investment dated activity failed (${r.why}) — timestamp coercion or real() cap regression`);
+    if (!r.skipped && !r.persisted) throw new Error('investment dated activity saved but values did not persist');
+  });
+
+  // Tracker create validates BEFORE auto-creating the backing CRM property
+  // (r374): a payload that fails zod must 400 without stranding an orphan
+  // crm_properties row. QA-ORPHAN% properties also purged by run-round.sh.
+  await step(page, p, 'agent-tracker-invalid-no-orphan', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const name = `QA-ORPHAN Tracker R${round}`;
+      const bad = await fetch('/api/investment-tracker', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ assetName: name, boardType: 'Sales', guidePrice: 'not-a-number' }) });
+      if (bad.ok) return { ok: false, why: 'invalid tracker POST unexpectedly succeeded' };
+      const props = await (await fetch('/api/crm/properties', { headers: auth })).json().catch(() => []);
+      const orphan = Array.isArray(props) && props.some(pr => pr.name === name);
+      return { ok: !orphan, why: orphan ? 'orphan crm_properties row stranded by validation 400' : undefined };
+    }, ROUND);
+    if (!r.ok) throw new Error(`tracker orphan guard failed (${r.why})`);
+  });
+
   // Tenancy re-import must not duplicate the tracker (r217): the schedule
   // import's clearExisting and bulk-delete unlink the mirror rows first, so
   // the fan-out re-adopts them by name instead of spawning a second listing
@@ -1503,6 +1765,52 @@ async function victoriaRound(page, cross) {
     if (r.stillListed) throw new Error('deal still pending after a verdict this month');
     if (!r.newTarget || new Date(r.newTarget) < new Date()) throw new Error(`slipping did not re-date the deal (targetDate ${r.newTarget})`);
     if (r.deleteStatus !== 200 && r.deleteStatus !== 204) throw new Error(`probe deal cleanup failed (${r.deleteStatus})`);
+  });
+
+  // Staff logs turnover entries — one on an in-slice brand, one on an
+  // out-of-slice company (Hammerson) — so Mark's round can prove the client
+  // turnover read is sliced and the write staff-only. run-round.sh purges
+  // the rows by the QA-PROBE notes marker next round.
+  await step(page, p, 'staff-turnover-entries', async () => {
+    const marker = `QA-PROBE turnover R${ROUND}`;
+    const r = await page.evaluate(async (note) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const companies = await (await fetch('/api/crm/companies', { headers: auth })).json();
+      const arr = Array.isArray(companies) ? companies : (companies?.data || []);
+      const brand = arr.find((c) => c.id === window.QA_FIX.brand);
+      if (!brand) return { skip: true };
+      const hidden = arr.find((c) => /hammerson/i.test(c.name || ''));
+      const mk = (company, tag) => fetch('/api/turnover', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ company_id: company.id, company_name: company.name, period: 'QA FY', turnover: 999999, source: 'Conversation', notes: `${note} ${tag}` }) });
+      const pv = await mk(brand, 'visible');
+      if (!pv.ok) return { ok: false, why: `visible POST ${pv.status}` };
+      if (hidden) {
+        const ph = await mk(hidden, 'hidden');
+        if (!ph.ok) return { ok: false, why: `hidden POST ${ph.status}` };
+      }
+      return { ok: true, hiddenMade: !!hidden };
+    }, marker);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`staff turnover entry failed (${r.why})`);
+    cross.turnoverMarker = marker;
+    cross.turnoverHiddenMade = r.hiddenMade;
+
+    // The 999999 probe value sits on formatCurrency's rounding edge: the
+    // board must show it as £1.0m, never the r365 "£1000k" regression.
+    await page.goto(`${BASE}/turnover`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1500);
+    const body = await page.evaluate(() => document.body.innerText);
+    if (body.includes('£1000k')) throw new Error('turnover board renders £1000k (formatCurrency rounding edge regressed)');
+    if (!body.includes('£1.0m')) throw new Error('turnover board missing £1.0m for the 999999 probe entry');
+
+    // The brands-hub Overview "Turnover Leaders" tile has its own formatter —
+    // r366 caught it rendering the same probe as £1000k after r365's fix.
+    await page.goto(`${BASE}/brands`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1500);
+    const hubBody = await page.evaluate(() => document.body.innerText);
+    if (hubBody.includes('£1000k') || hubBody.includes('£1000m')) throw new Error('brands hub renders £1000k/£1000m (formatTurnover rounding edge regressed)');
   });
 }
 
@@ -2115,6 +2423,10 @@ async function markRound(page, cross) {
       const rows = Array.isArray(list) ? list : (list?.data || []);
       const seen = new Set(); const dupes = [];
       for (const c of rows) {
+        // Skip the harness's own probe contacts — back-to-back runs without
+        // run-round.sh's 'QA Contact%' purge leave same-named rows behind,
+        // which are pollution, not an app dedupe failure (r379).
+        if (/^QA Contact/i.test(String(c.name || ''))) continue;
         const key = `${String(c.name || '').trim().toLowerCase()}|${String(c.email || '').trim().toLowerCase()}`;
         if (key === '|') continue;
         if (seen.has(key)) dupes.push(c.name);
@@ -2179,7 +2491,10 @@ async function markRound(page, cross) {
       if (!hub.ok || !hunter.ok || !dir.ok) return { ok: false, why: `hub ${hub.status} / hunter ${hunter.status} / directory ${dir.status}` };
       const visible = new Set((Array.isArray(dir.body) ? dir.body : []).map((c) => c.id));
       const rows = (x) => (Array.isArray(x) ? x : []).map((b) => ({ id: b.id, name: b.name, type: String(b.company_type || b.companyType || '') }));
-      const served = [...rows(hub.body?.superBrands), ...rows(hub.body?.hotBrands), ...rows(hub.body?.topTurnover), ...rows(hunter.body)];
+      // topTurnover serves turnover_data rows — the brand id/name live in
+      // company_id/company_name (b.id is the turnover row's own id).
+      const turnoverRows = (Array.isArray(hub.body?.topTurnover) ? hub.body.topTurnover : []).map((t) => ({ id: t.company_id, name: t.company_name, type: String(t.company_type || '') }));
+      const served = [...rows(hub.body?.superBrands), ...rows(hub.body?.hotBrands), ...turnoverRows, ...rows(hunter.body)];
       const leaks = served.filter((b) => b.id && !visible.has(b.id));
       return { ok: true, leaks: leaks.slice(0, 3) };
     });
@@ -2216,6 +2531,25 @@ async function markRound(page, cross) {
     await page.waitForTimeout(6000);
     page.off('response', listen);
     if (hits.length) throw new Error(`client shell polled /api/deal-verdicts (${hits.length} call(s), status ${hits[0]})`);
+  });
+
+  // A client deep-linked to the staff Investment tab must not mount the
+  // tracker (it used to fire 6 staff-only /api/investment-tracker fetches
+  // during the auth-load window, then show "Deal not found" because Deals
+  // parsed the "investment" segment as a deal id — r375). The hub now
+  // rewrites the URL to /deals/list.
+  await step(page, p, 'client-investment-deeplink-guard', async () => {
+    const hits = [];
+    const listen = (resp) => { if (/\/api\/investment-tracker/.test(resp.url())) hits.push(resp.status()); };
+    page.on('response', listen);
+    await visit(page, p, '/deals/investment');
+    await page.waitForTimeout(5000);
+    page.off('response', listen);
+    if (hits.length) throw new Error(`client shell fetched /api/investment-tracker (${hits.length} call(s), status ${hits[0]})`);
+    const body = await page.locator('body').innerText();
+    if (/deal not found/i.test(body)) throw new Error('client saw "Deal not found" on /deals/investment (tab segment parsed as a deal id)');
+    const loc = await page.evaluate(() => location.pathname);
+    if (loc !== '/deals/list') throw new Error(`expected rewrite to /deals/list, still at ${loc}`);
   });
 
   // Firm-wide reporting (the board report + reporting summary — whole-book
@@ -2862,6 +3196,48 @@ async function markRound(page, cross) {
     if (st !== 403) throw new Error(`client kyc-clouseau read expected 403, got ${st}`);
   });
 
+  // The PI Map panel + Land Registry tab work for clients (r359): the
+  // property-lookup aggregate, address autocomplete and the LR resolve POST
+  // must not 403 (resolve may 503 keyless — that's the staff experience
+  // too), while the PAID purchase-title POST and the searches PATCH stay
+  // staff-only.
+  await step(page, p, 'client-pi-lookup-open', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        lookup: await g('/api/property-lookup?postcode=DA9%209ST&layers=core&propertyDataLayers=core'),
+        addr: await g('/api/address-search?q=DA9'),
+        resolve: (await fetch('/api/land-registry/resolve', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ postcode: 'DA9 9ST' }) }).catch(() => ({ status: 0 }))).status,
+        purchase: (await fetch('/api/land-registry/purchase-title', { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status,
+        patchSearch: (await fetch('/api/land-registry/searches/00000000-0000-0000-0000-000000000000', { method: 'PATCH', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status,
+      };
+    });
+    if (r.lookup === 403) throw new Error('client property-lookup 403d — PI Map panel is empty for clients again');
+    if (r.addr === 403) throw new Error('client address-search 403d — PI map search box is dead for clients again');
+    if (r.resolve === 403) throw new Error('client land-registry resolve 403d — LR tab search dead-ends for clients again');
+    if (r.purchase !== 403) throw new Error(`client reached the PAID purchase-title endpoint (expected 403, got ${r.purchase})`);
+    if (r.patchSearch !== 403) throw new Error(`client patched a land-registry search (expected 403, got ${r.patchSearch})`);
+    // Own-searches scoping (r360): staff LR research and the paid-title
+    // ledger must never surface for a client login.
+    const staffLogin = await (await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: AGENT_USER, password: PASSWORD }) })).json();
+    await fetch(`${BASE}/api/land-registry/searches`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffLogin.token}` }, body: JSON.stringify({ address: 'QA-LR-SCOPE staff research probe', postcode: 'ZZ1 1ZZ' }) });
+    const scope = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await (await fetch('/api/land-registry/searches', { headers: auth })).json();
+      const recent = await (await fetch('/api/land-registry/searches/recent', { headers: auth })).json();
+      const ledger = await (await fetch('/api/land-registry/purchases', { headers: auth })).json();
+      return {
+        leak: [].concat(list, recent).some((s) => (s.address || '').includes('QA-LR-SCOPE')),
+        ledgerRows: Array.isArray(ledger) ? ledger.length : -1,
+        badDate: (Array.isArray(recent) ? recent : []).some((s) => !s.createdAt),
+      };
+    });
+    if (scope.leak) throw new Error('client can read STAFF land-registry research (own-searches scoping broken)');
+    if (scope.ledgerRows !== 0) throw new Error(`client purchase ledger not empty (got ${scope.ledgerRows})`);
+    if (scope.badDate) throw new Error('searches/recent row missing createdAt (Invalid Date regression)');
+  });
+
   // Covenant reads are open to clients for THEIR OWN visible brands only
   // (Woody, 2026-08-04: "open up covenant for Mark" — badge + commentary on
   // slice brands). The rest of the engine — rival companies, watchlist,
@@ -3412,6 +3788,58 @@ async function markRound(page, cross) {
     if (r.resync !== 403) throw new Error(`client fired global resync-mirror (expected 403, got ${r.resync})`);
   });
 
+  // r367: bulk-delete is staff-only (guard above), so the tenancy board must
+  // not offer a client the tick column / "Delete selected" bar that can only
+  // 403 (same class as the r223 Import/Re-sync fix). Per-row trash stays —
+  // single-row delete is client-allowed on their own property.
+  await step(page, p, 'client-tenancy-bulk-ticks-hidden', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.getByText('Tenancy Schedule', { exact: false }).first().waitFor({ timeout: 30000 });
+    await page.waitForTimeout(2500);
+    if (await page.getByTestId('tenancy-select-all').count()) {
+      throw new Error('bulk-delete select-all checkbox leaked to client tenancy board');
+    }
+    const rowTicks = await page.locator('tbody input[type="checkbox"]').count();
+    if (rowTicks > 0) throw new Error(`${rowTicks} bulk-delete row ticks leaked to client tenancy board`);
+  });
+
+  // r368: plan upload is client-allowed on their own property (board parity)
+  // but every other plan write — rename, auto-detect, delete — is staff-only,
+  // so the plans panel must not offer a client those controls (same class as
+  // the r367 tick fix) and the server must 403 the writes even on a plan the
+  // client itself uploaded. run-round.sh purges the QA-PLAN-GATE row.
+  await step(page, p, 'client-plans-write-controls-hidden', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      const raw = atob(b64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      const fd = new FormData();
+      fd.append('file', new Blob([bytes], { type: 'image/png' }), 'qa-plan-gate.png');
+      fd.append('floor', 'QA-PLAN-GATE');
+      const up = await fetch(`/api/properties/${window.QA_FIX.bluewater}/plans`, { method: 'POST', credentials: 'include', headers: auth, body: fd }).catch(() => ({ status: 0 }));
+      const plan = up.status === 200 ? await up.json().catch(() => null) : null;
+      if (!plan) return { up: up.status };
+      const jsonAuth = { ...auth, 'Content-Type': 'application/json' };
+      const patch = (await fetch(`/api/plans/${plan.id}`, { method: 'PATCH', credentials: 'include', headers: jsonAuth, body: JSON.stringify({ floor: 'QA-PLAN-GATE' }) }).catch(() => ({ status: 0 }))).status;
+      const auto = (await fetch(`/api/plans/${plan.id}/auto-detect`, { method: 'POST', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      const del = (await fetch(`/api/plans/${plan.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { up: up.status, patch, auto, del };
+    });
+    if (r.up !== 200) throw new Error(`client own-property plan upload should be allowed (expected 200, got ${r.up})`);
+    if (r.patch !== 403) throw new Error(`client renamed a plan (expected 403, got ${r.patch})`);
+    if (r.auto !== 403) throw new Error(`client fired plan auto-detect (expected 403, got ${r.auto})`);
+    if (r.del !== 403) throw new Error(`client deleted a plan (expected 403, got ${r.del})`);
+    await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.getByTestId('button-upload-plan').waitFor({ timeout: 30000 });
+    await page.waitForTimeout(2000);
+    if (!(await page.getByTestId('button-floor-QA-PLAN-GATE').count())) throw new Error('uploaded plan chip not rendered on client plans panel');
+    if (await page.getByTestId('button-toggle-draw-mode').count()) throw new Error('Add-unit draw toggle leaked to client plans panel');
+    if ((await page.getByTestId('button-auto-detect-plan').count()) + (await page.getByTestId('button-auto-detect-plan-hq').count())) throw new Error('Auto-detect leaked to client plans panel');
+    if (await page.locator('[data-testid="property-plans-panel"] button[title^="Delete"]').count()) throw new Error('Delete-plan button leaked to client plans panel');
+  });
+
   // The unified tenancy schedule's deal/letting link-map on the client's OWN
   // property must load (drives the tenancy view's linked-deal chips). It's
   // scope-checked; the foreign case is covered in client-foreign-unit-guards.
@@ -3693,12 +4121,19 @@ async function markRound(page, cross) {
       const outOfScope = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ propertyId: 'aaaa1111-0000-0000-0000-00000000dead', unitName: name + '-X' }) });
       const del = await fetch(`/api/available-units/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
-      return { ok: true, madeId: made.id, outOfScopeStatus: outOfScope.status, delOk: del.ok, delStatus: del.status };
+      // r378: unit create mirrors a stub row onto the tenancy spine — the
+      // delete must clean that stub too, not leave a ghost on the schedule.
+      const sched = await fetch(`/api/tenancy-schedule/property/${list[0].id}`, { headers: auth });
+      const schedRows = sched.ok ? await sched.json() : [];
+      const ghost = (Array.isArray(schedRows) ? schedRows : (schedRows?.units || []))
+        .some((u) => ((u.unit_number || u.unitNumber || '').trim() === name));
+      return { ok: true, madeId: made.id, outOfScopeStatus: outOfScope.status, delOk: del.ok, delStatus: del.status, ghost };
     }, stamp);
     if (r.skip) return;
     if (!r.ok) throw new Error(`client unit create failed (${r.why}) on their own property`);
     if (r.outOfScopeStatus >= 200 && r.outOfScopeStatus < 300) throw new Error('client created a unit on an out-of-scope property');
     if (!r.delOk) throw new Error(`client could not delete their own unit (${r.delStatus})`);
+    if (r.ghost) throw new Error('deleted unit left a ghost row on the tenancy schedule (spine stub not cleaned)');
   });
 
   // Summarise scope mirrors feed visibility (r207): the deal-linked Gail's
@@ -4466,16 +4901,23 @@ async function markRound(page, cross) {
       await mob.setViewportSize({ width: 390, height: 780 });
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/deals/${deal.id}`, nav);
       await mob.waitForTimeout(3000);
+      // JOGQK 2026-08-24: phone deal detail gates the stacked sections behind
+      // section pills (Overview/Brand/Activity/Files) — drive the pills the
+      // way a user would and assert the sections are still reachable.
+      const filesPill = mob.locator('[data-testid="deal-section-files"]');
+      if (!(await filesPill.count())) throw new Error('mobile deal detail lost its section pills (deal-section-files missing at 390px)');
+      await filesPill.click();
+      await mob.waitForTimeout(800);
       if (!(await mob.locator('[data-testid="deal-sidebar-mobile"]').isVisible().catch(() => false))) {
-        throw new Error('mobile deal detail lost the sidebar sections (deal-sidebar-mobile not visible at 390px)');
+        throw new Error('Files pill did not surface the sidebar sections (deal-sidebar-mobile not visible at 390px)');
       }
-      if (!(await mob.locator('[data-testid="deal-sidebar-mobile"] [data-testid="toggle-sidebar-comments"]').count())) {
-        throw new Error('mobile deal sidebar block is missing the Comments section');
+      await mob.locator('[data-testid="deal-section-activity"]').click();
+      await mob.waitForTimeout(800);
+      if (!(await mob.locator('[data-testid="deal-sidebar-mobile-activity"] [data-testid="toggle-sidebar-comments"]').count())) {
+        throw new Error('Activity pill section is missing the Comments block');
       }
     } finally {
       await mob.close();
@@ -4504,9 +4946,7 @@ async function markRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/requirements`, nav);
       await mob.waitForTimeout(3000);
       if (await mob.locator('[data-testid="button-new-brand"]').count()) {
@@ -4546,9 +4986,7 @@ async function markRound(page, cross) {
       // so goto's default "load" wait can burn 30s and log a false failure.
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/`, nav);
       // Dashboard widgets poll (news/map), so networkidle can't settle here.
       await mob.waitForLoadState('networkidle').catch(() => {});
@@ -4589,9 +5027,7 @@ async function markRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       const noOverflow = async (label) => {
         const { scrollW, clientW } = await mob.evaluate(() => ({
           scrollW: document.documentElement.scrollWidth,
@@ -4611,6 +5047,106 @@ async function markRound(page, cross) {
       await mob.waitForTimeout(3000);
       if (!await mob.getByText(/key contacts/i).count()) throw new Error('brand profile Key Contacts card missing at client mobile');
       await noOverflow('client brand profile');
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r369: phone brand Intel section (JOGQK b9b9678e) — UK stores map,
+  // Competition set (with the +N-more overflow line) and Instagram board.
+  // Data-driven off the profile payload so the scenario holds on any fixture:
+  // whatever the API returns geocoded stores / >6 AI competitors for must
+  // show the matching card once the Intel pill is tapped.
+  await step(page, p, 'client-mobile-brand-intel-cards', async () => {
+    const targetId = INTEL_BRAND || BRAND;
+    const pr = await fetch(`${BASE}/api/brand/${targetId}/profile`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (!pr.ok) throw new Error(`brand profile fetch ${pr.status} for intel target ${targetId}`);
+    const prof = await pr.json();
+    const stores = (prof?.stores || []).filter((s) => typeof s.lat === 'number' && typeof s.lng === 'number' && (!s.country || s.country === 'GB'));
+    const aiComps = Array.isArray(prof?.company?.ai_competitors) ? prof.company.ai_competitors : [];
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    const mob403s = [];
+    mob.on('response', (r) => { if (r.status() === 403) mob403s.push(r.url().replace(BASE, '').split('?')[0]); });
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/companies/${targetId}`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(3000);
+      const intelPill = mob.locator('[data-testid="company-section-intel"]');
+      if (!await intelPill.count()) throw new Error('Intel section pill missing on client mobile brand profile');
+      await intelPill.tap().catch(() => intelPill.click());
+      await mob.waitForTimeout(3000);
+      const body = await mob.evaluate(() => document.body.innerText);
+      if (aiComps.length > 0 && !/Competition/i.test(body)) throw new Error(`Intel: Competition card missing (${aiComps.length} AI competitors in payload)`);
+      if (aiComps.length > 6 && !/\+\d+ more in the competitor set/.test(body)) throw new Error('Intel: Competition overflow line missing with >6 AI competitors');
+      // UK stores moved from Intel to its own Stores pill (JOGQK 416bc9d1).
+      if (stores.length > 0) {
+        const storesPill = mob.locator('[data-testid="company-section-stores"]');
+        if (!await storesPill.count()) throw new Error(`Stores pill missing (${stores.length} geocoded stores in payload)`);
+        await storesPill.tap().catch(() => storesPill.click());
+        await mob.waitForTimeout(2000);
+        const storesBody = await mob.evaluate(() => document.body.innerText);
+        if (!/UK stores/i.test(storesBody)) throw new Error(`Stores: UK stores card missing (${stores.length} geocoded stores in payload)`);
+      }
+      // r377: the profile used to mount the staff-only activity feed for
+      // clients — a guaranteed 403 on every brand open. Zero 403s allowed.
+      if (mob403s.length) throw new Error(`client mobile brand profile fired staff-only 403s: ${[...new Set(mob403s)].join(', ').slice(0, 160)}`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r353: a ChatBGP send whose request the server REJECTS outright (keyless
+  // 503 here; validation 400s / outages in prod) must surface an assistant
+  // error bubble promptly — the mobile onError used to sit in its ~6-min
+  // late-response recovery poll first, leaving the user on "Thinking...".
+  // Assumes the keyless QA environment (the round always runs without AI
+  // keys), where /api/chatbgp/chat 503s immediately.
+  await step(page, p, 'client-mobile-chat-error-prompt', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      // A BARE /chatbgp open deliberately lands on the Messages LIST
+      // (Woody, 2026-08-23: "the messages page rather than last message");
+      // guard that decision, then enter the chat the deliberate way (?ask=1,
+      // the home "Ask ChatBGP…" path) to reach the composer.
+      await mobGoto(mob, `${BASE}/chatbgp`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(2000);
+      if (!await mob.locator('[data-testid="mobile-pinned-chatbgp"]').count()) {
+        throw new Error('bare /chatbgp open lost the Messages list (pinned ChatBGP row missing)');
+      }
+      await mobGoto(mob, `${BASE}/chatbgp?ask=1`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(2000);
+      const box = mob.locator('textarea, input[placeholder*="Reply" i]').first();
+      if (!await box.count()) throw new Error('chatbgp input missing at client mobile (?ask=1 entry)');
+      // "QA Thread" prefix keeps the auto-titled thread purgeable next round.
+      await box.fill('QA Thread probe — does a rejected send surface an error?');
+      await mob.keyboard.press('Enter');
+      // A definitive rejection (or a reply) must land well inside 25s —
+      // anything slower means the UI is stuck in the recovery poll again.
+      await mob.getByText(/Sorry, the server rejected this|Sorry, the server returned/i).first()
+        .waitFor({ state: 'visible', timeout: 25000 })
+        .catch(() => { throw new Error('rejected chat send still shows no assistant/error bubble after 25s (recovery-poll regression)'); });
     } finally {
       await mob.close();
       await mobCtx.close();
@@ -4659,6 +5195,27 @@ async function markRound(page, cross) {
     if (!r.ownIsArray) throw new Error('client own-property unit list is not an array');
     if (r.unfiltered !== 403) throw new Error(`unfiltered firm-wide unit list not refused (${r.unfiltered})`);
     if (r.write !== 403) throw new Error(`client property-units write not refused (${r.write})`);
+  });
+
+  // Turnover board slice (staff-creates → client-sees/stays-hidden): the
+  // entry Victoria logged on the in-slice brand must be readable, the one
+  // on the out-of-slice company must not, and the write is staff-only.
+  await step(page, p, 'client-turnover-slice-guard', async () => {
+    if (!cross.turnoverMarker) return;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await fetch('/api/turnover', { headers: auth });
+      if (!list.ok) return { ok: false, why: `GET ${list.status}` };
+      const rows = await list.json();
+      const mine = (Array.isArray(rows) ? rows : []).filter((t) => (t.notes || '').startsWith(marker));
+      const write = (await fetch('/api/turnover', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ company_name: 'QA-PROBE client write', period: 'QA FY' }) })).status;
+      return { ok: true, seesVisible: mine.some((t) => /visible$/.test(t.notes || '')), seesHidden: mine.some((t) => /hidden$/.test(t.notes || '')), write };
+    }, cross.turnoverMarker);
+    if (!r.ok) throw new Error(`client turnover read failed (${r.why})`);
+    if (!r.seesVisible) throw new Error('client cannot see the in-slice turnover entry');
+    if (cross.turnoverHiddenMade && r.seesHidden) throw new Error('client can see an out-of-slice turnover entry');
+    if (r.write !== 403) throw new Error(`client turnover write not refused (${r.write})`);
   });
 }
 
@@ -4924,13 +5481,24 @@ async function samRound(page, cross) {
 const QA_CHROMIUM = process.env.QA_CHROMIUM
   || (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : null);
 const browser = await chromium.launch(QA_CHROMIUM ? { executablePath: QA_CHROMIUM } : {});
+// The QA container has no external network — requests to external hosts
+// (google favicon fallbacks etc.) HANG ~12-28s before resetting, which
+// starves waitForLoadState('networkidle') and randomly times out scenarios
+// (r377: client-add-contact, staff-property-tenancy-mobile). Abort anything
+// that isn't the local app so idle reflects the app alone.
+const rawNewContext = browser.newContext.bind(browser);
+browser.newContext = async (opts) => {
+  const ctx = await rawNewContext(opts);
+  await ctx.route(/^https?:\/\/(?!localhost|127\.0\.0\.1)/, (r) => r.abort());
+  return ctx;
+};
 const agentCtx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
 const clientCtx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
 
 console.log(`── Round ${ROUND} — Victoria (agent) × Mark (Landsec client) ──`);
 const vPage = await login(agentCtx, AGENT_USER);
 const FIX = await resolveFixture(vPage.qaToken);
-LANDSEC = FIX.landsec; BLUEWATER = FIX.bluewater; BRAND = FIX.brand;
+LANDSEC = FIX.landsec; BLUEWATER = FIX.bluewater; BRAND = FIX.brand; INTEL_BRAND = FIX.intelBrand;
 console.log(`  [fixture] landsec=${LANDSEC} bluewater=${BLUEWATER} brand=${BRAND}`);
 // Every page in every context reads the resolved IDs as window.QA_FIX
 // (init script re-runs on each navigation — every scenario starts with one;

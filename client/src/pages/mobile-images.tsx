@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Sparkles, ChevronLeft, Search, Loader2, RotateCcw, Image as ImageIcon, X, Wand2,
-  Camera, Download, Link2, Building2, Tag, Briefcase, ZoomIn, Trash2, Folder, FolderPlus,
+  Camera, Download, Link2, Building2, Tag, Briefcase, ZoomIn, Trash2, Folder, FolderPlus, Check,
 } from "lucide-react";
 import { ToastAction } from "@/components/ui/toast";
 import { Link } from "wouter";
@@ -59,6 +59,19 @@ const SYSTEM_FOLDER_NAME = /^(Pathway|Brand|Property) · /;
 function isUserFolder(c: Collection): boolean {
   return c.kind == null && !c.property_id && !c.company_id && !SYSTEM_FOLDER_NAME.test(c.name);
 }
+// Property and Pathway collections are first-class on the phone (Woody,
+// 2026-08-26: "access to properties would be great including pathway —
+// they are very much something that is live"). Brand umbrellas stay
+// desktop-only. Pathway is checked first — pathway rows also carry a
+// property_id.
+function isPathwayFolder(c: Collection): boolean {
+  return c.kind === "pathway" || /^Pathway · /.test(c.name);
+}
+function isPropertyFolder(c: Collection): boolean {
+  if (isPathwayFolder(c)) return false;
+  return c.kind === "property" || /^Property · /.test(c.name) || (!!c.property_id && c.kind !== "brand");
+}
+const folderDisplayName = (c: Collection) => c.name.replace(SYSTEM_FOLDER_NAME, "");
 
 // What a drop lands on: another photo (→ make a new folder) or an existing
 // folder tile (→ drop the photo straight in).
@@ -77,6 +90,10 @@ export default function MobileImages() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<StudioImage | null>(null);
+  // Full-screen viewer — tapping a capture should LOOK at it first; editing
+  // is an action on the viewer, not the landing state (UX #99).
+  const [photoViewer, setPhotoViewer] = useState<{ list: StudioImage[]; index: number } | null>(null);
+  const viewerTouchX = useRef<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
 
@@ -205,6 +222,85 @@ export default function MobileImages() {
     });
   }, [images, search, filedSet, isClientViewer]);
 
+  // Keep the loose grid tight — old captures pile up into junk (Woody,
+  // 2026-08-26: "massively reduce the amount of images"). Newest 48 by
+  // default; search and "Show all" still reach everything.
+  const [showAllPhotos, setShowAllPhotos] = useState(false);
+  const CAPTURE_CAP = 48;
+  const capped = !search.trim() && !showAllPhotos && filtered.length > CAPTURE_CAP;
+  const visiblePhotos = capped ? filtered.slice(0, CAPTURE_CAP) : filtered;
+
+  // Multi-select on the capture grid (Woody, 2026-08-26: "select all so
+  // easy to move all to a folder, also need a delete option").
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkFolderOpen, setBulkFolderOpen] = useState(false);
+  const exitSelect = () => { setSelectMode(false); setSelectedIds(new Set()); setBulkFolderOpen(false); };
+  // Long-press action menu (hold a photo, release without dragging).
+  const [menuImage, setMenuImage] = useState<StudioImage | null>(null);
+  const [menuFolderOpen, setMenuFolderOpen] = useState(false);
+  const [menuAttachOpen, setMenuAttachOpen] = useState(false);
+  const shareImage = async (img: StudioImage) => {
+    try {
+      const r = await fetch(`/api/image-studio/${img.id}/full`, { credentials: "include" });
+      if (!r.ok) throw new Error(`Couldn't fetch image (${r.status})`);
+      const blob = await r.blob();
+      const filename = `${(img.description || img.fileName || "image").replace(/[^a-z0-9-_]+/gi, "-")}.png`;
+      const file = new File([blob], filename, { type: blob.type || "image/png" });
+      const navAny = navigator as any;
+      if (navAny.canShare && navAny.canShare({ files: [file] })) {
+        await navAny.share({ files: [file], title: filename });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        toast({ title: "Downloaded — check your camera roll / Files" });
+      }
+    } catch (e: any) {
+      if (e?.name !== "AbortError") toast({ title: "Share failed", description: e?.message, variant: "destructive" });
+    }
+  };
+  const toggleSelected = (id: string) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  // Keep the selection honest: photos that leave the grid (filed into a
+  // folder, deleted elsewhere) drop out of it, and an emptied grid ends
+  // select mode — otherwise the mode strands with its controls unmounted.
+  useEffect(() => {
+    if (!selectMode) return;
+    if (filtered.length === 0) { setSelectMode(false); setSelectedIds(new Set()); setBulkFolderOpen(false); return; }
+    setSelectedIds((prev) => {
+      const valid = new Set(filtered.map((i) => i.id));
+      const next = new Set(Array.from(prev).filter((id) => valid.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [selectMode, filtered]);
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        const r = await fetch(`/api/image-studio/${id}/trash`, { method: "POST", credentials: "include" });
+        if (!r.ok) throw new Error(`Delete failed (${r.status})`);
+      }
+      return ids.length;
+    },
+    onSuccess: (n) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      toast({ title: `${n} photo${n === 1 ? "" : "s"} deleted` });
+      exitSelect();
+    },
+    onError: (e: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      toast({ title: "Delete stopped partway", description: e?.message, variant: "destructive" });
+    },
+  });
+
   // ─── Folders (shared Image Studio collections) ─────────────────────────
   // Only ad-hoc, user-made folders (kind === null) — pathway/property/brand
   // collections are auto-managed elsewhere and would just be noise here.
@@ -214,6 +310,18 @@ export default function MobileImages() {
   });
   const folders = useMemo(
     () => allCollections.filter(isUserFolder),
+    [allCollections],
+  );
+  // Live property + pathway imagery, straight from the shared library.
+  // Empty collections are noise on a phone — only show ones with photos.
+  const propertyFolders = useMemo(
+    () => allCollections.filter((c) => isPropertyFolder(c) && c.image_count > 0)
+      .sort((a, b) => folderDisplayName(a).localeCompare(folderDisplayName(b))),
+    [allCollections],
+  );
+  const pathwayFolders = useMemo(
+    () => allCollections.filter((c) => isPathwayFolder(c) && c.image_count > 0)
+      .sort((a, b) => folderDisplayName(a).localeCompare(folderDisplayName(b))),
     [allCollections],
   );
 
@@ -261,8 +369,8 @@ export default function MobileImages() {
   // Tapping a folder swaps the default (unfiled) grid for that folder's
   // contents, right here in the page — no pop-out sheet.
   const openFolder = useMemo(
-    () => folders.find((f) => f.id === openFolderId) || null,
-    [folders, openFolderId],
+    () => allCollections.find((f) => f.id === openFolderId) || null,
+    [allCollections, openFolderId],
   );
   const { data: folderData, isLoading: folderLoading } = useQuery<{ id: string; name: string; images: any[] }>({
     queryKey: ["/api/image-studio/collections", openFolderId],
@@ -313,6 +421,7 @@ export default function MobileImages() {
   const dragImageRef = useRef<StudioImage | null>(null);
   const pressTimer = useRef<number | null>(null);
   const startPos = useRef<{ x: number; y: number } | null>(null);
+  const movedRef = useRef(false);
   const suppressClick = useRef(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
@@ -348,6 +457,7 @@ export default function MobileImages() {
     const { clientX, clientY, pointerId } = e;
     const target = e.currentTarget as HTMLElement;
     suppressClick.current = false;
+    movedRef.current = false;
     startPos.current = { x: clientX, y: clientY };
     clearPressTimer();
     pressTimer.current = window.setTimeout(() => {
@@ -369,6 +479,9 @@ export default function MobileImages() {
         }
       }
       return;
+    }
+    if (startPos.current && (Math.abs(e.clientX - startPos.current.x) > 10 || Math.abs(e.clientY - startPos.current.y) > 10)) {
+      movedRef.current = true;
     }
     setGhostPos({ x: e.clientX, y: e.clientY });
     const under = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
@@ -394,12 +507,19 @@ export default function MobileImages() {
       } else if (target.type === "image" && target.id !== dragged.id) {
         setPendingGroup([dragged.id, target.id]);
       }
+    } else if (wasDragging && dragged && !movedRef.current) {
+      // Held and released in place — the iOS Photos gesture. Show the
+      // photo action menu instead of doing nothing.
+      setMenuImage(dragged);
     }
   };
 
   const handleTileClick = (img: StudioImage) => {
     if (suppressClick.current) { suppressClick.current = false; return; }
-    setSelected(img);
+    if (selectMode) { toggleSelected(img.id); return; }
+    const idx = visiblePhotos.findIndex((i) => i.id === img.id);
+    if (idx >= 0) setPhotoViewer({ list: visiblePhotos, index: idx });
+    else setPhotoViewer({ list: [img], index: 0 });
   };
 
   return (
@@ -419,7 +539,10 @@ export default function MobileImages() {
             >
               <ChevronLeft className="w-6 h-6" />
             </button>
-            <h1 className="text-2xl font-semibold flex-1 truncate">{openFolder.name}</h1>
+            <h1 className="text-2xl font-semibold flex-1 truncate">{folderDisplayName(openFolder)}</h1>
+            {/* Only hand-made folders are deletable — Property/Pathway
+                collections are auto-managed by the system. */}
+            {isUserFolder(openFolder) && (
             <button
               type="button"
               onClick={() => { if (window.confirm("Delete this folder? The photos stay in your library.")) deleteFolderMutation.mutate(); }}
@@ -430,6 +553,7 @@ export default function MobileImages() {
             >
               {deleteFolderMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
             </button>
+            )}
           </>
         ) : (
           <>
@@ -493,13 +617,16 @@ export default function MobileImages() {
               <div key={r.id} className="aspect-square overflow-hidden rounded-xl bg-muted relative">
                 <button
                   type="button"
-                  onClick={() => setSelected(toStudioImage(r))}
+                  onClick={() => {
+                    const list = folderImages.map(toStudioImage);
+                    setPhotoViewer({ list, index: Math.max(0, list.findIndex((i) => i.id === r.id)) });
+                  }}
                   className="block w-full h-full active:opacity-80"
                   data-testid={`mobile-folder-image-${r.id}`}
                 >
                   <img src={`/api/image-studio/${r.id}/thumb`} alt={r.description || r.file_name} className="w-full h-full object-cover" loading="lazy" />
                 </button>
-                <button
+                {isUserFolder(openFolder) && <button
                   type="button"
                   onClick={() => removeFromFolderMutation.mutate(r.id)}
                   className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white inline-flex items-center justify-center active:bg-black/80"
@@ -507,7 +634,7 @@ export default function MobileImages() {
                   data-testid={`mobile-folder-remove-${r.id}`}
                 >
                   <X className="w-4 h-4" />
-                </button>
+                </button>}
               </div>
             ))}
           </div>
@@ -568,6 +695,44 @@ export default function MobileImages() {
         </div>
       )}
 
+      {/* Live property + pathway imagery (Woody, 2026-08-26) — read-through
+          to the same shared collections desktop Image Studio manages. */}
+      {[
+        { label: "Properties", list: propertyFolders },
+        { label: "Pathway runs", list: pathwayFolders },
+      ].map(({ label, list }) => list.length > 0 && (
+        <div key={label} className="px-3 mb-3">
+          <h2 className="px-1 mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {label}
+          </h2>
+          <div className="grid grid-cols-2 gap-2">
+            {list.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setOpenFolderId(f.id)}
+                className="flex items-center gap-2.5 rounded-xl border border-border/60 px-2.5 py-2 text-left bg-white dark:bg-card active:bg-muted/40"
+                data-testid={`mobile-folder-${f.id}`}
+              >
+                <div className="w-11 h-11 rounded-lg overflow-hidden bg-muted shrink-0 flex items-center justify-center">
+                  {f.cover_thumbnail ? (
+                    <img src={f.cover_thumbnail} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Folder className="w-5 h-5 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">{folderDisplayName(f)}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {f.image_count} {f.image_count === 1 ? "photo" : "photos"}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+
       {isLoading ? (
         <div className="flex items-center justify-center pt-16">
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -598,8 +763,43 @@ export default function MobileImages() {
           )}
         </div>
       ) : (
+        <>
+        <div className="px-4 mb-1.5 flex items-center gap-2">
+          <h2 className="flex-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {isClientViewer ? "Your imagery" : selectMode ? `${selectedIds.size} selected` : "Recent captures"}
+          </h2>
+          {!isClientViewer && (selectMode ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set(filtered.map((i) => i.id)))}
+                className="text-xs px-2.5 py-1 rounded-full border border-border/60 text-muted-foreground active:bg-muted"
+                data-testid="mobile-images-select-all"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={exitSelect}
+                className="text-xs px-2.5 py-1 rounded-full border border-border/60 font-semibold active:bg-muted"
+                data-testid="mobile-images-select-done"
+              >
+                Done
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSelectMode(true)}
+              className="text-xs px-2.5 py-1 rounded-full border border-border/60 text-muted-foreground active:bg-muted"
+              data-testid="mobile-images-select"
+            >
+              Select
+            </button>
+          ))}
+        </div>
         <div className="px-3 grid grid-cols-2 gap-2">
-          {filtered.map((img) => {
+          {visiblePhotos.map((img) => {
             const isDragging = dragId === img.id;
             const isDropTarget = dropTarget?.type === "image" && dropTarget.id === img.id;
             return (
@@ -609,7 +809,7 @@ export default function MobileImages() {
               data-drop-id={img.id}
               data-drop-type="image"
               onClick={() => handleTileClick(img)}
-              onPointerDown={(e) => onTilePointerDown(e, img)}
+              onPointerDown={(e) => { if (!selectMode) onTilePointerDown(e, img); }}
               onPointerMove={onTilePointerMove}
               onPointerUp={onTilePointerUp}
               onPointerCancel={finishDrag}
@@ -632,6 +832,15 @@ export default function MobileImages() {
                 loading="lazy"
                 draggable={false}
               />
+              {selectMode && (
+                <div className={`absolute inset-0 ${selectedIds.has(img.id) ? "bg-primary/25" : ""}`}>
+                  <span className={`absolute top-1.5 right-1.5 w-6 h-6 rounded-full border-2 inline-flex items-center justify-center ${
+                    selectedIds.has(img.id) ? "bg-primary border-primary text-primary-foreground" : "border-white/90 bg-black/20"
+                  }`}>
+                    {selectedIds.has(img.id) && <Check className="w-4 h-4" />}
+                  </span>
+                </div>
+              )}
               {(img.tags || []).includes("ai-pending") ? (
                 <>
                   <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center">
@@ -664,6 +873,19 @@ export default function MobileImages() {
             );
           })}
         </div>
+        {capped && (
+          <div className="px-3 mt-2">
+            <button
+              type="button"
+              onClick={() => setShowAllPhotos(true)}
+              className="w-full h-10 rounded-xl border border-border/60 text-sm text-muted-foreground active:bg-muted/40"
+              data-testid="mobile-images-show-all"
+            >
+              Show all {filtered.length}
+            </button>
+          </div>
+        )}
+        </>
       )}
       </>
       )}
@@ -684,6 +906,159 @@ export default function MobileImages() {
         </div>
       )}
 
+      {selectMode && selectedIds.size > 0 && (
+        <div
+          className="fixed bottom-0 inset-x-0 z-[120] border-t border-border/60 bg-background px-4 pt-3 flex items-center gap-2"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
+        >
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1 h-12 gap-2"
+            onClick={() => setBulkFolderOpen(true)}
+            data-testid="mobile-images-bulk-folder"
+          >
+            <FolderPlus className="w-4 h-4" /> Add to folder
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1 h-12 gap-2 text-red-600 hover:text-red-700"
+            disabled={bulkDeleteMutation.isPending}
+            onClick={() => {
+              if (window.confirm(`Delete ${selectedIds.size} photo${selectedIds.size === 1 ? "" : "s"}? Tap a deleted photo's Undo toast to bring one back.`))
+                bulkDeleteMutation.mutate(Array.from(selectedIds));
+            }}
+            data-testid="mobile-images-bulk-delete"
+          >
+            {bulkDeleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Delete
+          </Button>
+        </div>
+      )}
+      <FolderPickerSheet
+        open={bulkFolderOpen}
+        onClose={() => setBulkFolderOpen(false)}
+        imageIds={Array.from(selectedIds)}
+      />
+
+      {/* iOS-Photos-style long-press menu */}
+      <Sheet open={!!menuImage && !menuFolderOpen && !menuAttachOpen} onOpenChange={(o) => !o && setMenuImage(null)}>
+        <SheetContent side="bottom" hideClose className="rounded-t-3xl p-0">
+          {menuImage && (
+            <div style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.5rem)" }}>
+              <div className="px-4 pt-4 pb-3 flex items-center gap-3 border-b border-border/40">
+                <div className="w-12 h-12 rounded-lg overflow-hidden bg-muted shrink-0">
+                  <img src={`/api/image-studio/${menuImage.id}/thumb`} alt="" className="w-full h-full object-cover" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold truncate">{menuImage.description || menuImage.fileName}</div>
+                  <div className="text-[11px] text-muted-foreground">Photo actions</div>
+                </div>
+              </div>
+              <div className="py-1">
+                {[
+                  { icon: Wand2, label: "Edit with AI", testid: "menu-edit", act: () => { const img = menuImage; setMenuImage(null); setSelected(img); } },
+                  { icon: Download, label: "Share / save to phone", testid: "menu-share", act: () => { const img = menuImage; setMenuImage(null); shareImage(img); } },
+                  { icon: FolderPlus, label: "Add to folder", testid: "menu-folder", act: () => setMenuFolderOpen(true) },
+                  { icon: Link2, label: "Attach to property, brand or pathway", testid: "menu-attach", act: () => setMenuAttachOpen(true) },
+                  { icon: Check, label: "Select photos…", testid: "menu-select", act: () => { const img = menuImage; setMenuImage(null); setSelectMode(true); setSelectedIds(new Set([img.id])); } },
+                ].map(({ icon: Icon, label, testid, act }) => (
+                  <button
+                    key={testid}
+                    type="button"
+                    onClick={act}
+                    className="w-full flex items-center gap-3 px-5 py-3.5 text-left text-[15px] active:bg-muted/40"
+                    data-testid={`mobile-image-${testid}`}
+                  >
+                    <Icon className="w-5 h-5 text-muted-foreground" /> {label}
+                  </button>
+                ))}
+                <div className="border-t border-border/40 my-1" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const img = menuImage;
+                    if (window.confirm("Delete this photo? Undo is on the toast afterwards.")) {
+                      setMenuImage(null);
+                      bulkDeleteMutation.mutate([img.id]);
+                    }
+                  }}
+                  className="w-full flex items-center gap-3 px-5 py-3.5 text-left text-[15px] text-red-600 active:bg-muted/40"
+                  data-testid="mobile-image-menu-delete"
+                >
+                  <Trash2 className="w-5 h-5" /> Delete
+                </button>
+              </div>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+      {menuImage && (
+        <>
+          <FolderPickerSheet
+            open={menuFolderOpen}
+            onClose={() => { setMenuFolderOpen(false); setMenuImage(null); }}
+            imageIds={[menuImage.id]}
+          />
+          <AttachPickerSheet
+            open={menuAttachOpen}
+            onClose={() => { setMenuAttachOpen(false); setMenuImage(null); }}
+            imageId={menuImage.id}
+          />
+        </>
+      )}
+
+      {photoViewer && (() => {
+        const img = photoViewer.list[photoViewer.index];
+        if (!img) return null;
+        const step = (dir: number) => setPhotoViewer((v) => {
+          if (!v) return v;
+          const next = Math.min(v.list.length - 1, Math.max(0, v.index + dir));
+          return next === v.index ? v : { ...v, index: next };
+        });
+        return (
+          <div className="fixed inset-0 z-[60] bg-black flex flex-col" data-testid="mobile-photo-viewer">
+            <div className="flex items-center justify-between px-3 shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.5rem)" }}>
+              <button type="button" onClick={() => setPhotoViewer(null)} className="p-2 -ml-1 rounded-full text-white/90 active:bg-white/10" aria-label="Close viewer" data-testid="viewer-close">
+                <X className="w-5 h-5" />
+              </button>
+              <span className="text-white/60 text-xs tabular-nums">{photoViewer.index + 1} / {photoViewer.list.length}</span>
+              <button
+                type="button"
+                onClick={() => { setPhotoViewer(null); setMenuImage(img); }}
+                className="p-2 -mr-1 rounded-full text-white/90 active:bg-white/10 text-lg leading-none"
+                aria-label="More actions"
+                data-testid="viewer-more"
+              >
+                ⋯
+              </button>
+            </div>
+            <div
+              className="flex-1 min-h-0 flex items-center justify-center px-1"
+              onTouchStart={(e) => { viewerTouchX.current = e.touches[0]?.clientX ?? null; }}
+              onTouchEnd={(e) => {
+                const start = viewerTouchX.current;
+                viewerTouchX.current = null;
+                if (start == null) return;
+                const dx = (e.changedTouches[0]?.clientX ?? start) - start;
+                if (Math.abs(dx) > 50) step(dx < 0 ? 1 : -1);
+              }}
+            >
+              <img src={`/api/image-studio/${img.id}/full`} alt={img.description || img.fileName || "Photo"} className="max-h-full max-w-full object-contain" data-testid="viewer-image" />
+            </div>
+            <div className="flex items-center justify-center gap-2 px-4 pt-3 shrink-0" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}>
+              {!isClientViewer && (
+                <Button size="sm" className="gap-1.5" onClick={() => { setPhotoViewer(null); setSelected(img); }} data-testid="viewer-edit-ai">
+                  <Wand2 className="w-3.5 h-3.5" /> Edit with AI
+                </Button>
+              )}
+              <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => shareImage(img)} data-testid="viewer-share">
+                <Download className="w-3.5 h-3.5" /> Share
+              </Button>
+            </div>
+          </div>
+        );
+      })()}
       <ImageEditSheet image={selected} onClose={() => setSelected(null)} readOnly={isClientViewer} />
       <NameFolderSheet
         open={!!pendingGroup}
@@ -708,7 +1083,7 @@ function NameFolderSheet({
   const submit = () => { const n = name.trim(); if (n) onCreate(n); };
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onCancel()}>
-      <SheetContent side="bottom" className="rounded-t-3xl p-0">
+      <SheetContent side="bottom" hideClose className="rounded-t-3xl p-0">
         <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border/40">
           <FolderPlus className="w-5 h-5 text-primary" />
           <h2 className="text-base font-semibold flex-1">New folder</h2>
@@ -746,7 +1121,7 @@ function NameFolderSheet({
 
 // Tap-driven path to grouping (works on every device — no drag needed):
 // from an open photo, pick an existing folder or spin up a new one.
-function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose: () => void; imageId: string }) {
+function FolderPickerSheet({ open, onClose, imageIds }: { open: boolean; onClose: () => void; imageIds: string[] }) {
   const { toast } = useToast();
   const { data: collections = [] } = useQuery<Collection[]>({
     queryKey: ["/api/image-studio/collections"],
@@ -759,14 +1134,14 @@ function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
 
   const addMutation = useMutation({
     mutationFn: async (folderId: string) => {
-      await apiRequest("POST", `/api/image-studio/collections/${folderId}/images`, { imageIds: [imageId] });
+      await apiRequest("POST", `/api/image-studio/collections/${folderId}/images`, { imageIds });
       return folderId;
     },
     onSuccess: (folderId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections", folderId] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/filed-image-ids"] });
-      toast({ title: "Added to folder" });
+      toast({ title: imageIds.length > 1 ? `Added ${imageIds.length} to folder` : "Added to folder" });
       onClose();
     },
     onError: (e: any) => toast({ title: "Couldn't add", description: e?.message, variant: "destructive" }),
@@ -776,7 +1151,7 @@ function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
     mutationFn: async (name: string) => {
       const r = await apiRequest("POST", "/api/image-studio/collections", { name });
       const c = (await r.json()) as { id: string };
-      await apiRequest("POST", `/api/image-studio/collections/${c.id}/images`, { imageIds: [imageId] });
+      await apiRequest("POST", `/api/image-studio/collections/${c.id}/images`, { imageIds });
       return c;
     },
     onSuccess: () => {
@@ -792,7 +1167,7 @@ function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="bottom" className="h-[70dvh] p-0 rounded-t-3xl flex flex-col">
+      <SheetContent side="bottom" hideClose className="h-[70dvh] p-0 rounded-t-3xl flex flex-col">
         <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border/40 shrink-0">
           <Folder className="w-5 h-5 text-primary" />
           <h2 className="text-base font-semibold flex-1">Add to folder</h2>
@@ -1029,6 +1404,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
     <Sheet open={!!image} onOpenChange={(open) => !open && onClose()}>
       <SheetContent
         side="bottom"
+        hideClose
         className="h-[95dvh] p-0 rounded-t-3xl flex flex-col"
       >
         {image && (
@@ -1115,7 +1491,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                 variant="outline"
                 onClick={saveToDevice}
                 disabled={saving}
-                className={readOnly ? "flex-1 h-12 gap-2" : "h-12"}
+                className={readOnly ? "flex-1 h-12 gap-2" : "h-12 w-11 px-0 shrink-0"}
                 aria-label="Save to phone"
                 data-testid="mobile-image-save"
               >
@@ -1127,7 +1503,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                 type="button"
                 variant="outline"
                 onClick={() => setFolderPickOpen(true)}
-                className="h-12"
+                className="h-12 w-11 px-0 shrink-0"
                 aria-label="Add to a folder"
                 data-testid="mobile-image-folder"
               >
@@ -1137,7 +1513,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                 type="button"
                 variant="outline"
                 onClick={() => setAttachOpen(true)}
-                className="h-12"
+                className="h-12 w-11 px-0 shrink-0"
                 aria-label="Attach to property, brand or pathway"
                 data-testid="mobile-image-attach"
               >
@@ -1148,7 +1524,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                 variant="outline"
                 onClick={askDelete}
                 disabled={deleteMutation.isPending}
-                className="h-12 text-red-600 hover:text-red-700"
+                className="h-12 w-11 px-0 shrink-0 text-red-600 hover:text-red-700"
                 aria-label="Delete photo"
                 data-testid="mobile-image-delete"
               >
@@ -1160,7 +1536,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                   variant="outline"
                   onClick={() => revertMutation.mutate()}
                   disabled={revertMutation.isPending}
-                  className="h-12"
+                  className="h-12 w-11 px-0 shrink-0"
                   data-testid="mobile-image-revert"
                 >
                   {revertMutation.isPending ? (
@@ -1174,13 +1550,13 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                 type="button"
                 onClick={() => editMutation.mutate()}
                 disabled={editMutation.isPending || !prompt.trim()}
-                className="flex-1 h-12 text-base font-semibold gap-2"
+                className="flex-1 min-w-0 h-12 text-base font-semibold gap-2"
                 data-testid="mobile-image-apply"
               >
                 {editMutation.isPending ? (
-                  <><Loader2 className="w-5 h-5 animate-spin" /> AI is editing…</>
+                  <><Loader2 className="w-5 h-5 animate-spin" /> Editing…</>
                 ) : (
-                  <><Sparkles className="w-5 h-5" /> Apply with AI</>
+                  <><Sparkles className="w-5 h-5" /> Apply</>
                 )}
               </Button>
               </>}
@@ -1193,7 +1569,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
             <FolderPickerSheet
               open={folderPickOpen}
               onClose={() => setFolderPickOpen(false)}
-              imageId={image.id}
+              imageIds={[image.id]}
             />
             <ImageZoomLightbox
               open={zoomOpen}
@@ -1280,7 +1656,7 @@ function AttachPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="bottom" className="h-[85dvh] p-0 rounded-t-3xl flex flex-col">
+      <SheetContent side="bottom" hideClose className="h-[85dvh] p-0 rounded-t-3xl flex flex-col">
         <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border/40 shrink-0">
           <h2 className="text-base font-semibold flex-1">Attach to…</h2>
           <button type="button" onClick={onClose} className="p-2 -mr-2 rounded-full active:bg-gray-100" aria-label="Close">

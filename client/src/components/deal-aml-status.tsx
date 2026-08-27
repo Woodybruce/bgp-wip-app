@@ -65,7 +65,7 @@ export function DealAmlStatusCard({ dealId }: { dealId: string }) {
           <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm" data-testid="deal-aml-status-incomplete">
             <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
             <span>
-              Only {data.counterparties.length} counterparty linked to this deal — both sides need to be set on the deal record before AML status can clear and the invoice can unlock. AML AI tools below still work though.
+              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — both sides need to be set on the deal record before AML status can clear and the invoice can unlock. AML AI tools below still work though.
             </span>
           </div>
           <AmlAiPanel dealId={dealId} dealName={data.dealName} />
@@ -393,10 +393,10 @@ export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: str
 
       {/* Source of Funds analyses */}
       <div className="rounded-md border p-2.5">
-        <div className="flex items-center justify-between mb-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-y-1.5 mb-1.5">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-muted-foreground" />
-            <span className="text-xs font-semibold uppercase tracking-wide">AI Source-of-Funds</span>
+            <span className="text-xs font-semibold uppercase tracking-wide whitespace-nowrap">AI Source-of-Funds</span>
             <Badge variant="outline" className="text-[10px]">{sofItems.length} doc{sofItems.length === 1 ? "" : "s"}</Badge>
           </div>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInput.current?.click()} disabled={uploading} data-testid="button-upload-sof">
@@ -488,10 +488,10 @@ function UploadLinksPanel({ dealId, dealName }: { dealId: string; dealName: stri
 
   return (
     <div className="rounded-md border p-2.5">
-      <div className="flex items-center justify-between mb-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-y-1.5 mb-1.5">
         <div className="flex items-center gap-2">
           <Send className="w-4 h-4 text-muted-foreground" />
-          <span className="text-xs font-semibold uppercase tracking-wide">Client upload links</span>
+          <span className="text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Client upload links</span>
           <Badge variant="outline" className="text-[10px]">{links.length}</Badge>
         </div>
         <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid="button-request-kyc">

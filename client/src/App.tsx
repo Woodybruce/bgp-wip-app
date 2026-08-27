@@ -117,6 +117,7 @@ const DocumentStudioV2 = lazy(() => import("@/pages/document-studio"));
 const HRPage = lazy(() => import("@/pages/hr"));
 const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
 const FinancePage = lazy(() => import("@/pages/finance"));
+const CashflowPage = lazy(() => import("@/pages/cashflow"));
 
 function PublicKycUploadRoute() {
   return (
@@ -173,7 +174,11 @@ function MessagesRedirect() {
 // schedule — the old /leasing-schedule board is retired).
 function TenancyScheduleRedirect() {
   const [, setLocation] = useLocation();
-  useEffect(() => { setLocation("/properties", { replace: true }); }, [setLocation]);
+  const { toast } = useToast();
+  useEffect(() => {
+    setLocation("/properties", { replace: true });
+    toast({ title: "Pick a property", description: "Each property page carries its own tenancy schedule." });
+  }, [setLocation, toast]);
   return null;
 }
 
@@ -378,6 +383,7 @@ function Router() {
       <Route path="/addins" component={AddinsPage} />
       <Route path="/edozo" component={PropertiesHub} />
       <Route path="/finance">{() => <EquityRoute><FinancePage /></EquityRoute>}</Route>
+      <Route path="/cashflow">{() => <EquityRoute><CashflowPage /></EquityRoute>}</Route>
       <Route path="/expenses" component={ExpensesAdmin} />
       <Route path="/expenses/approvals" component={ExpensesApprovals} />
       <Route path="/expenses/revolut" component={ExpensesRevolut} />
@@ -705,7 +711,7 @@ function AuthenticatedApp() {
       {/* ChatBGPProvider is hoisted to AppContent so the full-page /chatbgp
           view and the side panel share the same messages / activeThreadId —
           toggling between them keeps the conversation alive. */}
-      <div className="flex h-screen w-full">
+      <div className="flex w-full" style={{ height: "calc(100vh - var(--app-banner-offset, 0px))", marginTop: "var(--app-banner-offset, 0px)" }}>
           <AppSidebar />
           <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
             <header className="flex items-center justify-between gap-2 p-2 border-b h-12 shrink-0">

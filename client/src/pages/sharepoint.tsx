@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest, getQueryFn, getAuthHeaders } from "@/lib/queryClient";
 import { ClientSharePointBrowser } from "@/components/client-sharepoint-browser";
 import {
@@ -38,6 +39,7 @@ import {
   List as ListIcon,
   Copy,
   Upload,
+  Trash2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -546,6 +548,51 @@ function StaffSharePoint() {
   });
 
   const files = filesData?.items;
+  const effectiveDriveId = driveId || filesData?.driveId || null;
+
+  // New folder + delete (Woody, 2026-08-26). Delete goes to the SharePoint
+  // recycle bin server-side, so it's recoverable from SharePoint itself.
+  const createFolderMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", "/api/microsoft/files/folder", {
+        driveId: effectiveDriveId,
+        parentId: currentFolderId || undefined,
+        name,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
+      toast({ title: "Folder created" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't create folder", description: e?.message, variant: "destructive" }),
+  });
+  // App dialogs instead of the browser's prompt()/confirm() chrome, with
+  // inline duplicate-name feedback before submitting (UX #102).
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const promptNewFolder = () => {
+    if (!effectiveDriveId) { toast({ title: "Still loading the drive — try again in a second" }); return; }
+    setNewFolderName("");
+    setNewFolderOpen(true);
+  };
+  const deleteItemMutation = useMutation({
+    mutationFn: async (item: DriveItem) => {
+      const res = await apiRequest("DELETE", "/api/microsoft/files/item", {
+        driveId: item.parentReference?.driveId || effectiveDriveId,
+        itemId: item.id,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
+      toast({ title: "Deleted", description: "Sent to the SharePoint recycle bin." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" }),
+  });
+  const [deleteTarget, setDeleteTarget] = useState<DriveItem | null>(null);
+  const confirmDelete = (item: DriveItem) => setDeleteTarget(item);
 
   // Filter by search query + type, then sort (folders always grouped first).
   const trimmedQuery = searchQuery.trim().toLowerCase();
@@ -702,28 +749,28 @@ function StaffSharePoint() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="sharepoint-page">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1 min-w-0">
           <h1 className="text-2xl font-bold tracking-tight">SharePoint & Files</h1>
-          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
             {breadcrumb.map((item, i) => (
-              <span key={item.id} className="flex items-center gap-1">
+              <span key={item.id} className="flex items-center gap-1 min-w-0">
                 {i > 0 && <span>/</span>}
                 {i < breadcrumb.length - 1 ? (
                   <button
-                    className="hover:text-foreground hover:underline"
+                    className="hover:text-foreground hover:underline truncate max-w-[10rem]"
                     onClick={() => setFolderStack(folderStack.slice(0, i))}
                   >
                     {item.name}
                   </button>
                 ) : (
-                  <span className="text-foreground">{item.name}</span>
+                  <span className="text-foreground truncate max-w-[12rem]">{item.name}</span>
                 )}
               </span>
             ))}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <Badge variant="outline" className="gap-1">
             <Cloud className="w-3 h-3" />
             Connected
@@ -767,16 +814,18 @@ function StaffSharePoint() {
         }}
       >
         <CardHeader className="flex flex-col gap-3 pb-3">
-          <div className="flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-sm font-semibold">
-              {folderStack.length > 0 ? folderStack[folderStack.length - 1].name : "All Files"}
-            </CardTitle>
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-baseline gap-2 min-w-0">
+              <CardTitle className="text-sm font-semibold truncate">
+                {folderStack.length > 0 ? folderStack[folderStack.length - 1].name : "All Files"}
+              </CardTitle>
               {sortedFiles.length > 0 && (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
                   {sortedFiles.length}{files && sortedFiles.length !== files.length ? ` of ${files.length}` : ""} items
                 </span>
               )}
+            </div>
+            <div className="flex items-center shrink-0">
               <div className="flex items-center border rounded-md overflow-hidden">
                 <Button
                   variant={viewMode === "list" ? "secondary" : "ghost"}
@@ -799,7 +848,10 @@ function StaffSharePoint() {
                   <LayoutGrid className="w-3.5 h-3.5" />
                 </Button>
               </div>
-              <label className="cursor-pointer">
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+              <label className="cursor-pointer flex-1 sm:flex-none">
                 <input
                   type="file"
                   multiple
@@ -811,21 +863,33 @@ function StaffSharePoint() {
                   }}
                   data-testid="input-upload-file"
                 />
-                <span className="inline-flex items-center gap-1.5 h-7 px-2 text-xs rounded-md border hover:bg-accent">
+                <span className="inline-flex w-full sm:w-auto justify-center items-center gap-1.5 h-9 sm:h-8 px-3 text-xs rounded-md border hover:bg-accent">
                   <Upload className="w-3.5 h-3.5" />
                   Upload
                 </span>
               </label>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 sm:h-8 px-3 text-xs gap-1.5 flex-1 sm:flex-none"
+                onClick={promptNewFolder}
+                disabled={createFolderMutation.isPending}
+                data-testid="button-new-folder"
+              >
+                <FolderPlus className="w-3.5 h-3.5" />
+                {createFolderMutation.isPending ? "Creating…" : "New folder"}
+              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
-                    className="h-7 px-2 text-xs gap-1.5"
+                    className="h-9 sm:h-8 px-3 text-xs gap-1.5 flex-1 sm:flex-none min-w-0"
                     data-testid="button-sort"
                   >
                     <ArrowUpDown className="w-3.5 h-3.5" />
-                    Sort: {SORT_LABELS[sortKey]}
+                    <span className="hidden sm:inline">Sort: {SORT_LABELS[sortKey]}</span>
+                    <span className="sm:hidden">Sort</span>
                     {sortDir === "asc" ? (
                       <ArrowUp className="w-3 h-3" />
                     ) : (
@@ -877,7 +941,6 @@ function StaffSharePoint() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            </div>
           </div>
           <div className="flex flex-col sm:flex-row gap-2">
             <div className="relative flex-1 min-w-0">
@@ -900,7 +963,7 @@ function StaffSharePoint() {
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar -mx-1 px-1">
+            <div className="flex items-center flex-wrap gap-1">
               {FILTER_CHIPS.map(chip => (
                 <button
                   key={chip.key}
@@ -996,19 +1059,19 @@ function StaffSharePoint() {
                         : formatSize(item.size) || "—"}
                     </p>
                   </div>
-                  {!item.folder && (
-                    <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5 bg-background/90 backdrop-blur-sm rounded-md border p-0.5">
-                      {item.webUrl && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          title="Copy link"
-                          onClick={(e) => { e.stopPropagation(); copyLink(item); }}
-                        >
-                          <Copy className="w-3 h-3" />
-                        </Button>
-                      )}
+                  <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5 bg-background/90 backdrop-blur-sm rounded-md border p-0.5">
+                    {!item.folder && item.webUrl && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        title="Copy link"
+                        onClick={(e) => { e.stopPropagation(); copyLink(item); }}
+                      >
+                        <Copy className="w-3 h-3" />
+                      </Button>
+                    )}
+                    {!item.folder && (
                       <a
                         href={item["@microsoft.graph.downloadUrl"] || `/api/microsoft/files/content?driveId=${item.parentReference?.driveId || driveId || ""}&itemId=${item.id}&fileName=${encodeURIComponent(item.name)}`}
                         download={item.name}
@@ -1018,8 +1081,18 @@ function StaffSharePoint() {
                           <Download className="w-3 h-3" />
                         </Button>
                       </a>
-                    </div>
-                  )}
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-red-600 hover:text-red-700"
+                      title="Delete"
+                      onClick={(e) => { e.stopPropagation(); confirmDelete(item); }}
+                      data-testid={`button-delete-grid-${item.id}`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1094,6 +1167,17 @@ function StaffSharePoint() {
                         )}
                       </div>
                     )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-red-600 hover:text-red-700"
+                      title="Delete"
+                      disabled={deleteItemMutation.isPending}
+                      onClick={(e) => { e.stopPropagation(); confirmDelete(item); }}
+                      data-testid={`button-delete-${item.id}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
                   </div>
                 );
               })}
@@ -1105,6 +1189,62 @@ function StaffSharePoint() {
       {previewItem && (
         <FilePreviewPanel item={previewItem} driveId={driveId} onClose={() => setPreviewItem(null)} />
       )}
+
+      <Dialog open={newFolderOpen} onOpenChange={(v) => !v && setNewFolderOpen(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>New folder</DialogTitle>
+          </DialogHeader>
+          {(() => {
+            const trimmed = newFolderName.trim();
+            const duplicate = !!trimmed && (files || []).some(f => f.folder && f.name.toLowerCase() === trimmed.toLowerCase());
+            const create = () => {
+              if (!trimmed || duplicate) return;
+              createFolderMutation.mutate(trimmed);
+              setNewFolderOpen(false);
+            };
+            return (
+              <>
+                <Input
+                  autoFocus
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") create(); }}
+                  placeholder="Folder name"
+                  data-testid="input-new-folder-name"
+                />
+                {duplicate && <p className="text-xs text-destructive">A folder called “{trimmed}” already exists here.</p>}
+                <DialogFooter>
+                  <Button variant="outline" size="sm" onClick={() => setNewFolderOpen(false)}>Cancel</Button>
+                  <Button size="sm" onClick={create} disabled={!trimmed || duplicate || createFolderMutation.isPending} data-testid="button-create-folder-confirm">
+                    Create
+                  </Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete “{deleteTarget?.name}”?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">It goes to the SharePoint recycle bin, so it's recoverable from SharePoint itself.</p>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => { if (deleteTarget) deleteItemMutation.mutate(deleteTarget); setDeleteTarget(null); }}
+              data-testid="button-delete-item-confirm"
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

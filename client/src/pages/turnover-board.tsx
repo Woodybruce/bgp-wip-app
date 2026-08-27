@@ -48,10 +48,26 @@ const SOURCES = ["Annual Accounts", "Landlord Report", "Conversation", "News", "
 const CONFIDENCES = ["High", "Medium", "Low"];
 const CATEGORIES = ["F&B", "Retail", "Leisure", "Services", "Health & Beauty", "Grocery", "Fashion", "Technology", "Hospitality", "Other"];
 
+function categoryFromCompanyType(t?: string | null): string {
+  const s = (t || "").toLowerCase();
+  if (!s) return "";
+  if (/restaurant|caf|coffee|food|bakery|pub|bar|f&b/.test(s)) return "F&B";
+  if (/fashion|apparel|clothing/.test(s)) return "Fashion";
+  if (/leisure|gym|fitness|cinema|entertainment/.test(s)) return "Leisure";
+  if (/grocery|supermarket|convenience/.test(s)) return "Grocery";
+  if (/health|beauty|pharmacy|salon/.test(s)) return "Health & Beauty";
+  if (/tech|electronic|phone/.test(s)) return "Technology";
+  if (/hotel|hospitality/.test(s)) return "Hospitality";
+  if (/service/.test(s)) return "Services";
+  if (/retail|tenant/.test(s)) return "Retail";
+  return "";
+}
+
 function formatCurrency(val: number | null) {
   if (val == null) return "—";
-  if (val >= 1_000_000) return `£${(val / 1_000_000).toFixed(1)}m`;
-  if (val >= 1_000) return `£${(val / 1_000).toFixed(0)}k`;
+  // Round before picking the unit so 999,999 shows as £1.0m, not £1000k.
+  if (Math.round(val / 1_000) >= 1_000) return `£${(val / 1_000_000).toFixed(1)}m`;
+  if (Math.round(val) >= 1_000) return `£${(val / 1_000).toFixed(0)}k`;
   return `£${val.toFixed(0)}`;
 }
 
@@ -223,7 +239,14 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
       const res = await apiRequest("POST", "/api/turnover/populate-from-comps", {});
       const data = await res.json();
       queryClient.invalidateQueries({ queryKey: ["/api/turnover"] });
-      toast({ title: `Created ${data.created} draft entries from CRM comps (${data.skipped} skipped)` });
+      if (data.created === 0) {
+        toast({
+          title: "No entries created from CRM comps",
+          description: "Comps match brands by exact tenant name — check tenant spellings on the Comps board against the brand book.",
+        });
+      } else {
+        toast({ title: `Created ${data.created} draft entries from CRM comps (${data.skipped} skipped)` });
+      }
     } catch {
       toast({ title: "Failed to populate from comps", variant: "destructive" });
     } finally {
@@ -298,7 +321,14 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
   function handleCompanySelect(companyId: string) {
     const company = companies.find((c: any) => c.id === companyId);
     if (company) {
-      setForm(f => ({ ...f, company_id: companyId, company_name: company.name }));
+      setForm(f => ({
+        ...f,
+        company_id: companyId,
+        company_name: company.name,
+        // Default the category from the brand's type so hand-added rows
+        // land in the same filter bucket as the AI-estimate rows.
+        category: f.category || categoryFromCompanyType(company.companyType || company.company_type),
+      }));
     }
   }
 

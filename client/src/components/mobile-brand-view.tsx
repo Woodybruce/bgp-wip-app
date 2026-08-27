@@ -53,6 +53,15 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   const { toast } = useToast();
   const { data: mbvUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientViewer = mbvUser?.role === "Client" || !!mbvUser?.companyScopeId;
+  // Clients come here for "who are they / who do I call" — land them on
+  // Contacts; Chat reads as an internal BGP tool (UX #95/#75). Staff keep
+  // Chat-first. One-shot when the user row arrives, so pill taps stick.
+  const clientLanded = useRef(false);
+  useEffect(() => {
+    if (clientLanded.current || !mbvUser) return;
+    clientLanded.current = true;
+    if (isClientViewer) setSection("contacts");
+  }, [mbvUser, isClientViewer]);
   // Same research trigger as the desktop Stores section — POST kicks the
   // background job, then poll /status until done (big brands take minutes).
   const storeScan = useMutation({
@@ -239,9 +248,13 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
             {(data.bgpSummary.team || []).length > 0 && (
               <div className="text-[11px] text-muted-foreground truncate">BGP side: {data.bgpSummary.team.slice(0, 4).join(", ")}</div>
             )}
-            <div className="max-h-[300px] overflow-y-auto pr-1">
-              <ActivitySummary companyId={companyId} />
-            </div>
+            {/* The activity feed is staff-only for brands that aren't the
+                viewer's own company — the API 403s otherwise (r377). */}
+            {(!isClientViewer || mbvUser?.companyScopeId === companyId) && (
+              <div className="max-h-[300px] overflow-y-auto pr-1">
+                <ActivitySummary companyId={companyId} />
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -476,6 +489,11 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
                 {comp.reason && <p className="text-[11px] text-muted-foreground leading-snug">{comp.reason}</p>}
               </div>
             ))}
+            {aiCompetitors.length > 6 && (
+              <p className="text-[11px] text-muted-foreground">
+                +{aiCompetitors.length - 6} more in the competitor set
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
@@ -583,7 +601,14 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
 
       <div className={sec("social")}>
-      {/* Instagram board — same card as desktop (posts + follower stats) */}
+      {/* Instagram board — same card as desktop (posts + follower stats).
+          The card returns null without a handle, which left this pill a
+          blank screen on the phone (r379) — show why instead. */}
+      {!c.instagram_handle && (
+        <div className="text-xs text-muted-foreground border border-dashed rounded-lg px-3 py-6 text-center">
+          No social feed yet — no Instagram handle on file for {c.name}.
+        </div>
+      )}
       <BrandInstagramCard companyId={companyId} />
       {c.instagram_handle && (
         <a

@@ -2914,6 +2914,7 @@ import { setupDocumentTemplateRoutes } from "./document-templates";
 import { setupCanvaRoutes } from "./canva";
 import { setupXeroRoutes } from "./xero";
 import { registerXeroFinancialRoutes } from "./xero-financials";
+import { registerCashflowRoutes } from "./cashflow-board";
 import { registerApiUsageRoutes } from "./api-usage";
 import { setupEvernoteRoutes } from "./evernote";
 import { registerLandRegistryRoutes } from "./land-registry";
@@ -3472,6 +3473,13 @@ app.use("/api/branding/assets", express.static(
     // entry used to read "/api/os-data" (the FILE name), which matched no
     // route, so the client Property Intelligence map's OS layers all 403'd.
     "/api/voa", "/api/map-layers", "/api/os/", "/api/edozo",
+    // Property Intelligence map panel + its search box: property-lookup is
+    // the public-data aggregate (price paid, VOA, EPC, flood, planning, TfL)
+    // and address-search proxies postcodes.io/Google autocomplete — no BGP
+    // internals in either. Without these the client Map tab (their PI
+    // landing tab, and the #69 My-properties quick-pick) opened an EMPTY
+    // intelligence panel on every resolve.
+    "/api/property-lookup", "/api/address-search",
     "/api/image-studio", "/api/ai-briefing",
     "/api/notifications", "/api/daily-digest", "/api/activity-feed",
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
@@ -3723,6 +3731,13 @@ app.use("/api/branding/assets", express.static(
         // caller's scope/visible brands; sync + discover-contacts don't match
         // this shape and stay staff-only.
         if (req.method === "POST" && /^\/api\/interactions\/[^/]+\/summarise$/.test(p)) return next();
+        // Land Registry search on the client-visible LR tab + PI map resolve:
+        // the resolve POST reads external title data (user-stamped search
+        // history row), the searches POST persists that history. Exact-match
+        // only — purchase-title (paid), backfill and the searches PATCHes
+        // stay staff-only. Without these the Land Registry tab's Search
+        // button dead-ended in a 403 for clients while #69 prefilled it.
+        if (req.method === "POST" && (p === "/api/land-registry/resolve" || p === "/api/land-registry/searches")) return next();
         // Same prefix-matching rule as the read allowlist: entries ending in
         // "/" match by prefix, others match exactly or as a path segment.
         if (CLIENT_ALLOWED_WRITES.some(w =>
@@ -3806,6 +3821,7 @@ app.use("/api/branding/assets", express.static(
   setupCanvaRoutes(app);
   setupXeroRoutes(app);
   registerXeroFinancialRoutes(app);
+  registerCashflowRoutes(app);
   registerApiUsageRoutes(app);
   setupEvernoteRoutes(app);
   registerLandRegistryRoutes(app);
@@ -5476,21 +5492,31 @@ app.use("/api/branding/assets", express.static(
         try {
           const { pool: dbPool } = await import("./db");
           const { hashPassword } = await import("./auth");
-          const newMembers = [
+          const newMembers: Array<{ username: string; name: string; email: string | null; password?: string; admin?: boolean }> = [
             { username: "johnny@brucegillinghampollard.com", name: "Johnny", email: "johnny@brucegillinghampollard.com" },
             { username: "daisy@brucegillinghampollard.com", name: "Daisy Driscoll", email: "daisy@brucegillinghampollard.com" },
+            // Woody 2026-08-27: Huseyn's login — normal staff access, no admin,
+            // no Finance (non-equity), own password, no mailbox.
+            { username: "hdog", name: "Huseyn", email: null, password: "hdog" },
           ];
           for (const m of newMembers) {
             const exists = await dbPool.query(`SELECT 1 FROM users WHERE username = $1 OR email = $2`, [m.username, m.email]);
             if (exists.rows.length === 0) {
-              const hashed = await hashPassword("B@nd0077!");
+              const hashed = await hashPassword(m.password || "B@nd0077!");
               await dbPool.query(
-                `INSERT INTO users (id, username, password, name, email, is_admin) VALUES (gen_random_uuid(), $1, $2, $3, $4, false)`,
-                [m.username, hashed, m.name, m.email]
+                `INSERT INTO users (id, username, password, name, email, is_admin) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)`,
+                [m.username, hashed, m.name, m.email, m.admin === true]
               );
               console.log(`[seed] Created user account: ${m.name} (${m.username})`);
             }
           }
+          // One-off: hdog briefly deployed as admin (26 Aug) — Woody reverted
+          // that on 27 Aug: normal staff access. Fires only while the admin
+          // flag is still set, then never again.
+          const demoted = await dbPool.query(
+            `UPDATE users SET name = 'Huseyn', is_admin = false WHERE username = 'hdog' AND is_admin = true RETURNING id`,
+          );
+          if (demoted.rows.length > 0) console.log(`[one-off hdog] hdog set to normal staff access (non-admin)`);
         } catch (err: any) {
           console.error("User creation error:", err?.message);
         }

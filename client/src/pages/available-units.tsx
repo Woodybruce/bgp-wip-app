@@ -1734,9 +1734,11 @@ export default function AvailableUnitsPage() {
                 <div className="rounded-xl border bg-card p-4 space-y-3 shadow-sm" data-testid={`mobile-unit-${u.id}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <span className="text-sm font-semibold leading-tight block truncate">{prop?.name || u.unitName || "Unit"}</span>
-                      {(u.unitName || u.floor) && (
-                        <p className="text-xs text-muted-foreground truncate mt-0.5">{[u.unitName, u.floor].filter(Boolean).join(" · ")}</p>
+                      {/* Unit first — a filtered list repeats the property name
+                          150 times; the unit is what you scan for (UX #70). */}
+                      <span className="text-sm font-semibold leading-tight block truncate">{u.unitName || prop?.name || "Unit"}</span>
+                      {(prop?.name || u.floor) && (
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">{[u.unitName ? prop?.name : null, u.floor].filter(Boolean).join(" · ")}</p>
                       )}
                     </div>
                     <Badge variant="secondary" className="shrink-0 text-[10px] px-2 py-0.5 gap-1.5">
@@ -1765,6 +1767,9 @@ export default function AvailableUnitsPage() {
                     </Button>
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-offer-${u.id}`}>
                       <HandCoins className="w-3.5 h-3.5" /> Offer{oCount ? ` (${oCount})` : ""}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => setInterestUnit(u)} data-testid={`unit-interest-${u.id}`}>
+                      <Flame className="w-3.5 h-3.5" /> Interest{(interestCounts[u.id] || 0) ? ` (${interestCounts[u.id]})` : ""}
                     </Button>
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
                       <Pencil className="w-3.5 h-3.5" /> Edit
@@ -1907,18 +1912,11 @@ export default function AvailableUnitsPage() {
                       </TableCell>
                       )}
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[220px]">
+                        {/* Unit leads, property is the sub-line — on a
+                            one-property board the property name repeats on
+                            every row and carries no signal (UX #97). */}
                         <div className="flex flex-col gap-0.5">
-                          <div className="text-sm font-medium truncate">
-                            <InlineLinkSelect
-                              value={u.propertyId}
-                              options={properties.map(p => ({ id: p.id, name: p.name }))}
-                              href={`/properties/${u.propertyId}`}
-                              onSave={(v) => inlineUpdate(u.id, "propertyId", v || null)}
-                              onCreate={async (name) => { const c = await createProperty(name); inlineUpdate(u.id, "propertyId", c.id); }}
-                              placeholder="Link property"
-                            />
-                          </div>
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground group/uname">
+                          <div className="flex items-center gap-1 text-sm font-medium group/uname">
                             {renameUnitId === u.id ? (
                               <Input
                                 autoFocus
@@ -1962,6 +1960,16 @@ export default function AvailableUnitsPage() {
                                 </button>
                               </>
                             )}
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            <InlineLinkSelect
+                              value={u.propertyId}
+                              options={properties.map(p => ({ id: p.id, name: p.name }))}
+                              href={`/properties/${u.propertyId}`}
+                              onSave={(v) => inlineUpdate(u.id, "propertyId", v || null)}
+                              onCreate={async (name) => { const c = await createProperty(name); inlineUpdate(u.id, "propertyId", c.id); }}
+                              placeholder="Link property"
+                            />
                           </div>
                         </div>
                       </TableCell>
@@ -2342,6 +2350,29 @@ export default function AvailableUnitsPage() {
                       )}
                       <TableCell rowSpan={unitRowSpan} className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
                         <div className="flex gap-1">
+                          {/* Viewing/Offer also live in the activity column,
+                              which scrolls off-screen at 1440px — keep a way
+                              to log them in the pinned cluster (UX #100). */}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                            onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }}
+                            data-testid={`button-log-viewing-${u.id}`}
+                            title="Log a viewing"
+                          >
+                            <CalendarDays className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                            onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }}
+                            data-testid={`button-log-offer-${u.id}`}
+                            title="Log an offer"
+                          >
+                            <HandCoins className="h-3.5 w-3.5" />
+                          </Button>
                           <Button
                             variant="ghost"
                             size="sm"

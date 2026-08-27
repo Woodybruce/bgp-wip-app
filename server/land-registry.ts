@@ -6,6 +6,7 @@ import { landRegistrySearches } from "@shared/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import pLimit from "p-limit";
 import { findProprietorsByAddress, findFreeholdsByPostcode, isHmlrProprietorsAvailable, lastIngestRun, type HmlrProprietor } from "./hmlr-direct";
+import { resolveCompanyScope } from "./company-scope";
 import { isOsConfigured } from "./os-data";
 
 /**
@@ -916,11 +917,68 @@ export function registerLandRegistryRoutes(app: Express) {
           }
         };
 
+        // Places Autocomplete first — the same API the map's Property
+        // Resolver uses, so it's proven against this key (the FindPlace /
+        // TextSearch calls below went quiet in production without logging
+        // why — Google returns HTTP 200 with a non-OK status body, which
+        // the old code swallowed silently; all four calls now log it).
+        try {
+          const acParams = new URLSearchParams({
+            input: q,
+            key: process.env.GOOGLE_API_KEY,
+            types: "geocode|establishment",
+            components: "country:gb",
+          });
+          const acResp = await fetch(`https://maps.googleapis.com/maps/api/place/autocomplete/json?${acParams}`, { signal: AbortSignal.timeout(5000) });
+          if (acResp.ok) {
+            const acData = await acResp.json() as any;
+            if (acData.status !== "OK" && acData.status !== "ZERO_RESULTS") {
+              console.error(`[address-search] Google Autocomplete status ${acData.status}: ${acData.error_message || ""}`);
+            }
+            const preds = (acData.predictions || []).slice(0, 5);
+            await Promise.all(preds.map(async (pr: any) => {
+              try {
+                const dParams = new URLSearchParams({
+                  place_id: pr.place_id,
+                  key: process.env.GOOGLE_API_KEY!,
+                  fields: "formatted_address,geometry,name,types",
+                });
+                const dResp = await fetch(`https://maps.googleapis.com/maps/api/place/details/json?${dParams}`, { signal: AbortSignal.timeout(5000) });
+                if (!dResp.ok) return;
+                const dData = await dResp.json() as any;
+                if (dData.status !== "OK") {
+                  console.error(`[address-search] Google Details status ${dData.status}: ${dData.error_message || ""}`);
+                  return;
+                }
+                const r = dData.result || {};
+                const addr = r.formatted_address || pr.description || "";
+                const pcMatch = addr.match(/([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})/i);
+                const postcode = pcMatch ? pcMatch[1].toUpperCase() : "";
+                const lat = r.geometry?.location?.lat;
+                const lng = r.geometry?.location?.lng;
+                const types = r.types || pr.types || [];
+                const isPrecise = types.includes("premise") || types.includes("subpremise") || types.includes("street_address") || types.includes("establishment") || types.includes("point_of_interest");
+                const cleanAddr = addr.replace(/, UK$/i, "").replace(/, United Kingdom$/i, "").trim();
+                const name = r.name || "";
+                const label = name && !cleanAddr.toLowerCase().startsWith(name.toLowerCase()) ? `${name}, ${cleanAddr}` : cleanAddr;
+                if (lat && lng) addGoogleResult(label, postcode, lat, lng, isPrecise ? "address" : "place");
+              } catch (e) {
+                console.error("[address-search] Google Details error:", e);
+              }
+            }));
+          }
+        } catch (e) {
+          console.error("[address-search] Google Autocomplete error:", e);
+        }
+
         try {
           const fpUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(googleQuery)}&inputtype=textquery&fields=formatted_address,name,geometry,place_id,types&locationbias=circle:50000@51.5074,-0.1278&key=${process.env.GOOGLE_API_KEY}`;
           const fpResp = await fetch(fpUrl, { signal: AbortSignal.timeout(5000) });
           if (fpResp.ok) {
             const fpData = await fpResp.json() as any;
+            if (fpData.status && fpData.status !== "OK" && fpData.status !== "ZERO_RESULTS") {
+              console.error(`[address-search] Google FindPlace status ${fpData.status}: ${fpData.error_message || ""}`);
+            }
             for (const c of (fpData.candidates || []).slice(0, 3)) {
               const addr = c.formatted_address || "";
               const pcMatch = addr.match(/([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})/i);
@@ -944,6 +1002,9 @@ export function registerLandRegistryRoutes(app: Express) {
           const tsResp = await fetch(tsUrl, { signal: AbortSignal.timeout(5000) });
           if (tsResp.ok) {
             const tsData = await tsResp.json() as any;
+            if (tsData.status && tsData.status !== "OK" && tsData.status !== "ZERO_RESULTS") {
+              console.error(`[address-search] Google TextSearch status ${tsData.status}: ${tsData.error_message || ""}`);
+            }
             for (const place of (tsData.results || []).slice(0, 5)) {
               const addr = place.formatted_address || "";
               const pcMatch = addr.match(/([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})/i);
@@ -965,6 +1026,9 @@ export function registerLandRegistryRoutes(app: Express) {
             const gResp = await fetch(gUrl, { signal: AbortSignal.timeout(5000) });
             if (gResp.ok) {
               const gData = await gResp.json() as any;
+              if (gData.status && gData.status !== "OK" && gData.status !== "ZERO_RESULTS") {
+                console.error(`[address-search] Google Geocode status ${gData.status}: ${gData.error_message || ""}`);
+              }
               for (const place of (gData.results || []).slice(0, 5)) {
                 const addr = place.formatted_address || "";
                 const pcMatch = addr.match(/([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})/i);
@@ -1206,8 +1270,12 @@ export function registerLandRegistryRoutes(app: Express) {
 
   // List previously-purchased titles so the Land Registry board can badge rows
   // the firm already owns a copy of.
-  app.get("/api/land-registry/purchases", requireAuth, async (_req: any, res) => {
+  app.get("/api/land-registry/purchases", requireAuth, async (req: any, res) => {
     try {
+      // The purchase ledger (paid documents + proprietor extracts) is
+      // staff-only; client logins get an empty list so the board renders
+      // without badges instead of 403-noise.
+      if (await resolveCompanyScope(req)) return res.json([]);
       const rows = await pool.query(
         `SELECT title_number AS "titleNumber", documents, register_url AS "registerUrl", plan_url AS "planUrl",
                 proprietor_data AS "proprietorData", created_at AS "purchasedAt"
@@ -1589,11 +1657,16 @@ Respond with ONLY a JSON object (no markdown, no backticks):
 
   app.get("/api/land-registry/searches", requireAuth, async (req: any, res) => {
     try {
-      // Land Registry is a shared team board — every user sees every search
-      // (regardless of who ran it) so the team can collaborate on the same
-      // research without duplicating work. Each row keeps its userId so the
-      // UI can show "searched by X" if useful.
+      // Land Registry is a shared team board for STAFF — every staff user
+      // sees every search (regardless of who ran it) so the team can
+      // collaborate on the same research without duplicating work. Client
+      // logins only see their OWN searches: the firm-wide board carries
+      // acquisition research (notes, statuses, ownership intel) that must
+      // not leak to a client account.
+      const scoped = await resolveCompanyScope(req);
+      const userId = req.session?.userId || req.tokenUserId;
       const rows = await db.select().from(landRegistrySearches)
+        .where(scoped ? eq(landRegistrySearches.userId, userId) : undefined)
         .orderBy(desc(landRegistrySearches.createdAt))
         .limit(200);
       res.json(rows);
@@ -1674,8 +1747,14 @@ Respond with ONLY a JSON object (no markdown, no backticks):
   app.get("/api/land-registry/property-searches/:crmPropertyId", requireAuth, async (req: any, res) => {
     try {
       const { crmPropertyId } = req.params;
+      // Same client rule as GET /searches: staff see the team's searches on
+      // a property, client logins only their own.
+      const scoped = await resolveCompanyScope(req);
+      const callerId = req.session?.userId || req.tokenUserId;
       const rows = await db.select().from(landRegistrySearches)
-        .where(eq(landRegistrySearches.crmPropertyId, crmPropertyId))
+        .where(scoped
+          ? sql`${landRegistrySearches.crmPropertyId} = ${crmPropertyId} AND ${landRegistrySearches.userId} = ${callerId}`
+          : eq(landRegistrySearches.crmPropertyId, crmPropertyId))
         .orderBy(desc(landRegistrySearches.createdAt));
       res.json(rows);
     } catch (e: any) {
@@ -1746,18 +1825,26 @@ Respond with ONLY a JSON object (no markdown, no backticks):
   // team board can show "searched by X". Shared across all users.
   app.get("/api/land-registry/searches/recent", requireAuth, async (req: any, res) => {
     try {
+      // Same client rule as GET /searches: staff see the shared team board,
+      // client logins only their own searches (staff names/notes/research
+      // must not leak). camelCase aliases match what the Recent Searches
+      // card reads (s.createdAt, s.freeholdsCount…) — the raw snake_case
+      // rows rendered "Invalid Date" and hid the count badges.
+      const scoped = await resolveCompanyScope(req);
+      const callerId = req.session?.userId || req.tokenUserId;
       const rows = await db.execute(sql`
         SELECT
           lrs.id,
           lrs.address,
           lrs.postcode,
-          lrs.freeholds_count,
-          lrs.leaseholds_count,
+          lrs.freeholds_count AS "freeholdsCount",
+          lrs.leaseholds_count AS "leaseholdsCount",
           lrs.status,
           lrs.notes,
-          lrs.crm_property_id,
-          lrs.created_at,
-          lrs.user_id,
+          lrs.ownership,
+          lrs.crm_property_id AS "crmPropertyId",
+          lrs.created_at AS "createdAt",
+          lrs.user_id AS "userId",
           u.name AS searched_by_name,
           u.email AS searched_by_email,
           (
@@ -1778,6 +1865,7 @@ Respond with ONLY a JSON object (no markdown, no backticks):
           ) AS linked_property
         FROM land_registry_searches lrs
         LEFT JOIN users u ON u.id = lrs.user_id
+        WHERE ${scoped ? sql`lrs.user_id = ${callerId}` : sql`TRUE`}
         ORDER BY lrs.created_at DESC
         LIMIT 100
       `);

@@ -6517,16 +6517,17 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
         </div>
 
         {/* Map / Satellite base-layer pill toggle — top-right of the map */}
-        <div className="absolute top-[60px] sm:top-3 right-3 z-[1000] flex items-center gap-2" data-testid="base-layer-toggle">
+        <div className="absolute top-[72px] sm:top-3 left-3 right-3 sm:left-auto z-[1000] flex items-center justify-end gap-2" data-testid="base-layer-toggle">
           <button
             onClick={exportGoadPlanPdf}
             disabled={exportingPlan}
-            className="bg-black text-white rounded-full shadow-lg px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 hover:bg-gray-800 disabled:opacity-60 disabled:cursor-wait"
+            className="bg-black text-white rounded-full shadow-lg px-2.5 sm:px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 hover:bg-gray-800 disabled:opacity-60 disabled:cursor-wait shrink-0"
             data-testid="export-goad-plan"
             title="Download the current map view as a BGP-branded PDF plan"
+            aria-label="Download plan"
           >
             {exportingPlan ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
-            {exportingPlan ? "Exporting..." : "Download Plan"}
+            <span className="hidden sm:inline">{exportingPlan ? "Exporting..." : "Download Plan"}</span>
           </button>
           <div className="bg-white rounded-full shadow-lg border border-border/60 flex p-0.5">
             <button
