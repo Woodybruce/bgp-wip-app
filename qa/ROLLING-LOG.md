@@ -39,6 +39,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - 503 GET /api/brand/:id/ai-take/* — keyless AI-take panels on company
   profiles fire these on load; UI shows "AI take unavailable" (r269)
 - ERR_CONNECTION_RESET on google.com/s2/favicons — no external network
+- 503 GET /api/os/sites?bbox=… on /property-intelligence — keyless OS
+  (Ordnance Survey) locally; map panel degrades, no user-facing error (r391)
+- 503 GET /api/property/:id/brand-gaps/international + /commentary — same
+  keyless-AI family as the listed brand-gaps/live-intel 503 (r391)
 - 404 GET /api/client/sharepoint/root — fixture has no SharePoint folder
   linked; handler returns a clean "ask your BGP team" 404, files panel
   degrades (r375)
@@ -76,22 +80,53 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r391 · 2026-08-27 · ROUND IN PROGRESS (provisional heartbeat)
+### r391 · 2026-08-27 · FULL (rotation #2 Landsec client desktop 1440px)
 - JOGQK already merged (ancestor check clean, no new commits). Fresh
   container: pg_hba trust fix + bgp superuser role + fixture restore needed.
-- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 391: exit 0, 5 issues — 4 listed
-  noise (2×400 rocketreach + tracker-invalid probe; 2×503 keyless AI), 1
-  flow-failure staff-deal-verdict-flow "overdue deal missing from pending".
-- Triage: verdict failure is a HARNESS bug, not app. r390's new
+- Smoke GREEN 42/0 (FRESH_BUILD=1) ×2 (before and after fixes). Two-bot 391:
+  exit 0, 5 issues — 4 listed noise (2×400 rocketreach + tracker-invalid
+  probe; 2×503 keyless AI), 1 flow-failure staff-deal-verdict-flow "overdue
+  deal missing from pending". 0 raw 500/502/504 in dev-server log.
+- Harness bug fixed (the flow-failure — NOT an app bug): r390's new
   staff-hdog-commission-zero scenario logs in as hdog via page fetch with
   default credentials → response Set-Cookie swaps the page SESSION to hdog;
   server auth prefers session over Bearer everywhere (auth.ts
   `req.session.userId || req.tokenUserId`), so the later verdict scenario's
   credentials:'include' pending fetch ran AS hdog → victoria's probe deal
-  correctly absent. Manual API repro as pure-victoria lists the deal fine
-  (count 1, daysOverdue 5). Fix (this round): hdog login fetch
-  credentials:'omit' so the session cookie is never stored.
-- Plan: harness fix + verify, then FULL journey rotation #2 client desktop.
+  correctly absent. First full round with the hdog scenario in-flow, hence
+  new. Fix: hdog login fetch credentials:'omit' (Set-Cookie never stored).
+  Verified in isolation: session stays victoria after hdog login, verdict
+  flow green end-to-end. (Same footgun admin-password-reset already works
+  around by re-logging-in; omit is the cleaner pattern for future scenarios.)
+- Journey: Mark Warne desktop 1440px — "start of week: any tenant news, my
+  tasks, a brand profile incl. compliance, who to chase, my property":
+  dashboard (KPIs, tracker widget, quick-add task) → /news (23 Starbucks/
+  tenant headlines, clean) → /tasks → Brand Intelligence overview (Who's
+  Hot) → Starbucks profile (KYC panel visible with checks parked + NO staff
+  action buttons = 2026-08-01 decision holds; Key Contacts shows Tom
+  Barista + email affordance) → /contacts → Deals → Properties tab (2
+  properties, map + table; property NAME is the link, row itself inert) →
+  Bluewater property page (news feed, risk register, Linked Contacts
+  answers "who to chase", tenancy sections). 0 pageerrors, no h-overflow,
+  only noise-list 4xx/5xx.
+- App bug fixed (1): client property page's Compliance & KYC card showed
+  "+ Set billing entity" (and the remove-X once set) to CLIENT viewers —
+  /api/crm/properties is not in the client write allowlist so the PUT can
+  only 403 (dead affordance; API-verified 403). property-detail.tsx
+  PropertyComplianceBoardWrapper now hides the billing-entity row for
+  client viewers (fail-closed while /api/auth/me loads); staff unchanged.
+  Verified visually both roles; tsc clean, rebuilt, smoke re-green.
+- Harness growth: client-property-put-guard in two-bot (client PUT own
+  property billingEntityId → 403; negative-probe listed). In-flow
+  verification run 392 kicked off (result in next entry/commit if this one
+  pushes first).
+- Deferred: none. Suggestions: UX-NOTES #101 (client property quick-add
+  task placeholder says "e.g. Pizza Express HOTs to legal" — staff jargon).
+- New noise listed: /api/os/sites 503 on /property-intelligence (keyless
+  OS); brand-gaps/international + /commentary 503s (keyless-AI family).
+- New flakes: none. Next journey: r391 was FULL → r392 LIGHT; then r393
+  FULL rotation #3 client mobile 390px. Still-open pointer: SharePoint
+  toolbar/New folder/delete via the r388 status/files mock pattern.
 
 ### r390 · 2026-08-26 · LIGHT (r389 was FULL) + targeted check on new JOGQK surface
 - Merged JOGQK c6c7f5a (hdog commission always-zero) into staging per parent

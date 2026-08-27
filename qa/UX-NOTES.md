@@ -16,6 +16,13 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+101. 2026-08-27 · Landsec client / desktop 1440px (QA r391) · "add a note-to-
+    self on my Bluewater property page" · The This Week's Focus quick-add
+    placeholder reads "Add a task — e.g. Pizza Express HOTs to legal" — BGP
+    staff jargon (HOTs, a rival-agent-style example) shown to a landlord
+    client · Give client viewers a client-flavoured example ("e.g. Chase
+    Q3 leasing update") or a neutral "Add a task…".
+
 100. 2026-08-26 · BGP staff / desktop 1440px (QA r389) · "log a viewing on
     a Bluewater unit from the Letting Tracker" · The per-unit Viewings /
     Offers count buttons live in the activity column, which sits off-screen
