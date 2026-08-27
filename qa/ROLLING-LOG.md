@@ -80,14 +80,42 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r400 · 2026-08-27 ~20:45 UTC · ROUND IN PROGRESS (provisional)
-- LIGHT (r399 was FULL). Merged JOGQK ff37b59 (Historical billings on
-  Finance — Sage invoiced WIP FY2019-26, /api/historical-wip, equity/admin
-  only) into staging (4c20bc4, clean). tsc clean. Smoke GREEN 42/0
-  (FRESH_BUILD=1).
-- Remaining this round: two-bot 400, targeted checks on Historical billings
-  (woody equity renders, victoria 403 doesn't break Finance page, lens/FY
-  switching, totals FY26 £5,191,872 / FY25 £4,919,519).
+### r400 · 2026-08-27 · LIGHT (r399 had the journey) — JOGQK historical-billings merge + targeted checks
+- Merged JOGQK ff37b59 (Historical billings on Finance — static Sage
+  invoiced WIP FY2019-26 via /api/historical-wip, equity/admin only) into
+  staging (4c20bc4, clean). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1)
+  ×2 (post-merge and post-fix rebuild).
+- Two-bot 400 (via run-round.sh): exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400 rocketreach/probe, 2×503 keyless AI).
+  0 raw 500/502/504 in the round's server log (status tally clean).
+- Targeted checks on Historical billings (browser as woody @1440 + API):
+  dataset sound (5607 rows, 0 malformed, FY26 £5,191,872 / FY25 £4,919,519
+  match Woody's sheet); section renders under Cashflow forecast, KPI tiles
+  + FY bar chart + top-25 table per house style; lens pills (Team/Client/
+  Agent/Company) and FY pills switch correctly; Client search "land sec" →
+  Land Sec £982,221 vs £646,180 +52%; asset copied to dist by build.
+  victoria@ (staff non-equity): API 403, /finance redirects to her
+  dashboard, section never mounts, 0 historical-wip fetches, no console
+  storm. mark@ (client): gateway 403 "Not available for client accounts".
+- BUG FIXED (1, new surface): search text persisted invisibly across lens
+  switches — type "land sec" on Client, click Agent → "Nothing billed under
+  this lens… matching that search" with NO search box on screen (Team/Agent
+  don't render one); table looked broken/empty. historical-billings.tsx
+  lens pills now reset search. Verified visually: Agent shows 25 rows after
+  a Client search; Company search box returns empty. tsc clean, rebuilt,
+  smoke re-green.
+- Harness growth: staff-historical-wip-gate in woodyRound (equity 200 +
+  fys 2019-26 + known FY totals + 4 dims non-empty; victoria token-login
+  403). API sequence dry-run verified via curl; first full two-bot
+  validation lands next round.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+- Suggestions added: none. New flakes: none. Setup notes: fresh container
+  needed pg_hba trust fix (r205); Playwright in this container needs
+  --no-proxy-server or in-page fetch fails; vite dev /login reloads once
+  ~3s after load — settle before page.evaluate login.
+- Next: r400 was LIGHT → r401 FULL rotation #3 Landsec client mobile 390px.
+  Validate staff-historical-wip-gate in the r401 two-bot.
 
 ### r399 · 2026-08-27 · FULL (rotation #2 Landsec client desktop 1440px)
 - JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke

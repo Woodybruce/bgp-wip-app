@@ -66,7 +66,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-lrbg-status-client-order-guard']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -5432,6 +5432,33 @@ async function woodyRound(page, cross) {
       return { ok: true };
     }, AGENT_USER);
     if (!r.ok) throw new Error(`cashflow board v3 check failed (${r.why})`);
+  });
+
+  // Historical billings (r400): static Sage-era invoiced WIP behind the
+  // equity/admin gate. Equity gets the pre-aggregated payload (FY2019-26,
+  // known totals); non-equity staff 403.
+  await step(page, p, 'staff-historical-wip-gate', async () => {
+    const r = await page.evaluate(async (agentUser) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/historical-wip', { credentials: 'include', headers: auth });
+      if (res.status !== 200) return { ok: false, why: `equity GET expected 200, got ${res.status}` };
+      const data = await res.json();
+      if (!Array.isArray(data.fys) || data.fys[data.fys.length - 1] !== 2026 || data.fys[0] !== 2019)
+        return { ok: false, why: `fys wrong (${JSON.stringify(data.fys)})` };
+      if (Math.round(data.fyTotals[2026]) !== 5191872 || Math.round(data.fyTotals[2025]) !== 4919519)
+        return { ok: false, why: `FY totals drifted (26=${data.fyTotals[2026]}, 25=${data.fyTotals[2025]})` };
+      for (const k of ['team', 'agent', 'client', 'company'])
+        if (!Array.isArray(data.dims?.[k]) || !data.dims[k].length) return { ok: false, why: `dim ${k} empty` };
+      const vlogin = await fetch('/api/auth/login', { method: 'POST', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: agentUser, password: 'B@nd0077!' }) });
+      if (!vlogin.ok) return { ok: false, why: `victoria token login ${vlogin.status}` };
+      const vtoken = (await vlogin.json()).token;
+      const vres = await fetch('/api/historical-wip', { credentials: 'omit', headers: { Authorization: 'Bearer ' + vtoken } });
+      if (vres.status !== 403) return { ok: false, why: `non-equity GET expected 403, got ${vres.status}` };
+      return { ok: true };
+    }, AGENT_USER);
+    if (!r.ok) throw new Error(`historical WIP gate check failed (${r.why})`);
   });
 
   // Business Gateway status must answer for staff (r396: require-in-ESM made
