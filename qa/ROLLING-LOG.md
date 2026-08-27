@@ -76,6 +76,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r391 · 2026-08-27 · ROUND IN PROGRESS (provisional heartbeat)
+- JOGQK already merged (ancestor check clean, no new commits). Fresh
+  container: pg_hba trust fix + bgp superuser role + fixture restore needed.
+- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 391: exit 0, 5 issues — 4 listed
+  noise (2×400 rocketreach + tracker-invalid probe; 2×503 keyless AI), 1
+  flow-failure staff-deal-verdict-flow "overdue deal missing from pending".
+- Triage: verdict failure is a HARNESS bug, not app. r390's new
+  staff-hdog-commission-zero scenario logs in as hdog via page fetch with
+  default credentials → response Set-Cookie swaps the page SESSION to hdog;
+  server auth prefers session over Bearer everywhere (auth.ts
+  `req.session.userId || req.tokenUserId`), so the later verdict scenario's
+  credentials:'include' pending fetch ran AS hdog → victoria's probe deal
+  correctly absent. Manual API repro as pure-victoria lists the deal fine
+  (count 1, daysOverdue 5). Fix (this round): hdog login fetch
+  credentials:'omit' so the session cookie is never stored.
+- Plan: harness fix + verify, then FULL journey rotation #2 client desktop.
+
 ### r390 · 2026-08-26 · LIGHT (r389 was FULL) + targeted check on new JOGQK surface
 - Merged JOGQK c6c7f5a (hdog commission always-zero) into staging per parent
   note. Merge clean (hr-routes.ts only).
