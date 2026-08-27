@@ -80,6 +80,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r393 · 2026-08-27 · ROUND IN PROGRESS (heartbeat)
+- Merged JOGQK (a38f270 hdog non-admin) into staging first per parent note;
+  merge clean (server/index.ts only). hdog quick check PASSED: fixture boot
+  creates hdog non-admin, login works; one-off demote verified live (set
+  is_admin=true, rebooted dev server, log line fired, row back to false).
+- Smoke GREEN 42/0 (FRESH_BUILD=1). 0 raw 500/502/504 in smoke app log.
+- Two-bot + FULL journey (rotation #3 client mobile 390px) to follow.
+
 ### r392 · 2026-08-27 · LIGHT (r391 was FULL) + both still-open pointers closed
 - Fresh container: pg_hba trust fix + bgp role + fixture restore needed
   (r205 pattern). JOGQK already merged (ancestor check clean at 5f5ad5f).
