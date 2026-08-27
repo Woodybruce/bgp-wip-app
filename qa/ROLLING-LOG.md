@@ -80,6 +80,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r399 · 2026-08-27 · ROUND IN PROGRESS (provisional)
+- JOGQK: no new commits ahead of staging — merge no-op. tsc clean.
+- Smoke GREEN 42/0 (FRESH_BUILD=1). Triage: nothing beyond listed noise.
+- Plan: FULL rotation #2 Landsec client desktop journey (tenancy/expiries/
+  vacancy angle — vary from r383 tracker/add-brand and r391 dashboard/news);
+  two-bot 399 to follow.
+
 ### r398 · 2026-08-27 · LIGHT (r397 had the journey)
 - Merged JOGQK ccd1cce (consultant share off the top — BGP House 15% applies
   to the remainder; fee-split pickers sorted alphabetically) into staging.
