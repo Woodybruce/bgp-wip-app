@@ -123,7 +123,7 @@ import { PropertyCombobox } from "@/components/property-combobox";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
 import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacked-cell";
-import { FeeAllocationEditor, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
+import { FeeAllocationEditor, withExternalAgents, EXTERNAL_FEE_AGENTS, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
 
@@ -1512,7 +1512,7 @@ function ConsultantCreateBody({
             allocType={feeAllocType}
             onAllocTypeChange={setFeeAllocType}
             dealFee={parseFloat(form.fee) || null}
-            bgpAgents={users.map(u => ({ id: String(u.id), name: u.name }))}
+            bgpAgents={withExternalAgents(users.map(u => ({ id: String(u.id), name: u.name })))}
           />
         </div>
       </div>
@@ -2106,7 +2106,7 @@ function SimplifiedCreateBody({
               allocType={feeAllocType}
               onAllocTypeChange={setFeeAllocType}
               dealFee={parseFloat(form.fee) || null}
-              bgpAgents={users.map(u => ({ id: String(u.id), name: u.name }))}
+              bgpAgents={withExternalAgents(users.map(u => ({ id: String(u.id), name: u.name })))}
             />
           </div>
         </div>
@@ -3322,7 +3322,7 @@ export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorM
             allocType={allocType}
             onAllocTypeChange={setAllocType}
             dealFee={totalFee}
-            bgpAgents={users}
+            bgpAgents={withExternalAgents(users)}
             colorMap={colorMap}
           />
         ) : isLoading ? (
@@ -3649,7 +3649,7 @@ function HotsChecklistDialog({
   });
 
   const canSubmit = (form.xeroContactId || form.xeroContactName) && (form.fee ?? 0) > 0;
-  const bgpAgents = users.map(u => u.name);
+  const bgpAgents = [...users.map(u => u.name), ...EXTERNAL_FEE_AGENTS];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

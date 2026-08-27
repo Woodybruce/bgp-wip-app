@@ -42,6 +42,19 @@ interface Props {
 // if the firm rate ever changes.
 export const BGP_HOUSE_PCT = 15;
 
+// Non-staff fee recipients selectable in every split picker (Woody,
+// 2026-08-27: "add Consultant as a BGP agent for fee splits"). Saved as
+// agent_name only — no user id — so their slice shows on the deal and the
+// WIP agent summary but never enters anyone's staff commission.
+export const EXTERNAL_FEE_AGENTS = ["Consultant"];
+export function withExternalAgents(agents: { id: string; name: string }[]): { id: string; name: string }[] {
+  return [
+    ...agents,
+    ...EXTERNAL_FEE_AGENTS.filter((n) => !agents.some((a) => a.name === n))
+      .map((n) => ({ id: `external-${n.toLowerCase()}`, name: n })),
+  ];
+}
+
 // Controlled fee-split editor — same shape the deal-detail FeeAllocationCard
 // has used for months, but with no internal mutation / query. Drives off
 // caller-owned state so the create-deal form can collect allocations
