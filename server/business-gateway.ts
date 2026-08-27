@@ -293,28 +293,38 @@ export async function persistOfficialCopy(opts: {
   return { registerUrl };
 }
 
-// Public-key SHA-256 fingerprints for the stored private key and installed
-// cert — fingerprints ONLY, never key material. This is how a "key values
-// mismatch" (cert minted from a different CSR than the key we hold) is
-// diagnosed from logs without touching the key.
-export function bgKeyFingerprints(): { keyPub?: string; certPub?: string; error?: string } {
-  const out: { keyPub?: string; certPub?: string; error?: string } = {};
+// Public-key SHA-256 fingerprints for BOTH stored pairs (test vars and
+// LIVE vars) — fingerprints ONLY, never key material. This is how a "key
+// values mismatch" (cert minted from a different CSR than the key we hold)
+// is diagnosed from logs without touching either key.
+type PairAudit = { key?: string; cert?: string; certCn?: string; certExpiry?: string; match?: boolean; error?: string };
+function auditPair(keyB64?: string, certB64?: string): PairAudit {
+  const out: PairAudit = {};
+  const { createPrivateKey, createPublicKey, createHash, X509Certificate } = require("crypto") as typeof import("crypto");
   try {
-    const { createPrivateKey, createPublicKey, createHash, X509Certificate } = require("crypto") as typeof import("crypto");
-    const keyPem = decode(process.env.LR_BG_KEY_B64);
+    const keyPem = decode(keyB64);
     if (keyPem) {
       const pub = createPublicKey(createPrivateKey(keyPem));
-      out.keyPub = createHash("sha256").update(pub.export({ type: "spki", format: "der" })).digest("hex");
+      out.key = createHash("sha256").update(pub.export({ type: "spki", format: "der" })).digest("hex").slice(0, 16);
     }
-    const certPem = decode(process.env.LR_BG_CERT_B64);
+    const certPem = decode(certB64);
     if (certPem) {
       const cert = new X509Certificate(certPem);
-      out.certPub = createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("hex");
+      out.cert = createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("hex").slice(0, 16);
+      out.certCn = (cert.subject.match(/CN=([^\n]+)/) || [])[1];
+      out.certExpiry = cert.validTo;
     }
+    if (out.key && out.cert) out.match = out.key === out.cert;
   } catch (e: any) {
     out.error = e?.message;
   }
   return out;
+}
+export function bgKeyFingerprints(): { test: PairAudit; live: PairAudit } {
+  return {
+    test: auditPair(process.env.LR_BG_KEY_B64, process.env.LR_BG_CERT_B64),
+    live: auditPair(process.env.LR_BG_LIVE_KEY_B64, process.env.LR_BG_LIVE_CERT_B64),
+  };
 }
 
 // Generate a fresh CSR from the STORED private key (which never leaves the

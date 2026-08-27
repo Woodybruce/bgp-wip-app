@@ -4141,12 +4141,10 @@ app.use("/api/branding/assets", express.static(
           const { bgConnectivity, bgKeyFingerprints } = await import("./business-gateway");
           const r = await bgConnectivity();
           console.log(`[lr-bg] env=${r.env} endpoint=${r.endpoint} ok=${r.ok}${r.status != null ? ` status=${r.status}` : ""}${r.error ? ` error=${r.error}` : ""}`);
-          if (!r.ok && /mismatch/i.test(r.error || "")) {
-            // Fingerprints only — proves WHICH side is wrong without ever
-            // logging key material.
-            const fp = bgKeyFingerprints();
-            console.log(`[lr-bg] pubkey fingerprints — storedKey=${fp.keyPub || "?"} installedCert=${fp.certPub || "?"}${fp.error ? ` err=${fp.error}` : ""}`);
-          }
+          // Fingerprints only — proves which key pairs with which cert
+          // without ever logging key material.
+          const fp = bgKeyFingerprints();
+          console.log(`[lr-bg] pairs — test: ${JSON.stringify(fp.test)} live: ${JSON.stringify(fp.live)}`);
         } catch (e: any) {
           console.error("[lr-bg] connectivity diag failed:", e?.message);
         }
