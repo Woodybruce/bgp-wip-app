@@ -80,6 +80,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r392 · 2026-08-27 · LIGHT — ROUND IN PROGRESS (provisional)
+- Fresh container: pg_hba trust fix + bgp role + fixture restore needed
+  (r205 pattern). JOGQK already merged (ancestor check clean at 5f5ad5f).
+- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 393 running; triage to follow.
+- Plan: light round (r391 was FULL) — triage + still-open pointer
+  (SharePoint toolbar/New folder/delete via r388 mock pattern) if time.
+
 ### r391 · 2026-08-27 · FULL (rotation #2 Landsec client desktop 1440px)
 - JOGQK already merged (ancestor check clean, no new commits). Fresh
   container: pg_hba trust fix + bgp superuser role + fixture restore needed.
