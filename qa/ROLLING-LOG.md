@@ -80,6 +80,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r401 · 2026-08-27 · ROUND IN PROGRESS (provisional heartbeat)
+- JOGQK: no new commits (ff37b59 already in staging via 4c20bc4) — merge
+  no-op. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 401 (via
+  run-round.sh): exit 0, ALL scenarios ok — staff-historical-wip-gate
+  first full-round validation PASSED (r400 goal met). 4 issues = standing
+  noise signature (2×400 rocketreach/probe, 2×503 keyless AI). 0 raw
+  500/502/504 in dev-server log.
+- Triage: nothing to triage beyond listed noise.
+- Next up this round: FULL journey rotation #3 Landsec client mobile 390px.
+
 ### r400 · 2026-08-27 · LIGHT (r399 had the journey) — JOGQK historical-billings merge + targeted checks
 - Merged JOGQK ff37b59 (Historical billings on Finance — static Sage
   invoiced WIP FY2019-26 via /api/historical-wip, equity/admin only) into
