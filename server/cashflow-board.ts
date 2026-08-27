@@ -8,10 +8,55 @@
 // (server/cashflow-seed.ts); after that the board's own data is the truth.
 // Gate matches the rest of Finance: equity directors + admins.
 
-import type { Express, Request, Response } from "express";
+import type { Express, NextFunction, Request, Response } from "express";
+import { timingSafeEqual } from "crypto";
 import { pool } from "./db";
 import { requireEquityOrAdmin } from "./auth";
 import { CASHFLOW_SEED } from "./cashflow-seed";
+import { withSystemXero } from "./xero-system-session";
+import { buildFinancials } from "./xero-financials";
+
+// Second lock on top of the equity gate — the source workbook was itself
+// password-protected, so the board keeps that behaviour (Woody, 2026-08-27:
+// "Password"). Default matches the workbook; override with the
+// CASHFLOW_PASSWORD env var on Railway.
+function cashflowPassword(): string {
+  return process.env.CASHFLOW_PASSWORD || "BGPPAY";
+}
+function keyMatches(supplied: string): boolean {
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(cashflowPassword());
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+function requireCashflowKey(req: Request, res: Response, next: NextFunction) {
+  const key = String(req.headers["x-cashflow-key"] || "");
+  if (!keyMatches(key)) return res.status(401).json({ error: "password_required" });
+  next();
+}
+
+// Light Xero snapshot for the cross-reference strip — cash at bank and the
+// FY's monthly income/expenses, from the same builder as /api/xero/financials.
+let xeroSnapCache: { at: number; data: any | null } | null = null;
+async function xeroSnapshot(): Promise<any | null> {
+  if (xeroSnapCache && Date.now() - xeroSnapCache.at < 15 * 60 * 1000) return xeroSnapCache.data;
+  let data: any | null = null;
+  try {
+    const fin = await withSystemXero((session) => buildFinancials(session));
+    if (fin && !fin.notConnected) {
+      data = {
+        asAt: fin.asAt,
+        orgName: fin.orgName,
+        cashTotal: fin.cashTotal ?? null,
+        bankAccounts: fin.bankAccounts || [],
+        monthly: fin.monthly || [],
+      };
+    }
+  } catch (e: any) {
+    console.warn("[cashflow] Xero snapshot failed:", e?.message);
+  }
+  xeroSnapCache = { at: Date.now(), data };
+  return data;
+}
 
 let ensured: Promise<void> | null = null;
 function ensureTables(): Promise<void> {
@@ -64,7 +109,13 @@ function ensureTables(): Promise<void> {
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 export function registerCashflowRoutes(app: Express): void {
-  app.get("/api/cashflow", requireEquityOrAdmin, async (_req: Request, res: Response) => {
+  app.post("/api/cashflow/unlock", requireEquityOrAdmin, async (req: Request, res: Response) => {
+    const supplied = String(req.body?.password || "");
+    if (!keyMatches(supplied)) return res.status(401).json({ error: "wrong_password" });
+    res.json({ ok: true });
+  });
+
+  app.get("/api/cashflow", requireEquityOrAdmin, requireCashflowKey, async (_req: Request, res: Response) => {
     try {
       await ensureTables();
       const lines = (await pool.query(
@@ -75,13 +126,14 @@ export function registerCashflowRoutes(app: Express): void {
       )).rows;
       const monthSet = new Set<string>(CASHFLOW_SEED.months);
       for (const c of cells) monthSet.add(c.month);
-      res.json({ lines, cells, months: [...monthSet].sort() });
+      const xero = await xeroSnapshot();
+      res.json({ lines, cells, months: [...monthSet].sort(), xero });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }
   });
 
-  app.patch("/api/cashflow/cell", requireEquityOrAdmin, async (req: Request, res: Response) => {
+  app.patch("/api/cashflow/cell", requireEquityOrAdmin, requireCashflowKey, async (req: Request, res: Response) => {
     try {
       await ensureTables();
       const { lineId, month, basis, amount } = req.body || {};
@@ -105,7 +157,7 @@ export function registerCashflowRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/cashflow/line", requireEquityOrAdmin, async (req: Request, res: Response) => {
+  app.post("/api/cashflow/line", requireEquityOrAdmin, requireCashflowKey, async (req: Request, res: Response) => {
     try {
       await ensureTables();
       const { label, section } = req.body || {};
@@ -126,7 +178,7 @@ export function registerCashflowRoutes(app: Express): void {
     }
   });
 
-  app.delete("/api/cashflow/line/:id", requireEquityOrAdmin, async (req: Request, res: Response) => {
+  app.delete("/api/cashflow/line/:id", requireEquityOrAdmin, requireCashflowKey, async (req: Request, res: Response) => {
     try {
       await ensureTables();
       await pool.query(`UPDATE cashflow_lines SET is_active = false WHERE id = $1 AND key NOT IN ('OPEN','RESERVE')`, [req.params.id]);

@@ -1,9 +1,8 @@
 // Cashflow board (Woody, 2026-08-27) — monthly Budget vs Actual cash flow,
-// seeded from the 2026/27 forecast workbook and edited in place. Only the
-// receipt/payment lines, the first opening balance and the reserve-account
-// closing are stored; totals, the opening-balance chain (per basis) and
-// closing balances are computed here. Equity/admin only, same gate as
-// Finance (/api/cashflow is requireEquityOrAdmin).
+// seeded from the 2026/27 forecast workbook and edited in place. Sits
+// behind a password on top of the equity gate (like the source workbook);
+// cross-references Xero (cash at bank + monthly income/expenses); phones
+// get a one-month-at-a-time layout instead of the 21-column grid.
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -12,28 +11,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollableTable } from "@/components/scrollable-table";
-import { apiRequest, getQueryFn, queryClient } from "@/lib/queryClient";
+import { queryClient, getAuthHeaders } from "@/lib/queryClient";
+import {
+  type CashflowData, type CashflowModel, buildCashflowModel, cashflowFetch, CashflowLocked,
+  getCashflowKey, setCashflowKey, CASHFLOW_MONTH_LABEL as ML, fmtCashflow as fmt, xeroLabelToMonth,
+} from "@/lib/cashflow-model";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Banknote, Plus, X } from "lucide-react";
+import { ArrowLeft, Banknote, ChevronLeft, ChevronRight, Lock, Plus, X } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ReferenceLine,
 } from "recharts";
-
-interface CashflowLine { id: string; key: string; label: string; section: "receipts" | "payments" | "balance"; sort: number }
-interface CashflowCell { line_id: string; month: string; basis: "budget" | "actual"; amount: number }
-interface CashflowData { lines: CashflowLine[]; cells: CashflowCell[]; months: string[] }
-
-const MONTH_LABEL = (m: string) => {
-  const [y, mm] = m.split("-");
-  return `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][parseInt(mm, 10) - 1]} ${y.slice(2)}`;
-};
-
-function fmt(n: number | undefined | null): string {
-  if (n === undefined || n === null) return "";
-  if (n === 0) return "-";
-  const abs = Math.abs(n).toLocaleString("en-GB", { maximumFractionDigits: 0 });
-  return n < 0 ? `(${abs})` : abs;
-}
 
 export default function CashflowPage() {
   const { toast } = useToast();
@@ -41,71 +28,80 @@ export default function CashflowPage() {
   const [newLabel, setNewLabel] = useState("");
   const [editCell, setEditCell] = useState<{ lineId: string; month: string; basis: "budget" | "actual" } | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [pw, setPw] = useState("");
+  const [pwError, setPwError] = useState(false);
+  const [mobileMonthIdx, setMobileMonthIdx] = useState<number | null>(null);
 
-  const { data, isLoading } = useQuery<CashflowData>({
+  const { data, isLoading, error, refetch } = useQuery<CashflowData>({
     queryKey: ["/api/cashflow"],
-    queryFn: getQueryFn({ on401: "throw" }),
+    queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
+    retry: (count, err) => !(err instanceof CashflowLocked) && count < 2,
+  });
+  const locked = error instanceof CashflowLocked;
+
+  const unlock = useMutation({
+    mutationFn: async (password: string) => {
+      const res = await fetch("/api/cashflow/unlock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ password }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("wrong");
+      return password;
+    },
+    onSuccess: (password) => { setCashflowKey(password); setPwError(false); refetch(); },
+    onError: () => setPwError(true),
   });
 
   const saveCell = useMutation({
-    mutationFn: async (p: { lineId: string; month: string; basis: string; amount: number | null }) => {
-      const res = await apiRequest("PATCH", "/api/cashflow/cell", p);
-      return res.json();
-    },
+    mutationFn: async (p: { lineId: string; month: string; basis: string; amount: number | null }) =>
+      (await cashflowFetch("PATCH", "/api/cashflow/cell", p)).json(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/cashflow"] }),
     onError: (e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }),
   });
   const addLine = useMutation({
-    mutationFn: async (p: { label: string; section: string }) => {
-      const res = await apiRequest("POST", "/api/cashflow/line", p);
-      return res.json();
-    },
+    mutationFn: async (p: { label: string; section: string }) =>
+      (await cashflowFetch("POST", "/api/cashflow/line", p)).json(),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/cashflow"] }); setAddingTo(null); setNewLabel(""); },
     onError: (e: any) => toast({ title: "Couldn't add line", description: e?.message, variant: "destructive" }),
   });
   const removeLine = useMutation({
-    mutationFn: async (id: string) => { await apiRequest("DELETE", `/api/cashflow/line/${id}`); },
+    mutationFn: async (id: string) => { await cashflowFetch("DELETE", `/api/cashflow/line/${id}`); },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/cashflow"] }),
   });
 
-  const model = useMemo(() => {
-    if (!data) return null;
-    const { lines, cells, months } = data;
-    const cellMap = new Map<string, number>();
-    for (const c of cells) cellMap.set(`${c.line_id}|${c.month}|${c.basis}`, Number(c.amount));
-    const get = (lineId: string, month: string, basis: string) => cellMap.get(`${lineId}|${month}|${basis}`);
-    const receipts = lines.filter(l => l.section === "receipts");
-    const payments = lines.filter(l => l.section === "payments");
-    const openLine = lines.find(l => l.key === "OPEN") || null;
-    const reserveLine = lines.find(l => l.key === "RESERVE") || null;
-
-    const totals: Record<string, Record<string, { rec: number; pay: number; open: number; close: number; reserve: number | undefined; all: number }>> = {};
-    for (const basis of ["budget", "actual"] as const) {
-      // Opening chain per basis: the OPEN line's earliest stored value
-      // starts the chain; each month's closing feeds the next opening.
-      let opening = openLine ? months.map(m => get(openLine.id, m, basis)).find(v => v !== undefined) ?? 0 : 0;
-      const firstOpenMonth = openLine ? months.find(m => get(openLine.id, m, basis) !== undefined) : undefined;
-      for (const m of months) {
-        if (openLine && firstOpenMonth && m === firstOpenMonth) opening = get(openLine.id, m, basis)!;
-        const rec = receipts.reduce((s, l) => s + (get(l.id, m, basis) || 0), 0);
-        const pay = payments.reduce((s, l) => s + (get(l.id, m, basis) || 0), 0);
-        const close = opening + rec + pay;
-        const reserve = reserveLine ? get(reserveLine.id, m, basis) : undefined;
-        (totals[m] ||= {} as any)[basis] = { rec, pay, open: opening, close, reserve, all: close + (reserve || 0) };
-        opening = close;
-      }
-    }
-    return { receipts, payments, openLine, reserveLine, months, get, totals };
-  }, [data]);
+  const model = useMemo(() => (data ? buildCashflowModel(data) : null), [data]);
 
   const chartData = useMemo(() => {
     if (!model) return [];
     return model.months.map(m => {
-      const row: Record<string, any> = { month: MONTH_LABEL(m), Budget: Math.round(model.totals[m]?.budget?.close ?? 0) };
-      if (hasAnyActual(model, m)) row.Actual = Math.round(model.totals[m]?.actual?.close ?? 0);
+      const row: Record<string, any> = { month: ML(m), Budget: Math.round(model.totals[m]?.budget?.close ?? 0) };
+      if (model.hasActual(m)) row.Actual = Math.round(model.totals[m]?.actual?.close ?? 0);
       return row;
     });
   }, [model]);
+
+  // Xero cross-reference: current cash vs the forecast, and monthly
+  // income/expenses vs the forecast's receipts/payments (actual basis).
+  const xeroCompare = useMemo(() => {
+    const x = data?.xero;
+    if (!x || !model) return null;
+    const nowMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    const t = model.totals[nowMonth];
+    const forecastClose = t ? (model.hasActual(nowMonth) ? t.actual.close : t.budget.close) : null;
+    const rows = (x.monthly || []).map(m => {
+      const key = xeroLabelToMonth(m.month);
+      if (!key || !model.totals[key]) return null;
+      const basis = model.hasActual(key) ? "actual" as const : "budget" as const;
+      return {
+        month: key, label: ML(key), basis,
+        xeroIn: m.income, xeroOut: -Math.abs(m.expenses),
+        fcIn: model.totals[key][basis].rec, fcOut: model.totals[key][basis].pay,
+      };
+    }).filter(Boolean) as Array<{ month: string; label: string; basis: string; xeroIn: number; xeroOut: number; fcIn: number; fcOut: number }>;
+    return { cashTotal: x.cashTotal, asAt: x.asAt, nowMonth, forecastClose, rows };
+  }, [data?.xero, model]);
 
   const startEdit = (lineId: string, month: string, basis: "budget" | "actual", current: number | undefined) => {
     setEditCell({ lineId, month, basis });
@@ -120,26 +116,29 @@ export default function CashflowPage() {
     setEditCell(null);
   };
 
+  const editInput = (
+    <Input
+      autoFocus
+      value={editValue}
+      onChange={(e) => setEditValue(e.target.value)}
+      onBlur={commitEdit}
+      onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditCell(null); }}
+      className="h-6 w-24 px-1 text-right text-xs font-mono inline-block"
+    />
+  );
+  const isEditing = (lineId: string, month: string, basis: string) =>
+    !!editCell && editCell.lineId === lineId && editCell.month === month && editCell.basis === basis;
+
   const cellTd = (lineId: string, month: string, basis: "budget" | "actual") => {
     const v = model!.get(lineId, month, basis);
-    const editing = editCell && editCell.lineId === lineId && editCell.month === month && editCell.basis === basis;
     return (
       <td
         key={`${month}-${basis}`}
         className={`px-2 py-1 text-right font-mono tabular-nums cursor-pointer hover:bg-muted/60 ${basis === "actual" ? "border-r" : ""} ${v !== undefined && v < 0 ? "text-red-700 dark:text-red-400" : ""}`}
-        onClick={() => !editing && startEdit(lineId, month, basis, v)}
+        onClick={() => !isEditing(lineId, month, basis) && startEdit(lineId, month, basis, v)}
         data-testid={`cf-cell-${lineId}-${month}-${basis}`}
       >
-        {editing ? (
-          <Input
-            autoFocus
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onBlur={commitEdit}
-            onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditCell(null); }}
-            className="h-6 w-24 px-1 text-right text-xs font-mono"
-          />
-        ) : fmt(v)}
+        {isEditing(lineId, month, basis) ? editInput : fmt(v)}
       </td>
     );
   };
@@ -149,10 +148,39 @@ export default function CashflowPage() {
       <td className="px-3 py-1.5 sticky left-0 bg-muted/50 backdrop-blur z-10">{label}</td>
       {model!.months.map(m => [
         <td key={`${m}-b`} className="px-2 py-1.5 text-right font-mono tabular-nums">{fmt(pick(model!.totals[m]?.budget))}</td>,
-        <td key={`${m}-a`} className="px-2 py-1.5 text-right font-mono tabular-nums border-r">{hasAnyActual(model!, m) ? fmt(pick(model!.totals[m]?.actual)) : ""}</td>,
+        <td key={`${m}-a`} className="px-2 py-1.5 text-right font-mono tabular-nums border-r">{model!.hasActual(m) ? fmt(pick(model!.totals[m]?.actual)) : ""}</td>,
       ])}
     </tr>
   );
+
+  if (locked) {
+    return (
+      <div className="p-4 md:p-6 flex justify-center">
+        <Card className="w-full max-w-sm mt-10">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2"><Lock className="w-4 h-4" /> Cashflow is locked</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">Enter the cashflow password. It stays unlocked for this browser session.</p>
+            <Input
+              autoFocus
+              type="password"
+              value={pw}
+              onChange={(e) => { setPw(e.target.value); setPwError(false); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && pw) unlock.mutate(pw); }}
+              placeholder="Password"
+              data-testid="cf-password-input"
+            />
+            {pwError && <p className="text-xs text-destructive">Wrong password.</p>}
+            <Button className="w-full" disabled={!pw || unlock.isPending} onClick={() => unlock.mutate(pw)} data-testid="cf-password-submit">Unlock</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const mobileIdx = model ? (mobileMonthIdx ?? defaultMonthIdx(model.months)) : 0;
+  const mobileMonth = model?.months[mobileIdx];
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-full">
@@ -165,7 +193,7 @@ export default function CashflowPage() {
             <Banknote className="w-5 h-5 text-muted-foreground" />
             <h1 className="text-2xl font-bold tracking-tight" data-testid="page-title">Cashflow</h1>
           </div>
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <p className="text-sm text-muted-foreground mt-0.5 hidden sm:block">
             Monthly Budget vs Actual, £. Click any cell to edit — totals and the balance chain recompute.
             Openings chain per column from July 2026; receipts positive, payments negative.
           </p>
@@ -176,14 +204,37 @@ export default function CashflowPage() {
         <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
       ) : (
         <>
+          {/* Xero cross-check */}
+          {xeroCompare && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3" data-testid="cf-xero-strip">
+              <Card><CardContent className="p-3">
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Cash at bank · Xero</p>
+                <p className="text-lg font-semibold font-mono tabular-nums">{xeroCompare.cashTotal != null ? `£${fmt(Math.round(xeroCompare.cashTotal))}` : "—"}</p>
+              </CardContent></Card>
+              <Card><CardContent className="p-3">
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Forecast close · {ML(xeroCompare.nowMonth)}</p>
+                <p className="text-lg font-semibold font-mono tabular-nums">{xeroCompare.forecastClose != null ? `£${fmt(Math.round(xeroCompare.forecastClose))}` : "—"}</p>
+              </CardContent></Card>
+              <Card className="col-span-2 sm:col-span-1"><CardContent className="p-3">
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Xero vs forecast</p>
+                <p className={`text-lg font-semibold font-mono tabular-nums ${xeroCompare.cashTotal != null && xeroCompare.forecastClose != null && xeroCompare.cashTotal - xeroCompare.forecastClose < 0 ? "text-red-700 dark:text-red-400" : ""}`}>
+                  {xeroCompare.cashTotal != null && xeroCompare.forecastClose != null ? `£${fmt(Math.round(xeroCompare.cashTotal - xeroCompare.forecastClose))}` : "—"}
+                </p>
+              </CardContent></Card>
+            </div>
+          )}
+          {!data?.xero && (
+            <p className="text-[11px] text-muted-foreground" data-testid="cf-xero-missing">Xero cross-check unavailable — Xero isn't connected in this environment.</p>
+          )}
+
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-sm">Closing bank balance</CardTitle></CardHeader>
-            <CardContent className="h-56">
+            <CardContent className="h-48 sm:h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 4, right: 12, bottom: 0, left: 12 }}>
+                <LineChart data={chartData} margin={{ top: 4, right: 12, bottom: 0, left: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
                   <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `£${Math.round(v / 1000)}k`} width={56} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `£${Math.round(v / 1000)}k`} width={52} />
                   <Tooltip formatter={(v: any) => `£${Number(v).toLocaleString("en-GB")}`} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <ReferenceLine y={0} stroke="hsl(var(--destructive))" strokeDasharray="4 4" />
@@ -194,7 +245,67 @@ export default function CashflowPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          {/* Phone: one month at a time (§7 phone card rules) — the full
+              21-column grid stays a desktop surface. */}
+          <div className="md:hidden space-y-3" data-testid="cf-mobile">
+            {mobileMonth && (
+              <>
+                <div className="flex items-center justify-between">
+                  <Button variant="outline" size="sm" className="h-9 w-9 p-0" disabled={mobileIdx === 0} onClick={() => setMobileMonthIdx(mobileIdx - 1)} aria-label="Previous month"><ChevronLeft className="w-4 h-4" /></Button>
+                  <span className="text-sm font-semibold" data-testid="cf-mobile-month">{ML(mobileMonth)}</span>
+                  <Button variant="outline" size="sm" className="h-9 w-9 p-0" disabled={mobileIdx === model.months.length - 1} onClick={() => setMobileMonthIdx(mobileIdx + 1)} aria-label="Next month"><ChevronRight className="w-4 h-4" /></Button>
+                </div>
+                <Card>
+                  <CardContent className="p-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                    {([
+                      ["Opening", (t: any) => t?.open],
+                      ["Receipts", (t: any) => t?.rec],
+                      ["Payments", (t: any) => t?.pay],
+                      ["Closing", (t: any) => t?.close],
+                      ["Reserve", (t: any) => t?.reserve],
+                      ["All accounts", (t: any) => t?.all],
+                    ] as Array<[string, (t: any) => number | undefined]>).map(([label, pick]) => (
+                      <div key={label} className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground">{label}</span>
+                        <span className="font-mono tabular-nums">
+                          {fmt(pick(model.totals[mobileMonth]?.[model.hasActual(mobileMonth) ? "actual" : "budget"]))}
+                        </span>
+                      </div>
+                    ))}
+                    <p className="col-span-2 text-[10px] text-muted-foreground pt-1">
+                      {model.hasActual(mobileMonth) ? "Actual basis" : "Budget basis (no actuals yet)"}
+                    </p>
+                  </CardContent>
+                </Card>
+                {(["receipts", "payments"] as const).map(section => (
+                  <Card key={section}>
+                    <CardHeader className="py-2"><CardTitle className="text-xs uppercase tracking-widest text-muted-foreground">{section}</CardTitle></CardHeader>
+                    <CardContent className="p-0 divide-y">
+                      <div className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        <span /><span className="text-right">Budget</span><span className="text-right">Actual</span>
+                      </div>
+                      {(section === "receipts" ? model.receipts : model.payments).map(l => (
+                        <div key={l.id} className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 px-3 py-1.5 text-xs" data-testid={`cf-m-line-${l.key}`}>
+                          <span className="truncate" title={l.label}><span className="text-muted-foreground mr-1">{l.key}</span>{l.label}</span>
+                          {(["budget", "actual"] as const).map(basis => {
+                            const v = model.get(l.id, mobileMonth, basis);
+                            return (
+                              <button key={basis} type="button" className={`text-right font-mono tabular-nums px-1 py-0.5 rounded active:bg-muted ${v !== undefined && v < 0 ? "text-red-700 dark:text-red-400" : ""}`} onClick={() => startEdit(l.id, mobileMonth, basis, v)}>
+                                {isEditing(l.id, mobileMonth, basis) ? editInput : (fmt(v) || <span className="text-muted-foreground/50">·</span>)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                ))}
+              </>
+            )}
+          </div>
+
+          {/* Desktop: the full grid */}
+          <Card className="hidden md:block">
             <CardContent className="p-0">
               <ScrollableTable minWidth={1100}>
                 <table className="w-full text-xs">
@@ -202,7 +313,7 @@ export default function CashflowPage() {
                     <tr>
                       <th className="px-3 py-2 text-left font-medium text-muted-foreground sticky left-0 bg-muted z-30 min-w-[220px]">Line</th>
                       {model.months.map(m => (
-                        <th key={m} colSpan={2} className="px-2 py-1 text-center font-medium text-muted-foreground border-l">{MONTH_LABEL(m)}</th>
+                        <th key={m} colSpan={2} className="px-2 py-1 text-center font-medium text-muted-foreground border-l">{ML(m)}</th>
                       ))}
                     </tr>
                     <tr>
@@ -253,6 +364,42 @@ export default function CashflowPage() {
             </CardContent>
           </Card>
 
+          {/* Forecast vs Xero, month by month */}
+          {xeroCompare && xeroCompare.rows.length > 0 && (
+            <Card data-testid="cf-xero-compare">
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Forecast vs Xero</CardTitle></CardHeader>
+              <CardContent className="p-0">
+                <ScrollableTable minWidth={520}>
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/50">
+                      <tr>
+                        <th className="px-3 py-1.5 text-left font-medium text-muted-foreground">Month</th>
+                        <th className="px-2 py-1.5 text-right font-medium text-muted-foreground">Forecast in</th>
+                        <th className="px-2 py-1.5 text-right font-medium text-muted-foreground">Xero income</th>
+                        <th className="px-2 py-1.5 text-right font-medium text-muted-foreground">Forecast out</th>
+                        <th className="px-2 py-1.5 text-right font-medium text-muted-foreground">Xero expenses</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {xeroCompare.rows.map(r => (
+                        <tr key={r.month}>
+                          <td className="px-3 py-1.5">{r.label} <span className="text-muted-foreground text-[10px]">({r.basis})</span></td>
+                          <td className="px-2 py-1.5 text-right font-mono tabular-nums">{fmt(Math.round(r.fcIn))}</td>
+                          <td className="px-2 py-1.5 text-right font-mono tabular-nums">{fmt(Math.round(r.xeroIn))}</td>
+                          <td className="px-2 py-1.5 text-right font-mono tabular-nums text-red-700 dark:text-red-400">{fmt(Math.round(r.fcOut))}</td>
+                          <td className="px-2 py-1.5 text-right font-mono tabular-nums text-red-700 dark:text-red-400">{fmt(Math.round(r.xeroOut))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </ScrollableTable>
+                <p className="px-3 py-2 text-[10px] text-muted-foreground">
+                  Xero figures are P&amp;L income/expenses (excl. VAT and balance-sheet movements), the forecast is cash in/out incl. VAT — expect differences; big gaps are the signal.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="flex flex-wrap items-center gap-2">
             {addingTo ? (
               <div className="flex items-center gap-2">
@@ -274,7 +421,7 @@ export default function CashflowPage() {
                 <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => { setAddingTo("payments"); setNewLabel(""); }} data-testid="cf-add-payment"><Plus className="w-3.5 h-3.5" /> Payment line</Button>
               </>
             )}
-            <span className="text-[11px] text-muted-foreground ml-auto">
+            <span className="text-[11px] text-muted-foreground ml-auto hidden sm:inline">
               Seeded from the 2026/27 forecast workbook · empty Actual columns simply haven't happened yet
             </span>
           </div>
@@ -284,6 +431,8 @@ export default function CashflowPage() {
   );
 }
 
-function hasAnyActual(model: { get: (l: string, m: string, b: string) => number | undefined; receipts: CashflowLine[]; payments: CashflowLine[] }, month: string): boolean {
-  return [...model.receipts, ...model.payments].some(l => model.get(l.id, month, "actual") !== undefined);
+function defaultMonthIdx(months: string[]): number {
+  const now = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  const i = months.indexOf(now);
+  return i >= 0 ? i : 0;
 }

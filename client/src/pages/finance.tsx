@@ -3,6 +3,11 @@
 // aged debtors. Data comes from /api/xero/financials (system Xero session,
 // cached 15 min server-side).
 import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import {
+  type CashflowData as CFData, buildCashflowModel, cashflowFetch, CashflowLocked,
+  setCashflowKey, CASHFLOW_MONTH_LABEL,
+} from "@/lib/cashflow-model";
 import { useEffect } from "react";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
@@ -600,8 +605,10 @@ export default function FinancePage() {
             </Button>
           </CardContent>
         </Card>
-        {/* The pipeline + commission halves come from the CRM, so they work
-            regardless of the Xero connection state. */}
+        {/* The pipeline, commission and cashflow-forecast halves come from
+            the CRM / local DB, so they work regardless of the Xero
+            connection state. */}
+        <CashflowForecastSection xeroCash={null} />
         {data.wip && <WipSection wip={data.wip} />}
         {data.commissions && data.commissions.statements.length > 0 && (
           <CommissionSection commissions={data.commissions} />
@@ -656,6 +663,11 @@ export default function FinancePage() {
 
       {/* WIP pipeline + projection (CRM ⇄ Xero cross-reference) */}
       {data.wip && <WipSection wip={data.wip} projection={data.projection} />}
+
+      {/* Cashflow forecast (Woody, 2026-08-27: fold the forecasting into
+          the finance board). Full editable grid lives at /cashflow behind
+          the cashflow password; this section shares that unlock. */}
+      <CashflowForecastSection xeroCash={data.cashTotal ?? null} />
 
       {/* (Data-health card removed — Woody, 2026-08-23: a weekly fix-list
           email to equity@ replaced it; see runWipHealthEmail. The live list
@@ -874,5 +886,119 @@ export default function FinancePage() {
         <p className="text-[11px] text-muted-foreground">Snapshot fetched {new Date(data.fetchedAt).toLocaleTimeString("en-GB")} · cached 15 min · Refresh forces a live pull.</p>
       )}
     </div>
+  );
+}
+
+// ── Cashflow forecast section ─────────────────────────────────────────────
+// Compact view of the /cashflow board: closing-balance trajectory, the low
+// point, this month's forecast close and the gap to Xero's live cash. The
+// board's password gates the data — until this browser session unlocks it
+// (here or on /cashflow) the section shows a locked card.
+function CashflowForecastSection({ xeroCash }: { xeroCash: number | null }) {
+  const { data: cf, error: cfError, refetch: cfRefetch } = useQuery<CFData>({
+    queryKey: ["/api/cashflow"],
+    queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
+    retry: (count, err) => !(err instanceof CashflowLocked) && count < 2,
+  });
+  const [cfPw, setCfPw] = useState("");
+  const [cfPwError, setCfPwError] = useState(false);
+  const locked = cfError instanceof CashflowLocked;
+
+  const model = useMemo(() => (cf ? buildCashflowModel(cf) : null), [cf]);
+  const summary = useMemo(() => {
+    if (!model) return null;
+    const nowMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    const series = model.months.map(m => {
+      const basis = model.hasActual(m) ? "actual" as const : "budget" as const;
+      return { m, close: model.totals[m]?.[basis]?.close ?? 0, basis };
+    });
+    const low = series.reduce((a, b) => (b.close < a.close ? b : a), series[0]);
+    const current = series.find(s => s.m === nowMonth) || null;
+    const chart = series.map(s => ({ month: CASHFLOW_MONTH_LABEL(s.m), Close: Math.round(s.close) }));
+    return { low, current, chart };
+  }, [model]);
+
+  const unlockNow = async () => {
+    const res = await fetch("/api/cashflow/unlock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ password: cfPw }),
+      credentials: "include",
+    });
+    if (res.ok) { setCashflowKey(cfPw); setCfPwError(false); cfRefetch(); }
+    else setCfPwError(true);
+  };
+
+  if (locked) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2"><Banknote className="w-4 h-4" /> Cashflow forecast</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-2">
+          <p className="text-xs text-muted-foreground mr-2">Locked — enter the cashflow password to show the forecast here and on the board.</p>
+          <input
+            type="password"
+            value={cfPw}
+            onChange={(e) => { setCfPw(e.target.value); setCfPwError(false); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && cfPw) unlockNow(); }}
+            placeholder="Password"
+            className="h-8 w-40 rounded-md border bg-background px-2 text-xs"
+            data-testid="finance-cf-password"
+          />
+          <Button size="sm" className="h-8" disabled={!cfPw} onClick={unlockNow} data-testid="finance-cf-unlock">Unlock</Button>
+          {cfPwError && <span className="text-xs text-destructive">Wrong password.</span>}
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!model || !summary) return null;
+
+  return (
+    <Card data-testid="finance-cashflow-section">
+      <CardHeader className="pb-2 flex flex-row items-center justify-between">
+        <CardTitle className="text-sm flex items-center gap-2"><Banknote className="w-4 h-4" /> Cashflow forecast</CardTitle>
+        <Link href="/cashflow">
+          <Button variant="ghost" size="sm" className="h-7 text-xs">Open board <ArrowRight className="w-3 h-3 ml-1" /></Button>
+        </Link>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatCard
+            label="Forecast close · this month"
+            value={summary.current ? money(summary.current.close) : "—"}
+            negative={(summary.current?.close ?? 0) < 0}
+            sub={summary.current ? `${summary.current.basis} basis` : undefined}
+          />
+          <StatCard
+            label="Cash at bank · Xero"
+            value={money(xeroCash)}
+            sub={summary.current && xeroCash != null ? `vs forecast ${money(xeroCash - summary.current.close)}` : undefined}
+          />
+          <StatCard
+            label="Low point"
+            value={money(summary.low.close)}
+            negative={summary.low.close < 0}
+            sub={CASHFLOW_MONTH_LABEL(summary.low.m)}
+          />
+          <StatCard
+            label="Window"
+            value={`${CASHFLOW_MONTH_LABEL(model.months[0])} – ${CASHFLOW_MONTH_LABEL(model.months[model.months.length - 1])}`}
+            sub="edit on the board"
+          />
+        </div>
+        <div className="h-40">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={summary.chart} margin={{ top: 4, right: 8, bottom: 0, left: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+              <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `£${Math.round(v / 1000)}k`} width={50} />
+              <Tooltip formatter={(v: any) => `£${Number(v).toLocaleString("en-GB")}`} />
+              <Line type="monotone" dataKey="Close" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 2 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

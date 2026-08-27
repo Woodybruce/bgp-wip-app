@@ -136,7 +136,7 @@ async function fetchInvoicePages(session: any, where: string, order: string, max
   return all;
 }
 
-async function buildFinancials(session: any): Promise<any> {
+export async function buildFinancials(session: any): Promise<any> {
   const orgRes = await xeroApi(session, "/Organisation");
   const org = orgRes?.Organisations?.[0] || {};
   const today = new Date();
