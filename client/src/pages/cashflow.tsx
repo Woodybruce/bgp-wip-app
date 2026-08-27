@@ -259,7 +259,7 @@ export default function CashflowPage() {
               </ResponsiveContainer>
               {linked && (
                 <p className="text-[10px] text-muted-foreground -mt-1">
-                  Dashed = app-linked projection: weighted deal fees{linked.hasXero ? " + Xero invoices due, less Xero bills due + the opex run-rate" : " (Xero not connected — deals only)"}. Reference, not the plan — it can't see VAT quarters or anything outside the deal book{linked.hasXero ? " and Xero" : ""}.
+                  Dashed = app-linked projection: weighted deal fees{linked.hasXero ? " + Xero invoices due, less Xero bills due + the opex run-rate" : " (Xero not connected — deals only)"}. Reference, not the plan — it can't see VAT quarters, and it can't see receipts invoiced before the Xero crossover (the Sage-era receivables in lines 1–4a), so expect it to sit BELOW the forecast while that legacy cash collects.
                 </p>
               )}
             </CardContent>
@@ -430,7 +430,7 @@ export default function CashflowPage() {
                   </table>
                 </ScrollableTable>
                 <p className="px-3 py-2 text-[10px] text-muted-foreground">
-                  Xero figures are P&amp;L income/expenses (excl. VAT and balance-sheet movements), the forecast is cash in/out incl. VAT — expect differences; big gaps are the signal.
+                  Xero figures are P&amp;L income/expenses (excl. VAT and balance-sheet movements), the forecast is cash in/out incl. VAT — and the forecast's early months include Sage-era receivables invoiced before the Xero crossover, which Xero never sees. Expect those differences; gaps beyond them are the signal.
                 </p>
               </CardContent>
             </Card>
