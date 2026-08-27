@@ -227,7 +227,12 @@ export async function buildFinancials(session: any): Promise<any> {
     const amount = toNum(inv.AmountDue);
     if (!amount) continue;
     outstanding += amount;
-    arByMonth[dueMonthKey(parseXeroDate(due))] = (arByMonth[dueMonthKey(parseXeroDate(due))] || 0) + amount;
+    // The cashflow forecast is ex-VAT (Woody, 2026-08-27: "we don't want to
+    // see VAT") — scale the outstanding amount by this invoice's own
+    // net/gross ratio. The debtors board itself stays gross, mirroring Xero.
+    const invTotal = toNum(inv.Total);
+    const netDue = invTotal > 0 ? amount * (toNum(inv.SubTotal) / invTotal) : amount;
+    arByMonth[dueMonthKey(parseXeroDate(due))] = (arByMonth[dueMonthKey(parseXeroDate(due))] || 0) + netDue;
     const dueMs = due ? new Date(due).getTime() : NaN;
     const daysOver = isNaN(dueMs) ? 0 : Math.floor((now - dueMs) / 86_400_000);
     if (daysOver <= 0) buckets.current += amount;
@@ -273,7 +278,9 @@ export async function buildFinancials(session: any): Promise<any> {
     const amount = toNum(b.AmountDue);
     if (!amount) continue;
     creditorsOutstanding += amount;
-    apByMonth[dueMonthKey(parseXeroDate(b.DueDateString || b.DueDate))] = (apByMonth[dueMonthKey(parseXeroDate(b.DueDateString || b.DueDate))] || 0) + amount;
+    const billTotal = toNum(b.Total);
+    const netBillDue = billTotal > 0 ? amount * (toNum(b.SubTotal) / billTotal) : amount;
+    apByMonth[dueMonthKey(parseXeroDate(b.DueDateString || b.DueDate))] = (apByMonth[dueMonthKey(parseXeroDate(b.DueDateString || b.DueDate))] || 0) + netBillDue;
     const due = parseXeroDate(b.DueDateString || b.DueDate);
     const dueMs = due ? due.getTime() : NaN;
     if (!isNaN(dueMs) && dueMs < now) credBuckets.overdue += amount;
