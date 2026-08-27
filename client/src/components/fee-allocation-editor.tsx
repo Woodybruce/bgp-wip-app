@@ -52,7 +52,7 @@ export function withExternalAgents(agents: { id: string; name: string }[]): { id
     ...agents,
     ...EXTERNAL_FEE_AGENTS.filter((n) => !agents.some((a) => a.name === n))
       .map((n) => ({ id: `external-${n.toLowerCase()}`, name: n })),
-  ];
+  ].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // Controlled fee-split editor — same shape the deal-detail FeeAllocationCard

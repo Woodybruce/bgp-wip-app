@@ -3649,7 +3649,7 @@ function HotsChecklistDialog({
   });
 
   const canSubmit = (form.xeroContactId || form.xeroContactName) && (form.fee ?? 0) > 0;
-  const bgpAgents = [...users.map(u => u.name), ...EXTERNAL_FEE_AGENTS];
+  const bgpAgents = [...users.map(u => u.name), ...EXTERNAL_FEE_AGENTS].sort((a, b) => a.localeCompare(b));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
