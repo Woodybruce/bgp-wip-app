@@ -4,6 +4,7 @@
 // cached 15 min server-side).
 import { useQuery } from "@tanstack/react-query";
 import { CashflowBoardSection } from "@/components/cashflow-board";
+import { HistoricalBillingsSection } from "@/components/historical-billings";
 import { useEffect } from "react";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
@@ -605,6 +606,7 @@ export default function FinancePage() {
             the CRM / local DB, so they work regardless of the Xero
             connection state. */}
         <CashflowBoardSection />
+        <HistoricalBillingsSection />
         {data.wip && <WipSection wip={data.wip} />}
         {data.commissions && data.commissions.statements.length > 0 && (
           <CommissionSection commissions={data.commissions} />
@@ -656,6 +658,7 @@ export default function FinancePage() {
       {/* Cashflow forecast — the app + Xero drive receipts, the typed
           lines below are Wendy's costs plan (Woody, 2026-08-27). */}
       <CashflowBoardSection />
+      <HistoricalBillingsSection />
 
       {/* (Data-health card removed — Woody, 2026-08-23: a weekly fix-list
           email to equity@ replaced it; see runWipHealthEmail. The live list
