@@ -1,7 +1,8 @@
 // Cashflow forecast section on the Finance page (v3 — Woody, 2026-08-27:
 // one finance page, no password; Xero + the app are the receipts source of
 // truth; Wendy's workbook lines are costs only; a single manual LEGACY line
-// carries the pre-Xero (Sage-era) receivables until Woody confirms them).
+// carries the pre-Xero (Sage-era) receivables — £263,604 budgeted Nov 2026
+// per Wendy's cashflow, the yellow cell, incl. five Landsec 30-Apr invoices).
 // Receipts rows are read-only app data; the LEGACY line and the cost lines
 // are editable in place. The balance chain anchors on Xero's live cash.
 import { useMemo, useState } from "react";
@@ -128,7 +129,7 @@ export function CashflowBoardSection() {
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2"><Banknote className="w-4 h-4" /> Cashflow forecast</CardTitle>
         <p className="text-xs text-muted-foreground">
-          Cash in comes from the app — pipeline-weighted deal fees and Xero invoices due — plus the legacy pre-Xero receivables line (to be confirmed).
+          Cash in comes from the app — pipeline-weighted deal fees and Xero invoices due — plus the legacy pre-Xero (Sage-era) receivables — £263,604 due November per Wendy's cashflow, editable if that moves.
           Cash out is the costs plan below (Wendy's forecast). The chain starts from {unified.anchor.source === "xero" ? "Xero's live cash at bank" : "the typed opening balance (Xero not connected)"}.
         </p>
       </CardHeader>
@@ -222,7 +223,7 @@ export function CashflowBoardSection() {
                 {data?.xero && appRow("Xero invoices due (AR)", m => data.xero!.arByMonth?.[m], "cf-app-ar")}
                 {legacyLine && (
                   <tr data-testid="cf-line-LEGACY">
-                    <td className="px-3 py-1 sticky left-0 bg-card z-10 whitespace-nowrap" title={legacyLine.label}>Legacy receivables (pre-Xero) — to confirm</td>
+                    <td className="px-3 py-1 sticky left-0 bg-card z-10 whitespace-nowrap" title={legacyLine.label}>Legacy receivables (pre-Xero, Sage era)</td>
                     {unified.months.map(m => [cellTd(legacyLine.id, m, "budget"), cellTd(legacyLine.id, m, "actual")])}
                   </tr>
                 )}
