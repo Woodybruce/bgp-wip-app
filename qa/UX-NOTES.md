@@ -16,6 +16,28 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+109. 2026-08-27 · BGP staff (non-admin) / desktop 1440px (QA r397) · "check
+    my numbers on the WIP report" · For a non-admin agent the WIP REPORT
+    tab lists deals (header said "6 transactions · £250,000") but the AGENT
+    SUMMARY tab on the same screen came back empty — the summary endpoint
+    only counts deals whose team exactly equals the user's team string
+    (fixture deals carry team "National" vs Victoria's "National Leasing",
+    and team-less deals are skipped entirely for non-admins), while the
+    deal table clearly uses a looser rule · Align the two tabs' scoping
+    (same team-matching rule, and decide whether team-less deals belong in
+    a non-admin's summary) so the two tabs on one screen never disagree.
+    Flagging as UX not bug: may be a fixture-data artifact — prod team
+    strings may match exactly.
+
+108. 2026-08-27 · BGP staff / desktop 1440px (QA r397) · "remove a fee split
+    I added on the wrong deal" · Once a fee split is saved it cannot be
+    cleared: the editor's BGP House row is locked and auto-re-added, saving
+    with only BGP House trips "Percentages total 15% — must equal 100%",
+    and the API rejects an empty allocations array by design (must include
+    the BGP House row) · Add an explicit "Clear split" action on the Fee
+    Allocation card (staff-only, confirm dialog) that removes all rows and
+    returns the deal to "No split yet".
+
 107. 2026-08-27 · BGP staff (equity) / mobile 390px (QA r395) · "check the
     cashflow forecast on my phone" · On the Finance page's cashflow stat
     tiles, big negative amounts render as "£" alone on one line with

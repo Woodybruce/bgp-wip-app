@@ -80,12 +80,44 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r397 · 2026-08-27 · ROUND IN PROGRESS (FULL, rotation #1 staff desktop 1440)
-- Merged JOGQK 8b51c2e (Consultant in fee-split pickers) into staging; clean,
-  tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge.
-- Triage: nothing new in smoke output. Next: two-bot 397 (validating
-  staff-lrbg-status-client-order-guard), journey = staff desktop deals board
-  + Consultant fee split + WIP agent summary.
+### r397 · 2026-08-27 · FULL (rotation #1 staff desktop 1440px)
+- Merged JOGQK 8b51c2e (Consultant option in every fee-split picker) into
+  staging; clean merge, tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1)
+  post-merge. Two-bot 397 (via run-round.sh): exit 0, all scenarios ok incl.
+  staff-lrbg-status-client-order-guard (r396 addition validated) and
+  rival-brand-profile-scoped; 4 issues = standing noise signature (2×400
+  rocketreach/tracker-invalid, 2×503 keyless AI).
+- OPERATOR LESSON: first two-bot run was launched bare (node
+  qa/two-bot-round.mjs) without run-round.sh's seed-personas.sql step →
+  3 bogus flow-failures (turnover Honi row missing, search can't find Honi,
+  rival brand profile over-scoped). That triple is the missing-seed
+  signature, not an app bug — always run bash qa/run-round.sh N.
+- Journey (Victoria @1440 + Woody for the summary): "morning WIP pass —
+  open the deals board, open the Broadgate deal, split the fee with the new
+  Consultant option, check the maths, then check the Agent Summary":
+  /deals hub → WIP table → deal detail → Fee Allocation Edit → Consultant
+  present in picker → Victoria 75 / Consultant 10 / BGP House 15 (Agents
+  85/85 balanced, green) → save toast → card shows Consultant £25,000 →
+  Woody /wip-report Agent Summary shows Consultant £25,000 WIP / 10%,
+  agent_user_id stays null (never staff commission). 14/14 checks,
+  0 pageerrors, 0 non-noise 4xx/5xx. Deal restored via SQL (allocations
+  deleted, internal_agent NULLed — PUT [] is rejected by design).
+- Bugs fixed: 0 — nothing broken found (merge + journey surfaces sound).
+- Harness growth: staff-consultant-fee-split in woodyRound (probe deal →
+  PUT split with Consultant → name-only row asserted (agentUserId null,
+  BGP House flag kept) → agent-summary shows the slice → delete cascades).
+  Dry-run verified against the dev server; first full two-bot validation
+  lands in r398.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2) — merge via
+  /duplicate-units tooling.
+- Suggestions: UX-NOTES #108 (a saved fee split can't be cleared — BGP House
+  locked + 100% rule + API rejects empty), #109 (non-admin WIP table vs
+  empty Agent Summary tab disagree on team scoping — may be fixture team
+  strings, flagged not fixed).
+- New flakes: none (the missing-seed triple documented above).
+- Next: r397 was FULL → r398 LIGHT; then r399 FULL rotation #2 Landsec
+  client desktop. Validate staff-consultant-fee-split in the r398 two-bot.
 
 ### r396 · 2026-08-27 · LIGHT (r395 was FULL) — JOGQK ex-VAT/BG-live merge + targeted checks
 - Merged JOGQK (cashflow ex-VAT 7c4adb0 + LEGACY 219,670 seed + HMLR

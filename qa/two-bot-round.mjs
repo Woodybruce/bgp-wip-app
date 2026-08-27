@@ -5457,6 +5457,43 @@ async function woodyRound(page, cross) {
     }, CLIENT_USER);
     if (!r.ok) throw new Error(`lr-bg status/guard check failed (${r.why})`);
   });
+
+  // Consultant external fee-split (r397, Woody 2026-08-27): "Consultant" is
+  // selectable in every split picker, saves as a name-only allocation
+  // (agent_user_id stays null — never enters staff commission) and shows on
+  // the WIP Agent Summary. Self-contained: probe deal is created + deleted
+  // (deleteCrmDeal cascades the allocation rows).
+  await step(page, p, 'staff-consultant-fee-split', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const cRes = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-R${round} consultant split probe`, status: 'NEG', fee: 100000 }) });
+      if (!cRes.ok) return { ok: false, why: `deal create ${cRes.status}` };
+      const deal = await cRes.json();
+      try {
+        const put = await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { method: 'PUT', credentials: 'include', headers: auth,
+          body: JSON.stringify({ allocations: [
+            { agentName: 'Victoria Broadhead', allocationType: 'percentage', percentage: 75, fixedAmount: 0, isBgpHouse: false },
+            { agentName: 'Consultant', allocationType: 'percentage', percentage: 10, fixedAmount: 0, isBgpHouse: false },
+            { agentName: 'BGP House', allocationType: 'percentage', percentage: 15, fixedAmount: 0, isBgpHouse: true },
+          ] }) });
+        if (!put.ok) return { ok: false, why: `allocations PUT ${put.status}` };
+        const rows = await (await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { credentials: 'include', headers: auth })).json();
+        const cons = rows.find((a) => a.agentName === 'Consultant');
+        if (!cons) return { ok: false, why: 'Consultant allocation missing after save' };
+        if (cons.agentUserId != null) return { ok: false, why: `Consultant resolved to a staff user id (${cons.agentUserId})` };
+        if (!rows.some((a) => a.isBgpHouse)) return { ok: false, why: 'BGP House flag lost on save' };
+        const summary = await (await fetch('/api/wip/agent-summary', { credentials: 'include', headers: auth })).json();
+        const sRow = Array.isArray(summary) ? summary.find((s) => s.agent === 'Consultant') : null;
+        if (!sRow) return { ok: false, why: 'Consultant missing from WIP agent summary' };
+        if (Math.round(sRow.wip) < 10000) return { ok: false, why: `Consultant WIP slice wrong (${sRow.wip})` };
+        return { ok: true };
+      } finally {
+        await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }
+    }, ROUND);
+    if (!r.ok) throw new Error(`consultant fee-split check failed (${r.why})`);
+  });
 }
 
 async function nickRound(page, cross) {
