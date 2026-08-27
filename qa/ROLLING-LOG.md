@@ -80,6 +80,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r398 · 2026-08-27 · ROUND IN PROGRESS (provisional heartbeat)
+- LIGHT round (r397 had the journey). Merged JOGQK ccd1cce (consultant share
+  off the top, BGP House 15% on remainder; picker sorted) into staging —
+  clean merge, tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge.
+- Two-bot round 398 running (validates r397's staff-consultant-fee-split
+  scenario). Triage to follow in the final entry.
+
 ### r397 · 2026-08-27 · FULL (rotation #1 staff desktop 1440px)
 - Merged JOGQK 8b51c2e (Consultant option in every fee-split picker) into
   staging; clean merge, tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1)
