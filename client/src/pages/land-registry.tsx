@@ -1174,6 +1174,9 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                   >
                     {docPurchasing[manualTitleInput.trim() + "both"] ? <Loader2 className="w-3 h-3 animate-spin" /> : "Order Title"}
                   </Button>
+                  {manualTitleInput.trim() && (
+                    <OfficialCopyButton titleNumber={manualTitleInput.trim()} className="h-8 text-xs shrink-0" />
+                  )}
                 </div>
                 {(() => {
                   const tn = manualTitleInput.trim();
