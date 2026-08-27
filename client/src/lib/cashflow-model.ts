@@ -1,9 +1,8 @@
 // Shared cashflow-forecast model + fetch helpers, used by the Cashflow
 // board (/cashflow) and the Finance page's forecasting section. Only the
 // input lines are stored server-side; totals, the per-basis opening-balance
-// chain and closing balances are computed here. The board sits behind a
-// password on top of the equity gate — the unlocked key lives in
-// sessionStorage so Finance and the board share one unlock per session.
+// chain and closing balances are computed here (equity/admin gate only —
+// the early password layer was removed on Woody's instruction).
 import { getAuthHeaders } from "@/lib/queryClient";
 
 export interface CashflowLine { id: string; key: string; label: string; section: "receipts" | "payments" | "balance"; sort: number }
@@ -23,26 +22,10 @@ export interface CashflowDeals {
 }
 export interface CashflowData { lines: CashflowLine[]; cells: CashflowCell[]; months: string[]; xero: CashflowXero | null; deals: CashflowDeals | null }
 
-const KEY_STORE = "cashflow-key";
-export function getCashflowKey(): string {
-  try { return sessionStorage.getItem(KEY_STORE) || ""; } catch { return ""; }
-}
-export function setCashflowKey(k: string): void {
-  try { sessionStorage.setItem(KEY_STORE, k); } catch {}
-}
-
-export class CashflowLocked extends Error {
-  constructor() { super("cashflow_locked"); this.name = "CashflowLocked"; }
-}
-
 export async function cashflowFetch(method: string, url: string, body?: unknown): Promise<Response> {
-  const headers: Record<string, string> = { ...getAuthHeaders(), "x-cashflow-key": getCashflowKey() };
+  const headers: Record<string, string> = { ...getAuthHeaders() };
   if (body) headers["Content-Type"] = "application/json";
   const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined, credentials: "include" });
-  if (res.status === 401) {
-    const j = await res.clone().json().catch(() => null);
-    if (j?.error === "password_required") throw new CashflowLocked();
-  }
   if (!res.ok) throw new Error((await res.text()) || res.statusText);
   return res;
 }
@@ -144,4 +127,50 @@ export function buildLinkedProjection(data: CashflowData, model: CashflowModel):
     open = close;
   }
   return { byMonth, months: future, hasXero: !!data.xero };
+}
+
+// Unified forecast (v3 — Woody, 2026-08-27): Xero + the app are the
+// receipts source of truth, Wendy's typed lines are COSTS ONLY, plus the
+// one manual LEGACY receivables line. Per forward month:
+//   in  = weighted deal fees + Xero AR due + typed LEGACY (actual ?? budget)
+//   out = typed cost lines (actual ?? budget)
+// The chain anchors on Xero's live cash at bank when available (falling
+// back to the typed opening), so the app's balance IS the balance.
+export interface UnifiedForecast {
+  months: string[];
+  byMonth: Record<string, { in: number; dealsIn: number; arIn: number; legacyIn: number; out: number; open: number; close: number }>;
+  anchor: { value: number; source: "xero" | "typed" };
+  low: { month: string; close: number };
+  current: { month: string; close: number } | null;
+}
+export function buildUnifiedForecast(data: CashflowData, model: CashflowModel): UnifiedForecast | null {
+  const nowKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  const months = model.months.filter(m => m >= nowKey);
+  if (months.length === 0) return null;
+  const legacyLine = model.receipts.find(l => l.key === "LEGACY") || null;
+  const firstBasis = model.hasActual(months[0]) ? "actual" : "budget";
+  const anchor: UnifiedForecast["anchor"] = data.xero?.cashTotal != null
+    ? { value: data.xero.cashTotal, source: "xero" }
+    : { value: model.totals[months[0]]?.[firstBasis]?.open ?? 0, source: "typed" };
+  const byMonth: UnifiedForecast["byMonth"] = {};
+  let open = anchor.value;
+  for (const m of months) {
+    const basis = model.hasActual(m) ? "actual" as const : "budget" as const;
+    const dealsIn = data.deals?.byMonth[m]?.weighted || 0;
+    const arIn = data.xero?.arByMonth?.[m] || 0;
+    const legacyIn = legacyLine ? (model.get(legacyLine.id, m, "actual") ?? model.get(legacyLine.id, m, "budget") ?? 0) : 0;
+    const inflow = dealsIn + arIn + legacyIn;
+    // Typed cost lines are stored negative; exclude the legacy receipts
+    // line's contribution from model totals by using payments only.
+    const out = model.payments.reduce((s, l) => s + (model.get(l.id, m, basis) ?? model.get(l.id, m, "budget") ?? 0), 0);
+    const close = open + inflow + out;
+    byMonth[m] = {
+      in: Math.round(inflow), dealsIn: Math.round(dealsIn), arIn: Math.round(arIn), legacyIn: Math.round(legacyIn),
+      out: Math.round(out), open: Math.round(open), close: Math.round(close),
+    };
+    open = close;
+  }
+  const low = months.reduce((a, m) => (byMonth[m].close < a.close ? { month: m, close: byMonth[m].close } : a), { month: months[0], close: byMonth[months[0]].close });
+  const current = byMonth[nowKey] ? { month: nowKey, close: byMonth[nowKey].close } : null;
+  return { months, byMonth, anchor, low, current };
 }
