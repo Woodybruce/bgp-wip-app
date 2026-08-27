@@ -8,6 +8,8 @@
 //
 // Cert material is held as base64-encoded PEM in Railway secrets:
 //   LR_BG_CERT_B64 (client cert), LR_BG_KEY_B64 (private key), LR_BG_CA_B64 (CA chain)
+//   LR_BG_LIVE_CERT_B64 / LR_BG_LIVE_KEY_B64 — the live-environment pair; used
+//     instead of the plain vars when LR_BG_ENV=live (test keeps the BGTest pair)
 //   LR_BG_ENV = "test" | "live"
 //   LR_BG_USERNAME / LR_BG_PASSWORD (Business Gateway portal account)
 import https from "https";
@@ -19,8 +21,20 @@ import { saveFile, getFile } from "./file-storage";
 
 const decode = (b64?: string): string | null => (b64 ? Buffer.from(b64, "base64").toString("utf8") : null);
 
+function bgIsLive(): boolean {
+  return (process.env.LR_BG_ENV || "test").toLowerCase() === "live";
+}
+
+function bgCertMaterial(): { cert?: string; key?: string } {
+  if (bgIsLive() && process.env.LR_BG_LIVE_CERT_B64 && process.env.LR_BG_LIVE_KEY_B64) {
+    return { cert: process.env.LR_BG_LIVE_CERT_B64, key: process.env.LR_BG_LIVE_KEY_B64 };
+  }
+  return { cert: process.env.LR_BG_CERT_B64, key: process.env.LR_BG_KEY_B64 };
+}
+
 export function bgConfigured(): boolean {
-  return !!(process.env.LR_BG_CERT_B64 && process.env.LR_BG_KEY_B64);
+  const m = bgCertMaterial();
+  return !!(m.cert && m.key);
 }
 
 // The cert authenticates the channel (mutual TLS); the SOAP WS-Security header
@@ -32,7 +46,7 @@ export function bgCredentials(): { username: string; password: string } | null {
 }
 
 export function bgBaseUrl(): string {
-  return (process.env.LR_BG_ENV || "test").toLowerCase() === "live"
+  return bgIsLive()
     ? "https://businessgateway.landregistry.gov.uk"
     : "https://bgtest.landregistry.gov.uk";
 }
@@ -40,9 +54,7 @@ export function bgBaseUrl(): string {
 // SOAP engine base path differs between environments (stub vs live engine).
 // Each operation lives at a named web-service appended to this base.
 export function bgSoapPath(): string {
-  return (process.env.LR_BG_ENV || "test").toLowerCase() === "live"
-    ? "/b2b/BGSoapEngine"
-    : "/b2b/ECBG_StubService";
+  return bgIsLive() ? "/b2b/BGSoapEngine" : "/b2b/ECBG_StubService";
 }
 
 // Official Copy "Title Known" (OC1) SOAP service endpoint.
@@ -54,7 +66,8 @@ let _agent: https.Agent | null = null;
 function bgAgent(): https.Agent | null {
   if (!bgConfigured()) return null;
   if (_agent) return _agent;
-  const cert = decode(process.env.LR_BG_CERT_B64), key = decode(process.env.LR_BG_KEY_B64), ca = decode(process.env.LR_BG_CA_B64);
+  const m = bgCertMaterial();
+  const cert = decode(m.cert), key = decode(m.key), ca = decode(process.env.LR_BG_CA_B64);
   if (!cert || !key) return null;
   _agent = new https.Agent({ cert, key, ca: ca || undefined, keepAlive: true });
   return _agent;
