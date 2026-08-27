@@ -80,6 +80,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r400 · 2026-08-27 ~20:45 UTC · ROUND IN PROGRESS (provisional)
+- LIGHT (r399 was FULL). Merged JOGQK ff37b59 (Historical billings on
+  Finance — Sage invoiced WIP FY2019-26, /api/historical-wip, equity/admin
+  only) into staging (4c20bc4, clean). tsc clean. Smoke GREEN 42/0
+  (FRESH_BUILD=1).
+- Remaining this round: two-bot 400, targeted checks on Historical billings
+  (woody equity renders, victoria 403 doesn't break Finance page, lens/FY
+  switching, totals FY26 £5,191,872 / FY25 £4,919,519).
+
 ### r399 · 2026-08-27 · FULL (rotation #2 Landsec client desktop 1440px)
 - JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
   GREEN 42/0 (FRESH_BUILD=1) ×2 (pre- and post-fix rebuild). Two-bot 399:
