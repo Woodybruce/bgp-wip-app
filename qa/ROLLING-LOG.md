@@ -80,16 +80,42 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r396 · 2026-08-27 · ROUND IN PROGRESS (LIGHT — r395 was FULL)
-- Merged JOGQK (cashflow ex-VAT 7c4adb0 + LEGACY seed + HMLR manual-row OC
-  button + BG cert audit) into staging, clean merge, tsc clean.
-- Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge. Two-bot pending.
-- Bug found+fixed 1: server/business-gateway.ts used require("crypto") in
-  ESM — boot cert-fingerprint diag threw "require is not defined" under
-  tsx dev AND GET /api/lr-bg/status 500'd in dev (prod cjs bundle was
-  fine). Static crypto imports now; status 200s, boot logs "[lr-bg] pairs".
-- Remaining: two-bot sweep, targeted checks (cashflow ex-VAT copy/LEGACY
-  219,670; HMLR OC buttons render + confirm dialog, polite keyless error).
+### r396 · 2026-08-27 · LIGHT (r395 was FULL) — JOGQK ex-VAT/BG-live merge + targeted checks
+- Merged JOGQK (cashflow ex-VAT 7c4adb0 + LEGACY 219,670 seed + HMLR
+  manual-row OC button + BG cert-pair audit) into staging, clean merge,
+  tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge. Two-bot 396:
+  exit 0, all scenarios ok (incl. staff-cashflow-board on the ex-VAT data —
+  no hardcoded amounts, held without edits); 4 issues = standing noise
+  signature (2×400 rocketreach/tracker-invalid, 2×503 keyless AI). 0 raw
+  500/502/504 in dev-server log.
+- BUG FIXED 1: server/business-gateway.ts used require("crypto") in ESM —
+  boot cert-fingerprint diag threw "require is not defined" under tsx dev
+  AND GET /api/lr-bg/status 500'd in dev (prod cjs bundle unaffected —
+  esbuild provides require). Static crypto imports now; verified status
+  200 + fingerprints and boot logs "[lr-bg] pairs — test:{} live:{}".
+- Targeted check 1 (cashflow ex-VAT, woody @1440 /finance): board copy
+  "All figures ex VAT" + £219,670 legacy note render; LEGACY row shows
+  219,670 (not 263,604) in Nov 26; API cell 2026-11 budget = 219670
+  (re-base fired on the fixture's old gross seed). 6/6, 0 pageerrors.
+- Targeted check 2 (HMLR OC button, victoria @1440): LR address search →
+  keyless degrade → manual title box → "Official Copy (HMLR)" button
+  appears; confirm dialog carries title + £7 fee copy; CANCEL sends
+  nothing; ACCEPT posts once and keyless failure surfaces as polite
+  destructive toast ("Business Gateway certificate not configured"), no
+  crash. 7/7. NO real orders attempted (no certs locally, per parent note).
+  Client gate probed direct: mark POST /api/lr-bg/official-copy 403,
+  GET status 403 (gateway blocks /api/lr-bg — paid endpoint safe).
+- Harness growth: staff-lrbg-status-client-order-guard in woodyRound
+  (staff status 200 + fingerprints audit present — regression on the
+  require bug; client token order POST 403). Added after the 396 sweep
+  started — dry-run verified via the direct API probes above; first full
+  two-bot validation lands in r397.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2) — merge via
+  /duplicate-units tooling.
+- Suggestions: none. New flakes: none.
+- Next: r396 was LIGHT → r397 FULL, rotation #1 staff desktop 1440px.
+  Validate staff-lrbg-status-client-order-guard in the r397 two-bot run.
 
 ### r395 · 2026-08-27 · FULL (rotation #4 staff mobile 390px)
 - Merged JOGQK cashflow v3 + Business Gateway live-cert into staging (clean
