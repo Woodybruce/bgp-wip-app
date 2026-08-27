@@ -80,15 +80,45 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r394 · 2026-08-27 · ROUND IN PROGRESS (provisional)
+### r394 · 2026-08-27 · LIGHT (r393 was FULL) — JOGQK cashflow/UX-batch merge + targeted checks
 - Merged JOGQK into staging per parent note (6e869fae UX batch I,
   51ac9588+4c1490f6 Cashflow board). Two conflicts resolved: voa-ratings
   detail sheet (kept aria-describedby fix + took JOGQK's sm:max-w-2xl cap —
   this also closes UX-NOTES #103), UX-NOTES numbering (kept staging 97-105).
-- Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge. Two-bot 394 running.
-- Planned (LIGHT round, r393 was FULL): targeted checks on the new JOGQK
-  surfaces — cashflow unlock/grid 1440px + 390px month pager, /m/images
-  phone photo viewer.
+  tsc clean post-merge.
+- Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge. Two-bot 394: exit 0, all
+  scenarios ok; 5 issues = 4 listed noise + 1 NEW: woody /finance →
+  GET /api/cashflow 401. Triaged as intended (the new password gate;
+  Finance's forecast section shows a clean locked card) → added to the
+  harness noise list with staff-cashflow-unlock as the authoritative check.
+- Targeted check 1 (cashflow board, woody @1440): locked card → wrong-pw
+  error → BGPPAY unlocks; grid renders; cell edit 123,456 saves and the
+  closing-balance chain recomputes (+123,456), restore clean; add/remove
+  receipt line roundtrip; 11/11, 0 pageerrors. API gate matrix: victoria
+  (non-equity) 403 on GET + unlock; woody keyless 401; wrong unlock 401.
+- Targeted check 2 (cashflow @390 iPhone UA): mobile shell, month pager
+  defaults to current month (Aug 26), prev/next page correctly, phone cell
+  edit input works, 0 horizontal overflow, 0 pageerrors. NOTE: device
+  emulation needs a real mobile UA — viewport 390 + hasTouch with a Linux
+  desktop UA correctly stays on the desktop shell (use-mobile.tsx UA check),
+  not a bug.
+- Targeted check 3 (/m/images photo viewer, victoria @390): seeded 2
+  phone-upload photos via /api/image-studio/upload (field name "images");
+  tap capture → full-screen viewer (counter 1/2, black canvas, Edit with
+  AI + Share actions), swipe advances 1/2→2/2, Edit-with-AI closes viewer
+  into the edit sheet; 9/9, 0 pageerrors. Seed rows deleted after.
+- Bugs fixed: 0 (nothing broken found — merge + new surfaces all sound).
+- Harness growth: staff-cashflow-unlock scenario (locked 401 →
+  wrong-pw 401 → unlock → GET lines/months → cell PATCH roundtrip landed +
+  restored), /api/cashflow 401 added to IGNORED_RESPONSES; validated in
+  two-bot 395.
+- Deferred (carried from r393, still needs staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2) — merge via the
+  /duplicate-units tooling rather than auto-pick.
+- Suggestions: UX-NOTES #106 (phone /cashflow double header — shell top bar
+  + page h1 both say "Cashflow").
+- Next: r394 was LIGHT → r395 FULL, rotation #4 staff mobile 390px (point
+  at the surfaces listed at end of r385).
 
 ### r393 · 2026-08-27 · FULL (rotation #3 Landsec client mobile 390px)
 - Merged JOGQK (a38f270 hdog non-admin) into staging per parent note; merge

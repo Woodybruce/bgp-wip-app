@@ -16,6 +16,14 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+106. 2026-08-27 · BGP staff (equity) / mobile 390px (QA r394) · "check the
+    cashflow forecast on my phone" · /cashflow on the phone shell shows two
+    stacked headers — the shell's top bar already says "← Cashflow", then
+    the page renders its own back-arrow + "Cashflow" title directly below,
+    so the first ~140px is the same title twice · Hide the page's own
+    back-button + h1 row on the phone shell (the shell bar owns the title
+    there), keeping the desktop header as is.
+
 105. 2026-08-27 · Landsec client / mobile 390px (QA r393) · "look at the
     Bluewater floor plan on my phone" · The Plans viewer opens at 100% zoom
     showing one giant colour block, and its only usage hint reads "drag to
