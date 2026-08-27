@@ -117,9 +117,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   client viewers (fail-closed while /api/auth/me loads); staff unchanged.
   Verified visually both roles; tsc clean, rebuilt, smoke re-green.
 - Harness growth: client-property-put-guard in two-bot (client PUT own
-  property billingEntityId → 403; negative-probe listed). In-flow
-  verification run 392 kicked off (result in next entry/commit if this one
-  pushes first).
+  property billingEntityId → 403; negative-probe listed).
+- In-flow verification run 392: exit 0, verdict flow GREEN (session fix
+  holds) and client-property-put-guard green, but the omit fix exposed a
+  knock-on in the SAME hdog scenario: its commission fetch sent hdog's
+  Bearer + victoria's session cookie (default same-origin credentials);
+  session wins, so admin-or-self 403'd. Pre-fix it only passed because the
+  session had been wrongly swapped to hdog. Fixed: commission fetch also
+  credentials:'omit'. Verified in isolation (exact scenario logic vs dev:
+  session stays victoria, hdog all-zero, victoria keeps tierBreakdown/
+  scenarios shape). Lesson for future scenarios: a Bearer-only probe for a
+  DIFFERENT user than the page session must omit credentials on every
+  fetch, or the session user wins server-side.
 - Deferred: none. Suggestions: UX-NOTES #101 (client property quick-add
   task placeholder says "e.g. Pizza Express HOTs to legal" — staff jargon).
 - New noise listed: /api/os/sites 503 on /property-intelligence (keyless

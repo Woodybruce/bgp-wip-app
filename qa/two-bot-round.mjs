@@ -1657,8 +1657,12 @@ async function victoriaRound(page, cross) {
         method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: 'hdog', password: 'hdog' }) })).json().catch(() => null);
       if (!login?.token || !login?.id) return { skip: true }; // hdog boot-seed absent
+      // credentials:'omit' here too — default same-origin credentials ride
+      // victoria's session cookie along with hdog's Bearer, and the server
+      // prefers session, so the admin-or-self commission check would run as
+      // victoria and 403 (r392).
       const h = await (await fetch(`/api/hr/staff/${login.id}/commission`, {
-        headers: { Authorization: 'Bearer ' + login.token } })).json().catch(() => null);
+        credentials: 'omit', headers: { Authorization: 'Bearer ' + login.token } })).json().catch(() => null);
       const me = JSON.parse(localStorage.getItem('user') || '{}');
       const own = await (await fetch(`/api/hr/staff/${me.id}/commission`, {
         headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } })).json().catch(() => null);
