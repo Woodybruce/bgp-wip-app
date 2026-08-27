@@ -80,6 +80,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r395 · 2026-08-27 · FULL — ROUND IN PROGRESS (provisional)
+- Merged JOGQK cashflow v3 + Business Gateway live-cert into staging (clean
+  merge, tsc clean). /cashflow now redirects to /finance; password gate GONE
+  (equity/admin gate is the lock); workbook receipts retired, LEGACY
+  receivables line added.
+- Two-bot scenario updated per parent note: staff-cashflow-unlock →
+  staff-cashflow-board (equity 200 direct, LEGACY line present, retired
+  receipt keys absent, unlock endpoint dead, cell roundtrip on LEGACY,
+  victoria token 403). /api/cashflow 401 removed from IGNORED_RESPONSES.
+- Smoke GREEN 42/0 (FRESH_BUILD=1) on merged code. Two-bot 395: exit 0, all
+  scenarios ok incl. staff-cashflow-board; 4 issues = standing noise
+  signature (2×400 rocketreach/tracker-invalid, 2×503 keyless AI). 0 raw
+  500/502/504.
+- Next: staff mobile 390px journey (rotation #4 — r385 pointers: mobile
+  Images folders/select, LR autocomplete, PI map toolbar) + finance visual.
+
 ### r394 · 2026-08-27 · LIGHT (r393 was FULL) — JOGQK cashflow/UX-batch merge + targeted checks
 - Merged JOGQK into staging per parent note (6e869fae UX batch I,
   51ac9588+4c1490f6 Cashflow board). Two conflicts resolved: voa-ratings

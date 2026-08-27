@@ -51,7 +51,6 @@ const IGNORED_RESPONSES = [
   /\/api\/activity\/(brand|landlord)\/[^/]+$/, // AI relationship activity: own company + slice brands return 200 for clients since r215 (gateway now honours the 2026-08-04 parity decision); anything else 403s. client-interactions-guard is the authoritative lock either way.
   /\/api\/interactions\//,               // correspondence drawer: own company + slice brands are client-readable (Woody, 2026-08-04 — restored r215); rival/summary/leaderboard stay 403. The client-interactions-guard scenario is the authoritative lock.
   /\/api\/covenant\//,                    // covenant engine (credit analysis) is staff-only — the client covenant badge fires /api/covenant/by-crm/:id and gets a safe 403. client-covenant-guard is the authoritative lock.
-  /\/api\/cashflow$/,                     // 401 password_required until the session unlocks the board — /finance and /cashflow fire it locked by design. staff-cashflow-unlock is the authoritative check.
   /fonts|\.woff|\.map$/,
 ];
 
@@ -67,7 +66,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-unlock']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -5392,39 +5391,47 @@ async function woodyRound(page, cross) {
     if (r.leaked) throw new Error(`client fee injection landed in the database (deal "${r.name}")`);
   });
 
-  // Cashflow board (r394): the password gate on top of the equity gate, and
-  // a cell-edit roundtrip through the computed balance chain. Local default
-  // password is BGPPAY (CASHFLOW_PASSWORD is a prod-only override).
-  await step(page, p, 'staff-cashflow-unlock', async () => {
-    const r = await page.evaluate(async () => {
+  // Cashflow board v3 (r395): password gate dropped — the equity/admin gate
+  // IS the lock. Equity sees the board directly on /finance; non-equity 403.
+  // Receipts are app/Xero-driven now: workbook receipt lines retired, the
+  // editable LEGACY receivables line remains; cell-edit roundtrip on it.
+  await step(page, p, 'staff-cashflow-board', async () => {
+    const r = await page.evaluate(async (agentUser) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const locked = await fetch('/api/cashflow', { credentials: 'include', headers: auth });
-      if (locked.status !== 401) return { ok: false, why: `locked GET expected 401, got ${locked.status}` };
-      const lockedBody = await locked.json().catch(() => null);
-      if (lockedBody?.error !== 'password_required') return { ok: false, why: `locked GET error='${lockedBody?.error}'` };
-      const bad = await fetch('/api/cashflow/unlock', { method: 'POST', credentials: 'include', headers: auth, body: '{"password":"QA-WRONG"}' });
-      if (bad.status !== 401) return { ok: false, why: `wrong password expected 401, got ${bad.status}` };
-      const good = await fetch('/api/cashflow/unlock', { method: 'POST', credentials: 'include', headers: auth, body: '{"password":"BGPPAY"}' });
-      if (!good.ok) return { ok: false, why: `unlock ${good.status}` };
-      const keyed = { ...auth, 'x-cashflow-key': 'BGPPAY' };
-      const data = await (await fetch('/api/cashflow', { credentials: 'include', headers: keyed })).json();
-      if (!Array.isArray(data.lines) || !data.lines.length || !data.months?.length) return { ok: false, why: 'unlocked GET returned no lines/months' };
-      const line = data.lines.find((l) => l.section === 'receipts');
+      const direct = await fetch('/api/cashflow', { credentials: 'include', headers: auth });
+      if (direct.status !== 200) return { ok: false, why: `equity GET expected 200, got ${direct.status}` };
+      const data = await direct.json();
+      if (!Array.isArray(data.lines) || !data.lines.length || !data.months?.length) return { ok: false, why: 'GET returned no lines/months' };
+      const legacy = data.lines.find((l) => l.key === 'LEGACY' && l.section === 'receipts');
+      if (!legacy) return { ok: false, why: 'LEGACY receivables line missing from receipts' };
+      const retired = data.lines.filter((l) => l.section === 'receipts' && ['1', '2', '3', '4a', '4c', '5'].includes(l.key));
+      if (retired.length) return { ok: false, why: `retired workbook receipt lines still active (${retired.map((l) => l.key).join(',')})` };
+      const gone = await fetch('/api/cashflow/unlock', { method: 'POST', credentials: 'include', headers: auth, body: '{"password":"BGPPAY"}' });
+      if (gone.ok) return { ok: false, why: 'retired /api/cashflow/unlock endpoint still answers' };
       const month = data.months[0];
-      const before = data.cells.find((c) => c.line_id === line.id && c.month === month && c.basis === 'budget');
-      const save = await fetch('/api/cashflow/cell', { method: 'PATCH', credentials: 'include', headers: keyed,
-        body: JSON.stringify({ lineId: line.id, month, basis: 'budget', amount: 424242 }) });
+      const before = data.cells.find((c) => c.line_id === legacy.id && c.month === month && c.basis === 'budget');
+      const save = await fetch('/api/cashflow/cell', { method: 'PATCH', credentials: 'include', headers: auth,
+        body: JSON.stringify({ lineId: legacy.id, month, basis: 'budget', amount: 424242 }) });
       if (!save.ok) return { ok: false, why: `cell PATCH ${save.status}` };
-      const after = await (await fetch('/api/cashflow', { credentials: 'include', headers: keyed })).json();
-      const cell = after.cells.find((c) => c.line_id === line.id && c.month === month && c.basis === 'budget');
+      const after = await (await fetch('/api/cashflow', { credentials: 'include', headers: auth })).json();
+      const cell = after.cells.find((c) => c.line_id === legacy.id && c.month === month && c.basis === 'budget');
       const landed = Number(cell?.amount) === 424242;
       // restore the original value (or clear the cell if it didn't exist)
-      await fetch('/api/cashflow/cell', { method: 'PATCH', credentials: 'include', headers: keyed,
-        body: JSON.stringify({ lineId: line.id, month, basis: 'budget', amount: before ? before.amount : null }) });
+      await fetch('/api/cashflow/cell', { method: 'PATCH', credentials: 'include', headers: auth,
+        body: JSON.stringify({ lineId: legacy.id, month, basis: 'budget', amount: before ? before.amount : null }) });
       if (!landed) return { ok: false, why: `cell edit did not land (got ${cell?.amount})` };
+      // non-equity staff must get nothing: token-login as victoria
+      // (credentials:'omit' — never store the Set-Cookie, r391 lesson)
+      const vlogin = await fetch('/api/auth/login', { method: 'POST', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: agentUser, password: 'B@nd0077!' }) });
+      if (!vlogin.ok) return { ok: false, why: `victoria token login ${vlogin.status}` };
+      const vtoken = (await vlogin.json()).token;
+      const vres = await fetch('/api/cashflow', { credentials: 'omit', headers: { Authorization: 'Bearer ' + vtoken } });
+      if (vres.status !== 403) return { ok: false, why: `non-equity GET expected 403, got ${vres.status}` };
       return { ok: true };
-    });
-    if (!r.ok) throw new Error(`cashflow unlock/edit roundtrip failed (${r.why})`);
+    }, AGENT_USER);
+    if (!r.ok) throw new Error(`cashflow board v3 check failed (${r.why})`);
   });
 }
 
