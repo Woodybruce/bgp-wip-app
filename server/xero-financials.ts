@@ -214,11 +214,20 @@ export async function buildFinancials(session: any): Promise<any> {
   const buckets = { current: 0, d1to30: 0, d31to60: 0, d60plus: 0 };
   let outstanding = 0, overdue = 0;
   const overdueList: Array<{ contact: string; number: string; due: string; amount: number }> = [];
+  // AR/AP due amounts keyed by YYYY-MM — feeds the Cashflow board's
+  // app-linked projection (overdue amounts land in the current month).
+  const arByMonth: Record<string, number> = {};
+  const apByMonth: Record<string, number> = {};
+  const dueMonthKey = (d: Date | null): string => {
+    const base = d && !isNaN(d.getTime()) && d.getTime() > now ? d : today;
+    return `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, "0")}`;
+  };
   for (const inv of invoices) {
     const due = inv.DueDateString || inv.DueDate || null;
     const amount = toNum(inv.AmountDue);
     if (!amount) continue;
     outstanding += amount;
+    arByMonth[dueMonthKey(parseXeroDate(due))] = (arByMonth[dueMonthKey(parseXeroDate(due))] || 0) + amount;
     const dueMs = due ? new Date(due).getTime() : NaN;
     const daysOver = isNaN(dueMs) ? 0 : Math.floor((now - dueMs) / 86_400_000);
     if (daysOver <= 0) buckets.current += amount;
@@ -264,6 +273,7 @@ export async function buildFinancials(session: any): Promise<any> {
     const amount = toNum(b.AmountDue);
     if (!amount) continue;
     creditorsOutstanding += amount;
+    apByMonth[dueMonthKey(parseXeroDate(b.DueDateString || b.DueDate))] = (apByMonth[dueMonthKey(parseXeroDate(b.DueDateString || b.DueDate))] || 0) + amount;
     const due = parseXeroDate(b.DueDateString || b.DueDate);
     const dueMs = due ? due.getTime() : NaN;
     if (!isNaN(dueMs) && dueMs < now) credBuckets.overdue += amount;
@@ -394,6 +404,8 @@ export async function buildFinancials(session: any): Promise<any> {
       billCount: (bills as any[]).length,
     },
     cashflow: { receiptsDue: recBuckets, billsDue: credBuckets },
+    arByMonth,
+    apByMonth,
     orgName: org.Name || "Xero",
     currency: org.BaseCurrency || "GBP",
     fyStart: from,

@@ -4132,6 +4132,25 @@ app.use("/api/branding/assets", express.static(
           console.error("[goad datum fix] Failed:", e?.message);
         }
       }, 30000);
+      // HMLR Business Gateway certificate diagnostic (2026-08-25): attempt
+      // the mutual-TLS handshake once per boot and log the outcome, so a
+      // cert install/rotation is verifiable straight from deploy logs. A
+      // cert/key mismatch surfaces here as the TLS agent error.
+      setTimeout(async () => {
+        try {
+          const { bgConnectivity, bgKeyFingerprints } = await import("./business-gateway");
+          const r = await bgConnectivity();
+          console.log(`[lr-bg] env=${r.env} endpoint=${r.endpoint} ok=${r.ok}${r.status != null ? ` status=${r.status}` : ""}${r.error ? ` error=${r.error}` : ""}`);
+          if (!r.ok && /mismatch/i.test(r.error || "")) {
+            // Fingerprints only — proves WHICH side is wrong without ever
+            // logging key material.
+            const fp = bgKeyFingerprints();
+            console.log(`[lr-bg] pubkey fingerprints — storedKey=${fp.keyPub || "?"} installedCert=${fp.certPub || "?"}${fp.error ? ` err=${fp.error}` : ""}`);
+          }
+        } catch (e: any) {
+          console.error("[lr-bg] connectivity diag failed:", e?.message);
+        }
+      }, 20000);
       // One-off (per Woody, 2026-08-14): purge non-lettable "units" (InPost
       // lockers, power-bank stations, vending, ATMs...) that schedule imports
       // carried onto the Letting Tracker app-wide. Stub deals still at AVA go

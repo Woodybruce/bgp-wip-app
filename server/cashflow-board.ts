@@ -8,31 +8,15 @@
 // (server/cashflow-seed.ts); after that the board's own data is the truth.
 // Gate matches the rest of Finance: equity directors + admins.
 
-import type { Express, NextFunction, Request, Response } from "express";
-import { timingSafeEqual } from "crypto";
+import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { requireEquityOrAdmin } from "./auth";
 import { CASHFLOW_SEED } from "./cashflow-seed";
 import { withSystemXero } from "./xero-system-session";
 import { buildFinancials } from "./xero-financials";
 
-// Second lock on top of the equity gate — the source workbook was itself
-// password-protected, so the board keeps that behaviour (Woody, 2026-08-27:
-// "Password"). Default matches the workbook; override with the
-// CASHFLOW_PASSWORD env var on Railway.
-function cashflowPassword(): string {
-  return process.env.CASHFLOW_PASSWORD || "BGPPAY";
-}
-function keyMatches(supplied: string): boolean {
-  const a = Buffer.from(supplied);
-  const b = Buffer.from(cashflowPassword());
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-function requireCashflowKey(req: Request, res: Response, next: NextFunction) {
-  const key = String(req.headers["x-cashflow-key"] || "");
-  if (!keyMatches(key)) return res.status(401).json({ error: "password_required" });
-  next();
-}
+// (The extra password gate from the first cut was dropped — Woody,
+// 2026-08-27: "lose the password"; the equity/admin gate is the lock.)
 
 // Light Xero snapshot for the cross-reference strip — cash at bank and the
 // FY's monthly income/expenses, from the same builder as /api/xero/financials.
@@ -49,6 +33,10 @@ async function xeroSnapshot(): Promise<any | null> {
         cashTotal: fin.cashTotal ?? null,
         bankAccounts: fin.bankAccounts || [],
         monthly: fin.monthly || [],
+        arByMonth: fin.arByMonth || {},
+        apByMonth: fin.apByMonth || {},
+        recurringBills: fin.recurring?.monthlyBills ?? null,
+        costRunRate: fin.costs?.runRate ?? null,
       };
     }
   } catch (e: any) {
@@ -56,6 +44,47 @@ async function xeroSnapshot(): Promise<any | null> {
   }
   xeroSnapCache = { at: Date.now(), data };
   return data;
+}
+
+// App-linked projection (Woody, 2026-08-27: "link the forecasting to the
+// app — deals, invoices, costs"). Deal fees come from the CRM book with the
+// same stage weights as the WIP forecast, bucketed by the deal's expected
+// month (completed → exchanged → target date); COM deals that still have no
+// Xero invoice count at full weight. Everything is read-only reference —
+// the board's typed budget stays the plan of record.
+const PROJ_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9, COM: 1 };
+async function buildDealProjection(): Promise<{ byMonth: Record<string, { weighted: number; count: number }>; undated: { weighted: number; count: number } }> {
+  const { legacyToCode } = await import("../shared/deal-status");
+  const { rows } = await pool.query(`
+    SELECT d.status, d.fee::float AS fee,
+           COALESCE(d.completed_at, d.exchanged_at, d.target_date) AS dt,
+           inv.invoice_count AS ic
+      FROM crm_deals d
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS invoice_count
+          FROM xero_invoices xi
+         WHERE xi.deal_id = d.id AND COALESCE(xi.status, '') <> 'ERROR'
+      ) inv ON TRUE
+     WHERE d.fee IS NOT NULL AND d.fee > 0
+  `);
+  const byMonth: Record<string, { weighted: number; count: number }> = {};
+  const undated = { weighted: 0, count: 0 };
+  const thisMonth = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
+  for (const d of rows) {
+    const code = legacyToCode(d.status);
+    if (!code || !(code in PROJ_WEIGHTS)) continue;
+    if (code === "COM" && d.ic > 0) continue; // invoiced — already in Xero AR/actuals
+    const weighted = (Number(d.fee) || 0) * PROJ_WEIGHTS[code];
+    if (!d.dt) { undated.weighted += weighted; undated.count++; continue; }
+    const dt = new Date(d.dt);
+    let key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
+    if (key < thisMonth) key = thisMonth; // slipped deals land in the current month
+    (byMonth[key] ||= { weighted: 0, count: 0 }).weighted += weighted;
+    byMonth[key].count++;
+  }
+  for (const k of Object.keys(byMonth)) byMonth[k].weighted = Math.round(byMonth[k].weighted);
+  undated.weighted = Math.round(undated.weighted);
+  return { byMonth, undated };
 }
 
 let ensured: Promise<void> | null = null;
@@ -102,6 +131,21 @@ function ensureTables(): Promise<void> {
       }
       console.log(`[cashflow] Seeded ${CASHFLOW_SEED.lines.length} lines / ${CASHFLOW_SEED.cells.length} cells from the 2026/27 forecast workbook`);
     }
+    // v3 (Woody, 2026-08-27): Xero + the app are the receipts source of
+    // truth and Wendy's workbook is COSTS ONLY — retire the workbook's
+    // receipts lines and add one manual line for the pre-Xero (Sage-era)
+    // receivables Woody will confirm. Guarded on the LEGACY line so it
+    // runs once; re-adding receipt lines later stays possible.
+    const legacy = await pool.query(`SELECT 1 FROM cashflow_lines WHERE key = 'LEGACY'`);
+    if (legacy.rows.length === 0) {
+      await pool.query(
+        `UPDATE cashflow_lines SET is_active = false WHERE section = 'receipts' AND key IN ('1','2','3','4a','4c','5')`,
+      );
+      await pool.query(
+        `INSERT INTO cashflow_lines (key, label, section, sort) VALUES ('LEGACY', 'Legacy receivables (pre-Xero, Sage era) — to confirm', 'receipts', 5)`,
+      );
+      console.log(`[cashflow] v3: workbook receipts lines retired; LEGACY receivables line added`);
+    }
   })().catch((e) => { ensured = null; throw e; });
   return ensured;
 }
@@ -109,13 +153,7 @@ function ensureTables(): Promise<void> {
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 export function registerCashflowRoutes(app: Express): void {
-  app.post("/api/cashflow/unlock", requireEquityOrAdmin, async (req: Request, res: Response) => {
-    const supplied = String(req.body?.password || "");
-    if (!keyMatches(supplied)) return res.status(401).json({ error: "wrong_password" });
-    res.json({ ok: true });
-  });
-
-  app.get("/api/cashflow", requireEquityOrAdmin, requireCashflowKey, async (_req: Request, res: Response) => {
+  app.get("/api/cashflow", requireEquityOrAdmin, async (_req: Request, res: Response) => {
     try {
       await ensureTables();
       const lines = (await pool.query(
@@ -127,13 +165,17 @@ export function registerCashflowRoutes(app: Express): void {
       const monthSet = new Set<string>(CASHFLOW_SEED.months);
       for (const c of cells) monthSet.add(c.month);
       const xero = await xeroSnapshot();
-      res.json({ lines, cells, months: [...monthSet].sort(), xero });
+      const deals = await buildDealProjection().catch((e) => {
+        console.warn("[cashflow] deal projection failed:", e?.message);
+        return null;
+      });
+      res.json({ lines, cells, months: [...monthSet].sort(), xero, deals });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }
   });
 
-  app.patch("/api/cashflow/cell", requireEquityOrAdmin, requireCashflowKey, async (req: Request, res: Response) => {
+  app.patch("/api/cashflow/cell", requireEquityOrAdmin, async (req: Request, res: Response) => {
     try {
       await ensureTables();
       const { lineId, month, basis, amount } = req.body || {};
@@ -157,7 +199,7 @@ export function registerCashflowRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/cashflow/line", requireEquityOrAdmin, requireCashflowKey, async (req: Request, res: Response) => {
+  app.post("/api/cashflow/line", requireEquityOrAdmin, async (req: Request, res: Response) => {
     try {
       await ensureTables();
       const { label, section } = req.body || {};
@@ -178,7 +220,7 @@ export function registerCashflowRoutes(app: Express): void {
     }
   });
 
-  app.delete("/api/cashflow/line/:id", requireEquityOrAdmin, requireCashflowKey, async (req: Request, res: Response) => {
+  app.delete("/api/cashflow/line/:id", requireEquityOrAdmin, async (req: Request, res: Response) => {
     try {
       await ensureTables();
       await pool.query(`UPDATE cashflow_lines SET is_active = false WHERE id = $1 AND key NOT IN ('OPEN','RESERVE')`, [req.params.id]);

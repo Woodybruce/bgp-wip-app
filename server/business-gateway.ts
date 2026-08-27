@@ -8,6 +8,8 @@
 //
 // Cert material is held as base64-encoded PEM in Railway secrets:
 //   LR_BG_CERT_B64 (client cert), LR_BG_KEY_B64 (private key), LR_BG_CA_B64 (CA chain)
+//   LR_BG_LIVE_CERT_B64 / LR_BG_LIVE_KEY_B64 — the live-environment pair; used
+//     instead of the plain vars when LR_BG_ENV=live (test keeps the BGTest pair)
 //   LR_BG_ENV = "test" | "live"
 //   LR_BG_USERNAME / LR_BG_PASSWORD (Business Gateway portal account)
 import https from "https";
@@ -19,8 +21,20 @@ import { saveFile, getFile } from "./file-storage";
 
 const decode = (b64?: string): string | null => (b64 ? Buffer.from(b64, "base64").toString("utf8") : null);
 
+function bgIsLive(): boolean {
+  return (process.env.LR_BG_ENV || "test").toLowerCase() === "live";
+}
+
+function bgCertMaterial(): { cert?: string; key?: string } {
+  if (bgIsLive() && process.env.LR_BG_LIVE_CERT_B64 && process.env.LR_BG_LIVE_KEY_B64) {
+    return { cert: process.env.LR_BG_LIVE_CERT_B64, key: process.env.LR_BG_LIVE_KEY_B64 };
+  }
+  return { cert: process.env.LR_BG_CERT_B64, key: process.env.LR_BG_KEY_B64 };
+}
+
 export function bgConfigured(): boolean {
-  return !!(process.env.LR_BG_CERT_B64 && process.env.LR_BG_KEY_B64);
+  const m = bgCertMaterial();
+  return !!(m.cert && m.key);
 }
 
 // The cert authenticates the channel (mutual TLS); the SOAP WS-Security header
@@ -32,7 +46,7 @@ export function bgCredentials(): { username: string; password: string } | null {
 }
 
 export function bgBaseUrl(): string {
-  return (process.env.LR_BG_ENV || "test").toLowerCase() === "live"
+  return bgIsLive()
     ? "https://businessgateway.landregistry.gov.uk"
     : "https://bgtest.landregistry.gov.uk";
 }
@@ -40,9 +54,7 @@ export function bgBaseUrl(): string {
 // SOAP engine base path differs between environments (stub vs live engine).
 // Each operation lives at a named web-service appended to this base.
 export function bgSoapPath(): string {
-  return (process.env.LR_BG_ENV || "test").toLowerCase() === "live"
-    ? "/b2b/BGSoapEngine"
-    : "/b2b/ECBG_StubService";
+  return bgIsLive() ? "/b2b/BGSoapEngine" : "/b2b/ECBG_StubService";
 }
 
 // Official Copy "Title Known" (OC1) SOAP service endpoint.
@@ -54,7 +66,8 @@ let _agent: https.Agent | null = null;
 function bgAgent(): https.Agent | null {
   if (!bgConfigured()) return null;
   if (_agent) return _agent;
-  const cert = decode(process.env.LR_BG_CERT_B64), key = decode(process.env.LR_BG_KEY_B64), ca = decode(process.env.LR_BG_CA_B64);
+  const m = bgCertMaterial();
+  const cert = decode(m.cert), key = decode(m.key), ca = decode(process.env.LR_BG_CA_B64);
   if (!cert || !key) return null;
   _agent = new https.Agent({ cert, key, ca: ca || undefined, keepAlive: true });
   return _agent;
@@ -280,10 +293,67 @@ export async function persistOfficialCopy(opts: {
   return { registerUrl };
 }
 
+// Public-key SHA-256 fingerprints for the stored private key and installed
+// cert — fingerprints ONLY, never key material. This is how a "key values
+// mismatch" (cert minted from a different CSR than the key we hold) is
+// diagnosed from logs without touching the key.
+export function bgKeyFingerprints(): { keyPub?: string; certPub?: string; error?: string } {
+  const out: { keyPub?: string; certPub?: string; error?: string } = {};
+  try {
+    const { createPrivateKey, createPublicKey, createHash, X509Certificate } = require("crypto") as typeof import("crypto");
+    const keyPem = decode(process.env.LR_BG_KEY_B64);
+    if (keyPem) {
+      const pub = createPublicKey(createPrivateKey(keyPem));
+      out.keyPub = createHash("sha256").update(pub.export({ type: "spki", format: "der" })).digest("hex");
+    }
+    const certPem = decode(process.env.LR_BG_CERT_B64);
+    if (certPem) {
+      const cert = new X509Certificate(certPem);
+      out.certPub = createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("hex");
+    }
+  } catch (e: any) {
+    out.error = e?.message;
+  }
+  return out;
+}
+
+// Generate a fresh CSR from the STORED private key (which never leaves the
+// server) so Land Registry can reissue the certificate against the key we
+// actually hold. CSRs contain only public information — safe to return.
+export async function bgGenerateCsr(): Promise<{ csr: string; keyPubSha256: string }> {
+  const keyPem = decode(process.env.LR_BG_KEY_B64);
+  if (!keyPem) throw new Error("LR_BG_KEY_B64 not configured");
+  const forge = await import("node-forge");
+  const key = forge.pki.privateKeyFromPem(keyPem);
+  const csr = forge.pki.createCertificationRequest();
+  csr.publicKey = forge.pki.setRsaPublicKey(key.n, key.e);
+  // Subject mirrors the issued certificate's — HMLR key the request off the CN.
+  csr.setSubject([
+    { name: "countryName", value: "gb" },
+    { name: "organizationName", value: "Bruce Gillingham Pollard Limited [226225]" },
+    { shortName: "OU", value: "devices" },
+    { name: "commonName", value: "Bruce Gillingham Pollard Limited [226225]" },
+  ]);
+  csr.sign(key, forge.md.sha256.create());
+  const { createHash } = require("crypto") as typeof import("crypto");
+  const keyPub = createHash("sha256").update(Buffer.from(forge.asn1.toDer(forge.pki.publicKeyToAsn1(csr.publicKey)).getBytes(), "binary")).digest("hex");
+  return { csr: forge.pki.certificationRequestToPem(csr), keyPubSha256: keyPub };
+}
+
 export function setupBusinessGatewayRoutes(app: Express) {
   app.get("/api/lr-bg/status", requireAuth, async (_req: Request, res: Response) => {
     const conn = await bgConnectivity();
-    res.json({ ...conn, credentials: bgCredentials() ? "set" : "missing", officialCopyPath: bgOfficialCopyPath() });
+    res.json({ ...conn, credentials: bgCredentials() ? "set" : "missing", officialCopyPath: bgOfficialCopyPath(), fingerprints: bgKeyFingerprints() });
+  });
+
+  // CSR for certificate reissue — returns the PEM text (public info only).
+  app.get("/api/lr-bg/csr", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const out = await bgGenerateCsr();
+      res.type("text/plain").send(out.csr);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "CSR generation failed" });
+    }
   });
 
   // Official Copy of Register (OC1) by title number.
