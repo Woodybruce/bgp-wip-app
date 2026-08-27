@@ -407,7 +407,11 @@ export function AppSidebar() {
     const raf = requestAnimationFrame(measure);
     const timers = [300, 1000, 2500].map((ms) => setTimeout(measure, ms));
     return () => { cancelAnimationFrame(raf); timers.forEach(clearTimeout); };
-  }, [colorScheme, brand.logoUrl, brand.primaryColor]);
+    // Depend on the brand OBJECT, not its fields: the fetched theme can echo
+    // the hardcoded fallback values exactly (Landsec navy, no logoUrl), in
+    // which case the fields never change while the injected CSS vars DO flip
+    // the sidebar dark after the timers above have already run.
+  }, [colorScheme, brand]);
 
   return (
     // collapsible="none" pins the left nav permanently open (the hover-peek

@@ -16,6 +16,15 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+110. 2026-08-27 · Landsec client / desktop 1440px (QA r399) · "which leases
+    expire soon — show me Wagamama's" · The dashboard EXPIRING (6M) KPI
+    opens a tidy popover of 8 expiring tenants, but clicking a tenant lands
+    on the full 200-unit Tenancy Schedule with no filter or highlight — the
+    user has to re-type the tenant name into the schedule search to find the
+    row they just clicked. Suggest: carry the tenant through (prefill the
+    schedule search with the clicked tenant, or scroll-to + flash-highlight
+    the matching row).
+
 109. 2026-08-27 · BGP staff (non-admin) / desktop 1440px (QA r397) · "check
     my numbers on the WIP report" · For a non-admin agent the WIP REPORT
     tab lists deals (header said "6 transactions · £250,000") but the AGENT

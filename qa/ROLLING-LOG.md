@@ -80,12 +80,43 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r399 · 2026-08-27 · ROUND IN PROGRESS (provisional)
-- JOGQK: no new commits ahead of staging — merge no-op. tsc clean.
-- Smoke GREEN 42/0 (FRESH_BUILD=1). Triage: nothing beyond listed noise.
-- Plan: FULL rotation #2 Landsec client desktop journey (tenancy/expiries/
-  vacancy angle — vary from r383 tracker/add-brand and r391 dashboard/news);
-  two-bot 399 to follow.
+### r399 · 2026-08-27 · FULL (rotation #2 Landsec client desktop 1440px)
+- JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
+  GREEN 42/0 (FRESH_BUILD=1) ×2 (pre- and post-fix rebuild). Two-bot 399:
+  first run polluted by MY journey logins running concurrently → 7 bogus
+  429/flow-failure/harness-crash issues (rate limiter, listed noise);
+  clean re-run after app restart: exit 0, ALL scenarios ok, 4 issues =
+  standing noise signature (2×400 rocketreach/probe, 2×503 keyless AI).
+  0 raw 500/502/504 in dev-server log. OPERATOR LESSON: never run browser
+  journeys (fresh UI logins) while two-bot is mid-round — the shared login
+  rate limiter 429s the later personas (nick/sam harness-crash signature).
+- Journey (Mark Warne @1440): "which leases expire soon, how are my vacant
+  units progressing, who do I chase": dashboard EXPIRING (6M) KPI → popover
+  lists 8 expiring tenants w/ dates → tenant click → Tenancy Schedule
+  (search Wagamama → row w/ expiry 2026-09-28 matching popover; Excel/
+  Columns/status chips present; row click inert for clients — read-only,
+  fine) → Available chip → Letting Tracker pre-filtered AVA 75 → NEGOTIATING
+  chip → deal #1002 → deal page answers the chase ("BGP contact: Victoria
+  Broadhead"). 0 pageerrors, 0 h-overflow, only noise-list 4xx/5xx.
+- BUG FIXED 1 (visual, client brand): once the Landsec brand skin lands
+  (~5-30s after login, /api/client/brand-theme), the sidebar flips navy but
+  the black Landsec logo stayed BLACK → invisible for the whole session.
+  Cause: app-sidebar's darkSidebar re-measure effect depended on
+  [colorScheme, brand.logoUrl, brand.primaryColor] — the fetched theme
+  echoes the hardcoded fallback exactly (logoUrl null, #00263A), so no dep
+  changed and the last re-measure timer (2.5s) fired before the skin landed.
+  Fix: depend on the brand OBJECT (new identity when theme resolves).
+  Verified visually: white logo silhouette on navy after flip; staff branch
+  untouched (no logoBox there). tsc clean, rebuilt, smoke re-green.
+- Harness growth: none — brand-theme endpoint already asserted in two-bot;
+  the bug was client-side CSS/measure timing, not fetchable.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+- Suggestions: UX-NOTES #110 (expiring-leases popover tenant click lands on
+  unfiltered tenancy schedule — no prefill/highlight, user re-types name).
+- New flakes: none (the 429 cascade is the standing rate-limiter noise).
+- Next: r399 was FULL → r400 LIGHT; then r401 FULL rotation #3 Landsec
+  client mobile 390px.
 
 ### r398 · 2026-08-27 · LIGHT (r397 had the journey)
 - Merged JOGQK ccd1cce (consultant share off the top — BGP House 15% applies
