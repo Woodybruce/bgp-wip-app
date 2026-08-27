@@ -4176,6 +4176,54 @@ app.use("/api/branding/assets", express.static(
           const r = await pool.query(`UPDATE unit_target_operators SET category = 'Cafe' WHERE category = 'Care'`);
           if (r.rowCount) console.log(`[care→cafe] healed ${r.rowCount} target-operator rows`);
         } catch { /* table may not exist on fresh DBs */ }
+        // Piggy-back heal: projection rows whose tenancy_unit_id points at a
+        // tenancy row that no longer exists. Old imports deleted tenancy rows
+        // without unlinking the mirrored Letting Tracker / leasing rows, so
+        // every re-import spawned duplicates (Bluewater: U062 ×8) — inflating
+        // "Available" counts on the tracker, client portfolio and risk
+        // register. Dangling rows that are bare duplicates of a still-linked
+        // same-name row and carry no data of their own are deleted; any other
+        // dangling row keeps its data and just gets unlinked (NULL), which the
+        // mirror's name-link adoption can re-adopt on the next import.
+        // Idempotent — orphans stop existing after the first pass.
+        try {
+          const delAvail = await pool.query(`
+            DELETE FROM available_units au
+             WHERE au.tenancy_unit_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.id = au.tenancy_unit_id)
+               AND au.deal_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM unit_viewings v WHERE v.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_offers f WHERE f.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_interest i WHERE i.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_briefs b WHERE b.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_marketing_files mf WHERE mf.unit_id = au.id)
+               AND EXISTS (SELECT 1 FROM available_units au2
+                            JOIN tenancy_schedule_units t2 ON t2.id = au2.tenancy_unit_id
+                           WHERE au2.property_id = au.property_id AND au2.id <> au.id
+                             AND lower(trim(coalesce(au2.unit_name, ''))) = lower(trim(coalesce(au.unit_name, ''))))`);
+          const unlinkAvail = await pool.query(`
+            UPDATE available_units au SET tenancy_unit_id = NULL
+             WHERE au.tenancy_unit_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.id = au.tenancy_unit_id)`);
+          const delLs = await pool.query(`
+            DELETE FROM leasing_schedule_units ls
+             WHERE ls.tenancy_unit_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.id = ls.tenancy_unit_id)
+               AND coalesce(ls.updates, '') = '' AND coalesce(ls.optimum_target, '') = '' AND coalesce(ls.target_brands, '') = ''
+               AND NOT EXISTS (SELECT 1 FROM target_tenants tt WHERE tt.unit_id = ls.id)
+               AND EXISTS (SELECT 1 FROM leasing_schedule_units ls2
+                            JOIN tenancy_schedule_units t2 ON t2.id = ls2.tenancy_unit_id
+                           WHERE ls2.property_id = ls.property_id AND ls2.id <> ls.id
+                             AND lower(trim(coalesce(ls2.unit_name, ''))) = lower(trim(coalesce(ls.unit_name, ''))))`);
+          const unlinkLs = await pool.query(`
+            UPDATE leasing_schedule_units ls SET tenancy_unit_id = NULL
+             WHERE ls.tenancy_unit_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.id = ls.tenancy_unit_id)`);
+          const total = (delAvail.rowCount || 0) + (unlinkAvail.rowCount || 0) + (delLs.rowCount || 0) + (unlinkLs.rowCount || 0);
+          if (total) console.log(`[orphan-projection heal] tracker: ${delAvail.rowCount} duplicate(s) removed + ${unlinkAvail.rowCount} unlinked; leasing: ${delLs.rowCount} removed + ${unlinkLs.rowCount} unlinked`);
+        } catch (e: any) {
+          console.error("[orphan-projection heal] failed:", e?.message);
+        }
         // Piggy-back heal: brands with a resolved Companies House profile
         // but an empty uk_entity_name (resolved before the 2026-08-18
         // backfill fix) — copy the registered name across so the KYC panel

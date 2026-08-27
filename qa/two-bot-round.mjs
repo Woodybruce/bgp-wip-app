@@ -3858,6 +3858,26 @@ async function markRound(page, cross) {
     if (rowTicks > 0) throw new Error(`${rowTicks} bulk-delete row ticks leaked to client tenancy board`);
   });
 
+  // r393: every write on the tenancy board 403s for a client (covered by
+  // client-tenancy-write-scoped), so the edit affordances must not render —
+  // Add unit, per-row status dropdowns, row deletes and inline cell editing
+  // were all client-visible dead controls (same class as the plans fix).
+  await step(page, p, 'client-tenancy-edit-controls-hidden', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.getByText('Tenancy Schedule', { exact: false }).first().waitFor({ timeout: 30000 });
+    await page.waitForTimeout(2500);
+    if (await page.getByTestId('btn-add-tenancy-unit').count()) {
+      throw new Error('Add-unit button leaked to client tenancy board');
+    }
+    const statusSelects = await page.locator('select[data-testid^="tenancy-status-"]').count();
+    if (statusSelects > 0) throw new Error(`${statusSelects} status dropdowns leaked to client tenancy board`);
+    const deletes = await page.locator('[data-testid^="tenancy-delete-"]').count();
+    if (deletes > 0) throw new Error(`${deletes} row-delete buttons leaked to client tenancy board`);
+    if (await page.getByTestId('btn-import-tenancy').count()) {
+      throw new Error('Import button leaked to client tenancy board');
+    }
+  });
+
   // r368: plan upload is client-allowed on their own property (board parity)
   // but every other plan write — rename, auto-detect, delete — is staff-only,
   // so the plans panel must not offer a client those controls (same class as

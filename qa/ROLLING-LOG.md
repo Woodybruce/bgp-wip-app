@@ -80,13 +80,58 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r393 · 2026-08-27 · ROUND IN PROGRESS (heartbeat)
-- Merged JOGQK (a38f270 hdog non-admin) into staging first per parent note;
-  merge clean (server/index.ts only). hdog quick check PASSED: fixture boot
-  creates hdog non-admin, login works; one-off demote verified live (set
-  is_admin=true, rebooted dev server, log line fired, row back to false).
-- Smoke GREEN 42/0 (FRESH_BUILD=1). 0 raw 500/502/504 in smoke app log.
-- Two-bot + FULL journey (rotation #3 client mobile 390px) to follow.
+### r393 · 2026-08-27 · FULL (rotation #3 Landsec client mobile 390px)
+- Merged JOGQK (a38f270 hdog non-admin) into staging per parent note; merge
+  clean. hdog check PASSED both ways: fresh boot creates hdog non-admin +
+  login works, AND the one-off demote verified live (set is_admin=true,
+  rebooted, "[one-off hdog]" log fired, row back to false).
+- Smoke GREEN 42/0 twice (FRESH_BUILD=1; second run includes today's
+  fixes). Two-bot 394: exit 0, all scenarios ok, 4 issues all listed noise
+  (2×400 rocketreach/tracker-invalid; 2×503 keyless AI). tsc clean.
+- Journey: Mark Warne @ 390px iPhone — "review my Bluewater tenancy
+  schedule: who's in a unit, when does the lease expire, what's vacant":
+  home → /properties (map+list clean) → Bluewater → Boards → Tenancy
+  Schedule → search "Wagamama" → card shows unit SVU04, tenant, Occupied,
+  Start 29 Sept 2011 / Exp 28 Sept 2026. Task achievable in sensible steps;
+  CRM tile detour (brand directory, not properties) was my miss, not a trap.
+- BUG FIXED 1 (data-integrity, staff+client): orphaned mirror projections —
+  old tenancy re-imports deleted spine rows without unlinking, leaving
+  available_units/leasing_schedule_units rows pointing at dead tenancy ids;
+  every re-import then duplicated boards (U062 ×8; fixture: 75/156 tracker +
+  156/327 leasing rows were orphans). Client portfolio said "153 Available"
+  vs real 76; risk register "150 units vacant". Fix: [orphan-projection
+  heal] boot sweep in server/index.ts — deletes dangling rows that are bare
+  duplicates of a surviving linked same-name row and carry no
+  viewings/offers/interest/deals/strategy/targets; anything else just gets
+  tenancy_unit_id NULLed so name-link adoption re-adopts it. Verified:
+  heal log 75+156 removed, counts now 76 Available everywhere, smoke green.
+- BUG FIXED 2 (client dead affordances): tenancy schedule board rendered
+  the full edit UI to clients — Add unit, per-row status dropdowns, row
+  deletes, inline cell edits, brand picker — all 403 server-side (verified).
+  readOnly prop was never passed by either call site. Fix: canEdit =
+  !readOnly && !isClientViewer in PropertyTenancySchedule gates every edit
+  affordance (mobile cards + desktop UnitRow, which now has a read-only
+  cell renderer: static status chip, tenant company link kept, plain text
+  cells). Covenant badge back to staff-only (its endpoint 403s clients).
+  Verified client mobile + desktop (0 edit controls, 200 rows render) and
+  staff intact (Add/Import/398 status controls).
+- Harness growth: two-bot scenario client-tenancy-edit-controls-hidden
+  (Add/status-selects/deletes/Import absent on client full board).
+- Deferred (data, needs staff decision): Bluewater tenancy SPINE has true
+  duplicate rows (U062 ×4, L090 ×2, L130 ×2 — 201 rows/195 distinct) from a
+  double-processing import on 03 Aug; projections mirror them 1:1 (correct
+  linkage). The /duplicate-units + merge-tenancy-units tooling exists —
+  flag to Woody/staff to merge rather than auto-pick a survivor.
+- Suggestions: UX-NOTES #104 (client property Overview card is a wall of
+  "—" placeholders), #105 (Plans viewer on touch: 100% zoom + "wheel to
+  zoom" hint, no pinch/fit-to-screen).
+- Env note: QA-PLAN-GATE plan (two-bot upload) lingers on the client plans
+  panel between rounds — purged at next round START by run-round.sh; it was
+  the giant red block in my journey screenshots, not an app bug.
+- New flakes: pkill/pgrep -f self-match kills the QA shell (exit 144) —
+  split the pattern ("serv""er/index") when killing the dev server.
+- Next journey: r393 was FULL → r394 LIGHT; then r395 FULL rotation #4
+  staff mobile 390px (point it at the surfaces listed at end of r385).
 
 ### r392 · 2026-08-27 · LIGHT (r391 was FULL) + both still-open pointers closed
 - Fresh container: pg_hba trust fix + bgp role + fixture restore needed

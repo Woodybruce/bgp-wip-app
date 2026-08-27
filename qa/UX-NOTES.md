@@ -16,6 +16,22 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+105. 2026-08-27 · Landsec client / mobile 390px (QA r393) · "look at the
+    Bluewater floor plan on my phone" · The Plans viewer opens at 100% zoom
+    showing one giant colour block, and its only usage hint reads "drag to
+    pan · wheel to zoom" — there is no wheel on a phone, and no pinch-zoom
+    hint or fit-to-screen start state · Start the plan fitted to the
+    viewport and switch the hint to touch wording ("pinch to zoom") when
+    the device is touch.
+
+104. 2026-08-27 · Landsec client / mobile 390px (QA r393) · "open my
+    Bluewater property page" · The Overview card leads with Status, Asset
+    Class, BGP Team, Website and Area — all showing "—" dashes for the
+    client's own flagship property, pushing the real content (ownership,
+    tasks, risk register) below a card of empty placeholders · Hide
+    unfilled fields for client viewers (or fill these fields for Landsec
+    properties — Bluewater has no asset class or website set).
+
 103. 2026-08-27 · BGP staff / desktop 1440px (QA r392) · "check a unit's
     rateable value" · The Business Rates entry-detail sheet slides up as a
     full-width bottom sheet at 1440px — each label sits at the far left and
