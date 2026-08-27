@@ -5102,6 +5102,42 @@ async function markRound(page, cross) {
     }
   });
 
+  // r401: the brands-hub search box (mobile quick search) is backed by
+  // /api/brands/search — assert the brand + contact facets actually return
+  // rows for an in-slice brand (Mark's "find my tenant's contact" journey
+  // dead-ends silently if this regresses) and that a no-match query is an
+  // empty result, not an error. Data-driven off the brand's own profile.
+  await step(page, p, 'client-brands-search-facets', async () => {
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const pr = await fetch(`${BASE}/api/brand/${BRAND}/profile`, auth);
+    if (!pr.ok) throw new Error(`brand profile fetch ${pr.status}`);
+    const prof = await pr.json();
+    const name = prof?.company?.name;
+    if (!name) throw new Error('brand profile returned no company name');
+    const q = encodeURIComponent(name.slice(0, 5));
+    const sr = await fetch(`${BASE}/api/brands/search?q=${q}`, auth);
+    if (!sr.ok) throw new Error(`brands search ${sr.status} for "${name.slice(0, 5)}"`);
+    const hits = await sr.json();
+    for (const k of ['brands', 'contacts', 'agents']) {
+      if (!Array.isArray(hits?.[k])) throw new Error(`brands search missing ${k} facet`);
+    }
+    if (!hits.brands.some((b) => b.id === BRAND)) throw new Error(`brands search "${name.slice(0, 5)}" did not return ${name}`);
+    const contact = (prof?.contacts || [])[0];
+    if (contact?.name) {
+      const cq = encodeURIComponent(contact.name.split(' ')[0]);
+      const cr = await fetch(`${BASE}/api/brands/search?q=${cq}`, auth);
+      if (!cr.ok) throw new Error(`brands contact search ${cr.status}`);
+      const chits = await cr.json();
+      const found = chits.brands.some((b) => (b.contacts || []).some((c) => c.id === contact.id))
+        || chits.contacts.some((c) => c.id === contact.id);
+      if (!found) throw new Error(`brands search did not surface contact "${contact.name}"`);
+    }
+    const nr = await fetch(`${BASE}/api/brands/search?q=zzqxnomatch`, auth);
+    if (!nr.ok) throw new Error(`brands search no-match query errored ${nr.status}`);
+    const none = await nr.json();
+    if (none.brands.length || none.contacts.length || none.agents.length) throw new Error('brands search no-match query returned rows');
+  });
+
   // r281: client-mobile Brand Intelligence path — the "look up a tenant brand
   // on my phone before a meeting" journey. The hub, a brand profile and its
   // Key Contacts drill-in must all render inside a real 390px phone context

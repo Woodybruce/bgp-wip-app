@@ -16,6 +16,30 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+112. 2026-08-27 · Landsec client / mobile 390px (QA r401) · "check a tenant's
+    covenant standing" · On a client's brand Compliance panel, when no UK
+    trading entity is set the copy says "Not confirmed yet — BGP is
+    identifying the UK trading entity." but immediately below it offers the
+    client a "Search Companies House for ‘X’" link (external CH search).
+    Mixed message: the client is told BGP is handling it, then handed the
+    tool to do it themselves (and they can't save a match anyway — edit is
+    staff-only). Suggest: hide the CH search link for client viewers
+    (brand-profile-panel.tsx ~line 4130, gate on bcIsClient like the
+    edit/rescrape buttons beside it).
+
+111. 2026-08-27 · Landsec client / mobile 390px (QA r401) · "a colleague says
+    Wagamama's lease is expiring — find their contact" · Wagamama Limited is
+    on Mark's own tenancy schedule, but has no brand row in the directory,
+    so Brand Intelligence search says "No matches for ‘wagamama’ — try a
+    shorter name" and the Add-brand dialog (global directory search) also
+    dead-ends at "No brands match." — there is NO path for a client to get
+    their own tenant tracked from here (partly a fixture data gap, but the
+    dead end is real whenever a tenancy tenant is missing from the
+    directory). Suggest: when a client search misses, check the tenant
+    names on their own tenancy schedules and offer "Wagamama is one of your
+    tenants — ask BGP to add it" (request lands with staff), or auto-seed
+    directory stubs from tenancy-schedule tenant names.
+
 110. 2026-08-27 · Landsec client / desktop 1440px (QA r399) · "which leases
     expire soon — show me Wagamama's" · The dashboard EXPIRING (6M) KPI
     opens a tidy popover of 8 expiring tenants, but clicking a tenant lands

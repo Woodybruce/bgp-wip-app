@@ -80,15 +80,46 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r401 · 2026-08-27 · ROUND IN PROGRESS (provisional heartbeat)
+### r401 · 2026-08-27 · FULL (rotation #3 Landsec client mobile 390px)
 - JOGQK: no new commits (ff37b59 already in staging via 4c20bc4) — merge
   no-op. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 401 (via
   run-round.sh): exit 0, ALL scenarios ok — staff-historical-wip-gate
   first full-round validation PASSED (r400 goal met). 4 issues = standing
   noise signature (2×400 rocketreach/probe, 2×503 keyless AI). 0 raw
-  500/502/504 in dev-server log.
-- Triage: nothing to triage beyond listed noise.
-- Next up this round: FULL journey rotation #3 Landsec client mobile 390px.
+  500/502/504 in dev-server log ("1×500" grep hit was news-feed log text).
+- Journey (Mark Warne @390px iPhone UA, UI form login): "a colleague says
+  Wagamama's lease is expiring — find their contact and check their
+  standing, then glance at news": login (Client/guest reveal) → "/"
+  Portfolio home (bottom nav Portfolio|Messages|Deals|Tasks|News) → Brands
+  quick link → Brand Intelligence hub (category chips + 9 cards clean) →
+  search "wagamama" → NO MATCH (tenant has no directory row; Add-brand
+  dialog also "No brands match." — dead end, UX-NOTES #111) → fallback
+  Starbucks profile → all 6 pill tabs walked (CHAT/CONTACTS/INTEL/STORES/
+  SOCIAL/COMPLIANCE): Key Contacts + BGP Engagement, stores map+list,
+  compliance panel visible w/ edit+rescrape correctly staff-gated
+  (bcIsClient), no staff-action leak → News tab clean. 0 pageerrors,
+  0 h-overflow anywhere, only noise-list 4xx/5xx. /api/brands/search
+  verified as mark: brand + contact facets return rows, no-match = clean
+  empty. Task verdict: fails on Wagamama purely for want of a directory
+  row; every surface behaved.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2).
+- Harness growth: client-brands-search-facets in markRound (data-driven:
+  profile name → search returns the brand; first contact's forename →
+  contact surfaced; nonsense query → empty facets not error). API sequence
+  dry-run verified via curl as mark; first full two-bot validation next
+  round. node --check clean.
+- Suggestions added: UX-NOTES #111 (client tenant-brand search dead end,
+  no path to request tracking), #112 (client compliance panel offers
+  "Search Companies House" link while copy says BGP is handling it).
+- New flakes: none. Setup notes: pg_hba trust fix needed (r205); mobile
+  brand cards are overlay anchors (a[aria-label=name]) — click those, not
+  the text; login "Sign in with Microsoft" button matches
+  has-text("Sign in") — use exact-name locator (its /api/auth/microsoft
+  500s keyless locally, noise).
+- Next: r401 was FULL → r402 LIGHT; then r403 FULL rotation #4 staff
+  mobile 390px. Validate client-brands-search-facets in the r402 two-bot.
 
 ### r400 · 2026-08-27 · LIGHT (r399 had the journey) — JOGQK historical-billings merge + targeted checks
 - Merged JOGQK ff37b59 (Historical billings on Finance — static Sage
