@@ -313,6 +313,12 @@ function FeedTab() {
 
   const filteredArticles = useMemo(() => {
     if (!articles) return [];
+    // The same story often arrives twice — raw feed headline vs normalised
+    // signal ("… - London Evening Standard" suffix etc). Collapse
+    // near-duplicates by normalised headline, same rule as the brand
+    // profile Signals list (UX #12/#91). First occurrence wins.
+    const seen: string[] = [];
+    const norm = (h: string) => (h || "").toLowerCase().replace(/\s+-\s+[^-]{3,40}$/, "").replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
     return articles.filter((a) => {
       if (dismissedArticles.has(a.id)) return false;
       if (categoryFilter !== "All") {
@@ -326,6 +332,12 @@ function FeedTab() {
           if (articleTags.has(wanted)) { matched = true; break; }
         }
         if (!matched) return false;
+      }
+      const n = norm(a.title || (a as any).headline);
+      if (n) {
+        const dup = seen.some(p => p === n || (n.length >= 30 && p.startsWith(n)) || (p.length >= 30 && n.startsWith(p)));
+        if (dup) return false;
+        seen.push(n);
       }
       return true;
     });

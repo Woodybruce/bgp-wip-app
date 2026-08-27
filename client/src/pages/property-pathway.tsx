@@ -4971,14 +4971,19 @@ function PlanningDocsDialog({
         <div className="overflow-y-auto -mx-6 px-6 space-y-3">
           {planningDocs.map((app, ai) => (
             <div key={ai} className="border rounded bg-background">
-              <div className="flex items-start gap-2 px-3 py-2 border-b bg-muted/30">
-                <span className="text-[11px] text-muted-foreground shrink-0 w-20 mt-0.5">{app.appDate ? app.appDate.slice(0, 10) : ""}</span>
-                {app.lpa && <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase font-medium shrink-0 mt-0.5" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
-                <span className="flex-1 min-w-0">
+              {/* Phone: date + badges on one small line, ref + description
+                  full-width below — the desktop columns left ~110px for the
+                  reference and broke refs mid-token (UX #98). */}
+              <div className="px-3 py-2 border-b bg-muted/30 flex flex-col gap-1 sm:flex-row sm:items-start sm:gap-2">
+                <div className="flex items-center gap-2 sm:contents">
+                  <span className="text-[11px] text-muted-foreground shrink-0 sm:w-20 sm:mt-0.5 sm:order-1">{app.appDate ? app.appDate.slice(0, 10) : ""}</span>
+                  {app.lpa && <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase font-medium shrink-0 sm:mt-0.5 sm:order-2" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0 ml-auto sm:ml-0 sm:mt-0.5 sm:order-4">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
+                </div>
+                <span className="flex-1 min-w-0 sm:order-3">
                   <a href={app.docsUrl} target="_blank" rel="noreferrer" className="font-medium break-all text-primary hover:underline text-[12px]">{app.ref}</a>
                   {app.description && <span className="block text-muted-foreground text-[11px]">{app.description}</span>}
                 </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0 mt-0.5">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
               </div>
               <div className="divide-y">
                 {app.docs.map((d, di) => (
@@ -4987,16 +4992,18 @@ function PlanningDocsDialog({
                     href={planningPdfProxy(d.url, app.docsUrl)}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-start gap-2 py-1.5 px-3 hover:bg-muted/30 text-[12px]"
+                    className="py-1.5 px-3 hover:bg-muted/30 text-[12px] flex flex-col gap-0.5 sm:flex-row sm:items-start sm:gap-2"
                     title={d.description}
                   >
-                    <span className="text-[11px] text-muted-foreground shrink-0 w-20 mt-0.5">{d.date ? d.date.slice(0, 10) : ""}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 mt-0.5 ${docCategoryTone(d.category)}`}>{d.label}</span>
-                    <span className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 sm:contents">
+                      <span className="text-[11px] text-muted-foreground shrink-0 sm:w-20 sm:mt-0.5 sm:order-1">{d.date ? d.date.slice(0, 10) : ""}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 sm:mt-0.5 sm:order-2 ${docCategoryTone(d.category)}`}>{d.label}</span>
+                      <Download className="w-3.5 h-3.5 shrink-0 text-muted-foreground ml-auto sm:ml-0 sm:mt-0.5 sm:order-4" />
+                    </div>
+                    <span className="flex-1 min-w-0 sm:order-3">
                       <span className="block">{d.description}</span>
                       {d.drawingNumber && <span className="block text-muted-foreground text-[11px]">Drawing {d.drawingNumber}</span>}
                     </span>
-                    <Download className="w-3.5 h-3.5 shrink-0 text-muted-foreground mt-0.5" />
                   </a>
                 ))}
               </div>

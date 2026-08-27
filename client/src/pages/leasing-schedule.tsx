@@ -216,9 +216,18 @@ const POSITIONING_SUBTYPES: Record<string, string[]> = {
 
 // Positioning cell — two-step picker: group (Key ii umbrella) + sub-type.
 // Saves to two fields: positioning_group (filterable) + positioning (free text).
+// The retired board stays visible to client logins for reference, but the
+// BGP strategy controls (Set band / Set positioning / principles editing)
+// are staff-only — clients get the values read-only (UX #76).
+function useIsClientViewer(): boolean {
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  return me?.role === "Client" || !!me?.companyScopeId;
+}
+
 function PositioningCell({ unitId, group, subType, onSave }: {
   unitId: string; group: string | null | undefined; subType: string; onSave: (id: string, field: string, value: string) => void;
 }) {
+  const readOnly = useIsClientViewer();
   const [open, setOpen] = useState(false);
   const [draftGroup, setDraftGroup] = useState(group || "");
   const [draftSub, setDraftSub] = useState(subType || "");
@@ -228,6 +237,22 @@ function PositioningCell({ unitId, group, subType, onSave }: {
     if ((draftSub || "") !== (subType || "")) onSave(unitId, "positioning", draftSub);
     setOpen(false);
   };
+  if (readOnly) {
+    return (
+      <span className="px-1 text-xs inline-block leading-tight min-w-[100px] align-top" data-testid={`positioning-cell-${unitId}`}>
+        {group ? (
+          <span>
+            <span className="font-medium text-[11px] block">{group}</span>
+            {subType && <span className="text-[11px] text-muted-foreground">{subType}</span>}
+          </span>
+        ) : subType ? (
+          <span className="text-[11px]">{subType}</span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </span>
+    );
+  }
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
@@ -645,6 +670,14 @@ function formatLandsecDate(d: string | null | undefined): string | null {
 
 function StatusBandCell({ unitId, value, onSave }: { unitId: string; value: string | null | undefined; onSave: (id: string, field: string, value: string) => void }) {
   const band = statusBandFor(value);
+  const readOnly = useIsClientViewer();
+  if (readOnly) {
+    return (
+      <span className={`inline-flex items-center whitespace-nowrap rounded-md border px-2.5 py-0.5 text-[10px] font-semibold ${band?.pillClass || "border-gray-300 text-gray-500"}`} data-testid={`inline-statusband-${unitId}`}>
+        {band?.label || "—"}
+      </span>
+    );
+  }
   // Render the trigger as a real <button> rather than a Badge wrapped in
   // <DropdownMenuTrigger asChild>. Badge is a plain function component
   // without forwardRef, so Radix can't reliably hook up the ref/anchor and
@@ -2931,6 +2964,7 @@ const DEFAULT_PRINCIPLES: StrategicPrinciples = {
 function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const isClientViewer = useIsClientViewer();
   const { data, isLoading } = useQuery<{ principles: StrategicPrinciples | null }>({
     queryKey: ["/api/leasing-schedule/property", propertyId, "strategic-principles"],
     queryFn: () => fetch(`/api/leasing-schedule/property/${propertyId}/strategic-principles`, { headers: getAuthHeaders() }).then(r => r.json()),
@@ -2959,7 +2993,9 @@ function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
 
   if (isLoading) return null;
 
-  // Not yet set up — show "Enable" CTA so user can opt in (most clients won't).
+  // Not yet set up — show "Enable" CTA so user can opt in. BGP strategy
+  // controls mean nothing to client viewers, so they get nothing here.
+  if (isClientViewer && !principles?.enabled) return null;
   if (!principles) {
     return (
       <div className="border rounded-lg p-3 bg-muted/20 text-xs flex items-center justify-between">
@@ -2981,6 +3017,7 @@ function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
     <div className="border rounded-lg p-4 bg-card/60">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-bold uppercase tracking-wider">Overarching Hospitality &amp; Leisure Strategic Principles &amp; Priorities</h3>
+        {!isClientViewer && (
         <div className="flex items-center gap-1">
           {editing ? (
             <>
@@ -2996,6 +3033,7 @@ function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
             </>
           )}
         </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">

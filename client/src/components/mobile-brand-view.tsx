@@ -53,6 +53,15 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   const { toast } = useToast();
   const { data: mbvUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientViewer = mbvUser?.role === "Client" || !!mbvUser?.companyScopeId;
+  // Clients come here for "who are they / who do I call" — land them on
+  // Contacts; Chat reads as an internal BGP tool (UX #95/#75). Staff keep
+  // Chat-first. One-shot when the user row arrives, so pill taps stick.
+  const clientLanded = useRef(false);
+  useEffect(() => {
+    if (clientLanded.current || !mbvUser) return;
+    clientLanded.current = true;
+    if (isClientViewer) setSection("contacts");
+  }, [mbvUser, isClientViewer]);
   // Same research trigger as the desktop Stores section — POST kicks the
   // background job, then poll /status until done (big brands take minutes).
   const storeScan = useMutation({

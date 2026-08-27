@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest, getQueryFn, getAuthHeaders } from "@/lib/queryClient";
 import { ClientSharePointBrowser } from "@/components/client-sharepoint-browser";
 import {
@@ -566,10 +567,14 @@ function StaffSharePoint() {
     },
     onError: (e: any) => toast({ title: "Couldn't create folder", description: e?.message, variant: "destructive" }),
   });
+  // App dialogs instead of the browser's prompt()/confirm() chrome, with
+  // inline duplicate-name feedback before submitting (UX #102).
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
   const promptNewFolder = () => {
     if (!effectiveDriveId) { toast({ title: "Still loading the drive — try again in a second" }); return; }
-    const name = window.prompt("New folder name");
-    if (name && name.trim()) createFolderMutation.mutate(name.trim());
+    setNewFolderName("");
+    setNewFolderOpen(true);
   };
   const deleteItemMutation = useMutation({
     mutationFn: async (item: DriveItem) => {
@@ -586,11 +591,8 @@ function StaffSharePoint() {
     },
     onError: (e: any) => toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" }),
   });
-  const confirmDelete = (item: DriveItem) => {
-    if (window.confirm(`Delete "${item.name}"? It goes to the SharePoint recycle bin.`)) {
-      deleteItemMutation.mutate(item);
-    }
-  };
+  const [deleteTarget, setDeleteTarget] = useState<DriveItem | null>(null);
+  const confirmDelete = (item: DriveItem) => setDeleteTarget(item);
 
   // Filter by search query + type, then sort (folders always grouped first).
   const trimmedQuery = searchQuery.trim().toLowerCase();
@@ -1187,6 +1189,62 @@ function StaffSharePoint() {
       {previewItem && (
         <FilePreviewPanel item={previewItem} driveId={driveId} onClose={() => setPreviewItem(null)} />
       )}
+
+      <Dialog open={newFolderOpen} onOpenChange={(v) => !v && setNewFolderOpen(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>New folder</DialogTitle>
+          </DialogHeader>
+          {(() => {
+            const trimmed = newFolderName.trim();
+            const duplicate = !!trimmed && (files || []).some(f => f.folder && f.name.toLowerCase() === trimmed.toLowerCase());
+            const create = () => {
+              if (!trimmed || duplicate) return;
+              createFolderMutation.mutate(trimmed);
+              setNewFolderOpen(false);
+            };
+            return (
+              <>
+                <Input
+                  autoFocus
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") create(); }}
+                  placeholder="Folder name"
+                  data-testid="input-new-folder-name"
+                />
+                {duplicate && <p className="text-xs text-destructive">A folder called “{trimmed}” already exists here.</p>}
+                <DialogFooter>
+                  <Button variant="outline" size="sm" onClick={() => setNewFolderOpen(false)}>Cancel</Button>
+                  <Button size="sm" onClick={create} disabled={!trimmed || duplicate || createFolderMutation.isPending} data-testid="button-create-folder-confirm">
+                    Create
+                  </Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete “{deleteTarget?.name}”?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">It goes to the SharePoint recycle bin, so it's recoverable from SharePoint itself.</p>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => { if (deleteTarget) deleteItemMutation.mutate(deleteTarget); setDeleteTarget(null); }}
+              data-testid="button-delete-item-confirm"
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
