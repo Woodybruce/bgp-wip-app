@@ -80,6 +80,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r397 · 2026-08-27 · ROUND IN PROGRESS (FULL, rotation #1 staff desktop 1440)
+- Merged JOGQK 8b51c2e (Consultant in fee-split pickers) into staging; clean,
+  tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge.
+- Triage: nothing new in smoke output. Next: two-bot 397 (validating
+  staff-lrbg-status-client-order-guard), journey = staff desktop deals board
+  + Consultant fee split + WIP agent summary.
+
 ### r396 · 2026-08-27 · LIGHT (r395 was FULL) — JOGQK ex-VAT/BG-live merge + targeted checks
 - Merged JOGQK (cashflow ex-VAT 7c4adb0 + LEGACY 219,670 seed + HMLR
   manual-row OC button + BG cert-pair audit) into staging, clean merge,
