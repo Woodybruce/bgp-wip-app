@@ -80,6 +80,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r396 · 2026-08-27 · ROUND IN PROGRESS (LIGHT — r395 was FULL)
+- Merged JOGQK (cashflow ex-VAT 7c4adb0 + LEGACY seed + HMLR manual-row OC
+  button + BG cert audit) into staging, clean merge, tsc clean.
+- Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge. Two-bot pending.
+- Bug found+fixed 1: server/business-gateway.ts used require("crypto") in
+  ESM — boot cert-fingerprint diag threw "require is not defined" under
+  tsx dev AND GET /api/lr-bg/status 500'd in dev (prod cjs bundle was
+  fine). Static crypto imports now; status 200s, boot logs "[lr-bg] pairs".
+- Remaining: two-bot sweep, targeted checks (cashflow ex-VAT copy/LEGACY
+  219,670; HMLR OC buttons render + confirm dialog, polite keyless error).
+
 ### r395 · 2026-08-27 · FULL (rotation #4 staff mobile 390px)
 - Merged JOGQK cashflow v3 + Business Gateway live-cert into staging (clean
   merge, tsc clean). /cashflow now redirects to /finance; password gate GONE
