@@ -80,12 +80,35 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r392 · 2026-08-27 · LIGHT — ROUND IN PROGRESS (provisional)
+### r392 · 2026-08-27 · LIGHT (r391 was FULL) + both still-open pointers closed
 - Fresh container: pg_hba trust fix + bgp role + fixture restore needed
   (r205 pattern). JOGQK already merged (ancestor check clean at 5f5ad5f).
-- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 393 running; triage to follow.
-- Plan: light round (r391 was FULL) — triage + still-open pointer
-  (SharePoint toolbar/New folder/delete via r388 mock pattern) if time.
+- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 393: exit 0, all scenarios ok
+  (incl. r391's fixed verdict flow + hdog omit-credentials + property-put
+  guard), 4 issues all listed noise (2×400 rocketreach + tracker-invalid
+  probe; 2×503 keyless AI live-intel + commentary regen). 0 raw 500/502/504
+  in dev-server log.
+- Targeted check 1 (closes r385/r388 pointer): staff SharePoint toolbar via
+  the r388 status/files mock pattern, 1440px — New folder (prompt → POST
+  {driveId,name}, "Folder created" toast, folder appears first in list),
+  prompt-cancel sends nothing; delete (confirm → DELETE {driveId,itemId},
+  recycle-bin toast, row gone), confirm-cancel sends nothing; 11/11 checks,
+  0 pageerrors, screenshots clean. Server routes re-read: 401 keyless / 400
+  validation / 409 conflict mapping all sound.
+- Targeted check 2 (closes r385 pointer): Business Rates entry detail —
+  seeded 3 voa_ratings rows (sqlite absent → postgres fallback path),
+  /property-intelligence?tab=business-rates as victoria: rows render, detail
+  sheet opens with address/RV/BA/UARN + "Full valuation on VOA" link
+  carrying the uarn, RV-less entry shows the amber removed/altered notice.
+  6/6 checks, 0 pageerrors. Seed rows deleted after.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions:
+  UX-NOTES #102 (SharePoint New folder/delete use native prompt/confirm,
+  off-brand + no inline 409 feedback), #103 (Business Rates detail sheet is
+  full-width at 1440px — label/value ~1,350px apart).
+- New flakes: none. Harness growth: none (both checks are mocked/seeded
+  visual flows, not cheap two-bot API probes).
+- Next journey: r392 was LIGHT → r393 FULL, rotation #3 client mobile 390px
+  (then #4 staff mobile). No still-open pointers remain.
 
 ### r391 · 2026-08-27 · FULL (rotation #2 Landsec client desktop 1440px)
 - JOGQK already merged (ancestor check clean, no new commits). Fresh

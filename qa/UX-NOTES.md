@@ -16,6 +16,21 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+103. 2026-08-27 · BGP staff / desktop 1440px (QA r392) · "check a unit's
+    rateable value" · The Business Rates entry-detail sheet slides up as a
+    full-width bottom sheet at 1440px — each label sits at the far left and
+    its value ~1,350px away at the far right, so the eye has to track the
+    whole screen per row · Cap the sheet at ~640px (centred, or a right-hand
+    side sheet on desktop); mobile behaviour is fine as is.
+
+102. 2026-08-27 · BGP staff / desktop 1440px (QA r392) · "make a folder /
+    delete a file in SharePoint" · New folder uses the native browser
+    prompt() and delete uses confirm() — both work, but they're unstyled
+    browser chrome in an app where every other action uses the design-system
+    dialog, and the prompt offers no inline duplicate-name feedback (409
+    only surfaces as a toast after submit) · Swap to the app Dialog with an
+    input + validation message.
+
 101. 2026-08-27 · Landsec client / desktop 1440px (QA r391) · "add a note-to-
     self on my Bluewater property page" · The This Week's Focus quick-add
     placeholder reads "Add a task — e.g. Pizza Express HOTs to legal" — BGP
