@@ -16,13 +16,18 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
-106. 2026-08-27 · BGP staff (equity) / mobile 390px (QA r394) · "check the
-    cashflow forecast on my phone" · /cashflow on the phone shell shows two
-    stacked headers — the shell's top bar already says "← Cashflow", then
-    the page renders its own back-arrow + "Cashflow" title directly below,
-    so the first ~140px is the same title twice · Hide the page's own
-    back-button + h1 row on the phone shell (the shell bar owns the title
-    there), keeping the desktop header as is.
+107. 2026-08-27 · BGP staff (equity) / mobile 390px (QA r395) · "check the
+    cashflow forecast on my phone" · On the Finance page's cashflow stat
+    tiles, big negative amounts render as "£" alone on one line with
+    "(4,244,249)" wrapped underneath (LOW POINT / CLOSE tiles at 390px) —
+    legible but scruffy · Keep the currency symbol glued to the number
+    (non-breaking, e.g. £(4.24m) or whitespace-nowrap + smaller type on
+    the phone tiles).
+
+106. ~~2026-08-27 · BGP staff (equity) / mobile 390px (QA r394) · /cashflow
+    phone double header~~ · OBSOLETE r395: cashflow v3 removed the
+    standalone /cashflow page (it now redirects to /finance, which has no
+    double header at 390px — verified r395). Nothing to build.
 
 105. 2026-08-27 · Landsec client / mobile 390px (QA r393) · "look at the
     Bluewater floor plan on my phone" · The Plans viewer opens at 100% zoom

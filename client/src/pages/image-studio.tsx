@@ -594,9 +594,12 @@ export default function ImageStudio() {
     mutationFn: async (id: string) => {
       await apiRequest("DELETE", `/api/image-studio/collections/${id}`);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+    onSuccess: (_data, id) => {
+      // Drop the deleted collection's detail query outright — a prefix
+      // invalidation would refetch it while still enabled and 404.
       setViewingCollectionId(null);
+      queryClient.removeQueries({ queryKey: ["/api/image-studio/collections", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"], exact: true });
       toast({ title: "Deleted", description: "Collection deleted" });
     },
   });

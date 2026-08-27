@@ -80,21 +80,51 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r395 · 2026-08-27 · FULL — ROUND IN PROGRESS (provisional)
+### r395 · 2026-08-27 · FULL (rotation #4 staff mobile 390px)
 - Merged JOGQK cashflow v3 + Business Gateway live-cert into staging (clean
   merge, tsc clean). /cashflow now redirects to /finance; password gate GONE
   (equity/admin gate is the lock); workbook receipts retired, LEGACY
-  receivables line added.
+  receivables line added. BG cert change is server-env only (boot log shows
+  "[lr-bg] env=test … Certificate not configured" locally — expected, add
+  to mental noise).
 - Two-bot scenario updated per parent note: staff-cashflow-unlock →
   staff-cashflow-board (equity 200 direct, LEGACY line present, retired
-  receipt keys absent, unlock endpoint dead, cell roundtrip on LEGACY,
-  victoria token 403). /api/cashflow 401 removed from IGNORED_RESPONSES.
-- Smoke GREEN 42/0 (FRESH_BUILD=1) on merged code. Two-bot 395: exit 0, all
-  scenarios ok incl. staff-cashflow-board; 4 issues = standing noise
-  signature (2×400 rocketreach/tracker-invalid, 2×503 keyless AI). 0 raw
-  500/502/504.
-- Next: staff mobile 390px journey (rotation #4 — r385 pointers: mobile
-  Images folders/select, LR autocomplete, PI map toolbar) + finance visual.
+  receipt keys 1/2/3/4a/4c/5 absent, unlock endpoint dead, cell roundtrip
+  on LEGACY, victoria token 403 via credentials:'omit' login).
+  /api/cashflow 401 removed from IGNORED_RESPONSES — it's a real signal now.
+- Smoke GREEN 42/0 (FRESH_BUILD=1) ×2 (post-merge + post-fix). Two-bot 395:
+  exit 0, all 54 scenarios ok incl. staff-cashflow-board; 4 issues =
+  standing noise signature (2×400 rocketreach/tracker-invalid, 2×503
+  keyless AI). 0 raw 500/502/504 in dev-server log.
+- Journey: Victoria @390 iPhone — "on site with my phone: file my unit
+  photos into a folder, then look up a property title and glance at the
+  intelligence map": /m/images seeded 2 phone uploads → Select → both →
+  Add to folder → New folder → create → tile appears → open folder →
+  remove one → delete folder → tap opens full-screen viewer. PI: tab pills
+  clean at 390, Land Registry address search renders + degrades cleanly
+  keyless, no h-overflow anywhere. Woody /finance @390: cashflow v3 board
+  renders DIRECTLY (no password/locked card), forecast tiles + chart
+  render, no h-overflow. 17/17 checks, 0 pageerrors. All r385 staff-mobile
+  pointers now closed.
+- BUG FIXED 1 (minor, both image surfaces): deleting a folder/collection
+  404-storms — deleteFolder/deleteCollection onSuccess prefix-invalidated
+  ["/api/image-studio/collections"], which refetched the still-enabled
+  detail query for the just-deleted id → GET /collections/:id 404 (console
+  noise + QA false positive). Fix: setOpenFolderId/ViewingCollectionId null
+  first, removeQueries the detail key, invalidate the list with exact:true
+  (mobile-images.tsx + image-studio.tsx). Verified: journey re-run 17/17
+  with 0 non-noise 4xx.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2) — merge via
+  /duplicate-units tooling.
+- Suggestions: UX-NOTES #107 (finance phone stat tiles wrap "£" alone above
+  the bracketed negative). #106 marked OBSOLETE (its /cashflow double
+  header page no longer exists — v3 redirect verified).
+- New flakes: journey nav to /m/images can land on /messages when the
+  mobile shell's root redirect races page.goto — verify page.url() after
+  goto and retry (visit() pattern extended in my journey script).
+- Next: r395 was FULL → r396 LIGHT; then r397 FULL rotation #1 staff
+  desktop. Cashflow v3 surfaces all verified; nothing left pointed.
 
 ### r394 · 2026-08-27 · LIGHT (r393 was FULL) — JOGQK cashflow/UX-batch merge + targeted checks
 - Merged JOGQK into staging per parent note (6e869fae UX batch I,
