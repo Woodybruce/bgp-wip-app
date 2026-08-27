@@ -80,12 +80,27 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r398 · 2026-08-27 · ROUND IN PROGRESS (provisional heartbeat)
-- LIGHT round (r397 had the journey). Merged JOGQK ccd1cce (consultant share
-  off the top, BGP House 15% on remainder; picker sorted) into staging —
-  clean merge, tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge.
-- Two-bot round 398 running (validates r397's staff-consultant-fee-split
-  scenario). Triage to follow in the final entry.
+### r398 · 2026-08-27 · LIGHT (r397 had the journey)
+- Merged JOGQK ccd1cce (consultant share off the top — BGP House 15% applies
+  to the remainder; fee-split pickers sorted alphabetically) into staging.
+  Clean merge, tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge.
+- Two-bot 398 (via run-round.sh): exit 0, ALL scenarios ok — including
+  staff-consultant-fee-split first full-round validation (r397 goal met).
+  4 issues = standing noise signature (2×400 rocketreach/scenario-probe,
+  2×503 keyless AI). 0 raw 500/502/504 across the whole round's server log;
+  every 400/503 tallied to listed noise or intentional guard probes.
+- Harness maintenance: staff-consultant-fee-split now PUTs the post-ccd1cce
+  off-the-top maths (Victoria 76.5 / Consultant 10 / BGP House 13.5, was
+  75/10/15). Dry-run verified as woody: rows persist (Consultant name-only,
+  agentUserId null, house flag kept), agent-summary WIP £10,000.
+- NOTE (feeds UX-NOTES #109, no new note added): the same dry-run as
+  VICTORIA returns no Consultant row from /api/wip/agent-summary while the
+  save itself succeeds — non-admin team scoping again; scenario runs as
+  woody so the harness is unaffected.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none.
+- Next: r398 was LIGHT → r399 FULL rotation #2 Landsec client desktop.
 
 ### r397 · 2026-08-27 · FULL (rotation #1 staff desktop 1440px)
 - Merged JOGQK 8b51c2e (Consultant option in every fee-split picker) into

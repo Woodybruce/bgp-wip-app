@@ -5472,10 +5472,12 @@ async function woodyRound(page, cross) {
       const deal = await cRes.json();
       try {
         const put = await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { method: 'PUT', credentials: 'include', headers: auth,
+          // Off-the-top rule (JOGQK ccd1cce): consultant 10% first, BGP House
+          // 15% of the remaining 90% = 13.5%, staff share the rest (76.5%).
           body: JSON.stringify({ allocations: [
-            { agentName: 'Victoria Broadhead', allocationType: 'percentage', percentage: 75, fixedAmount: 0, isBgpHouse: false },
+            { agentName: 'Victoria Broadhead', allocationType: 'percentage', percentage: 76.5, fixedAmount: 0, isBgpHouse: false },
             { agentName: 'Consultant', allocationType: 'percentage', percentage: 10, fixedAmount: 0, isBgpHouse: false },
-            { agentName: 'BGP House', allocationType: 'percentage', percentage: 15, fixedAmount: 0, isBgpHouse: true },
+            { agentName: 'BGP House', allocationType: 'percentage', percentage: 13.5, fixedAmount: 0, isBgpHouse: true },
           ] }) });
         if (!put.ok) return { ok: false, why: `allocations PUT ${put.status}` };
         const rows = await (await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { credentials: 'include', headers: auth })).json();
