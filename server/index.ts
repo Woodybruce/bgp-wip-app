@@ -5480,8 +5480,9 @@ app.use("/api/branding/assets", express.static(
           const newMembers: Array<{ username: string; name: string; email: string | null; password?: string; admin?: boolean }> = [
             { username: "johnny@brucegillinghampollard.com", name: "Johnny", email: "johnny@brucegillinghampollard.com" },
             { username: "daisy@brucegillinghampollard.com", name: "Daisy Driscoll", email: "daisy@brucegillinghampollard.com" },
-            // Woody 2026-08-26: Huseyn's login, own password, no mailbox, sees everything Woody sees
-            { username: "hdog", name: "Huseyn", email: null, password: "hdog", admin: true },
+            // Woody 2026-08-27: Huseyn's login — normal staff access, no admin,
+            // no Finance (non-equity), own password, no mailbox.
+            { username: "hdog", name: "Huseyn", email: null, password: "hdog" },
           ];
           for (const m of newMembers) {
             const exists = await dbPool.query(`SELECT 1 FROM users WHERE username = $1 OR email = $2`, [m.username, m.email]);
@@ -5494,12 +5495,13 @@ app.use("/api/branding/assets", express.static(
               console.log(`[seed] Created user account: ${m.name} (${m.username})`);
             }
           }
-          // One-off: the hdog row first deployed as non-admin "Hdog" — upgrade it
-          // in place. Guarded on the old name so it never re-fires after this.
-          const upgraded = await dbPool.query(
-            `UPDATE users SET name = 'Huseyn', is_admin = true WHERE username = 'hdog' AND name = 'Hdog' RETURNING id`,
+          // One-off: hdog briefly deployed as admin (26 Aug) — Woody reverted
+          // that on 27 Aug: normal staff access. Fires only while the admin
+          // flag is still set, then never again.
+          const demoted = await dbPool.query(
+            `UPDATE users SET name = 'Huseyn', is_admin = false WHERE username = 'hdog' AND is_admin = true RETURNING id`,
           );
-          if (upgraded.rows.length > 0) console.log(`[one-off hdog] Upgraded hdog to admin (Huseyn)`);
+          if (demoted.rows.length > 0) console.log(`[one-off hdog] hdog set to normal staff access (non-admin)`);
         } catch (err: any) {
           console.error("User creation error:", err?.message);
         }
