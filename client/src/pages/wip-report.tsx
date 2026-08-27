@@ -448,6 +448,14 @@ function AgentSummaryTab() {
     );
   }
 
+  if (agents.length === 0) {
+    return (
+      <div className="bg-card border border-border rounded-lg p-8 text-center text-sm text-muted-foreground" data-testid="agent-summary-empty">
+        No fees are attributed to agents yet — assign a BGP contact (or add a fee split) on a deal to see the breakdown here.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 overflow-y-auto flex-1 min-h-0">
       {/* Agent Bar Chart */}

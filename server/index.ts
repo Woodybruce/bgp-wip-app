@@ -2914,6 +2914,7 @@ import { setupDocumentTemplateRoutes } from "./document-templates";
 import { setupCanvaRoutes } from "./canva";
 import { setupXeroRoutes } from "./xero";
 import { registerXeroFinancialRoutes } from "./xero-financials";
+import { registerCashflowRoutes } from "./cashflow-board";
 import { registerApiUsageRoutes } from "./api-usage";
 import { setupEvernoteRoutes } from "./evernote";
 import { registerLandRegistryRoutes } from "./land-registry";
@@ -3820,6 +3821,7 @@ app.use("/api/branding/assets", express.static(
   setupCanvaRoutes(app);
   setupXeroRoutes(app);
   registerXeroFinancialRoutes(app);
+  registerCashflowRoutes(app);
   registerApiUsageRoutes(app);
   setupEvernoteRoutes(app);
   registerLandRegistryRoutes(app);

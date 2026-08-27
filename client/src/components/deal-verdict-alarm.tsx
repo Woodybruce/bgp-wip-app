@@ -3,7 +3,7 @@
 // (new date) / ready to invoice. Until answered: an un-dismissable red
 // banner on every page; 3+ days past target → a full-screen block. The only
 // way out is to answer.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -117,6 +117,15 @@ export default function DealVerdictAlarm() {
     refetchInterval: 5 * 60 * 1000,
     staleTime: 60 * 1000,
   });
+
+  // While the nag banner is up, push the app shell down (iOS in-call-bar
+  // style) so the header + global search stay usable underneath it.
+  const nagVisible = !!data && data.count > 0 && data.maxDaysOverdue < 3;
+  useEffect(() => {
+    if (!nagVisible) return;
+    document.documentElement.style.setProperty("--app-banner-offset", "34px");
+    return () => { document.documentElement.style.removeProperty("--app-banner-offset"); };
+  }, [nagVisible]);
 
   if (!data || data.count === 0) return null;
 

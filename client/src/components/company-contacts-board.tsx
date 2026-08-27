@@ -260,8 +260,13 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     });
   const crmAiChecked = allContacts.filter((c: any) => discoveryFor(c)?.ai).length;
 
-  const crmVisible = showAll || !filterPropertyTier ? allContacts : allContacts.filter((c: any) => isPropertyTier(c.role));
-  const discoveredVisible = showAll || !filterPropertyTier ? discovered : discovered.filter((k: any) => isPropertyTier(k.title));
+  // When nothing survives the property-tier filter and the full list is
+  // small anyway, gating a handful of contacts behind "Show all 1" is pure
+  // friction — just list them (UX #85). The gate keeps working for long lists.
+  const tierEmpty = allContacts.every((c: any) => !isPropertyTier(c.role)) && discovered.every((k: any) => !isPropertyTier(k.title));
+  const effectiveShowAll = showAll || (tierEmpty && allContacts.length + discovered.length <= 5);
+  const crmVisible = effectiveShowAll || !filterPropertyTier ? allContacts : allContacts.filter((c: any) => isPropertyTier(c.role));
+  const discoveredVisible = effectiveShowAll || !filterPropertyTier ? discovered : discovered.filter((k: any) => isPropertyTier(k.title));
   const hiddenCount = (allContacts.length - crmVisible.length) + (discovered.length - discoveredVisible.length);
   const summary = cascade?.summary;
 

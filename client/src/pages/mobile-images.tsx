@@ -90,6 +90,10 @@ export default function MobileImages() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<StudioImage | null>(null);
+  // Full-screen viewer — tapping a capture should LOOK at it first; editing
+  // is an action on the viewer, not the landing state (UX #99).
+  const [photoViewer, setPhotoViewer] = useState<{ list: StudioImage[]; index: number } | null>(null);
+  const viewerTouchX = useRef<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
 
@@ -513,7 +517,9 @@ export default function MobileImages() {
   const handleTileClick = (img: StudioImage) => {
     if (suppressClick.current) { suppressClick.current = false; return; }
     if (selectMode) { toggleSelected(img.id); return; }
-    setSelected(img);
+    const idx = visiblePhotos.findIndex((i) => i.id === img.id);
+    if (idx >= 0) setPhotoViewer({ list: visiblePhotos, index: idx });
+    else setPhotoViewer({ list: [img], index: 0 });
   };
 
   return (
@@ -611,7 +617,10 @@ export default function MobileImages() {
               <div key={r.id} className="aspect-square overflow-hidden rounded-xl bg-muted relative">
                 <button
                   type="button"
-                  onClick={() => setSelected(toStudioImage(r))}
+                  onClick={() => {
+                    const list = folderImages.map(toStudioImage);
+                    setPhotoViewer({ list, index: Math.max(0, list.findIndex((i) => i.id === r.id)) });
+                  }}
                   className="block w-full h-full active:opacity-80"
                   data-testid={`mobile-folder-image-${r.id}`}
                 >
@@ -999,6 +1008,57 @@ export default function MobileImages() {
         </>
       )}
 
+      {photoViewer && (() => {
+        const img = photoViewer.list[photoViewer.index];
+        if (!img) return null;
+        const step = (dir: number) => setPhotoViewer((v) => {
+          if (!v) return v;
+          const next = Math.min(v.list.length - 1, Math.max(0, v.index + dir));
+          return next === v.index ? v : { ...v, index: next };
+        });
+        return (
+          <div className="fixed inset-0 z-[60] bg-black flex flex-col" data-testid="mobile-photo-viewer">
+            <div className="flex items-center justify-between px-3 shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.5rem)" }}>
+              <button type="button" onClick={() => setPhotoViewer(null)} className="p-2 -ml-1 rounded-full text-white/90 active:bg-white/10" aria-label="Close viewer" data-testid="viewer-close">
+                <X className="w-5 h-5" />
+              </button>
+              <span className="text-white/60 text-xs tabular-nums">{photoViewer.index + 1} / {photoViewer.list.length}</span>
+              <button
+                type="button"
+                onClick={() => { setPhotoViewer(null); setMenuImage(img); }}
+                className="p-2 -mr-1 rounded-full text-white/90 active:bg-white/10 text-lg leading-none"
+                aria-label="More actions"
+                data-testid="viewer-more"
+              >
+                ⋯
+              </button>
+            </div>
+            <div
+              className="flex-1 min-h-0 flex items-center justify-center px-1"
+              onTouchStart={(e) => { viewerTouchX.current = e.touches[0]?.clientX ?? null; }}
+              onTouchEnd={(e) => {
+                const start = viewerTouchX.current;
+                viewerTouchX.current = null;
+                if (start == null) return;
+                const dx = (e.changedTouches[0]?.clientX ?? start) - start;
+                if (Math.abs(dx) > 50) step(dx < 0 ? 1 : -1);
+              }}
+            >
+              <img src={`/api/image-studio/${img.id}/full`} alt={img.description || img.fileName || "Photo"} className="max-h-full max-w-full object-contain" data-testid="viewer-image" />
+            </div>
+            <div className="flex items-center justify-center gap-2 px-4 pt-3 shrink-0" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}>
+              {!isClientViewer && (
+                <Button size="sm" className="gap-1.5" onClick={() => { setPhotoViewer(null); setSelected(img); }} data-testid="viewer-edit-ai">
+                  <Wand2 className="w-3.5 h-3.5" /> Edit with AI
+                </Button>
+              )}
+              <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => shareImage(img)} data-testid="viewer-share">
+                <Download className="w-3.5 h-3.5" /> Share
+              </Button>
+            </div>
+          </div>
+        );
+      })()}
       <ImageEditSheet image={selected} onClose={() => setSelected(null)} readOnly={isClientViewer} />
       <NameFolderSheet
         open={!!pendingGroup}

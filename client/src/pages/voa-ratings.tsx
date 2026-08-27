@@ -632,7 +632,7 @@ function RatingDetailSheet({ item, baNames, onClose }: { item: VoaRating | null;
   ];
   return (
     <Sheet open onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="bottom" hideClose aria-describedby={undefined} className="max-h-[85dvh] overflow-y-auto p-0 rounded-t-3xl">
+      <SheetContent side="bottom" hideClose aria-describedby={undefined} className="max-h-[85dvh] overflow-y-auto p-0 rounded-t-3xl sm:max-w-2xl sm:mx-auto">
         <div className="px-4 pt-4 pb-3 flex items-start gap-2 border-b border-border/40 sticky top-0 bg-background">
           <div className="min-w-0 flex-1">
             <SheetTitle className="text-base font-semibold leading-snug">{item.firmName || item.numberOrName || "Rating entry"}</SheetTitle>

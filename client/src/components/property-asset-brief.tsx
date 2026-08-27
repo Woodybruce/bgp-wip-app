@@ -1309,7 +1309,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) addTask.mutate(draft.trim()); }}
-            placeholder="Add a task — e.g. Pizza Express HOTs to legals by Friday"
+            placeholder="Add a task — e.g. Chase Q3 leasing update"
             className="text-xs h-7 flex-1 min-w-[180px]"
           />
           <Select value={assigneeId || "me"} onValueChange={(v) => setAssigneeId(v === "me" ? "" : v)}>
