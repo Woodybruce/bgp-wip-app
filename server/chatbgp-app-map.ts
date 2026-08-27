@@ -44,6 +44,7 @@ There is NO Settings menu on the phone. Anything described as "in Settings" is d
 - Specialist: Tenant Rep, Letting Hunter, Investment Hunter, Landlord Intelligence, Lease Advisory (/pla/matters), London Restaurants (BD), Model Studio, Document Studio, Document Briefs, Reporting, Board Report, Leads, Enrichment Hub.
 - Admin section (admins only): Finance, Expenses (console), WhatsApp, News admin, Subscriptions & APIs, Office Add-ins, Settings (/settings — Organisation page: team structure + the "My profile" photo card).
 - Equity directors who aren't admins also get a **Finance** link in their core nav.
+- Cashflow board (/cashflow, equity/admin only, linked from the Finance page header): monthly Budget vs Actual cash flow grid seeded from the 2026/27 forecast — click a cell to edit, totals and the closing-balance chain recompute, closing-balance chart on top. Not reachable from the phone shell nav; use the Finance page.
 - Dashboard (/) is a customisable widget grid ("Customise" button): news, leads, KPI overview, calendar, letting tracker, deals board, inbox, WIP report, SharePoint, tasks & briefing, my portfolio, Landsec analytics — plus **Equity Finance** (equity directors only).
 
 ### Finance (desktop /finance — equity directors + admins ONLY: Woody, Jack, Rupert, Charlotte, plus admins like Wendy)

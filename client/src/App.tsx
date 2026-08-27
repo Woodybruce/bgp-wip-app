@@ -117,6 +117,7 @@ const DocumentStudioV2 = lazy(() => import("@/pages/document-studio"));
 const HRPage = lazy(() => import("@/pages/hr"));
 const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
 const FinancePage = lazy(() => import("@/pages/finance"));
+const CashflowPage = lazy(() => import("@/pages/cashflow"));
 
 function PublicKycUploadRoute() {
   return (
@@ -382,6 +383,7 @@ function Router() {
       <Route path="/addins" component={AddinsPage} />
       <Route path="/edozo" component={PropertiesHub} />
       <Route path="/finance">{() => <EquityRoute><FinancePage /></EquityRoute>}</Route>
+      <Route path="/cashflow">{() => <EquityRoute><CashflowPage /></EquityRoute>}</Route>
       <Route path="/expenses" component={ExpensesAdmin} />
       <Route path="/expenses/approvals" component={ExpensesApprovals} />
       <Route path="/expenses/revolut" component={ExpensesRevolut} />

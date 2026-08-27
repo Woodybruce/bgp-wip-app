@@ -624,9 +624,16 @@ export default function FinancePage() {
             {data.orgName} · financial year from {formatDate(data.fyStart)} · as at {formatDate(data.asAt)} · live from Xero
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={hardRefresh} disabled={isFetching} data-testid="button-finance-refresh">
-          <RefreshCw className={`w-4 h-4 mr-1 ${isFetching ? "animate-spin" : ""}`} /> Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Link href="/cashflow">
+            <Button variant="outline" size="sm" data-testid="button-open-cashflow">
+              <Banknote className="w-4 h-4 mr-1" /> Cashflow board
+            </Button>
+          </Link>
+          <Button variant="outline" size="sm" onClick={hardRefresh} disabled={isFetching} data-testid="button-finance-refresh">
+            <RefreshCw className={`w-4 h-4 mr-1 ${isFetching ? "animate-spin" : ""}`} /> Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Headline stats */}
