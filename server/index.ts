@@ -4145,6 +4145,21 @@ app.use("/api/branding/assets", express.static(
           // without ever logging key material.
           const fp = bgKeyFingerprints();
           console.log(`[lr-bg] pairs — test: ${JSON.stringify(fp.test)} live: ${JSON.stringify(fp.live)}`);
+          // Stub-gateway order proof: set LR_BG_BOOT_TEST_TITLE in Railway to
+          // fire ONE Official Copy request at boot and log the SOAP round-trip.
+          // Test env only — never fires against the live (paid) gateway.
+          // Remove the variable once the round-trip is verified.
+          const bootTestTitle = process.env.LR_BG_BOOT_TEST_TITLE;
+          if (bootTestTitle && r.env !== "live") {
+            try {
+              const { officialCopyByTitle } = await import("./business-gateway");
+              const oc = await officialCopyByTitle({ titleNumber: bootTestTitle, propertyDescription: "Boot verification order" });
+              console.log(`[lr-bg] test OC1 ${bootTestTitle}: ok=${oc.ok} status=${oc.status} fault=${oc.summary.fault || "none"} fee=${oc.summary.actualPrice || "?"} reference=${oc.summary.reference || "?"} document=${oc.document ? `${oc.document.format} (${Math.round(oc.document.base64.length * 0.75 / 1024)}KB)` : "none"}`);
+              if (!oc.ok && !oc.summary.fault) console.log(`[lr-bg] test OC1 body head: ${oc.body.slice(0, 300).replace(/\s+/g, " ")}`);
+            } catch (e: any) {
+              console.error(`[lr-bg] test OC1 ${bootTestTitle} failed:`, e?.message);
+            }
+          }
         } catch (e: any) {
           console.error("[lr-bg] connectivity diag failed:", e?.message);
         }
