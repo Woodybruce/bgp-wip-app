@@ -159,17 +159,22 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
   const payrollAvg = bucketAvg(payrollLines);
   const commissionTypedFy = months.reduce((s, m) => s + (bucketMonth(commissionLines, m) || 0), 0);
 
-  // Per-line detail for the cost dropdowns: monthly average over the months
-  // the plan has typed, and the FY total that implies.
-  const lineDetail = (lines: typeof planLines): CostLineDetail[] =>
-    lines
+  // Per-line detail for the cost dropdowns. Each line's FY total is spread
+  // over the SAME month count as the bucket header average, so the list
+  // sums exactly to the header — a quarterly rent or annual insurance
+  // payment shows as its per-month share, not per-payment (Woody's
+  // screenshot, 2026-08-28 18:12: the lines added to 2× the header).
+  const lineDetail = (lines: typeof planLines): CostLineDetail[] => {
+    const bucketMonths = months.filter(m => bucketMonth(lines, m) !== undefined).length;
+    return lines
       .map(l => {
-        const vals = months.map(m => lineVal(l.id, m)).filter((v): v is number => v !== undefined);
-        const monthly = vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
-        return { label: l.label, monthly: Math.round(monthly), fy: Math.round(monthly * FY_MONTH_COUNT) };
+        const sum = months.reduce((s, m) => s + (lineVal(l.id, m) ?? 0), 0);
+        const monthly = bucketMonths ? sum / bucketMonths : 0;
+        return { label: l.label, monthly: Math.round(monthly), fy: Math.round(sum) };
       })
       .filter(d => d.monthly > 0)
       .sort((a, b) => b.monthly - a.monthly);
+  };
 
   // Commission: the app-computed number (fee splits × tier bands) replaces
   // the typed guess when available; spread over the forward months.
