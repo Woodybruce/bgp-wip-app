@@ -60,23 +60,48 @@ export function PartnerRemunerationSection() {
     return data.partners.map(p => data.rows.find(r => r.fy === fy && r.partner === p) || { fy, partner: p, salary: 0, bonus: 0, advances: 0 });
   }, [data, fy]);
 
-  // Projected profit pool for the current FY: the unified Finance forecast's
-  // remaining-year net (cash in − cash out, ex VAT, costs incl. salaries
-  // already deducted), split equally four ways.
+  // Historical billings (FY totals) — the calibration anchor for the forecast.
+  const { data: hist } = useQuery<{ fyTotals: Record<string, number> }>({
+    queryKey: ["/api/historical-wip"],
+    queryFn: async () => (await cashflowFetch("GET", "/api/historical-wip")).json(),
+    staleTime: 60 * 60 * 1000,
+  });
+
+  // Projected profit pool, calibrated to reality (v2 — Woody's screenshot,
+  // 2026-08-28: the raw cash-forecast net said £1.5m+ each, +500% on last
+  // year, because it assumed every weighted pipeline deal cashes this year
+  // against Wendy's plan, which is nowhere near the full cost base).
+  // Instead: projected FY billings (weighted deals + Xero AR + legacy, from
+  // the live forecast) × the margin the firm ACTUALLY converted last year
+  // (FY26 profit distributed ÷ FY26 billings). Self-calibrating: both sides
+  // update as the year and the books move.
   const forecast = useMemo(() => {
-    if (!cashflow) return null;
+    if (!cashflow || !data || !hist?.fyTotals) return null;
     try {
       const model = buildCashflowModel(cashflow);
       const unified = buildUnifiedForecast(cashflow, model);
       if (!unified || unified.months.length === 0) return null;
       // FY2027 = May 2026 – Apr 2027; the board's months already end 2027-04.
       const months = unified.months.filter(m => m <= "2027-04");
-      const pool = months.reduce((s, m) => s + (unified.byMonth[m]?.in || 0) - (unified.byMonth[m]?.out || 0), 0);
-      return { pool: Math.round(pool), share: Math.round(pool / 4), from: months[0], to: months[months.length - 1] };
+      const projectedBillings = months.reduce((s, m) => s + (unified.byMonth[m]?.in || 0), 0);
+      const fy26 = data.rows.filter(r => r.fy === 2026);
+      const fy26Distributed = fy26.reduce((s, r) => s + r.bonus + r.advances, 0);
+      const fy26Billings = hist.fyTotals["2026"] || 0;
+      if (!fy26Billings || !fy26Distributed) return null;
+      const margin = fy26Distributed / fy26Billings;
+      const pool = projectedBillings * margin;
+      return {
+        pool: Math.round(pool),
+        share: Math.round(pool / 4),
+        billings: Math.round(projectedBillings),
+        marginPct: (margin * 100).toFixed(1),
+        fy26Billings: Math.round(fy26Billings),
+        fy26Distributed: Math.round(fy26Distributed),
+      };
     } catch {
       return null;
     }
-  }, [cashflow]);
+  }, [cashflow, data, hist]);
 
   if (isLoading) return <Skeleton className="h-40 w-full rounded-xl" />;
   if (!data) return null;
@@ -185,7 +210,7 @@ export function PartnerRemunerationSection() {
               })}
             </div>
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Projected profit pool £{fmt(forecast.pool)} = the Finance cashflow forecast's remaining-year net (pipeline-weighted deal fees + Xero receipts − Wendy's cost plan, ex VAT, salaries already in the costs), split £{fmt(forecast.share)} each. It moves as deals progress and invoices land — treat it as a live indication, not a promise. Bonus and cash advances typed above are draws against each share.
+              Projected profit pool £{fmt(forecast.pool)}, split £{fmt(forecast.share)} each: projected billings for the rest of the year £{fmt(forecast.billings)} (pipeline-weighted deal fees + Xero invoices due, from the cashflow forecast) × {forecast.marginPct}% — the share of billings that actually reached the four of you as bonus and advances last year (£{fmt(forecast.fy26Distributed)} on £{fmt(forecast.fy26Billings)} billed). It moves as deals progress and invoices land — a live indication anchored to how last year really converted, not a promise. Bonus and cash advances typed above are draws against each share.
             </p>
           </div>
         )}
