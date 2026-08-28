@@ -53,11 +53,13 @@ async function xeroSnapshot(): Promise<any | null> {
 // Xero invoice count at full weight. Everything is read-only reference —
 // the board's typed budget stays the plan of record.
 const PROJ_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9, COM: 1 };
+let _projLogged = false; // one composition log per boot — enough to audit the pipeline from deploy logs
 async function buildDealProjection(): Promise<{ byMonth: Record<string, { weighted: number; count: number }>; undated: { weighted: number; count: number } }> {
   const { legacyToCode } = await import("../shared/deal-status");
   const { rows } = await pool.query(`
-    SELECT d.status, d.fee::float AS fee,
+    SELECT d.name, d.status, d.fee::float AS fee,
            COALESCE(d.completed_at, d.exchanged_at, d.target_date) AS dt,
+           d.updated_at AS ua,
            inv.invoice_count AS ic
       FROM crm_deals d
       LEFT JOIN LATERAL (
@@ -70,17 +72,37 @@ async function buildDealProjection(): Promise<{ byMonth: Record<string, { weight
   const byMonth: Record<string, { weighted: number; count: number }> = {};
   const undated = { weighted: 0, count: 0 };
   const thisMonth = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
+  // Staleness guards (Woody, 2026-08-28 "maths defo not working"): without
+  // them EVERY open deal ever entered counted, and anything past its date
+  // slipped into the current month — years of dead book inflating the
+  // projection. A deal expected >3 months ago is stale; an undated deal
+  // untouched for 6 months is dead. Both drop out until someone updates them.
+  const staleBefore = Date.now() - 92 * 86_400_000;
+  const deadBefore = Date.now() - 183 * 86_400_000;
+  const excluded = { weighted: 0, count: 0 };
+  const included: Array<{ name: string; code: string; weighted: number }> = [];
   for (const d of rows) {
     const code = legacyToCode(d.status);
     if (!code || !(code in PROJ_WEIGHTS)) continue;
     if (code === "COM" && d.ic > 0) continue; // invoiced — already in Xero AR/actuals
     const weighted = (Number(d.fee) || 0) * PROJ_WEIGHTS[code];
-    if (!d.dt) { undated.weighted += weighted; undated.count++; continue; }
+    if (!d.dt) {
+      if (d.ua && new Date(d.ua).getTime() < deadBefore) { excluded.weighted += weighted; excluded.count++; continue; }
+      undated.weighted += weighted; undated.count++; continue;
+    }
     const dt = new Date(d.dt);
+    if (dt.getTime() < staleBefore) { excluded.weighted += weighted; excluded.count++; continue; }
     let key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
-    if (key < thisMonth) key = thisMonth; // slipped deals land in the current month
+    if (key < thisMonth) key = thisMonth; // recently-slipped deals land in the current month
     (byMonth[key] ||= { weighted: 0, count: 0 }).weighted += weighted;
     byMonth[key].count++;
+    included.push({ name: d.name, code, weighted: Math.round(weighted) });
+  }
+  if (!_projLogged) {
+    _projLogged = true;
+    const inclSum = included.reduce((s, x) => s + x.weighted, 0);
+    const top = [...included].sort((a, b) => b.weighted - a.weighted).slice(0, 8);
+    console.log(`[cashflow diag] deal projection: included ${included.length} deals £${Math.round(inclSum).toLocaleString()} weighted + undated ${undated.count} £${Math.round(undated.weighted).toLocaleString()} | excluded stale/dead ${excluded.count} £${Math.round(excluded.weighted).toLocaleString()} | top: ${top.map(t => `${t.name} (${t.code} £${t.weighted.toLocaleString()})`).join("; ")}`);
   }
   for (const k of Object.keys(byMonth)) byMonth[k].weighted = Math.round(byMonth[k].weighted);
   undated.weighted = Math.round(undated.weighted);
