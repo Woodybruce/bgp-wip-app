@@ -37,7 +37,10 @@ export function MobileBottomNav() {
   const unseen = navNotifications?.unseenCount || 0;
 
   const isActive = (path: string) => {
-    if (path === "/") return location === "/";
+    if (path === "/") return location === "/" || location === "/home";
+    // The staff cold-open lands on /chatbgp, which renders the Messages
+    // list — keep the Messages tab lit there.
+    if (path === "/messages") return location.startsWith("/messages") || location.startsWith("/chatbgp");
     return location.startsWith(path);
   };
 

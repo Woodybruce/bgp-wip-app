@@ -80,7 +80,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r411 · 2026-08-28 ~19:05 UTC · FULL — ROUND IN PROGRESS (heartbeat)
+### r411 · 2026-08-28 ~19:45 UTC · FULL (rotation #4 staff mobile 390px)
 - Per parent-session note: JOGQK NOT merged into staging (parent merges on
   Woody's say-so).
 - tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
@@ -88,10 +88,31 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   standing noise signature (2×400 rocketreach/investment-tracker gate
   probe, 2×503 keyless AI brand-gaps/commentary-regen). 0 raw 500/502/504
   in dev-server log; full 4xx/503 endpoint tally triaged — all noise-list
-  (keyless AI 503s, hr-photo/sharepoint 404s, M365 401s) or intentional
-  rival-isolation/gate probes (the 403 wall from sam scenarios). 0 app
-  bugs from regression.
-- Journey next: rotation #4 staff mobile 390px (Victoria) — in progress.
+  or intentional rival-isolation/gate probes. 0 app bugs from regression.
+- Journey (Victoria @390px iPhone UA, UI form login): "between viewings:
+  check my day, dig into a deal, scan tracker/mail/news": login → lands
+  on /chatbgp Messages list (deliberate: cold-open→ChatBGP 2026-08-18,
+  bare-open→list 2026-08-23; Mail tab removal + 4-tab nav = deliberate
+  2026-08-22, /mail excluded from mobile boards in mobile-home.tsx:280)
+  → Dashboard tab (greeting, billing KPIs, boards grid) → Deals board
+  (3 deals, stage chips) → deal detail (pill tabs, parties, fee split,
+  breadcrumb back; Deals tab lit) → Letting Tracker (81 units, chips wrap
+  clean) → /mail (Connect-M365 degradation clean) → News. No h-overflow
+  anywhere; 0 non-noise 4xx/5xx.
+- Bug fixed (1): /chatbgp cold-open rendered the Messages list with NO
+  bottom-nav tab lit (isActive only matched /messages; /home alias same
+  class of miss). mobile-bottom-nav.tsx now lights Messages on /chatbgp
+  and Dashboard on /home. Verified visually at 390px; tsc clean; rebuilt;
+  smoke re-GREEN 42/0.
+- Harness growth: staff-mobile-chat-home-nav scenario in two-bot-round.mjs
+  (real phone emulation → /chatbgp → asserts Messages lit, Dashboard not).
+  Assertions dry-run green against the dev server.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: none.
+  New flakes: none. Note: two-bot's staff-consultant-fee-split leaves its
+  QA-R411 deal on the board until the next round's purge — cosmetic only.
+- Next: r411 was FULL → r412 LIGHT; then rotation #1 staff desktop.
+  Real-device check of keyboard-up composer (r405) still open for Woody.
 
 ### r410 · 2026-08-28 ~16:50 UTC · LIGHT (r409 had the journey)
 - Per parent-session note: JOGQK deliberately NOT merged into staging

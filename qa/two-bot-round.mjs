@@ -465,6 +465,36 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r411: the staff cold-open lands on /chatbgp, which renders the Messages
+  // list — the bottom nav must light the Messages tab there (it shipped with
+  // no tab active, leaving the cold-open screen unanchored). Needs real
+  // phone emulation: the /chatbgp → MobileApp branch is gated on useIsMobile.
+  await step(page, p, 'staff-mobile-chat-home-nav', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/chatbgp`, nav);
+      await mob.waitForTimeout(3000);
+      const messages = mob.locator('[data-testid="bottom-nav-messages"]');
+      if (!(await messages.count())) throw new Error('bottom nav missing on /chatbgp at 390px');
+      const cls = await messages.getAttribute('class');
+      if (!/\btext-foreground\b/.test(cls || '')) throw new Error('/chatbgp cold-open does not light the Messages tab');
+      const dashCls = await mob.locator('[data-testid="bottom-nav-dashboard"]').getAttribute('class');
+      if (/\btext-foreground\b/.test(dashCls || '')) throw new Error('/chatbgp lights the Dashboard tab too');
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // 4e. The retired Leasing Schedule shows its archived banner and the
   // banner's Letting Tracker link goes somewhere real (it shipped pointing
   // at /available-units, which has no route).
