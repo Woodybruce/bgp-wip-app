@@ -1292,6 +1292,23 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     };
   }, [keyboardOpen]);
 
+  // The shell is fixed inset-0, sized to the LAYOUT viewport — which iOS
+  // does NOT shrink for the keyboard, and the snap above cancels iOS's own
+  // scroll-the-input-into-view compensation. Net effect: on the first
+  // keyboard opening the composer hid behind the keys until you tapped out
+  // and back in (Woody, 2026-08-28). While the keyboard is up, pin the
+  // shell's height to the VISUAL viewport so the composer sits right above
+  // the keys, tracking height changes (QuickType bar, rotation).
+  const [kbShellHeight, setKbShellHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!keyboardOpen || !vv) { setKbShellHeight(null); return; }
+    const apply = () => setKbShellHeight(Math.round(vv.height));
+    apply();
+    vv.addEventListener("resize", apply);
+    return () => { vv.removeEventListener("resize", apply); setKbShellHeight(null); };
+  }, [keyboardOpen]);
+
   const { data: activeThread } = useQuery<ThreadData>({
     queryKey: ["/api/chat/threads", threadId],
     queryFn: getQueryFn({ on401: "throw" }),
@@ -2294,7 +2311,13 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     // nav so the composer sits above it. Team chats stay full-screen.
     <div
       className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-muted/50`}
-      style={isActiveThreadAi && !keyboardOpen ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" } : undefined}
+      style={
+        keyboardOpen && kbShellHeight
+          ? { height: kbShellHeight, bottom: "auto" }
+          : isActiveThreadAi && !keyboardOpen
+            ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" }
+            : undefined
+      }
     >
       <input type="file" accept="image/*" className="hidden" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
       {isActiveThreadAi && <MobileBottomNav />}
