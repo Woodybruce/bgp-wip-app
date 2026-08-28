@@ -80,6 +80,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r403 · 2026-08-28 · FULL (rotation #4 staff mobile 390px) — IN PROGRESS
+- JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
+  GREEN 42/0 (FRESH_BUILD=1). Two-bot 403 (via run-round.sh): exit 0, ALL
+  scenarios ok. 4 issues = standing noise signature (2×400
+  rocketreach/probe, 2×503 keyless AI). 0 raw 500/502/504 in dev-server
+  log; 400/404/503 endpoint tallies all on the noise list or intentional
+  guard probes (cashflow/unlock 404 = dead-endpoint assert).
+- Journey next: Victoria @390px iPhone — tasks triage + calendar +
+  requirements + CRM contact (surfaces recent staff-mobile rounds missed).
+- Setup notes: fresh container needed pg_hba trust fix (r205).
+
 ### r402 · 2026-08-28 · LIGHT (r401 had the journey)
 - JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
   GREEN 42/0 (FRESH_BUILD=1). Two-bot 402 (via run-round.sh): exit 0, ALL
