@@ -227,6 +227,19 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
               </p>
             )}
           </CostRow>
+          {/* The three rows above, added up */}
+          <div className="border rounded-xl bg-muted/40 flex items-center gap-2 p-3" data-testid="outlook-cost-total">
+            <span className="w-4 shrink-0" />
+            <span className="flex-1 min-w-0">
+              <span className="text-sm font-semibold">Total</span>
+              <span className="block text-[11px] text-muted-foreground leading-snug">
+                Basic costs + payroll + commissions · {money((costs.basicAvg + costs.payrollAvg) * 12 + costs.commissionFy)} a year on the plan
+              </span>
+            </span>
+            <span className="text-sm font-semibold tabular-nums shrink-0">
+              {money(Math.round(costs.basicAvg + costs.payrollAvg + costs.commissionFy / 12))}/mo
+            </span>
+          </div>
         </div>
 
         {/* Month by month vs the last few years */}
