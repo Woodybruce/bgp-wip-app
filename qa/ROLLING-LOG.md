@@ -80,10 +80,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r404 · 2026-08-28 ~04:49 UTC · ROUND IN PROGRESS (provisional)
-- LIGHT round (r403 had the journey). JOGQK: no new commits ahead of
-  staging — merge no-op. Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 404
-  running via run-round.sh; triage to follow. Final entry replaces this.
+### r404 · 2026-08-28 · LIGHT (r403 had the journey)
+- JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
+  GREEN 42/0 (FRESH_BUILD=1). Two-bot 404 (via run-round.sh): exit 0, ALL
+  34 scenarios ok. 4 issues = standing noise signature (2×400
+  rocketreach/probe, 2×503 keyless AI). 0 raw 500/502/504 in dev-server
+  log; full 400/404/503 endpoint tally checked — all on the noise list
+  (ai-briefing, ai-take, brand-gaps, os/sites, hr/photo,
+  client/sharepoint/root) or intentional guard probes (cashflow/unlock,
+  investment-tracker 400, deal-verdicts 400, bulk-assign-property 400).
+  0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none.
+- Setup notes: fresh container needed the pg_hba trust fix (r205).
+- Next: r404 was LIGHT → r405 FULL rotation #1 staff desktop 1440px.
 
 ### r403 · 2026-08-28 · FULL (rotation #4 staff mobile 390px)
 - JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
