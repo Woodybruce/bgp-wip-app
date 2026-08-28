@@ -80,6 +80,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r413 · 2026-08-28 ~23:00 UTC · FULL (rotation #1 staff desktop 1440px) — ROUND IN PROGRESS
+- Watchdog-spawned session. JOGQK NOT merged into staging per parent note
+  (Company outlook on Finance, page dedupe, shared Xero pull, collapsible
+  cashflow board all on JOGQK — parent merges on Woody's say-so).
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 413 via run-round.sh: exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400 rocketreach/tracker-gate-probe, 2×503
+  keyless AI brand-gaps/commentary-regen). 0 raw 500/502/504 in dev-server
+  log; full 4xx/503 endpoint tally triaged — all noise-list (keyless
+  ai-briefing/ai-take/chatbgp/brand-gaps/OS 503s, hr-photo/sharepoint 404s,
+  M365 401s) or intentional rival-isolation/gate probes (403s, bulk-op
+  400s). 0 app bugs from regression.
+- Journey next: Victoria @1440px — Letting Tracker unit-prep flow (target
+  operator brief, log viewing, record offer) + client-side cross-check.
+
 ### r412 · 2026-08-28 ~21:00 UTC · LIGHT (r411 had the journey)
 - Watchdog-spawned session. JOGQK NOT merged into staging per parent note.
 - tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
