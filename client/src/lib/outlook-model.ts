@@ -120,6 +120,18 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
     actualIncome[key] = (actualIncome[key] || 0) + (mo.income || 0);
     actualExpenses[key] = (actualExpenses[key] || 0) + (mo.expenses || 0);
   }
+  // True the mapped months up to the headline FYTD income — the single
+  // source both the Income FYTD card and this panel must agree on. Any
+  // shortfall (a month a label quirk dropped, or income outside the
+  // monthly columns) lands in the current month.
+  if (data.xero?.fytdIncome != null) {
+    const mappedFytd = months.reduce((s, m) => s + (actualIncome[m] || 0), 0);
+    const residual = data.xero.fytdIncome - mappedFytd;
+    if (residual > 0.5) {
+      const cur = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+      actualIncome[cur] = (actualIncome[cur] || 0) + residual;
+    }
+  }
 
   // Typed plan buckets (payments lines are stored negative — flip to cost).
   const legacyLine = model.receipts.find(l => l.key === "LEGACY") || null;

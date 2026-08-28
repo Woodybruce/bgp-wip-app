@@ -32,6 +32,11 @@ async function xeroSnapshot(): Promise<any | null> {
         asAt: fin.asAt,
         orgName: fin.orgName,
         cashTotal: fin.cashTotal ?? null,
+        // Headline FYTD P&L totals — the truth the outlook's "billed so
+        // far" must agree with (the monthly columns can drop a month on a
+        // label quirk; the FYTD report can't).
+        fytdIncome: fin.headline?.income ?? null,
+        fytdExpenses: fin.headline?.operatingExpenses ?? null,
         bankAccounts: fin.bankAccounts || [],
         monthly: fin.monthly || [],
         arByMonth: fin.arByMonth || {},
@@ -207,15 +212,24 @@ function ensureTables(): Promise<void> {
     );
     if ((rebased.rowCount ?? 0) > 0) console.log(`[cashflow] LEGACY re-based ex VAT: 263,604 -> 219,670`);
     // Woody, 2026-08-28: zero the Sage figure — he'll type the confirmed
-    // number on the board himself. Guarded on the exact seeded value so a
-    // figure he's already typed is never clobbered.
-    const zeroed = await pool.query(
-      `UPDATE cashflow_cells c SET amount = 0, updated_at = now()
-        FROM cashflow_lines l
-       WHERE l.id = c.line_id AND l.key = 'LEGACY'
-         AND c.month = '2026-11' AND c.basis = 'budget' AND c.amount = 219670`,
-    );
-    if ((zeroed.rowCount ?? 0) > 0) console.log(`[cashflow] LEGACY zeroed pending Woody's confirmed Sage figure`);
+    // number on the board himself. Flag-gated so it runs exactly once EVER:
+    // the earlier value-guard (amount = 219670) re-fired on every boot, so
+    // a deploy would wipe the figure if Woody re-typed that exact number.
+    const ZERO_FLAG = "migration:cashflow_legacy_zero_v1";
+    const zeroFlag = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [ZERO_FLAG]);
+    if (zeroFlag.rows.length === 0) {
+      const zeroed = await pool.query(
+        `UPDATE cashflow_cells c SET amount = 0, updated_at = now()
+          FROM cashflow_lines l
+         WHERE l.id = c.line_id AND l.key = 'LEGACY'
+           AND c.month = '2026-11' AND c.basis = 'budget' AND c.amount = 219670`,
+      );
+      await pool.query(
+        `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        [ZERO_FLAG, JSON.stringify({ at: new Date().toISOString(), zeroedRows: zeroed.rowCount ?? 0 })],
+      );
+      console.log(`[cashflow] LEGACY zero one-off complete (rows: ${zeroed.rowCount ?? 0}) — flag set, never re-runs`);
+    }
   })().catch((e) => { ensured = null; throw e; });
   return ensured;
 }
