@@ -80,6 +80,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r409 · 2026-08-28 · ROUND IN PROGRESS (provisional heartbeat)
+- FULL round, rotation #3 Landsec client mobile 390px. Per parent-session
+  note: JOGQK deliberately NOT merged into staging this round (it moved
+  well ahead today — HMLR live, ex-VAT cashflow, etc.).
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 409 via run-round.sh: exit 0, ALL scenarios ok (incl.
+  client-portfolio-bgp-contact-names again). 4 issues = standing noise
+  signature (2×400 rocketreach/gate-probe, 2×503 keyless AI). 0 raw
+  500/502/504 in dev-server log; 4xx/503 endpoint tally all noise-list
+  or scope-guard probes. Triage: 0 app bugs from regression.
+- Journey (client mobile 390px) in progress — final entry to follow.
+- Setup: pg_hba trust (r205) needed again on this fresh container; bgp
+  role created superuser so no ownership transfer needed.
+
 ### r408 · 2026-08-28 · LIGHT (r407 had the journey)
 - JOGQK merge: already up to date (b301104 was the head on both). tsc
   clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
