@@ -80,11 +80,25 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r408 · 2026-08-28 · LIGHT — ROUND IN PROGRESS (provisional)
-- JOGQK merge: already up to date (b301104 was the head on both).
-- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore). Two-bot 408
-  in progress (first full validation of r407's
-  client-portfolio-bgp-contact-names scenario). Triage to follow.
+### r408 · 2026-08-28 · LIGHT (r407 had the journey)
+- JOGQK merge: already up to date (b301104 was the head on both). tsc
+  clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 408 via run-round.sh: exit 0, ALL scenarios ok — including
+  first full validation of r407's client-portfolio-bgp-contact-names
+  scenario ✓. 4 issues = standing noise signature (2×400, 2×503). 0 raw
+  500/502/504 in the round's dev-server log; full 4xx/503 endpoint tally
+  triaged — mass 403s all rival-client scope-guard probes, 503s all
+  keyless-AI/OS/M365 family, 404s = hr-photo/sharepoint noise +
+  delete-then-fetch probes + cashflow/unlock dead-endpoint assert, 400s =
+  rocketreach + intentional gate probes. 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none. Setup: pg_hba
+  trust (r205) + bgp ownership transfer (r249) needed again on this
+  fresh container.
+- Next: r408 was LIGHT → r409 FULL rotation #3 Landsec client mobile
+  390px. Real-device check of keyboard-up composer (r405) still open
+  for Woody.
 
 ### r407 · 2026-08-28 · FULL (rotation #2 Landsec client desktop 1440px)
 - JOGQK: no new commits ahead of staging — merge no-op. Smoke GREEN 42/0
