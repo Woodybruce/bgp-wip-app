@@ -14,6 +14,7 @@ import { requireEquityOrAdmin } from "./auth";
 import { CASHFLOW_SEED } from "./cashflow-seed";
 import { withSystemXero } from "./xero-system-session";
 import { buildFinancials } from "./xero-financials";
+import { buildCommissionOutlook } from "./commission-engine";
 
 // (The extra password gate from the first cut was dropped — Woody,
 // 2026-08-27: "lose the password"; the equity/admin gate is the lock.)
@@ -223,7 +224,14 @@ export function registerCashflowRoutes(app: Express): void {
         console.warn("[cashflow] deal projection failed:", e?.message);
         return null;
       });
-      res.json({ lines, cells, months: [...monthSet].sort(), xero, deals });
+      // Commission outlook — FYTD earned + the forward tier commission the
+      // weighted pipeline implies per agent (fee-split rows). Feeds the
+      // Company outlook's cost side in place of a typed commission guess.
+      const commissionOutlook = await buildCommissionOutlook().catch((e) => {
+        console.warn("[cashflow] commission outlook failed:", e?.message);
+        return null;
+      });
+      res.json({ lines, cells, months: [...monthSet].sort(), xero, deals, commissionOutlook });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }

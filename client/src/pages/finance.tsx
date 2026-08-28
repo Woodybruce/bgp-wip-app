@@ -4,6 +4,7 @@
 // cached 15 min server-side).
 import { useQuery } from "@tanstack/react-query";
 import { CashflowBoardSection } from "@/components/cashflow-board";
+import { CompanyOutlookSection } from "@/components/company-outlook";
 import { cashflowFetch } from "@/lib/cashflow-model";
 import { HistoricalBillingsSection } from "@/components/historical-billings";
 import { PartnerRemunerationSection } from "@/components/partner-remuneration";
@@ -626,6 +627,7 @@ export default function FinancePage() {
         {/* The pipeline, commission and cashflow-forecast halves come from
             the CRM / local DB, so they work regardless of the Xero
             connection state. */}
+        <CompanyOutlookSection />
         <CashflowBoardSection />
         <HistoricalBillingsSection />
         <PartnerRemunerationSection />
@@ -673,6 +675,11 @@ export default function FinancePage() {
           sub={`${money(d?.overdue ?? 0)} overdue · pre-Xero (Sage) ${money(sageOutstanding)}`}
         />
       </div>
+
+      {/* Company outlook — front and centre (Woody, 2026-08-28): income
+          forecast + actuals, cost base, computed commissions, prior years,
+          breakeven and the per-partner picture. */}
+      <CompanyOutlookSection />
 
       {/* WIP pipeline + projection (CRM ⇄ Xero cross-reference) */}
       {data.wip && <WipSection wip={data.wip} projection={data.projection} />}

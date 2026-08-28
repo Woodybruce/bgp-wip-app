@@ -269,6 +269,112 @@ export async function buildCommissionStatements(): Promise<{ fyStart: string; st
   };
 }
 
+// Forward commission outlook (Woody, 2026-08-28: "work out the commissions
+// payments based on everyone's project fee splits and billings in the deal
+// boards") — the cost side of the Finance outlook. On top of the FYTD
+// statements, each agent's share of the live pipeline (NEG 50% / SOL 75%
+// weighted, same weights as the income projection) is added to their
+// cumulative billings and run through the same tier bands, giving the
+// commission the firm would owe if the weighted book lands. Deals already
+// at fee-due (EXC/COM/INV) are in the statements, not the forward book.
+const FORWARD_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75 };
+
+export interface CommissionOutlook {
+  fyStart: string;
+  earned: number;            // FYTD accrued commission across all agents
+  payable: number;           // … the slice where the client has paid
+  awaiting: number;          // … earned, awaiting client payment
+  projectedForward: number;  // extra commission if the weighted pipeline lands
+  projectedFyTotal: number;  // earned + projectedForward
+  byAgent: Array<{ agent: string; salary: number | null; billings: number; forwardBillings: number; earned: number; projectedForward: number }>;
+}
+
+let _outlookCache: { at: number; data: CommissionOutlook } | null = null;
+
+export async function buildCommissionOutlook(): Promise<CommissionOutlook> {
+  if (_outlookCache && Date.now() - _outlookCache.at < 5 * 60 * 1000) return _outlookCache.data;
+  const { fyStart, statements } = await buildCommissionStatements();
+
+  const { rows } = await pool.query(`
+    SELECT d.status,
+           dfa.agent_user_id AS "agentUserId",
+           dfa.agent_name AS "agentName",
+           (CASE WHEN dfa.fixed_amount IS NOT NULL AND dfa.fixed_amount <> 0
+                 THEN dfa.fixed_amount
+                 ELSE d.fee * COALESCE(dfa.percentage, 0) / 100.0
+            END)::float AS billing
+      FROM crm_deals d
+      JOIN deal_fee_allocations dfa
+        ON dfa.deal_id = d.id AND COALESCE(dfa.is_bgp_house, false) = false
+     WHERE d.fee IS NOT NULL AND d.fee > 0
+  `);
+  const usersRes = await pool.query(`
+    SELECT u.id, u.name, sp.salary_current AS "salaryCurrent"
+      FROM users u
+      LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+  `);
+  const userById = new Map(usersRes.rows.map((u: any) => [u.id, u]));
+  const userByName = new Map(usersRes.rows.map((u: any) => [String(u.name || "").trim().toLowerCase(), u]));
+
+  type Entry = { agent: string; userId: string | null; salary: number | null; billings: number; forward: number; earned: number };
+  const byKey = new Map<string, Entry>();
+  const keyFor = (userId: string | null, name: string) => (userId ? `u:${userId}` : `n:${name.trim().toLowerCase()}`);
+  for (const s of statements) {
+    byKey.set(keyFor(s.userId, s.agent), {
+      agent: s.agent, userId: s.userId, salary: s.salary, billings: s.billings, forward: 0, earned: s.earned,
+    });
+  }
+  for (const r of rows) {
+    const w = FORWARD_WEIGHTS[legacyToCode(r.status) || ""];
+    if (!w) continue;
+    const billing = (Number(r.billing) || 0) * w;
+    if (billing <= 0) continue;
+    const user = (r.agentUserId && userById.get(r.agentUserId))
+      || userByName.get(String(r.agentName || "").trim().toLowerCase())
+      || null;
+    const key = keyFor(user?.id || null, String(r.agentName || ""));
+    if (!key.slice(2)) continue;
+    let entry = byKey.get(key);
+    if (!entry) {
+      entry = {
+        agent: user?.name || r.agentName || "Unassigned",
+        userId: user?.id || null,
+        salary: user?.salaryCurrent != null ? Math.round(user.salaryCurrent / 100) : null,
+        billings: 0, forward: 0, earned: 0,
+      };
+      byKey.set(key, entry);
+    }
+    entry.forward += billing;
+  }
+
+  const byAgent: CommissionOutlook["byAgent"] = [];
+  let earned = 0, payable = 0, awaiting = 0, projectedForward = 0;
+  for (const s of statements) { earned += s.earned; payable += s.payable; awaiting += s.awaitingPayment; }
+  for (const e of byKey.values()) {
+    const proj = e.salary && e.salary > 0 && e.forward > 0
+      ? bandCommission(e.billings, e.billings + e.forward, e.salary).amount
+      : 0;
+    projectedForward += proj;
+    byAgent.push({
+      agent: e.agent, salary: e.salary, billings: Math.round(e.billings),
+      forwardBillings: Math.round(e.forward), earned: Math.round(e.earned), projectedForward: Math.round(proj),
+    });
+  }
+  byAgent.sort((a, b) => (b.earned + b.projectedForward) - (a.earned + a.projectedForward));
+
+  const data: CommissionOutlook = {
+    fyStart,
+    earned: Math.round(earned),
+    payable: Math.round(payable),
+    awaiting: Math.round(awaiting),
+    projectedForward: Math.round(projectedForward),
+    projectedFyTotal: Math.round(earned + projectedForward),
+    byAgent,
+  };
+  _outlookCache = { at: Date.now(), data };
+  return data;
+}
+
 // Single-agent view for the HR profile's Commission tab — same engine, same
 // numbers as the Finance dashboard, just filtered to one person. Matches by
 // user id first, then by the user's name for legacy allocation rows.

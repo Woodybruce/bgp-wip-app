@@ -2,10 +2,10 @@
 // mirroring his Woody_.xlsx: Gross Salary / Bonus / Cash Advances / Total
 // per director per fiscal year (May–April), FY25 + FY26 seeded from the
 // workbook, FY27 typed in as drawn. The FY27 view adds the forecast Woody
-// asked for: the year's projected profit from the Finance cashflow forecast
-// (receipts already net of ALL costs including salaries) split equally
-// between the four equity partners — "what the guys might make this year",
-// moving live with the deal pipeline.
+// asked for: the Company outlook's projected FY profit (income minus the
+// full cost base, see lib/outlook-model.ts) split equally between the four
+// equity partners on top of the £145k basic — "what the guys might make
+// this year", moving live with the deal pipeline.
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,8 +14,9 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { Pill } from "@/components/ui/pill";
 import { queryClient } from "@/lib/queryClient";
 import {
-  type CashflowData, buildCashflowModel, buildUnifiedForecast, cashflowFetch, fmtCashflow as fmt,
+  type CashflowData, cashflowFetch, fmtCashflow as fmt,
 } from "@/lib/cashflow-model";
+import { buildCompanyOutlook, type HistoricalWip } from "@/lib/outlook-model";
 import { useToast } from "@/hooks/use-toast";
 import { Users } from "lucide-react";
 
@@ -60,57 +61,31 @@ export function PartnerRemunerationSection() {
     return data.partners.map(p => data.rows.find(r => r.fy === fy && r.partner === p) || { fy, partner: p, salary: 0, bonus: 0, advances: 0 });
   }, [data, fy]);
 
-  // Historical billings (FY totals) — the calibration anchor for the forecast.
-  const { data: hist } = useQuery<{ fyTotals: Record<string, number> }>({
+  // Historical billings — prior-year context for the forecast.
+  const { data: hist } = useQuery<HistoricalWip>({
     queryKey: ["/api/historical-wip"],
     queryFn: async () => (await cashflowFetch("GET", "/api/historical-wip")).json(),
     staleTime: 60 * 60 * 1000,
   });
 
-  // Projected profit pool, calibrated to reality (v2 — Woody's screenshot,
-  // 2026-08-28: the raw cash-forecast net said £1.5m+ each, +500% on last
-  // year, because it assumed every weighted pipeline deal cashes this year
-  // against Wendy's plan, which is nowhere near the full cost base).
-  // Instead: projected FY billings (weighted deals + Xero AR + legacy, from
-  // the live forecast) × the margin the firm ACTUALLY converted last year
-  // (FY26 profit distributed ÷ FY26 billings). Self-calibrating: both sides
-  // update as the year and the books move.
+  // Forecast v4 (Woody, 2026-08-28): the pool is the Company outlook's
+  // projected FY profit — income (Xero to date + weighted deal book +
+  // legacy Sage) minus the full cost base (basic costs + salaries +
+  // app-computed commissions), pre corporation tax. Salaries are already
+  // a cost, so the share sits ON TOP of the £145k basic. Replaces the
+  // earlier last-year-margin heuristic with the same P&L the outlook
+  // panel above shows.
   const forecast = useMemo(() => {
-    if (!cashflow || !data || !hist?.fyTotals) return null;
-    try {
-      const model = buildCashflowModel(cashflow);
-      const unified = buildUnifiedForecast(cashflow, model);
-      if (!unified || unified.months.length === 0) return null;
-      // FY2027 = May 2026 – Apr 2027; the board's months already end 2027-04.
-      // Full-year billings = what Xero has already booked this FY (accrual
-      // income since May, which includes invoices still unpaid) + the
-      // forward weighted deal book + the pre-Xero legacy receivable. Xero AR
-      // is deliberately NOT added — those invoices are already inside the
-      // FYTD income figure.
-      const months = unified.months.filter(m => m <= "2027-04");
-      const fytdIncome = (cashflow.xero?.monthly || []).reduce((s, mo) => s + (mo.income || 0), 0);
-      const forwardBook = months.reduce((s, m) => s + (unified.byMonth[m]?.dealsIn || 0) + (unified.byMonth[m]?.legacyIn || 0), 0);
-      const projectedBillings = fytdIncome + forwardBook;
-      const fy26 = data.rows.filter(r => r.fy === 2026);
-      const fy26Distributed = fy26.reduce((s, r) => s + r.bonus + r.advances, 0);
-      const fy26Billings = hist.fyTotals["2026"] || 0;
-      if (!fy26Billings || !fy26Distributed) return null;
-      const margin = fy26Distributed / fy26Billings;
-      const pool = projectedBillings * margin;
-      return {
-        pool: Math.round(pool),
-        share: Math.round(pool / 4),
-        billings: Math.round(projectedBillings),
-        fytdIncome: Math.round(fytdIncome),
-        forwardBook: Math.round(forwardBook),
-        marginPct: (margin * 100).toFixed(1),
-        fy26Billings: Math.round(fy26Billings),
-        fy26Distributed: Math.round(fy26Distributed),
-      };
-    } catch {
-      return null;
-    }
-  }, [cashflow, data, hist]);
+    const outlook = buildCompanyOutlook(cashflow, hist ?? null);
+    if (!outlook) return null;
+    return {
+      pool: outlook.profit.projectedFy,
+      share: outlook.profit.perPartner,
+      income: outlook.income.projectedFy,
+      costs: outlook.costs.projectedFy,
+      next6: outlook.profit.next6,
+    };
+  }, [cashflow, hist]);
 
   if (isLoading) return <Skeleton className="h-40 w-full rounded-xl" />;
   if (!data) return null;
@@ -219,7 +194,7 @@ export function PartnerRemunerationSection() {
               })}
             </div>
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Projected profit pool £{fmt(forecast.pool)}, split £{fmt(forecast.share)} each. Basis: projected FY billings £{fmt(forecast.billings)} (£{fmt(forecast.fytdIncome)} already billed this FY per Xero + £{fmt(forecast.forwardBook)} pipeline-weighted forward book incl. the pre-Xero receivable) × {forecast.marginPct}% — the share of billings that actually reached the four of you as bonus and advances last year (£{fmt(forecast.fy26Distributed)} on £{fmt(forecast.fy26Billings)} billed). Deals won later in the year aren't in the book yet, so early-year projections run conservative and firm up as the year fills in. Bonus and cash advances typed above are draws against each share.
+              Projected profit pool £{fmt(forecast.pool)}, split £{fmt(forecast.share)} each on top of salary. Basis: the Company outlook's P&amp;L — projected FY income £{fmt(forecast.income)} (Xero billed to date + the pipeline-weighted deal book + the legacy Sage line) minus the full cost base £{fmt(forecast.costs)} (basic company costs, salaries and payroll, and commissions computed from the deal boards' fee splits), pre corporation tax. Next six months alone: £{fmt(forecast.next6)}. Deals won later in the year aren't in the book yet, so early-year projections run conservative and firm up as the year fills in. Bonus and cash advances typed above are draws against each share.
             </p>
           </div>
         )}

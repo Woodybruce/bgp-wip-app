@@ -91,6 +91,7 @@ const LEGACY_MAP: Record<string, DealStatusCode> = {
   "under negotiation": "NEG",
   "in negotiation": "NEG",        // leasing-schedule unit status, leaks into deals
   "negotiation": "NEG",
+  "negotiating": "NEG",           // the display label itself
   "neg": "NEG",
   "hots": "HOT",
   "heads of terms": "HOT",
