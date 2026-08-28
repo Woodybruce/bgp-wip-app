@@ -5343,6 +5343,23 @@ async function markRound(page, cross) {
     if (cross.turnoverHiddenMade && r.seesHidden) throw new Error('client can see an out-of-slice turnover entry');
     if (r.write !== 403) throw new Error(`client turnover write not refused (${r.write})`);
   });
+
+  // r407: the portfolio dashboard's "BGP Contacts" pills must be display
+  // names, not raw user ids (the endpoint used to send bgp_contact_user_ids
+  // through unresolved).
+  await step(page, p, 'client-portfolio-bgp-contact-names', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch(`/api/company-portfolio/${window.QA_FIX.landsec}`, { headers: auth });
+      if (!res.ok) return { ok: false, why: `GET ${res.status}` };
+      const body = await res.json();
+      return { ok: true, contacts: body?.company?.bgpContacts || [] };
+    });
+    if (!r.ok) throw new Error(`client portfolio read failed (${r.why})`);
+    const uuidish = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const raw = r.contacts.filter((c) => uuidish.test(String(c)));
+    if (raw.length) throw new Error(`bgpContacts contains raw user ids: ${raw.join(', ')}`);
+  });
 }
 
 // ─── Additional personas ──────────────────────────────────────────────────

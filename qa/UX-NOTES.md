@@ -16,6 +16,16 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+114. 2026-08-28 · Landsec client / desktop 1440px (QA r407) · "see how my
+    Bluewater lettings are progressing" · On the client Properties table
+    (/properties, TABLE view) only the property NAME text is clickable —
+    clicking anywhere else in the row (ownership chips aside, the row is
+    mostly empty cells: Status/Class/Team all "—") does nothing, with no
+    hover cue about where the click target is. Users treat list rows as
+    click targets; a whole-row click (like the Letting Tracker rows) or at
+    least a cursor-pointer row hover would remove the dead-click. Suggest:
+    make the row itself open the property, keeping inner links working.
+
 113. 2026-08-28 · BGP staff / mobile 390px (QA r403) · "on the train: check
     my diary for today" · The calendar page itself is genuinely phone-ready
     (day view, UPCOMING list, event bottom-sheet with attendees all render

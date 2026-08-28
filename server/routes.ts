@@ -7968,6 +7968,18 @@ These terms are indicative only and do not constitute a binding agreement.`;
         }
       }
 
+      // Resolve bgp_contact_user_ids → display names; the dashboard renders
+      // these pills as people, not raw user ids.
+      let bgpContactNames: string[] = [];
+      if (Array.isArray(company?.bgp_contact_user_ids) && company.bgp_contact_user_ids.length > 0) {
+        const cov = await pool.query(
+          `SELECT COALESCE(u.name, u.username, u.email) AS name
+             FROM users u WHERE u.id = ANY($1::text[]) ORDER BY u.name`,
+          [company.bgp_contact_user_ids]
+        ).catch(() => ({ rows: [] as any[] }));
+        bgpContactNames = cov.rows.map((r: any) => r.name).filter(Boolean);
+      }
+
       res.json({
         stats: {
           totalProperties: properties.length,
@@ -7990,7 +8002,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
           // ON this client — never send them back to the client themselves.
           kycStatus: scopeCompanyId ? null : company.kyc_status,
           kycCheckedAt: scopeCompanyId ? null : company.kyc_checked_at,
-          bgpContacts: company.bgp_contact_user_ids || [],
+          bgpContacts: bgpContactNames,
           companiesHouseNumber: company.companies_house_number,
           parentCompanyName,
           pscList: scopeCompanyId ? [] : pscList,

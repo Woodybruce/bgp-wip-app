@@ -80,16 +80,43 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r407 · 2026-08-28 · ROUND IN PROGRESS (heartbeat)
+### r407 · 2026-08-28 · FULL (rotation #2 Landsec client desktop 1440px)
 - JOGQK: no new commits ahead of staging — merge no-op. Smoke GREEN 42/0
   (FRESH_BUILD=1). Two-bot 407 (via run-round.sh): exit 0, ALL scenarios ok;
   4 issues = standing noise signature (2×400, 2×503). 0 raw 500/502/504 in
-  dev-server log; 4xx/503 endpoint tally all noise-list (ai-briefing,
-  ai-take, brand-gaps, os/sites, sharepoint/root, hr/photo, chatbgp keyless)
-  or intentional guard probes (bulk ops 403s, scope guards). 0 app bugs from
-  regression.
-- FULL round: exploratory journey rotation #2 Landsec client desktop 1440px
-  in progress — will replace this entry with the final one.
+  dev-server log; 4xx/503 endpoint tally all noise-list or intentional
+  guard probes. Post-fix rebuild: smoke re-run GREEN 42/0.
+- Journey (Mark Warne @1440px, UI form login): "see how my Bluewater
+  lettings are progressing and find who at BGP to chase": dashboard KPIs +
+  Letting Tracker card → /properties (table clean, map tiles grey =
+  no-network noise) → Bluewater property page (news feed, risk register,
+  linked contacts, compliance panel correctly client-visible) → Letting
+  Tracker (78 units, status pills, client add/edit affordances are
+  intended per r263) → Deals board → deal detail #1003 shows "BGP contact:
+  Victoria Broadhead" = the chase answer, 3 clicks ✓ → tenancy schedule
+  section + Landsec account card. 0 pageerrors, 0 h-overflow, only
+  noise-list 4xx/5xx. Task verdict: journey succeeds; one dead-click
+  surface logged (UX #114).
+- BUG FIXED: client dashboard / Landsec account card "BGP Contacts" pills
+  rendered raw user UUIDs — /api/company-portfolio/:companyId sent
+  bgp_contact_user_ids through unresolved while the UI renders them as
+  names. Resolved ids → COALESCE(name, username, email) server-side (same
+  pattern as brand-profile.ts coverers). tsc clean; verified in browser
+  (pills now "Victoria Broadhead" / "Woody Bruce") + via curl as mark.
+- Harness growth: client-portfolio-bgp-contact-names in markRound (fetch
+  portfolio as client, assert no UUID-shaped bgpContacts). node --check
+  clean; API dry-run via curl green; first full two-bot validation next
+  round.
+- Bugs fixed: 1. Deferred: none new. Carried (data, staff decision):
+  Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+  Suggestions added: UX #114 (client /properties table rows are dead
+  except the name text). New flakes: none. Setup: pg_hba trust (r205) +
+  bgp ownership transfer (r249) needed again on this fresh container;
+  guest-login button needs a hydration-retry click in Playwright (added
+  to journey pattern, not a user-facing issue).
+- Next: r407 was FULL → r408 LIGHT; then r409 FULL rotation #3 Landsec
+  client mobile 390px. Real-device check of keyboard-up composer (r405)
+  still open.
 
 ### r406 · 2026-08-28 · LIGHT (r405 had the journey)
 - JOGQK merge: already up to date (no new commits since r405's merge).
