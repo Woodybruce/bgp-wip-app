@@ -22,7 +22,7 @@ import {
   CASHFLOW_MONTH_LABEL as ML, fmtCashflow as fmt,
 } from "@/lib/cashflow-model";
 import { useToast } from "@/hooks/use-toast";
-import { Banknote, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
+import { Banknote, ChevronDown, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine,
 } from "recharts";
@@ -34,6 +34,17 @@ export function CashflowBoardSection() {
   const [editCell, setEditCell] = useState<{ lineId: string; month: string; basis: "budget" | "actual" } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [mobileMonthIdx, setMobileMonthIdx] = useState<number | null>(null);
+  // Minimise the whole board (Woody, 2026-08-28: it's a long scroll on the
+  // phone) — remembered per device.
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem("finance:cashflow-collapsed") === "1"; } catch { return false; }
+  });
+  const toggleCollapsed = () => {
+    setCollapsed(c => {
+      try { localStorage.setItem("finance:cashflow-collapsed", c ? "0" : "1"); } catch { /* private mode */ }
+      return !c;
+    });
+  };
 
   const { data, isLoading } = useQuery<CashflowData>({
     queryKey: ["/api/cashflow"],
@@ -130,13 +141,24 @@ export function CashflowBoardSection() {
 
   return (
     <Card data-testid="finance-cashflow-section">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2"><Banknote className="w-4 h-4" /> Cashflow forecast</CardTitle>
-        <p className="text-xs text-muted-foreground">
-          All figures ex VAT. Cash in comes from the app — pipeline-weighted deal fees and Xero invoices due — plus the legacy pre-Xero (Sage-era) receivables from Wendy's cashflow (£219,670 ex VAT, November) — editable on the Legacy line below if that moves; it also feeds the Debtors card above.
-          Cash out is the costs plan below (Wendy's forecast). The chain starts from {unified.anchor.source === "xero" ? "Xero's live cash at bank" : "the typed opening balance (Xero not connected)"}.
-        </p>
+      <CardHeader className="pb-2 cursor-pointer" onClick={toggleCollapsed} data-testid="cf-collapse-toggle" aria-expanded={!collapsed}>
+        <CardTitle className="text-sm flex items-center gap-2">
+          <ChevronDown className={`w-4 h-4 shrink-0 text-muted-foreground transition-transform ${collapsed ? "-rotate-90" : ""}`} />
+          <Banknote className="w-4 h-4" /> Cashflow forecast
+          {collapsed && (
+            <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">
+              Cash now £{fmt(unified.anchor.value)} · low {unified.low.close < 0 ? "-" : ""}£{fmt(Math.abs(unified.low.close))} ({ML(unified.low.month)})
+            </span>
+          )}
+        </CardTitle>
+        {!collapsed && (
+          <p className="text-xs text-muted-foreground">
+            All figures ex VAT. Cash in comes from the app — pipeline-weighted deal fees and Xero invoices due — plus the legacy pre-Xero (Sage-era) receivables from Wendy's cashflow (£219,670 ex VAT, November) — editable on the Legacy line below if that moves; it also feeds the Debtors card above.
+            Cash out is the costs plan below (Wendy's forecast). The chain starts from {unified.anchor.source === "xero" ? "Xero's live cash at bank" : "the typed opening balance (Xero not connected)"}. Tap the header to minimise.
+          </p>
+        )}
       </CardHeader>
+      {!collapsed && (
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <MiniStat label={`Cash now (${unified.anchor.source === "xero" ? "Xero" : "typed"})`} value={unified.anchor.value} />
@@ -275,6 +297,7 @@ export function CashflowBoardSection() {
           </span>
         </div>
       </CardContent>
+      )}
     </Card>
   );
 }
