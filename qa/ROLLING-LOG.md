@@ -80,10 +80,25 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r412 · 2026-08-28 ~20:45 UTC · ROUND IN PROGRESS (LIGHT — r411 had the journey)
+### r412 · 2026-08-28 ~21:00 UTC · LIGHT (r411 had the journey)
 - Watchdog-spawned session. JOGQK NOT merged into staging per parent note.
 - tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
-- Two-bot round + triage next. Setup: pg_hba trust (r205) needed again.
+  Two-bot 412 via run-round.sh: exit 0, ALL scenarios ok — including first
+  full validation of r411's staff-mobile-chat-home-nav scenario ✓. 4 issues
+  = standing noise signature (2×400 rocketreach/gate-probe, 2×503 keyless
+  AI). 0 raw 500/502/504 in the round's dev-server log (one grep hit was
+  "500 articles" in a news-feed info line, not a status). Full 4xx/503
+  endpoint tally triaged — all noise-list (keyless ai-briefing/ai-take/
+  chatbgp/brand-gaps/OS 503s, sharepoint/hr-photo 404s, M365 401s) or
+  intentional rival-isolation/gate probes (403s, bulk-op 400s). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none. r411's leftover
+  QA-R411 fee-split deal swept by this round's purge as expected.
+- Setup: pg_hba trust (r205) needed again on this fresh container; bgp
+  role created superuser so no ownership transfer needed.
+- Next: r412 was LIGHT → r413 FULL rotation #1 staff desktop 1440px.
+  Real-device check of keyboard-up composer (r405) still open for Woody.
 
 ### r411 · 2026-08-28 ~19:45 UTC · FULL (rotation #4 staff mobile 390px)
 - Per parent-session note: JOGQK NOT merged into staging (parent merges on
