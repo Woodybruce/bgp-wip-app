@@ -80,6 +80,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r405 · 2026-08-28 · IN PROGRESS (FULL — rotation #1 staff desktop 1440px + new mobile-chat code checks)
+- JOGQK merged into staging: 7 new commits (native chat copy, visual-viewport
+  chat shell, immutable hashed assets, logo.dev key panel + backfill, ChatBGP
+  medium effort). Merge clean, tsc clean.
+- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 405 running.
+- Verified on prod build: /assets/*.js serve Cache-Control public,
+  max-age=31536000, immutable; index.html stays no-cache. ✓
+- Triage so far: nothing beyond noise list. Journey next.
+
 ### r404 · 2026-08-28 · LIGHT (r403 had the journey)
 - JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
   GREEN 42/0 (FRESH_BUILD=1). Two-bot 404 (via run-round.sh): exit 0, ALL
