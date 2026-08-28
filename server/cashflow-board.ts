@@ -72,28 +72,19 @@ async function buildDealProjection(): Promise<{ byMonth: Record<string, { weight
   const byMonth: Record<string, { weighted: number; count: number }> = {};
   const undated = { weighted: 0, count: 0 };
   const thisMonth = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
-  // Staleness guards (Woody, 2026-08-28 "maths defo not working"): without
-  // them EVERY open deal ever entered counted, and anything past its date
-  // slipped into the current month — years of dead book inflating the
-  // projection. A deal expected >3 months ago is stale; an undated deal
-  // untouched for 6 months is dead. Both drop out until someone updates them.
-  const staleBefore = Date.now() - 92 * 86_400_000;
-  const deadBefore = Date.now() - 183 * 86_400_000;
-  const excluded = { weighted: 0, count: 0 };
+  // Every deal on the deal board counts (Woody, 2026-08-28: "the deals in
+  // solicitors are in the deal board of the app and should all be counted")
+  // — no staleness cut. Past-dated deals land in the current month.
   const included: Array<{ name: string; code: string; weighted: number }> = [];
   for (const d of rows) {
     const code = legacyToCode(d.status);
     if (!code || !(code in PROJ_WEIGHTS)) continue;
     if (code === "COM" && d.ic > 0) continue; // invoiced — already in Xero AR/actuals
     const weighted = (Number(d.fee) || 0) * PROJ_WEIGHTS[code];
-    if (!d.dt) {
-      if (d.ua && new Date(d.ua).getTime() < deadBefore) { excluded.weighted += weighted; excluded.count++; continue; }
-      undated.weighted += weighted; undated.count++; continue;
-    }
+    if (!d.dt) { undated.weighted += weighted; undated.count++; continue; }
     const dt = new Date(d.dt);
-    if (dt.getTime() < staleBefore) { excluded.weighted += weighted; excluded.count++; continue; }
     let key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
-    if (key < thisMonth) key = thisMonth; // recently-slipped deals land in the current month
+    if (key < thisMonth) key = thisMonth; // slipped deals land in the current month
     (byMonth[key] ||= { weighted: 0, count: 0 }).weighted += weighted;
     byMonth[key].count++;
     included.push({ name: d.name, code, weighted: Math.round(weighted) });
@@ -102,7 +93,7 @@ async function buildDealProjection(): Promise<{ byMonth: Record<string, { weight
     _projLogged = true;
     const inclSum = included.reduce((s, x) => s + x.weighted, 0);
     const top = [...included].sort((a, b) => b.weighted - a.weighted).slice(0, 8);
-    console.log(`[cashflow diag] deal projection: included ${included.length} deals £${Math.round(inclSum).toLocaleString()} weighted + undated ${undated.count} £${Math.round(undated.weighted).toLocaleString()} | excluded stale/dead ${excluded.count} £${Math.round(excluded.weighted).toLocaleString()} | top: ${top.map(t => `${t.name} (${t.code} £${t.weighted.toLocaleString()})`).join("; ")}`);
+    console.log(`[cashflow diag] deal projection: ${included.length} deals £${Math.round(inclSum).toLocaleString()} weighted + undated ${undated.count} £${Math.round(undated.weighted).toLocaleString()} | top: ${top.map(t => `${t.name} (${t.code} £${t.weighted.toLocaleString()})`).join("; ")}`);
   }
   for (const k of Object.keys(byMonth)) byMonth[k].weighted = Math.round(byMonth[k].weighted);
   undated.weighted = Math.round(undated.weighted);
@@ -199,6 +190,16 @@ function ensureTables(): Promise<void> {
          AND c.month = '2026-11' AND c.basis = 'budget' AND c.amount = 263604`,
     );
     if ((rebased.rowCount ?? 0) > 0) console.log(`[cashflow] LEGACY re-based ex VAT: 263,604 -> 219,670`);
+    // Woody, 2026-08-28: zero the Sage figure — he'll type the confirmed
+    // number on the board himself. Guarded on the exact seeded value so a
+    // figure he's already typed is never clobbered.
+    const zeroed = await pool.query(
+      `UPDATE cashflow_cells c SET amount = 0, updated_at = now()
+        FROM cashflow_lines l
+       WHERE l.id = c.line_id AND l.key = 'LEGACY'
+         AND c.month = '2026-11' AND c.basis = 'budget' AND c.amount = 219670`,
+    );
+    if ((zeroed.rowCount ?? 0) > 0) console.log(`[cashflow] LEGACY zeroed pending Woody's confirmed Sage figure`);
   })().catch((e) => { ensured = null; throw e; });
   return ensured;
 }

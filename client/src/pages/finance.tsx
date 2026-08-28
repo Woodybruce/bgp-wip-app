@@ -4,9 +4,10 @@
 // cached 15 min server-side).
 import { useQuery } from "@tanstack/react-query";
 import { CashflowBoardSection } from "@/components/cashflow-board";
+import { cashflowFetch } from "@/lib/cashflow-model";
 import { HistoricalBillingsSection } from "@/components/historical-billings";
 import { PartnerRemunerationSection } from "@/components/partner-remuneration";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -539,6 +540,25 @@ export default function FinancePage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Pre-Xero (Sage-era) receivables — the editable LEGACY line on the
+  // cashflow board below. Woody, 2026-08-28: the Debtors card must show
+  // Xero + Sage together; he types the confirmed Sage figure on the board.
+  const { data: cfData } = useQuery<{ lines: Array<{ id: string; key: string }>; cells: Array<{ line_id: string; month: string; basis: string; amount: number }> }>({
+    queryKey: ["/api/cashflow"],
+    queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const sageOutstanding = useMemo(() => {
+    const line = cfData?.lines?.find(l => l.key === "LEGACY");
+    if (!line) return 0;
+    const byMonth: Record<string, { a?: number; b?: number }> = {};
+    for (const c of cfData!.cells || []) {
+      if (c.line_id !== line.id) continue;
+      (byMonth[c.month] ||= {})[c.basis === "actual" ? "a" : "b"] = Number(c.amount) || 0;
+    }
+    return Object.values(byMonth).reduce((s, m) => s + (m.a ?? m.b ?? 0), 0);
+  }, [cfData]);
+
   // The Xero OAuth callback lands back here with ?xero=connected or
   // ?xero_error=… — surface the outcome and, on success, force a live
   // pull so the page doesn't keep showing the cached pre-connect state.
@@ -648,9 +668,9 @@ export default function FinancePage() {
         <StatCard label="Cash at bank" value={money(data.cashTotal)} sub={`${data.bankAccounts?.length || 0} account(s)`} />
         <StatCard
           label="Debtors outstanding"
-          value={money(d?.outstanding)}
+          value={money((d?.outstanding ?? 0) + sageOutstanding)}
           negative={(d?.overdue ?? 0) > 0}
-          sub={d ? `${money(d.overdue)} overdue` : undefined}
+          sub={`${money(d?.overdue ?? 0)} overdue · pre-Xero (Sage) ${money(sageOutstanding)}`}
         />
       </div>
 
