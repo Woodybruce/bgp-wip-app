@@ -118,7 +118,7 @@ export function CompanyOutlookSection() {
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Money in — projected year</p>
             <p className="text-2xl font-semibold tabular-nums mt-1" data-testid="outlook-money-in">{money(income.projectedFy)}</p>
             <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-              {money(income.fytdActual)} billed so far + {money(income.forwardDeals)} deal book{income.legacy ? ` + ${money(income.legacy)} old Sage invoices` : ""}
+              {money(income.fytdActual)} billed so far + {money(income.forwardDeals)} deal book{income.legacy ? ` + ${money(income.legacy)} old Sage invoices (Wendy's sheet)` : ""}
               {history?.vsLastFyPct != null && lastFy ? ` · ${history.vsLastFyPct >= 0 ? "+" : ""}${history.vsLastFyPct}% vs last year` : ""}
             </p>
           </div>

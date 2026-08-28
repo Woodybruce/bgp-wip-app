@@ -230,6 +230,26 @@ function ensureTables(): Promise<void> {
       );
       console.log(`[cashflow] LEGACY zero one-off complete (rows: ${zeroed.rowCount ?? 0}) — flag set, never re-runs`);
     }
+    // Woody, 2026-08-28 (evening): "the number is in Wendy's sheet — we
+    // discussed this" — the Sage figure IS Wendy's £263,604 inc VAT yellow
+    // cell, £219,670 ex VAT on the board. Restore it where the zero left
+    // the line at 0; a non-zero typed value is never touched. Flag-gated,
+    // one shot.
+    const RESTORE_FLAG = "migration:cashflow_legacy_restore_v1";
+    const restoreFlag = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [RESTORE_FLAG]);
+    if (restoreFlag.rows.length === 0) {
+      const restored = await pool.query(
+        `UPDATE cashflow_cells c SET amount = 219670, updated_at = now()
+          FROM cashflow_lines l
+         WHERE l.id = c.line_id AND l.key = 'LEGACY'
+           AND c.month = '2026-11' AND c.basis = 'budget' AND c.amount = 0`,
+      );
+      await pool.query(
+        `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        [RESTORE_FLAG, JSON.stringify({ at: new Date().toISOString(), restoredRows: restored.rowCount ?? 0 })],
+      );
+      console.log(`[cashflow] LEGACY restored to Wendy's 219,670 ex VAT (rows: ${restored.rowCount ?? 0}) — flag set`);
+    }
   })().catch((e) => { ensured = null; throw e; });
   return ensured;
 }

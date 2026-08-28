@@ -1,10 +1,12 @@
 // Cashflow forecast section on the Finance page (v3 — Woody, 2026-08-27:
 // one finance page, no password; Xero + the app are the receipts source of
 // truth; Wendy's workbook lines are costs only; a single manual LEGACY line
-// carries the pre-Xero (Sage-era) receivables — zeroed 2026-08-28 pending
-// Woody typing the confirmed Sage figure ("I will update the sage figure");
-// it also feeds the Debtors card on the Finance page. Everything on the
-// board is ex VAT — Woody, 2026-08-27: "we don't want to see VAT").
+// carries the pre-Xero (Sage-era) receivables — Wendy's cashflow yellow
+// cell, £263,604 inc VAT = £219,670 ex VAT budgeted Nov 2026 (Woody,
+// 2026-08-28 evening: "the number is in Wendy's sheet"); editable in
+// place if it moves, and it also feeds the Debtors card on the Finance
+// page. Everything on the board is ex VAT — Woody, 2026-08-27: "we
+// don't want to see VAT").
 // Receipts rows are read-only app data; the LEGACY line and the cost lines
 // are editable in place. The balance chain anchors on Xero's live cash.
 import { useMemo, useState } from "react";
@@ -131,7 +133,7 @@ export function CashflowBoardSection() {
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2"><Banknote className="w-4 h-4" /> Cashflow forecast</CardTitle>
         <p className="text-xs text-muted-foreground">
-          All figures ex VAT. Cash in comes from the app — pipeline-weighted deal fees and Xero invoices due — plus the legacy pre-Xero (Sage-era) receivables — type the confirmed Sage figure on the Legacy line below; it also feeds the Debtors card above.
+          All figures ex VAT. Cash in comes from the app — pipeline-weighted deal fees and Xero invoices due — plus the legacy pre-Xero (Sage-era) receivables from Wendy's cashflow (£219,670 ex VAT, November) — editable on the Legacy line below if that moves; it also feeds the Debtors card above.
           Cash out is the costs plan below (Wendy's forecast). The chain starts from {unified.anchor.source === "xero" ? "Xero's live cash at bank" : "the typed opening balance (Xero not connected)"}.
         </p>
       </CardHeader>
