@@ -80,6 +80,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r406 · 2026-08-28 · LIGHT (r405 had the journey) — IN PROGRESS
+- JOGQK merge: already up to date (no new commits since r405's merge).
+- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore). Two-bot 406
+  in progress via run-round.sh; triage to follow in the final entry.
+- No deferred bugs carried in (r405 deferred none; Bluewater SPINE
+  duplicates remain a staff data decision, not code).
+
 ### r405 · 2026-08-28 · FULL (rotation #1 staff desktop 1440px + new mobile-chat code checks)
 - JOGQK merged into staging: 7 new commits (native chat copy, visual-viewport
   chat shell, immutable hashed assets, logo.dev key panel + backfill, ChatBGP
