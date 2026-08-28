@@ -6338,8 +6338,8 @@ export async function executeCrmToolRaw(
 
   if (fnName === "run_brand_enrichment_backfill") {
     const { runLogoDevBackfill, isLogoDevBrandConfigured } = await import("./logo-dev-brand");
-    if (!isLogoDevBrandConfigured()) {
-      return { data: { success: false, error: "LOGO_DEV_SECRET_KEY isn't configured on this environment yet — add it to the deployment's variables first." } };
+    if (!(await isLogoDevBrandConfigured())) {
+      return { data: { success: false, error: "The logo.dev Brand API secret key (sk_...) isn't configured. An admin can paste it on Subscriptions & APIs → logo.dev Brand API (desktop, admin sidebar) — it takes effect within a minute, no restart needed." } };
     }
     try {
       const stats = await runLogoDevBackfill(

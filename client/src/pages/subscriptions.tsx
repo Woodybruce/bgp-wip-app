@@ -107,6 +107,16 @@ const subscriptions: Subscription[] = [
     apiNote: "Scrape-based integration — credentials configured below (admins only).",
   },
   {
+    name: "logo.dev",
+    category: "Brand Data",
+    description: "Company logos (publishable pk_ token, env-configured) and the Brand API — descriptions, socials, brand colours — used by CRM enrichment (~1p per lookup).",
+    url: "https://logo.dev",
+    icon: Palette,
+    color: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+    hasApi: true,
+    apiNote: "Brand API secret key (sk_...) configured below (admins only) — takes effect within a minute, no restart.",
+  },
+  {
     name: "Requirement List",
     category: "Property Data",
     description: "Tenant requirement and property availability listing platform.",
@@ -241,6 +251,34 @@ export default function Subscriptions() {
       toast({ title: "Save failed", description: err.message, variant: "destructive" });
     } finally {
       setPipnetSaving(false);
+    }
+  };
+  const { data: logoDevStatus, refetch: refetchLogoDev } = useQuery<{ configured: boolean; source: "db" | "env" | "none"; keyMasked: string }>({
+    queryKey: ["/api/admin/integrations/logo-dev"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/integrations/logo-dev");
+      return res.json();
+    },
+    enabled: isAdmin,
+  });
+  const [logoDevKey, setLogoDevKey] = useState("");
+  const [logoDevSaving, setLogoDevSaving] = useState(false);
+  const saveLogoDevKey = async () => {
+    if (!logoDevKey.trim().startsWith("sk_")) {
+      toast({ title: "Wrong key", description: "The Brand API secret key starts sk_ — the pk_ one is the image token, already configured.", variant: "destructive" });
+      return;
+    }
+    setLogoDevSaving(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/integrations/logo-dev", { secretKey: logoDevKey.trim() });
+      if (!res.ok) throw new Error((await res.json()).message || "Save failed");
+      toast({ title: "logo.dev secret key saved", description: "Live within a minute — ask ChatBGP to run the enrichment backfill." });
+      setLogoDevKey("");
+      await refetchLogoDev();
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
+    } finally {
+      setLogoDevSaving(false);
     }
   };
   const testPipnetLogin = async () => {
@@ -611,6 +649,43 @@ export default function Subscriptions() {
                           >
                             {pipnetTesting ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
                             Test login
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                    {sub.name === "logo.dev" && isExpanded && isAdmin && (
+                      <div className="mt-3 p-3 rounded-md border bg-muted/30 space-y-2" data-testid="logo-dev-config">
+                        <div className="flex items-center gap-2 text-xs">
+                          {logoDevStatus?.configured ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Brand API key set — {logoDevStatus.keyMasked} ({logoDevStatus.source})</span>
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="w-3.5 h-3.5 text-amber-500" />
+                              <span>Brand API secret key not set — logo images work, enrichment doesn't</span>
+                            </>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <Input
+                            type="password"
+                            className="h-7 text-xs"
+                            placeholder="sk_… secret key from the logo.dev dashboard"
+                            value={logoDevKey}
+                            onChange={(e) => setLogoDevKey(e.target.value)}
+                            data-testid="input-logo-dev-key"
+                          />
+                          <Button
+                            size="sm"
+                            className="h-7 text-xs shrink-0"
+                            onClick={saveLogoDevKey}
+                            disabled={logoDevSaving || !logoDevKey.trim()}
+                            data-testid="button-save-logo-dev"
+                          >
+                            {logoDevSaving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <KeyRound className="w-3 h-3 mr-1" />}
+                            Save
                           </Button>
                         </div>
                       </div>
