@@ -12,8 +12,7 @@ import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { requireEquityOrAdmin } from "./auth";
 import { CASHFLOW_SEED } from "./cashflow-seed";
-import { withSystemXero } from "./xero-system-session";
-import { buildFinancials } from "./xero-financials";
+import { buildFinancialsShared } from "./xero-financials";
 import { buildCommissionOutlook } from "./commission-engine";
 
 // (The extra password gate from the first cut was dropped — Woody,
@@ -32,7 +31,7 @@ async function xeroSnapshot(): Promise<any | null> {
   }
   let data: any | null = null;
   try {
-    const fin = await withSystemXero((session) => buildFinancials(session));
+    const fin = await buildFinancialsShared();
     if (fin && !fin.notConnected) {
       data = {
         asAt: fin.asAt,
