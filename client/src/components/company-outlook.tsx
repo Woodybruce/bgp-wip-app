@@ -194,10 +194,10 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
           </CostRow>
           <CostRow
             id="commission" title="Commissions"
-            sub={costs.usingEngineCommission
+            sub={`${costs.usingEngineCommission
               ? "Worked out live from each deal's fee splits and the tier bands"
-              : "From the typed plan line — fee splits unavailable"}
-            headline={`${money(costs.commissionFy)} FY`}
+              : "From the typed plan line — fee splits unavailable"} · ${money(costs.commissionFy)} for the year`}
+            headline={`${money(Math.round(costs.commissionFy / 12))}/mo`}
             open={openRow === "commission"} onToggle={() => toggle("commission")}
           >
             {costs.commissionByAgent.length === 0 ? (
