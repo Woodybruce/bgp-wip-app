@@ -80,6 +80,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r411 · 2026-08-28 ~19:05 UTC · FULL — ROUND IN PROGRESS (heartbeat)
+- Per parent-session note: JOGQK NOT merged into staging (parent merges on
+  Woody's say-so).
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 411 via run-round.sh: exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400 rocketreach/investment-tracker gate
+  probe, 2×503 keyless AI brand-gaps/commentary-regen). 0 raw 500/502/504
+  in dev-server log; full 4xx/503 endpoint tally triaged — all noise-list
+  (keyless AI 503s, hr-photo/sharepoint 404s, M365 401s) or intentional
+  rival-isolation/gate probes (the 403 wall from sam scenarios). 0 app
+  bugs from regression.
+- Journey next: rotation #4 staff mobile 390px (Victoria) — in progress.
+
 ### r410 · 2026-08-28 ~16:50 UTC · LIGHT (r409 had the journey)
 - Per parent-session note: JOGQK deliberately NOT merged into staging
   (Company outlook panel, Finance dedupe, commission outlook, LEGACY Sage
