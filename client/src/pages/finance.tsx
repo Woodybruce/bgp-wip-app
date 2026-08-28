@@ -5,6 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { CashflowBoardSection } from "@/components/cashflow-board";
 import { HistoricalBillingsSection } from "@/components/historical-billings";
+import { PartnerRemunerationSection } from "@/components/partner-remuneration";
 import { useEffect } from "react";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
@@ -607,6 +608,7 @@ export default function FinancePage() {
             connection state. */}
         <CashflowBoardSection />
         <HistoricalBillingsSection />
+        <PartnerRemunerationSection />
         {data.wip && <WipSection wip={data.wip} />}
         {data.commissions && data.commissions.statements.length > 0 && (
           <CommissionSection commissions={data.commissions} />
@@ -659,6 +661,7 @@ export default function FinancePage() {
           lines below are Wendy's costs plan (Woody, 2026-08-27). */}
       <CashflowBoardSection />
       <HistoricalBillingsSection />
+      <PartnerRemunerationSection />
 
       {/* (Data-health card removed — Woody, 2026-08-23: a weekly fix-list
           email to equity@ replaced it; see runWipHealthEmail. The live list
