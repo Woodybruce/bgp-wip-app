@@ -4166,6 +4166,49 @@ app.use("/api/branding/assets", express.static(
           console.error("[lr-bg] connectivity diag failed:", e?.message);
         }
       }, 20000);
+      // One-off (Woody, 2026-08-28 "Can you do this"): the logo.dev Brand
+      // API secret key was pasted somewhere but never landed. If it went
+      // into a ChatBGP message, fish it out, VERIFY it against logo.dev,
+      // store it via the new settings path, and run the enrichment
+      // backfill. The key itself is never logged. Guarded on the key not
+      // already being configured; remove once done.
+      setTimeout(async () => {
+        try {
+          const { getLogoDevSecretKey, setLogoDevSecretKey } = await import("./integration-credentials");
+          if (await getLogoDevSecretKey()) return;
+          const { rows } = await pool.query(
+            `SELECT content FROM chat_messages
+              WHERE role = 'user' AND created_at > now() - interval '7 days'
+                AND content ~ 'sk_[A-Za-z0-9_-]{8,}'
+              ORDER BY created_at DESC LIMIT 50`
+          );
+          const candidates = new Set<string>();
+          for (const r of rows) {
+            for (const m of String(r.content).matchAll(/sk_[A-Za-z0-9_-]{8,}/g)) candidates.add(m[0]);
+          }
+          if (candidates.size === 0) {
+            console.log("[logo-dev one-off] no sk_ key found in recent chat messages — Woody needs to paste it (Subscriptions & APIs -> logo.dev)");
+            return;
+          }
+          for (const key of candidates) {
+            const res = await fetch("https://api.logo.dev/brand/starbucks.com", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20000) }).catch(() => null);
+            // 200 = works; 404 = auth fine, no brand; 402 = valid key, out of credits
+            if (res && (res.ok || res.status === 404 || res.status === 402)) {
+              await setLogoDevSecretKey(key);
+              const { clearLogoDevKeyCache, runLogoDevBackfill } = await import("./logo-dev-brand");
+              clearLogoDevKeyCache();
+              console.log(`[logo-dev one-off] verified + stored key ending …${key.slice(-4)}; running enrichment backfill`);
+              const stats = await runLogoDevBackfill(600, false);
+              console.log(`[logo-dev one-off] backfill done: candidates=${stats.candidates} processed=${stats.processed} companiesFilled=${stats.filled} fieldsFilled=${stats.fieldsFilled}`);
+              return;
+            }
+            console.log(`[logo-dev one-off] candidate ending …${key.slice(-4)} rejected by logo.dev (${res ? res.status : "network error"})`);
+          }
+          console.log("[logo-dev one-off] no candidate verified — Woody needs to paste the sk_ key (Subscriptions & APIs -> logo.dev)");
+        } catch (e: any) {
+          console.error("[logo-dev one-off] failed:", e?.message);
+        }
+      }, 25000);
       // One-off (per Woody, 2026-08-14): purge non-lettable "units" (InPost
       // lockers, power-bank stations, vending, ATMs...) that schedule imports
       // carried onto the Letting Tracker app-wide. Stub deals still at AVA go
