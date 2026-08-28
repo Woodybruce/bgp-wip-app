@@ -581,8 +581,18 @@ export default function FinancePage() {
 
       {/* Company outlook — front and centre (Woody, 2026-08-28): income
           forecast + actuals, cost base, computed commissions, prior years,
-          breakeven and the per-partner picture. */}
-      <CompanyOutlookSection />
+          breakeven and the per-partner picture. Fed the page's own Xero
+          numbers as a fallback so it can never disagree with the headline
+          cards when the cashflow snapshot hiccups. */}
+      <CompanyOutlookSection
+        xeroFallback={{
+          cashTotal: data.cashTotal ?? null,
+          fytdIncome: h.income ?? null,
+          fytdExpenses: h.operatingExpenses ?? null,
+          monthly: data.monthly || [],
+          bankAccounts: data.bankAccounts || [],
+        }}
+      />
 
       {/* Completed deals nobody has invoiced — the chase list. The stage
           cards live inside the outlook's deal-book strip now. */}

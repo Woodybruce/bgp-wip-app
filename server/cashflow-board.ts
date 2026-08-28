@@ -23,7 +23,13 @@ import { buildCommissionOutlook } from "./commission-engine";
 // FY's monthly income/expenses, from the same builder as /api/xero/financials.
 let xeroSnapCache: { at: number; data: any | null } | null = null;
 async function xeroSnapshot(): Promise<any | null> {
-  if (xeroSnapCache && Date.now() - xeroSnapCache.at < 15 * 60 * 1000) return xeroSnapCache.data;
+  // A good snapshot is cached 15 min; a FAILED one only 60s — caching a
+  // null for 15 min made the outlook show "£0 billed so far" while the
+  // headline cards (their own feed) were fine (Woody's screenshot,
+  // 2026-08-28 17:39).
+  if (xeroSnapCache && Date.now() - xeroSnapCache.at < (xeroSnapCache.data ? 15 * 60 * 1000 : 60 * 1000)) {
+    return xeroSnapCache.data;
+  }
   let data: any | null = null;
   try {
     const fin = await withSystemXero((session) => buildFinancials(session));
@@ -48,6 +54,7 @@ async function xeroSnapshot(): Promise<any | null> {
   } catch (e: any) {
     console.warn("[cashflow] Xero snapshot failed:", e?.message);
   }
+  if (!data) console.warn("[cashflow] Xero snapshot empty (not connected or fetch failed) — retrying in 60s");
   xeroSnapCache = { at: Date.now(), data };
   return data;
 }

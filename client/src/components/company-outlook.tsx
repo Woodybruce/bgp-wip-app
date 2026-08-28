@@ -11,7 +11,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { type CashflowData, cashflowFetch, CASHFLOW_MONTH_LABEL } from "@/lib/cashflow-model";
+import { type CashflowData, type CashflowXero, cashflowFetch, CASHFLOW_MONTH_LABEL } from "@/lib/cashflow-model";
 import { buildCompanyOutlook, type HistoricalWip, type CostLineDetail } from "@/lib/outlook-model";
 import { TrendingUp, ChevronDown, ChevronRight, ArrowRight } from "lucide-react";
 import {
@@ -64,7 +64,11 @@ function LineList({ lines }: { lines: CostLineDetail[] }) {
   );
 }
 
-export function CompanyOutlookSection() {
+// xeroFallback: the Finance page's own /api/xero/financials numbers (the
+// feed the headline cards use). If the cashflow snapshot's Xero fetch
+// hiccups, the outlook borrows this instead of showing "£0 billed so far"
+// under a headline card that says £600k+.
+export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: CashflowXero } = {}) {
   const { data: cashflow } = useQuery<CashflowData>({
     queryKey: ["/api/cashflow"],
     queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
@@ -76,7 +80,13 @@ export function CompanyOutlookSection() {
     staleTime: 60 * 60 * 1000,
   });
 
-  const outlook = useMemo(() => buildCompanyOutlook(cashflow, hist), [cashflow, hist]);
+  const effective = useMemo<CashflowData | undefined>(() => {
+    if (!cashflow) return undefined;
+    if (cashflow.xero || !xeroFallback) return cashflow;
+    return { ...cashflow, xero: xeroFallback };
+  }, [cashflow, xeroFallback]);
+
+  const outlook = useMemo(() => buildCompanyOutlook(effective, hist), [effective, hist]);
   const [openRow, setOpenRow] = useState<string | null>(null);
   const toggle = (id: string) => setOpenRow(cur => (cur === id ? null : id));
 
