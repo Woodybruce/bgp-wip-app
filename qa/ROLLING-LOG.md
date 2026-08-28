@@ -80,6 +80,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r412 · 2026-08-28 ~20:45 UTC · ROUND IN PROGRESS (LIGHT — r411 had the journey)
+- Watchdog-spawned session. JOGQK NOT merged into staging per parent note.
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+- Two-bot round + triage next. Setup: pg_hba trust (r205) needed again.
+
 ### r411 · 2026-08-28 ~19:45 UTC · FULL (rotation #4 staff mobile 390px)
 - Per parent-session note: JOGQK NOT merged into staging (parent merges on
   Woody's say-so).
