@@ -80,6 +80,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r407 · 2026-08-28 · ROUND IN PROGRESS (heartbeat)
+- JOGQK: no new commits ahead of staging — merge no-op. Smoke GREEN 42/0
+  (FRESH_BUILD=1). Two-bot 407 (via run-round.sh): exit 0, ALL scenarios ok;
+  4 issues = standing noise signature (2×400, 2×503). 0 raw 500/502/504 in
+  dev-server log; 4xx/503 endpoint tally all noise-list (ai-briefing,
+  ai-take, brand-gaps, os/sites, sharepoint/root, hr/photo, chatbgp keyless)
+  or intentional guard probes (bulk ops 403s, scope guards). 0 app bugs from
+  regression.
+- FULL round: exploratory journey rotation #2 Landsec client desktop 1440px
+  in progress — will replace this entry with the final one.
+
 ### r406 · 2026-08-28 · LIGHT (r405 had the journey)
 - JOGQK merge: already up to date (no new commits since r405's merge).
 - Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore). Two-bot 406
