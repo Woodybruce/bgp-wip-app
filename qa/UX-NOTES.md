@@ -16,6 +16,19 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+113. 2026-08-28 · BGP staff / mobile 390px (QA r403) · "on the train: check
+    my diary for today" · The calendar page itself is genuinely phone-ready
+    (day view, UPCOMING list, event bottom-sheet with attendees all render
+    clean at 390px) but a staff phone user has NO tap path to it: bottom
+    nav is Dashboard/Messages/Deals/News, the staff mobile-home QUICK_LINKS
+    are Deals/Expenses/Images/CRM, and the only in-app links to /calendar
+    live on the desktop dashboard widget and inside a deals-page meetings
+    card that is M365-gated. Clients DO get a Calendar tile
+    (PORTFOLIO_LINKS). Victoria has to type the URL or ask ChatBGP.
+    Suggest: add a Calendar tile to QUICK_LINKS in mobile-home.tsx
+    (mirroring the client grid), or surface a "today" diary strip on the
+    staff mobile home that links through.
+
 112. 2026-08-27 · Landsec client / mobile 390px (QA r401) · "check a tenant's
     covenant standing" · On a client's brand Compliance panel, when no UK
     trading entity is set the copy says "Not confirmed yet — BGP is

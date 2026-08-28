@@ -80,16 +80,41 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r403 · 2026-08-28 · FULL (rotation #4 staff mobile 390px) — IN PROGRESS
+### r403 · 2026-08-28 · FULL (rotation #4 staff mobile 390px)
 - JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
   GREEN 42/0 (FRESH_BUILD=1). Two-bot 403 (via run-round.sh): exit 0, ALL
   scenarios ok. 4 issues = standing noise signature (2×400
   rocketreach/probe, 2×503 keyless AI). 0 raw 500/502/504 in dev-server
   log; 400/404/503 endpoint tallies all on the noise list or intentional
   guard probes (cashflow/unlock 404 = dead-endpoint assert).
-- Journey next: Victoria @390px iPhone — tasks triage + calendar +
-  requirements + CRM contact (surfaces recent staff-mobile rounds missed).
-- Setup notes: fresh container needed pg_hba trust fix (r205).
+- Journey (Victoria @390px iPhone UA, UI form login): "on the train:
+  triage my tasks, check today's diary, see who's hunting space, find a
+  landlord contact": cold-open lands on Messages (intended) → /tasks:
+  inline add (Enter) → "Task created", toggle → "Nice!" toast +
+  Completed(1) group, DONE filter shows it; AI briefing degrades to
+  Generate button (keyless, noise) → Dashboard: billing tiles + quick
+  links + boards clean → /calendar (URL only — see UX #113): day view +
+  UPCOMING + event bottom-sheet w/ attendees, all clean → /requirements:
+  card + Match dialog lists matching AVA units → /contacts (CRM): cards,
+  Open people → company profile; CONTACTS pill shows Key Contacts + BGP
+  Engagement incl. upcoming meeting. 0 pageerrors, 0 h-overflow anywhere,
+  only noise-list 4xx/5xx. Verdict: every surface behaved; only gap is
+  the calendar entry point (UX #113). NOTE (not a bug): CRM shows both
+  "Hammerson" and "Hammerson SubCo Ltd" persona-seed companies — first
+  Open-people click can land on the contact-less SubCo; data, not app.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2).
+- Harness growth: none this round (no new fixable surface; journey was
+  UI-timing/visual, existing scenarios already cover the APIs walked).
+- Suggestions added: UX-NOTES #113 (staff phone has no tap path to the
+  perfectly phone-ready /calendar — QUICK_LINKS lacks the Calendar tile
+  clients get).
+- New flakes: none. Setup notes: pg_hba trust fix (r205); journey QA task
+  deleted via API after; QA-CAL/QA-REQ-R403 rows are two-bot residue,
+  purged by next round's run-round.sh sweep as usual.
+- Next: r403 was FULL → r404 LIGHT; then r405 FULL rotation #1 staff
+  desktop 1440px.
 
 ### r402 · 2026-08-28 · LIGHT (r401 had the journey)
 - JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
