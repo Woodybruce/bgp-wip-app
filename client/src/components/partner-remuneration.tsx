@@ -82,8 +82,15 @@ export function PartnerRemunerationSection() {
       const unified = buildUnifiedForecast(cashflow, model);
       if (!unified || unified.months.length === 0) return null;
       // FY2027 = May 2026 – Apr 2027; the board's months already end 2027-04.
+      // Full-year billings = what Xero has already booked this FY (accrual
+      // income since May, which includes invoices still unpaid) + the
+      // forward weighted deal book + the pre-Xero legacy receivable. Xero AR
+      // is deliberately NOT added — those invoices are already inside the
+      // FYTD income figure.
       const months = unified.months.filter(m => m <= "2027-04");
-      const projectedBillings = months.reduce((s, m) => s + (unified.byMonth[m]?.in || 0), 0);
+      const fytdIncome = (cashflow.xero?.monthly || []).reduce((s, mo) => s + (mo.income || 0), 0);
+      const forwardBook = months.reduce((s, m) => s + (unified.byMonth[m]?.dealsIn || 0) + (unified.byMonth[m]?.legacyIn || 0), 0);
+      const projectedBillings = fytdIncome + forwardBook;
       const fy26 = data.rows.filter(r => r.fy === 2026);
       const fy26Distributed = fy26.reduce((s, r) => s + r.bonus + r.advances, 0);
       const fy26Billings = hist.fyTotals["2026"] || 0;
@@ -94,6 +101,8 @@ export function PartnerRemunerationSection() {
         pool: Math.round(pool),
         share: Math.round(pool / 4),
         billings: Math.round(projectedBillings),
+        fytdIncome: Math.round(fytdIncome),
+        forwardBook: Math.round(forwardBook),
         marginPct: (margin * 100).toFixed(1),
         fy26Billings: Math.round(fy26Billings),
         fy26Distributed: Math.round(fy26Distributed),
@@ -210,7 +219,7 @@ export function PartnerRemunerationSection() {
               })}
             </div>
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Projected profit pool £{fmt(forecast.pool)}, split £{fmt(forecast.share)} each: projected billings for the rest of the year £{fmt(forecast.billings)} (pipeline-weighted deal fees + Xero invoices due, from the cashflow forecast) × {forecast.marginPct}% — the share of billings that actually reached the four of you as bonus and advances last year (£{fmt(forecast.fy26Distributed)} on £{fmt(forecast.fy26Billings)} billed). It moves as deals progress and invoices land — a live indication anchored to how last year really converted, not a promise. Bonus and cash advances typed above are draws against each share.
+              Projected profit pool £{fmt(forecast.pool)}, split £{fmt(forecast.share)} each. Basis: projected FY billings £{fmt(forecast.billings)} (£{fmt(forecast.fytdIncome)} already billed this FY per Xero + £{fmt(forecast.forwardBook)} pipeline-weighted forward book incl. the pre-Xero receivable) × {forecast.marginPct}% — the share of billings that actually reached the four of you as bonus and advances last year (£{fmt(forecast.fy26Distributed)} on £{fmt(forecast.fy26Billings)} billed). Deals won later in the year aren't in the book yet, so early-year projections run conservative and firm up as the year fills in. Bonus and cash advances typed above are draws against each share.
             </p>
           </div>
         )}
