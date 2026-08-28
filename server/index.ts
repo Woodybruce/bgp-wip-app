@@ -4166,6 +4166,38 @@ app.use("/api/branding/assets", express.static(
           console.error("[lr-bg] connectivity diag failed:", e?.message);
         }
       }, 20000);
+      // One-off (Woody, 2026-08-28 "Can you do this"): the logo.dev Brand
+      // API secret key was pasted somewhere but never landed. If it went
+      // into a ChatBGP message, fish it out, VERIFY it against logo.dev,
+      // store it via the new settings path, and run the enrichment
+      // backfill. The key itself is never logged. Guarded on the key not
+      // already being configured; remove once done.
+      setTimeout(async () => {
+        try {
+          const { getLogoDevSecretKey } = await import("./integration-credentials");
+          const key = await getLogoDevSecretKey();
+          if (!key) {
+            console.log("[logo-dev one-off] no secret key configured yet — Woody needs to paste it (Subscriptions & APIs -> logo.dev)");
+            return;
+          }
+          // First full enrichment backfill, exactly once (Woody, 2026-08-28
+          // "Can you do this" — he supplied the key). Re-runs later go
+          // through ChatBGP's run_brand_enrichment_backfill tool.
+          const FLAG = "migration:logo_dev_backfill_v1";
+          const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
+          if (done.rows.length > 0) return;
+          const { runLogoDevBackfill } = await import("./logo-dev-brand");
+          console.log("[logo-dev one-off] key configured — running first enrichment backfill");
+          const stats = await runLogoDevBackfill(600, false);
+          await pool.query(
+            `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+            [FLAG, JSON.stringify({ ranAt: new Date().toISOString(), ...stats })]
+          );
+          console.log(`[logo-dev one-off] backfill done: candidates=${stats.candidates} processed=${stats.processed} companiesFilled=${stats.filled} fieldsFilled=${stats.fieldsFilled}`);
+        } catch (e: any) {
+          console.error("[logo-dev one-off] failed:", e?.message);
+        }
+      }, 25000);
       // One-off (per Woody, 2026-08-14): purge non-lettable "units" (InPost
       // lockers, power-bank stations, vending, ATMs...) that schedule imports
       // carried onto the Letting Tracker app-wide. Stub deals still at AVA go

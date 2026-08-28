@@ -436,23 +436,27 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
   };
 
   const handleLongPress = useRef<NodeJS.Timeout | null>(null);
-  // Track where the touch started so we can cancel the long-press if the
-  // finger moves more than a few pixels — otherwise scrolling through a
-  // long ChatBGP reply triggers a copy every time, since the finger sits
-  // on a bubble for >400ms while the page is moving.
+  // Copy is the OS's job (Woody, 2026-08-28: "use the normal Apple version
+  // of copy and paste rather than our own") — ChatBGP replies and other
+  // people's messages carry NO touch handlers, so press-and-hold gives the
+  // native iOS/Android selection menu. Only your OWN messages keep this
+  // long-press menu, because Edit/Delete need a home; it still stands down
+  // if a text selection has started.
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const LONG_PRESS_MS = 600;
   const MOVE_TOLERANCE_PX = 10;
 
+  // In an AI thread every user bubble is your own (1:1 with ChatBGP), even
+  // when the message row carries no userId.
+  const ownEditable = isOwn || (isUser && isAiThread);
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (!ownEditable) return;
     const t = e.touches[0];
     touchStart.current = t ? { x: t.clientX, y: t.clientY } : null;
     handleLongPress.current = setTimeout(() => {
-      // AI messages have no Edit/Delete affordances — long-press just copies
-      // the whole bubble. User messages still show the menu so Edit/Delete
-      // stay reachable.
-      if (!isUser) handleCopy();
-      else setShowActions(true);
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) return;
+      setShowActions(true);
     }, LONG_PRESS_MS);
   };
   const handleTouchMove = (e: React.TouchEvent) => {
@@ -549,7 +553,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               onTouchEnd={handleTouchEnd}
               onTouchCancel={handleTouchEnd}
             >
-              <div className="text-[15px] leading-[1.7] text-foreground whitespace-pre-wrap break-words">
+              <div className="text-[15px] leading-[1.7] text-foreground whitespace-pre-wrap break-words select-text">
                 <RenderMessageContent content={message.content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} />
               </div>
             </div>
@@ -608,7 +612,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
                 <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted" data-testid="button-copy-message">
                   <Copy className="w-3.5 h-3.5" /> Copy
                 </button>
-                {isOwn && message.id && (
+                {ownEditable && message.id && (
                   <>
                     <div className="w-px h-4 bg-border" />
                     <button onClick={() => { setEditContent(message.content); setEditing(true); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted">
@@ -1286,6 +1290,23 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       window.visualViewport?.removeEventListener("scroll", snap);
       window.removeEventListener("scroll", snap);
     };
+  }, [keyboardOpen]);
+
+  // The shell is fixed inset-0, sized to the LAYOUT viewport — which iOS
+  // does NOT shrink for the keyboard, and the snap above cancels iOS's own
+  // scroll-the-input-into-view compensation. Net effect: on the first
+  // keyboard opening the composer hid behind the keys until you tapped out
+  // and back in (Woody, 2026-08-28). While the keyboard is up, pin the
+  // shell's height to the VISUAL viewport so the composer sits right above
+  // the keys, tracking height changes (QuickType bar, rotation).
+  const [kbShellHeight, setKbShellHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!keyboardOpen || !vv) { setKbShellHeight(null); return; }
+    const apply = () => setKbShellHeight(Math.round(vv.height));
+    apply();
+    vv.addEventListener("resize", apply);
+    return () => { vv.removeEventListener("resize", apply); setKbShellHeight(null); };
   }, [keyboardOpen]);
 
   const { data: activeThread } = useQuery<ThreadData>({
@@ -2290,7 +2311,13 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     // nav so the composer sits above it. Team chats stay full-screen.
     <div
       className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-muted/50`}
-      style={isActiveThreadAi && !keyboardOpen ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" } : undefined}
+      style={
+        keyboardOpen && kbShellHeight
+          ? { height: kbShellHeight, bottom: "auto" }
+          : isActiveThreadAi && !keyboardOpen
+            ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" }
+            : undefined
+      }
     >
       <input type="file" accept="image/*" className="hidden" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
       {isActiveThreadAi && <MobileBottomNav />}

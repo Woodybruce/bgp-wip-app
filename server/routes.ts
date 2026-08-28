@@ -3031,6 +3031,33 @@ export async function registerRoutes(
     }
   });
 
+  // logo.dev Brand API secret key (sk_...) — saved to system_settings so it
+  // takes effect without a redeploy; the pk_ image token stays an env var.
+  app.get("/api/admin/integrations/logo-dev", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { getLogoDevKeyStatus } = await import("./integration-credentials");
+      res.json(await getLogoDevKeyStatus());
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to read logo.dev key status" });
+    }
+  });
+
+  app.post("/api/admin/integrations/logo-dev", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const secretKey = String(req.body?.secretKey || "").trim();
+      if (!secretKey.startsWith("sk_")) {
+        return res.status(400).json({ message: "That looks wrong — the Brand API secret key starts sk_ (the pk_ one is the image token, already configured)." });
+      }
+      const { setLogoDevSecretKey } = await import("./integration-credentials");
+      await setLogoDevSecretKey(secretKey);
+      const { clearLogoDevKeyCache } = await import("./logo-dev-brand");
+      clearLogoDevKeyCache();
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to save logo.dev key" });
+    }
+  });
+
   app.post("/api/admin/integrations/pipnet/test", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const { testPipnetLogin } = await import("./pipnet");
@@ -5529,7 +5556,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const { resolveCompanyScope } = await import("./company-scope");
       if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Staff only" });
       const { fetchBrandThemeForCompany, isLogoDevBrandConfigured } = await import("./logo-dev-brand");
-      if (!isLogoDevBrandConfigured()) return res.status(503).json({ message: "logo.dev Brand API not configured (LOGO_DEV_SECRET_KEY)" });
+      if (!(await isLogoDevBrandConfigured())) return res.status(503).json({ message: "logo.dev Brand API not configured — an admin can add the sk_ key on Subscriptions & APIs" });
       const theme = await fetchBrandThemeForCompany(String(req.params.id), { force: true });
       if (!theme) return res.status(404).json({ message: "No brand found — the company needs a domain, or logo.dev had no match." });
       res.json(theme);

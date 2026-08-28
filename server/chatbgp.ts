@@ -811,6 +811,13 @@ export async function callClaude(params: any): Promise<any> {
   if (params.thinking === true) {
     claudeParams.thinking = { type: "adaptive" };
   }
+  // Effort — opt-in per callsite. Interactive chat runs "medium": on Fable 5
+  // effort is the main latency lever (default "high" thinks long on every
+  // turn); medium keeps the model, trims thinking depth + preamble (Woody,
+  // 2026-08-28: "speed the app up, particularly ChatBGP").
+  if (params.effort) {
+    claudeParams.output_config = { effort: params.effort };
+  }
   // Support structured system prompt (array with cache_control) for prompt caching
   if (params.systemArray) {
     claudeParams.system = params.systemArray;
@@ -932,6 +939,9 @@ export async function callClaudeStreaming(
     claudeParams.thinking = { type: "adaptive" };
   }
 
+  if (params.effort) {
+    claudeParams.output_config = { effort: params.effort };
+  }
   // Support structured system prompt (array with cache_control)
   if (params.systemArray) {
     claudeParams.system = params.systemArray;
@@ -6338,8 +6348,8 @@ export async function executeCrmToolRaw(
 
   if (fnName === "run_brand_enrichment_backfill") {
     const { runLogoDevBackfill, isLogoDevBrandConfigured } = await import("./logo-dev-brand");
-    if (!isLogoDevBrandConfigured()) {
-      return { data: { success: false, error: "LOGO_DEV_SECRET_KEY isn't configured on this environment yet — add it to the deployment's variables first." } };
+    if (!(await isLogoDevBrandConfigured())) {
+      return { data: { success: false, error: "The logo.dev Brand API secret key (sk_...) isn't configured. An admin can paste it on Subscriptions & APIs → logo.dev Brand API (desktop, admin sidebar) — it takes effect within a minute, no restart needed." } };
     }
     try {
       const stats = await runLogoDevBackfill(
@@ -13478,6 +13488,7 @@ export function setupChatBGPRoutes(app: Express) {
           messages: convMessages,
           max_completion_tokens: 8192,
           thinking: true,
+          effort: "medium", // interactive chat: trims Fable's default deep-think per turn (Woody, 2026-08-28: speed)
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
@@ -14835,6 +14846,7 @@ export function setupChatBGPRoutes(app: Express) {
           max_completion_tokens: 16384,
           systemArray, // prompt caching on every call
           thinking: true, // extended thinking for quality
+          effort: "medium", // interactive chat: trims Fable's default deep-think per turn (Woody, 2026-08-28: speed)
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;

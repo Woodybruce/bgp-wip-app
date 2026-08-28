@@ -18,8 +18,20 @@ import { pool } from "./db";
 
 const API_BASE = "https://api.logo.dev/brand";
 
-export function isLogoDevBrandConfigured(): boolean {
-  return !!process.env.LOGO_DEV_SECRET_KEY;
+// Key resolution: DB (saved from Subscriptions & APIs, no redeploy needed)
+// with the LOGO_DEV_SECRET_KEY env var as fallback. Cached for a minute so
+// the backfill doesn't hit system_settings once per company.
+let _keyCache: { key: string | null; at: number } = { key: null, at: 0 };
+async function resolveSecretKey(): Promise<string | null> {
+  if (Date.now() - _keyCache.at < 60_000) return _keyCache.key;
+  const { getLogoDevSecretKey } = await import("./integration-credentials");
+  _keyCache = { key: await getLogoDevSecretKey(), at: Date.now() };
+  return _keyCache.key;
+}
+export function clearLogoDevKeyCache(): void { _keyCache = { key: null, at: 0 }; }
+
+export async function isLogoDevBrandConfigured(): Promise<boolean> {
+  return !!(await resolveSecretKey());
 }
 
 let creditsExhaustedUntil = 0; // back off for an hour on 402 instead of burning requests
@@ -31,7 +43,7 @@ function cleanDomain(raw: string | null | undefined): string | null {
 }
 
 export async function fetchLogoDevBrand(domain: string): Promise<any | null> {
-  const key = process.env.LOGO_DEV_SECRET_KEY;
+  const key = await resolveSecretKey();
   if (!key || Date.now() < creditsExhaustedUntil) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000); // docs: allow up to 30s
@@ -217,7 +229,7 @@ export async function runLogoDevBackfill(limit = 100, hospitalityOnly = false): 
       LIMIT $1`,
     params
   );
-  const stats = { configured: isLogoDevBrandConfigured(), candidates: candidatesQ.rows.length, processed: 0, filled: 0, fieldsFilled: 0 };
+  const stats = { configured: await isLogoDevBrandConfigured(), candidates: candidatesQ.rows.length, processed: 0, filled: 0, fieldsFilled: 0 };
   if (!stats.configured) return stats;
   for (const row of candidatesQ.rows) {
     const r = await enrichCompanyFromLogoDev(row.id).catch(() => null);
