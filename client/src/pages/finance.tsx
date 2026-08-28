@@ -17,10 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { formatDate } from "@/lib/format";
-import { RefreshCw, Landmark, TrendingUp, Banknote, AlertTriangle, ExternalLink, Briefcase, ArrowRight } from "lucide-react";
-import {
-  ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
-} from "recharts";
+import { RefreshCw, Banknote, AlertTriangle, ExternalLink } from "lucide-react";
 
 interface WipForecast {
   pipeline: Record<"NEG" | "SOL" | "EXC", { total: number; count: number }>;
@@ -138,114 +135,41 @@ function StatCard({ label, value, sub, negative }: { label: string; value: strin
   );
 }
 
-// Pipeline + forecast from the WIP board, cross-referenced against Xero
-// invoices. Rendered on its own so it still shows when Xero needs a
-// reconnect (it's built from the CRM, not the Xero API).
-function WipSection({ wip, projection }: { wip: WipForecast; projection?: Financials["projection"] }) {
-  const stages: Array<{ code: "EXC" | "SOL" | "NEG"; label: string }> = [
-    { code: "EXC", label: "Exchanged" },
-    { code: "SOL", label: "At solicitors" },
-    { code: "NEG", label: "Negotiating" },
-  ];
-  const proj = projection;
-  const projParts = proj ? [
-    { label: "Actual income", value: proj.actuals, color: "bg-emerald-500" },
-    { label: "To invoice", value: proj.toInvoice, color: "bg-sky-500" },
-    { label: "Weighted pipeline", value: proj.weightedPipeline, color: "bg-violet-500" },
-  ].filter(p => p.value > 0) : [];
-  const projTotal = proj?.total || 0;
-
+// The one piece of the old pipeline section the Company outlook doesn't
+// already show: completed deals nobody has invoiced yet — a chase list,
+// not a forecast. (The stage cards and projected-year bar were retired
+// 2026-08-28: the outlook's deal-book strip is the same numbers.)
+function UninvoicedSection({ wip }: { wip: WipForecast }) {
+  if (wip.toInvoice.deals.length === 0) return null;
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Deal pipeline</h2>
-        <Link href="/wip-report">
-          <span className="text-xs text-primary cursor-pointer inline-flex items-center gap-1" data-testid="finance-open-wip-report">
-            Open WIP report <ArrowRight className="w-3 h-3" />
-          </span>
-        </Link>
-      </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard
-          label="Completed — to invoice"
-          value={money(wip.toInvoice.total)}
-          sub={`${wip.toInvoice.count} deal(s) with no Xero invoice`}
-          negative={wip.toInvoice.total > 0}
-        />
-        {stages.map(s => (
-          <StatCard
-            key={s.code}
-            label={`${s.label} pipeline`}
-            value={money(wip.pipeline[s.code]?.total)}
-            sub={`${wip.pipeline[s.code]?.count || 0} deal(s) · weighted ${Math.round((wip.weights[s.code] || 0) * 100)}%`}
-          />
-        ))}
-      </div>
-
-      {proj && projTotal > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2"><Briefcase className="w-4 h-4" /> Projected year</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex h-8 w-full rounded-md overflow-hidden border">
-              {projParts.map((p, i) => (
-                <div
-                  key={i}
-                  className={`${p.color} h-full`}
-                  style={{ width: `${Math.max((p.value / projTotal) * 100, 1.5)}%` }}
-                  title={`${p.label}: ${money(p.value)}`}
-                />
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-              {projParts.map((p, i) => (
-                <span key={i} className="inline-flex items-center gap-1.5">
-                  <span className={`w-2.5 h-2.5 rounded-sm ${p.color}`} />
-                  {p.label} <span className="font-mono font-medium">{money(p.value)}</span>
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-500" /> Completed, not yet invoiced</span>
+          <Badge variant="secondary" className="text-[10px]">{wip.toInvoice.count} deal(s) · {money(wip.toInvoice.total)}</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-0.5">
+        {wip.toInvoice.deals.map(deal => (
+          <Link key={deal.id} href={`/deals/${deal.id}`}>
+            <div className="flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded hover:bg-muted cursor-pointer" data-testid={`finance-uninvoiced-${deal.id}`}>
+              <span className="truncate pr-3">
+                {deal.name}
+                <span className="text-muted-foreground text-xs">
+                  {deal.agent ? ` · ${deal.agent}` : ""}{deal.completedAt ? ` · completed ${formatDate(deal.completedAt)}` : ""}
                 </span>
-              ))}
-              <span className="ml-auto font-semibold">Projected total {money(projTotal)}</span>
+              </span>
+              <span className="font-mono shrink-0">{money(deal.fee)}</span>
             </div>
-            <p className="text-[11px] text-muted-foreground">
-              Actual Xero income FY-to-date + completed-but-uninvoiced fees + pipeline weighted EXC 90% · SOL 75% · NEG 50%.
-              Unweighted pipeline {money(wip.unweightedPipeline)}; early-stage deals (pre-negotiation) excluded: {money(wip.earlyPipeline.total)} across {wip.earlyPipeline.count}.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {wip.toInvoice.deals.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-500" /> Completed, not yet invoiced</span>
-              <Badge variant="secondary" className="text-[10px]">{wip.toInvoice.count} deal(s) · {money(wip.toInvoice.total)}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-0.5">
-            {wip.toInvoice.deals.map(deal => (
-              <Link key={deal.id} href={`/deals/${deal.id}`}>
-                <div className="flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded hover:bg-muted cursor-pointer" data-testid={`finance-uninvoiced-${deal.id}`}>
-                  <span className="truncate pr-3">
-                    {deal.name}
-                    <span className="text-muted-foreground text-xs">
-                      {deal.agent ? ` · ${deal.agent}` : ""}{deal.completedAt ? ` · completed ${formatDate(deal.completedAt)}` : ""}
-                    </span>
-                  </span>
-                  <span className="font-mono shrink-0">{money(deal.fee)}</span>
-                </div>
-              </Link>
-            ))}
-            {wip.invoicedAwaitingPayment > 0 && (
-              <p className="text-[11px] text-muted-foreground pt-2">
-                Plus {money(wip.invoicedAwaitingPayment)} invoiced on completed deals still awaiting payment (in debtors above).
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-    </div>
+          </Link>
+        ))}
+        {wip.invoicedAwaitingPayment > 0 && (
+          <p className="text-[11px] text-muted-foreground pt-2">
+            Plus {money(wip.invoicedAwaitingPayment)} invoiced on completed deals still awaiting payment (in debtors below).
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -387,17 +311,16 @@ function AppCostsSection() {
   );
 }
 
-// Costs & forecast — the other half of the projection. Income forecasting
-// comes from the WIP pipeline; this is the cost base (per-account P&L lines),
-// a run-rate projection to FY end (Wendy doesn't budget in Xero, so the
-// forecast is trailing-average based), committed bills, and near-term cash
-// flow both directions.
-function CostsSection({ costs, creditors, cashflow, recurring, projection }: {
+// Cash management — the near-term money mechanics the outlook doesn't
+// cover: what actually left the account this FY (Xero lines + movers),
+// committed bills, and cash due both directions. The old run-rate /
+// projected-FY / projected-net stat trio was retired 2026-08-28 — the
+// Company outlook is the one forecast on the page.
+function CostsSection({ costs, creditors, cashflow, recurring }: {
   costs: NonNullable<Financials["costs"]>;
   creditors?: Financials["creditors"];
   cashflow?: Financials["cashflow"];
   recurring?: Financials["recurring"];
-  projection?: Financials["projection"];
 }) {
   const cf = cashflow;
   const cfCols = cf ? [
@@ -408,40 +331,11 @@ function CostsSection({ costs, creditors, cashflow, recurring, projection }: {
   ] : [];
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard
-          label="Cost run rate"
-          value={`${money(costs.runRate)}/mo`}
-          sub={costs.runRateBasisMonths > 0 ? `Avg of last ${costs.runRateBasisMonths} full month(s)` : "Current month so far"}
-        />
-        <StatCard
-          label="Projected FY costs"
-          value={money(costs.projectedFyCosts)}
-          sub={`${money(costs.fytdExpenses)} to date + ${costs.monthsRemaining} mo at run rate`}
-        />
-        {projection?.projectedNet != null && (
-          <StatCard
-            label="Projected FY net"
-            value={money(projection.projectedNet)}
-            negative={projection.projectedNet < 0}
-            sub={`Projected income ${money(projection.total)} − costs`}
-          />
-        )}
-        {creditors && (
-          <StatCard
-            label="Bills outstanding"
-            value={money(creditors.outstanding)}
-            negative={creditors.buckets.overdue > 0}
-            sub={creditors.buckets.overdue > 0 ? `${money(creditors.buckets.overdue)} overdue` : `${creditors.billCount} open bill(s)`}
-          />
-        )}
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Where the money goes */}
+        {/* What actually left — Xero actuals, vs the plan in the outlook */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Where the money goes — FY to date</CardTitle>
+            <CardTitle className="text-sm">Where the money actually went — Xero, FY to date</CardTitle>
           </CardHeader>
           <CardContent className="space-y-0.5">
             {costs.topLines.map((c, i) => (
@@ -468,6 +362,15 @@ function CostsSection({ costs, creditors, cashflow, recurring, projection }: {
         </Card>
 
         <div className="space-y-4">
+          {/* Bills outstanding headline */}
+          {creditors && (
+            <StatCard
+              label="Bills outstanding"
+              value={money(creditors.outstanding)}
+              negative={creditors.buckets.overdue > 0}
+              sub={creditors.buckets.overdue > 0 ? `${money(creditors.buckets.overdue)} overdue` : `${creditors.billCount} open bill(s)`}
+            />
+          )}
           {/* Near-term cash flow */}
           {cf && (
             <Card>
@@ -628,10 +531,10 @@ export default function FinancePage() {
             the CRM / local DB, so they work regardless of the Xero
             connection state. */}
         <CompanyOutlookSection />
+        {data.wip && <UninvoicedSection wip={data.wip} />}
         <CashflowBoardSection />
         <HistoricalBillingsSection />
         <PartnerRemunerationSection />
-        {data.wip && <WipSection wip={data.wip} />}
         {data.commissions && data.commissions.statements.length > 0 && (
           <CommissionSection commissions={data.commissions} />
         )}
@@ -681,8 +584,9 @@ export default function FinancePage() {
           breakeven and the per-partner picture. */}
       <CompanyOutlookSection />
 
-      {/* WIP pipeline + projection (CRM ⇄ Xero cross-reference) */}
-      {data.wip && <WipSection wip={data.wip} projection={data.projection} />}
+      {/* Completed deals nobody has invoiced — the chase list. The stage
+          cards live inside the outlook's deal-book strip now. */}
+      {data.wip && <UninvoicedSection wip={data.wip} />}
 
       {/* Cashflow forecast — the app + Xero drive receipts, the typed
           lines below are Wendy's costs plan (Woody, 2026-08-27). */}
@@ -694,64 +598,50 @@ export default function FinancePage() {
           email to equity@ replaced it; see runWipHealthEmail. The live list
           stays on WIP report → Needs Attention.) */}
 
-      {/* Costs & forecast — cost base, run-rate projection, bills, cash flow */}
+      {/* Cash management — actual spend, bills, cash due both directions */}
       {data.costs && (
         <CostsSection
           costs={data.costs}
           creditors={data.creditors}
           cashflow={data.cashflow}
           recurring={data.recurring}
-          projection={data.projection}
         />
       )}
 
-      {/* Paid this FY — when the client's money actually landed. */}
+      {/* Paid this FY — when the client's money actually landed. (The
+          "Cash collected" mirror card was retired 2026-08-28 — it repeated
+          the badge total.) */}
       {data.paid && data.paid.count > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center justify-between">
-                <span>Paid this year</span>
-                <Badge variant="secondary" className="text-[10px]">{data.paid.count} invoice(s) · {money(data.paid.totalPaid)} ex VAT</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-0.5">
-              {data.paid.recent.map((p, i) => {
-                const row = (
-                  <div className={`flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded ${p.dealId ? "hover:bg-muted cursor-pointer" : ""}`}>
-                    <span className="truncate pr-3">
-                      {p.label}
-                      <span className="text-muted-foreground text-xs">
-                        {p.number ? ` · ${p.number}` : ""}{p.paidOn ? ` · paid ${formatDate(p.paidOn)}` : ""}
-                      </span>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span>Paid this year</span>
+              <Badge variant="secondary" className="text-[10px]">{data.paid.count} invoice(s) · {money(data.paid.totalPaid)} ex VAT</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-0.5">
+            {data.paid.recent.map((p, i) => {
+              const row = (
+                <div className={`flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded ${p.dealId ? "hover:bg-muted cursor-pointer" : ""}`}>
+                  <span className="truncate pr-3">
+                    {p.label}
+                    <span className="text-muted-foreground text-xs">
+                      {p.number ? ` · ${p.number}` : ""}{p.paidOn ? ` · paid ${formatDate(p.paidOn)}` : ""}
                     </span>
-                    <span className="font-mono shrink-0">{money(p.amount)}</span>
-                  </div>
-                );
-                return p.dealId
-                  ? <Link key={i} href={`/deals/${p.dealId}`}>{row}</Link>
-                  : <div key={i}>{row}</div>;
-              })}
-              {data.paid.unmatchedCount > 0 && (
-                <p className="text-[11px] text-muted-foreground pt-2">
-                  {data.paid.unmatchedCount} paid invoice(s) aren't linked to a deal in the app (raised directly in Xero).
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Cash collected</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-semibold tracking-tight">{money(data.paid.totalPaid)}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {data.paid.count} invoice(s) fully paid this financial year (ex VAT). Commission statements below pay out at month-end payroll once these land.
-              </p>
-            </CardContent>
-          </Card>
-        </div>
+                  </span>
+                  <span className="font-mono shrink-0">{money(p.amount)}</span>
+                </div>
+              );
+              return p.dealId
+                ? <Link key={i} href={`/deals/${p.dealId}`}>{row}</Link>
+                : <div key={i}>{row}</div>;
+            })}
+            <p className="text-[11px] text-muted-foreground pt-2">
+              Commission statements below pay out at month-end payroll once these land.
+              {data.paid.unmatchedCount > 0 ? ` ${data.paid.unmatchedCount} paid invoice(s) aren't linked to a deal in the app (raised directly in Xero).` : ""}
+            </p>
+          </CardContent>
+        </Card>
       )}
 
       {/* Commission statements — Woody's tiered scheme */}
@@ -788,30 +678,9 @@ export default function FinancePage() {
         </div>
       )}
 
-      {/* Monthly P&L chart */}
-      {(data.monthly?.length || 0) > 1 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Month by month</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={data.monthly}>
-                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `£${(v / 1000).toFixed(0)}k`} />
-                  <Tooltip formatter={(v: any) => money(Number(v))} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="income" name="Income" fill="#10b981" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="expenses" name="Expenses" fill="#f59e0b" radius={[3, 3, 0, 0]} />
-                  <Line dataKey="netProfit" name="Net profit" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* (The old "Month by month" chart was retired 2026-08-28 — the
+          Company outlook's chart carries the same months plus the forecast
+          and prior-year overlays.) */}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* P&L summary */}

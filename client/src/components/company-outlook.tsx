@@ -207,6 +207,7 @@ export function CompanyOutlookSection() {
                   Earned so far {money(costs.commissionEarned)} + {money(costs.commissionForward)} if the weighted book lands.
                   {costs.commissionTypedFy ? ` Wendy's plan line had ${money(costs.commissionTypedFy)}.` : ""}
                   {costs.commissionByAgent.some(a => a.salary == null) ? " ⚠︎ = no salary on file, so no commission can be worked out." : ""}
+                  {" "}Full per-deal statements with band progress are in Commission statements further down the page.
                 </p>
               </div>
             )}

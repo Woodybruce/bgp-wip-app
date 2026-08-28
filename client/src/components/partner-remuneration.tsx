@@ -78,13 +78,7 @@ export function PartnerRemunerationSection() {
   const forecast = useMemo(() => {
     const outlook = buildCompanyOutlook(cashflow, hist ?? null);
     if (!outlook) return null;
-    return {
-      pool: outlook.profit.projectedFy,
-      share: outlook.profit.perPartner,
-      income: outlook.income.projectedFy,
-      costs: outlook.costs.projectedFy,
-      next6: outlook.profit.next6,
-    };
+    return { pool: outlook.profit.projectedFy, share: outlook.profit.perPartner };
   }, [cashflow, hist]);
 
   if (isLoading) return <Skeleton className="h-40 w-full rounded-xl" />;
@@ -94,8 +88,6 @@ export function PartnerRemunerationSection() {
     (a, r) => ({ salary: a.salary + r.salary, bonus: a.bonus + r.bonus, advances: a.advances + r.advances }),
     { salary: 0, bonus: 0, advances: 0 },
   );
-  const fy26TotalByPartner = new Map(data.rows.filter(r => r.fy === 2026).map(r => [r.partner, r.salary + r.bonus + r.advances]));
-
   const beginEdit = (partner: string, field: "salary" | "bonus" | "advances", current: number) => {
     setEditCell({ partner, field });
     setEditValue(current ? String(current) : "");
@@ -175,31 +167,14 @@ export function PartnerRemunerationSection() {
           </table>
         </ScrollableTable>
 
+        {/* The four per-partner forecast cards were retired 2026-08-28 —
+            the Company outlook at the top of the page carries the live
+            per-partner number; this table is the record of what's actually
+            drawn. One line ties the two together. */}
         {fy === 2027 && forecast && (
-          <div className="space-y-2" data-testid="rem-forecast">
-            <p className="text-[10px] uppercase tracking-widest text-muted-foreground">What the year might pay — live forecast</p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {yearRows.map(r => {
-                const drawn = r.bonus + r.advances;
-                const projected = r.salary + forecast.share;
-                const prior = fy26TotalByPartner.get(r.partner) || 0;
-                return (
-                  <div key={r.partner} className="border rounded-xl p-3 space-y-1">
-                    <p className="text-xs font-semibold">{r.partner}</p>
-                    <p className="text-lg font-semibold tabular-nums">£{fmt(projected)}</p>
-                    <p className="text-[11px] text-muted-foreground tabular-nums">£{fmt(r.salary)} salary + £{fmt(forecast.share)} profit share</p>
-                    <p className="text-[11px] text-muted-foreground tabular-nums">{drawn ? `Drawn so far £${fmt(drawn)}` : "Nothing drawn yet"}{prior ? ` · ${projected >= prior ? "+" : ""}${(((projected - prior) / prior) * 100).toFixed(0)}% vs last year` : ""}</p>
-                  </div>
-                );
-              })}
-            </div>
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Projected profit pool £{fmt(forecast.pool)}, split £{fmt(forecast.share)} each on top of salary. Basis: the Company outlook's P&amp;L — projected FY income £{fmt(forecast.income)} (Xero billed to date + the pipeline-weighted deal book + the legacy Sage line) minus the full cost base £{fmt(forecast.costs)} (basic company costs, salaries and payroll, and commissions computed from the deal boards' fee splits), pre corporation tax. Next six months alone: £{fmt(forecast.next6)}. Deals won later in the year aren't in the book yet, so early-year projections run conservative and firm up as the year fills in. Bonus and cash advances typed above are draws against each share.
-            </p>
-          </div>
-        )}
-        {fy === 2027 && !forecast && (
-          <p className="text-[11px] text-muted-foreground">Profit-share forecast appears once the Finance cashflow forecast has data for the year.</p>
+          <p className="text-[11px] text-muted-foreground leading-relaxed" data-testid="rem-forecast">
+            Live forecast (from the Company outlook above): profit pool £{fmt(forecast.pool)} → £{fmt(forecast.share)} each on top of the £145k salary. Bonus and cash advances typed above are draws against that share.
+          </p>
         )}
       </CardContent>
     </Card>
