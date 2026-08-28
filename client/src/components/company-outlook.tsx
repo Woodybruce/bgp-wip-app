@@ -141,11 +141,11 @@ export function CompanyOutlookSection() {
         {/* Where the income comes from — same stages, same weights, same
             book as the WIP report */}
         <div>
-          <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center justify-between gap-2 mb-1.5">
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground">The deal book — as on the WIP report</p>
             <Link href="/wip-report">
-              <span className="text-xs text-primary cursor-pointer inline-flex items-center gap-1" data-testid="outlook-open-wip">
-                Open WIP report <ArrowRight className="w-3 h-3" />
+              <span className="text-xs text-primary cursor-pointer inline-flex items-center gap-1 whitespace-nowrap shrink-0" data-testid="outlook-open-wip">
+                WIP report <ArrowRight className="w-3 h-3" />
               </span>
             </Link>
           </div>
@@ -193,28 +193,26 @@ export function CompanyOutlookSection() {
             {costs.commissionByAgent.length === 0 ? (
               <p className="text-xs text-muted-foreground">No commission accruing yet this year.</p>
             ) : (
-              <div className="space-y-0.5">
-                <div className="grid grid-cols-4 gap-2 text-[10px] uppercase tracking-widest text-muted-foreground pb-1">
-                  <span>Agent</span><span className="text-right">Billings FY</span><span className="text-right">Pipeline share</span><span className="text-right">Commission</span>
-                </div>
+              <div className="space-y-1">
                 {costs.commissionByAgent.map((a, i) => (
-                  <div key={i} className="grid grid-cols-4 gap-2 text-xs py-0.5">
-                    <span className="truncate">{a.agent}{a.salary == null ? " ⚠︎" : ""}</span>
-                    <span className="text-right font-mono tabular-nums">{money(a.billings)}</span>
-                    <span className="text-right font-mono tabular-nums">{money(a.forwardBillings)}</span>
-                    <span className="text-right font-mono tabular-nums">{money(a.earned + a.projectedForward)}</span>
+                  <div key={i} className="flex items-center justify-between gap-3 text-xs py-0.5">
+                    <span className="min-w-0">
+                      <span className="font-medium truncate block">{a.agent}{a.salary == null ? " ⚠︎" : ""}</span>
+                      <span className="text-muted-foreground tabular-nums">billed {money(a.billings)} · pipeline {money(a.forwardBillings)}</span>
+                    </span>
+                    <span className="font-mono tabular-nums font-medium shrink-0">{money(a.earned + a.projectedForward)}</span>
                   </div>
                 ))}
                 <p className="text-[11px] text-muted-foreground pt-1.5">
                   Earned so far {money(costs.commissionEarned)} + {money(costs.commissionForward)} if the weighted book lands.
                   {costs.commissionTypedFy ? ` Wendy's plan line had ${money(costs.commissionTypedFy)}.` : ""}
-                  {" "}⚠︎ = no salary on file, so no commission can be worked out.
+                  {costs.commissionByAgent.some(a => a.salary == null) ? " ⚠︎ = no salary on file, so no commission can be worked out." : ""}
                 </p>
               </div>
             )}
             {costs.missingSplits && (
               <p className="text-[11px] text-amber-600 dark:text-amber-400 pt-1.5">
-                {costs.missingSplits.count} pipeline deal{costs.missingSplits.count === 1 ? "" : "s"} ({money(costs.missingSplits.fee)} of fees) have no fee split yet — their commission isn't counted until the splits go in on the deal.
+                {costs.missingSplits.count} pipeline deal{costs.missingSplits.count === 1 ? " has" : "s have"} no fee split yet ({money(costs.missingSplits.fee)} of fees) — that commission isn't counted until the splits go in on the deal.
               </p>
             )}
           </CostRow>
@@ -228,7 +226,7 @@ export function CompanyOutlookSection() {
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                  <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} minTickGap={24} />
                   <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `£${(v / 1000).toFixed(0)}k`} />
                   <Tooltip formatter={(v: any) => money(Number(v))} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
