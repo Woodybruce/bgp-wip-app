@@ -80,6 +80,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r408 · 2026-08-28 · LIGHT — ROUND IN PROGRESS (provisional)
+- JOGQK merge: already up to date (b301104 was the head on both).
+- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore). Two-bot 408
+  in progress (first full validation of r407's
+  client-portfolio-bgp-contact-names scenario). Triage to follow.
+
 ### r407 · 2026-08-28 · FULL (rotation #2 Landsec client desktop 1440px)
 - JOGQK: no new commits ahead of staging — merge no-op. Smoke GREEN 42/0
   (FRESH_BUILD=1). Two-bot 407 (via run-round.sh): exit 0, ALL scenarios ok;
