@@ -80,6 +80,26 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r410 · 2026-08-28 ~16:50 UTC · LIGHT (r409 had the journey)
+- Per parent-session note: JOGQK deliberately NOT merged into staging
+  (Company outlook panel, Finance dedupe, commission outlook, LEGACY Sage
+  fixes all landed on JOGQK today — parent merges on Woody's say-so).
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 410 via run-round.sh: exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400 rocketreach/gate-probe, 2×503 keyless
+  AI). 0 raw 500/502/504 in the round's dev-server log; full 4xx/503
+  endpoint tally triaged — all noise-list (keyless ai-briefing/ai-take/
+  brand-gaps/chatbgp/OS/land-registry 503s, sharepoint/hr-photo 404s) or
+  intentional gate probes (investment-tracker/bulk-assign/bogus-verdict
+  400s, cashflow/unlock dead-endpoint 404). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none. Setup: pg_hba
+  trust (r205) needed again on this fresh container; bgp role created
+  superuser so no ownership transfer needed.
+- Next: r410 was LIGHT → r411 FULL rotation #4 staff mobile 390px.
+  Real-device check of keyboard-up composer (r405) still open for Woody.
+
 ### r409 · 2026-08-28 · FULL (rotation #3 Landsec client mobile 390px)
 - Per parent-session note: JOGQK deliberately NOT merged into staging this
   round (it moved well ahead today — HMLR live, ex-VAT cashflow, etc.).
