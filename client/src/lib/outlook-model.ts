@@ -43,11 +43,17 @@ export interface OutlookMonth {
   profit: number;
 }
 
+export interface CostLineDetail { label: string; monthly: number; fy: number }
+
 export interface CompanyOutlook {
   fyLabel: string;
   months: OutlookMonth[];
   nowKey: string;
-  income: { fytdActual: number; forwardDeals: number; legacy: number; projectedFy: number };
+  income: {
+    fytdActual: number; forwardDeals: number; legacy: number; projectedFy: number;
+    // Same stage buckets and weights as the WIP report.
+    byStage: Array<{ code: string; label: string; weightPct: number; weighted: number; unweighted: number; count: number }>;
+  };
   costs: {
     basicAvg: number;              // basic company costs, £/mo (plan)
     payrollAvg: number;            // salaries/pensions/PAYE etc, £/mo (plan)
@@ -58,6 +64,10 @@ export interface CompanyOutlook {
     avgPerMonth: number;           // total FY costs ÷ 12 — the breakeven line
     projectedFy: number;
     usingEngineCommission: boolean;
+    basicLines: CostLineDetail[];  // Wendy's plan lines behind each bucket,
+    payrollLines: CostLineDetail[];// monthly average + FY total, largest first
+    commissionByAgent: Array<{ agent: string; salary: number | null; billings: number; forwardBillings: number; earned: number; projectedForward: number }>;
+    missingSplits: { count: number; fee: number } | null;
   };
   profit: { next6: number; next6Income: number; next6Costs: number; projectedFy: number; perPartner: number; partnerSalary: number };
   history: {
@@ -137,6 +147,18 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
   const payrollAvg = bucketAvg(payrollLines);
   const commissionTypedFy = months.reduce((s, m) => s + (bucketMonth(commissionLines, m) || 0), 0);
 
+  // Per-line detail for the cost dropdowns: monthly average over the months
+  // the plan has typed, and the FY total that implies.
+  const lineDetail = (lines: typeof planLines): CostLineDetail[] =>
+    lines
+      .map(l => {
+        const vals = months.map(m => lineVal(l.id, m)).filter((v): v is number => v !== undefined);
+        const monthly = vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
+        return { label: l.label, monthly: Math.round(monthly), fy: Math.round(monthly * FY_MONTH_COUNT) };
+      })
+      .filter(d => d.monthly > 0)
+      .sort((a, b) => b.monthly - a.monthly);
+
   // Commission: the app-computed number (fee splits × tier bands) replaces
   // the typed guess when available; spread over the forward months.
   const co = data.commissionOutlook || null;
@@ -212,6 +234,14 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
       forwardDeals: Math.round(forwardDeals),
       legacy: Math.round(legacy),
       projectedFy: Math.round(projectedFyIncome),
+      byStage: (["NEG", "SOL", "EXC", "COM"] as const)
+        .map(code => {
+          const s = data.deals?.byStage?.[code];
+          const labels: Record<string, string> = { NEG: "Negotiating", SOL: "At solicitors", EXC: "Exchanged", COM: "Completed, to invoice" };
+          const weights: Record<string, number> = { NEG: 50, SOL: 75, EXC: 90, COM: 100 };
+          return s ? { code, label: labels[code], weightPct: weights[code], weighted: s.weighted, unweighted: s.unweighted, count: s.count } : null;
+        })
+        .filter((s): s is NonNullable<typeof s> => !!s),
     },
     costs: {
       basicAvg: Math.round(basicAvg),
@@ -223,6 +253,10 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
       avgPerMonth: Math.round(projectedFyCosts / FY_MONTH_COUNT),
       projectedFy: Math.round(projectedFyCosts),
       usingEngineCommission,
+      basicLines: lineDetail(basicLines),
+      payrollLines: lineDetail(payrollLines),
+      commissionByAgent: (co?.byAgent || []).filter(a => a.earned > 0 || a.projectedForward > 0 || a.forwardBillings > 0),
+      missingSplits: co?.missingSplits && co.missingSplits.count > 0 ? co.missingSplits : null,
     },
     profit: {
       next6: Math.round(next6Income - next6Costs),

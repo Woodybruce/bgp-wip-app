@@ -55,7 +55,11 @@ async function xeroSnapshot(): Promise<any | null> {
 // the board's typed budget stays the plan of record.
 const PROJ_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9, COM: 1 };
 let _projLogged = false; // one composition log per boot — enough to audit the pipeline from deploy logs
-async function buildDealProjection(): Promise<{ byMonth: Record<string, { weighted: number; count: number }>; undated: { weighted: number; count: number } }> {
+async function buildDealProjection(): Promise<{
+  byMonth: Record<string, { weighted: number; count: number }>;
+  undated: { weighted: number; count: number };
+  byStage: Record<string, { weighted: number; unweighted: number; count: number }>;
+}> {
   const { legacyToCode } = await import("../shared/deal-status");
   const { rows } = await pool.query(`
     SELECT d.name, d.status, d.fee::float AS fee,
@@ -72,6 +76,9 @@ async function buildDealProjection(): Promise<{ byMonth: Record<string, { weight
   `);
   const byMonth: Record<string, { weighted: number; count: number }> = {};
   const undated = { weighted: 0, count: 0 };
+  // Same stage buckets as the WIP report, so the Company outlook's forward
+  // book reads as the same story with the same numbers.
+  const byStage: Record<string, { weighted: number; unweighted: number; count: number }> = {};
   const thisMonth = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
   // Every deal on the deal board counts (Woody, 2026-08-28: "the deals in
   // solicitors are in the deal board of the app and should all be counted")
@@ -82,6 +89,10 @@ async function buildDealProjection(): Promise<{ byMonth: Record<string, { weight
     if (!code || !(code in PROJ_WEIGHTS)) continue;
     if (code === "COM" && d.ic > 0) continue; // invoiced — already in Xero AR/actuals
     const weighted = (Number(d.fee) || 0) * PROJ_WEIGHTS[code];
+    (byStage[code] ||= { weighted: 0, unweighted: 0, count: 0 });
+    byStage[code].weighted += weighted;
+    byStage[code].unweighted += Number(d.fee) || 0;
+    byStage[code].count++;
     if (!d.dt) { undated.weighted += weighted; undated.count++; continue; }
     const dt = new Date(d.dt);
     let key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -98,7 +109,11 @@ async function buildDealProjection(): Promise<{ byMonth: Record<string, { weight
   }
   for (const k of Object.keys(byMonth)) byMonth[k].weighted = Math.round(byMonth[k].weighted);
   undated.weighted = Math.round(undated.weighted);
-  return { byMonth, undated };
+  for (const k of Object.keys(byStage)) {
+    byStage[k].weighted = Math.round(byStage[k].weighted);
+    byStage[k].unweighted = Math.round(byStage[k].unweighted);
+  }
+  return { byMonth, undated, byStage };
 }
 
 let ensured: Promise<void> | null = null;

@@ -287,6 +287,7 @@ export interface CommissionOutlook {
   projectedForward: number;  // extra commission if the weighted pipeline lands
   projectedFyTotal: number;  // earned + projectedForward
   byAgent: Array<{ agent: string; salary: number | null; billings: number; forwardBillings: number; earned: number; projectedForward: number }>;
+  missingSplits: { count: number; fee: number }; // pipeline deals with no fee-split rows — billings credited to nobody
 }
 
 let _outlookCache: { at: number; data: CommissionOutlook } | null = null;
@@ -315,6 +316,23 @@ export async function buildCommissionOutlook(): Promise<CommissionOutlook> {
   `);
   const userById = new Map(usersRes.rows.map((u: any) => [u.id, u]));
   const userByName = new Map(usersRes.rows.map((u: any) => [String(u.name || "").trim().toLowerCase(), u]));
+
+  // Pipeline deals with NO allocation rows at all — their billings reach
+  // nobody, so the forward commission is understated until splits go in.
+  const missingRes = await pool.query(`
+    SELECT d.status, d.fee::float AS fee
+      FROM crm_deals d
+     WHERE d.fee IS NOT NULL AND d.fee > 0
+       AND NOT EXISTS (SELECT 1 FROM deal_fee_allocations dfa
+                        WHERE dfa.deal_id = d.id AND COALESCE(dfa.is_bgp_house, false) = false)
+  `);
+  const missingSplits = { count: 0, fee: 0 };
+  for (const r of missingRes.rows) {
+    if (!FORWARD_WEIGHTS[legacyToCode(r.status) || ""]) continue;
+    missingSplits.count++;
+    missingSplits.fee += Number(r.fee) || 0;
+  }
+  missingSplits.fee = Math.round(missingSplits.fee);
 
   type Entry = { agent: string; userId: string | null; salary: number | null; billings: number; forward: number; earned: number };
   const byKey = new Map<string, Entry>();
@@ -370,6 +388,7 @@ export async function buildCommissionOutlook(): Promise<CommissionOutlook> {
     projectedForward: Math.round(projectedForward),
     projectedFyTotal: Math.round(earned + projectedForward),
     byAgent,
+    missingSplits,
   };
   _outlookCache = { at: Date.now(), data };
   return data;

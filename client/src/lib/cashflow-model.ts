@@ -19,6 +19,7 @@ export interface CashflowXero {
 export interface CashflowDeals {
   byMonth: Record<string, { weighted: number; count: number }>;
   undated: { weighted: number; count: number };
+  byStage?: Record<string, { weighted: number; unweighted: number; count: number }>;
 }
 export interface CommissionOutlook {
   fyStart: string;
@@ -28,6 +29,7 @@ export interface CommissionOutlook {
   projectedForward: number;
   projectedFyTotal: number;
   byAgent: Array<{ agent: string; salary: number | null; billings: number; forwardBillings: number; earned: number; projectedForward: number }>;
+  missingSplits?: { count: number; fee: number };
 }
 export interface CashflowData { lines: CashflowLine[]; cells: CashflowCell[]; months: string[]; xero: CashflowXero | null; deals: CashflowDeals | null; commissionOutlook?: CommissionOutlook | null }
 
