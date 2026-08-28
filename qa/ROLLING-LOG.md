@@ -80,6 +80,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r404 · 2026-08-28 ~04:49 UTC · ROUND IN PROGRESS (provisional)
+- LIGHT round (r403 had the journey). JOGQK: no new commits ahead of
+  staging — merge no-op. Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 404
+  running via run-round.sh; triage to follow. Final entry replaces this.
+
 ### r403 · 2026-08-28 · FULL (rotation #4 staff mobile 390px)
 - JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
   GREEN 42/0 (FRESH_BUILD=1). Two-bot 403 (via run-round.sh): exit 0, ALL
