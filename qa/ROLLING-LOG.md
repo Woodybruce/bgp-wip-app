@@ -80,15 +80,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r402 · 2026-08-28 · LIGHT (r401 had the journey) — ROUND IN PROGRESS
+### r402 · 2026-08-28 · LIGHT (r401 had the journey)
 - JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
   GREEN 42/0 (FRESH_BUILD=1). Two-bot 402 (via run-round.sh): exit 0, ALL
   scenarios ok — client-brands-search-facets first full-round validation
   PASSED (r401 goal met). 4 issues = standing noise signature (2×400
   rocketreach/probe, 2×503 keyless AI); 0 raw 500/502/504 in dev-server
-  log; 400/503 endpoint tally all on the noise list.
-- Triage: 0 app bugs so far. Deferred-bug queue empty (only the carried
-  Bluewater SPINE duplicates, staff decision).
+  log; 400/503 endpoint tally checked, all on the noise list or
+  intentional guard probes. 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none.
+- Setup notes: fresh container needed the pg_hba trust fix (r205).
+- Next: r402 was LIGHT → r403 FULL rotation #4 staff mobile 390px.
 
 ### r401 · 2026-08-27 · FULL (rotation #3 Landsec client mobile 390px)
 - JOGQK: no new commits (ff37b59 already in staging via 4c20bc4) — merge
