@@ -80,12 +80,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r406 · 2026-08-28 · LIGHT (r405 had the journey) — IN PROGRESS
+### r406 · 2026-08-28 · LIGHT (r405 had the journey)
 - JOGQK merge: already up to date (no new commits since r405's merge).
 - Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore). Two-bot 406
-  in progress via run-round.sh; triage to follow in the final entry.
-- No deferred bugs carried in (r405 deferred none; Bluewater SPINE
-  duplicates remain a staff data decision, not code).
+  via run-round.sh: exit 0, ALL scenarios ok; 4 logged issues = standing
+  noise signature (2×400, 2×503). 0 raw 500/502/504 in the round's server
+  log. Full endpoint tally triaged: 400s = rocketreach + intentional gate
+  probes (bogus-verdict, bulk-assign, investment-tracker); 503s all
+  keyless-AI/OS family; 404s = hr-photo/sharepoint noise + delete-then-
+  fetch probes; 403s all scope-guard probes. 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates. Suggestions added:
+  none. New flakes: none. Setup: pg_hba trust (r205) + bgp ownership
+  transfer (r249) needed again on this fresh container.
+- Next journey: rotation #2 Landsec client desktop (r406 was LIGHT →
+  r407 FULL).
 
 ### r405 · 2026-08-28 · FULL (rotation #1 staff desktop 1440px + new mobile-chat code checks)
 - JOGQK merged into staging: 7 new commits (native chat copy, visual-viewport
