@@ -80,14 +80,45 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r405 · 2026-08-28 · IN PROGRESS (FULL — rotation #1 staff desktop 1440px + new mobile-chat code checks)
+### r405 · 2026-08-28 · FULL (rotation #1 staff desktop 1440px + new mobile-chat code checks)
 - JOGQK merged into staging: 7 new commits (native chat copy, visual-viewport
   chat shell, immutable hashed assets, logo.dev key panel + backfill, ChatBGP
-  medium effort). Merge clean, tsc clean.
-- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 405 running.
-- Verified on prod build: /assets/*.js serve Cache-Control public,
-  max-age=31536000, immutable; index.html stays no-cache. ✓
-- Triage so far: nothing beyond noise list. Journey next.
+  medium effort). Merge clean, tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1).
+  Two-bot 405 (via run-round.sh): exit 0, ALL 34 scenarios ok; 4 issues =
+  standing noise signature (2×400, 2×503). 0 raw 500/502/504 in dev-server
+  log; 4xx/503 endpoint tally all noise-list or intentional gate probes.
+- New-code checks: hashed /assets serve Cache-Control public,
+  max-age=31536000, immutable on the prod build; index.html stays no-cache ✓.
+  logo.dev card renders on /subscriptions with API badge; sk_ admin panel
+  correctly hidden for non-admin Victoria ✓.
+- Journey (Victoria): desktop 1440px — dashboard, Deals/WIP report,
+  properties, subscriptions, all clean, no h-overflow; /chatbgp desktop
+  shows clean "Not Connected" keyless state. Mobile 390px chat — cold-open
+  lands on Messages, ChatBGP thread: composer visible above bottom nav from
+  first keystroke (keyboard-closed baseline; TRUE keyboard-up visual-viewport
+  shrink is NOT simulatable in Playwright emulation — af7c135's kbShellHeight
+  path needs a real-device check by Woody), own-bubble long-press → Copy/
+  Edit/Delete pill ✓, Edit persists ✓, Delete shows confirm sheet ✓, AI
+  bubbles are select-text with NO custom menu (native selection) ✓.
+- BUG FIXED: chat action pill only dismissed via its X (or acting on a
+  button) — outside taps left it floating indefinitely. Added native-style
+  outside-touch/mousedown dismissal (capture-phase listeners while open).
+  Verified in browser: opens, dismisses on outside tap, re-opens, Copy+toast
+  intact. tsc clean. (15ae0f7)
+- NOTE for future rounds: opening the pinned ChatBGP row starts a FRESH
+  conversation (old ones under History) — test messages don't persist
+  across visits; send fresh, then purge chat_messages 'QA r405%'-style.
+- Bugs fixed: 1 (pill outside-tap dismiss). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions added: none.
+- Harness growth: none — the fix is touch-gesture UI (synthetic TouchEvent
+  long-press); existing two-bot scenarios don't have a chat-thread touch
+  rig and building one isn't cheap. Manual verify scripts kept in round
+  scratchpad pattern (journey-r405/verify-dismiss/verify-edit).
+- New flakes: none. Setup notes: pg_hba trust fix (r205) + bgp role/table
+  ownership transfer (r249); QA chat residue purged.
+- Next: r405 was FULL → r406 LIGHT; then r407 FULL rotation #2 Landsec
+  client desktop. Real-device check of keyboard-up composer still open.
 
 ### r404 · 2026-08-28 · LIGHT (r403 had the journey)
 - JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
