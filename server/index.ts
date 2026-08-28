@@ -4174,37 +4174,26 @@ app.use("/api/branding/assets", express.static(
       // already being configured; remove once done.
       setTimeout(async () => {
         try {
-          const { getLogoDevSecretKey, setLogoDevSecretKey } = await import("./integration-credentials");
-          if (await getLogoDevSecretKey()) return;
-          const { rows } = await pool.query(
-            `SELECT content FROM chat_messages
-              WHERE role = 'user' AND created_at > now() - interval '7 days'
-                AND content ~ 'sk_[A-Za-z0-9_-]{8,}'
-              ORDER BY created_at DESC LIMIT 50`
-          );
-          const candidates = new Set<string>();
-          for (const r of rows) {
-            for (const m of String(r.content).matchAll(/sk_[A-Za-z0-9_-]{8,}/g)) candidates.add(m[0]);
-          }
-          if (candidates.size === 0) {
-            console.log("[logo-dev one-off] no sk_ key found in recent chat messages — Woody needs to paste it (Subscriptions & APIs -> logo.dev)");
+          const { getLogoDevSecretKey } = await import("./integration-credentials");
+          const key = await getLogoDevSecretKey();
+          if (!key) {
+            console.log("[logo-dev one-off] no secret key configured yet — Woody needs to paste it (Subscriptions & APIs -> logo.dev)");
             return;
           }
-          for (const key of candidates) {
-            const res = await fetch("https://api.logo.dev/brand/starbucks.com", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20000) }).catch(() => null);
-            // 200 = works; 404 = auth fine, no brand; 402 = valid key, out of credits
-            if (res && (res.ok || res.status === 404 || res.status === 402)) {
-              await setLogoDevSecretKey(key);
-              const { clearLogoDevKeyCache, runLogoDevBackfill } = await import("./logo-dev-brand");
-              clearLogoDevKeyCache();
-              console.log(`[logo-dev one-off] verified + stored key ending …${key.slice(-4)}; running enrichment backfill`);
-              const stats = await runLogoDevBackfill(600, false);
-              console.log(`[logo-dev one-off] backfill done: candidates=${stats.candidates} processed=${stats.processed} companiesFilled=${stats.filled} fieldsFilled=${stats.fieldsFilled}`);
-              return;
-            }
-            console.log(`[logo-dev one-off] candidate ending …${key.slice(-4)} rejected by logo.dev (${res ? res.status : "network error"})`);
-          }
-          console.log("[logo-dev one-off] no candidate verified — Woody needs to paste the sk_ key (Subscriptions & APIs -> logo.dev)");
+          // First full enrichment backfill, exactly once (Woody, 2026-08-28
+          // "Can you do this" — he supplied the key). Re-runs later go
+          // through ChatBGP's run_brand_enrichment_backfill tool.
+          const FLAG = "migration:logo_dev_backfill_v1";
+          const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
+          if (done.rows.length > 0) return;
+          const { runLogoDevBackfill } = await import("./logo-dev-brand");
+          console.log("[logo-dev one-off] key configured — running first enrichment backfill");
+          const stats = await runLogoDevBackfill(600, false);
+          await pool.query(
+            `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+            [FLAG, JSON.stringify({ ranAt: new Date().toISOString(), ...stats })]
+          );
+          console.log(`[logo-dev one-off] backfill done: candidates=${stats.candidates} processed=${stats.processed} companiesFilled=${stats.filled} fieldsFilled=${stats.fieldsFilled}`);
         } catch (e: any) {
           console.error("[logo-dev one-off] failed:", e?.message);
         }
