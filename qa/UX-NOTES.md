@@ -16,6 +16,18 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+115. 2026-08-28 · Landsec client / mobile 390px (QA r409) · "a colleague
+    mentioned a brand — look it up" · Brand Intelligence search for a brand
+    that isn't in the client's slice (e.g. "Gail") says only "No matches for
+    'Gail' — try a shorter name." Two issues: (a) "try a shorter name" is
+    odd advice for a 4-letter query, and (b) the empty state never points at
+    the "Add brand" button sitting directly above it, which searches the
+    WIDER global directory and is exactly what the user needs next (the
+    self-add flow itself works cleanly at 390px — verified this round).
+    Suggest: zero-hit copy becomes "No matches in your brands — search the
+    wider directory via Add brand" (mirrors the confirmed #13 pattern on
+    Contacts).
+
 114. 2026-08-28 · Landsec client / desktop 1440px (QA r407) · "see how my
     Bluewater lettings are progressing" · On the client Properties table
     (/properties, TABLE view) only the property NAME text is clickable —

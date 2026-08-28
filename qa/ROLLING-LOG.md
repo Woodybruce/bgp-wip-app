@@ -80,19 +80,42 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r409 · 2026-08-28 · ROUND IN PROGRESS (provisional heartbeat)
-- FULL round, rotation #3 Landsec client mobile 390px. Per parent-session
-  note: JOGQK deliberately NOT merged into staging this round (it moved
-  well ahead today — HMLR live, ex-VAT cashflow, etc.).
+### r409 · 2026-08-28 · FULL (rotation #3 Landsec client mobile 390px)
+- Per parent-session note: JOGQK deliberately NOT merged into staging this
+  round (it moved well ahead today — HMLR live, ex-VAT cashflow, etc.).
 - tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
   Two-bot 409 via run-round.sh: exit 0, ALL scenarios ok (incl.
   client-portfolio-bgp-contact-names again). 4 issues = standing noise
   signature (2×400 rocketreach/gate-probe, 2×503 keyless AI). 0 raw
   500/502/504 in dev-server log; 4xx/503 endpoint tally all noise-list
-  or scope-guard probes. Triage: 0 app bugs from regression.
-- Journey (client mobile 390px) in progress — final entry to follow.
+  or scope-guard probes. 0 app bugs from regression.
+- Journey (Mark Warne @390px iPhone UA, UI form login): "a colleague
+  mentioned a brand — find it, check covenant/compliance + key contact,
+  scan news, message BGP": login → "/" Portfolio home (greeting, tracker
+  KPI card, BGP team w/ photos+email, quick links incl. Brands) → /brands
+  Brand Intelligence (category tiles, 9 slice brands) → search "Gail" →
+  correct zero-hit (no Gail's in fixture; copy clunky → UX #115) → search
+  Starbucks → profile in 3 taps: Key Contacts (Tom Barista + email btn),
+  BGP Engagement, pill tabs all render; COMPLIANCE tab client-VISIBLE ✓
+  with parked downstream checks, staff-only actions absent (CH link is a
+  public external search — fine) → Add-brand self-add cycle exercised in
+  UI (Remove → Add → name becomes profile link → profile opens; fixture
+  self-add state restored afterwards) → /news brand signals clean →
+  /messages → ChatBGP thread, composer present. 0 pageerrors, 0
+  h-overflow on any surface, 0 non-noise 4xx/5xx.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: UX #115 (client brands-hub zero-hit copy
+  should point at Add brand / wider directory). New flakes: none.
+- Harness growth: none needed — add-brand cycle already covered
+  (client-add-brand-from-directory, client-add-brand-remove-ui).
 - Setup: pg_hba trust (r205) needed again on this fresh container; bgp
-  role created superuser so no ownership transfer needed.
+  role created superuser so no ownership transfer needed. NOTE: r409's
+  heartbeat commit footer carries a model name by mistake — repo footer
+  is plain "Co-Authored-By: Claude"; kept for later commits.
+- Next: r409 was FULL → r410 LIGHT; then r411 FULL rotation #4 staff
+  mobile 390px. Real-device check of keyboard-up composer (r405) still
+  open for Woody.
 
 ### r408 · 2026-08-28 · LIGHT (r407 had the journey)
 - JOGQK merge: already up to date (b301104 was the head on both). tsc
