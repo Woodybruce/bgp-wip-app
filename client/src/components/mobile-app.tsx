@@ -436,23 +436,24 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
   };
 
   const handleLongPress = useRef<NodeJS.Timeout | null>(null);
-  // Track where the touch started so we can cancel the long-press if the
-  // finger moves more than a few pixels — otherwise scrolling through a
-  // long ChatBGP reply triggers a copy every time, since the finger sits
-  // on a bubble for >400ms while the page is moving.
+  // Copy is the OS's job (Woody, 2026-08-28: "use the normal Apple version
+  // of copy and paste rather than our own") — ChatBGP replies and other
+  // people's messages carry NO touch handlers, so press-and-hold gives the
+  // native iOS/Android selection menu. Only your OWN messages keep this
+  // long-press menu, because Edit/Delete need a home; it still stands down
+  // if a text selection has started.
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const LONG_PRESS_MS = 600;
   const MOVE_TOLERANCE_PX = 10;
 
+  // In an AI thread every user bubble is your own (1:1 with ChatBGP), even
+  // when the message row carries no userId.
+  const ownEditable = isOwn || (isUser && isAiThread);
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (!ownEditable) return;
     const t = e.touches[0];
     touchStart.current = t ? { x: t.clientX, y: t.clientY } : null;
     handleLongPress.current = setTimeout(() => {
-      // If the OS text selection has started (press-and-hold to select part
-      // of a reply), stay out of its way — the user is grabbing a snippet,
-      // not the whole bubble (Woody, 2026-08-28: instant "Copied" was
-      // fighting iOS selection). Otherwise show the action pill; nothing
-      // copies without an explicit tap any more.
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed) return;
       setShowActions(true);
@@ -552,20 +553,9 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               onTouchEnd={handleTouchEnd}
               onTouchCancel={handleTouchEnd}
             >
-              <div className="text-[15px] leading-[1.7] text-foreground whitespace-pre-wrap break-words">
+              <div className="text-[15px] leading-[1.7] text-foreground whitespace-pre-wrap break-words select-text">
                 <RenderMessageContent content={message.content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} />
               </div>
-              {showActions && (
-                <div className="absolute -top-11 left-0 flex items-center gap-1 bg-white rounded-xl shadow-lg border border-border px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150">
-                  <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted" data-testid="button-copy-message">
-                    <Copy className="w-3.5 h-3.5" /> Copy
-                  </button>
-                  <div className="w-px h-4 bg-border" />
-                  <button onClick={() => setShowActions(false)} className="px-2 py-1.5 rounded-lg active:bg-muted">
-                    <X className="w-3.5 h-3.5 text-muted-foreground/70" />
-                  </button>
-                </div>
-              )}
             </div>
           )}
           {message.action && <ActionCard action={message.action} />}
@@ -622,7 +612,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
                 <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted" data-testid="button-copy-message">
                   <Copy className="w-3.5 h-3.5" /> Copy
                 </button>
-                {isOwn && message.id && (
+                {ownEditable && message.id && (
                   <>
                     <div className="w-px h-4 bg-border" />
                     <button onClick={() => { setEditContent(message.content); setEditing(true); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted">
