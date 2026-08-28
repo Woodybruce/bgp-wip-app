@@ -80,7 +80,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r413 · 2026-08-28 ~23:00 UTC · FULL (rotation #1 staff desktop 1440px) — ROUND IN PROGRESS
+### r413 · 2026-08-28 ~23:30 UTC · FULL (rotation #1 staff desktop 1440px)
 - Watchdog-spawned session. JOGQK NOT merged into staging per parent note
   (Company outlook on Finance, page dedupe, shared Xero pull, collapsible
   cashflow board all on JOGQK — parent merges on Woody's say-so).
@@ -92,8 +92,31 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   ai-briefing/ai-take/chatbgp/brand-gaps/OS 503s, hr-photo/sharepoint 404s,
   M365 401s) or intentional rival-isolation/gate probes (403s, bulk-op
   400s). 0 app bugs from regression.
-- Journey next: Victoria @1440px — Letting Tracker unit-prep flow (target
-  operator brief, log viewing, record offer) + client-side cross-check.
+- Journey (Victoria @1440px, UI form login): "a Bluewater unit needs
+  pushing — log yesterday's viewing with the brand, record their offer,
+  check the targeting brief; then as Mark see the progress client-side":
+  login → /available → search MSU9 → Viewings dialog (date defaults today,
+  UX2 holds; CrmPicker company select works; outcome badge on card; toast)
+  → Offers dialog (rent/term/comments save, Pending badge) → Targeting
+  Brief dialog renders → Mark @1440 /deals/letting → same unit found via
+  search → client SEES the staff-logged Starbucks viewing (attendees +
+  outcome) and offer — staff-creates → client-sees parity holds in the UI.
+  14/14 checks, 0 pageerrors, only login-screen 401 echoes (listed noise).
+  Journey rows cleaned by SQL (offer company was a real brand name, outside
+  the QA-% purge patterns — future journeys: prefer QA-OFFER-% names or
+  self-clean).
+- Bugs fixed: 0 (nothing broken found — regression + journey both clean).
+  Deferred: none. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: UX #116
+  (viewing with outcome "Offer Expected" → offer means re-entering the
+  same company/contact/date in a second dialog; add a pre-filled "Record
+  offer" shortcut). Harness growth: none — UI dialog flow is journey-only;
+  API-level viewing/offer create/edit/delete + client parity already
+  covered (client-viewings-offers, rival-viewing-offer-patch-guard).
+- New flakes: none. Setup: pg_hba trust (r205) needed again on this fresh
+  container; bgp role created superuser so no ownership transfer needed.
+- Next: r413 was FULL → r414 LIGHT; then rotation #2 client desktop.
+  Real-device check of keyboard-up composer (r405) still open for Woody.
 
 ### r412 · 2026-08-28 ~21:00 UTC · LIGHT (r411 had the journey)
 - Watchdog-spawned session. JOGQK NOT merged into staging per parent note.

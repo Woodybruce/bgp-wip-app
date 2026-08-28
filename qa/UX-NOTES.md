@@ -16,6 +16,17 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+116. 2026-08-28 · BGP staff / desktop 1440px (QA r413) · "log yesterday's
+    viewing with the brand, then record the offer they made" · Both steps
+    work, but they are two fully separate dialogs: after saving a viewing
+    with outcome "Offer Expected", recording the actual offer means closing
+    the Viewings dialog, opening the Offers dialog on the same row and
+    re-picking the same company/contact/date from scratch — double data
+    entry for what the user experiences as one event ("they viewed, then
+    offered") · Suggest: a "Record offer" shortcut on the viewing card (or
+    shown after saving with outcome "Offer Expected") that opens the offer
+    form pre-filled with the viewing's company, contact and date.
+
 115. 2026-08-28 · Landsec client / mobile 390px (QA r409) · "a colleague
     mentioned a brand — look it up" · Brand Intelligence search for a brand
     that isn't in the client's slice (e.g. "Gail") says only "No matches for
