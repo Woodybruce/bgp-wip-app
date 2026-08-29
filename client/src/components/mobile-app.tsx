@@ -68,8 +68,8 @@ function clog(tag: string, info?: Record<string, unknown>) {
 // never even reached the network, 2026-08-29). A module-owned input with a
 // native listener survives any remount; if the chat view remounted while
 // picking, the file is stashed and consumed on the next mount.
-let groupPicSink: ((f: File) => void) | null = null;
 let stashedGroupPic: File | null = null;
+let groupPicPoke: (() => void) | null = null;
 function openGroupPicPicker() {
   clog("group-pic:open");
   const inp = document.createElement("input");
@@ -78,11 +78,14 @@ function openGroupPicPicker() {
   inp.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;";
   inp.addEventListener("change", () => {
     const f = inp.files?.[0] || null;
-    clog("group-pic:change", { n: inp.files?.length ?? 0, size: f?.size, type: f?.type, sink: !!groupPicSink });
+    clog("group-pic:change", { n: inp.files?.length ?? 0, size: f?.size, type: f?.type });
     inp.remove();
     if (!f) return;
-    if (groupPicSink) groupPicSink(f);
-    else stashedGroupPic = f;
+    // The stash holds the photo until the cropper is actually on screen —
+    // it stays put through any view rebuild and is cleared only when the
+    // user acts on the cropper (save / cancel / fallback).
+    stashedGroupPic = f;
+    if (groupPicPoke) groupPicPoke();
   });
   document.body.appendChild(inp);
   inp.click();
@@ -1098,6 +1101,7 @@ function GroupPicCropper({ file, onCancel, onSave, onFallback }: { file: File; o
   const url = useMemo(() => URL.createObjectURL(file), [file]);
   useEffect(() => () => URL.revokeObjectURL(url), [url]);
   useEffect(() => {
+    clog("group-pic:cropper-open", { size: file.size });
     const i = new window.Image(); // lucide's Image icon shadows the global
     i.onload = () => {
       clog("group-pic:decoded", { w: i.naturalWidth, h: i.naturalHeight });
@@ -2384,18 +2388,29 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const headerInitials = isDm && dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
   const isGroup = !isActiveThreadAi && !isDm;
   const [pendingGroupPic, setPendingGroupPic] = useState<File | null>(null);
+  const pendingGroupPicRef = useRef(false);
+  useEffect(() => { pendingGroupPicRef.current = !!pendingGroupPic; }, [pendingGroupPic]);
   useEffect(() => {
-    const sink = (f: File) => setPendingGroupPic(f);
-    groupPicSink = sink;
-    if (stashedGroupPic) {
-      // A photo was picked while this view was remounting — pick it up.
+    if (!isGroup) return;
+    // Keep checking the stash until the cropper is actually up — a picked
+    // photo must survive this view being rebuilt while backgrounded.
+    const check = () => {
       const f = stashedGroupPic;
-      stashedGroupPic = null;
-      clog("group-pic:stash-consumed", { size: f.size });
-      setPendingGroupPic(f);
-    }
-    return () => { if (groupPicSink === sink) groupPicSink = null; };
-  }, []);
+      if (f && !pendingGroupPicRef.current) {
+        clog("group-pic:consume", { size: f.size });
+        setPendingGroupPic(f);
+      }
+    };
+    groupPicPoke = check;
+    check();
+    document.addEventListener("visibilitychange", check);
+    const id = setInterval(check, 1500);
+    return () => {
+      if (groupPicPoke === check) groupPicPoke = null;
+      document.removeEventListener("visibilitychange", check);
+      clearInterval(id);
+    };
+  }, [isGroup]);
   useEffect(() => {
     // Holds off the auto-update reload (index.html) while the cropper is up.
     if (pendingGroupPic) {
@@ -2508,9 +2523,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       {pendingGroupPic && (
         <GroupPicCropper
           file={pendingGroupPic}
-          onCancel={() => setPendingGroupPic(null)}
-          onSave={(blob) => { setPendingGroupPic(null); handleGroupPicUpload(new File([blob], "group.jpg", { type: "image/jpeg" })); }}
-          onFallback={(f) => { setPendingGroupPic(null); toast({ title: "Couldn't preview that photo", description: "Uploading it as-is instead." }); handleGroupPicUpload(f); }}
+          onCancel={() => { stashedGroupPic = null; setPendingGroupPic(null); }}
+          onSave={(blob) => { stashedGroupPic = null; setPendingGroupPic(null); handleGroupPicUpload(new File([blob], "group.jpg", { type: "image/jpeg" })); }}
+          onFallback={(f) => { stashedGroupPic = null; setPendingGroupPic(null); toast({ title: "Couldn't preview that photo", description: "Uploading it as-is instead." }); handleGroupPicUpload(f); }}
         />
       )}
       {isActiveThreadAi && <MobileBottomNav />}
