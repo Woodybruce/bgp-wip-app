@@ -80,10 +80,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r415 · 2026-08-29 ~09:40 UTC · ROUND IN PROGRESS (heartbeat)
+### r415 · 2026-08-29 ~10:30 UTC · regression-only (journey ceded to r416)
 - NOTE: this is the session the r416 watchdog presumed dead — it was
   container-suspended 02:33–09:00 UTC, resumed and ran anyway. r416 (below)
-  already covered the rotation #2 FULL journey, so r415 finalises as the
+  covered the rotation #2 FULL journey, so r415 finalised as the
   regression + triage half only; entries stay newest-first.
 - tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
   Two-bot 415 via run-round.sh: exit 0, 5 issues = 4 standing noise
@@ -91,9 +91,24 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   lost the (allowed) deal Audit log card" — reproduced manually as Mark:
   audit card PRESENT ×3 probes, judged a round-load timing flake (fixed
   2.5s sample); assertion hardened to a 15s waitFor in two-bot-round.mjs
-  (this commit).
-- Side-quest this session (Woody, live): reviewing the JOGQK Finance page
-  in a worktree — read-only, no pushes to JOGQK.
+  (pushed in the r415 heartbeat commit).
+- Bugs fixed: 0 app, 1 harness (above). Deferred: none. Suggestions
+  added: none (staging). New flakes: the audit-card sample flake, now
+  hardened away.
+- Side-quest (Woody, live in-session): full review of the JOGQK Finance
+  page (code + visual @1440/390 in a worktree on :5300, read-only, no
+  pushes to JOGQK). Findings reported to Woody in-session: 2 code-level
+  issues on JOGQK (concurrent-first-load race can cache an empty
+  Income-FYTD paid panel for 15 min; /api/app-costs gated requireAdmin
+  while the page gate is equity-or-admin → non-admin equity would get a
+  silently hidden App-costs card + 403 noise), 1 stale ChatBGP app-map
+  line (WIP "amber card on the Finance page" — data-health card was
+  retired 2026-08-23), plus minor phone nits (cost-group headlines show
+  board-sign negatives in red where the outlook shows positive magnitudes;
+  "Legacy receiv…" truncation at 390px). Xero-connected headline-stat
+  dropdowns reviewed in code only (keyless env).
+- Next: r417 may be LIGHT; then rotation #3 client mobile 390px (per
+  r416). Real-device check of keyboard-up composer (r405) still open.
 
 ### r416 · 2026-08-29 ~07:15 UTC · FULL (rotation #2 client desktop 1440px)
 - Watchdog-spawned session; r415 stalled and pushed nothing, so r414 (LIGHT)
