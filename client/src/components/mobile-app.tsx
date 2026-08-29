@@ -1422,6 +1422,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   // WhatsApp-style Media/Links/Docs sheet for the open conversation.
   const [showThreadMedia, setShowThreadMedia] = useState(false);
   const [showLinkMenu, setShowLinkMenu] = useState(false);
+  const [linkMenuPos, setLinkMenuPos] = useState({ left: 8, bottom: 96 });
   const [showLinkSearch, setShowLinkSearch] = useState<"property" | "deal" | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -3059,9 +3060,16 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                   }}
                 />
               </div>
-              <div className="relative shrink-0">
+              <div className="shrink-0">
                 <button
-                  onClick={() => setShowLinkMenu(prev => !prev)}
+                  onClick={(e) => {
+                    // Menu must be fixed-positioned: the composer box is
+                    // overflow-hidden, which silently clipped an absolute
+                    // dropdown to nothing (Woody, 2026-08-29).
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setLinkMenuPos({ left: Math.max(8, r.left), bottom: window.innerHeight - r.top + 8 });
+                    setShowLinkMenu(prev => !prev);
+                  }}
                   className="p-2.5 text-muted-foreground/70 active:text-muted-foreground cursor-pointer"
                   data-testid="button-mobile-attach"
                   style={{ minWidth: 36, minHeight: 36 }}
@@ -3071,7 +3079,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 {showLinkMenu && (
                   <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowLinkMenu(false)} />
-                  <div className="absolute bottom-12 left-0 bg-white rounded-xl shadow-lg border border-border py-1 w-52 z-50">
+                  <div className="fixed bg-white rounded-xl shadow-lg border border-border py-1 w-52 z-50" style={{ left: linkMenuPos.left, bottom: linkMenuPos.bottom }} data-testid="mobile-attach-menu">
                     <button
                       onClick={() => { setShowLinkSearch("property"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
                       className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-muted active:bg-muted"
