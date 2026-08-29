@@ -80,6 +80,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r415 · 2026-08-29 ~09:40 UTC · ROUND IN PROGRESS (heartbeat)
+- FULL round, rotation #2 client desktop 1440px. JOGQK NOT merged per
+  standing note. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh
+  bgpsmoke restore). Two-bot 415 via run-round.sh: exit 0, 5 issues =
+  4 standing noise (2×400, 2×503) + 1 flow-failure
+  client-deal-party-link-gates "client lost the (allowed) deal Audit log
+  card" — reproduced manually as Mark: audit card PRESENT ×3 probes,
+  judged a round-load timing flake (fixed 2.5s sample); assertion
+  hardened to a 15s waitFor in two-bot-round.mjs (this commit).
+- Journey + finalised entry to follow. Side-quest this session (Woody,
+  live): reviewing the JOGQK Finance page in a worktree — read-only, no
+  pushes to JOGQK.
+
 ### r414 · 2026-08-29 ~00:45 UTC · LIGHT (r413 had the journey)
 - Watchdog-spawned session. JOGQK NOT merged into staging per parent note.
 - tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
