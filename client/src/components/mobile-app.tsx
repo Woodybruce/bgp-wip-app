@@ -1044,6 +1044,80 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
   );
 }
 
+// WhatsApp-style position/zoom step for the group photo — the upload used
+// to take the raw file and centre-crop it with no say over the framing
+// (Woody, 2026-08-29: "photo upload doesn't allow positioning in group
+// chats"). Drag pans, the slider zooms, Save uploads exactly the circle.
+function GroupPicCropper({ file, onCancel, onSave }: { file: File; onCancel: () => void; onSave: (blob: Blob) => void }) {
+  const V = Math.min(300, typeof window !== "undefined" ? window.innerWidth - 64 : 300);
+  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [off, setOff] = useState({ x: 0, y: 0 });
+  const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const url = useMemo(() => URL.createObjectURL(file), [file]);
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  useEffect(() => {
+    const i = new window.Image(); // lucide's Image icon shadows the global
+    i.onload = () => {
+      const s = V / Math.min(i.naturalWidth, i.naturalHeight);
+      setImg(i);
+      setZoom(1);
+      setOff({ x: (V - i.naturalWidth * s) / 2, y: (V - i.naturalHeight * s) / 2 });
+    };
+    i.src = url;
+  }, [url, V]);
+  if (!img) return null;
+  const s0 = V / Math.min(img.naturalWidth, img.naturalHeight);
+  const s = s0 * zoom;
+  const clamp = (o: { x: number; y: number }, sc: number) => ({
+    x: Math.min(0, Math.max(V - img.naturalWidth * sc, o.x)),
+    y: Math.min(0, Math.max(V - img.naturalHeight * sc, o.y)),
+  });
+  const startDrag = (cx: number, cy: number) => { drag.current = { x: cx, y: cy, ox: off.x, oy: off.y }; };
+  const moveDrag = (cx: number, cy: number) => {
+    if (!drag.current) return;
+    setOff(clamp({ x: drag.current.ox + cx - drag.current.x, y: drag.current.oy + cy - drag.current.y }, s));
+  };
+  const setZoomKeepCentre = (z: number) => {
+    const sNew = s0 * z;
+    const cx = (V / 2 - off.x) / s;
+    const cy = (V / 2 - off.y) / s;
+    setZoom(z);
+    setOff(clamp({ x: V / 2 - cx * sNew, y: V / 2 - cy * sNew }, sNew));
+  };
+  const save = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return onCancel();
+    ctx.drawImage(img, -off.x / s, -off.y / s, V / s, V / s, 0, 0, 512, 512);
+    canvas.toBlob(b => { if (b) onSave(b); }, "image/jpeg", 0.9);
+  };
+  return (
+    <div className="fixed inset-0 z-[200] bg-black/90 flex flex-col items-center justify-center gap-5 p-6" data-testid="group-pic-cropper">
+      <p className="text-white text-sm font-medium">Drag to position · slide to zoom</p>
+      <div
+        className="rounded-full overflow-hidden relative touch-none select-none ring-2 ring-white/40 shrink-0"
+        style={{ width: V, height: V }}
+        onTouchStart={e => startDrag(e.touches[0].clientX, e.touches[0].clientY)}
+        onTouchMove={e => moveDrag(e.touches[0].clientX, e.touches[0].clientY)}
+        onTouchEnd={() => { drag.current = null; }}
+        onMouseDown={e => { e.preventDefault(); startDrag(e.clientX, e.clientY); }}
+        onMouseMove={e => { if (e.buttons === 1) moveDrag(e.clientX, e.clientY); }}
+        onMouseUp={() => { drag.current = null; }}
+      >
+        <img src={url} alt="" draggable={false}
+          style={{ position: "absolute", left: off.x, top: off.y, width: img.naturalWidth * s, height: img.naturalHeight * s, maxWidth: "none" }} />
+      </div>
+      <input type="range" min={1} max={3} step={0.01} value={zoom} onChange={e => setZoomKeepCentre(Number(e.target.value))} className="w-64" data-testid="group-pic-zoom" />
+      <div className="flex gap-3">
+        <Button variant="outline" className="h-11 px-6 rounded-xl bg-transparent text-white border-white/40 hover:bg-white/10" onClick={onCancel} data-testid="group-pic-cancel">Cancel</Button>
+        <Button className="h-11 px-6 rounded-xl bg-white text-black hover:bg-white/90" onClick={save} data-testid="group-pic-save">Save</Button>
+      </div>
+    </div>
+  );
+}
+
 function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
   thread: ThreadData;
   currentUser: UserType | null;
@@ -2255,6 +2329,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const headerInitials = isDm && dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
   const isGroup = !isActiveThreadAi && !isDm;
   const groupPicFileRef = useRef<HTMLInputElement>(null);
+  const [pendingGroupPic, setPendingGroupPic] = useState<File | null>(null);
   // NOTE: the "Search the web" photo chooser (ImageSourceSheet + the
   // /api/image-search + *-from-url endpoints) is PARKED — Google kept
   // refusing the project Custom Search access despite the API, key and
@@ -2349,7 +2424,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             : undefined
       }
     >
-      <input type="file" accept="image/*" className="hidden" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
+      {pendingGroupPic && (
+        <GroupPicCropper
+          file={pendingGroupPic}
+          onCancel={() => setPendingGroupPic(null)}
+          onSave={(blob) => { setPendingGroupPic(null); handleGroupPicUpload(new File([blob], "group.jpg", { type: "image/jpeg" })); }}
+        />
+      )}
+      <input type="file" accept="image/*" className="hidden" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) setPendingGroupPic(f); e.target.value = ""; }} />
       {isActiveThreadAi && <MobileBottomNav />}
       {isActiveThreadAi ? (
         <div className="bg-white text-foreground pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2.5 px-4 shrink-0 border-b border-border">
