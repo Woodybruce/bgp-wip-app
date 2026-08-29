@@ -152,7 +152,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
   return (
     <Card data-testid="company-outlook">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
+        <CardTitle className="text-base flex items-center gap-2">
           <TrendingUp className="w-4 h-4" /> Company outlook — {fyLabel}
         </CardTitle>
         <p className="text-xs text-muted-foreground">

@@ -160,7 +160,7 @@ export function CashflowBoardSection() {
   return (
     <Card data-testid="finance-cashflow-section">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
+        <CardTitle className="text-base flex items-center gap-2">
           <Banknote className="w-4 h-4" /> Cashflow forecast
           <span className="ml-auto text-[11px] font-normal text-muted-foreground">ex VAT</span>
         </CardTitle>
@@ -237,7 +237,7 @@ export function CashflowBoardSection() {
             show a dot because Wendy's workbook cell is empty — actuals-only
             months and quarterly items are blank in her sheet too. */}
         <div className="md:hidden space-y-2" data-testid="cf-mobile-inputs">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground px-1">Cost plan · {ML(mobileMonth)} · tap a figure to edit</p>
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground px-1">Cost plan · {ML(mobileMonth)} · tap a figure to edit</p>
           {(legacyLine ? [{ id: "legacy", title: "Legacy receivables", sub: "Pre-Xero Sage invoices still to collect", lines: [legacyLine] }, ...mobileGroups] : mobileGroups).map(g => {
             const total = g.lines.reduce((s, l) => s + (model.get(l.id, mobileMonth, "actual") ?? model.get(l.id, mobileMonth, "budget") ?? 0), 0);
             return (
@@ -252,7 +252,7 @@ export function CashflowBoardSection() {
                 onToggle={() => setOpenGroup(o => (o === g.id ? null : g.id))}
               >
                 <div className="space-y-0.5">
-                  <div className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <div className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground">
                     <span /><span className="text-right">Budget</span><span className="text-right">Actual</span>
                   </div>
                   {g.lines.map(l => (
@@ -288,8 +288,8 @@ export function CashflowBoardSection() {
                 <tr>
                   <th className="px-3 py-1 sticky left-0 bg-muted z-30" />
                   {unified.months.map(m => [
-                    <th key={`${m}-b`} className="px-2 py-1 text-right font-normal text-[10px] uppercase tracking-wide text-muted-foreground border-l">Budget</th>,
-                    <th key={`${m}-a`} className="px-2 py-1 text-right font-normal text-[10px] uppercase tracking-wide text-muted-foreground border-r">Actual</th>,
+                    <th key={`${m}-b`} className="px-2 py-1 text-right font-normal text-[10px] uppercase tracking-widest text-muted-foreground border-l">Budget</th>,
+                    <th key={`${m}-a`} className="px-2 py-1 text-right font-normal text-[10px] uppercase tracking-widest text-muted-foreground border-r">Actual</th>,
                   ])}
                 </tr>
               </thead>

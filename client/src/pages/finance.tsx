@@ -124,8 +124,8 @@ function StatCard({ label, value, sub, negative }: { label: string; value: strin
   return (
     <Card>
       <CardContent className="p-4">
-        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-        <p className={`text-2xl font-semibold tracking-tight mt-1 ${negative ? "text-red-600 dark:text-red-400" : ""}`} data-testid={`finance-stat-${label.toLowerCase().replace(/\s+/g, "-")}`}>
+        <p className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</p>
+        <p className={`text-lg font-semibold tabular-nums mt-1 ${negative ? "text-red-600 dark:text-red-400" : ""}`} data-testid={`finance-stat-${label.toLowerCase().replace(/\s+/g, "-")}`}>
           {value}
         </p>
         {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
@@ -171,7 +171,7 @@ function CommissionSection({ commissions }: { commissions: NonNullable<Financial
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center justify-between">
+        <CardTitle className="text-base flex items-center justify-between">
           <span>Commission statements</span>
           <span className="text-xs font-normal text-muted-foreground">FY from {formatDate(commissions.fyStart)}</span>
         </CardTitle>
@@ -265,7 +265,7 @@ function AppCostsSection() {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center justify-between">
+        <CardTitle className="text-base flex items-center justify-between">
           <span>App &amp; AI running costs</span>
           <span className="text-xs font-normal text-muted-foreground">
             {usd(data.monthUsd)} this month · {usd(data.fytdUsd)} FYTD
@@ -275,7 +275,7 @@ function AppCostsSection() {
       <CardContent className="space-y-3">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">By provider (this month)</p>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">By provider (this month)</p>
             <div className="space-y-0.5">
               {data.byProvider.length === 0 && <p className="text-sm text-muted-foreground">No AI calls metered yet — data accrues from the next deploy onwards.</p>}
               {data.byProvider.map((p, i) => (
@@ -289,7 +289,7 @@ function AppCostsSection() {
             </div>
           </div>
           <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">By feature (this month)</p>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">By feature (this month)</p>
             <div className="space-y-0.5">
               {data.byFeature.map((f, i) => (
                 <div key={i} className="flex items-center justify-between text-sm py-0.5">
@@ -450,7 +450,7 @@ export default function FinancePage() {
         <ExpandableStat label="Income FYTD" value={money(h.income)} sub="Tap for the invoices">
           {data.paid && data.paid.count > 0 ? (
             <div className="space-y-0.5">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground pb-1">Paid this year · {data.paid.count} invoice(s) · {money(data.paid.totalPaid)}</p>
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground pb-1">Paid this year · {data.paid.count} invoice(s) · {money(data.paid.totalPaid)}</p>
               {data.paid.recent.map((p, i) => {
                 const row = (
                   <div className={`flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded ${p.dealId ? "hover:bg-muted cursor-pointer" : ""}`}>
@@ -479,7 +479,7 @@ export default function FinancePage() {
           <div className="space-y-3">
             {(data.pnlSections || []).filter(s => s.rows.length > 0).map((sec, i) => (
               <div key={i}>
-                {sec.title && <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">{sec.title}</p>}
+                {sec.title && <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">{sec.title}</p>}
                 <div className="space-y-0.5">
                   {sec.rows.map((r, j) => (
                     <div key={j} className={`flex items-center justify-between text-sm py-0.5 ${r.isTotal ? "font-semibold border-t mt-1 pt-1" : ""}`}>
@@ -536,7 +536,7 @@ export default function FinancePage() {
               </div>
               {d.top.length > 0 && (
                 <div>
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Largest overdue</p>
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Largest overdue</p>
                   <div className="space-y-0.5">
                     {d.top.map((inv, i) => (
                       <div key={i} className="flex items-center justify-between text-sm py-0.5">
