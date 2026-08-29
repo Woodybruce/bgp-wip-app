@@ -301,104 +301,11 @@ function AppCostsSection() {
   );
 }
 
-// Cash management — the near-term money mechanics the outlook doesn't
-// cover: committed bills and cash due both directions. The old run-rate /
-// projected-FY / projected-net stat trio was retired 2026-08-28, and the
-// "Where the money actually went" Xero lines + movers card on 2026-08-29
-// (Woody circled it — another cost list; the outlook's Average monthly
-// costs dropdowns are the one place for cost lines).
-function CostsSection({ creditors, cashflow, recurring }: {
-  creditors?: Financials["creditors"];
-  cashflow?: Financials["cashflow"];
-  recurring?: Financials["recurring"];
-}) {
-  const cf = cashflow;
-  const cfCols = cf ? [
-    { label: "Overdue", in: cf.receiptsDue.overdue, out: cf.billsDue.overdue },
-    { label: "This month", in: cf.receiptsDue.thisMonth, out: cf.billsDue.thisMonth },
-    { label: "Next month", in: cf.receiptsDue.nextMonth, out: cf.billsDue.nextMonth },
-    { label: "Later", in: cf.receiptsDue.later, out: cf.billsDue.later },
-  ] : [];
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-        <div className="space-y-4">
-          {/* Bills outstanding headline */}
-          {creditors && (
-            <StatCard
-              label="Bills outstanding"
-              value={money(creditors.outstanding)}
-              negative={creditors.buckets.overdue > 0}
-              sub={creditors.buckets.overdue > 0 ? `${money(creditors.buckets.overdue)} overdue` : `${creditors.billCount} open bill(s)`}
-            />
-          )}
-          {/* Near-term cash flow */}
-          {cf && (
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Cash due in vs out</CardTitle></CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-4 gap-2 text-center">
-                  {cfCols.map((c, i) => (
-                    <div key={i} className="rounded-md border p-2">
-                      <p className="text-[10px] text-muted-foreground">{c.label}</p>
-                      <p className="text-xs font-mono text-emerald-600 dark:text-emerald-400">+{money(c.in)}</p>
-                      <p className="text-xs font-mono text-red-600 dark:text-red-400">−{money(c.out)}</p>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-[11px] text-muted-foreground mt-2">
-                  Invoices due in vs bills due out, by due date. Bills are already inside the P&L cost figures — this is timing, not extra cost.
-                </p>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
-        <div className="space-y-4">
-          {/* Largest open bills */}
-          {creditors && creditors.top.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center justify-between">
-                  <span>Largest open bills</span>
-                  <Badge variant="secondary" className="text-[10px]">{creditors.billCount} bill(s)</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-0.5">
-                {creditors.top.map((b, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                    <span className="truncate pr-3">{b.contact} <span className="text-muted-foreground text-xs">{b.number}{b.due ? ` · due ${formatDate(b.due)}` : ""}</span></span>
-                    <span className="font-mono shrink-0">{money(b.amount)}</span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Recurring commitments */}
-          {recurring && (recurring.monthlyBills > 0 || recurring.bills.length > 0) && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center justify-between">
-                  <span>Recurring commitments</span>
-                  <Badge variant="secondary" className="text-[10px]">{money(recurring.monthlyBills)}/mo</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-0.5">
-                {recurring.bills.map((r, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                    <span className="truncate pr-3">{r.contact}{r.reference ? <span className="text-muted-foreground text-xs"> · {r.reference}</span> : null}</span>
-                    <span className="font-mono shrink-0">{money(r.monthly)}/mo</span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+// (The cash-management block — Bills outstanding, Cash due in vs out,
+// largest open bills, recurring commitments — was retired 2026-08-29.
+// Woody: double counting and dead data (BGP doesn't run bills through
+// Xero, so AP was always £0, and cash due in duplicated the Debtors
+// dropdown). The Debtors headline stat is the one receivables view.)
 
 export default function FinancePage() {
   const { toast } = useToast();
@@ -657,15 +564,6 @@ export default function FinancePage() {
       {/* (Data-health card removed — Woody, 2026-08-23: a weekly fix-list
           email to equity@ replaced it; see runWipHealthEmail. The live list
           stays on WIP report → Needs Attention.) */}
-
-      {/* Cash management — bills and cash due both directions */}
-      {data.costs && (
-        <CostsSection
-          creditors={data.creditors}
-          cashflow={data.cashflow}
-          recurring={data.recurring}
-        />
-      )}
 
       {/* (The "Paid this year" card moved into the Income FYTD dropdown,
           2026-08-29.) */}
