@@ -177,7 +177,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
 
         {/* Costs — tap a row to see what's inside it */}
         <div className="space-y-2">
-          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Where the money goes</p>
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Average monthly costs</p>
           <CostRow
             id="basic" title="Basic company costs"
             sub="Rent, rates, suppliers — everything that isn't people"
