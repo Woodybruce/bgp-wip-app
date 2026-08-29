@@ -2427,6 +2427,10 @@ export async function registerRoutes(
       });
       if (role === "user") {
         await storage.markOtherMembersUnseen(thread.id, userId);
+        // Sending IS seeing — without this a freshly created thread (member
+        // rows start seen:false, the creator's included) showed the sender
+        // their own message as unread (Woody, 2026-08-29).
+        await storage.markThreadSeen(thread.id, userId);
         const sender = await storage.getUser(userId);
         const senderName = sender?.name || "Someone";
         emitNewMessage(thread.id, message, senderName);
@@ -8581,6 +8585,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
               actionData: null, attachments: null,
             });
             await storage.markOtherMembersUnseen(t.id, userId);
+            await storage.markThreadSeen(t.id, userId);
             emitNewMessage(t.id, message, senderName);
             const members = await storage.getChatThreadMembers(t.id);
             for (const m of members) {
