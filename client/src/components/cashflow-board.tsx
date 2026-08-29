@@ -204,7 +204,7 @@ export function CashflowBoardSection() {
             ] as Array<[string, number]>).map(([label, v]) => (
               <div key={label} className="flex items-center justify-between gap-2">
                 <span className="text-muted-foreground">{label}</span>
-                <span className={`font-mono tabular-nums ${v < 0 ? "text-red-700 dark:text-red-400" : ""}`}>{fmt(v)}</span>
+                <span className={`tabular-nums ${v < 0 ? "text-red-700 dark:text-red-400" : ""}`}>{fmt(v)}</span>
               </div>
             ))}
           </div>
@@ -356,7 +356,7 @@ function MiniStat({ label, value }: { label: string; value: number | null }) {
   return (
     <div className="border rounded-lg p-3">
       <p className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</p>
-      <p className={`text-lg font-semibold font-mono tabular-nums ${value != null && value < 0 ? "text-red-700 dark:text-red-400" : ""}`}>
+      <p className={`text-lg font-semibold tabular-nums ${value != null && value < 0 ? "text-red-700 dark:text-red-400" : ""}`}>
         {value != null ? `£${fmt(Math.round(value))}` : "—"}
       </p>
     </div>
