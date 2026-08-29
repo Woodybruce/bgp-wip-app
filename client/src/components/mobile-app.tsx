@@ -763,7 +763,11 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive,
   const isDm = !isAi && otherMembers.length === 1;
   const dmName = isDm ? otherMembers[0].name : null;
   const dmInitials = dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
-  const displayTitle = thread.title || dmName || "New conversation";
+  // A 1:1 auto-titled at creation carries the CREATOR'S pick of name — for
+  // the other member that's their own name. Treat member-name titles (and
+  // the old "Group Chat" default) as auto-names and show the other person.
+  const autoNamed = !thread.title || thread.title === "Group Chat" || thread.members.some(m => m.name === thread.title);
+  const displayTitle = (isDm && autoNamed ? dmName : thread.title) || dmName || "New conversation";
   const dmPic = isDm && otherMembers[0] ? userPics?.[otherMembers[0].id] : null;
   // WhatsApp anatomy: ✓✓ on your own last message (coloured once everyone
   // has seen it) and a green "Draft:" preview for unsent input.

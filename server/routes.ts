@@ -2173,6 +2173,15 @@ export async function registerRoutes(
         isAiChat: isAiChat !== undefined ? isAiChat : true,
         hasAiMember,
       });
+      // The creator needs a member row too (seen — they wrote it into being):
+      // without one, a 1:1 they start renders as a GROUP for the other person
+      // (otherMembers.length is 0 on that side) and the creator can never get
+      // an unread dot, since unread checks look up MY member row.
+      if (!(isAiChat !== undefined ? isAiChat : true)) {
+        try {
+          await storage.addChatThreadMember({ threadId: thread.id, userId, addedBy: userId, seen: true });
+        } catch {}
+      }
       if (Array.isArray(realMemberIds) && realMemberIds.length > 0) {
         for (const memberId of realMemberIds) {
           if (memberId !== userId) {

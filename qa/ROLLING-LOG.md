@@ -80,17 +80,58 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r420 · 2026-08-29 ~14:55 UTC · ROUND IN PROGRESS (provisional)
+### r420 · 2026-08-29 ~16:15 UTC · FULL (rotation #4 staff mobile 390px)
 - Merged origin/claude/terminal-coding-interface-JOGQK into staging (chat DM
-  naming + per-user unread dots + rename one-offs, chart tap-away tooltip
-  dismissal, FY27-red/forecast-pink recolour, YTD bar group, forced month
-  ticks, auto-apply updates, last-good Xero fallback). Conflict in
-  historical-billings.tsx resolved keeping BOTH r419's haveCur gating AND
-  the new red/pink colours; same gating applied to the new unconditional
-  cur/fc Bars (same dead-legend issue in keyless env). tsc clean.
-- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore) on merged tree.
-- Two-bot 420 running; triage to follow. FULL round planned: rotation #4
-  staff mobile 390px — Messages surface (today's chat fixes) + Finance @390.
+  naming + per-user unread dots + rename one-offs, tap-away tooltips,
+  FY27-red/forecast-pink recolour, YTD bar group, forced month ticks,
+  auto-apply updates, last-good Xero fallback). historical-billings.tsx
+  conflict resolved keeping BOTH r419's haveCur gating AND the red/pink
+  colours; same gating applied to the new unconditional cur/fc Bars.
+- Smoke GREEN 42/0 ×2 (FRESH_BUILD=1 both — merged tree and post-fix).
+  Two-bot 420 via run-round.sh: exit 0, ALL scenarios ok, 4 issues =
+  standing noise signature (2×400, 2×503). 0 raw 500/502/504. tsc clean ×2.
+- Journey (Victoria + Alex + Jack @390px iPhone UA, UI form logins):
+  "DM a colleague from the phone, both sides; then Finance": login → "/"
+  (staff cold-open lands on Messages list per Woody 2026-08-18/23 —
+  verified intended, not a bug) → New Chat → pick Alex ("Start Chat"
+  button label holds) → send → back (no self-unread, ✓ af4f416 holds) →
+  as Alex: read, reply → as Victoria: unread dot appears + clears on read.
+  Finance @390 as jack: outlook hero, stat tiles, Historical billings
+  Line/Bars both clean (12 month ticks, FY24/25/26 distinct colours, YTD
+  group, NO ghost "so far"/Forecast legend keyless = merge reconciliation
+  verified visually), no h-overflow anywhere.
+- Bug fixed (1, but 3-part — same root cause): a 1:1 chat was BROKEN on the
+  recipient's side — thread creation never inserted a member row for the
+  CREATOR, so for the other person otherMembers=[] → the DM rendered as a
+  GROUP ("Tap to edit" header, group avatar) titled with THEIR OWN name
+  (today's DM-naming fix stores the creator's pick = other person's name),
+  and the creator could never get an unread dot (today's per-user unread
+  fix looks up MY member row — creator has none; desktop same). Fix:
+  (a) routes.ts POST /api/chat/threads adds a creator member row seen=true
+  for team chats; (b) flag-gated boot one-off backfills creator rows for
+  existing non-AI threads (prod: makes old DMs render right for
+  recipients); (c) display guard in mobile-app.tsx + chat-panel.tsx (list
+  cards + desktop panel header): a 1:1 titled with a MEMBER'S name (or
+  "Group Chat") counts as auto-named → show the other person; typed custom
+  titles untouched. Verified visually both sides at 390px: Alex sees
+  "Victoria Broadhead" DM-style, Victoria sees "Alex Todd" + working
+  unread dot round-trip.
+- Harness growth: staff-dm-creator-member-row in two-bot-round.mjs (create
+  DM → creator row present seen=true + member row present → delete);
+  API-sequence dry-run green; node --check clean.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: none.
+  New flakes: none. Journey probe rows cleaned in-round (thread deleted,
+  alext/jack password hashes restored from saved originals).
+- Setup: pg_hba trust (r205) needed again; bgp role created superuser.
+  NOTE: staff mobile "/" now cold-opens the MESSAGES LIST (Woody
+  2026-08-18 ChatBGP-home + 2026-08-23 bare-open-lands-on-list decisions
+  compose) — journeys should not assume Dashboard renders at "/" on first
+  load; the Dashboard tab still works.
+- Next: r420 was FULL → r421 may be LIGHT; then rotation #1 staff desktop
+  1440px (desktop chat-panel DM naming/unread after this fix is a good
+  candidate). Real-device check of keyboard-up composer (r405) still open
+  for Woody.
 
 ### r419 · 2026-08-29 ~13:45 UTC · LIGHT (r418 had the journey)
 - Merged origin/claude/terminal-coding-interface-JOGQK into staging per

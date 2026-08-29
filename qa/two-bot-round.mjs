@@ -1813,6 +1813,39 @@ async function victoriaRound(page, cross) {
     cross.briefId = r.briefId;
   });
 
+  // A team chat's CREATOR must get their own member row (seen=true) at
+  // creation — without it a 1:1 renders as a GROUP on the other side and
+  // the creator never gets an unread dot (r420 fix). Thread title matches
+  // the 'QA Thread%' purge pattern; deleted in-scenario anyway.
+  await step(page, p, 'staff-dm-creator-member-row', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json().catch(() => ({}));
+      const myId = me?.id || me?.user?.id;
+      if (!myId) return { fail: 'no self id from /api/auth/me' };
+      const users = await (await fetch('/api/users', { headers: auth })).json().catch(() => []);
+      const other = (Array.isArray(users) ? users : []).find((u) => u.id !== myId && u.id !== '__chatbgp__');
+      if (!other) return { fail: 'no second user to DM' };
+      const cRes = await fetch('/api/chat/threads', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title: `QA Thread DM R${round}`, isAiChat: false, memberIds: [other.id] }) });
+      if (!cRes.ok) return { fail: `thread create ${cRes.status}` };
+      const thread = await cRes.json();
+      const list = await (await fetch('/api/chat/threads', { headers: auth })).json().catch(() => []);
+      const mine = (Array.isArray(list) ? list : []).find((t) => t.id === thread.id);
+      const out = {
+        members: mine?.members || [],
+        myRow: (mine?.members || []).find((m) => m.id === myId) || null,
+        otherRow: (mine?.members || []).find((m) => m.id === other.id) || null,
+      };
+      await fetch(`/api/chat/threads/${thread.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return out;
+    }, ROUND);
+    if (r.fail) throw new Error(r.fail);
+    if (!r.otherRow) throw new Error('invited member missing a member row');
+    if (!r.myRow) throw new Error('creator missing their own member row (1:1 renders as group for the other side)');
+    if (r.myRow.seen !== true) throw new Error('creator member row not seen=true at creation');
+  });
+
   // Invoice-verdict alarm (2026-08-19 feature): a deal past its target date
   // with no verdict must show in /pending for its agent; "slipping" demands a
   // date (400 bare), re-dates the deal, and clears the pending list. The deal

@@ -2749,6 +2749,34 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn("[one-off 3511] correction failed:", e?.message);
   }
 
+  // One-off (flag-gated): backfill a member row for each team-chat CREATOR.
+  // Creation never inserted one, so a 1:1 rendered as a GROUP on the other
+  // member's side (no creator in members → otherMembers empty) and the
+  // creator could never get an unread dot (unread checks look up MY member
+  // row). seen=true — nothing pending for a chat you started.
+  try {
+    const FLAG = "migration:backfill_creator_member_rows_20260829";
+    const { rows: done } = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
+    if (!done.length) {
+      const { rowCount } = await pool.query(`
+        INSERT INTO chat_thread_members (thread_id, user_id, added_by, seen)
+        SELECT t.id, t.created_by, t.created_by, true
+          FROM chat_threads t
+         WHERE t.is_ai_chat = false
+           AND t.created_by IS NOT NULL AND t.created_by <> '__chatbgp__'
+           AND EXISTS (SELECT 1 FROM users u WHERE u.id = t.created_by)
+           AND NOT EXISTS (SELECT 1 FROM chat_thread_members m
+                            WHERE m.thread_id = t.id AND m.user_id = t.created_by)`);
+      await pool.query(
+        `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        [FLAG, JSON.stringify({ at: new Date().toISOString(), backfilled: rowCount })],
+      );
+      console.log(`[one-off creator-member-backfill] ${rowCount} creator row(s) added`);
+    }
+  } catch (e: any) {
+    console.warn("[one-off creator-member-backfill] failed:", e?.message);
+  }
+
   // One-off (flag-gated): rename today's two-person chat still titled
   // "Group Chat" to the other member's name — created on the phone before
   // the DM-naming fix landed (Woody, 2026-08-29: "Joe"). Also clears the

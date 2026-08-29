@@ -1044,7 +1044,11 @@ function ThreadCard({ thread, onClick, onDelete, currentUserId, userPics }: { th
   const isDm = !isAi && otherMembers.length === 1;
   const dmName = isDm ? otherMembers[0].name : null;
   const dmInitials = dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
-  const displayTitle = thread.title || dmName || "New conversation";
+  // Auto-titled 1:1s carry the creator's pick of name — the other member's
+  // own name on their side. Member-name titles (and the old "Group Chat"
+  // default) count as auto-names: show the other person instead.
+  const autoNamed = !thread.title || thread.title === "Group Chat" || thread.members.some(m => m.name === thread.title);
+  const displayTitle = (isDm && autoNamed ? dmName : thread.title) || dmName || "New conversation";
   const dmPic = isDm && otherMembers[0] ? userPics?.[otherMembers[0].id] : null;
 
   const renderAvatar = () => {
@@ -2725,12 +2729,17 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   const threadMembers = activeThread?.members || [];
   const threadCreatorId = activeThread?.createdBy || currentUser?.id || "";
 
+  // Same auto-name rule as the list cards: a 1:1 titled with a member's name
+  // (or the old "Group Chat" default) shows the OTHER person for this viewer.
+  const headerOthers = threadMembers.filter(m => m.id !== currentUser?.id);
+  const headerAutoNamed = !activeThread?.title || activeThread.title === "Group Chat" || threadMembers.some(m => m.name === activeThread.title);
+  const headerDmName = !isActiveThreadAi && headerOthers.length === 1 && headerAutoNamed ? headerOthers[0].name : null;
   const headerTitle = view === "new-group"
     ? "New message"
     : view === "threads"
       ? "Chat"
       : activeThread
-        ? (activeThread.title || "Chat")
+        ? (headerDmName || activeThread.title || "Chat")
         : (isActiveThreadAi ? "ChatBGP" : "Chat");
 
   // Keep the panel mounted when closed so the conversation (messages,
