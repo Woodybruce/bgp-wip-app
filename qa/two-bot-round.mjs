@@ -1846,6 +1846,22 @@ async function victoriaRound(page, cross) {
     if (r.myRow.seen !== true) throw new Error('creator member row not seen=true at creation');
   });
 
+  // Phone breadcrumb endpoint (2026-08-29): POST /api/client-log must accept
+  // an authed post (200 {ok:true}) and reject an unauthed one (401) — the
+  // group-photo flow on phones depends on it for debugging.
+  await step(page, p, 'staff-client-log-breadcrumb', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const okRes = await fetch('/api/client-log', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ tag: 'qa-probe' }) });
+      const okBody = okRes.ok ? await okRes.json().catch(() => ({})) : {};
+      return { authedStatus: okRes.status, ok: okBody.ok };
+    });
+    if (r.authedStatus !== 200 || r.ok !== true) throw new Error(`authed client-log ${r.authedStatus} ok=${r.ok}`);
+    // Anon probe from Node — a page fetch would ride the session cookie.
+    const anon = await fetch(`${BASE}/api/client-log`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'qa-probe-anon' }) });
+    if (anon.status !== 401) throw new Error(`unauthed client-log ${anon.status} (expected 401)`);
+  });
+
   // Invoice-verdict alarm (2026-08-19 feature): a deal past its target date
   // with no verdict must show in /pending for its agent; "slipping" demands a
   // date (400 bare), re-dates the deal, and clears the pending list. The deal
