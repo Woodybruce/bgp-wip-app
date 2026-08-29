@@ -47,6 +47,50 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+// Breadcrumbs for the group-photo flow land in the server log so we can see
+// how far a phone gets (picker opened → photo received → cropper → upload).
+function clog(tag: string, info?: Record<string, unknown>) {
+  try {
+    fetch("/api/client-log", {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ tag, ...info }),
+    }).catch(() => {});
+  } catch {}
+}
+
+// The group-photo file input lives OUTSIDE React. iOS backgrounds the PWA
+// while the photo picker is up; if the app re-renders or remounts in that
+// window, a React-owned <input> is destroyed and the picked file is
+// delivered to a detached element — silently lost (why Woody's uploads
+// never even reached the network, 2026-08-29). A module-owned input with a
+// native listener survives any remount; if the chat view remounted while
+// picking, the file is stashed and consumed on the next mount.
+let stashedGroupPic: File | null = null;
+let groupPicPoke: (() => void) | null = null;
+function openGroupPicPicker() {
+  clog("group-pic:open");
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = "image/*";
+  inp.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;";
+  inp.addEventListener("change", () => {
+    const f = inp.files?.[0] || null;
+    clog("group-pic:change", { n: inp.files?.length ?? 0, size: f?.size, type: f?.type });
+    inp.remove();
+    if (!f) return;
+    // The stash holds the photo until the cropper is actually on screen —
+    // it stays put through any view rebuild and is cleared only when the
+    // user acts on the cropper (save / cancel / fallback).
+    stashedGroupPic = f;
+    if (groupPicPoke) groupPicPoke();
+  });
+  document.body.appendChild(inp);
+  inp.click();
+}
+
 type ChatAction = {
   type: "model_run";
   runId: string;
@@ -1048,6 +1092,95 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
   );
 }
 
+// WhatsApp-style position/zoom step for the group photo — the upload used
+// to take the raw file and centre-crop it with no say over the framing
+// (Woody, 2026-08-29: "photo upload doesn't allow positioning in group
+// chats"). Drag pans, the slider zooms, Save uploads exactly the circle.
+function GroupPicCropper({ file, onCancel, onSave, onFallback }: { file: File; onCancel: () => void; onSave: (blob: Blob) => void; onFallback: (file: File) => void }) {
+  const V = Math.min(300, typeof window !== "undefined" ? window.innerWidth - 64 : 300);
+  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [off, setOff] = useState({ x: 0, y: 0 });
+  const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const url = useMemo(() => URL.createObjectURL(file), [file]);
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  useEffect(() => {
+    clog("group-pic:cropper-open", { size: file.size });
+    const i = new window.Image(); // lucide's Image icon shadows the global
+    i.onload = () => {
+      clog("group-pic:decoded", { w: i.naturalWidth, h: i.naturalHeight });
+      const s = V / Math.min(i.naturalWidth, i.naturalHeight);
+      setImg(i);
+      setZoom(1);
+      setOff({ x: (V - i.naturalWidth * s) / 2, y: (V - i.naturalHeight * s) / 2 });
+    };
+    // Some formats (HEIC on older webviews) won't decode in the browser —
+    // don't die silently: hand the original file back for a direct upload.
+    i.onerror = () => { clog("group-pic:decode-error"); onFallback(file); };
+    i.src = url;
+    const t = setTimeout(() => { if (!i.complete || !i.naturalWidth) onFallback(file); }, 8000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, V]);
+  if (!img) {
+    return (
+      <div className="fixed inset-0 z-[200] bg-black/90 flex flex-col items-center justify-center gap-4 p-6" data-testid="group-pic-cropper">
+        <p className="text-white text-sm">Loading photo…</p>
+        <Button variant="outline" className="h-11 px-6 rounded-xl bg-transparent text-white border-white/40" onClick={onCancel}>Cancel</Button>
+      </div>
+    );
+  }
+  const s0 = V / Math.min(img.naturalWidth, img.naturalHeight);
+  const s = s0 * zoom;
+  const clamp = (o: { x: number; y: number }, sc: number) => ({
+    x: Math.min(0, Math.max(V - img.naturalWidth * sc, o.x)),
+    y: Math.min(0, Math.max(V - img.naturalHeight * sc, o.y)),
+  });
+  const startDrag = (cx: number, cy: number) => { drag.current = { x: cx, y: cy, ox: off.x, oy: off.y }; };
+  const moveDrag = (cx: number, cy: number) => {
+    if (!drag.current) return;
+    setOff(clamp({ x: drag.current.ox + cx - drag.current.x, y: drag.current.oy + cy - drag.current.y }, s));
+  };
+  const setZoomKeepCentre = (z: number) => {
+    const sNew = s0 * z;
+    const cx = (V / 2 - off.x) / s;
+    const cy = (V / 2 - off.y) / s;
+    setZoom(z);
+    setOff(clamp({ x: V / 2 - cx * sNew, y: V / 2 - cy * sNew }, sNew));
+  };
+  const save = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return onCancel();
+    ctx.drawImage(img, -off.x / s, -off.y / s, V / s, V / s, 0, 0, 512, 512);
+    canvas.toBlob(b => { if (b) onSave(b); }, "image/jpeg", 0.9);
+  };
+  return (
+    <div className="fixed inset-0 z-[200] bg-black/90 flex flex-col items-center justify-center gap-5 p-6" data-testid="group-pic-cropper">
+      <p className="text-white text-sm font-medium">Drag to position · slide to zoom</p>
+      <div
+        className="rounded-full overflow-hidden relative touch-none select-none ring-2 ring-white/40 shrink-0"
+        style={{ width: V, height: V }}
+        onTouchStart={e => startDrag(e.touches[0].clientX, e.touches[0].clientY)}
+        onTouchMove={e => moveDrag(e.touches[0].clientX, e.touches[0].clientY)}
+        onTouchEnd={() => { drag.current = null; }}
+        onMouseDown={e => { e.preventDefault(); startDrag(e.clientX, e.clientY); }}
+        onMouseMove={e => { if (e.buttons === 1) moveDrag(e.clientX, e.clientY); }}
+        onMouseUp={() => { drag.current = null; }}
+      >
+        <img src={url} alt="" draggable={false}
+          style={{ position: "absolute", left: off.x, top: off.y, width: img.naturalWidth * s, height: img.naturalHeight * s, maxWidth: "none" }} />
+      </div>
+      <input type="range" min={1} max={3} step={0.01} value={zoom} onChange={e => setZoomKeepCentre(Number(e.target.value))} className="w-64" data-testid="group-pic-zoom" />
+      <div className="flex gap-3">
+        <Button variant="outline" className="h-11 px-6 rounded-xl bg-transparent text-white border-white/40 hover:bg-white/10" onClick={onCancel} data-testid="group-pic-cancel">Cancel</Button>
+        <Button className="h-11 px-6 rounded-xl bg-white text-black hover:bg-white/90" onClick={save} data-testid="group-pic-save">Save</Button>
+      </div>
+    </div>
+  );
+}
+
 function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
   thread: ThreadData;
   currentUser: UserType | null;
@@ -1293,6 +1426,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   // WhatsApp-style Media/Links/Docs sheet for the open conversation.
   const [showThreadMedia, setShowThreadMedia] = useState(false);
   const [showLinkMenu, setShowLinkMenu] = useState(false);
+  const [linkMenuPos, setLinkMenuPos] = useState({ left: 8, bottom: 96 });
   const [showLinkSearch, setShowLinkSearch] = useState<"property" | "deal" | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -2258,7 +2392,37 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const threadTitle = isDm ? dmName : (activeThread?.title || activeThread?.linkedName || (isActiveThreadAi ? "ChatBGP" : "Chat"));
   const headerInitials = isDm && dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
   const isGroup = !isActiveThreadAi && !isDm;
-  const groupPicFileRef = useRef<HTMLInputElement>(null);
+  const [pendingGroupPic, setPendingGroupPic] = useState<File | null>(null);
+  const pendingGroupPicRef = useRef(false);
+  useEffect(() => { pendingGroupPicRef.current = !!pendingGroupPic; }, [pendingGroupPic]);
+  useEffect(() => {
+    if (!isGroup) return;
+    // Keep checking the stash until the cropper is actually up — a picked
+    // photo must survive this view being rebuilt while backgrounded.
+    const check = () => {
+      const f = stashedGroupPic;
+      if (f && !pendingGroupPicRef.current) {
+        clog("group-pic:consume", { size: f.size });
+        setPendingGroupPic(f);
+      }
+    };
+    groupPicPoke = check;
+    check();
+    document.addEventListener("visibilitychange", check);
+    const id = setInterval(check, 1500);
+    return () => {
+      if (groupPicPoke === check) groupPicPoke = null;
+      document.removeEventListener("visibilitychange", check);
+      clearInterval(id);
+    };
+  }, [isGroup]);
+  useEffect(() => {
+    // Holds off the auto-update reload (index.html) while the cropper is up.
+    if (pendingGroupPic) {
+      (window as any).__bgpBusy = true;
+      return () => { (window as any).__bgpBusy = false; };
+    }
+  }, [pendingGroupPic]);
   // NOTE: the "Search the web" photo chooser (ImageSourceSheet + the
   // /api/image-search + *-from-url endpoints) is PARKED — Google kept
   // refusing the project Custom Search access despite the API, key and
@@ -2267,6 +2431,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
 
   const handleGroupPicUpload = async (file: File) => {
     if (!threadId) return;
+    clog("group-pic:upload-start", { size: file.size });
+    (window as any).__bgpBusy = true;
     const formData = new FormData();
     formData.append("file", file);
     try {
@@ -2279,9 +2445,15 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       if (res.ok) {
         queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
         queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+      } else {
+        const j = await res.json().catch(() => ({} as any));
+        toast({ title: "Photo didn't upload", description: j?.message || `Server said ${res.status}`, variant: "destructive" });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("[handleGroupPicUpload] Failed:", err);
+      toast({ title: "Photo didn't upload", description: err?.message || "Network error", variant: "destructive" });
+    } finally {
+      (window as any).__bgpBusy = false;
     }
   };
 
@@ -2308,7 +2480,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     }
     if (activeThread?.groupPicUrl) {
       return (
-        <button type="button" className="relative" onClick={() => groupPicFileRef.current?.click()} data-testid="button-group-pic">
+        <button type="button" className="relative" onClick={(e) => { e.stopPropagation(); e.preventDefault(); openGroupPicPicker(); }} data-testid="button-group-pic">
           <img src={activeThread.groupPicUrl} alt="" className="w-10 h-10 rounded-full object-cover" />
           <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white/90 flex items-center justify-center">
             <Camera className="w-2.5 h-2.5 text-black" />
@@ -2317,7 +2489,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       );
     }
     return (
-      <button type="button" className="relative" onClick={() => groupPicFileRef.current?.click()} data-testid="button-group-pic">
+      <button type="button" className="relative" onClick={(e) => { e.stopPropagation(); e.preventDefault(); openGroupPicPicker(); }} data-testid="button-group-pic">
         <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
           <Users className="w-5 h-5" />
         </div>
@@ -2330,12 +2502,22 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
 
   if (showGroupEdit && activeThread && allUsers) {
     return (
-      <MobileGroupEdit
-        thread={activeThread}
-        currentUser={currentUser}
-        allUsers={allUsers}
-        onBack={() => setShowGroupEdit(false)}
-      />
+      <>
+        {pendingGroupPic && (
+          <GroupPicCropper
+            file={pendingGroupPic}
+            onCancel={() => { stashedGroupPic = null; setPendingGroupPic(null); }}
+            onSave={(blob) => { stashedGroupPic = null; setPendingGroupPic(null); handleGroupPicUpload(new File([blob], "group.jpg", { type: "image/jpeg" })); }}
+            onFallback={(f) => { stashedGroupPic = null; setPendingGroupPic(null); toast({ title: "Couldn't preview that photo", description: "Uploading it as-is instead." }); handleGroupPicUpload(f); }}
+          />
+        )}
+        <MobileGroupEdit
+          thread={activeThread}
+          currentUser={currentUser}
+          allUsers={allUsers}
+          onBack={() => setShowGroupEdit(false)}
+        />
+      </>
     );
   }
 
@@ -2353,7 +2535,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             : undefined
       }
     >
-      <input type="file" accept="image/*" className="hidden" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
+      {pendingGroupPic && (
+        <GroupPicCropper
+          file={pendingGroupPic}
+          onCancel={() => { stashedGroupPic = null; setPendingGroupPic(null); }}
+          onSave={(blob) => { stashedGroupPic = null; setPendingGroupPic(null); handleGroupPicUpload(new File([blob], "group.jpg", { type: "image/jpeg" })); }}
+          onFallback={(f) => { stashedGroupPic = null; setPendingGroupPic(null); toast({ title: "Couldn't preview that photo", description: "Uploading it as-is instead." }); handleGroupPicUpload(f); }}
+        />
+      )}
       {isActiveThreadAi && <MobileBottomNav />}
       {isActiveThreadAi ? (
         <div className="bg-white text-foreground pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2.5 px-4 shrink-0 border-b border-border">
@@ -2875,9 +3064,16 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                   }}
                 />
               </div>
-              <div className="relative shrink-0">
+              <div className="shrink-0">
                 <button
-                  onClick={() => setShowLinkMenu(prev => !prev)}
+                  onClick={(e) => {
+                    // Menu must be fixed-positioned: the composer box is
+                    // overflow-hidden, which silently clipped an absolute
+                    // dropdown to nothing (Woody, 2026-08-29).
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setLinkMenuPos({ left: Math.max(8, r.left), bottom: window.innerHeight - r.top + 8 });
+                    setShowLinkMenu(prev => !prev);
+                  }}
                   className="p-2.5 text-muted-foreground/70 active:text-muted-foreground cursor-pointer"
                   data-testid="button-mobile-attach"
                   style={{ minWidth: 36, minHeight: 36 }}
@@ -2887,7 +3083,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 {showLinkMenu && (
                   <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowLinkMenu(false)} />
-                  <div className="absolute bottom-12 left-0 bg-white rounded-xl shadow-lg border border-border py-1 w-52 z-50">
+                  <div className="fixed bg-white rounded-xl shadow-lg border border-border py-1 w-52 z-50" style={{ left: linkMenuPos.left, bottom: linkMenuPos.bottom }} data-testid="mobile-attach-menu">
                     <button
                       onClick={() => { setShowLinkSearch("property"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
                       className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-muted active:bg-muted"

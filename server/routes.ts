@@ -73,7 +73,9 @@ if (!fs.existsSync(PROFILE_PICS_DIR)) {
 
 const profilePicUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  // 15MB: a full-res iPhone photo is routinely >5MB and the old cap made
+  // group-photo uploads fail (silently, client-side) — Woody, 2026-08-29.
+  limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (![".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"].includes(ext)) {
@@ -1719,6 +1721,14 @@ export async function registerRoutes(
       console.error("[seed-team]", err);
       res.status(500).json({ message: err?.message || "Failed to seed team" });
     }
+  });
+
+  // Client-side breadcrumbs (group-photo picker debugging on phones) — the
+  // phone posts a tag per step so the flow is visible in the server log.
+  app.post("/api/client-log", requireAuth, (req, res) => {
+    const userId = req.session.userId || (req as any).tokenUserId;
+    console.log("[client-log]", userId, JSON.stringify(req.body).slice(0, 500));
+    res.json({ ok: true });
   });
 
   app.post("/api/heartbeat", requireAuth, async (req, res) => {

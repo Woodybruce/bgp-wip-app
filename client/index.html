@@ -83,12 +83,39 @@
         });
 
         // Apply a waiting build straight away (Woody, 2026-08-29: "Why are
-        // we doing update? Just do it"). skipWaiting promotes the new SW;
-        // controllerchange (above) then reloads into the fresh build.
+        // we doing update? Just do it") — but never while the app is
+        // backgrounded (e.g. behind the OS photo picker: reloading there
+        // wipes the in-flight file selection) or mid-interaction
+        // (window.__bgpBusy, set by the app while a cropper/upload is
+        // live). Deferred updates apply a few seconds after it's safe.
+        var updatePending = false;
+        function safeToApply() {
+          return document.visibilityState === 'visible' && !window.__bgpBusy;
+        }
+        function tryApplyUpdate() {
+          if (!updatePending) return;
+          if (safeToApply()) {
+            updatePending = false;
+            window.__bgpApplyUpdate();
+          } else {
+            setTimeout(tryApplyUpdate, 3000);
+          }
+        }
         function announceUpdate() {
           window.__bgpUpdateReady = true;
-          window.__bgpApplyUpdate();
+          updatePending = true;
+          if (safeToApply()) {
+            tryApplyUpdate();
+          } else {
+            setTimeout(tryApplyUpdate, 3000);
+          }
         }
+        document.addEventListener('visibilitychange', function() {
+          // Returning from the picker fires this before the file input's
+          // change event lands — wait 3s so the app can open the cropper
+          // (which sets __bgpBusy) before we consider reloading.
+          if (document.visibilityState === 'visible') setTimeout(tryApplyUpdate, 3000);
+        });
 
         // Called by the in-app "Update now" button. Promotes the waiting SW;
         // controllerchange (above) then reloads into the fresh build.
