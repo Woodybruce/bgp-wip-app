@@ -663,6 +663,11 @@ export function registerXeroFinancialRoutes(app: Express): void {
       let payload: any;
       try {
         payload = await buildFinancialsShared(req.query.refresh === "1");
+        // Concurrent first loads share ONE payload object from the in-flight
+        // build; the mutations below (paid panel + delete paidInvoices) must
+        // not corrupt it for the other caller — the loser used to cache an
+        // empty Income-FYTD paid panel for 15 min.
+        if (payload) payload = { ...payload };
       } catch (e: any) {
         const msg = String(e?.message || "");
         // Anything that smells like an auth/consent problem — old token

@@ -14,7 +14,7 @@
 
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
-import { requireAdmin } from "./auth";
+import { requireEquityOrAdmin } from "./auth";
 
 // USD per million tokens. Matched by substring so dated variants map too.
 const RATE_CARD: Array<{ match: RegExp; in: number; out: number; cacheRead: number; cacheWrite: number }> = [
@@ -212,7 +212,7 @@ async function buildCosts(): Promise<any> {
 }
 
 export function registerApiUsageRoutes(app: Express): void {
-  app.get("/api/app-costs", requireAdmin, async (req: Request, res: Response) => {
+  app.get("/api/app-costs", requireEquityOrAdmin, async (req: Request, res: Response) => {
     try {
       if (cache && Date.now() - cache.at < CACHE_TTL_MS && req.query.refresh !== "1") {
         return res.json(cache.payload);
