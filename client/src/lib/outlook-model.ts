@@ -89,6 +89,16 @@ const EXCLUDE_RE = /^vat$|transfer|corporation tax/i;
 const PAYROLL_RE = /wages|salar|commission|bonus|pension|paye|p11d|psa|\bnic\b|directors/i;
 const COMMISSION_RE = /commission/i;
 
+// Shared with the cashflow board so its grouped input rows bucket lines
+// exactly the way the outlook's cost dropdowns do.
+export function costBucketFor(label: string): "excluded" | "commission" | "payroll" | "basic" {
+  const l = label.trim();
+  if (EXCLUDE_RE.test(l)) return "excluded";
+  if (COMMISSION_RE.test(l)) return "commission";
+  if (PAYROLL_RE.test(l)) return "payroll";
+  return "basic";
+}
+
 function fyWindow(now = new Date()): { start: number; months: string[]; label: string } {
   const y = now.getUTCMonth() >= 4 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
   const months: string[] = [];
@@ -135,10 +145,10 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
 
   // Typed plan buckets (payments lines are stored negative — flip to cost).
   const legacyLine = model.receipts.find(l => l.key === "LEGACY") || null;
-  const planLines = model.payments.filter(l => !EXCLUDE_RE.test(l.label.trim()));
-  const commissionLines = planLines.filter(l => COMMISSION_RE.test(l.label));
-  const payrollLines = planLines.filter(l => PAYROLL_RE.test(l.label) && !COMMISSION_RE.test(l.label));
-  const basicLines = planLines.filter(l => !PAYROLL_RE.test(l.label));
+  const planLines = model.payments.filter(l => costBucketFor(l.label) !== "excluded");
+  const commissionLines = planLines.filter(l => costBucketFor(l.label) === "commission");
+  const payrollLines = planLines.filter(l => costBucketFor(l.label) === "payroll");
+  const basicLines = planLines.filter(l => costBucketFor(l.label) === "basic");
   const lineVal = (lineId: string, m: string) => {
     const v = model.get(lineId, m, "actual") ?? model.get(lineId, m, "budget");
     return v === undefined ? undefined : Math.abs(v);

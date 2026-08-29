@@ -22,6 +22,8 @@ import {
   CASHFLOW_MONTH_LABEL as ML, fmtCashflow as fmt,
 } from "@/lib/cashflow-model";
 import { useToast } from "@/hooks/use-toast";
+import { costBucketFor } from "@/lib/outlook-model";
+import { DisclosureRow } from "@/components/company-outlook";
 import { Banknote, ChevronDown, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine,
@@ -73,6 +75,20 @@ export function CashflowBoardSection() {
   const model = useMemo(() => (data ? buildCashflowModel(data) : null), [data]);
   const unified = useMemo(() => (data && model ? buildUnifiedForecast(data, model) : null), [data, model]);
   const legacyLine = model?.receipts.find(l => l.key === "LEGACY") || null;
+
+  // Phone input groups — the same buckets as the outlook's cost dropdowns,
+  // so the plan reads in the same anatomy everywhere.
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const mobileGroups = useMemo(() => {
+    if (!model) return [];
+    return ([
+      { id: "basic", title: "Basic company costs", sub: "Rent, rates, suppliers — everything that isn't people" },
+      { id: "payroll", title: "Salaries & payroll", sub: "Wages, pensions, PAYE/NI, directors" },
+      { id: "commission", title: "Commissions", sub: "Commission & bonus payments" },
+      { id: "excluded", title: "VAT, tax & transfers", sub: "Pass-through lines — outside the outlook's cost totals" },
+    ] as const).map(d => ({ ...d, lines: model.payments.filter(l => costBucketFor(l.label) === d.id) }))
+      .filter(g => g.lines.length > 0);
+  }, [model]);
 
   const chartData = useMemo(() => {
     if (!unified) return [];
@@ -215,25 +231,47 @@ export function CashflowBoardSection() {
 
         {!inputsCollapsed && (
         <>
-        <div className="md:hidden space-y-3" data-testid="cf-mobile-inputs">
-          <div className="border rounded-lg divide-y">
-            <div className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-              <span>Costs · {ML(mobileMonth)}</span><span className="text-right">Budget</span><span className="text-right">Actual</span>
-            </div>
-            {(legacyLine ? [legacyLine, ...model.payments] : model.payments).map(l => (
-              <div key={l.id} className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 px-3 py-1.5 text-xs" data-testid={`cf-m-line-${l.key}`}>
-                <span className="truncate" title={l.label}>{l.key === "LEGACY" ? "Legacy receivables" : <><span className="text-muted-foreground mr-1">{l.key}</span>{l.label}</>}</span>
-                {(["budget", "actual"] as const).map(basis => {
-                  const v = model.get(l.id, mobileMonth, basis);
-                  return (
-                    <button key={basis} type="button" className={`text-right font-mono tabular-nums px-1 py-0.5 rounded active:bg-muted ${v !== undefined && v < 0 ? "text-red-700 dark:text-red-400" : ""}`} onClick={() => startEdit(l.id, mobileMonth, basis, v)}>
-                      {isEditing(l.id, mobileMonth, basis) ? editInput : (fmt(v) || <span className="text-muted-foreground/50">·</span>)}
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
+        {/* Phone: the plan lines in the outlook's dropdown anatomy (Woody,
+            2026-08-29: "use the first design for the forecasting"), grouped
+            by the same buckets so the two surfaces read as one. Empty cells
+            show a dot because Wendy's workbook cell is empty — actuals-only
+            months and quarterly items are blank in her sheet too. */}
+        <div className="md:hidden space-y-2" data-testid="cf-mobile-inputs">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground px-1">Cost plan · {ML(mobileMonth)} · tap a figure to edit</p>
+          {(legacyLine ? [{ id: "legacy", title: "Legacy receivables", sub: "Pre-Xero Sage invoices still to collect", lines: [legacyLine] }, ...mobileGroups] : mobileGroups).map(g => {
+            const total = g.lines.reduce((s, l) => s + (model.get(l.id, mobileMonth, "actual") ?? model.get(l.id, mobileMonth, "budget") ?? 0), 0);
+            return (
+              <DisclosureRow
+                key={g.id}
+                id={`cf-${g.id}`}
+                title={g.title}
+                sub={g.sub}
+                headline={fmt(total)}
+                negative={total < 0}
+                open={openGroup === g.id}
+                onToggle={() => setOpenGroup(o => (o === g.id ? null : g.id))}
+              >
+                <div className="space-y-0.5">
+                  <div className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <span /><span className="text-right">Budget</span><span className="text-right">Actual</span>
+                  </div>
+                  {g.lines.map(l => (
+                    <div key={l.id} className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 py-0.5 text-xs" data-testid={`cf-m-line-${l.key}`}>
+                      <span className="truncate" title={l.label}>{l.key === "LEGACY" ? "Legacy receivables" : l.label}</span>
+                      {(["budget", "actual"] as const).map(basis => {
+                        const v = model.get(l.id, mobileMonth, basis);
+                        return (
+                          <button key={basis} type="button" className={`text-right font-mono tabular-nums px-1 py-0.5 rounded active:bg-muted ${v !== undefined && v < 0 ? "text-red-700 dark:text-red-400" : ""}`} onClick={() => startEdit(l.id, mobileMonth, basis, v)}>
+                            {isEditing(l.id, mobileMonth, basis) ? editInput : (fmt(v) || <span className="text-muted-foreground/50">·</span>)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </DisclosureRow>
+            );
+          })}
         </div>
 
         {/* Desktop grid */}
