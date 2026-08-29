@@ -1887,13 +1887,20 @@ export const CLIENT_BLOCKED_TOOLS = new Set([
   // 2. Raw DB / codebase / destructive / firm-wide
   "sql_query", "sql_write", "add_database_column", "describe_schema",
   "delete_record", "wipe_crm_deals", "bulk_update_crm", "merge_properties",
-  "scan_duplicates", "find_duplicate_properties", "delete_document_template",
+  "scan_duplicates", "find_duplicate_properties",
+  // House templates are firm-shared state — create/update were open while
+  // only delete was blocked, letting a client session rewrite BGP's templates.
+  "delete_document_template", "create_document_template", "update_document_template",
   "run_shell_command", "restart_application", "git_diff", "git_status",
   "grep_codebase", "read_source_file", "edit_source_file", "list_project_files",
   "list_chatbgp_branches", "merge_chatbgp_branch", "revert_chatbgp_commit",
   "trigger_archivist_crawl", "run_brand_enrichment_backfill", "import_wip_excel",
   // 3. BGP money + internal memory
-  "query_wip", "query_xero", "search_knowledge_base", "save_learning",
+  // get_aged_receivables is BGP's own Xero sales ledger (who owes the firm
+  // fees) — same category as query_wip/query_xero. query_turnover reads the
+  // whole turnover table unscoped, i.e. any landlord's tenant turnover.
+  "query_wip", "query_xero", "get_aged_receivables", "query_turnover",
+  "search_knowledge_base", "save_learning",
   "search_chat_history", "manage_chat_members",
 ]);
 

@@ -16,6 +16,15 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+118. 2026-08-29 · Landsec client / ChatBGP (QA r426, code review — no browser
+    this round) · "ask ChatBGP how my F&B tenants at Bluewater are trading" ·
+    query_turnover was reachable from client chat but read the WHOLE turnover
+    table (any landlord's schemes), so r426 blocked it for clients along with
+    the other money tools — meaning a client now gets no turnover answer at
+    all from chat · Suggest: a portfolio-scoped turnover path for client
+    ChatBGP (filter to the caller's own properties, same slice as their Comps
+    board), so the legit "how are MY tenants trading" ask works again.
+
 117. 2026-08-29 · BGP staff / desktop 1440px (QA r422) · "message a colleague
     from the desktop chat panel" · Picking one person in New Message shows a
     button labelled "Create Group (1 member)" — the user is starting a 1:1,

@@ -2512,6 +2512,25 @@ async function markRound(page, cross) {
     if (r.dupes !== 403) throw new Error(`client ran the CRM dedupe scan (expected 403, got ${r.dupes})`);
   });
 
+  // The four firm-wide link-dump GETs (bare uuid relationship maps across the
+  // whole CRM) are centrally blocked for clients in index.ts
+  // CLIENT_BLOCKED_SUBPATHS — lock that gate in (r426, closes r425's deferral).
+  await step(page, p, 'client-link-dumps-403', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const get = async (url) => (await fetch(url, { credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        companyDeal: await get('/api/crm/company-deal-links'),
+        contactProperty: await get('/api/crm/contact-property-links'),
+        contactDeal: await get('/api/crm/contact-deal-links'),
+        contactRequirement: await get('/api/crm/contact-requirement-links'),
+      };
+    });
+    for (const [k, v] of Object.entries(r)) {
+      if (v !== 403) throw new Error(`client read ${k} link dump (expected 403, got ${v})`);
+    }
+  });
+
   // Clients may regenerate BGP Commentary on their OWN properties (terminal
   // side, 2026-08-03 — Mark hit a read-only 403 on Liverpool ONE), but a
   // foreign property must still refuse. Locally the own-property call gets
