@@ -1048,7 +1048,7 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
 // to take the raw file and centre-crop it with no say over the framing
 // (Woody, 2026-08-29: "photo upload doesn't allow positioning in group
 // chats"). Drag pans, the slider zooms, Save uploads exactly the circle.
-function GroupPicCropper({ file, onCancel, onSave }: { file: File; onCancel: () => void; onSave: (blob: Blob) => void }) {
+function GroupPicCropper({ file, onCancel, onSave, onFallback }: { file: File; onCancel: () => void; onSave: (blob: Blob) => void; onFallback: (file: File) => void }) {
   const V = Math.min(300, typeof window !== "undefined" ? window.innerWidth - 64 : 300);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -1064,9 +1064,22 @@ function GroupPicCropper({ file, onCancel, onSave }: { file: File; onCancel: () 
       setZoom(1);
       setOff({ x: (V - i.naturalWidth * s) / 2, y: (V - i.naturalHeight * s) / 2 });
     };
+    // Some formats (HEIC on older webviews) won't decode in the browser —
+    // don't die silently: hand the original file back for a direct upload.
+    i.onerror = () => onFallback(file);
     i.src = url;
+    const t = setTimeout(() => { if (!i.complete || !i.naturalWidth) onFallback(file); }, 8000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, V]);
-  if (!img) return null;
+  if (!img) {
+    return (
+      <div className="fixed inset-0 z-[200] bg-black/90 flex flex-col items-center justify-center gap-4 p-6" data-testid="group-pic-cropper">
+        <p className="text-white text-sm">Loading photo…</p>
+        <Button variant="outline" className="h-11 px-6 rounded-xl bg-transparent text-white border-white/40" onClick={onCancel}>Cancel</Button>
+      </div>
+    );
+  }
   const s0 = V / Math.min(img.naturalWidth, img.naturalHeight);
   const s = s0 * zoom;
   const clamp = (o: { x: number; y: number }, sc: number) => ({
@@ -2433,6 +2446,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           file={pendingGroupPic}
           onCancel={() => setPendingGroupPic(null)}
           onSave={(blob) => { setPendingGroupPic(null); handleGroupPicUpload(new File([blob], "group.jpg", { type: "image/jpeg" })); }}
+          onFallback={(f) => { setPendingGroupPic(null); toast({ title: "Couldn't preview that photo", description: "Uploading it as-is instead." }); handleGroupPicUpload(f); }}
         />
       )}
       <input type="file" accept="image/*" className="hidden" data-testid="input-group-pic" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) setPendingGroupPic(f); e.target.value = ""; }} />
