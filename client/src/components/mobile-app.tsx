@@ -1024,8 +1024,17 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
       </div>
 
       <div className="p-4 border-t pb-[calc(1rem+env(safe-area-inset-bottom))] shrink-0">
-        <Button className="w-full h-12 text-base font-semibold bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800 rounded-xl" disabled={selectedIds.size === 0} onClick={() => onCreate(groupName || "Group Chat", Array.from(selectedIds))} data-testid="button-mobile-create-group">
-          Create Group ({selectedIds.size})
+        <Button className="w-full h-12 text-base font-semibold bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800 rounded-xl" disabled={selectedIds.size === 0} onClick={() => {
+          // One person and no typed name = a one-to-one, so title it with
+          // their name — not "Group Chat" (Woody, 2026-08-29).
+          const ids = Array.from(selectedIds);
+          let title = groupName.trim();
+          if (!title && ids.length === 1) {
+            title = ids[0] === "__chatbgp__" ? "ChatBGP" : (allUsers.find(u => u.id === ids[0])?.name || "Chat");
+          }
+          onCreate(title || "Group Chat", ids);
+        }} data-testid="button-mobile-create-group">
+          {selectedIds.size === 1 ? "Start Chat" : `Create Group (${selectedIds.size})`}
         </Button>
       </div>
     </div>
