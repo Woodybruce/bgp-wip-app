@@ -204,7 +204,7 @@ export default function MobileHome() {
   // Equity directors (Woody, Jack, Rupert, Charlotte) get the company
   // finance tile — server-gated API, so the query only runs for them.
   const isEquity = isEquityUser(user) && !isClientHome;
-  const { data: equityFin } = useQuery<any>({
+  const { data: equityFin, isFetched: equityFinFetched } = useQuery<any>({
     queryKey: ["/api/xero/financials"],
     enabled: isEquity,
     staleTime: 5 * 60 * 1000,
@@ -244,7 +244,7 @@ export default function MobileHome() {
   };
   const { data: alerts = [] } = useQuery<Alert[]>({ queryKey: ["/api/daily-digest"] });
   const { data: tasks = [] } = useQuery<Task[]>({ queryKey: ["/api/tasks"] });
-  const { data: commission } = useQuery<Commission>({
+  const { data: commission, isFetched: commissionFetched } = useQuery<Commission>({
     queryKey: [`/api/hr/staff/${user?.id}/commission`],
     queryFn: () => apiRequest("GET", `/api/hr/staff/${user?.id}/commission`).then(r => r.json()),
     enabled: !!user?.id && !isClientHome,
@@ -379,6 +379,17 @@ export default function MobileHome() {
           combined into one board with tabs (Woody, 2026-08-22). Non-equity
           staff only ever see Personal; the tabs appear when both apply. */}
       {(() => {
+        // Wait for BOTH feeds before rendering, so the tile appears once,
+        // fully formed — previously it flashed up as untabbed "Equity
+        // finance" and then re-rendered with the Personal/Company tabs when
+        // the commission figures landed a beat later (Woody, 2026-08-29:
+        // "says equity finance, it's a glitch, then returns to personal
+        // and company").
+        const commissionSettled = isClientHome || !user?.id || commissionFetched;
+        const equitySettled = !isEquity || equityFinFetched;
+        if (!commissionSettled || !equitySettled) {
+          return <div className="rounded-2xl bg-[hsl(var(--mobile-chrome))] h-[104px] animate-pulse" data-testid="mobile-home-finance-loading" />;
+        }
         const equityOk = isEquity && equityFin && !equityFin.notConnected && !equityFin.needsReconnect;
         if (!commission && !equityOk) return null;
         const showTabs = !!commission && equityOk;
