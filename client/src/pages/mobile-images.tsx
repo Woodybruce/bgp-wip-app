@@ -403,10 +403,13 @@ export default function MobileImages() {
       await apiRequest("DELETE", `/api/image-studio/collections/${openFolderId}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      // Drop the deleted folder's detail query outright — a prefix
+      // invalidation would refetch it while still enabled and 404.
+      setOpenFolderId(null);
+      queryClient.removeQueries({ queryKey: ["/api/image-studio/collections", openFolderId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"], exact: true });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/filed-image-ids"] });
       toast({ title: "Folder deleted", description: "The photos themselves are still in your library." });
-      setOpenFolderId(null);
     },
     onError: (e: any) => toast({ title: "Couldn't delete folder", description: e?.message, variant: "destructive" }),
   });

@@ -13,7 +13,7 @@
 //   LR_BG_ENV = "test" | "live"
 //   LR_BG_USERNAME / LR_BG_PASSWORD (Business Gateway portal account)
 import https from "https";
-import { randomUUID } from "crypto";
+import { randomUUID, createPrivateKey, createPublicKey, createHash, X509Certificate } from "crypto";
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
@@ -300,7 +300,6 @@ export async function persistOfficialCopy(opts: {
 type PairAudit = { key?: string; cert?: string; certCn?: string; certExpiry?: string; match?: boolean; error?: string };
 function auditPair(keyB64?: string, certB64?: string): PairAudit {
   const out: PairAudit = {};
-  const { createPrivateKey, createPublicKey, createHash, X509Certificate } = require("crypto") as typeof import("crypto");
   try {
     const keyPem = decode(keyB64);
     if (keyPem) {
@@ -345,7 +344,6 @@ export async function bgGenerateCsr(): Promise<{ csr: string; keyPubSha256: stri
     { name: "commonName", value: "Bruce Gillingham Pollard Limited [226225]" },
   ]);
   csr.sign(key, forge.md.sha256.create());
-  const { createHash } = require("crypto") as typeof import("crypto");
   const keyPub = createHash("sha256").update(Buffer.from(forge.asn1.toDer(forge.pki.publicKeyToAsn1(csr.publicKey)).getBytes(), "binary")).digest("hex");
   return { csr: forge.pki.certificationRequestToPem(csr), keyPubSha256: keyPub };
 }

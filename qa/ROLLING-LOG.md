@@ -39,6 +39,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - 503 GET /api/brand/:id/ai-take/* — keyless AI-take panels on company
   profiles fire these on load; UI shows "AI take unavailable" (r269)
 - ERR_CONNECTION_RESET on google.com/s2/favicons — no external network
+- 503 GET /api/os/sites?bbox=… on /property-intelligence — keyless OS
+  (Ordnance Survey) locally; map panel degrades, no user-facing error (r391)
+- 503 GET /api/property/:id/brand-gaps/international + /commentary — same
+  keyless-AI family as the listed brand-gaps/live-intel 503 (r391)
 - 404 GET /api/client/sharepoint/root — fixture has no SharePoint folder
   linked; handler returns a clean "ask your BGP team" 404, files panel
   degrades (r375)
@@ -75,6 +79,987 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   the full sweep; run-smoke.sh stays the quick authoritative regression.
 
 ## Rounds
+
+### r416 · 2026-08-29 ~07:15 UTC · FULL (rotation #2 client desktop 1440px)
+- Watchdog-spawned session; r415 stalled and pushed nothing, so r414 (LIGHT)
+  was the previous round → FULL this round.
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 416 via run-round.sh: exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400, 2×503). 0 raw 500/502/504 in dev-server
+  log; full 4xx/503 endpoint tally triaged — all noise-list (keyless
+  ai-briefing/ai-take/chatbgp/brand-gaps/OS 503s, hr-photo/sharepoint 404s,
+  M365 401s) or intentional rival-isolation/gate probes. 0 app bugs.
+- Journey (Mark @1440px, UI form login): "scope a new operator for a vacant
+  unit — browse the directory, self-add a non-slice brand, review its
+  profile, then check lettings progress and who to chase": login → Portfolio
+  dashboard (KPIs, tracker tile, tasks render) → Brand Intelligence →
+  Add-brand dialog → Testco Fashion (fixture ships it pre-added): Remove →
+  Add back → Added badge + name-becomes-link (UX #27 holds) + toast →
+  profile (renders, Compliance & KYC visible to client, no staff
+  Delete/Merge actions) → Letting Tracker (KPI row, 78 units) → deal detail
+  (parties, BGP contact Victoria Broadhead = the "who to chase" answer,
+  client files jail message intact). 15/15 checks, 0 pageerrors, 0 non-noise
+  4xx/5xx. NOT bugs: client sees Add unit / edit / delete on the tracker and
+  Edit on deal detail — intended parity ("client does as much as the agent",
+  Woody 2026-07; writes scope-checked server-side per CLIENT_ALLOWED_WRITES).
+  Journey net-zero on data: Testco Fashion re-added (fixture state verified
+  restored); two-bot's 2 QA probe deals match purge patterns for next round.
+- Bugs fixed: 0 (nothing broken found — regression + journey both clean).
+  Deferred: none. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: none. Harness
+  growth: none needed — client add-brand add/remove already covered API-side
+  (client-add-brand-from-directory, client-add-brand-remove-ui).
+- New flakes: none. Setup: pg_hba trust (r205) needed again on this fresh
+  container; bgp role created superuser so no ownership transfer needed.
+- Next: r416 was FULL → r417 may be LIGHT; then rotation #3 client mobile
+  390px. Real-device check of keyboard-up composer (r405) still open for
+  Woody.
+
+### r414 · 2026-08-29 ~00:45 UTC · LIGHT (r413 had the journey)
+- Watchdog-spawned session. JOGQK NOT merged into staging per parent note.
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 414 via run-round.sh: exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400, 2×503). 0 raw 500/502/504 in dev-server
+  log; full 4xx/503 endpoint tally triaged — all noise-list (keyless
+  ai-briefing/ai-take/chatbgp/brand-gaps/OS 503s, hr-photo/sharepoint 404s,
+  M365 401s) or intentional probes (403 rival-isolation, cashflow/unlock
+  404 = retired-endpoint PASS probe, bulk-op/gate 400s). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none. This round's QA-R414
+  leftovers (2 deals, 1 viewing, 1 offer, 2 threads) all match the purge
+  patterns — next round's run-round.sh sweeps them.
+- Note: this round's heartbeat commit footer carries a nonstandard
+  Co-Authored-By (session tooling default); final commit uses the repo
+  standard. No force-push per standing rule.
+- Setup: pg_hba trust (r205) needed again on this fresh container; bgp
+  role created superuser so no ownership transfer needed.
+- Next: r414 was LIGHT → r415 FULL rotation #2 client desktop 1440px.
+  Real-device check of keyboard-up composer (r405) still open for Woody.
+
+### r413 · 2026-08-28 ~23:30 UTC · FULL (rotation #1 staff desktop 1440px)
+- Watchdog-spawned session. JOGQK NOT merged into staging per parent note
+  (Company outlook on Finance, page dedupe, shared Xero pull, collapsible
+  cashflow board all on JOGQK — parent merges on Woody's say-so).
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 413 via run-round.sh: exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400 rocketreach/tracker-gate-probe, 2×503
+  keyless AI brand-gaps/commentary-regen). 0 raw 500/502/504 in dev-server
+  log; full 4xx/503 endpoint tally triaged — all noise-list (keyless
+  ai-briefing/ai-take/chatbgp/brand-gaps/OS 503s, hr-photo/sharepoint 404s,
+  M365 401s) or intentional rival-isolation/gate probes (403s, bulk-op
+  400s). 0 app bugs from regression.
+- Journey (Victoria @1440px, UI form login): "a Bluewater unit needs
+  pushing — log yesterday's viewing with the brand, record their offer,
+  check the targeting brief; then as Mark see the progress client-side":
+  login → /available → search MSU9 → Viewings dialog (date defaults today,
+  UX2 holds; CrmPicker company select works; outcome badge on card; toast)
+  → Offers dialog (rent/term/comments save, Pending badge) → Targeting
+  Brief dialog renders → Mark @1440 /deals/letting → same unit found via
+  search → client SEES the staff-logged Starbucks viewing (attendees +
+  outcome) and offer — staff-creates → client-sees parity holds in the UI.
+  14/14 checks, 0 pageerrors, only login-screen 401 echoes (listed noise).
+  Journey rows cleaned by SQL (offer company was a real brand name, outside
+  the QA-% purge patterns — future journeys: prefer QA-OFFER-% names or
+  self-clean).
+- Bugs fixed: 0 (nothing broken found — regression + journey both clean).
+  Deferred: none. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: UX #116
+  (viewing with outcome "Offer Expected" → offer means re-entering the
+  same company/contact/date in a second dialog; add a pre-filled "Record
+  offer" shortcut). Harness growth: none — UI dialog flow is journey-only;
+  API-level viewing/offer create/edit/delete + client parity already
+  covered (client-viewings-offers, rival-viewing-offer-patch-guard).
+- New flakes: none. Setup: pg_hba trust (r205) needed again on this fresh
+  container; bgp role created superuser so no ownership transfer needed.
+- Next: r413 was FULL → r414 LIGHT; then rotation #2 client desktop.
+  Real-device check of keyboard-up composer (r405) still open for Woody.
+
+### r412 · 2026-08-28 ~21:00 UTC · LIGHT (r411 had the journey)
+- Watchdog-spawned session. JOGQK NOT merged into staging per parent note.
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 412 via run-round.sh: exit 0, ALL scenarios ok — including first
+  full validation of r411's staff-mobile-chat-home-nav scenario ✓. 4 issues
+  = standing noise signature (2×400 rocketreach/gate-probe, 2×503 keyless
+  AI). 0 raw 500/502/504 in the round's dev-server log (one grep hit was
+  "500 articles" in a news-feed info line, not a status). Full 4xx/503
+  endpoint tally triaged — all noise-list (keyless ai-briefing/ai-take/
+  chatbgp/brand-gaps/OS 503s, sharepoint/hr-photo 404s, M365 401s) or
+  intentional rival-isolation/gate probes (403s, bulk-op 400s). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none. r411's leftover
+  QA-R411 fee-split deal swept by this round's purge as expected.
+- Setup: pg_hba trust (r205) needed again on this fresh container; bgp
+  role created superuser so no ownership transfer needed.
+- Next: r412 was LIGHT → r413 FULL rotation #1 staff desktop 1440px.
+  Real-device check of keyboard-up composer (r405) still open for Woody.
+
+### r411 · 2026-08-28 ~19:45 UTC · FULL (rotation #4 staff mobile 390px)
+- Per parent-session note: JOGQK NOT merged into staging (parent merges on
+  Woody's say-so).
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 411 via run-round.sh: exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400 rocketreach/investment-tracker gate
+  probe, 2×503 keyless AI brand-gaps/commentary-regen). 0 raw 500/502/504
+  in dev-server log; full 4xx/503 endpoint tally triaged — all noise-list
+  or intentional rival-isolation/gate probes. 0 app bugs from regression.
+- Journey (Victoria @390px iPhone UA, UI form login): "between viewings:
+  check my day, dig into a deal, scan tracker/mail/news": login → lands
+  on /chatbgp Messages list (deliberate: cold-open→ChatBGP 2026-08-18,
+  bare-open→list 2026-08-23; Mail tab removal + 4-tab nav = deliberate
+  2026-08-22, /mail excluded from mobile boards in mobile-home.tsx:280)
+  → Dashboard tab (greeting, billing KPIs, boards grid) → Deals board
+  (3 deals, stage chips) → deal detail (pill tabs, parties, fee split,
+  breadcrumb back; Deals tab lit) → Letting Tracker (81 units, chips wrap
+  clean) → /mail (Connect-M365 degradation clean) → News. No h-overflow
+  anywhere; 0 non-noise 4xx/5xx.
+- Bug fixed (1): /chatbgp cold-open rendered the Messages list with NO
+  bottom-nav tab lit (isActive only matched /messages; /home alias same
+  class of miss). mobile-bottom-nav.tsx now lights Messages on /chatbgp
+  and Dashboard on /home. Verified visually at 390px; tsc clean; rebuilt;
+  smoke re-GREEN 42/0.
+- Harness growth: staff-mobile-chat-home-nav scenario in two-bot-round.mjs
+  (real phone emulation → /chatbgp → asserts Messages lit, Dashboard not).
+  Assertions dry-run green against the dev server.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: none.
+  New flakes: none. Note: two-bot's staff-consultant-fee-split leaves its
+  QA-R411 deal on the board until the next round's purge — cosmetic only.
+- Next: r411 was FULL → r412 LIGHT; then rotation #1 staff desktop.
+  Real-device check of keyboard-up composer (r405) still open for Woody.
+
+### r410 · 2026-08-28 ~16:50 UTC · LIGHT (r409 had the journey)
+- Per parent-session note: JOGQK deliberately NOT merged into staging
+  (Company outlook panel, Finance dedupe, commission outlook, LEGACY Sage
+  fixes all landed on JOGQK today — parent merges on Woody's say-so).
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 410 via run-round.sh: exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400 rocketreach/gate-probe, 2×503 keyless
+  AI). 0 raw 500/502/504 in the round's dev-server log; full 4xx/503
+  endpoint tally triaged — all noise-list (keyless ai-briefing/ai-take/
+  brand-gaps/chatbgp/OS/land-registry 503s, sharepoint/hr-photo 404s) or
+  intentional gate probes (investment-tracker/bulk-assign/bogus-verdict
+  400s, cashflow/unlock dead-endpoint 404). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none. Setup: pg_hba
+  trust (r205) needed again on this fresh container; bgp role created
+  superuser so no ownership transfer needed.
+- Next: r410 was LIGHT → r411 FULL rotation #4 staff mobile 390px.
+  Real-device check of keyboard-up composer (r405) still open for Woody.
+
+### r409 · 2026-08-28 · FULL (rotation #3 Landsec client mobile 390px)
+- Per parent-session note: JOGQK deliberately NOT merged into staging this
+  round (it moved well ahead today — HMLR live, ex-VAT cashflow, etc.).
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 409 via run-round.sh: exit 0, ALL scenarios ok (incl.
+  client-portfolio-bgp-contact-names again). 4 issues = standing noise
+  signature (2×400 rocketreach/gate-probe, 2×503 keyless AI). 0 raw
+  500/502/504 in dev-server log; 4xx/503 endpoint tally all noise-list
+  or scope-guard probes. 0 app bugs from regression.
+- Journey (Mark Warne @390px iPhone UA, UI form login): "a colleague
+  mentioned a brand — find it, check covenant/compliance + key contact,
+  scan news, message BGP": login → "/" Portfolio home (greeting, tracker
+  KPI card, BGP team w/ photos+email, quick links incl. Brands) → /brands
+  Brand Intelligence (category tiles, 9 slice brands) → search "Gail" →
+  correct zero-hit (no Gail's in fixture; copy clunky → UX #115) → search
+  Starbucks → profile in 3 taps: Key Contacts (Tom Barista + email btn),
+  BGP Engagement, pill tabs all render; COMPLIANCE tab client-VISIBLE ✓
+  with parked downstream checks, staff-only actions absent (CH link is a
+  public external search — fine) → Add-brand self-add cycle exercised in
+  UI (Remove → Add → name becomes profile link → profile opens; fixture
+  self-add state restored afterwards) → /news brand signals clean →
+  /messages → ChatBGP thread, composer present. 0 pageerrors, 0
+  h-overflow on any surface, 0 non-noise 4xx/5xx.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: UX #115 (client brands-hub zero-hit copy
+  should point at Add brand / wider directory). New flakes: none.
+- Harness growth: none needed — add-brand cycle already covered
+  (client-add-brand-from-directory, client-add-brand-remove-ui).
+- Setup: pg_hba trust (r205) needed again on this fresh container; bgp
+  role created superuser so no ownership transfer needed. NOTE: r409's
+  heartbeat commit footer carries a model name by mistake — repo footer
+  is plain "Co-Authored-By: Claude"; kept for later commits.
+- Next: r409 was FULL → r410 LIGHT; then r411 FULL rotation #4 staff
+  mobile 390px. Real-device check of keyboard-up composer (r405) still
+  open for Woody.
+
+### r408 · 2026-08-28 · LIGHT (r407 had the journey)
+- JOGQK merge: already up to date (b301104 was the head on both). tsc
+  clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 408 via run-round.sh: exit 0, ALL scenarios ok — including
+  first full validation of r407's client-portfolio-bgp-contact-names
+  scenario ✓. 4 issues = standing noise signature (2×400, 2×503). 0 raw
+  500/502/504 in the round's dev-server log; full 4xx/503 endpoint tally
+  triaged — mass 403s all rival-client scope-guard probes, 503s all
+  keyless-AI/OS/M365 family, 404s = hr-photo/sharepoint noise +
+  delete-then-fetch probes + cashflow/unlock dead-endpoint assert, 400s =
+  rocketreach + intentional gate probes. 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none. Setup: pg_hba
+  trust (r205) + bgp ownership transfer (r249) needed again on this
+  fresh container.
+- Next: r408 was LIGHT → r409 FULL rotation #3 Landsec client mobile
+  390px. Real-device check of keyboard-up composer (r405) still open
+  for Woody.
+
+### r407 · 2026-08-28 · FULL (rotation #2 Landsec client desktop 1440px)
+- JOGQK: no new commits ahead of staging — merge no-op. Smoke GREEN 42/0
+  (FRESH_BUILD=1). Two-bot 407 (via run-round.sh): exit 0, ALL scenarios ok;
+  4 issues = standing noise signature (2×400, 2×503). 0 raw 500/502/504 in
+  dev-server log; 4xx/503 endpoint tally all noise-list or intentional
+  guard probes. Post-fix rebuild: smoke re-run GREEN 42/0.
+- Journey (Mark Warne @1440px, UI form login): "see how my Bluewater
+  lettings are progressing and find who at BGP to chase": dashboard KPIs +
+  Letting Tracker card → /properties (table clean, map tiles grey =
+  no-network noise) → Bluewater property page (news feed, risk register,
+  linked contacts, compliance panel correctly client-visible) → Letting
+  Tracker (78 units, status pills, client add/edit affordances are
+  intended per r263) → Deals board → deal detail #1003 shows "BGP contact:
+  Victoria Broadhead" = the chase answer, 3 clicks ✓ → tenancy schedule
+  section + Landsec account card. 0 pageerrors, 0 h-overflow, only
+  noise-list 4xx/5xx. Task verdict: journey succeeds; one dead-click
+  surface logged (UX #114).
+- BUG FIXED: client dashboard / Landsec account card "BGP Contacts" pills
+  rendered raw user UUIDs — /api/company-portfolio/:companyId sent
+  bgp_contact_user_ids through unresolved while the UI renders them as
+  names. Resolved ids → COALESCE(name, username, email) server-side (same
+  pattern as brand-profile.ts coverers). tsc clean; verified in browser
+  (pills now "Victoria Broadhead" / "Woody Bruce") + via curl as mark.
+- Harness growth: client-portfolio-bgp-contact-names in markRound (fetch
+  portfolio as client, assert no UUID-shaped bgpContacts). node --check
+  clean; API dry-run via curl green; first full two-bot validation next
+  round.
+- Bugs fixed: 1. Deferred: none new. Carried (data, staff decision):
+  Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+  Suggestions added: UX #114 (client /properties table rows are dead
+  except the name text). New flakes: none. Setup: pg_hba trust (r205) +
+  bgp ownership transfer (r249) needed again on this fresh container;
+  guest-login button needs a hydration-retry click in Playwright (added
+  to journey pattern, not a user-facing issue).
+- Next: r407 was FULL → r408 LIGHT; then r409 FULL rotation #3 Landsec
+  client mobile 390px. Real-device check of keyboard-up composer (r405)
+  still open.
+
+### r406 · 2026-08-28 · LIGHT (r405 had the journey)
+- JOGQK merge: already up to date (no new commits since r405's merge).
+- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore). Two-bot 406
+  via run-round.sh: exit 0, ALL scenarios ok; 4 logged issues = standing
+  noise signature (2×400, 2×503). 0 raw 500/502/504 in the round's server
+  log. Full endpoint tally triaged: 400s = rocketreach + intentional gate
+  probes (bogus-verdict, bulk-assign, investment-tracker); 503s all
+  keyless-AI/OS family; 404s = hr-photo/sharepoint noise + delete-then-
+  fetch probes; 403s all scope-guard probes. 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates. Suggestions added:
+  none. New flakes: none. Setup: pg_hba trust (r205) + bgp ownership
+  transfer (r249) needed again on this fresh container.
+- Next journey: rotation #2 Landsec client desktop (r406 was LIGHT →
+  r407 FULL).
+
+### r405 · 2026-08-28 · FULL (rotation #1 staff desktop 1440px + new mobile-chat code checks)
+- JOGQK merged into staging: 7 new commits (native chat copy, visual-viewport
+  chat shell, immutable hashed assets, logo.dev key panel + backfill, ChatBGP
+  medium effort). Merge clean, tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1).
+  Two-bot 405 (via run-round.sh): exit 0, ALL 34 scenarios ok; 4 issues =
+  standing noise signature (2×400, 2×503). 0 raw 500/502/504 in dev-server
+  log; 4xx/503 endpoint tally all noise-list or intentional gate probes.
+- New-code checks: hashed /assets serve Cache-Control public,
+  max-age=31536000, immutable on the prod build; index.html stays no-cache ✓.
+  logo.dev card renders on /subscriptions with API badge; sk_ admin panel
+  correctly hidden for non-admin Victoria ✓.
+- Journey (Victoria): desktop 1440px — dashboard, Deals/WIP report,
+  properties, subscriptions, all clean, no h-overflow; /chatbgp desktop
+  shows clean "Not Connected" keyless state. Mobile 390px chat — cold-open
+  lands on Messages, ChatBGP thread: composer visible above bottom nav from
+  first keystroke (keyboard-closed baseline; TRUE keyboard-up visual-viewport
+  shrink is NOT simulatable in Playwright emulation — af7c135's kbShellHeight
+  path needs a real-device check by Woody), own-bubble long-press → Copy/
+  Edit/Delete pill ✓, Edit persists ✓, Delete shows confirm sheet ✓, AI
+  bubbles are select-text with NO custom menu (native selection) ✓.
+- BUG FIXED: chat action pill only dismissed via its X (or acting on a
+  button) — outside taps left it floating indefinitely. Added native-style
+  outside-touch/mousedown dismissal (capture-phase listeners while open).
+  Verified in browser: opens, dismisses on outside tap, re-opens, Copy+toast
+  intact. tsc clean. (15ae0f7)
+- NOTE for future rounds: opening the pinned ChatBGP row starts a FRESH
+  conversation (old ones under History) — test messages don't persist
+  across visits; send fresh, then purge chat_messages 'QA r405%'-style.
+- Bugs fixed: 1 (pill outside-tap dismiss). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions added: none.
+- Harness growth: none — the fix is touch-gesture UI (synthetic TouchEvent
+  long-press); existing two-bot scenarios don't have a chat-thread touch
+  rig and building one isn't cheap. Manual verify scripts kept in round
+  scratchpad pattern (journey-r405/verify-dismiss/verify-edit).
+- New flakes: none. Setup notes: pg_hba trust fix (r205) + bgp role/table
+  ownership transfer (r249); QA chat residue purged.
+- Next: r405 was FULL → r406 LIGHT; then r407 FULL rotation #2 Landsec
+  client desktop. Real-device check of keyboard-up composer still open.
+
+### r404 · 2026-08-28 · LIGHT (r403 had the journey)
+- JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
+  GREEN 42/0 (FRESH_BUILD=1). Two-bot 404 (via run-round.sh): exit 0, ALL
+  34 scenarios ok. 4 issues = standing noise signature (2×400
+  rocketreach/probe, 2×503 keyless AI). 0 raw 500/502/504 in dev-server
+  log; full 400/404/503 endpoint tally checked — all on the noise list
+  (ai-briefing, ai-take, brand-gaps, os/sites, hr/photo,
+  client/sharepoint/root) or intentional guard probes (cashflow/unlock,
+  investment-tracker 400, deal-verdicts 400, bulk-assign-property 400).
+  0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none.
+- Setup notes: fresh container needed the pg_hba trust fix (r205).
+- Next: r404 was LIGHT → r405 FULL rotation #1 staff desktop 1440px.
+
+### r403 · 2026-08-28 · FULL (rotation #4 staff mobile 390px)
+- JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
+  GREEN 42/0 (FRESH_BUILD=1). Two-bot 403 (via run-round.sh): exit 0, ALL
+  scenarios ok. 4 issues = standing noise signature (2×400
+  rocketreach/probe, 2×503 keyless AI). 0 raw 500/502/504 in dev-server
+  log; 400/404/503 endpoint tallies all on the noise list or intentional
+  guard probes (cashflow/unlock 404 = dead-endpoint assert).
+- Journey (Victoria @390px iPhone UA, UI form login): "on the train:
+  triage my tasks, check today's diary, see who's hunting space, find a
+  landlord contact": cold-open lands on Messages (intended) → /tasks:
+  inline add (Enter) → "Task created", toggle → "Nice!" toast +
+  Completed(1) group, DONE filter shows it; AI briefing degrades to
+  Generate button (keyless, noise) → Dashboard: billing tiles + quick
+  links + boards clean → /calendar (URL only — see UX #113): day view +
+  UPCOMING + event bottom-sheet w/ attendees, all clean → /requirements:
+  card + Match dialog lists matching AVA units → /contacts (CRM): cards,
+  Open people → company profile; CONTACTS pill shows Key Contacts + BGP
+  Engagement incl. upcoming meeting. 0 pageerrors, 0 h-overflow anywhere,
+  only noise-list 4xx/5xx. Verdict: every surface behaved; only gap is
+  the calendar entry point (UX #113). NOTE (not a bug): CRM shows both
+  "Hammerson" and "Hammerson SubCo Ltd" persona-seed companies — first
+  Open-people click can land on the contact-less SubCo; data, not app.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2).
+- Harness growth: none this round (no new fixable surface; journey was
+  UI-timing/visual, existing scenarios already cover the APIs walked).
+- Suggestions added: UX-NOTES #113 (staff phone has no tap path to the
+  perfectly phone-ready /calendar — QUICK_LINKS lacks the Calendar tile
+  clients get).
+- New flakes: none. Setup notes: pg_hba trust fix (r205); journey QA task
+  deleted via API after; QA-CAL/QA-REQ-R403 rows are two-bot residue,
+  purged by next round's run-round.sh sweep as usual.
+- Next: r403 was FULL → r404 LIGHT; then r405 FULL rotation #1 staff
+  desktop 1440px.
+
+### r402 · 2026-08-28 · LIGHT (r401 had the journey)
+- JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
+  GREEN 42/0 (FRESH_BUILD=1). Two-bot 402 (via run-round.sh): exit 0, ALL
+  scenarios ok — client-brands-search-facets first full-round validation
+  PASSED (r401 goal met). 4 issues = standing noise signature (2×400
+  rocketreach/probe, 2×503 keyless AI); 0 raw 500/502/504 in dev-server
+  log; 400/503 endpoint tally checked, all on the noise list or
+  intentional guard probes. 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none.
+- Setup notes: fresh container needed the pg_hba trust fix (r205).
+- Next: r402 was LIGHT → r403 FULL rotation #4 staff mobile 390px.
+
+### r401 · 2026-08-27 · FULL (rotation #3 Landsec client mobile 390px)
+- JOGQK: no new commits (ff37b59 already in staging via 4c20bc4) — merge
+  no-op. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 401 (via
+  run-round.sh): exit 0, ALL scenarios ok — staff-historical-wip-gate
+  first full-round validation PASSED (r400 goal met). 4 issues = standing
+  noise signature (2×400 rocketreach/probe, 2×503 keyless AI). 0 raw
+  500/502/504 in dev-server log ("1×500" grep hit was news-feed log text).
+- Journey (Mark Warne @390px iPhone UA, UI form login): "a colleague says
+  Wagamama's lease is expiring — find their contact and check their
+  standing, then glance at news": login (Client/guest reveal) → "/"
+  Portfolio home (bottom nav Portfolio|Messages|Deals|Tasks|News) → Brands
+  quick link → Brand Intelligence hub (category chips + 9 cards clean) →
+  search "wagamama" → NO MATCH (tenant has no directory row; Add-brand
+  dialog also "No brands match." — dead end, UX-NOTES #111) → fallback
+  Starbucks profile → all 6 pill tabs walked (CHAT/CONTACTS/INTEL/STORES/
+  SOCIAL/COMPLIANCE): Key Contacts + BGP Engagement, stores map+list,
+  compliance panel visible w/ edit+rescrape correctly staff-gated
+  (bcIsClient), no staff-action leak → News tab clean. 0 pageerrors,
+  0 h-overflow anywhere, only noise-list 4xx/5xx. /api/brands/search
+  verified as mark: brand + contact facets return rows, no-match = clean
+  empty. Task verdict: fails on Wagamama purely for want of a directory
+  row; every surface behaved.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2).
+- Harness growth: client-brands-search-facets in markRound (data-driven:
+  profile name → search returns the brand; first contact's forename →
+  contact surfaced; nonsense query → empty facets not error). API sequence
+  dry-run verified via curl as mark; first full two-bot validation next
+  round. node --check clean.
+- Suggestions added: UX-NOTES #111 (client tenant-brand search dead end,
+  no path to request tracking), #112 (client compliance panel offers
+  "Search Companies House" link while copy says BGP is handling it).
+- New flakes: none. Setup notes: pg_hba trust fix needed (r205); mobile
+  brand cards are overlay anchors (a[aria-label=name]) — click those, not
+  the text; login "Sign in with Microsoft" button matches
+  has-text("Sign in") — use exact-name locator (its /api/auth/microsoft
+  500s keyless locally, noise).
+- Next: r401 was FULL → r402 LIGHT; then r403 FULL rotation #4 staff
+  mobile 390px. Validate client-brands-search-facets in the r402 two-bot.
+
+### r400 · 2026-08-27 · LIGHT (r399 had the journey) — JOGQK historical-billings merge + targeted checks
+- Merged JOGQK ff37b59 (Historical billings on Finance — static Sage
+  invoiced WIP FY2019-26 via /api/historical-wip, equity/admin only) into
+  staging (4c20bc4, clean). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1)
+  ×2 (post-merge and post-fix rebuild).
+- Two-bot 400 (via run-round.sh): exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400 rocketreach/probe, 2×503 keyless AI).
+  0 raw 500/502/504 in the round's server log (status tally clean).
+- Targeted checks on Historical billings (browser as woody @1440 + API):
+  dataset sound (5607 rows, 0 malformed, FY26 £5,191,872 / FY25 £4,919,519
+  match Woody's sheet); section renders under Cashflow forecast, KPI tiles
+  + FY bar chart + top-25 table per house style; lens pills (Team/Client/
+  Agent/Company) and FY pills switch correctly; Client search "land sec" →
+  Land Sec £982,221 vs £646,180 +52%; asset copied to dist by build.
+  victoria@ (staff non-equity): API 403, /finance redirects to her
+  dashboard, section never mounts, 0 historical-wip fetches, no console
+  storm. mark@ (client): gateway 403 "Not available for client accounts".
+- BUG FIXED (1, new surface): search text persisted invisibly across lens
+  switches — type "land sec" on Client, click Agent → "Nothing billed under
+  this lens… matching that search" with NO search box on screen (Team/Agent
+  don't render one); table looked broken/empty. historical-billings.tsx
+  lens pills now reset search. Verified visually: Agent shows 25 rows after
+  a Client search; Company search box returns empty. tsc clean, rebuilt,
+  smoke re-green.
+- Harness growth: staff-historical-wip-gate in woodyRound (equity 200 +
+  fys 2019-26 + known FY totals + 4 dims non-empty; victoria token-login
+  403). API sequence dry-run verified via curl; first full two-bot
+  validation lands next round.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+- Suggestions added: none. New flakes: none. Setup notes: fresh container
+  needed pg_hba trust fix (r205); Playwright in this container needs
+  --no-proxy-server or in-page fetch fails; vite dev /login reloads once
+  ~3s after load — settle before page.evaluate login.
+- Next: r400 was LIGHT → r401 FULL rotation #3 Landsec client mobile 390px.
+  Validate staff-historical-wip-gate in the r401 two-bot.
+
+### r399 · 2026-08-27 · FULL (rotation #2 Landsec client desktop 1440px)
+- JOGQK: no new commits ahead of staging — merge no-op. tsc clean. Smoke
+  GREEN 42/0 (FRESH_BUILD=1) ×2 (pre- and post-fix rebuild). Two-bot 399:
+  first run polluted by MY journey logins running concurrently → 7 bogus
+  429/flow-failure/harness-crash issues (rate limiter, listed noise);
+  clean re-run after app restart: exit 0, ALL scenarios ok, 4 issues =
+  standing noise signature (2×400 rocketreach/probe, 2×503 keyless AI).
+  0 raw 500/502/504 in dev-server log. OPERATOR LESSON: never run browser
+  journeys (fresh UI logins) while two-bot is mid-round — the shared login
+  rate limiter 429s the later personas (nick/sam harness-crash signature).
+- Journey (Mark Warne @1440): "which leases expire soon, how are my vacant
+  units progressing, who do I chase": dashboard EXPIRING (6M) KPI → popover
+  lists 8 expiring tenants w/ dates → tenant click → Tenancy Schedule
+  (search Wagamama → row w/ expiry 2026-09-28 matching popover; Excel/
+  Columns/status chips present; row click inert for clients — read-only,
+  fine) → Available chip → Letting Tracker pre-filtered AVA 75 → NEGOTIATING
+  chip → deal #1002 → deal page answers the chase ("BGP contact: Victoria
+  Broadhead"). 0 pageerrors, 0 h-overflow, only noise-list 4xx/5xx.
+- BUG FIXED 1 (visual, client brand): once the Landsec brand skin lands
+  (~5-30s after login, /api/client/brand-theme), the sidebar flips navy but
+  the black Landsec logo stayed BLACK → invisible for the whole session.
+  Cause: app-sidebar's darkSidebar re-measure effect depended on
+  [colorScheme, brand.logoUrl, brand.primaryColor] — the fetched theme
+  echoes the hardcoded fallback exactly (logoUrl null, #00263A), so no dep
+  changed and the last re-measure timer (2.5s) fired before the skin landed.
+  Fix: depend on the brand OBJECT (new identity when theme resolves).
+  Verified visually: white logo silhouette on navy after flip; staff branch
+  untouched (no logoBox there). tsc clean, rebuilt, smoke re-green.
+- Harness growth: none — brand-theme endpoint already asserted in two-bot;
+  the bug was client-side CSS/measure timing, not fetchable.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+- Suggestions: UX-NOTES #110 (expiring-leases popover tenant click lands on
+  unfiltered tenancy schedule — no prefill/highlight, user re-types name).
+- New flakes: none (the 429 cascade is the standing rate-limiter noise).
+- Next: r399 was FULL → r400 LIGHT; then r401 FULL rotation #3 Landsec
+  client mobile 390px.
+
+### r398 · 2026-08-27 · LIGHT (r397 had the journey)
+- Merged JOGQK ccd1cce (consultant share off the top — BGP House 15% applies
+  to the remainder; fee-split pickers sorted alphabetically) into staging.
+  Clean merge, tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge.
+- Two-bot 398 (via run-round.sh): exit 0, ALL scenarios ok — including
+  staff-consultant-fee-split first full-round validation (r397 goal met).
+  4 issues = standing noise signature (2×400 rocketreach/scenario-probe,
+  2×503 keyless AI). 0 raw 500/502/504 across the whole round's server log;
+  every 400/503 tallied to listed noise or intentional guard probes.
+- Harness maintenance: staff-consultant-fee-split now PUTs the post-ccd1cce
+  off-the-top maths (Victoria 76.5 / Consultant 10 / BGP House 13.5, was
+  75/10/15). Dry-run verified as woody: rows persist (Consultant name-only,
+  agentUserId null, house flag kept), agent-summary WIP £10,000.
+- NOTE (feeds UX-NOTES #109, no new note added): the same dry-run as
+  VICTORIA returns no Consultant row from /api/wip/agent-summary while the
+  save itself succeeds — non-admin team scoping again; scenario runs as
+  woody so the harness is unaffected.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none.
+- Next: r398 was LIGHT → r399 FULL rotation #2 Landsec client desktop.
+
+### r397 · 2026-08-27 · FULL (rotation #1 staff desktop 1440px)
+- Merged JOGQK 8b51c2e (Consultant option in every fee-split picker) into
+  staging; clean merge, tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1)
+  post-merge. Two-bot 397 (via run-round.sh): exit 0, all scenarios ok incl.
+  staff-lrbg-status-client-order-guard (r396 addition validated) and
+  rival-brand-profile-scoped; 4 issues = standing noise signature (2×400
+  rocketreach/tracker-invalid, 2×503 keyless AI).
+- OPERATOR LESSON: first two-bot run was launched bare (node
+  qa/two-bot-round.mjs) without run-round.sh's seed-personas.sql step →
+  3 bogus flow-failures (turnover Honi row missing, search can't find Honi,
+  rival brand profile over-scoped). That triple is the missing-seed
+  signature, not an app bug — always run bash qa/run-round.sh N.
+- Journey (Victoria @1440 + Woody for the summary): "morning WIP pass —
+  open the deals board, open the Broadgate deal, split the fee with the new
+  Consultant option, check the maths, then check the Agent Summary":
+  /deals hub → WIP table → deal detail → Fee Allocation Edit → Consultant
+  present in picker → Victoria 75 / Consultant 10 / BGP House 15 (Agents
+  85/85 balanced, green) → save toast → card shows Consultant £25,000 →
+  Woody /wip-report Agent Summary shows Consultant £25,000 WIP / 10%,
+  agent_user_id stays null (never staff commission). 14/14 checks,
+  0 pageerrors, 0 non-noise 4xx/5xx. Deal restored via SQL (allocations
+  deleted, internal_agent NULLed — PUT [] is rejected by design).
+- Bugs fixed: 0 — nothing broken found (merge + journey surfaces sound).
+- Harness growth: staff-consultant-fee-split in woodyRound (probe deal →
+  PUT split with Consultant → name-only row asserted (agentUserId null,
+  BGP House flag kept) → agent-summary shows the slice → delete cascades).
+  Dry-run verified against the dev server; first full two-bot validation
+  lands in r398.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2) — merge via
+  /duplicate-units tooling.
+- Suggestions: UX-NOTES #108 (a saved fee split can't be cleared — BGP House
+  locked + 100% rule + API rejects empty), #109 (non-admin WIP table vs
+  empty Agent Summary tab disagree on team scoping — may be fixture team
+  strings, flagged not fixed).
+- New flakes: none (the missing-seed triple documented above).
+- Next: r397 was FULL → r398 LIGHT; then r399 FULL rotation #2 Landsec
+  client desktop. Validate staff-consultant-fee-split in the r398 two-bot.
+
+### r396 · 2026-08-27 · LIGHT (r395 was FULL) — JOGQK ex-VAT/BG-live merge + targeted checks
+- Merged JOGQK (cashflow ex-VAT 7c4adb0 + LEGACY 219,670 seed + HMLR
+  manual-row OC button + BG cert-pair audit) into staging, clean merge,
+  tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge. Two-bot 396:
+  exit 0, all scenarios ok (incl. staff-cashflow-board on the ex-VAT data —
+  no hardcoded amounts, held without edits); 4 issues = standing noise
+  signature (2×400 rocketreach/tracker-invalid, 2×503 keyless AI). 0 raw
+  500/502/504 in dev-server log.
+- BUG FIXED 1: server/business-gateway.ts used require("crypto") in ESM —
+  boot cert-fingerprint diag threw "require is not defined" under tsx dev
+  AND GET /api/lr-bg/status 500'd in dev (prod cjs bundle unaffected —
+  esbuild provides require). Static crypto imports now; verified status
+  200 + fingerprints and boot logs "[lr-bg] pairs — test:{} live:{}".
+- Targeted check 1 (cashflow ex-VAT, woody @1440 /finance): board copy
+  "All figures ex VAT" + £219,670 legacy note render; LEGACY row shows
+  219,670 (not 263,604) in Nov 26; API cell 2026-11 budget = 219670
+  (re-base fired on the fixture's old gross seed). 6/6, 0 pageerrors.
+- Targeted check 2 (HMLR OC button, victoria @1440): LR address search →
+  keyless degrade → manual title box → "Official Copy (HMLR)" button
+  appears; confirm dialog carries title + £7 fee copy; CANCEL sends
+  nothing; ACCEPT posts once and keyless failure surfaces as polite
+  destructive toast ("Business Gateway certificate not configured"), no
+  crash. 7/7. NO real orders attempted (no certs locally, per parent note).
+  Client gate probed direct: mark POST /api/lr-bg/official-copy 403,
+  GET status 403 (gateway blocks /api/lr-bg — paid endpoint safe).
+- Harness growth: staff-lrbg-status-client-order-guard in woodyRound
+  (staff status 200 + fingerprints audit present — regression on the
+  require bug; client token order POST 403). Added after the 396 sweep
+  started — dry-run verified via the direct API probes above; first full
+  two-bot validation lands in r397.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2) — merge via
+  /duplicate-units tooling.
+- Suggestions: none. New flakes: none.
+- Next: r396 was LIGHT → r397 FULL, rotation #1 staff desktop 1440px.
+  Validate staff-lrbg-status-client-order-guard in the r397 two-bot run.
+
+### r395 · 2026-08-27 · FULL (rotation #4 staff mobile 390px)
+- Merged JOGQK cashflow v3 + Business Gateway live-cert into staging (clean
+  merge, tsc clean). /cashflow now redirects to /finance; password gate GONE
+  (equity/admin gate is the lock); workbook receipts retired, LEGACY
+  receivables line added. BG cert change is server-env only (boot log shows
+  "[lr-bg] env=test … Certificate not configured" locally — expected, add
+  to mental noise).
+- Two-bot scenario updated per parent note: staff-cashflow-unlock →
+  staff-cashflow-board (equity 200 direct, LEGACY line present, retired
+  receipt keys 1/2/3/4a/4c/5 absent, unlock endpoint dead, cell roundtrip
+  on LEGACY, victoria token 403 via credentials:'omit' login).
+  /api/cashflow 401 removed from IGNORED_RESPONSES — it's a real signal now.
+- Smoke GREEN 42/0 (FRESH_BUILD=1) ×2 (post-merge + post-fix). Two-bot 395:
+  exit 0, all 54 scenarios ok incl. staff-cashflow-board; 4 issues =
+  standing noise signature (2×400 rocketreach/tracker-invalid, 2×503
+  keyless AI). 0 raw 500/502/504 in dev-server log.
+- Journey: Victoria @390 iPhone — "on site with my phone: file my unit
+  photos into a folder, then look up a property title and glance at the
+  intelligence map": /m/images seeded 2 phone uploads → Select → both →
+  Add to folder → New folder → create → tile appears → open folder →
+  remove one → delete folder → tap opens full-screen viewer. PI: tab pills
+  clean at 390, Land Registry address search renders + degrades cleanly
+  keyless, no h-overflow anywhere. Woody /finance @390: cashflow v3 board
+  renders DIRECTLY (no password/locked card), forecast tiles + chart
+  render, no h-overflow. 17/17 checks, 0 pageerrors. All r385 staff-mobile
+  pointers now closed.
+- BUG FIXED 1 (minor, both image surfaces): deleting a folder/collection
+  404-storms — deleteFolder/deleteCollection onSuccess prefix-invalidated
+  ["/api/image-studio/collections"], which refetched the still-enabled
+  detail query for the just-deleted id → GET /collections/:id 404 (console
+  noise + QA false positive). Fix: setOpenFolderId/ViewingCollectionId null
+  first, removeQueries the detail key, invalidate the list with exact:true
+  (mobile-images.tsx + image-studio.tsx). Verified: journey re-run 17/17
+  with 0 non-noise 4xx.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2) — merge via
+  /duplicate-units tooling.
+- Suggestions: UX-NOTES #107 (finance phone stat tiles wrap "£" alone above
+  the bracketed negative). #106 marked OBSOLETE (its /cashflow double
+  header page no longer exists — v3 redirect verified).
+- New flakes: journey nav to /m/images can land on /messages when the
+  mobile shell's root redirect races page.goto — verify page.url() after
+  goto and retry (visit() pattern extended in my journey script).
+- Next: r395 was FULL → r396 LIGHT; then r397 FULL rotation #1 staff
+  desktop. Cashflow v3 surfaces all verified; nothing left pointed.
+
+### r394 · 2026-08-27 · LIGHT (r393 was FULL) — JOGQK cashflow/UX-batch merge + targeted checks
+- Merged JOGQK into staging per parent note (6e869fae UX batch I,
+  51ac9588+4c1490f6 Cashflow board). Two conflicts resolved: voa-ratings
+  detail sheet (kept aria-describedby fix + took JOGQK's sm:max-w-2xl cap —
+  this also closes UX-NOTES #103), UX-NOTES numbering (kept staging 97-105).
+  tsc clean post-merge.
+- Smoke GREEN 42/0 (FRESH_BUILD=1) post-merge. Two-bot 394: exit 0, all
+  scenarios ok; 5 issues = 4 listed noise + 1 NEW: woody /finance →
+  GET /api/cashflow 401. Triaged as intended (the new password gate;
+  Finance's forecast section shows a clean locked card) → added to the
+  harness noise list with staff-cashflow-unlock as the authoritative check.
+- Targeted check 1 (cashflow board, woody @1440): locked card → wrong-pw
+  error → BGPPAY unlocks; grid renders; cell edit 123,456 saves and the
+  closing-balance chain recomputes (+123,456), restore clean; add/remove
+  receipt line roundtrip; 11/11, 0 pageerrors. API gate matrix: victoria
+  (non-equity) 403 on GET + unlock; woody keyless 401; wrong unlock 401.
+- Targeted check 2 (cashflow @390 iPhone UA): mobile shell, month pager
+  defaults to current month (Aug 26), prev/next page correctly, phone cell
+  edit input works, 0 horizontal overflow, 0 pageerrors. NOTE: device
+  emulation needs a real mobile UA — viewport 390 + hasTouch with a Linux
+  desktop UA correctly stays on the desktop shell (use-mobile.tsx UA check),
+  not a bug.
+- Targeted check 3 (/m/images photo viewer, victoria @390): seeded 2
+  phone-upload photos via /api/image-studio/upload (field name "images");
+  tap capture → full-screen viewer (counter 1/2, black canvas, Edit with
+  AI + Share actions), swipe advances 1/2→2/2, Edit-with-AI closes viewer
+  into the edit sheet; 9/9, 0 pageerrors. Seed rows deleted after.
+- Bugs fixed: 0 (nothing broken found — merge + new surfaces all sound).
+- Harness growth: staff-cashflow-unlock scenario (locked 401 →
+  wrong-pw 401 → unlock → GET lines/months → cell PATCH roundtrip landed +
+  restored), /api/cashflow 401 added to IGNORED_RESPONSES; validated in
+  two-bot 395.
+- Deferred (carried from r393, still needs staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2) — merge via the
+  /duplicate-units tooling rather than auto-pick.
+- Suggestions: UX-NOTES #106 (phone /cashflow double header — shell top bar
+  + page h1 both say "Cashflow").
+- Next: r394 was LIGHT → r395 FULL, rotation #4 staff mobile 390px (point
+  at the surfaces listed at end of r385).
+
+### r393 · 2026-08-27 · FULL (rotation #3 Landsec client mobile 390px)
+- Merged JOGQK (a38f270 hdog non-admin) into staging per parent note; merge
+  clean. hdog check PASSED both ways: fresh boot creates hdog non-admin +
+  login works, AND the one-off demote verified live (set is_admin=true,
+  rebooted, "[one-off hdog]" log fired, row back to false).
+- Smoke GREEN 42/0 twice (FRESH_BUILD=1; second run includes today's
+  fixes). Two-bot 394: exit 0, all scenarios ok, 4 issues all listed noise
+  (2×400 rocketreach/tracker-invalid; 2×503 keyless AI). tsc clean.
+- Journey: Mark Warne @ 390px iPhone — "review my Bluewater tenancy
+  schedule: who's in a unit, when does the lease expire, what's vacant":
+  home → /properties (map+list clean) → Bluewater → Boards → Tenancy
+  Schedule → search "Wagamama" → card shows unit SVU04, tenant, Occupied,
+  Start 29 Sept 2011 / Exp 28 Sept 2026. Task achievable in sensible steps;
+  CRM tile detour (brand directory, not properties) was my miss, not a trap.
+- BUG FIXED 1 (data-integrity, staff+client): orphaned mirror projections —
+  old tenancy re-imports deleted spine rows without unlinking, leaving
+  available_units/leasing_schedule_units rows pointing at dead tenancy ids;
+  every re-import then duplicated boards (U062 ×8; fixture: 75/156 tracker +
+  156/327 leasing rows were orphans). Client portfolio said "153 Available"
+  vs real 76; risk register "150 units vacant". Fix: [orphan-projection
+  heal] boot sweep in server/index.ts — deletes dangling rows that are bare
+  duplicates of a surviving linked same-name row and carry no
+  viewings/offers/interest/deals/strategy/targets; anything else just gets
+  tenancy_unit_id NULLed so name-link adoption re-adopts it. Verified:
+  heal log 75+156 removed, counts now 76 Available everywhere, smoke green.
+- BUG FIXED 2 (client dead affordances): tenancy schedule board rendered
+  the full edit UI to clients — Add unit, per-row status dropdowns, row
+  deletes, inline cell edits, brand picker — all 403 server-side (verified).
+  readOnly prop was never passed by either call site. Fix: canEdit =
+  !readOnly && !isClientViewer in PropertyTenancySchedule gates every edit
+  affordance (mobile cards + desktop UnitRow, which now has a read-only
+  cell renderer: static status chip, tenant company link kept, plain text
+  cells). Covenant badge back to staff-only (its endpoint 403s clients).
+  Verified client mobile + desktop (0 edit controls, 200 rows render) and
+  staff intact (Add/Import/398 status controls).
+- Harness growth: two-bot scenario client-tenancy-edit-controls-hidden
+  (Add/status-selects/deletes/Import absent on client full board).
+- Deferred (data, needs staff decision): Bluewater tenancy SPINE has true
+  duplicate rows (U062 ×4, L090 ×2, L130 ×2 — 201 rows/195 distinct) from a
+  double-processing import on 03 Aug; projections mirror them 1:1 (correct
+  linkage). The /duplicate-units + merge-tenancy-units tooling exists —
+  flag to Woody/staff to merge rather than auto-pick a survivor.
+- Suggestions: UX-NOTES #104 (client property Overview card is a wall of
+  "—" placeholders), #105 (Plans viewer on touch: 100% zoom + "wheel to
+  zoom" hint, no pinch/fit-to-screen).
+- Env note: QA-PLAN-GATE plan (two-bot upload) lingers on the client plans
+  panel between rounds — purged at next round START by run-round.sh; it was
+  the giant red block in my journey screenshots, not an app bug.
+- New flakes: pkill/pgrep -f self-match kills the QA shell (exit 144) —
+  split the pattern ("serv""er/index") when killing the dev server.
+- Next journey: r393 was FULL → r394 LIGHT; then r395 FULL rotation #4
+  staff mobile 390px (point it at the surfaces listed at end of r385).
+
+### r392 · 2026-08-27 · LIGHT (r391 was FULL) + both still-open pointers closed
+- Fresh container: pg_hba trust fix + bgp role + fixture restore needed
+  (r205 pattern). JOGQK already merged (ancestor check clean at 5f5ad5f).
+- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 393: exit 0, all scenarios ok
+  (incl. r391's fixed verdict flow + hdog omit-credentials + property-put
+  guard), 4 issues all listed noise (2×400 rocketreach + tracker-invalid
+  probe; 2×503 keyless AI live-intel + commentary regen). 0 raw 500/502/504
+  in dev-server log.
+- Targeted check 1 (closes r385/r388 pointer): staff SharePoint toolbar via
+  the r388 status/files mock pattern, 1440px — New folder (prompt → POST
+  {driveId,name}, "Folder created" toast, folder appears first in list),
+  prompt-cancel sends nothing; delete (confirm → DELETE {driveId,itemId},
+  recycle-bin toast, row gone), confirm-cancel sends nothing; 11/11 checks,
+  0 pageerrors, screenshots clean. Server routes re-read: 401 keyless / 400
+  validation / 409 conflict mapping all sound.
+- Targeted check 2 (closes r385 pointer): Business Rates entry detail —
+  seeded 3 voa_ratings rows (sqlite absent → postgres fallback path),
+  /property-intelligence?tab=business-rates as victoria: rows render, detail
+  sheet opens with address/RV/BA/UARN + "Full valuation on VOA" link
+  carrying the uarn, RV-less entry shows the amber removed/altered notice.
+  6/6 checks, 0 pageerrors. Seed rows deleted after.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions:
+  UX-NOTES #102 (SharePoint New folder/delete use native prompt/confirm,
+  off-brand + no inline 409 feedback), #103 (Business Rates detail sheet is
+  full-width at 1440px — label/value ~1,350px apart).
+- New flakes: none. Harness growth: none (both checks are mocked/seeded
+  visual flows, not cheap two-bot API probes).
+- Next journey: r392 was LIGHT → r393 FULL, rotation #3 client mobile 390px
+  (then #4 staff mobile). No still-open pointers remain.
+
+### r391 · 2026-08-27 · FULL (rotation #2 Landsec client desktop 1440px)
+- JOGQK already merged (ancestor check clean, no new commits). Fresh
+  container: pg_hba trust fix + bgp superuser role + fixture restore needed.
+- Smoke GREEN 42/0 (FRESH_BUILD=1) ×2 (before and after fixes). Two-bot 391:
+  exit 0, 5 issues — 4 listed noise (2×400 rocketreach + tracker-invalid
+  probe; 2×503 keyless AI), 1 flow-failure staff-deal-verdict-flow "overdue
+  deal missing from pending". 0 raw 500/502/504 in dev-server log.
+- Harness bug fixed (the flow-failure — NOT an app bug): r390's new
+  staff-hdog-commission-zero scenario logs in as hdog via page fetch with
+  default credentials → response Set-Cookie swaps the page SESSION to hdog;
+  server auth prefers session over Bearer everywhere (auth.ts
+  `req.session.userId || req.tokenUserId`), so the later verdict scenario's
+  credentials:'include' pending fetch ran AS hdog → victoria's probe deal
+  correctly absent. First full round with the hdog scenario in-flow, hence
+  new. Fix: hdog login fetch credentials:'omit' (Set-Cookie never stored).
+  Verified in isolation: session stays victoria after hdog login, verdict
+  flow green end-to-end. (Same footgun admin-password-reset already works
+  around by re-logging-in; omit is the cleaner pattern for future scenarios.)
+- Journey: Mark Warne desktop 1440px — "start of week: any tenant news, my
+  tasks, a brand profile incl. compliance, who to chase, my property":
+  dashboard (KPIs, tracker widget, quick-add task) → /news (23 Starbucks/
+  tenant headlines, clean) → /tasks → Brand Intelligence overview (Who's
+  Hot) → Starbucks profile (KYC panel visible with checks parked + NO staff
+  action buttons = 2026-08-01 decision holds; Key Contacts shows Tom
+  Barista + email affordance) → /contacts → Deals → Properties tab (2
+  properties, map + table; property NAME is the link, row itself inert) →
+  Bluewater property page (news feed, risk register, Linked Contacts
+  answers "who to chase", tenancy sections). 0 pageerrors, no h-overflow,
+  only noise-list 4xx/5xx.
+- App bug fixed (1): client property page's Compliance & KYC card showed
+  "+ Set billing entity" (and the remove-X once set) to CLIENT viewers —
+  /api/crm/properties is not in the client write allowlist so the PUT can
+  only 403 (dead affordance; API-verified 403). property-detail.tsx
+  PropertyComplianceBoardWrapper now hides the billing-entity row for
+  client viewers (fail-closed while /api/auth/me loads); staff unchanged.
+  Verified visually both roles; tsc clean, rebuilt, smoke re-green.
+- Harness growth: client-property-put-guard in two-bot (client PUT own
+  property billingEntityId → 403; negative-probe listed).
+- In-flow verification run 392: exit 0, verdict flow GREEN (session fix
+  holds) and client-property-put-guard green, but the omit fix exposed a
+  knock-on in the SAME hdog scenario: its commission fetch sent hdog's
+  Bearer + victoria's session cookie (default same-origin credentials);
+  session wins, so admin-or-self 403'd. Pre-fix it only passed because the
+  session had been wrongly swapped to hdog. Fixed: commission fetch also
+  credentials:'omit'. Verified in isolation (exact scenario logic vs dev:
+  session stays victoria, hdog all-zero, victoria keeps tierBreakdown/
+  scenarios shape). Lesson for future scenarios: a Bearer-only probe for a
+  DIFFERENT user than the page session must omit credentials on every
+  fetch, or the session user wins server-side.
+- Deferred: none. Suggestions: UX-NOTES #101 (client property quick-add
+  task placeholder says "e.g. Pizza Express HOTs to legal" — staff jargon).
+- New noise listed: /api/os/sites 503 on /property-intelligence (keyless
+  OS); brand-gaps/international + /commentary 503s (keyless-AI family).
+- New flakes: none. Next journey: r391 was FULL → r392 LIGHT; then r393
+  FULL rotation #3 client mobile 390px. Still-open pointer: SharePoint
+  toolbar/New folder/delete via the r388 status/files mock pattern.
+
+### r390 · 2026-08-26 · LIGHT (r389 was FULL) + targeted check on new JOGQK surface
+- Merged JOGQK c6c7f5a (hdog commission always-zero) into staging per parent
+  note. Merge clean (hr-routes.ts only).
+- Smoke GREEN 42/0 (FRESH_BUILD=1 on merged code). Two-bot 390: exit 0, all
+  34 scenarios ok, 4 issues all listed noise (2×400 rocketreach +
+  tracker-invalid probe; 2×503 keyless AI live-intel + commentary regen).
+  0 raw 500/502/504 in dev-server log (one grep hit = news-feed "500
+  articles" line again).
+- Targeted check (per parent): commission endpoint as hdog → billedPence 0,
+  billingsByYear [], wipTotal 0, topDeals/awaitingPayment empty, xeroError
+  null. Browser: hdog's HR "Your profile" card shows COMMISSION £0 billed /
+  £0 WIP / forecast £0; Victoria's Commission tab renders the full tracker
+  (tiles, tier table, scenarios) — endpoint keeps its 200 shape for regular
+  staff. Note: staff→other-staff commission is admin-or-self only (403),
+  so the check must run AS hdog; hdog fixture login is hdog/hdog (boot-seed
+  server/index.ts ~5484), NOT the standard fixture password.
+- /hr?person=<hdog id> deep-link lands on the HR overview, not a profile
+  view (hdog has no staff_profiles row / team, so he's not in the directory
+  list) — treated as intended for this special login, not a bug.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions: none.
+- Harness growth: staff-hdog-commission-zero in two-bot (login as hdog →
+  own commission all-zero + victoria's keeps tierBreakdown/scenarios shape;
+  skips if the hdog boot-seed is absent). Exact logic dry-run green vs dev.
+- New flakes: none. Next journey: r390 was LIGHT → r391 FULL, rotation #2
+  client desktop. Still-open pointer: SharePoint toolbar/New folder/delete
+  via the r388 status/files mock pattern.
+
+### r389 · 2026-08-26 · FULL (rotation #1 staff desktop 1440px)
+- JOGQK already merged into staging (ancestor check clean, no new commits).
+- Smoke GREEN 42/0 (FRESH_BUILD=1). Two-bot 389: exit 0, all 34 scenarios
+  ok, 4 issues all listed noise (2×400 rocketreach + tracker-invalid;
+  2×503 keyless AI). 0 raw 500/502/504 in dev-server log (one grep hit =
+  news-feed "500 articles" line again).
+- Journey: Victoria desktop 1440px — "prep the Landsec review: check
+  Bluewater on the Letting Tracker, log a viewing, look up a unit's
+  business rates; then as Mark Warne confirm the client sees the viewing":
+  tracker search → viewings dialog → add viewing (date/time/attendees/
+  notes) saves 200, FY strip bumps 2→3, dialog lists it; Business Rates
+  tab on 3 seeded voa_ratings rows (r385's open pointer — CLOSED): live
+  search-as-you-type filters the table, suggest dropdown shows firm+RV,
+  suggest click opens entry detail, RV column sort works, row click opens
+  the detail sheet with all fields + VOA deep link; client login sees the
+  staff viewing in tracker FY strip + unit dialog (cross-check pass).
+  Viewing deleted after (fixture restored); VOA seeds live only in the
+  container-local dev db, not committed. 0 pageerrors, 0 non-noise 4xx/5xx.
+- Bug fixed (1): VOA entry-detail sheet had no Radix DialogTitle/
+  aria-describedby — screen readers got an unnamed dialog + console
+  warnings on every open. h2 → SheetTitle + aria-describedby={undefined}
+  in RatingDetailSheet (voa-ratings.tsx); tsc clean, re-verified visually
+  identical with 0 warnings.
+- Deferred: none. Suggestions: UX-NOTES #100 (desktop tracker per-unit
+  Viewings/Offers buttons live in the activity column off-screen right at
+  1440px — logging a viewing needs a horizontal-scroll discovery).
+- Harness growth: none needed — agent-log-viewing + client-sees-agent-
+  viewing already cover the cross-check; VOA browse needs seeded voa rows
+  (this round's 3-row INSERT pattern is in the journey script if wanted).
+- Testing note: two-bot and browser journeys share the :5000 login rate
+  limiter — run them sequentially, not concurrently.
+- New flakes: none. Next journey: r389 was FULL → r390 LIGHT; then r391
+  FULL rotation #2 client desktop. Still-open pointer: SharePoint toolbar/
+  New folder/delete via the r388 status/files mock pattern.
+
+### r388 · 2026-08-26 · LIGHT (r387 was FULL) + targeted checks on new JOGQK surfaces
+- Merged JOGQK f6f2a2f+3bc83b4 (SharePoint chip wrap; hdog→Huseyn admin)
+  into staging per parent note. Merge clean, tsc not needed (2-file diff,
+  build green below).
+- Smoke GREEN 42/0 (FRESH_BUILD=1 on merged code). Two-bot 388: exit 0,
+  all 34 scenarios ok. 4 issues all listed noise (2×400 rocketreach +
+  tracker-invalid probe; 2×503 keyless AI). 0 raw 500/502/504 in
+  dev-server log (one grep hit was "500 articles" in a news-feed line).
+  requirements-leasing 404 = client cross-scope probe, intended.
+- Targeted check 1: hdog boot block seeds Huseyn admin=true on fresh
+  restore ([seed] log + users row verified).
+- Targeted check 2 (per parent): SharePoint staff page at 390px with
+  mocked /api/microsoft/status {connected:true} + files — type-filter
+  chips wrap onto 2 lines (flexWrap:wrap, scrollWidth==clientWidth, no
+  chip-row scroll), document has NO horizontal overflow (390/390),
+  mocked items render, Slides chip still filters correctly when wrapped
+  (deck shown, PDF hidden). 0 pageerrors. Screenshots clean.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions: none.
+- New flakes: none. Harness growth: none (chip wrap is mocked-route
+  visual, doesn't fit two-bot's API pattern cheaply).
+- Next journey: r388 was LIGHT → r389 FULL, rotation #1 staff desktop.
+  r385's untouched pointers still open: SharePoint toolbar/New folder/
+  delete (needs M365 or stub — note the status/files mock pattern in this
+  entry works for it), Business Rates entry detail (needs VOA seed rows).
+
+### r387 · 2026-08-26 · FULL (rotation #4 staff mobile 390px)
+- Merged JOGQK 7de822d (hdog boot-block staff login) into staging per parent
+  note. Merge clean, tsc clean. Smoke GREEN 42/0 (fresh build on merged code).
+- Two-bot 387: exit 0, all scenarios ok. 4 issues all listed noise (2×400
+  rocketreach + tracker-invalid's intended 400; 2×503 keyless AI live-intel
+  + commentary regen). 0 raw 500/502/504 in dev-server log.
+- Journey: Victoria phone 390px — "what rates does a Bluewater unit pay /
+  who to look up / grab my site-visit photos": PI Business Rates tab renders
+  clean (fixture has 0 VOA rows, so RV sort + entry detail + suggest can't
+  be exercised locally — search UI + empty state fine, no errors); Land
+  Registry autocomplete resolved "Bluewater Shopping Centre … DA9 9ST",
+  picked result degrades gracefully keyless (clear "no title data" notice +
+  HMLR title-number fallback); PI map toolbar renders (tiles blank = no
+  external network, noise); /m/images empty state correct for a no-uploads
+  user, then with seeded phone-uploads + user folder (cleaned after):
+  FOLDERS row, folder open/back/remove-X, tap→edit sheet, Select mode →
+  2 SELECTED → Select all → Add-to-folder picker (New folder…) → Done all
+  work; 0 pageerrors, 0 non-noise 4xx/5xx (a /full 404 on a seeded
+  bytes-less image was a seed artifact), no h-overflow on any screen.
+  SharePoint toolbar untestable locally (no M365 tokens) — skipped.
+- Bugs fixed: 0 (nothing broken found). Deferred: none.
+- Suggestions: UX-NOTES #99 (/m/images tap opens Edit-with-AI sheet, viewing
+  the photo needs a second "Tap to zoom" — propose viewer-first with Edit
+  as an action).
+- Harness growth: staff-image-folder-lifecycle added to two-bot (create
+  hand-made collection → listed with kind null → delete → gone) + run-round
+  purge line for 'QA Folder R%'. Verified green in a full round-388 run
+  (exit 0, ledger = same 4 noise issues only).
+- Fixture note for future rounds: VOA table empty — Business Rates browse/
+  sort/detail needs a few seeded voa rows if a round wants to exercise it.
+- Next journey: r387 was FULL → r388 LIGHT (triage + any deferred). After
+  that, rotation #1 staff desktop; r385's untouched pointers still open:
+  SharePoint toolbar/New folder/delete (needs M365 or stub), Business Rates
+  entry detail (needs VOA seed rows).
+
+### r386 · 2026-08-26 · LIGHT (r385 was FULL) + targeted checks on new JOGQK surfaces
+- Merged JOGQK fb6bbff+4046677 (pathway phone view, RBKC planning tier)
+  into staging first per parent note. Merge clean, tsc clean.
+- Smoke GREEN 42/0 (FRESH_BUILD=1) on merged code. Two-bot 386: exit 0,
+  all scenarios ok. 4 issues all noise/intended (2×400 rocketreach +
+  tracker-invalid probe; 2×503 keyless AI); bulk-assign 400 = guards
+  probe's intended validation stop. 0 raw 500/502/504 in dev-server log.
+- Planning-docs unit check (scratchpad tsx, local stub server): Idox tier
+  end-to-end green (parse, classify, relative hrefs — note the parser puts
+  the wording in `type` per its cell heuristic, classification correct);
+  parseRbkcDocsHtml green on table + anchor layouts; docsTabUrl leaves
+  RBKC details.aspx untouched; isRbkcUrl host detection correct. Live
+  RBKC untestable here (403s sandbox; ScraperAPI key Railway-only) —
+  prod verification pending.
+- Pathway phone view 390px (victoria, iPhone UA + hasTouch, seeded run
+  with stage1+stage4 results, cleaned after): ⋯ overflow menu renders and
+  opens with Create comp/Create document/Delete (desktop buttons hidden);
+  slim stepper clean; Initial Search stacks (2 thumbnails share the image
+  row, address below — intended); inline E1/E2 citation chips render in
+  email commentary; planning-docs dialog opens with proper header and
+  fits the viewport; 0 pageerrors, 0 non-noise 4xx/5xx, no h-overflow.
+  (Screenshots were local-only — qa/logs/ is gitignored.)
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions:
+  UX-NOTES #98 (planning-docs dialog app-header keeps desktop columns at
+  390px — refs break mid-token; stack on <sm). Harness growth: none —
+  pathway run view needs seeded stage_results, too heavy for two-bot;
+  the scratchpad seed + check pattern is in this entry if wanted again.
+- Next journey: r386 was LIGHT → r387 FULL rotation #4 staff mobile 390px
+  (r385's pointer list: mobile Images folders/select/long-press, SharePoint
+  toolbar + New folder + delete, Business Rates RV sort + entry detail +
+  address finder, Land Registry autocomplete, Property Intelligence map
+  toolbar) — pathway phone view now covered here, skip it there.
 
 ### r385 · 2026-08-26 · FULL (rotation #3 client mobile 390px)
 - Merged JOGQK phone-UX batch (0852246b) into staging first per parent note.

@@ -563,6 +563,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   // viewers so the controls don't 403.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
+  // Clients get the read view: every write on this board 403s server-side,
+  // so the edit affordances (Add, status dropdown, deletes, inline cells)
+  // are staff-only. Read affordances (search, export, Full Board) stay.
+  const canEdit = !readOnly && !isClientViewer;
 
   // When already on the dedicated full-board route the "Full Board" link is
   // redundant — hide it. The route is /tenancy-schedule/:propertyId.
@@ -1010,7 +1014,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={handleExport} data-testid="btn-export-tenancy">
             <Download className="w-3 h-3 mr-1" />Excel
           </Button>
-          {!readOnly && (<>
+          {canEdit && (<>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
             <Plus className="w-3 h-3 mr-1" />Add
           </Button>
@@ -1225,7 +1229,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   <p className="text-[11px] text-muted-foreground mt-0.5">{fmtNum(unit.nia_sqft)} sq ft</p>
                 ) : null}
                 <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                  {!readOnly && (
+                  {canEdit && (
                     <button
                       onClick={() => promoteMutation.mutate()}
                       disabled={promoteMutation.isPending}
@@ -1244,7 +1248,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                       </Badge>
                     </a>
                   )}
-                  {!readOnly && unit.available_unit_id && (
+                  {canEdit && unit.available_unit_id && (
                     <button
                       onClick={() => {
                         const label = unit.unit_number || unit.premises || "this unit";
@@ -1285,7 +1289,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                 {[unit.floor_level, unit.permitted_use].filter(Boolean).join(" · ") || "—"}
               </p>
               <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                {readOnly ? (
+                {!canEdit ? (
                   <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}>
                     {statusValue || "—"}
                   </span>
@@ -1327,7 +1331,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   <a href="/deals/letting" title={`On the Letting Tracker (${letting.marketing_status || "listed"})`} data-testid={`tenancy-on-tracker-card-${unit.id}`}>
                     <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50 whitespace-nowrap">LT</Badge>
                   </a>
-                ) : (!readOnly && (
+                ) : (canEdit && (
                   <button
                     onClick={() => sendToTrackerMutation.mutate(unit)}
                     disabled={sendToTrackerMutation.isPending}
@@ -1356,7 +1360,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                     <MapPinIcon className="w-2.5 h-2.5" />Plan
                   </Badge>
                 </button>
-                {!readOnly && (
+                {canEdit && (
                   <button
                     onClick={() => {
                       const label = unit.unit_number || unit.tenant_name || "this unit";
@@ -1504,18 +1508,18 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   columns={visibleColumns}
                   onUpdate={inlineUpdate}
                   onDelete={() => deleteMutation.mutate(unit.id)}
-                  onDeleteTracker={readOnly || !unit.available_unit_id ? undefined : () => deleteTrackerUnitMutation.mutate(String(unit.available_unit_id))}
+                  onDeleteTracker={!canEdit || !unit.available_unit_id ? undefined : () => deleteTrackerUnitMutation.mutate(String(unit.available_unit_id))}
                   selected={selectedForDelete.has(unit.id)}
                   onToggleSelect={readOnly || isClientViewer || unit.is_vacant ? undefined : () => setSelectedForDelete(prev => {
                     const next = new Set(prev);
                     if (next.has(unit.id)) next.delete(unit.id); else next.add(unit.id);
                     return next;
                   })}
-                  onPromote={readOnly ? undefined : () => promoteMutation.mutate()}
+                  onPromote={!canEdit ? undefined : () => promoteMutation.mutate()}
                   promoting={promoteMutation.isPending}
-                  onSendToTracker={readOnly ? undefined : () => sendToTrackerMutation.mutate(unit)}
+                  onSendToTracker={!canEdit ? undefined : () => sendToTrackerMutation.mutate(unit)}
                   sendingToTracker={sendToTrackerMutation.isPending}
-                  readOnly={readOnly}
+                  readOnly={!canEdit}
                   deal={matchDeal(unit)}
                   letting={matchLetting(unit)}
                 />
@@ -1705,6 +1709,37 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
         const editType = c.type === "num" || c.type === "currency" || c.type === "currency_psf"
           ? "number"
           : isDateField ? "date" : "text";
+
+        // Read-only viewers (clients — every write here 403s server-side)
+        // get plain cells: status as a static chip, resolved tenants keep
+        // their company link, everything else is text. No selects, no
+        // inline edits, no brand picker.
+        if (readOnly) {
+          if (c.field === "status") {
+            const statusValue = unit.status === "Not Vacant" ? "Occupied" : unit.status;
+            return (
+              <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
+                <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}>
+                  {statusValue || "—"}
+                </span>
+              </td>
+            );
+          }
+          if ((c.field === "tenant_name" || c.field === "trading_name") && unit.resolved_tenant_company_id && displayVal) {
+            return (
+              <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
+                <Link href={`/companies/${unit.resolved_tenant_company_id}`} onClick={(e: any) => e.stopPropagation()}>
+                  <span className="text-primary hover:underline cursor-pointer font-medium">{displayVal}</span>
+                </Link>
+              </td>
+            );
+          }
+          return (
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
+              {displayVal || <span className="text-muted-foreground">—</span>}
+            </td>
+          );
+        }
 
         // Specialised renderers — keep the InlineEdit-only default for the
         // bulk of columns and override only where the cell needs extra UI:

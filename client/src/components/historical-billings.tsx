@@ -99,7 +99,7 @@ export function HistoricalBillingsSection() {
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center flex-wrap gap-1.5">
             {DIMENSIONS.map((d) => (
-              <Pill key={d.key} active={dim === d.key} onClick={() => { setDim(d.key); setShowAll(false); }} data-testid={`hist-dim-${d.key}`}>
+              <Pill key={d.key} active={dim === d.key} onClick={() => { setDim(d.key); setShowAll(false); setSearch(""); }} data-testid={`hist-dim-${d.key}`}>
                 {d.label}
               </Pill>
             ))}

@@ -16,6 +16,198 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+116. 2026-08-28 · BGP staff / desktop 1440px (QA r413) · "log yesterday's
+    viewing with the brand, then record the offer they made" · Both steps
+    work, but they are two fully separate dialogs: after saving a viewing
+    with outcome "Offer Expected", recording the actual offer means closing
+    the Viewings dialog, opening the Offers dialog on the same row and
+    re-picking the same company/contact/date from scratch — double data
+    entry for what the user experiences as one event ("they viewed, then
+    offered") · Suggest: a "Record offer" shortcut on the viewing card (or
+    shown after saving with outcome "Offer Expected") that opens the offer
+    form pre-filled with the viewing's company, contact and date.
+
+115. 2026-08-28 · Landsec client / mobile 390px (QA r409) · "a colleague
+    mentioned a brand — look it up" · Brand Intelligence search for a brand
+    that isn't in the client's slice (e.g. "Gail") says only "No matches for
+    'Gail' — try a shorter name." Two issues: (a) "try a shorter name" is
+    odd advice for a 4-letter query, and (b) the empty state never points at
+    the "Add brand" button sitting directly above it, which searches the
+    WIDER global directory and is exactly what the user needs next (the
+    self-add flow itself works cleanly at 390px — verified this round).
+    Suggest: zero-hit copy becomes "No matches in your brands — search the
+    wider directory via Add brand" (mirrors the confirmed #13 pattern on
+    Contacts).
+
+114. 2026-08-28 · Landsec client / desktop 1440px (QA r407) · "see how my
+    Bluewater lettings are progressing" · On the client Properties table
+    (/properties, TABLE view) only the property NAME text is clickable —
+    clicking anywhere else in the row (ownership chips aside, the row is
+    mostly empty cells: Status/Class/Team all "—") does nothing, with no
+    hover cue about where the click target is. Users treat list rows as
+    click targets; a whole-row click (like the Letting Tracker rows) or at
+    least a cursor-pointer row hover would remove the dead-click. Suggest:
+    make the row itself open the property, keeping inner links working.
+
+113. 2026-08-28 · BGP staff / mobile 390px (QA r403) · "on the train: check
+    my diary for today" · The calendar page itself is genuinely phone-ready
+    (day view, UPCOMING list, event bottom-sheet with attendees all render
+    clean at 390px) but a staff phone user has NO tap path to it: bottom
+    nav is Dashboard/Messages/Deals/News, the staff mobile-home QUICK_LINKS
+    are Deals/Expenses/Images/CRM, and the only in-app links to /calendar
+    live on the desktop dashboard widget and inside a deals-page meetings
+    card that is M365-gated. Clients DO get a Calendar tile
+    (PORTFOLIO_LINKS). Victoria has to type the URL or ask ChatBGP.
+    Suggest: add a Calendar tile to QUICK_LINKS in mobile-home.tsx
+    (mirroring the client grid), or surface a "today" diary strip on the
+    staff mobile home that links through.
+
+112. 2026-08-27 · Landsec client / mobile 390px (QA r401) · "check a tenant's
+    covenant standing" · On a client's brand Compliance panel, when no UK
+    trading entity is set the copy says "Not confirmed yet — BGP is
+    identifying the UK trading entity." but immediately below it offers the
+    client a "Search Companies House for ‘X’" link (external CH search).
+    Mixed message: the client is told BGP is handling it, then handed the
+    tool to do it themselves (and they can't save a match anyway — edit is
+    staff-only). Suggest: hide the CH search link for client viewers
+    (brand-profile-panel.tsx ~line 4130, gate on bcIsClient like the
+    edit/rescrape buttons beside it).
+
+111. 2026-08-27 · Landsec client / mobile 390px (QA r401) · "a colleague says
+    Wagamama's lease is expiring — find their contact" · Wagamama Limited is
+    on Mark's own tenancy schedule, but has no brand row in the directory,
+    so Brand Intelligence search says "No matches for ‘wagamama’ — try a
+    shorter name" and the Add-brand dialog (global directory search) also
+    dead-ends at "No brands match." — there is NO path for a client to get
+    their own tenant tracked from here (partly a fixture data gap, but the
+    dead end is real whenever a tenancy tenant is missing from the
+    directory). Suggest: when a client search misses, check the tenant
+    names on their own tenancy schedules and offer "Wagamama is one of your
+    tenants — ask BGP to add it" (request lands with staff), or auto-seed
+    directory stubs from tenancy-schedule tenant names.
+
+110. 2026-08-27 · Landsec client / desktop 1440px (QA r399) · "which leases
+    expire soon — show me Wagamama's" · The dashboard EXPIRING (6M) KPI
+    opens a tidy popover of 8 expiring tenants, but clicking a tenant lands
+    on the full 200-unit Tenancy Schedule with no filter or highlight — the
+    user has to re-type the tenant name into the schedule search to find the
+    row they just clicked. Suggest: carry the tenant through (prefill the
+    schedule search with the clicked tenant, or scroll-to + flash-highlight
+    the matching row).
+
+109. 2026-08-27 · BGP staff (non-admin) / desktop 1440px (QA r397) · "check
+    my numbers on the WIP report" · For a non-admin agent the WIP REPORT
+    tab lists deals (header said "6 transactions · £250,000") but the AGENT
+    SUMMARY tab on the same screen came back empty — the summary endpoint
+    only counts deals whose team exactly equals the user's team string
+    (fixture deals carry team "National" vs Victoria's "National Leasing",
+    and team-less deals are skipped entirely for non-admins), while the
+    deal table clearly uses a looser rule · Align the two tabs' scoping
+    (same team-matching rule, and decide whether team-less deals belong in
+    a non-admin's summary) so the two tabs on one screen never disagree.
+    Flagging as UX not bug: may be a fixture-data artifact — prod team
+    strings may match exactly.
+
+108. 2026-08-27 · BGP staff / desktop 1440px (QA r397) · "remove a fee split
+    I added on the wrong deal" · Once a fee split is saved it cannot be
+    cleared: the editor's BGP House row is locked and auto-re-added, saving
+    with only BGP House trips "Percentages total 15% — must equal 100%",
+    and the API rejects an empty allocations array by design (must include
+    the BGP House row) · Add an explicit "Clear split" action on the Fee
+    Allocation card (staff-only, confirm dialog) that removes all rows and
+    returns the deal to "No split yet".
+
+107. 2026-08-27 · BGP staff (equity) / mobile 390px (QA r395) · "check the
+    cashflow forecast on my phone" · On the Finance page's cashflow stat
+    tiles, big negative amounts render as "£" alone on one line with
+    "(4,244,249)" wrapped underneath (LOW POINT / CLOSE tiles at 390px) —
+    legible but scruffy · Keep the currency symbol glued to the number
+    (non-breaking, e.g. £(4.24m) or whitespace-nowrap + smaller type on
+    the phone tiles).
+
+106. ~~2026-08-27 · BGP staff (equity) / mobile 390px (QA r394) · /cashflow
+    phone double header~~ · OBSOLETE r395: cashflow v3 removed the
+    standalone /cashflow page (it now redirects to /finance, which has no
+    double header at 390px — verified r395). Nothing to build.
+
+105. 2026-08-27 · Landsec client / mobile 390px (QA r393) · "look at the
+    Bluewater floor plan on my phone" · The Plans viewer opens at 100% zoom
+    showing one giant colour block, and its only usage hint reads "drag to
+    pan · wheel to zoom" — there is no wheel on a phone, and no pinch-zoom
+    hint or fit-to-screen start state · Start the plan fitted to the
+    viewport and switch the hint to touch wording ("pinch to zoom") when
+    the device is touch.
+
+104. 2026-08-27 · Landsec client / mobile 390px (QA r393) · "open my
+    Bluewater property page" · The Overview card leads with Status, Asset
+    Class, BGP Team, Website and Area — all showing "—" dashes for the
+    client's own flagship property, pushing the real content (ownership,
+    tasks, risk register) below a card of empty placeholders · Hide
+    unfilled fields for client viewers (or fill these fields for Landsec
+    properties — Bluewater has no asset class or website set).
+
+103. 2026-08-27 · BGP staff / desktop 1440px (QA r392) · "check a unit's
+    rateable value" · The Business Rates entry-detail sheet slides up as a
+    full-width bottom sheet at 1440px — each label sits at the far left and
+    its value ~1,350px away at the far right, so the eye has to track the
+    whole screen per row · Cap the sheet at ~640px (centred, or a right-hand
+    side sheet on desktop); mobile behaviour is fine as is.
+
+102. 2026-08-27 · BGP staff / desktop 1440px (QA r392) · "make a folder /
+    delete a file in SharePoint" · New folder uses the native browser
+    prompt() and delete uses confirm() — both work, but they're unstyled
+    browser chrome in an app where every other action uses the design-system
+    dialog, and the prompt offers no inline duplicate-name feedback (409
+    only surfaces as a toast after submit) · Swap to the app Dialog with an
+    input + validation message.
+
+101. 2026-08-27 · Landsec client / desktop 1440px (QA r391) · "add a note-to-
+    self on my Bluewater property page" · The This Week's Focus quick-add
+    placeholder reads "Add a task — e.g. Pizza Express HOTs to legal" — BGP
+    staff jargon (HOTs, a rival-agent-style example) shown to a landlord
+    client · Give client viewers a client-flavoured example ("e.g. Chase
+    Q3 leasing update") or a neutral "Add a task…".
+
+100. 2026-08-26 · BGP staff / desktop 1440px (QA r389) · "log a viewing on
+    a Bluewater unit from the Letting Tracker" · The per-unit Viewings /
+    Offers count buttons live in the activity column, which sits off-screen
+    to the right at 1440px — the visible Actions column only offers
+    AI/comment/edit/delete, so logging a viewing means discovering a
+    horizontal scroll first (the FY strip up top shows viewing counts,
+    which makes the missing per-row affordance more surprising) · Surface
+    a Viewing/Offer action in the always-visible Actions cluster (or its
+    ⋯ menu), or pin the activity column so it stays on-screen.
+
+99. 2026-08-26 · BGP staff / mobile 390px (QA r387) · "review the photos I
+    took on a site visit in /m/images" · Tapping a photo in Recent Captures
+    opens the Edit-with-AI sheet, where the photo itself is a small
+    thumbnail strip at the top ("Tap to zoom" for the real view) — a user
+    who just wants to LOOK at their capture gets an editing prompt and
+    suggestion pills first, and the actual photo needs a second tap ·
+    Open a full-screen viewer on tap (swipe between captures), with Edit
+    with AI as an action on that viewer; keeps the one-tap edit path but
+    makes the common "just look at it" case first-class.
+
+98. 2026-08-26 · BGP staff / mobile 390px (QA r386) · "open the Planning
+    documents dialog on a pathway run from a phone" · The dialog opens and
+    is legible, but each application header keeps its desktop columns
+    (date w-20 + LPA badge + PDF-count badge all shrink-0), leaving ~110px
+    for the reference and description — refs like PP/25/06454 break
+    mid-token onto two lines and descriptions wrap 2-3 words per line ·
+    On <sm stack the header: date + badges on one small top line, ref +
+    description full-width below (doc rows could do the same with their
+    category pill).
+
+97. 2026-08-26 · Landsec client / desktop (QA r383) · "scan my Letting
+    Tracker to see how lettings are progressing" · Every row's Property/Unit
+    headline is the truncated property name ("Bluewater Sho...") repeated
+    153 times, while the distinguishing unit name sits in the small grey
+    sub-line — for a client whose whole tracker is one property the primary
+    line carries zero information and the eye has to read the sub-line on
+    every row · Flip the emphasis (unit name as the headline, property as
+    the sub-line), or at least stop truncating when the column is wide
+    enough — staff multi-property boards can keep property-first.
+
 96. 2026-08-25 · BGP staff / mobile 390px (QA r379) · "open a brand's Stores
     pill on the phone" · On a 0-store brand the auto-fired store scan's
     failure surfaces as a raw config string in a red toast ("Store search

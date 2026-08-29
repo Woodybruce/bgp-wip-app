@@ -125,6 +125,12 @@ function PropertyComplianceBoardWrapper({
     || (property as any).landlordId
     || null;
 
+  // Billing entity is BGP invoicing bookkeeping — the setter's PUT
+  // /api/crm/properties/:id is gateway-blocked for clients, so don't
+  // show them a control that can only fail. Fail closed while loading.
+  const { data: kycViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = !kycViewer || kycViewer.role === "Client" || !!kycViewer.companyScopeId;
+
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/api/brand", ownerId, "profile"],
     queryFn: async () => {
@@ -137,7 +143,7 @@ function PropertyComplianceBoardWrapper({
 
   // Billing entity row — rendered above the brand checks via the
   // ComplianceBoard's `prefix` slot.
-  const billingEntityRow = (
+  const billingEntityRow = isClientViewer ? null : (
     <div>
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
         Billing entity

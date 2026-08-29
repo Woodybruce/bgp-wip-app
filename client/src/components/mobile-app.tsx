@@ -476,6 +476,23 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
     touchStart.current = null;
   };
 
+  // Native context menus dismiss on any outside touch; without this the
+  // pill floats until its X is found (r405).
+  const bubbleRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!showActions) return;
+    const dismiss = (e: Event) => {
+      if (bubbleRef.current && e.target instanceof Node && bubbleRef.current.contains(e.target)) return;
+      setShowActions(false);
+    };
+    document.addEventListener("touchstart", dismiss, true);
+    document.addEventListener("mousedown", dismiss, true);
+    return () => {
+      document.removeEventListener("touchstart", dismiss, true);
+      document.removeEventListener("mousedown", dismiss, true);
+    };
+  }, [showActions]);
+
   const renderAttachments = () => {
     if (!message.attachments || message.attachments.length === 0) return null;
     return (
@@ -584,6 +601,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
           </div>
         ) : (
           <div
+            ref={bubbleRef}
             className="relative"
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}

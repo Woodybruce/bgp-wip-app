@@ -66,7 +66,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -462,6 +462,36 @@ async function victoriaRound(page, cross) {
       if (scrollW > clientW + 4) throw new Error(`staff dashboard overflows on mobile: scrollWidth ${scrollW} > viewport ${clientW}`);
     } finally {
       await mob.close();
+    }
+  });
+
+  // r411: the staff cold-open lands on /chatbgp, which renders the Messages
+  // list — the bottom nav must light the Messages tab there (it shipped with
+  // no tab active, leaving the cold-open screen unanchored). Needs real
+  // phone emulation: the /chatbgp → MobileApp branch is gated on useIsMobile.
+  await step(page, p, 'staff-mobile-chat-home-nav', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/chatbgp`, nav);
+      await mob.waitForTimeout(3000);
+      const messages = mob.locator('[data-testid="bottom-nav-messages"]');
+      if (!(await messages.count())) throw new Error('bottom nav missing on /chatbgp at 390px');
+      const cls = await messages.getAttribute('class');
+      if (!/\btext-foreground\b/.test(cls || '')) throw new Error('/chatbgp cold-open does not light the Messages tab');
+      const dashCls = await mob.locator('[data-testid="bottom-nav-dashboard"]').getAttribute('class');
+      if (/\btext-foreground\b/.test(dashCls || '')) throw new Error('/chatbgp lights the Dashboard tab too');
+    } finally {
+      await mob.close();
+      await mobCtx.close();
     }
   });
 
@@ -1619,6 +1649,61 @@ async function victoriaRound(page, cross) {
     if (path !== '/image-studio') throw new Error(`non-admin /image-studio landed on ${path}, expected to stay on /image-studio`);
     if (await page.getByText('Page not found').count()) throw new Error('non-admin /image-studio landed on Page not found');
     if (!(await page.locator('[data-testid="button-upload"]').count())) throw new Error('full studio toolbar (button-upload) did not render for non-admin staff');
+  });
+
+  // Mobile Images folder lifecycle (r387): the /m/images FOLDERS row is a
+  // hand-made collection (kind null, no CRM link). Create → listed → delete.
+  await step(page, p, 'staff-image-folder-lifecycle', async () => {
+    const name = `QA Folder R${ROUND}`;
+    const r = await page.evaluate(async (nm) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const created = await (await fetch('/api/image-studio/collections', {
+        method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ name: nm }) })).json().catch(() => null);
+      const id = created?.id || null;
+      const list = id ? await (await fetch('/api/image-studio/collections', { headers: auth })).json().catch(() => []) : [];
+      const row = (Array.isArray(list) ? list : []).find((c) => c.id === id) || null;
+      const del = id ? (await fetch(`/api/image-studio/collections/${id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status : 0;
+      const after = id ? await (await fetch('/api/image-studio/collections', { headers: auth })).json().catch(() => []) : [];
+      const ghost = (Array.isArray(after) ? after : []).some((c) => c.id === id);
+      return { id, row, del, ghost };
+    }, name);
+    if (!r.id) throw new Error('folder create did not return an id');
+    if (!r.row) throw new Error('created folder missing from collections list');
+    if (r.row.kind != null || r.row.property_id || r.row.company_id) throw new Error('hand-made folder carries a system kind/CRM link — /m/images would hide it');
+    if (r.del < 200 || r.del >= 300) throw new Error(`folder delete refused (${r.del})`);
+    if (r.ghost) throw new Error('deleted folder still in collections list');
+  });
+
+  // hdog commission (r390, Woody 2026-08-26): Huseyn's billing always shows
+  // zero — Xero/engine/allocation matching skipped for the hdog login. Other
+  // users' commission endpoint must keep its full shape.
+  await step(page, p, 'staff-hdog-commission-zero', async () => {
+    const r = await page.evaluate(async () => {
+      // credentials:'omit' so the login's Set-Cookie never swaps THIS page's
+      // session to hdog — server auth prefers session over Bearer, so a
+      // stored hdog cookie makes every later credentials:'include' scenario
+      // (deal-verdict pending, etc.) run as hdog (r391).
+      const login = await (await fetch('/api/auth/login', {
+        method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'hdog', password: 'hdog' }) })).json().catch(() => null);
+      if (!login?.token || !login?.id) return { skip: true }; // hdog boot-seed absent
+      // credentials:'omit' here too — default same-origin credentials ride
+      // victoria's session cookie along with hdog's Bearer, and the server
+      // prefers session, so the admin-or-self commission check would run as
+      // victoria and 403 (r392).
+      const h = await (await fetch(`/api/hr/staff/${login.id}/commission`, {
+        credentials: 'omit', headers: { Authorization: 'Bearer ' + login.token } })).json().catch(() => null);
+      const me = JSON.parse(localStorage.getItem('user') || '{}');
+      const own = await (await fetch(`/api/hr/staff/${me.id}/commission`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } })).json().catch(() => null);
+      return { h, ownOk: !!(own && Array.isArray(own.tierBreakdown) && Array.isArray(own.scenarios)) };
+    });
+    if (r.skip) return;
+    if (!r.h) throw new Error('hdog commission fetch failed');
+    if (r.h.billedPence !== 0 || (r.h.billingsByYear || []).length || r.h.wipTotal !== 0
+      || (r.h.topDeals || []).length || (r.h.awaitingPayment || []).length)
+      throw new Error(`hdog billing not zeroed: ${JSON.stringify({ billedPence: r.h.billedPence, byYear: (r.h.billingsByYear || []).length, wip: r.h.wipTotal })}`);
+    if (!r.ownOk) throw new Error('regular staff commission lost its shape (tierBreakdown/scenarios)');
   });
 
   // 4m. Deal comments round-trip: Victoria writes a comment on the Bluewater
@@ -3803,6 +3888,26 @@ async function markRound(page, cross) {
     if (rowTicks > 0) throw new Error(`${rowTicks} bulk-delete row ticks leaked to client tenancy board`);
   });
 
+  // r393: every write on the tenancy board 403s for a client (covered by
+  // client-tenancy-write-scoped), so the edit affordances must not render —
+  // Add unit, per-row status dropdowns, row deletes and inline cell editing
+  // were all client-visible dead controls (same class as the plans fix).
+  await step(page, p, 'client-tenancy-edit-controls-hidden', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.getByText('Tenancy Schedule', { exact: false }).first().waitFor({ timeout: 30000 });
+    await page.waitForTimeout(2500);
+    if (await page.getByTestId('btn-add-tenancy-unit').count()) {
+      throw new Error('Add-unit button leaked to client tenancy board');
+    }
+    const statusSelects = await page.locator('select[data-testid^="tenancy-status-"]').count();
+    if (statusSelects > 0) throw new Error(`${statusSelects} status dropdowns leaked to client tenancy board`);
+    const deletes = await page.locator('[data-testid^="tenancy-delete-"]').count();
+    if (deletes > 0) throw new Error(`${deletes} row-delete buttons leaked to client tenancy board`);
+    if (await page.getByTestId('btn-import-tenancy').count()) {
+      throw new Error('Import button leaked to client tenancy board');
+    }
+  });
+
   // r368: plan upload is client-allowed on their own property (board parity)
   // but every other plan write — rename, auto-detect, delete — is staff-only,
   // so the plans panel must not offer a client those controls (same class as
@@ -3874,6 +3979,21 @@ async function markRound(page, cross) {
     if (r.ownStatus !== 200 || !r.ownIsArray) throw new Error(`client own property tenant list unhealthy (status ${r.ownStatus}, array ${r.ownIsArray})`);
     if (r.foreign !== 403) throw new Error(`client read a foreign property's rent roll (expected 403, got ${r.foreign})`);
     if (r.del !== 403) throw new Error(`client removed a tenant from a property (expected 403, got ${r.del})`);
+  });
+
+  // Property row writes (billing entity, status, etc.) are staff-only —
+  // /api/crm/properties is not in the client write allowlist, and the UI now
+  // hides the Set-billing-entity control for clients (r391). Guard the API
+  // side: a client PUT on their OWN property must 403 and change nothing.
+  await step(page, p, 'client-property-put-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const own = window.QA_FIX.bluewater;
+      const put = (await fetch(`/api/crm/properties/${own}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ billingEntityId: null }) }).catch(() => ({ status: 0 }))).status;
+      return { put };
+    });
+    if (r.put !== 403) throw new Error(`client PUT /api/crm/properties succeeded (expected 403, got ${r.put})`);
   });
 
   // The available-units LIST is client-scoped, so the single-unit read must be
@@ -5012,6 +5132,42 @@ async function markRound(page, cross) {
     }
   });
 
+  // r401: the brands-hub search box (mobile quick search) is backed by
+  // /api/brands/search — assert the brand + contact facets actually return
+  // rows for an in-slice brand (Mark's "find my tenant's contact" journey
+  // dead-ends silently if this regresses) and that a no-match query is an
+  // empty result, not an error. Data-driven off the brand's own profile.
+  await step(page, p, 'client-brands-search-facets', async () => {
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const pr = await fetch(`${BASE}/api/brand/${BRAND}/profile`, auth);
+    if (!pr.ok) throw new Error(`brand profile fetch ${pr.status}`);
+    const prof = await pr.json();
+    const name = prof?.company?.name;
+    if (!name) throw new Error('brand profile returned no company name');
+    const q = encodeURIComponent(name.slice(0, 5));
+    const sr = await fetch(`${BASE}/api/brands/search?q=${q}`, auth);
+    if (!sr.ok) throw new Error(`brands search ${sr.status} for "${name.slice(0, 5)}"`);
+    const hits = await sr.json();
+    for (const k of ['brands', 'contacts', 'agents']) {
+      if (!Array.isArray(hits?.[k])) throw new Error(`brands search missing ${k} facet`);
+    }
+    if (!hits.brands.some((b) => b.id === BRAND)) throw new Error(`brands search "${name.slice(0, 5)}" did not return ${name}`);
+    const contact = (prof?.contacts || [])[0];
+    if (contact?.name) {
+      const cq = encodeURIComponent(contact.name.split(' ')[0]);
+      const cr = await fetch(`${BASE}/api/brands/search?q=${cq}`, auth);
+      if (!cr.ok) throw new Error(`brands contact search ${cr.status}`);
+      const chits = await cr.json();
+      const found = chits.brands.some((b) => (b.contacts || []).some((c) => c.id === contact.id))
+        || chits.contacts.some((c) => c.id === contact.id);
+      if (!found) throw new Error(`brands search did not surface contact "${contact.name}"`);
+    }
+    const nr = await fetch(`${BASE}/api/brands/search?q=zzqxnomatch`, auth);
+    if (!nr.ok) throw new Error(`brands search no-match query errored ${nr.status}`);
+    const none = await nr.json();
+    if (none.brands.length || none.contacts.length || none.agents.length) throw new Error('brands search no-match query returned rows');
+  });
+
   // r281: client-mobile Brand Intelligence path — the "look up a tenant brand
   // on my phone before a meeting" journey. The hub, a brand profile and its
   // Key Contacts drill-in must all render inside a real 390px phone context
@@ -5217,6 +5373,23 @@ async function markRound(page, cross) {
     if (cross.turnoverHiddenMade && r.seesHidden) throw new Error('client can see an out-of-slice turnover entry');
     if (r.write !== 403) throw new Error(`client turnover write not refused (${r.write})`);
   });
+
+  // r407: the portfolio dashboard's "BGP Contacts" pills must be display
+  // names, not raw user ids (the endpoint used to send bgp_contact_user_ids
+  // through unresolved).
+  await step(page, p, 'client-portfolio-bgp-contact-names', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch(`/api/company-portfolio/${window.QA_FIX.landsec}`, { headers: auth });
+      if (!res.ok) return { ok: false, why: `GET ${res.status}` };
+      const body = await res.json();
+      return { ok: true, contacts: body?.company?.bgpContacts || [] };
+    });
+    if (!r.ok) throw new Error(`client portfolio read failed (${r.why})`);
+    const uuidish = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const raw = r.contacts.filter((c) => uuidish.test(String(c)));
+    if (raw.length) throw new Error(`bgpContacts contains raw user ids: ${raw.join(', ')}`);
+  });
 }
 
 // ─── Additional personas ──────────────────────────────────────────────────
@@ -5299,6 +5472,139 @@ async function woodyRound(page, cross) {
       return { leaked: !!hit, name: hit?.name };
     });
     if (r.leaked) throw new Error(`client fee injection landed in the database (deal "${r.name}")`);
+  });
+
+  // Cashflow board v3 (r395): password gate dropped — the equity/admin gate
+  // IS the lock. Equity sees the board directly on /finance; non-equity 403.
+  // Receipts are app/Xero-driven now: workbook receipt lines retired, the
+  // editable LEGACY receivables line remains; cell-edit roundtrip on it.
+  await step(page, p, 'staff-cashflow-board', async () => {
+    const r = await page.evaluate(async (agentUser) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const direct = await fetch('/api/cashflow', { credentials: 'include', headers: auth });
+      if (direct.status !== 200) return { ok: false, why: `equity GET expected 200, got ${direct.status}` };
+      const data = await direct.json();
+      if (!Array.isArray(data.lines) || !data.lines.length || !data.months?.length) return { ok: false, why: 'GET returned no lines/months' };
+      const legacy = data.lines.find((l) => l.key === 'LEGACY' && l.section === 'receipts');
+      if (!legacy) return { ok: false, why: 'LEGACY receivables line missing from receipts' };
+      const retired = data.lines.filter((l) => l.section === 'receipts' && ['1', '2', '3', '4a', '4c', '5'].includes(l.key));
+      if (retired.length) return { ok: false, why: `retired workbook receipt lines still active (${retired.map((l) => l.key).join(',')})` };
+      const gone = await fetch('/api/cashflow/unlock', { method: 'POST', credentials: 'include', headers: auth, body: '{"password":"BGPPAY"}' });
+      if (gone.ok) return { ok: false, why: 'retired /api/cashflow/unlock endpoint still answers' };
+      const month = data.months[0];
+      const before = data.cells.find((c) => c.line_id === legacy.id && c.month === month && c.basis === 'budget');
+      const save = await fetch('/api/cashflow/cell', { method: 'PATCH', credentials: 'include', headers: auth,
+        body: JSON.stringify({ lineId: legacy.id, month, basis: 'budget', amount: 424242 }) });
+      if (!save.ok) return { ok: false, why: `cell PATCH ${save.status}` };
+      const after = await (await fetch('/api/cashflow', { credentials: 'include', headers: auth })).json();
+      const cell = after.cells.find((c) => c.line_id === legacy.id && c.month === month && c.basis === 'budget');
+      const landed = Number(cell?.amount) === 424242;
+      // restore the original value (or clear the cell if it didn't exist)
+      await fetch('/api/cashflow/cell', { method: 'PATCH', credentials: 'include', headers: auth,
+        body: JSON.stringify({ lineId: legacy.id, month, basis: 'budget', amount: before ? before.amount : null }) });
+      if (!landed) return { ok: false, why: `cell edit did not land (got ${cell?.amount})` };
+      // non-equity staff must get nothing: token-login as victoria
+      // (credentials:'omit' — never store the Set-Cookie, r391 lesson)
+      const vlogin = await fetch('/api/auth/login', { method: 'POST', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: agentUser, password: 'B@nd0077!' }) });
+      if (!vlogin.ok) return { ok: false, why: `victoria token login ${vlogin.status}` };
+      const vtoken = (await vlogin.json()).token;
+      const vres = await fetch('/api/cashflow', { credentials: 'omit', headers: { Authorization: 'Bearer ' + vtoken } });
+      if (vres.status !== 403) return { ok: false, why: `non-equity GET expected 403, got ${vres.status}` };
+      return { ok: true };
+    }, AGENT_USER);
+    if (!r.ok) throw new Error(`cashflow board v3 check failed (${r.why})`);
+  });
+
+  // Historical billings (r400): static Sage-era invoiced WIP behind the
+  // equity/admin gate. Equity gets the pre-aggregated payload (FY2019-26,
+  // known totals); non-equity staff 403.
+  await step(page, p, 'staff-historical-wip-gate', async () => {
+    const r = await page.evaluate(async (agentUser) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/historical-wip', { credentials: 'include', headers: auth });
+      if (res.status !== 200) return { ok: false, why: `equity GET expected 200, got ${res.status}` };
+      const data = await res.json();
+      if (!Array.isArray(data.fys) || data.fys[data.fys.length - 1] !== 2026 || data.fys[0] !== 2019)
+        return { ok: false, why: `fys wrong (${JSON.stringify(data.fys)})` };
+      if (Math.round(data.fyTotals[2026]) !== 5191872 || Math.round(data.fyTotals[2025]) !== 4919519)
+        return { ok: false, why: `FY totals drifted (26=${data.fyTotals[2026]}, 25=${data.fyTotals[2025]})` };
+      for (const k of ['team', 'agent', 'client', 'company'])
+        if (!Array.isArray(data.dims?.[k]) || !data.dims[k].length) return { ok: false, why: `dim ${k} empty` };
+      const vlogin = await fetch('/api/auth/login', { method: 'POST', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: agentUser, password: 'B@nd0077!' }) });
+      if (!vlogin.ok) return { ok: false, why: `victoria token login ${vlogin.status}` };
+      const vtoken = (await vlogin.json()).token;
+      const vres = await fetch('/api/historical-wip', { credentials: 'omit', headers: { Authorization: 'Bearer ' + vtoken } });
+      if (vres.status !== 403) return { ok: false, why: `non-equity GET expected 403, got ${vres.status}` };
+      return { ok: true };
+    }, AGENT_USER);
+    if (!r.ok) throw new Error(`historical WIP gate check failed (${r.why})`);
+  });
+
+  // Business Gateway status must answer for staff (r396: require-in-ESM made
+  // it 500 under tsx dev) and the paid official-copy order must be blocked
+  // for clients by the API gateway.
+  await step(page, p, 'staff-lrbg-status-client-order-guard', async () => {
+    const r = await page.evaluate(async (clientUser) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const st = await fetch('/api/lr-bg/status', { credentials: 'include', headers: auth });
+      if (st.status !== 200) return { ok: false, why: `staff status expected 200, got ${st.status}` };
+      const body = await st.json();
+      if (!body.fingerprints || !('test' in body.fingerprints)) return { ok: false, why: 'fingerprints audit missing from status' };
+      const mlogin = await fetch('/api/auth/login', { method: 'POST', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: clientUser, password: 'B@nd0077!' }) });
+      if (!mlogin.ok) return { ok: false, why: `client token login ${mlogin.status}` };
+      const mtoken = (await mlogin.json()).token;
+      const order = await fetch('/api/lr-bg/official-copy', { method: 'POST', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + mtoken },
+        body: JSON.stringify({ titleNumber: 'QA-GUARD-1' }) });
+      if (order.status !== 403) return { ok: false, why: `client official-copy expected 403, got ${order.status}` };
+      return { ok: true };
+    }, CLIENT_USER);
+    if (!r.ok) throw new Error(`lr-bg status/guard check failed (${r.why})`);
+  });
+
+  // Consultant external fee-split (r397, Woody 2026-08-27): "Consultant" is
+  // selectable in every split picker, saves as a name-only allocation
+  // (agent_user_id stays null — never enters staff commission) and shows on
+  // the WIP Agent Summary. Self-contained: probe deal is created + deleted
+  // (deleteCrmDeal cascades the allocation rows).
+  await step(page, p, 'staff-consultant-fee-split', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const cRes = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-R${round} consultant split probe`, status: 'NEG', fee: 100000 }) });
+      if (!cRes.ok) return { ok: false, why: `deal create ${cRes.status}` };
+      const deal = await cRes.json();
+      try {
+        const put = await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { method: 'PUT', credentials: 'include', headers: auth,
+          // Off-the-top rule (JOGQK ccd1cce): consultant 10% first, BGP House
+          // 15% of the remaining 90% = 13.5%, staff share the rest (76.5%).
+          body: JSON.stringify({ allocations: [
+            { agentName: 'Victoria Broadhead', allocationType: 'percentage', percentage: 76.5, fixedAmount: 0, isBgpHouse: false },
+            { agentName: 'Consultant', allocationType: 'percentage', percentage: 10, fixedAmount: 0, isBgpHouse: false },
+            { agentName: 'BGP House', allocationType: 'percentage', percentage: 13.5, fixedAmount: 0, isBgpHouse: true },
+          ] }) });
+        if (!put.ok) return { ok: false, why: `allocations PUT ${put.status}` };
+        const rows = await (await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { credentials: 'include', headers: auth })).json();
+        const cons = rows.find((a) => a.agentName === 'Consultant');
+        if (!cons) return { ok: false, why: 'Consultant allocation missing after save' };
+        if (cons.agentUserId != null) return { ok: false, why: `Consultant resolved to a staff user id (${cons.agentUserId})` };
+        if (!rows.some((a) => a.isBgpHouse)) return { ok: false, why: 'BGP House flag lost on save' };
+        const summary = await (await fetch('/api/wip/agent-summary', { credentials: 'include', headers: auth })).json();
+        const sRow = Array.isArray(summary) ? summary.find((s) => s.agent === 'Consultant') : null;
+        if (!sRow) return { ok: false, why: 'Consultant missing from WIP agent summary' };
+        if (Math.round(sRow.wip) < 10000) return { ok: false, why: `Consultant WIP slice wrong (${sRow.wip})` };
+        return { ok: true };
+      } finally {
+        await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }
+    }, ROUND);
+    if (!r.ok) throw new Error(`consultant fee-split check failed (${r.why})`);
   });
 }
 
