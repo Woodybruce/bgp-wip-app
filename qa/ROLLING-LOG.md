@@ -80,6 +80,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r418 · 2026-08-29 ~10:45 UTC · ROUND IN PROGRESS (provisional)
+- FULL round per parent note (rotation #3 client mobile 390px). Merged
+  origin/claude/terminal-coding-interface-JOGQK into staging per convention
+  (picks up today's Finance rework: headline stat dropdowns, outlook cost
+  dropdowns, grouped cashflow inputs, commission statement rows, company
+  outlook + partner remuneration components). tsc clean post-merge.
+- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore) on the merged
+  tree. Two-bot 418 running; triage + journey to follow.
+- Setup: pg_hba trust (r205) needed again on this fresh container; bgp
+  role created superuser.
+
 ### r417 · 2026-08-29 ~10:00 UTC · LIGHT (r416 had the journey)
 - Watchdog-spawned session (parent note: r416 finished 06:59 without a
   successor). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke
