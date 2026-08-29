@@ -160,43 +160,8 @@ function ExpandableStat({ label, value, sub, negative, children }: {
   );
 }
 
-// The one piece of the old pipeline section the Company outlook doesn't
-// already show: completed deals nobody has invoiced yet — a chase list,
-// not a forecast. (The stage cards and projected-year bar were retired
-// 2026-08-28: the outlook's deal-book strip is the same numbers.)
-function UninvoicedSection({ wip }: { wip: WipForecast }) {
-  if (wip.toInvoice.deals.length === 0) return null;
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center justify-between">
-          <span className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-500" /> Completed, not yet invoiced</span>
-          <Badge variant="secondary" className="text-[10px]">{wip.toInvoice.count} deal(s) · {money(wip.toInvoice.total)}</Badge>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-0.5">
-        {wip.toInvoice.deals.map(deal => (
-          <Link key={deal.id} href={`/deals/${deal.id}`}>
-            <div className="flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded hover:bg-muted cursor-pointer" data-testid={`finance-uninvoiced-${deal.id}`}>
-              <span className="truncate pr-3">
-                {deal.name}
-                <span className="text-muted-foreground text-xs">
-                  {deal.agent ? ` · ${deal.agent}` : ""}{deal.completedAt ? ` · completed ${formatDate(deal.completedAt)}` : ""}
-                </span>
-              </span>
-              <span className="font-mono shrink-0">{money(deal.fee)}</span>
-            </div>
-          </Link>
-        ))}
-        {wip.invoicedAwaitingPayment > 0 && (
-          <p className="text-[11px] text-muted-foreground pt-2">
-            Plus {money(wip.invoicedAwaitingPayment)} invoiced on completed deals still awaiting payment (in debtors below).
-          </p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
+// (The "Completed, not yet invoiced" card was retired 2026-08-29 — the
+// outlook's "Completed, to invoice" deal-book row opens to the same deals.)
 
 // Commission statements — the tiered scheme: billings (agent's fee split,
 // after BGP House's 15%) accumulate from 1 May in fee-due order; 0% to 2×
@@ -556,7 +521,6 @@ export default function FinancePage() {
             the CRM / local DB, so they work regardless of the Xero
             connection state. */}
         <CompanyOutlookSection />
-        {data.wip && <UninvoicedSection wip={data.wip} />}
         <CashflowBoardSection />
         <HistoricalBillingsSection />
         <PartnerRemunerationSection />
@@ -710,10 +674,6 @@ export default function FinancePage() {
           bankAccounts: data.bankAccounts || [],
         }}
       />
-
-      {/* Completed deals nobody has invoiced — the chase list. The stage
-          cards live inside the outlook's deal-book strip now. */}
-      {data.wip && <UninvoicedSection wip={data.wip} />}
 
       {/* Cashflow forecast — the app + Xero drive receipts, the typed
           lines below are Wendy's costs plan (Woody, 2026-08-27). */}
