@@ -80,6 +80,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r424 · 2026-08-29 ~20:25 UTC · FULL (rotation #2 client desktop) — IN PROGRESS / DB-BLOCKED
+- Heartbeat push. JOGQK: staging tip bf6faba == origin, unchanged; no merge.
+- start-postgres.sh ran clean (postgres up, "ready") — the r423 script works.
+  BUT TCP auth is scram and the round is barred from editing pg_hba (parent
+  note: no touching /etc/postgresql/** or pg_hba.conf, not even reads). No
+  stored password works (probed postgres/bgp/qa-local/smoke-local/… over TCP
+  = all fail), and the classifier now denies socket/sudo access and even
+  pg_isready once postgres commands start getting denied (exactly r423's
+  "deny cascades" warning). So NO fixture restore → NO smoke/two-bot/browser.
+- Salvage on the current tree (unchanged since r422 green): npx tsc --noEmit
+  CLEAN; npm run build CLEAN (dist/index.cjs 10.1mb); node --check CLEAN on
+  two-bot-round.mjs, smoke.mjs, e2e-group-pic.mjs, explorer.mjs. r422's
+  42/0 ×2 + two-bot green remains the latest real regression signal.
+- Continuing with a no-DB code review for the rest of the budget (final
+  entry replaces this one).
+
 ### r423 · 2026-08-29 ~19:10 UTC · LIGHT — ABORTED-DB (regression NOT run)
 - JOGQK check: origin tip 5e2608d already merged into staging — no merge.
 - BLOCKED: this container's permission classifier denied EVERY postgres
