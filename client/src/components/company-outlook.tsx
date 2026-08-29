@@ -23,14 +23,15 @@ function money(n: number | null | undefined): string {
   return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 }).format(Number(n));
 }
 
-// One expandable cost row: the plain-English headline, and the lines (or
-// agents) behind it a tap away.
-function CostRow({ id, title, headline, sub, open, onToggle, children }: {
-  id: string; title: string; headline: string; sub?: string;
+// The one disclosure-row anatomy every expandable number on Finance uses
+// (Woody, 2026-08-29: "all needs some uniformity"): chevron left, name +
+// detail, figure right, tap to open the rows behind it.
+export function DisclosureRow({ id, title, headline, sub, negative, open, onToggle, children }: {
+  id: string; title: string; headline: string; sub?: string; negative?: boolean;
   open: boolean; onToggle: () => void; children: React.ReactNode;
 }) {
   return (
-    <div className="border rounded-xl">
+    <div className="border rounded-xl bg-card">
       <button
         className="w-full flex items-center gap-2 p-3 text-left"
         onClick={onToggle}
@@ -42,49 +43,48 @@ function CostRow({ id, title, headline, sub, open, onToggle, children }: {
           <span className="text-sm font-medium">{title}</span>
           {sub && <span className="block text-[11px] text-muted-foreground leading-snug">{sub}</span>}
         </span>
-        <span className="text-sm font-semibold tabular-nums shrink-0">{headline}</span>
+        <span className={`text-sm font-semibold tabular-nums shrink-0 ${negative ? "text-red-600 dark:text-red-400" : ""}`}>{headline}</span>
       </button>
       {open && <div className="px-3 pb-3 pl-9">{children}</div>}
     </div>
   );
 }
+const CostRow = DisclosureRow;
 
-// A deal-book stage card that opens to list its deals — same tap-to-open
-// pattern as the headline stats (Woody, 2026-08-29). While open it spans
-// the full row so the list isn't crushed on phones.
-function StageCard({ stage }: { stage: { code: string; label: string; weightPct: number; weighted: number; unweighted: number; count: number; deals: Array<{ id: string; name: string; fee: number; weighted: number }> } }) {
-  const [open, setOpen] = useState(false);
+// A deal-book stage row — the same DisclosureRow as everything else,
+// opening to the stage's deals.
+function StageRow({ stage, open, onToggle }: {
+  stage: { code: string; label: string; weightPct: number; weighted: number; unweighted: number; count: number; deals: Array<{ id: string; name: string; fee: number; weighted: number }> };
+  open: boolean; onToggle: () => void;
+}) {
   const [showAll, setShowAll] = useState(false);
   const visible = showAll ? stage.deals : stage.deals.slice(0, 15);
   return (
-    <div className={`border rounded-xl p-3 ${open ? "col-span-2 lg:col-span-4" : ""}`} data-testid={`outlook-stage-${stage.code}`}>
-      <button type="button" className="w-full text-left" onClick={() => setOpen(o => !o)} aria-expanded={open} data-testid={`outlook-stage-toggle-${stage.code}`}>
-        <p className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center justify-between">
-          {stage.label}
-          <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
-        </p>
-        <p className="text-lg font-semibold tabular-nums mt-0.5">{money(stage.weighted)}</p>
-        <p className="text-[11px] text-muted-foreground mt-0.5">{stage.count} deal{stage.count === 1 ? "" : "s"} · {money(stage.unweighted)} at {stage.weightPct}%</p>
-      </button>
-      {open && (
-        <div className="mt-2 border-t pt-2 space-y-0.5">
-          {visible.map(d => (
-            <Link key={d.id} href={`/deals/${d.id}`}>
-              <div className="flex items-center justify-between gap-3 text-sm py-1 px-1 -mx-1 rounded hover:bg-muted cursor-pointer">
-                <span className="truncate">{d.name}</span>
-                <span className="font-mono tabular-nums shrink-0 text-muted-foreground">{money(d.fee)} <span className="text-foreground">→ {money(d.weighted)}</span></span>
-              </div>
-            </Link>
-          ))}
-          {stage.deals.length > visible.length && (
-            <button type="button" className="text-xs text-primary pt-1" onClick={() => setShowAll(true)}>
-              Show all {stage.deals.length}
-            </button>
-          )}
-          <p className="text-[11px] text-muted-foreground pt-1.5">Fee → weighted at {stage.weightPct}%. Tap a deal to open it.</p>
-        </div>
-      )}
-    </div>
+    <DisclosureRow
+      id={`stage-${stage.code}`}
+      title={stage.label}
+      sub={`${stage.count} deal${stage.count === 1 ? "" : "s"} · ${money(stage.unweighted)} at ${stage.weightPct}%`}
+      headline={money(stage.weighted)}
+      open={open}
+      onToggle={onToggle}
+    >
+      <div className="space-y-0.5">
+        {visible.map(d => (
+          <Link key={d.id} href={`/deals/${d.id}`}>
+            <div className="flex items-center justify-between gap-3 text-sm py-1 px-1 -mx-1 rounded hover:bg-muted cursor-pointer">
+              <span className="truncate">{d.name}</span>
+              <span className="font-mono tabular-nums shrink-0 text-muted-foreground">{money(d.fee)} <span className="text-foreground">→ {money(d.weighted)}</span></span>
+            </div>
+          </Link>
+        ))}
+        {stage.deals.length > visible.length && (
+          <button type="button" className="text-xs text-primary pt-1" onClick={() => setShowAll(true)}>
+            Show all {stage.deals.length}
+          </button>
+        )}
+        <p className="text-[11px] text-muted-foreground pt-1.5">Fee → weighted at {stage.weightPct}%. Tap a deal to open it.</p>
+      </div>
+    </DisclosureRow>
   );
 }
 
@@ -200,10 +200,12 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
               </span>
             </Link>
           </div>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 items-start">
-            {income.byStage.map(s => <StageCard key={s.code} stage={s} />)}
+          <div className="space-y-2">
+            {income.byStage.map(s => (
+              <StageRow key={s.code} stage={s} open={openRow === `stage-${s.code}`} onToggle={() => toggle(`stage-${s.code}`)} />
+            ))}
             {income.byStage.length === 0 && (
-              <p className="text-xs text-muted-foreground col-span-full">No live deals with fees on the boards yet.</p>
+              <p className="text-xs text-muted-foreground">No live deals with fees on the boards yet.</p>
             )}
           </div>
         </div>

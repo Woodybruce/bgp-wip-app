@@ -4,7 +4,7 @@
 // cached 15 min server-side).
 import { useQuery } from "@tanstack/react-query";
 import { CashflowBoardSection } from "@/components/cashflow-board";
-import { CompanyOutlookSection } from "@/components/company-outlook";
+import { CompanyOutlookSection, DisclosureRow } from "@/components/company-outlook";
 import { cashflowFetch } from "@/lib/cashflow-model";
 import { HistoricalBillingsSection } from "@/components/historical-billings";
 import { PartnerRemunerationSection } from "@/components/partner-remuneration";
@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { formatDate } from "@/lib/format";
-import { RefreshCw, AlertTriangle, ExternalLink, ChevronDown } from "lucide-react";
+import { RefreshCw, AlertTriangle, ExternalLink } from "lucide-react";
 
 interface WipForecast {
   pipeline: Record<"NEG" | "SOL" | "EXC", { total: number; count: number }>;
@@ -135,30 +135,28 @@ function StatCard({ label, value, sub, negative }: { label: string; value: strin
   );
 }
 
-// Headline stat that opens to show what's behind the number (Woody,
-// 2026-08-29: "can all of these have drop downs of the deals?"). While
-// open the card spans the full row so the detail isn't crushed on phones.
+// Headline stat as the same disclosure row every other expandable number
+// on the page uses (Woody, 2026-08-29: "all needs some uniformity").
+// While open the row spans the full grid so the detail isn't crushed.
 function ExpandableStat({ label, value, sub, negative, children }: {
   label: string; value: string; sub?: string; negative?: boolean; children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const slug = label.toLowerCase().replace(/\s+/g, "-");
   return (
-    <Card className={open ? "col-span-2 lg:col-span-4" : ""}>
-      <CardContent className="p-4">
-        <button type="button" className="w-full text-left" onClick={() => setOpen(o => !o)} data-testid={`finance-stat-toggle-${slug}`} aria-expanded={open}>
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center justify-between">
-            {label}
-            <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
-          </p>
-          <p className={`text-2xl font-semibold tracking-tight mt-1 ${negative ? "text-red-600 dark:text-red-400" : ""}`} data-testid={`finance-stat-${slug}`}>
-            {value}
-          </p>
-          {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
-        </button>
-        {open && <div className="mt-3 border-t pt-3">{children}</div>}
-      </CardContent>
-    </Card>
+    <div className={open ? "md:col-span-2" : ""}>
+      <DisclosureRow
+        id={`stat-${slug}`}
+        title={label}
+        sub={sub}
+        headline={value}
+        negative={negative}
+        open={open}
+        onToggle={() => setOpen(o => !o)}
+      >
+        {children}
+      </DisclosureRow>
+    </div>
   );
 }
 
@@ -588,8 +586,8 @@ export default function FinancePage() {
         </Button>
       </div>
 
-      {/* Headline stats — tap a card to see what's behind the number */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 items-start">
+      {/* Headline stats — tap a row to see what's behind the number */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
         <ExpandableStat label="Income FYTD" value={money(h.income)} sub="Tap for the invoices">
           {data.paid && data.paid.count > 0 ? (
             <div className="space-y-0.5">
