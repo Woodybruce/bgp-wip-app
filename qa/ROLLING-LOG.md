@@ -80,16 +80,58 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r418 · 2026-08-29 ~10:45 UTC · ROUND IN PROGRESS (provisional)
-- FULL round per parent note (rotation #3 client mobile 390px). Merged
-  origin/claude/terminal-coding-interface-JOGQK into staging per convention
-  (picks up today's Finance rework: headline stat dropdowns, outlook cost
-  dropdowns, grouped cashflow inputs, commission statement rows, company
-  outlook + partner remuneration components). tsc clean post-merge.
-- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore) on the merged
-  tree. Two-bot 418 running; triage + journey to follow.
+### r418 · 2026-08-29 ~11:45 UTC · FULL (rotation #3 client mobile 390px)
+- Merged origin/claude/terminal-coding-interface-JOGQK into staging per
+  convention — staging now carries today's Finance rework (headline stat
+  dropdowns, company outlook, grouped cashflow inputs, commission rows,
+  partner remuneration). tsc clean post-merge and post-fix.
+- Smoke GREEN 42/0 ×2 (FRESH_BUILD=1 both, fresh bgpsmoke restore) — on the
+  merged tree and again after fixes. Two-bot 418 via run-round.sh: exit 0,
+  ALL scenarios ok. 4 issues = standing noise signature (2×400
+  rocketreach/tracker-gate, 2×503 keyless AI). Full 4xx/503 endpoint tally
+  triaged — all noise-list or intentional rival-isolation/write-guard
+  probes; the single 500 was GET /api/auth/microsoft "SSO not configured"
+  (keyless env, this round's journey clicked it once by mistake).
+- Journey (Mark @390px iPhone UA, UI form login incl. Client/guest reveal):
+  "a colleague mentions a brand — look it up, find who to call; then check
+  portfolio news and my letting deals": login → Portfolio home (KPI strip,
+  team card, tile grid, bottom nav Portfolio|Messages|Deals|Tasks|News) →
+  Brands tile → /brands (search + category tiles, 9 slice brands) → search
+  "Starbucks" → grouped result with contact row (email button) → profile
+  (Key Contacts + engagement card, Compliance pill present, staff actions
+  hidden) → /news (brand signals feed clean) → /deals (2 deals + "+2
+  letting deals" subtitle holds). 0 pageerrors, 0 non-noise 4xx/5xx, no
+  h-overflow anywhere. Empty grey hero block on the profile = missing-photo
+  env noise (hero hides onError; no external network locally).
+- Bug fixed 1 (from r415's JOGQK findings, still present post-merge):
+  /api/app-costs was requireAdmin while every other Finance-page endpoint
+  is requireEquityOrAdmin — a non-admin equity partner silently lost the
+  App-costs card (renders null) + 403 noise. Now requireEquityOrAdmin.
+  Verified: equity non-admin 200 (temp-flipped jack, fixture restored),
+  victoria still 403.
+- Bug fixed 2 (r415 finding): /api/xero/financials concurrent first loads
+  share ONE payload object from buildFinancialsShared; the winner deleted
+  payload.paidInvoices after building the paid panel, so the loser built
+  its Income-FYTD paid panel from [] and cached it empty for 15 min. Route
+  now clones the shared payload before mutating. (Keyless env — verified by
+  code + tsc + smoke; Xero-connected behaviour unchanged in shape.)
+- Also fixed (doc, r415 finding #3): stale ChatBGP app-map line still sent
+  users to the retired Finance amber data-health card — now says weekly
+  fix-list email to equity, no amber card.
+- Harness growth: none — equity-non-admin gate probe needs a fixture user
+  that doesn't exist (all fixture equity are admins); noted for a future
+  seed-personas extension if gates multiply.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: none
+  (journey was clean; #115's zero-hit copy suggestion still open covers
+  the one rough edge in this flow). New flakes: none.
 - Setup: pg_hba trust (r205) needed again on this fresh container; bgp
-  role created superuser.
+  role created superuser. Journey read-only; two-bot probe leftovers match
+  purge patterns for next round.
+- Next: r418 was FULL → r419 may be LIGHT; then rotation #4 staff mobile
+  390px (Finance page @390 as staff is a good candidate — new layout now in
+  staging, only code-reviewed keyless). Real-device check of keyboard-up
+  composer (r405) still open for Woody.
 
 ### r417 · 2026-08-29 ~10:00 UTC · LIGHT (r416 had the journey)
 - Watchdog-spawned session (parent note: r416 finished 06:59 without a
