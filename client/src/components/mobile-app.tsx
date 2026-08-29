@@ -2350,9 +2350,13 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       if (res.ok) {
         queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
         queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+      } else {
+        const j = await res.json().catch(() => ({} as any));
+        toast({ title: "Photo didn't upload", description: j?.message || `Server said ${res.status}`, variant: "destructive" });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("[handleGroupPicUpload] Failed:", err);
+      toast({ title: "Photo didn't upload", description: err?.message || "Network error", variant: "destructive" });
     }
   };
 
@@ -2431,7 +2435,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           onSave={(blob) => { setPendingGroupPic(null); handleGroupPicUpload(new File([blob], "group.jpg", { type: "image/jpeg" })); }}
         />
       )}
-      <input type="file" accept="image/*" className="hidden" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) setPendingGroupPic(f); e.target.value = ""; }} />
+      <input type="file" accept="image/*" className="hidden" data-testid="input-group-pic" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) setPendingGroupPic(f); e.target.value = ""; }} />
       {isActiveThreadAi && <MobileBottomNav />}
       {isActiveThreadAi ? (
         <div className="bg-white text-foreground pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2.5 px-4 shrink-0 border-b border-border">

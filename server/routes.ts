@@ -73,7 +73,9 @@ if (!fs.existsSync(PROFILE_PICS_DIR)) {
 
 const profilePicUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  // 15MB: a full-res iPhone photo is routinely >5MB and the old cap made
+  // group-photo uploads fail (silently, client-side) — Woody, 2026-08-29.
+  limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (![".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"].includes(ext)) {
