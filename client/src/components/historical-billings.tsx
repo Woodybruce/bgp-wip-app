@@ -14,6 +14,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { Pill } from "@/components/ui/pill";
 import { type CashflowData, cashflowFetch, fmtCashflow as fmt } from "@/lib/cashflow-model";
 import { buildCompanyOutlook } from "@/lib/outlook-model";
+import { TapAwayChart } from "@/components/company-outlook";
 import { History } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
@@ -232,7 +233,7 @@ export function HistoricalBillingsSection() {
           <Pill active={chartKind === "bar"} onClick={() => pickChartKind("bar")} data-testid="hist-chart-bar">Bars</Pill>
         </div>
 
-        <div className="h-44">
+        <TapAwayChart className="h-44">
           <ResponsiveContainer width="100%" height="100%">
             {chartKind === "line" ? (
               <LineChart data={chartData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
@@ -262,7 +263,7 @@ export function HistoricalBillingsSection() {
               </BarChart>
             )}
           </ResponsiveContainer>
-        </div>
+        </TapAwayChart>
 
         {(dim === "client" || dim === "company") && (
           <Input

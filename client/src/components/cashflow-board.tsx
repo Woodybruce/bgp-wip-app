@@ -23,7 +23,7 @@ import {
 } from "@/lib/cashflow-model";
 import { useToast } from "@/hooks/use-toast";
 import { costBucketFor } from "@/lib/outlook-model";
-import { DisclosureRow } from "@/components/company-outlook";
+import { DisclosureRow, TapAwayChart } from "@/components/company-outlook";
 import { Banknote, ChevronDown, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine,
@@ -173,7 +173,7 @@ export function CashflowBoardSection() {
           <MiniStat label={`Close · ${ML(unified.months[unified.months.length - 1])}`} value={unified.byMonth[unified.months[unified.months.length - 1]].close} />
         </div>
 
-        <div className="h-44 sm:h-52">
+        <TapAwayChart className="h-44 sm:h-52">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 4 }}>
               <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
@@ -184,7 +184,7 @@ export function CashflowBoardSection() {
               <Line type="monotone" dataKey="Close" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 2.5 }} />
             </LineChart>
           </ResponsiveContainer>
-        </div>
+        </TapAwayChart>
 
         {/* Phone: one month at a time */}
         <div className="md:hidden space-y-3" data-testid="cf-mobile">

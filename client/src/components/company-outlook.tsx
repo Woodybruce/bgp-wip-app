@@ -7,7 +7,7 @@
 // out / profit), the deal-book strip mirrors the WIP report's stages and
 // links to it, and each cost bucket is a dropdown revealing the lines (or
 // agents) behind the number.
-import { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,6 +50,24 @@ export function DisclosureRow({ id, title, headline, sub, negative, open, onTogg
   );
 }
 const CostRow = DisclosureRow;
+
+// On touch screens a recharts tooltip opens on tap and never closes — there
+// is no mouseleave (Woody, 2026-08-29: "doesn't go when click off"). This
+// wrapper remounts its chart when a touch lands outside it, clearing any
+// stuck tooltip. Shared by every Finance chart.
+export function TapAwayChart({ className, children }: { className?: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [k, setK] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined" || !("ontouchstart" in window)) return;
+    const onTouch = (e: TouchEvent) => {
+      if (ref.current && e.target instanceof Node && !ref.current.contains(e.target)) setK(x => x + 1);
+    };
+    document.addEventListener("touchstart", onTouch, { passive: true });
+    return () => document.removeEventListener("touchstart", onTouch);
+  }, []);
+  return <div ref={ref} className={className}><div key={k} className="w-full h-full">{children}</div></div>;
+}
 
 // A deal-book stage row — the same DisclosureRow as everything else,
 // opening to the stage's deals.
@@ -214,7 +232,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
         {chartData.length > 0 && (
           <div>
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">Month by month vs prior years</p>
-            <div className="h-[240px]">
+            <TapAwayChart className="h-[240px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
@@ -230,7 +248,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
                   ))}
                 </ComposedChart>
               </ResponsiveContainer>
-            </div>
+            </TapAwayChart>
           </div>
         )}
 
