@@ -2343,6 +2343,13 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const isGroup = !isActiveThreadAi && !isDm;
   const groupPicFileRef = useRef<HTMLInputElement>(null);
   const [pendingGroupPic, setPendingGroupPic] = useState<File | null>(null);
+  useEffect(() => {
+    // Holds off the auto-update reload (index.html) while the cropper is up.
+    if (pendingGroupPic) {
+      (window as any).__bgpBusy = true;
+      return () => { (window as any).__bgpBusy = false; };
+    }
+  }, [pendingGroupPic]);
   // NOTE: the "Search the web" photo chooser (ImageSourceSheet + the
   // /api/image-search + *-from-url endpoints) is PARKED — Google kept
   // refusing the project Custom Search access despite the API, key and
@@ -2351,6 +2358,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
 
   const handleGroupPicUpload = async (file: File) => {
     if (!threadId) return;
+    (window as any).__bgpBusy = true;
     const formData = new FormData();
     formData.append("file", file);
     try {
@@ -2370,6 +2378,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     } catch (err: any) {
       console.error("[handleGroupPicUpload] Failed:", err);
       toast({ title: "Photo didn't upload", description: err?.message || "Network error", variant: "destructive" });
+    } finally {
+      (window as any).__bgpBusy = false;
     }
   };
 
