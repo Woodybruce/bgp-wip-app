@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
@@ -209,6 +209,24 @@ export default function MobileHome() {
     enabled: isEquity,
     staleTime: 5 * 60 * 1000,
   });
+  // Pre-Xero (Sage) receivables from the cashflow board's LEGACY line, so
+  // the tile's Debtors figure matches the Finance page's to the pound.
+  const { data: equityCf } = useQuery<any>({
+    queryKey: ["/api/cashflow"],
+    queryFn: () => apiRequest("GET", "/api/cashflow").then(r => r.json()),
+    enabled: isEquity,
+    staleTime: 5 * 60 * 1000,
+  });
+  const sageOutstanding = useMemo(() => {
+    const line = equityCf?.lines?.find((l: any) => l.key === "LEGACY");
+    if (!line) return 0;
+    const byMonth: Record<string, { a?: number; b?: number }> = {};
+    for (const c of equityCf!.cells || []) {
+      if (c.line_id !== line.id) continue;
+      (byMonth[c.month] ||= {})[c.basis === "actual" ? "a" : "b"] = Number(c.amount) || 0;
+    }
+    return Object.values(byMonth).reduce((s, m) => s + (m.a ?? m.b ?? 0), 0);
+  }, [equityCf]);
   // Personal (my billing) vs Company (equity finance) tab on the combined
   // finance tile — Company is the default (Woody, 2026-08-22), an explicit
   // switch to Personal sticks per device.
@@ -468,34 +486,36 @@ export default function MobileHome() {
                   )}
                 </>
               ) : (
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <div>
-                    <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.headline?.income || 0).toLocaleString("en-GB")}</p>
+                    <p className="text-base font-bold tabular-nums leading-tight">£{Math.round(equityFin.headline?.income || 0).toLocaleString("en-GB")}</p>
                     <p className="text-[10px] opacity-70">Income FYTD</p>
                   </div>
                   <div>
-                    <p className={`text-lg font-bold tabular-nums leading-tight ${(equityFin.headline?.netProfit || 0) < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                    <p className={`text-base font-bold tabular-nums leading-tight ${(equityFin.headline?.netProfit || 0) < 0 ? "text-red-400" : "text-emerald-400"}`}>
                       £{Math.round(equityFin.headline?.netProfit || 0).toLocaleString("en-GB")}
                     </p>
                     <p className="text-[10px] opacity-70">Net FYTD</p>
                   </div>
                   <div>
-                    <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.cashTotal || 0).toLocaleString("en-GB")}</p>
+                    <p className={`text-base font-bold tabular-nums leading-tight ${(equityFin.debtors?.overdue || 0) > 0 ? "text-amber-400" : ""}`}>
+                      £{Math.round((equityFin.debtors?.outstanding || 0) + sageOutstanding).toLocaleString("en-GB")}
+                    </p>
+                    <p className="text-[10px] opacity-70">Debtors</p>
+                  </div>
+                  <div>
+                    <p className="text-base font-bold tabular-nums leading-tight">£{Math.round(equityFin.cashTotal || 0).toLocaleString("en-GB")}</p>
                     <p className="text-[10px] opacity-70">Cash at bank</p>
                   </div>
-                  {equityFin.projection?.projectedNet != null ? (
+                  {equityFin.projection?.projectedNet != null && (
                     <div>
-                      <p className={`text-lg font-bold tabular-nums leading-tight ${equityFin.projection.projectedNet < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                      <p className={`text-base font-bold tabular-nums leading-tight ${equityFin.projection.projectedNet < 0 ? "text-red-400" : "text-emerald-400"}`}>
                         £{Math.round(equityFin.projection.projectedNet).toLocaleString("en-GB")}
                       </p>
                       <p className="text-[10px] opacity-70">Projected FY net</p>
                     </div>
-                  ) : (
-                    <div>
-                      <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.debtors?.outstanding || 0).toLocaleString("en-GB")}</p>
-                      <p className="text-[10px] opacity-70">Debtors</p>
-                    </div>
                   )}
+                  {/* One slot free — Woody's next key metric goes here. */}
                 </div>
               )}
             </button>
