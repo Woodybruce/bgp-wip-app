@@ -302,12 +302,12 @@ function AppCostsSection() {
 }
 
 // Cash management — the near-term money mechanics the outlook doesn't
-// cover: what actually left the account this FY (Xero lines + movers),
-// committed bills, and cash due both directions. The old run-rate /
-// projected-FY / projected-net stat trio was retired 2026-08-28 — the
-// Company outlook is the one forecast on the page.
-function CostsSection({ costs, creditors, cashflow, recurring }: {
-  costs: NonNullable<Financials["costs"]>;
+// cover: committed bills and cash due both directions. The old run-rate /
+// projected-FY / projected-net stat trio was retired 2026-08-28, and the
+// "Where the money actually went" Xero lines + movers card on 2026-08-29
+// (Woody circled it — another cost list; the outlook's Average monthly
+// costs dropdowns are the one place for cost lines).
+function CostsSection({ creditors, cashflow, recurring }: {
   creditors?: Financials["creditors"];
   cashflow?: Financials["cashflow"];
   recurring?: Financials["recurring"];
@@ -321,36 +321,7 @@ function CostsSection({ costs, creditors, cashflow, recurring }: {
   ] : [];
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* What actually left — Xero actuals, vs the plan in the outlook */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Where the money actually went — Xero, FY to date</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-0.5">
-            {costs.topLines.map((c, i) => (
-              <div key={i} className="flex items-center gap-2 text-sm py-0.5">
-                <span className="truncate flex-1">{c.label}</span>
-                <span className="text-[11px] text-muted-foreground w-9 text-right shrink-0">{c.share}%</span>
-                <span className="font-mono shrink-0 w-24 text-right">{money(c.fytd)}</span>
-              </div>
-            ))}
-            {costs.movers.length > 0 && (
-              <div className="pt-3">
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Biggest movers vs 3-month average</p>
-                {costs.movers.map((m, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                    <span className="truncate pr-3">{m.label}</span>
-                    <span className={`font-mono shrink-0 ${m.delta > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                      {m.delta > 0 ? "+" : ""}{money(m.delta)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         <div className="space-y-4">
           {/* Bills outstanding headline */}
           {creditors && (
@@ -381,7 +352,9 @@ function CostsSection({ costs, creditors, cashflow, recurring }: {
               </CardContent>
             </Card>
           )}
+        </div>
 
+        <div className="space-y-4">
           {/* Largest open bills */}
           {creditors && creditors.top.length > 0 && (
             <Card>
@@ -685,10 +658,9 @@ export default function FinancePage() {
           email to equity@ replaced it; see runWipHealthEmail. The live list
           stays on WIP report → Needs Attention.) */}
 
-      {/* Cash management — actual spend, bills, cash due both directions */}
+      {/* Cash management — bills and cash due both directions */}
       {data.costs && (
         <CostsSection
-          costs={data.costs}
           creditors={data.creditors}
           cashflow={data.cashflow}
           recurring={data.recurring}
