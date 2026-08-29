@@ -515,7 +515,12 @@ export default function MobileHome() {
                       <p className="text-[10px] opacity-70">Projected FY net</p>
                     </div>
                   )}
-                  {/* One slot free — Woody's next key metric goes here. */}
+                  <div>
+                    <p className={`text-base font-bold tabular-nums leading-tight ${(equityFin.debtors?.buckets?.d60plus || 0) > 0 ? "text-red-400" : ""}`}>
+                      £{Math.round(equityFin.debtors?.buckets?.d60plus || 0).toLocaleString("en-GB")}
+                    </p>
+                    <p className="text-[10px] opacity-70">Overdue 60d+</p>
+                  </div>
                 </div>
               )}
             </button>

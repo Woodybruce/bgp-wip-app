@@ -163,7 +163,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
         {/* The three numbers that matter */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <div className="border rounded-xl p-4">
-            <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Money in — projected year</p>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Income — projected year</p>
             <p className="text-2xl font-semibold tabular-nums mt-1" data-testid="outlook-money-in">{money(income.projectedFy)}</p>
             <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
               {money(income.fytdActual)} billed so far + {money(income.forwardDeals)} deal book{income.legacy ? ` + ${money(income.legacy)} old Sage invoices (Wendy's sheet)` : ""}
@@ -171,7 +171,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
             </p>
           </div>
           <div className="border rounded-xl p-4">
-            <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Money out — projected year</p>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Costs — projected year</p>
             <p className="text-2xl font-semibold tabular-nums mt-1" data-testid="outlook-money-out">{money(costs.projectedFy)}</p>
             <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
               {money(costs.avgPerMonth)}/month on average — that's what we need to bill monthly to break even
