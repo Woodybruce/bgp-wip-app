@@ -52,7 +52,7 @@ export interface CompanyOutlook {
   income: {
     fytdActual: number; forwardDeals: number; legacy: number; projectedFy: number;
     // Same stage buckets and weights as the WIP report.
-    byStage: Array<{ code: string; label: string; weightPct: number; weighted: number; unweighted: number; count: number }>;
+    byStage: Array<{ code: string; label: string; weightPct: number; weighted: number; unweighted: number; count: number; deals: Array<{ id: string; name: string; fee: number; weighted: number }> }>;
   };
   costs: {
     basicAvg: number;              // basic company costs, £/mo (plan)
@@ -256,7 +256,7 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
           const s = data.deals?.byStage?.[code];
           const labels: Record<string, string> = { NEG: "Negotiating", SOL: "At solicitors", EXC: "Exchanged", COM: "Completed, to invoice" };
           const weights: Record<string, number> = { NEG: 50, SOL: 75, EXC: 90, COM: 100 };
-          return s ? { code, label: labels[code], weightPct: weights[code], weighted: s.weighted, unweighted: s.unweighted, count: s.count } : null;
+          return s ? { code, label: labels[code], weightPct: weights[code], weighted: s.weighted, unweighted: s.unweighted, count: s.count, deals: s.deals || [] } : null;
         })
         .filter((s): s is NonNullable<typeof s> => !!s),
     },

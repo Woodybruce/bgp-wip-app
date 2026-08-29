@@ -21,7 +21,7 @@ export interface CashflowXero {
 export interface CashflowDeals {
   byMonth: Record<string, { weighted: number; count: number }>;
   undated: { weighted: number; count: number };
-  byStage?: Record<string, { weighted: number; unweighted: number; count: number }>;
+  byStage?: Record<string, { weighted: number; unweighted: number; count: number; deals?: Array<{ id: string; name: string; fee: number; weighted: number }> }>;
 }
 export interface CommissionOutlook {
   fyStart: string;

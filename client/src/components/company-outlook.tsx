@@ -49,6 +49,45 @@ function CostRow({ id, title, headline, sub, open, onToggle, children }: {
   );
 }
 
+// A deal-book stage card that opens to list its deals — same tap-to-open
+// pattern as the headline stats (Woody, 2026-08-29). While open it spans
+// the full row so the list isn't crushed on phones.
+function StageCard({ stage }: { stage: { code: string; label: string; weightPct: number; weighted: number; unweighted: number; count: number; deals: Array<{ id: string; name: string; fee: number; weighted: number }> } }) {
+  const [open, setOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll ? stage.deals : stage.deals.slice(0, 15);
+  return (
+    <div className={`border rounded-xl p-3 ${open ? "col-span-2 lg:col-span-4" : ""}`} data-testid={`outlook-stage-${stage.code}`}>
+      <button type="button" className="w-full text-left" onClick={() => setOpen(o => !o)} aria-expanded={open} data-testid={`outlook-stage-toggle-${stage.code}`}>
+        <p className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center justify-between">
+          {stage.label}
+          <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
+        </p>
+        <p className="text-lg font-semibold tabular-nums mt-0.5">{money(stage.weighted)}</p>
+        <p className="text-[11px] text-muted-foreground mt-0.5">{stage.count} deal{stage.count === 1 ? "" : "s"} · {money(stage.unweighted)} at {stage.weightPct}%</p>
+      </button>
+      {open && (
+        <div className="mt-2 border-t pt-2 space-y-0.5">
+          {visible.map(d => (
+            <Link key={d.id} href={`/deals/${d.id}`}>
+              <div className="flex items-center justify-between gap-3 text-sm py-1 px-1 -mx-1 rounded hover:bg-muted cursor-pointer">
+                <span className="truncate">{d.name}</span>
+                <span className="font-mono tabular-nums shrink-0 text-muted-foreground">{money(d.fee)} <span className="text-foreground">→ {money(d.weighted)}</span></span>
+              </div>
+            </Link>
+          ))}
+          {stage.deals.length > visible.length && (
+            <button type="button" className="text-xs text-primary pt-1" onClick={() => setShowAll(true)}>
+              Show all {stage.deals.length}
+            </button>
+          )}
+          <p className="text-[11px] text-muted-foreground pt-1.5">Fee → weighted at {stage.weightPct}%. Tap a deal to open it.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LineList({ lines }: { lines: CostLineDetail[] }) {
   if (lines.length === 0) return <p className="text-xs text-muted-foreground">Nothing typed on the plan yet.</p>;
   return (
@@ -161,14 +200,8 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
               </span>
             </Link>
           </div>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-            {income.byStage.map(s => (
-              <div key={s.code} className="border rounded-xl p-3" data-testid={`outlook-stage-${s.code}`}>
-                <p className="text-[10px] uppercase tracking-widest text-muted-foreground">{s.label}</p>
-                <p className="text-lg font-semibold tabular-nums mt-0.5">{money(s.weighted)}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">{s.count} deal{s.count === 1 ? "" : "s"} · {money(s.unweighted)} at {s.weightPct}%</p>
-              </div>
-            ))}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 items-start">
+            {income.byStage.map(s => <StageCard key={s.code} stage={s} />)}
             {income.byStage.length === 0 && (
               <p className="text-xs text-muted-foreground col-span-full">No live deals with fees on the boards yet.</p>
             )}
