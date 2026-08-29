@@ -80,6 +80,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r419 · 2026-08-29 ~13:00 UTC · ROUND IN PROGRESS (LIGHT — r418 had the journey)
+- Merged origin/claude/terminal-coding-interface-JOGQK into staging per
+  convention (Historical billings line/bar toggle, uniform Finance
+  typography, update banner re-enabled). Clean merge, tsc clean.
+- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore) on the merged
+  tree. Two-bot 419 via run-round.sh currently running; triage to follow.
+- Provisional — final entry replaces this one.
+
 ### r418 · 2026-08-29 ~11:45 UTC · FULL (rotation #3 client mobile 390px)
 - Merged origin/claude/terminal-coding-interface-JOGQK into staging per
   convention — staging now carries today's Finance rework (headline stat
