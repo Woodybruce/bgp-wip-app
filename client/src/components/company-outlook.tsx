@@ -98,7 +98,6 @@ function LineList({ lines }: { lines: CostLineDetail[] }) {
           <span className="font-mono tabular-nums shrink-0">{money(l.monthly)}/mo</span>
         </div>
       ))}
-      <p className="text-[11px] text-muted-foreground pt-1.5">Each line's year spread evenly per month, so the list adds up to the header — quarterly rent and annual one-offs show as their monthly share. From the cashflow plan below; edit a line there and this follows.</p>
     </div>
   );
 }
