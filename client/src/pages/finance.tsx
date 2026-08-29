@@ -14,7 +14,6 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { formatDate } from "@/lib/format";
 import { RefreshCw, AlertTriangle, ExternalLink } from "lucide-react";
@@ -168,6 +167,7 @@ function ExpandableStat({ label, value, sub, negative, children }: {
 // salary, then 30% / 40% / 50% bands; payable at month-end payroll once
 // the client has paid.
 function CommissionSection({ commissions }: { commissions: NonNullable<Financials["commissions"]> }) {
+  const [openAgent, setOpenAgent] = useState<string | null>(null);
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -176,46 +176,61 @@ function CommissionSection({ commissions }: { commissions: NonNullable<Financial
           <span className="text-xs font-normal text-muted-foreground">FY from {formatDate(commissions.fyStart)}</span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {commissions.statements.map((s, i) => {
+      <CardContent className="space-y-2">
+        {commissions.statements.map((s) => {
           const pct = s.multiple != null ? Math.min((s.multiple / 4) * 100, 100) : 0;
+          const slug = s.agent.toLowerCase().replace(/\s+/g, "-");
           return (
-            <div key={i} className="space-y-1.5" data-testid={`commission-statement-${s.agent.toLowerCase().replace(/\s+/g, "-")}`}>
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm font-medium truncate">{s.agent}</span>
-                  {s.multiple != null ? (
-                    <Badge variant="secondary" className="text-[10px]">{s.multiple}× salary</Badge>
-                  ) : (
-                    <Badge variant="outline" className="text-[10px] text-amber-600">no salary on file</Badge>
+            <div key={s.agent} data-testid={`commission-statement-${slug}`}>
+              <DisclosureRow
+                id={`agent-${slug}`}
+                title={s.agent}
+                sub={s.multiple != null
+                  ? `Billings ${money(s.billings)} · ${s.multiple}× salary · ${Math.round(s.currentRate * 100)}% band`
+                  : `Billings ${money(s.billings)} · no salary on file`}
+                headline={s.payable > 0 ? `${money(s.payable)} due` : money(s.earned)}
+                open={openAgent === slug}
+                onToggle={() => setOpenAgent(o => (o === slug ? null : slug))}
+              >
+                <div className="space-y-2">
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                    <span>Earned <span className="font-mono font-medium text-foreground">{money(s.earned)}</span></span>
+                    <span>Payable <span className="font-mono font-medium text-emerald-600 dark:text-emerald-400">{money(s.payable)}</span></span>
+                    {s.awaitingPayment > 0 && (
+                      <span>Awaiting client <span className="font-mono font-medium text-amber-600 dark:text-amber-400">{money(s.awaitingPayment)}</span></span>
+                    )}
+                  </div>
+                  {/* Progress to the salary-multiple thresholds (markers at 2×/3×/4×) */}
+                  {s.multiple != null && (
+                    <div className="relative h-2 rounded-full bg-muted overflow-hidden">
+                      <div className="absolute inset-y-0 left-0 bg-primary rounded-full" style={{ width: `${pct}%` }} />
+                      {[2, 3, 4].map(m => (
+                        <div key={m} className="absolute inset-y-0 w-px bg-background" style={{ left: `${(m / 4) * 100}%` }} title={`${m}× salary`} />
+                      ))}
+                    </div>
                   )}
-                  <Badge variant={s.currentRate > 0 ? "default" : "outline"} className="text-[10px]">
-                    {Math.round(s.currentRate * 100)}% band
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-4 text-sm">
-                  <span className="text-muted-foreground text-xs">Billings <span className="font-mono font-medium text-foreground">{money(s.billings)}</span></span>
-                  <span className="text-muted-foreground text-xs">Earned <span className="font-mono font-medium text-foreground">{money(s.earned)}</span></span>
-                  <span className="text-muted-foreground text-xs">Payable <span className="font-mono font-medium text-emerald-600 dark:text-emerald-400">{money(s.payable)}</span></span>
-                  {s.awaitingPayment > 0 && (
-                    <span className="text-muted-foreground text-xs">Awaiting client <span className="font-mono font-medium text-amber-600 dark:text-amber-400">{money(s.awaitingPayment)}</span></span>
+                  {s.nextThreshold && (
+                    <p className="text-[11px] text-muted-foreground">
+                      {money(s.nextThreshold.billingsAway)} of billings away from the {Math.round(s.nextThreshold.rate * 100)}% band ({s.nextThreshold.multiple}× salary).
+                    </p>
+                  )}
+                  {s.deals.length > 0 && (
+                    <div className="space-y-0.5">
+                      {s.deals.map(d => (
+                        <Link key={d.id} href={`/deals/${d.id}`}>
+                          <div className="flex items-center justify-between gap-3 text-xs py-1 px-1 -mx-1 rounded hover:bg-muted cursor-pointer">
+                            <span className="truncate">{d.name}</span>
+                            <span className="font-mono tabular-nums shrink-0 text-muted-foreground">
+                              {money(d.billing)} → {money(d.commission)}
+                              <span className={`ml-1.5 text-[10px] ${d.clientPaid ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>{d.clientPaid ? "paid" : "awaiting"}</span>
+                            </span>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
                   )}
                 </div>
-              </div>
-              {/* Progress to the salary-multiple thresholds (markers at 2×/3×/4×) */}
-              {s.multiple != null && (
-                <div className="relative h-2 rounded-full bg-muted overflow-hidden">
-                  <div className="absolute inset-y-0 left-0 bg-primary rounded-full" style={{ width: `${pct}%` }} />
-                  {[2, 3, 4].map(m => (
-                    <div key={m} className="absolute inset-y-0 w-px bg-background" style={{ left: `${(m / 4) * 100}%` }} title={`${m}× salary`} />
-                  ))}
-                </div>
-              )}
-              {s.nextThreshold && (
-                <p className="text-[11px] text-muted-foreground">
-                  {money(s.nextThreshold.billingsAway)} of billings away from the {Math.round(s.nextThreshold.rate * 100)}% band ({s.nextThreshold.multiple}× salary).
-                </p>
-              )}
+              </DisclosureRow>
             </div>
           );
         })}
