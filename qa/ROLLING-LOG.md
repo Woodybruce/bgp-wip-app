@@ -80,6 +80,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r420 · 2026-08-29 ~14:55 UTC · ROUND IN PROGRESS (provisional)
+- Merged origin/claude/terminal-coding-interface-JOGQK into staging (chat DM
+  naming + per-user unread dots + rename one-offs, chart tap-away tooltip
+  dismissal, FY27-red/forecast-pink recolour, YTD bar group, forced month
+  ticks, auto-apply updates, last-good Xero fallback). Conflict in
+  historical-billings.tsx resolved keeping BOTH r419's haveCur gating AND
+  the new red/pink colours; same gating applied to the new unconditional
+  cur/fc Bars (same dead-legend issue in keyless env). tsc clean.
+- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore) on merged tree.
+- Two-bot 420 running; triage to follow. FULL round planned: rotation #4
+  staff mobile 390px — Messages surface (today's chat fixes) + Finance @390.
+
 ### r419 · 2026-08-29 ~13:45 UTC · LIGHT (r418 had the journey)
 - Merged origin/claude/terminal-coding-interface-JOGQK into staging per
   convention (Historical billings line/bar toggle, uniform Finance
