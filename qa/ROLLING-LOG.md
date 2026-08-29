@@ -80,13 +80,40 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r416 · 2026-08-29 ~06:55 UTC · ROUND IN PROGRESS (provisional)
+### r416 · 2026-08-29 ~07:15 UTC · FULL (rotation #2 client desktop 1440px)
 - Watchdog-spawned session; r415 stalled and pushed nothing, so r414 (LIGHT)
-  is the previous round → this is FULL, rotation #2 client desktop 1440px.
+  was the previous round → FULL this round.
 - tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
-- Two-bot 416 via run-round.sh: running. Journey (Mark @1440, brand
-  self-add + deals chase) prepared, runs after two-bot completes.
-- Triage list so far: none beyond standing noise.
+  Two-bot 416 via run-round.sh: exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400, 2×503). 0 raw 500/502/504 in dev-server
+  log; full 4xx/503 endpoint tally triaged — all noise-list (keyless
+  ai-briefing/ai-take/chatbgp/brand-gaps/OS 503s, hr-photo/sharepoint 404s,
+  M365 401s) or intentional rival-isolation/gate probes. 0 app bugs.
+- Journey (Mark @1440px, UI form login): "scope a new operator for a vacant
+  unit — browse the directory, self-add a non-slice brand, review its
+  profile, then check lettings progress and who to chase": login → Portfolio
+  dashboard (KPIs, tracker tile, tasks render) → Brand Intelligence →
+  Add-brand dialog → Testco Fashion (fixture ships it pre-added): Remove →
+  Add back → Added badge + name-becomes-link (UX #27 holds) + toast →
+  profile (renders, Compliance & KYC visible to client, no staff
+  Delete/Merge actions) → Letting Tracker (KPI row, 78 units) → deal detail
+  (parties, BGP contact Victoria Broadhead = the "who to chase" answer,
+  client files jail message intact). 15/15 checks, 0 pageerrors, 0 non-noise
+  4xx/5xx. NOT bugs: client sees Add unit / edit / delete on the tracker and
+  Edit on deal detail — intended parity ("client does as much as the agent",
+  Woody 2026-07; writes scope-checked server-side per CLIENT_ALLOWED_WRITES).
+  Journey net-zero on data: Testco Fashion re-added (fixture state verified
+  restored); two-bot's 2 QA probe deals match purge patterns for next round.
+- Bugs fixed: 0 (nothing broken found — regression + journey both clean).
+  Deferred: none. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: none. Harness
+  growth: none needed — client add-brand add/remove already covered API-side
+  (client-add-brand-from-directory, client-add-brand-remove-ui).
+- New flakes: none. Setup: pg_hba trust (r205) needed again on this fresh
+  container; bgp role created superuser so no ownership transfer needed.
+- Next: r416 was FULL → r417 may be LIGHT; then rotation #3 client mobile
+  390px. Real-device check of keyboard-up composer (r405) still open for
+  Woody.
 
 ### r414 · 2026-08-29 ~00:45 UTC · LIGHT (r413 had the journey)
 - Watchdog-spawned session. JOGQK NOT merged into staging per parent note.
