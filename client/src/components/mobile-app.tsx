@@ -754,7 +754,10 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive,
   const [swipeX, setSwipeX] = useState(0);
   const [showDelete, setShowDelete] = useState(false);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
-  const hasUnseen = thread.members.some(m => !m.seen);
+  // Unread = *I* haven't seen it. It used to flag when ANY member hadn't,
+  // so a thread someone else never opened stayed dotted for everyone
+  // forever (Woody, 2026-08-29: "I've read this but it doesn't go away").
+  const hasUnseen = thread.members.some(m => m.id === currentUserId && !m.seen);
   const isAi = thread.isAiChat;
   const otherMembers = thread.members.filter(m => m.id !== currentUserId);
   const isDm = !isAi && otherMembers.length === 1;

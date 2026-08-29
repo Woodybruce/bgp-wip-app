@@ -2754,7 +2754,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   // the DM-naming fix landed (Woody, 2026-08-29: "Joe"). Also clears the
   // creator's stale self-unread flag from the same pre-fix window.
   try {
-    const FLAG = "migration:rename_group_chat_dm_20260829";
+    const FLAG = "migration:rename_group_chat_dm_20260829_v2";
     const { rows: done } = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
     if (!done.length) {
       const { rows: dms } = await pool.query(`
@@ -2763,7 +2763,6 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
                  WHERE m.thread_id = t.id AND m.user_id <> t.created_by LIMIT 1) AS other_name
           FROM chat_threads t
          WHERE t.title = 'Group Chat'
-           AND t.created_at >= '2026-08-29'
            AND (SELECT count(*) FROM chat_thread_members m2 WHERE m2.thread_id = t.id) = 2
            AND NOT EXISTS (SELECT 1 FROM chat_thread_members m3 WHERE m3.thread_id = t.id AND m3.user_id = '__chatbgp__')`);
       for (const t of dms) {
@@ -2772,7 +2771,10 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
         await pool.query(`UPDATE chat_thread_members SET seen = true WHERE thread_id = $1 AND user_id = $2`, [t.id, t.created_by]);
         console.log(`[one-off dm-rename] "Group Chat" ${t.id} renamed to "${t.other_name}"`);
       }
-      await pool.query(`INSERT INTO system_settings (key, value) VALUES ($1, 'done') ON CONFLICT (key) DO NOTHING`, [FLAG]);
+      await pool.query(
+        `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        [FLAG, JSON.stringify({ at: new Date().toISOString(), renamed: dms.length })],
+      );
       if (!dms.length) console.log("[one-off dm-rename] no matching Group Chat DMs found — flag set, nothing changed");
     }
   } catch (e: any) {
