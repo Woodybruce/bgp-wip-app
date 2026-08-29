@@ -177,7 +177,7 @@ export function CashflowBoardSection() {
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 4 }}>
               <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-              <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+              <XAxis dataKey="month" tick={{ fontSize: 9 }} interval={0} tickFormatter={(v: string) => String(v).split(" ")[0]} />
               <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `£${Math.round(v / 1000)}k`} width={52} />
               <Tooltip formatter={(v: any) => `£${Number(v).toLocaleString("en-GB")}`} />
               <ReferenceLine y={0} stroke="hsl(var(--destructive))" strokeDasharray="4 4" />

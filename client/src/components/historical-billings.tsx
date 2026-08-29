@@ -237,7 +237,7 @@ export function HistoricalBillingsSection() {
             {chartKind === "line" ? (
               <LineChart data={chartData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.1} />
-                <XAxis dataKey="m" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <XAxis dataKey="m" tick={{ fontSize: 9 }} interval={0} tickLine={false} axisLine={false} />
                 <YAxis tickFormatter={(v: number) => `£${(v / 1_000_000).toFixed(1)}m`} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} />
                 <Tooltip formatter={(v: any, name: any) => [`£${fmt(Number(v))}`, name]} />
                 {lineFys.map((y, i) => (
@@ -250,7 +250,7 @@ export function HistoricalBillingsSection() {
             ) : (
               <BarChart data={barData} barGap={0} barCategoryGap="20%" margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.1} />
-                <XAxis dataKey="m" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <XAxis dataKey="m" tick={{ fontSize: 9 }} interval={0} tickLine={false} axisLine={false} />
                 <YAxis tickFormatter={(v: number) => `£${(v / 1_000_000).toFixed(1)}m`} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} />
                 <Tooltip formatter={(v: any, name: any) => [`£${fmt(Number(v))}`, name]} />
                 {lineFys.map((y, i) => (
