@@ -2841,7 +2841,18 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const links = await db.select().from(crmPropertyAgents).where(eq(crmPropertyAgents.propertyId, req.params.id));
       const userIds = links.map(l => l.userId).filter(Boolean);
       if (userIds.length === 0) return res.json([]);
-      const agentUsers = await db.select().from(users).where(inArray(users.id, userIds as any[]));
+      // Display fields only — never the whole users row: this route is open to
+      // client logins (the "who do I chase" agent list on their properties),
+      // and the full row carries the password hash + HR PII (dob, address,
+      // personal email). Mirror the client-safe projection used elsewhere.
+      const agentUsers = await db.select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        role: users.role,
+        team: users.team,
+        profilePicUrl: users.profilePicUrl,
+      }).from(users).where(inArray(users.id, userIds as any[]));
       res.json(agentUsers);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -5298,11 +5309,13 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   // Comps are BGP market intelligence — client logins (e.g. Landsec) get an
   // empty table for now rather than BGP's comp evidence.
+  // Delegate to the canonical client test (role='Client' OR a non-BGP email).
+  // A role-only check failed OPEN: a client login whose role column isn't the
+  // exact string "Client" (a state the rest of the codebase handles) would be
+  // treated as staff and shown BGP-internal comps / agent intel / the full
+  // tenant-brand universe instead of their hospitality slice.
   async function isClientRequest(req: any): Promise<boolean> {
-    const uid = req.session?.userId || req.tokenUserId;
-    if (!uid) return false;
-    const r = await pool.query("SELECT role FROM users WHERE id = $1", [uid]);
-    return r.rows[0]?.role === "Client";
+    return isClientRequestUser(req);
   }
 
   // Brand directory for client CRM lookup — brand companies in the allowed

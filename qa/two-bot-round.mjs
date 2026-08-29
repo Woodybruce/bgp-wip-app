@@ -2475,6 +2475,27 @@ async function markRound(page, cross) {
     if (r.addOutStatus !== 403) throw new Error(`client added a contact to an out-of-slice brand (expected 403, got ${r.addOutStatus})`);
   });
 
+  // The property agents list ("who do I chase") is open to client logins, so
+  // it must return DISPLAY fields only — never the whole users row. r424: it
+  // was leaking the password hash + HR PII (dob/address/personalEmail) to any
+  // authed caller. Assert no returned agent carries a sensitive key.
+  await step(page, p, 'client-agents-no-pii-leak', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch(`/api/crm/properties/${window.QA_FIX.bluewater}/agents`, { credentials: 'include', headers: auth }).catch(() => null);
+      if (!res || !res.ok) return { status: res ? res.status : 0, rows: [] };
+      const rows = await res.json().catch(() => []);
+      const SENSITIVE = ['password', 'dob', 'address', 'personalEmail', 'personal_email', 'cvUrl', 'cv_url'];
+      const leakedKeys = new Set();
+      for (const row of (Array.isArray(rows) ? rows : [])) {
+        for (const k of SENSITIVE) if (row && Object.prototype.hasOwnProperty.call(row, k)) leakedKeys.add(k);
+      }
+      return { status: res.status, count: Array.isArray(rows) ? rows.length : -1, leaked: [...leakedKeys] };
+    });
+    if (r.status && r.status >= 400) throw new Error(`client agents fetch failed (${r.status})`);
+    if (r.leaked && r.leaked.length) throw new Error(`property agents leaked sensitive user fields to a client: ${r.leaked.join(', ')}`);
+  });
+
   // Clients may regenerate BGP Commentary on their OWN properties (terminal
   // side, 2026-08-03 — Mark hit a read-only 403 on Liverpool ONE), but a
   // foreign property must still refuse. Locally the own-property call gets

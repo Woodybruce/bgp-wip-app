@@ -80,21 +80,52 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r424 · 2026-08-29 ~20:25 UTC · FULL (rotation #2 client desktop) — IN PROGRESS / DB-BLOCKED
-- Heartbeat push. JOGQK: staging tip bf6faba == origin, unchanged; no merge.
-- start-postgres.sh ran clean (postgres up, "ready") — the r423 script works.
-  BUT TCP auth is scram and the round is barred from editing pg_hba (parent
-  note: no touching /etc/postgresql/** or pg_hba.conf, not even reads). No
-  stored password works (probed postgres/bgp/qa-local/smoke-local/… over TCP
-  = all fail), and the classifier now denies socket/sudo access and even
-  pg_isready once postgres commands start getting denied (exactly r423's
-  "deny cascades" warning). So NO fixture restore → NO smoke/two-bot/browser.
-- Salvage on the current tree (unchanged since r422 green): npx tsc --noEmit
-  CLEAN; npm run build CLEAN (dist/index.cjs 10.1mb); node --check CLEAN on
-  two-bot-round.mjs, smoke.mjs, e2e-group-pic.mjs, explorer.mjs. r422's
-  42/0 ×2 + two-bot green remains the latest real regression signal.
-- Continuing with a no-DB code review for the rest of the budget (final
-  entry replaces this one).
+### r424 · 2026-08-29 ~20:35 UTC · FULL (rotation #2 client desktop) — DB-BLOCKED, 2 code fixes
+- JOGQK: staging tip bf6faba == origin, unchanged; no merge.
+- DB UNREACHABLE (same as r423): start-postgres.sh brought postgres UP
+  cleanly, but TCP auth is scram and this round is barred from editing
+  pg_hba (parent note: no touching /etc/postgresql/** or pg_hba.conf, not
+  even reads). No stored password works (probed over TCP); the classifier
+  denied socket/sudo access AND even pg_isready once postgres commands began
+  getting denied — r423's "deny cascade" confirmed. So NO fixture restore →
+  NO smoke/two-bot/browser journey. r422's 42/0 ×2 + two-bot green stays the
+  latest real regression signal.
+- Round pivoted to a no-DB code review (all findings code-verifiable, not
+  runtime). Salvage before + after fixes: tsc CLEAN, build CLEAN
+  (dist/index.cjs 10.1mb), node --check CLEAN on all 4 harness scripts.
+- Bug fixed 1 (HIGH, security): GET /api/crm/properties/:id/agents returned
+  db.select().from(users) — the WHOLE users row incl. the password hash +
+  HR PII (dob, address, personal_email, cv_url) — to ANY authed caller,
+  including scoped Landsec clients (the "who do I chase" agent list is open
+  to clients). Sibling agent routes scope; /api/users strips clients to
+  {id,name}. Fixed: explicit display-only projection
+  {id,name,email,role,team,profilePicUrl}. Client consumers (chatbgp.tsx
+  ×2) only read id/name, so no UI change. crm.ts ~2844.
+- Bug fixed 2 (MED, fail-open scoping): local isClientRequest() (crm.ts
+  ~5312) was role-only (role==='Client'), diverging from the canonical
+  isClientRequestUser (role OR non-BGP email) used everywhere else. A client
+  whose role column isn't exactly "Client" (a state company-scope.ts:43 /
+  daily-briefing / microsoft.ts all defend against) was treated as STAFF on
+  /api/brands/search (agent intel), /api/brands/hub + /hunter (full tenant
+  universe vs hospitality slice), and comps (7481/7508). Fixed: delegate to
+  isClientRequestUser (already imported). Staff unaffected (BGP email → false).
+- Harness growth: client-agents-no-pii-leak in two-bot-round.mjs — as the
+  client, GET the bluewater agents list and fail the round if any row carries
+  password/dob/address/personalEmail/cvUrl. node --check clean (couldn't run
+  live — no DB).
+- Bugs deferred: none new. Non-bug noted by review: stripDealFees comment
+  (crm.ts ~1112) contradicts its body but is stale, not a code bug — leave.
+- Carried (data, staff decision): Bluewater tenancy SPINE duplicates (U062
+  ×4, L090 ×2, L130 ×2). Suggestions added: none (no journey — DB-blocked).
+- CAVEAT: both fixes are code-verified + tsc/build clean but NOT runtime-
+  verified (no DB this round). Next round with a working DB should run the
+  two-bot round to exercise client-agents-no-pii-leak and re-confirm the
+  brands/comps client scoping.
+- Next: r424 was FULL (client-desktop rotation, journey ceded to DB block) →
+  r425 rotation #3 client mobile 390px; MUST re-run the plain regression
+  (smoke + two-bot) that r423/r424 couldn't. If DB still blocked, the
+  pg_hba/scram issue needs Woody — flag it. Real-device keyboard-up composer
+  check (r405) still open for Woody.
 
 ### r423 · 2026-08-29 ~19:10 UTC · LIGHT — ABORTED-DB (regression NOT run)
 - JOGQK check: origin tip 5e2608d already merged into staging — no merge.
