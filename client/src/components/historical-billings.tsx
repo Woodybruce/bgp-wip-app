@@ -12,10 +12,10 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { Pill } from "@/components/ui/pill";
-import { cashflowFetch, fmtCashflow as fmt } from "@/lib/cashflow-model";
+import { type CashflowData, cashflowFetch, fmtCashflow as fmt } from "@/lib/cashflow-model";
 import { History } from "lucide-react";
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, Legend,
 } from "recharts";
 
 interface DimEntry { name: string; totals: Record<number, number> }
@@ -52,6 +52,16 @@ export function HistoricalBillingsSection() {
     queryFn: async () => (await cashflowFetch("GET", "/api/historical-wip")).json(),
     staleTime: 60 * 60 * 1000,
   });
+  // This year so far, from Xero — overlaid on the historic years so the
+  // current pace reads against every full year (Woody, 2026-08-29).
+  const { data: cashflow } = useQuery<CashflowData>({
+    queryKey: ["/api/cashflow"],
+    queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const ytd = cashflow?.xero?.fytdIncome ?? null;
+  const now = new Date();
+  const curFy = now.getUTCMonth() >= 4 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
 
   const selFy = fy ?? (data ? data.fys[data.fys.length - 1] : null);
   const prevFy = selFy != null ? selFy - 1 : null;
@@ -72,7 +82,9 @@ export function HistoricalBillingsSection() {
   const curTotal = data.fyTotals[selFy!] || 0;
   const prevTotal = data.fyTotals[prevFy!] || 0;
   const visible = showAll ? rows : rows.slice(0, 25);
-  const chartData = data.fys.map((y) => ({ name: fyLabel(y), total: Math.round(data.fyTotals[y] || 0) }));
+  const chartData: Array<{ name: string; total?: number; ytd?: number }> =
+    data.fys.map((y) => ({ name: fyLabel(y), total: Math.round(data.fyTotals[y] || 0) }));
+  if (ytd != null && ytd > 0) chartData.push({ name: `${fyLabel(curFy)} so far`, ytd: Math.round(ytd) });
 
   return (
     <Card className="border rounded-xl" data-testid="historical-billings">
@@ -80,10 +92,8 @@ export function HistoricalBillingsSection() {
         <CardTitle className="text-base flex items-center gap-2">
           <History className="w-4 h-4" />
           Historical billings
+          <span className="ml-auto text-[11px] font-normal text-muted-foreground">ex VAT</span>
         </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Invoiced fees from the Sage ledger, FY2019–FY2026 (fiscal years May–April, ex VAT, credits netted). Pick a year and a lens to see it against the year before. Client is the landlord group; Company is the occupier brand.
-        </p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
@@ -122,14 +132,19 @@ export function HistoricalBillingsSection() {
           </div>
         </div>
 
-        <div className="h-36">
+        <div className="h-40">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.1} />
               <XAxis dataKey="name" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
               <YAxis tickFormatter={(v: number) => `£${(v / 1_000_000).toFixed(1)}m`} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} />
-              <Tooltip formatter={(v: any) => [`£${fmt(Number(v))}`, "Billed"]} />
-              <Bar dataKey="total" fill="#b45309" radius={[3, 3, 0, 0]} />
+              <Tooltip formatter={(v: any, name: any) => [`£${fmt(Number(v))}`, name === "ytd" ? "This year so far" : "Billed"]} />
+              {ytd != null && ytd > 0 && (
+                <ReferenceLine y={Math.round(ytd)} stroke="#10b981" strokeDasharray="4 4" ifOverflow="extendDomain" />
+              )}
+              <Bar dataKey="total" name="Billed" fill="#b45309" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="ytd" name="This year so far" fill="#10b981" radius={[3, 3, 0, 0]} />
+              {ytd != null && ytd > 0 && <Legend wrapperStyle={{ fontSize: 11 }} />}
             </BarChart>
           </ResponsiveContainer>
         </div>

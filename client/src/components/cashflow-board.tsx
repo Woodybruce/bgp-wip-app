@@ -306,9 +306,6 @@ export function CashflowBoardSection() {
           ) : (
             <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => { setAddingLine(true); setNewLabel(""); }} data-testid="cf-add-cost"><Plus className="w-3.5 h-3.5" /> Cost line</Button>
           )}
-          <span className="text-[11px] text-muted-foreground ml-auto">
-            Deal fees weighted NEG 50% · SOL 75% · EXC 90% · completed-uninvoiced 100% — move a deal or raise an invoice and this updates itself.
-          </span>
         </div>
         </>
         )}
