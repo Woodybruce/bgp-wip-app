@@ -2754,28 +2754,35 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   // the DM-naming fix landed (Woody, 2026-08-29: "Joe"). Also clears the
   // creator's stale self-unread flag from the same pre-fix window.
   try {
-    const FLAG = "migration:rename_group_chat_dm_20260829_v2";
+    const FLAG = "migration:rename_group_chat_dm_20260829_v3";
     const { rows: done } = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
     if (!done.length) {
-      const { rows: dms } = await pool.query(`
+      const { rows: cands } = await pool.query(`
         SELECT t.id, t.created_by,
-               (SELECT u.name FROM chat_thread_members m JOIN users u ON u.id = m.user_id
-                 WHERE m.thread_id = t.id AND m.user_id <> t.created_by LIMIT 1) AS other_name
+               COALESCE((SELECT array_agg(DISTINCT m.user_id) FROM chat_thread_members m WHERE m.thread_id = t.id), '{}') AS member_ids
           FROM chat_threads t
-         WHERE t.title = 'Group Chat'
-           AND (SELECT count(*) FROM chat_thread_members m2 WHERE m2.thread_id = t.id) = 2
-           AND NOT EXISTS (SELECT 1 FROM chat_thread_members m3 WHERE m3.thread_id = t.id AND m3.user_id = '__chatbgp__')`);
-      for (const t of dms) {
-        if (!t.other_name) continue;
-        await pool.query(`UPDATE chat_threads SET title = $1 WHERE id = $2`, [t.other_name, t.id]);
+         WHERE t.title = 'Group Chat'`);
+      let renamed = 0;
+      for (const t of cands) {
+        const humans = new Set<string>([t.created_by, ...(t.member_ids || [])]);
+        humans.delete("__chatbgp__");
+        console.log(`[one-off dm-rename] candidate ${t.id}: created_by=${t.created_by} members=[${(t.member_ids || []).join(",")}]`);
+        if (humans.size !== 2) continue;
+        const otherId = [...humans].find(id => id !== t.created_by);
+        if (!otherId) continue;
+        const { rows: u } = await pool.query(`SELECT name FROM users WHERE id = $1`, [otherId]);
+        const otherName = u[0]?.name;
+        if (!otherName) continue;
+        await pool.query(`UPDATE chat_threads SET title = $1 WHERE id = $2`, [otherName, t.id]);
         await pool.query(`UPDATE chat_thread_members SET seen = true WHERE thread_id = $1 AND user_id = $2`, [t.id, t.created_by]);
-        console.log(`[one-off dm-rename] "Group Chat" ${t.id} renamed to "${t.other_name}"`);
+        renamed++;
+        console.log(`[one-off dm-rename] "Group Chat" ${t.id} renamed to "${otherName}"`);
       }
       await pool.query(
         `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
-        [FLAG, JSON.stringify({ at: new Date().toISOString(), renamed: dms.length })],
+        [FLAG, JSON.stringify({ at: new Date().toISOString(), renamed })],
       );
-      if (!dms.length) console.log("[one-off dm-rename] no matching Group Chat DMs found — flag set, nothing changed");
+      if (!renamed) console.log(`[one-off dm-rename] ${cands.length} candidate(s), none renamed`);
     }
   } catch (e: any) {
     console.warn("[one-off dm-rename] failed:", e?.message);
