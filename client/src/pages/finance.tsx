@@ -8,7 +8,7 @@ import { CompanyOutlookSection } from "@/components/company-outlook";
 import { cashflowFetch } from "@/lib/cashflow-model";
 import { HistoricalBillingsSection } from "@/components/historical-billings";
 import { PartnerRemunerationSection } from "@/components/partner-remuneration";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { formatDate } from "@/lib/format";
-import { RefreshCw, Banknote, AlertTriangle, ExternalLink } from "lucide-react";
+import { RefreshCw, AlertTriangle, ExternalLink, ChevronDown } from "lucide-react";
 
 interface WipForecast {
   pipeline: Record<"NEG" | "SOL" | "EXC", { total: number; count: number }>;
@@ -130,6 +130,33 @@ function StatCard({ label, value, sub, negative }: { label: string; value: strin
           {value}
         </p>
         {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Headline stat that opens to show what's behind the number (Woody,
+// 2026-08-29: "can all of these have drop downs of the deals?"). While
+// open the card spans the full row so the detail isn't crushed on phones.
+function ExpandableStat({ label, value, sub, negative, children }: {
+  label: string; value: string; sub?: string; negative?: boolean; children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const slug = label.toLowerCase().replace(/\s+/g, "-");
+  return (
+    <Card className={open ? "col-span-2 lg:col-span-4" : ""}>
+      <CardContent className="p-4">
+        <button type="button" className="w-full text-left" onClick={() => setOpen(o => !o)} data-testid={`finance-stat-toggle-${slug}`} aria-expanded={open}>
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center justify-between">
+            {label}
+            <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
+          </p>
+          <p className={`text-2xl font-semibold tracking-tight mt-1 ${negative ? "text-red-600 dark:text-red-400" : ""}`} data-testid={`finance-stat-${slug}`}>
+            {value}
+          </p>
+          {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+        </button>
+        {open && <div className="mt-3 border-t pt-3">{children}</div>}
       </CardContent>
     </Card>
   );
@@ -561,22 +588,114 @@ export default function FinancePage() {
         </Button>
       </div>
 
-      {/* Headline stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="Income FYTD" value={money(h.income)} />
-        <StatCard
+      {/* Headline stats — tap a card to see what's behind the number */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 items-start">
+        <ExpandableStat label="Income FYTD" value={money(h.income)} sub="Tap for the invoices">
+          {data.paid && data.paid.count > 0 ? (
+            <div className="space-y-0.5">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground pb-1">Paid this year · {data.paid.count} invoice(s) · {money(data.paid.totalPaid)}</p>
+              {data.paid.recent.map((p, i) => {
+                const row = (
+                  <div className={`flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded ${p.dealId ? "hover:bg-muted cursor-pointer" : ""}`}>
+                    <span className="truncate pr-3">
+                      {p.label}
+                      <span className="text-muted-foreground text-xs">{p.number ? ` · ${p.number}` : ""}{p.paidOn ? ` · paid ${formatDate(p.paidOn)}` : ""}</span>
+                    </span>
+                    <span className="font-mono shrink-0">{money(p.amount)}</span>
+                  </div>
+                );
+                return p.dealId ? <Link key={i} href={`/deals/${p.dealId}`}>{row}</Link> : <div key={i}>{row}</div>;
+              })}
+              <p className="text-[11px] text-muted-foreground pt-2">
+                The rest of the FYTD income is invoiced but unpaid — it's in Debtors outstanding.
+                {data.paid.unmatchedCount > 0 ? ` ${data.paid.unmatchedCount} paid invoice(s) aren't linked to a deal in the app (raised directly in Xero).` : ""}
+              </p>
+            </div>
+          ) : <p className="text-xs text-muted-foreground">No fully paid invoices this financial year yet.</p>}
+        </ExpandableStat>
+        <ExpandableStat
           label="Net profit FYTD"
           value={money(h.netProfit)}
           negative={(h.netProfit ?? 0) < 0}
-          sub={h.operatingExpenses != null ? `Expenses ${money(h.operatingExpenses)}` : undefined}
-        />
-        <StatCard label="Cash at bank" value={money(data.cashTotal)} sub={`${data.bankAccounts?.length || 0} account(s)`} />
-        <StatCard
+          sub={h.operatingExpenses != null ? `Expenses ${money(h.operatingExpenses)}` : "Tap for the P&L"}
+        >
+          <div className="space-y-3">
+            {(data.pnlSections || []).filter(s => s.rows.length > 0).map((sec, i) => (
+              <div key={i}>
+                {sec.title && <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">{sec.title}</p>}
+                <div className="space-y-0.5">
+                  {sec.rows.map((r, j) => (
+                    <div key={j} className={`flex items-center justify-between text-sm py-0.5 ${r.isTotal ? "font-semibold border-t mt-1 pt-1" : ""}`}>
+                      <span className="truncate pr-3">{r.label}</span>
+                      <span className="font-mono shrink-0">{money(r.values[0])}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {(data.pnlSections || []).length === 0 && <p className="text-xs text-muted-foreground">P&L lines unavailable right now.</p>}
+          </div>
+        </ExpandableStat>
+        <ExpandableStat label="Cash at bank" value={money(data.cashTotal)} sub={`${data.bankAccounts?.length || 0} account(s) — tap to list`}>
+          <div className="space-y-1">
+            {(data.bankAccounts || []).map((a, i) => (
+              <div key={i} className="flex items-center justify-between text-sm py-0.5">
+                <span className="truncate pr-3">{a.name}</span>
+                <span className="font-mono shrink-0">{money(a.balance)}</span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between text-sm font-semibold border-t mt-1 pt-1.5">
+              <span>Total cash</span>
+              <span className="font-mono">{money(data.cashTotal)}</span>
+            </div>
+            {data.balanceSheet?.netAssets != null && (
+              <p className="text-xs text-muted-foreground pt-2">
+                Net assets {money(data.balanceSheet.netAssets)}
+                {data.balanceSheet.totalAssets != null ? ` · total assets ${money(data.balanceSheet.totalAssets)}` : ""}
+              </p>
+            )}
+          </div>
+        </ExpandableStat>
+        <ExpandableStat
           label="Debtors outstanding"
           value={money((d?.outstanding ?? 0) + sageOutstanding)}
           negative={(d?.overdue ?? 0) > 0}
           sub={`${money(d?.overdue ?? 0)} overdue · pre-Xero (Sage) ${money(sageOutstanding)}`}
-        />
+        >
+          {d ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-4 gap-2 text-center">
+                {[
+                  { label: "Current", v: d.buckets.current },
+                  { label: "1–30d", v: d.buckets.d1to30 },
+                  { label: "31–60d", v: d.buckets.d31to60 },
+                  { label: "60d+", v: d.buckets.d60plus },
+                ].map((b, i) => (
+                  <div key={i} className="rounded-md border p-2">
+                    <p className="text-[10px] text-muted-foreground">{b.label}</p>
+                    <p className={`text-sm font-semibold font-mono ${i >= 2 && b.v > 0 ? "text-red-600 dark:text-red-400" : ""}`}>{money(b.v)}</p>
+                  </div>
+                ))}
+              </div>
+              {d.top.length > 0 && (
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Largest overdue</p>
+                  <div className="space-y-0.5">
+                    {d.top.map((inv, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm py-0.5">
+                        <span className="truncate pr-3">{inv.contact} <span className="text-muted-foreground text-xs">{inv.number}{inv.due ? ` · due ${formatDate(inv.due)}` : ""}</span></span>
+                        <span className="font-mono shrink-0">{money(inv.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                Plus {money(sageOutstanding)} pre-Xero (Sage) receivables from Wendy's cashflow — edit on the Legacy line of the cashflow board below.
+              </p>
+            </div>
+          ) : <p className="text-xs text-muted-foreground">No open invoices.</p>}
+        </ExpandableStat>
       </div>
 
       {/* Company outlook — front and centre (Woody, 2026-08-28): income
@@ -618,41 +737,8 @@ export default function FinancePage() {
         />
       )}
 
-      {/* Paid this FY — when the client's money actually landed. (The
-          "Cash collected" mirror card was retired 2026-08-28 — it repeated
-          the badge total.) */}
-      {data.paid && data.paid.count > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span>Paid this year</span>
-              <Badge variant="secondary" className="text-[10px]">{data.paid.count} invoice(s) · {money(data.paid.totalPaid)} ex VAT</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-0.5">
-            {data.paid.recent.map((p, i) => {
-              const row = (
-                <div className={`flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded ${p.dealId ? "hover:bg-muted cursor-pointer" : ""}`}>
-                  <span className="truncate pr-3">
-                    {p.label}
-                    <span className="text-muted-foreground text-xs">
-                      {p.number ? ` · ${p.number}` : ""}{p.paidOn ? ` · paid ${formatDate(p.paidOn)}` : ""}
-                    </span>
-                  </span>
-                  <span className="font-mono shrink-0">{money(p.amount)}</span>
-                </div>
-              );
-              return p.dealId
-                ? <Link key={i} href={`/deals/${p.dealId}`}>{row}</Link>
-                : <div key={i}>{row}</div>;
-            })}
-            <p className="text-[11px] text-muted-foreground pt-2">
-              Commission statements below pay out at month-end payroll once these land.
-              {data.paid.unmatchedCount > 0 ? ` ${data.paid.unmatchedCount} paid invoice(s) aren't linked to a deal in the app (raised directly in Xero).` : ""}
-            </p>
-          </CardContent>
-        </Card>
-      )}
+      {/* (The "Paid this year" card moved into the Income FYTD dropdown,
+          2026-08-29.) */}
 
       {/* Commission statements — Woody's tiered scheme */}
       {data.commissions && data.commissions.statements.length > 0 && (
@@ -688,96 +774,8 @@ export default function FinancePage() {
         </div>
       )}
 
-      {/* (The old "Month by month" chart was retired 2026-08-28 — the
-          Company outlook's chart carries the same months plus the forecast
-          and prior-year overlays.) */}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* P&L summary */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Profit &amp; Loss — financial year to date</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            {(data.pnlSections || []).filter(s => s.rows.length > 0).map((sec, i) => (
-              <div key={i}>
-                {sec.title && <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">{sec.title}</p>}
-                <div className="space-y-0.5">
-                  {sec.rows.map((r, j) => (
-                    <div key={j} className={`flex items-center justify-between text-sm py-0.5 ${r.isTotal ? "font-semibold border-t mt-1 pt-1" : ""}`}>
-                      <span className="truncate pr-3">{r.label}</span>
-                      <span className="font-mono shrink-0">{money(r.values[0])}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        <div className="space-y-4">
-          {/* Bank accounts */}
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Banknote className="w-4 h-4" /> Cash position</CardTitle></CardHeader>
-            <CardContent className="space-y-1">
-              {(data.bankAccounts || []).map((a, i) => (
-                <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                  <span className="truncate pr-3">{a.name}</span>
-                  <span className="font-mono shrink-0">{money(a.balance)}</span>
-                </div>
-              ))}
-              <div className="flex items-center justify-between text-sm font-semibold border-t mt-1 pt-1.5">
-                <span>Total cash</span>
-                <span className="font-mono">{money(data.cashTotal)}</span>
-              </div>
-              {data.balanceSheet?.netAssets != null && (
-                <p className="text-xs text-muted-foreground pt-2">
-                  Net assets {money(data.balanceSheet.netAssets)}
-                  {data.balanceSheet.totalAssets != null ? ` · total assets ${money(data.balanceSheet.totalAssets)}` : ""}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Aged debtors */}
-          {d && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center justify-between">
-                  <span>Aged debtors</span>
-                  <Badge variant="secondary" className="text-[10px]">{d.invoiceCount} open invoice(s)</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="grid grid-cols-4 gap-2 text-center">
-                  {[
-                    { label: "Current", v: d.buckets.current },
-                    { label: "1–30d", v: d.buckets.d1to30 },
-                    { label: "31–60d", v: d.buckets.d31to60 },
-                    { label: "60d+", v: d.buckets.d60plus },
-                  ].map((b, i) => (
-                    <div key={i} className="rounded-md border p-2">
-                      <p className="text-[10px] text-muted-foreground">{b.label}</p>
-                      <p className={`text-sm font-semibold font-mono ${i >= 2 && b.v > 0 ? "text-red-600 dark:text-red-400" : ""}`}>{money(b.v)}</p>
-                    </div>
-                  ))}
-                </div>
-                {d.top.length > 0 && (
-                  <div>
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Largest overdue</p>
-                    <div className="space-y-0.5">
-                      {d.top.map((inv, i) => (
-                        <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                          <span className="truncate pr-3">{inv.contact} <span className="text-muted-foreground text-xs">{inv.number}{inv.due ? ` · due ${formatDate(inv.due)}` : ""}</span></span>
-                          <span className="font-mono shrink-0">{money(inv.amount)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </div>
+      {/* (The bottom P&L / Cash position / Aged debtors grid moved into
+          the headline stat dropdowns, 2026-08-29.) */}
 
       {/* What the app itself costs to run (AI + data APIs) */}
       <AppCostsSection />
