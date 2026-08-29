@@ -268,9 +268,13 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
           </div>
         )}
 
-        <p className="text-[11px] text-muted-foreground leading-relaxed border-t pt-2">
-          Basis: income counts Xero's booked (accrual) income for months gone plus the deal board weighted NEG 50% / SOL 75% / EXC 90% / COM 100% for months ahead — the same book and weights as the WIP report, and invoiced deals only ever count once. Costs use Xero's actual spend for months gone and the typed plan forward (averages fill untyped months); commissions come from each deal's fee-split rows through the tier bands (0% to 2× salary, then 30/40/50%), spread over the months remaining. VAT, transfers and corporation tax are left out — profit here is pre-tax. Prior-year lines are the Sage billings archive.
-        </p>
+        {/* (The "Basis:" footnote was deleted 2026-08-29 on Woody's
+            instruction — the methodology lives in this comment instead:
+            income = Xero accrual income for months gone + deal board
+            weighted NEG 50/SOL 75/EXC 90/COM 100 ahead, invoiced deals
+            count once; costs = Xero actuals gone + typed plan forward;
+            commissions = fee splits through the tier bands; VAT/transfers/
+            corp tax excluded, profit pre-tax; prior years = Sage archive.) */}
       </CardContent>
     </Card>
   );
