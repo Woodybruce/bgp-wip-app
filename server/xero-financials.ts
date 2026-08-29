@@ -34,6 +34,30 @@ let cache: { at: number; payload: any } | null = null;
 // cached payload is reused when fresh — it's a superset).
 let inFlightBuild: Promise<any | null> | null = null;
 let bareCache: { at: number; payload: any | null } | null = null;
+
+// Last good full payload, persisted so a rate-limited or failed pull after
+// a deploy restart serves yesterday's numbers (marked stale) instead of a
+// blank Finance page.
+const LAST_GOOD_KEY = "xero:financials:last_good";
+function saveLastGoodFinancials(payload: any): void {
+  pool.query(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+    [LAST_GOOD_KEY, JSON.stringify({ at: new Date().toISOString(), payload })],
+  ).catch((e: any) => console.warn("[xero-financials] last-good save failed:", e?.message));
+}
+async function loadLastGoodFinancials(): Promise<any | null> {
+  try {
+    const r = await pool.query(`SELECT value FROM system_settings WHERE key = $1`, [LAST_GOOD_KEY]);
+    if (!r.rows.length) return null;
+    const stored = typeof r.rows[0].value === "string" ? JSON.parse(r.rows[0].value) : r.rows[0].value;
+    if (!stored?.payload) return null;
+    return { ...stored.payload, stale: true, staleAsOf: stored.at };
+  } catch (e: any) {
+    console.warn("[xero-financials] last-good load failed:", e?.message);
+    return null;
+  }
+}
 export async function buildFinancialsShared(force = false): Promise<any | null> {
   if (!force) {
     if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.payload;
@@ -716,10 +740,21 @@ export function registerXeroFinancialRoutes(app: Express): void {
         }
       }
       cache = { at: Date.now(), payload };
+      saveLastGoodFinancials(payload);
       res.json(payload);
     } catch (e: any) {
       const msg = String(e?.message || "");
       console.error("[xero-financials] error:", msg);
+      // Serve the last good pull (persisted across restarts) instead of a
+      // 500. Deploy churn wipes the in-memory caches, the cold re-pulls
+      // trip Xero's rate limit (429), and the Finance page + dashboard
+      // tile used to go blank for the duration (Woody, 2026-08-29: "it's
+      // all gone from front of the screen").
+      const lastGood = await loadLastGoodFinancials();
+      if (lastGood) {
+        console.warn("[xero-financials] serving last-good payload from", lastGood.staleAsOf);
+        return res.json(lastGood);
+      }
       res.status(500).json({ error: msg });
     }
   });

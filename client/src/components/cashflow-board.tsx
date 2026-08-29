@@ -23,7 +23,7 @@ import {
 } from "@/lib/cashflow-model";
 import { useToast } from "@/hooks/use-toast";
 import { costBucketFor } from "@/lib/outlook-model";
-import { DisclosureRow } from "@/components/company-outlook";
+import { DisclosureRow, TapAwayChart } from "@/components/company-outlook";
 import { Banknote, ChevronDown, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine,
@@ -173,18 +173,18 @@ export function CashflowBoardSection() {
           <MiniStat label={`Close · ${ML(unified.months[unified.months.length - 1])}`} value={unified.byMonth[unified.months[unified.months.length - 1]].close} />
         </div>
 
-        <div className="h-44 sm:h-52">
+        <TapAwayChart className="h-44 sm:h-52">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 4 }}>
               <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-              <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+              <XAxis dataKey="month" tick={{ fontSize: 9 }} interval={0} tickFormatter={(v: string) => String(v).split(" ")[0]} />
               <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `£${Math.round(v / 1000)}k`} width={52} />
               <Tooltip formatter={(v: any) => `£${Number(v).toLocaleString("en-GB")}`} />
               <ReferenceLine y={0} stroke="hsl(var(--destructive))" strokeDasharray="4 4" />
               <Line type="monotone" dataKey="Close" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 2.5 }} />
             </LineChart>
           </ResponsiveContainer>
-        </div>
+        </TapAwayChart>
 
         {/* Phone: one month at a time */}
         <div className="md:hidden space-y-3" data-testid="cf-mobile">

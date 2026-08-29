@@ -754,7 +754,10 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive,
   const [swipeX, setSwipeX] = useState(0);
   const [showDelete, setShowDelete] = useState(false);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
-  const hasUnseen = thread.members.some(m => !m.seen);
+  // Unread = *I* haven't seen it. It used to flag when ANY member hadn't,
+  // so a thread someone else never opened stayed dotted for everyone
+  // forever (Woody, 2026-08-29: "I've read this but it doesn't go away").
+  const hasUnseen = thread.members.some(m => m.id === currentUserId && !m.seen);
   const isAi = thread.isAiChat;
   const otherMembers = thread.members.filter(m => m.id !== currentUserId);
   const isDm = !isAi && otherMembers.length === 1;
@@ -1024,8 +1027,17 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
       </div>
 
       <div className="p-4 border-t pb-[calc(1rem+env(safe-area-inset-bottom))] shrink-0">
-        <Button className="w-full h-12 text-base font-semibold bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800 rounded-xl" disabled={selectedIds.size === 0} onClick={() => onCreate(groupName || "Group Chat", Array.from(selectedIds))} data-testid="button-mobile-create-group">
-          Create Group ({selectedIds.size})
+        <Button className="w-full h-12 text-base font-semibold bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800 rounded-xl" disabled={selectedIds.size === 0} onClick={() => {
+          // One person and no typed name = a one-to-one, so title it with
+          // their name — not "Group Chat" (Woody, 2026-08-29).
+          const ids = Array.from(selectedIds);
+          let title = groupName.trim();
+          if (!title && ids.length === 1) {
+            title = ids[0] === "__chatbgp__" ? "ChatBGP" : (allUsers.find(u => u.id === ids[0])?.name || "Chat");
+          }
+          onCreate(title || "Group Chat", ids);
+        }} data-testid="button-mobile-create-group">
+          {selectedIds.size === 1 ? "Start Chat" : `Create Group (${selectedIds.size})`}
         </Button>
       </div>
     </div>

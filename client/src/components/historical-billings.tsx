@@ -14,6 +14,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { Pill } from "@/components/ui/pill";
 import { type CashflowData, cashflowFetch, fmtCashflow as fmt } from "@/lib/cashflow-model";
 import { buildCompanyOutlook } from "@/lib/outlook-model";
+import { TapAwayChart } from "@/components/company-outlook";
 import { History } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
@@ -147,23 +148,39 @@ export function HistoricalBillingsSection() {
     }
     return row;
   });
-  const HIST_STROKES = ["#d6d3d1", "#a8a29e", "#57534e"];
+  // Distinct hues per year — the grey shades were indistinguishable at
+  // bar width on a phone (Woody, 2026-08-29).
+  const HIST_STROKES = ["#60a5fa", "#f59e0b", "#334155"];
 
-  // Bar mode: one bar per full year, then the current year as billed-so-far
-  // with the forecast stacked on top and last year's same-point figure in
-  // grey alongside.
-  const lastHistFy = data.fys.length ? data.fys[data.fys.length - 1] : null;
-  const samePoint = lastHistFy != null && data.monthly[lastHistFy]
-    ? Math.round(data.monthly[lastHistFy].slice(0, monthsElapsed).reduce((s, v) => s + v, 0))
-    : null;
-  const barData: Array<{ name: string; total?: number; ytd?: number; prior?: number; forecast?: number }> =
-    data.fys.map((y) => ({ name: fyLabel(y), total: Math.round(data.fyTotals[y] || 0) }));
-  if (haveCur) barData.push({
-    name: `${fyLabel(curFy)} so far`,
-    ytd: Math.round(ytd!),
-    ...(samePoint != null && samePoint > 0 ? { prior: samePoint } : {}),
-    ...(outlookCum[11] > Math.round(ytd!) ? { forecast: outlookCum[11] - Math.round(ytd!) } : {}),
+  // Bar mode: the same months-along-the-bottom view as the line chart
+  // (Woody, 2026-08-29: "Months!!! not the years — need each year's
+  // months"), but as raw monthly billings — grey bars per recent year,
+  // green for this year's months, light green for the forecast months.
+  const barData: Array<Record<string, number | string>> = FM_LABELS.map((m, i) => {
+    const row: Record<string, number | string> = { m };
+    for (const y of lineFys) {
+      const arr = data.monthly[y];
+      if (arr) row[`fy${y}`] = Math.round(arr[i] || 0);
+    }
+    if (haveCur && outlook) {
+      const inc = Math.round(outlook.months[i]?.income || 0);
+      if (i <= nowIdx) row.cur = inc;
+      else row.fc = inc;
+    }
+    return row;
   });
+  // Final "YTD" group — each year's May-to-now total next to this year's,
+  // the like-for-like comparison (Woody, 2026-08-29: "a total year to date
+  // one too, maybe at the end, so can compare").
+  {
+    const ytdRow: Record<string, number | string> = { m: "YTD" };
+    for (const y of lineFys) {
+      const arr = data.monthly[y];
+      if (arr) ytdRow[`fy${y}`] = Math.round(arr.slice(0, monthsElapsed).reduce((s, v) => s + v, 0));
+    }
+    if (haveCur) ytdRow.cur = Math.round(ytd!);
+    barData.push(ytdRow);
+  }
 
   return (
     <Card className="border rounded-xl" data-testid="historical-billings">
@@ -216,40 +233,40 @@ export function HistoricalBillingsSection() {
           <Pill active={chartKind === "bar"} onClick={() => pickChartKind("bar")} data-testid="hist-chart-bar">Bars</Pill>
         </div>
 
-        <div className="h-44">
+        <TapAwayChart className="h-44">
           <ResponsiveContainer width="100%" height="100%">
             {chartKind === "line" ? (
               <LineChart data={chartData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.1} />
-                <XAxis dataKey="m" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <XAxis dataKey="m" tick={{ fontSize: 9 }} interval={0} tickLine={false} axisLine={false} />
                 <YAxis tickFormatter={(v: number) => `£${(v / 1_000_000).toFixed(1)}m`} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} />
                 <Tooltip formatter={(v: any, name: any) => [`£${fmt(Number(v))}`, name]} />
                 {lineFys.map((y, i) => (
                   <Line key={y} type="monotone" dataKey={`fy${y}`} name={fyLabel(y)} stroke={HIST_STROKES[i] || "#a8a29e"} strokeWidth={1.25} strokeDasharray="4 4" dot={false} />
                 ))}
-                {/* Only mount the green series when there's data behind them —
-                    a dead Xero pull otherwise leaves "so far"/"Forecast"
-                    legend entries pointing at nothing (bar mode already
-                    gates its legend on haveCur). */}
-                {haveCur && <Line type="monotone" dataKey="cur" name={`${fyLabel(curFy)} so far`} stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} />}
-                {haveCur && <Line type="monotone" dataKey="fc" name="Forecast" stroke="#10b981" strokeWidth={2} strokeDasharray="5 4" dot={false} opacity={0.7} />}
+                {/* Only mount the current/forecast series when there's data
+                    behind them — a dead Xero pull otherwise leaves "so far"/
+                    "Forecast" legend entries pointing at nothing. */}
+                {haveCur && <Line type="monotone" dataKey="cur" name={`${fyLabel(curFy)} so far`} stroke="#dc2626" strokeWidth={2} dot={{ r: 2 }} />}
+                {haveCur && <Line type="monotone" dataKey="fc" name="Forecast" stroke="#f472b6" strokeWidth={2} strokeDasharray="5 4" dot={false} />}
                 <Legend wrapperStyle={{ fontSize: 11 }} />
               </LineChart>
             ) : (
-              <BarChart data={barData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
+              <BarChart data={barData} barGap={0} barCategoryGap="20%" margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.1} />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <XAxis dataKey="m" tick={{ fontSize: 9 }} interval={0} tickLine={false} axisLine={false} />
                 <YAxis tickFormatter={(v: number) => `£${(v / 1_000_000).toFixed(1)}m`} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} />
                 <Tooltip formatter={(v: any, name: any) => [`£${fmt(Number(v))}`, name]} />
-                <Bar dataKey="total" name="Billed" fill="#b45309" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="prior" name={lastHistFy != null ? `${fyLabel(lastHistFy)} by this point` : "Last year by this point"} fill="#a8a29e" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="ytd" name="This year so far" stackId="cur" fill="#10b981" />
-                <Bar dataKey="forecast" name="Forecast to come" stackId="cur" fill="#6ee7b7" radius={[3, 3, 0, 0]} />
-                {haveCur && <Legend wrapperStyle={{ fontSize: 11 }} />}
+                {lineFys.map((y, i) => (
+                  <Bar key={y} dataKey={`fy${y}`} name={fyLabel(y)} fill={HIST_STROKES[i] || "#a8a29e"} radius={[2, 2, 0, 0]} />
+                ))}
+                {haveCur && <Bar dataKey="cur" name={`${fyLabel(curFy)} so far`} stackId="cur" fill="#dc2626" radius={[2, 2, 0, 0]} />}
+                {haveCur && <Bar dataKey="fc" name="Forecast" stackId="cur" fill="#f472b6" radius={[2, 2, 0, 0]} />}
+                <Legend wrapperStyle={{ fontSize: 11 }} />
               </BarChart>
             )}
           </ResponsiveContainer>
-        </div>
+        </TapAwayChart>
 
         {(dim === "client" || dim === "company") && (
           <Input
