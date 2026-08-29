@@ -80,6 +80,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r416 · 2026-08-29 ~06:55 UTC · ROUND IN PROGRESS (provisional)
+- Watchdog-spawned session; r415 stalled and pushed nothing, so r414 (LIGHT)
+  is the previous round → this is FULL, rotation #2 client desktop 1440px.
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+- Two-bot 416 via run-round.sh: running. Journey (Mark @1440, brand
+  self-add + deals chase) prepared, runs after two-bot completes.
+- Triage list so far: none beyond standing noise.
+
 ### r414 · 2026-08-29 ~00:45 UTC · LIGHT (r413 had the journey)
 - Watchdog-spawned session. JOGQK NOT merged into staging per parent note.
 - tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
