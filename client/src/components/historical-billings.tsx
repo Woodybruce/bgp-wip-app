@@ -147,13 +147,15 @@ export function HistoricalBillingsSection() {
     }
     return row;
   });
-  const HIST_STROKES = ["#d6d3d1", "#a8a29e", "#57534e"];
+  // Distinct hues per year — the grey shades were indistinguishable at
+  // bar width on a phone (Woody, 2026-08-29).
+  const HIST_STROKES = ["#60a5fa", "#f59e0b", "#334155"];
 
   // Bar mode: the same months-along-the-bottom view as the line chart
   // (Woody, 2026-08-29: "Months!!! not the years — need each year's
   // months"), but as raw monthly billings — grey bars per recent year,
   // green for this year's months, light green for the forecast months.
-  const barData = FM_LABELS.map((m, i) => {
+  const barData: Array<Record<string, number | string>> = FM_LABELS.map((m, i) => {
     const row: Record<string, number | string> = { m };
     for (const y of lineFys) {
       const arr = data.monthly[y];
@@ -166,6 +168,18 @@ export function HistoricalBillingsSection() {
     }
     return row;
   });
+  // Final "YTD" group — each year's May-to-now total next to this year's,
+  // the like-for-like comparison (Woody, 2026-08-29: "a total year to date
+  // one too, maybe at the end, so can compare").
+  {
+    const ytdRow: Record<string, number | string> = { m: "YTD" };
+    for (const y of lineFys) {
+      const arr = data.monthly[y];
+      if (arr) ytdRow[`fy${y}`] = Math.round(arr.slice(0, monthsElapsed).reduce((s, v) => s + v, 0));
+    }
+    if (haveCur) ytdRow.cur = Math.round(ytd!);
+    barData.push(ytdRow);
+  }
 
   return (
     <Card className="border rounded-xl" data-testid="historical-billings">
