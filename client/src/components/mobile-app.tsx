@@ -2475,7 +2475,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     }
     if (activeThread?.groupPicUrl) {
       return (
-        <button type="button" className="relative" onClick={openGroupPicPicker} data-testid="button-group-pic">
+        <button type="button" className="relative" onClick={(e) => { e.stopPropagation(); e.preventDefault(); openGroupPicPicker(); }} data-testid="button-group-pic">
           <img src={activeThread.groupPicUrl} alt="" className="w-10 h-10 rounded-full object-cover" />
           <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white/90 flex items-center justify-center">
             <Camera className="w-2.5 h-2.5 text-black" />
@@ -2484,7 +2484,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       );
     }
     return (
-      <button type="button" className="relative" onClick={openGroupPicPicker} data-testid="button-group-pic">
+      <button type="button" className="relative" onClick={(e) => { e.stopPropagation(); e.preventDefault(); openGroupPicPicker(); }} data-testid="button-group-pic">
         <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
           <Users className="w-5 h-5" />
         </div>
@@ -2497,12 +2497,22 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
 
   if (showGroupEdit && activeThread && allUsers) {
     return (
-      <MobileGroupEdit
-        thread={activeThread}
-        currentUser={currentUser}
-        allUsers={allUsers}
-        onBack={() => setShowGroupEdit(false)}
-      />
+      <>
+        {pendingGroupPic && (
+          <GroupPicCropper
+            file={pendingGroupPic}
+            onCancel={() => { stashedGroupPic = null; setPendingGroupPic(null); }}
+            onSave={(blob) => { stashedGroupPic = null; setPendingGroupPic(null); handleGroupPicUpload(new File([blob], "group.jpg", { type: "image/jpeg" })); }}
+            onFallback={(f) => { stashedGroupPic = null; setPendingGroupPic(null); toast({ title: "Couldn't preview that photo", description: "Uploading it as-is instead." }); handleGroupPicUpload(f); }}
+          />
+        )}
+        <MobileGroupEdit
+          thread={activeThread}
+          currentUser={currentUser}
+          allUsers={allUsers}
+          onBack={() => setShowGroupEdit(false)}
+        />
+      </>
     );
   }
 
