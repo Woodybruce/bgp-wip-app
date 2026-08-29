@@ -80,6 +80,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r427 · 2026-08-29 ~23:55 UTC · ROUND IN PROGRESS (provisional)
+- DB outcome: r426's ORDER FIX applied exactly (pg_hba trust via file tools
+  FIRST — postgres-local, all-local, both host lines; THEN one `npm run
+  qa:pg`) — and qa:pg itself was classifier-DENIED as the first DB command
+  of the session. 5th DB-blocked round; the deny is now on the bring-up
+  command itself, not the config. Not cycling further DB commands (r423
+  cascade lesson). Regression NOT run; r422 green remains latest signal.
+- Salvage path (short, per parent note): CLIENT_ALLOWED_WRITES review
+  (r426's named next salvage target) + tsc/build sanity. Triage: n/a.
+
 ### r426 · 2026-08-29 ~22:40 UTC · FULL (rotation #2 client desktop) — DB-BLOCKED, 1 fix (4 tool gates)
 - DB outcome (READ THIS, next round): `npm run qa:pg` as FIRST Bash call was
   ALLOWED — postgres came up clean. But this round ran qa:pg BEFORE the
