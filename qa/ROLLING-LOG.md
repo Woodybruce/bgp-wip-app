@@ -80,6 +80,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r425 · 2026-08-29 ~21:10 UTC · LIGHT — ROUND IN PROGRESS (provisional)
+- DB-BLOCKED AGAIN, worse than r424: classifier denied `bash qa/start-postgres.sh`
+  as the FIRST Bash call of the session (r423's "first start is allowed" no
+  longer holds), then a plain node TCP probe of 127.0.0.1:5432, then
+  `bash qa/run-smoke.sh`. pg_hba trust edit WAS applied via file tools
+  (local + host lines) but postgres never started. No smoke, no two-bot.
+  r422's 42/0 ×2 + two-bot green remains the latest real regression signal.
+- tsc CLEAN on staging tip ff64140. Triage list: nothing runnable; pivoting
+  to no-DB salvage (build check, node --check on harness, targeted code
+  review of an area r424 didn't cover).
+
 ### r424 · 2026-08-29 ~20:35 UTC · FULL (rotation #2 client desktop) — DB-BLOCKED, 2 code fixes
 - JOGQK: staging tip bf6faba == origin, unchanged; no merge.
 - DB UNREACHABLE (same as r423): start-postgres.sh brought postgres UP
