@@ -159,6 +159,28 @@ export function HistoricalBillingsSection() {
           />
         )}
 
+        {/* Phone: card list — the same fix as the Equity partners table,
+            whose name column scrolled off-left inside a min-width table. */}
+        <div className="md:hidden space-y-1.5" data-testid="hist-mobile">
+          {visible.map((r) => (
+            <div key={r.name} className="border rounded-xl p-3" data-testid={`hist-card-${r.name}`}>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs font-medium min-w-0">{r.name}</p>
+                <p className="text-sm font-semibold tabular-nums shrink-0">{r.cur ? `£${fmt(r.cur)}` : "—"}</p>
+              </div>
+              <div className="flex items-center justify-between gap-3 mt-1 text-[11px] text-muted-foreground tabular-nums">
+                <span>{prevFy ? fyLabel(prevFy) : "Prior"} {r.prev ? `£${fmt(r.prev)}` : "—"}</span>
+                <span className={r.prev && r.cur >= r.prev ? "text-emerald-600" : r.prev ? "text-red-600" : ""}>{deltaPct(r.cur, r.prev)}</span>
+                <span>{curTotal && r.cur ? `${((r.cur / curTotal) * 100).toFixed(1)}% share` : "—"}</span>
+              </div>
+            </div>
+          ))}
+          {visible.length === 0 && (
+            <p className="py-4 text-center text-xs text-muted-foreground">Nothing billed under this lens in {fyLabel(selFy!)}{search ? " matching that search" : ""}.</p>
+          )}
+        </div>
+
+        <div className="hidden md:block">
         <ScrollableTable minWidth={560}>
           <table className="w-full text-xs">
             <thead>
@@ -186,6 +208,7 @@ export function HistoricalBillingsSection() {
             </tbody>
           </table>
         </ScrollableTable>
+        </div>
         {rows.length > 25 && !showAll && (
           <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowAll(true)} data-testid="hist-show-all">
             Show all {rows.length}
