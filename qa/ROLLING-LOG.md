@@ -80,13 +80,42 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r419 · 2026-08-29 ~13:00 UTC · ROUND IN PROGRESS (LIGHT — r418 had the journey)
+### r419 · 2026-08-29 ~13:45 UTC · LIGHT (r418 had the journey)
 - Merged origin/claude/terminal-coding-interface-JOGQK into staging per
   convention (Historical billings line/bar toggle, uniform Finance
-  typography, update banner re-enabled). Clean merge, tsc clean.
-- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore) on the merged
-  tree. Two-bot 419 via run-round.sh currently running; triage to follow.
-- Provisional — final entry replaces this one.
+  typography, update banner re-enabled). Clean merge, tsc clean post-merge
+  and post-fix.
+- Smoke GREEN 42/0 ×2 (FRESH_BUILD=1, fresh bgpsmoke restore — merged tree
+  and again after the fix). Two-bot 419 via run-round.sh: exit 0, ALL
+  scenarios ok. 4 issues = standing noise signature (2×400
+  rocketreach/tracker-gate-probe, 2×503 keyless AI brand-gaps/
+  commentary-regen). 0 raw 500/502/504 in dev-server log; full 4xx/503
+  endpoint tally triaged — all noise-list (keyless ai-briefing/ai-take/
+  chatbgp/brand-gaps/OS 503s, hr-photo/sharepoint 404s, M365 401s) or
+  intentional rival-isolation/write-guard/gate probes. 0 regression bugs.
+- Targeted visual check of the just-merged Historical billings toggle
+  (@1440 as jack, temp password flip → fixture hash restored + verified):
+  Line/Bars pills render, choice sticks across reload (localStorage),
+  bars mode clean, tooltip fine.
+- Bug fixed 1 (micro, from that check): line mode mounted the green
+  "FY27 so far"/"Forecast" Lines unconditionally, so with no Xero data
+  (keyless env; prod whenever the Xero pull is briefly down) the legend
+  advertised two green series pointing at nothing — bar mode already
+  gates its legend on haveCur. Now both green Lines mount only when
+  haveCur. tsc clean, verified visually (legend shows FY24/25/26 only),
+  smoke re-green on rebuilt bundle.
+- Harness growth: none (client-render one-liner, no cheap API probe).
+- Bugs deferred: none (r418 deferred none). Carried (data, staff
+  decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none. Leftovers: two-bot
+  probe rows match purge patterns for next round.
+- Setup: pg_hba trust (r205) needed again on this fresh container; bgp
+  role created superuser. Playwright login script must waitForSelector +
+  ~1.5s before clicking the guest-login reveal (hydration race).
+- Next: r419 was LIGHT (regression + targeted check only, no journey) →
+  r420 FULL rotation #4 staff mobile 390px — Finance page @390 as staff
+  is the standing candidate (new layout merged, only checked @1440).
+  Real-device check of keyboard-up composer (r405) still open for Woody.
 
 ### r418 · 2026-08-29 ~11:45 UTC · FULL (rotation #3 client mobile 390px)
 - Merged origin/claude/terminal-coding-interface-JOGQK into staging per

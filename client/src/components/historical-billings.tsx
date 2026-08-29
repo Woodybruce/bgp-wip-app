@@ -227,8 +227,12 @@ export function HistoricalBillingsSection() {
                 {lineFys.map((y, i) => (
                   <Line key={y} type="monotone" dataKey={`fy${y}`} name={fyLabel(y)} stroke={HIST_STROKES[i] || "#a8a29e"} strokeWidth={1.25} strokeDasharray="4 4" dot={false} />
                 ))}
-                <Line type="monotone" dataKey="cur" name={`${fyLabel(curFy)} so far`} stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} />
-                <Line type="monotone" dataKey="fc" name="Forecast" stroke="#10b981" strokeWidth={2} strokeDasharray="5 4" dot={false} opacity={0.7} />
+                {/* Only mount the green series when there's data behind them —
+                    a dead Xero pull otherwise leaves "so far"/"Forecast"
+                    legend entries pointing at nothing (bar mode already
+                    gates its legend on haveCur). */}
+                {haveCur && <Line type="monotone" dataKey="cur" name={`${fyLabel(curFy)} so far`} stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} />}
+                {haveCur && <Line type="monotone" dataKey="fc" name="Forecast" stroke="#10b981" strokeWidth={2} strokeDasharray="5 4" dot={false} opacity={0.7} />}
                 <Legend wrapperStyle={{ fontSize: 11 }} />
               </LineChart>
             ) : (
