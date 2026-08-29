@@ -34,14 +34,16 @@ export function CashflowBoardSection() {
   const [editCell, setEditCell] = useState<{ lineId: string; month: string; basis: "budget" | "actual" } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [mobileMonthIdx, setMobileMonthIdx] = useState<number | null>(null);
-  // Minimise the whole board (Woody, 2026-08-28: it's a long scroll on the
-  // phone) — remembered per device.
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem("finance:cashflow-collapsed") === "1"; } catch { return false; }
+  // The stats, chart and month summary always show; the typed INPUTS (the
+  // budget/actual lines) minimise instead, collapsed by default (Woody,
+  // 2026-08-29: "have this element always in show and minimise the inputs").
+  // Remembered per device.
+  const [inputsCollapsed, setInputsCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem("finance:cashflow-inputs-collapsed") !== "0"; } catch { return true; }
   });
-  const toggleCollapsed = () => {
-    setCollapsed(c => {
-      try { localStorage.setItem("finance:cashflow-collapsed", c ? "0" : "1"); } catch { /* private mode */ }
+  const toggleInputs = () => {
+    setInputsCollapsed(c => {
+      try { localStorage.setItem("finance:cashflow-inputs-collapsed", c ? "0" : "1"); } catch { /* private mode */ }
       return !c;
     });
   };
@@ -141,24 +143,12 @@ export function CashflowBoardSection() {
 
   return (
     <Card data-testid="finance-cashflow-section">
-      <CardHeader className="pb-2 cursor-pointer" onClick={toggleCollapsed} data-testid="cf-collapse-toggle" aria-expanded={!collapsed}>
+      <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2">
-          <ChevronDown className={`w-4 h-4 shrink-0 text-muted-foreground transition-transform ${collapsed ? "-rotate-90" : ""}`} />
           <Banknote className="w-4 h-4" /> Cashflow forecast
-          {collapsed && (
-            <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">
-              Cash now £{fmt(unified.anchor.value)} · low {unified.low.close < 0 ? "-" : ""}£{fmt(Math.abs(unified.low.close))} ({ML(unified.low.month)})
-            </span>
-          )}
+          <span className="ml-auto text-[11px] font-normal text-muted-foreground">ex VAT</span>
         </CardTitle>
-        {!collapsed && (
-          <p className="text-xs text-muted-foreground">
-            All figures ex VAT. Cash in comes from the app — pipeline-weighted deal fees and Xero invoices due — plus the legacy pre-Xero (Sage-era) receivables from Wendy's cashflow (£219,670 ex VAT, November) — editable on the Legacy line below if that moves; it also feeds the Debtors card above.
-            Cash out is the costs plan below (Wendy's forecast). The chain starts from {unified.anchor.source === "xero" ? "Xero's live cash at bank" : "the typed opening balance (Xero not connected)"}. Tap the header to minimise.
-          </p>
-        )}
       </CardHeader>
-      {!collapsed && (
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <MiniStat label={`Cash now (${unified.anchor.source === "xero" ? "Xero" : "typed"})`} value={unified.anchor.value} />
@@ -202,9 +192,33 @@ export function CashflowBoardSection() {
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Inputs — the typed budget/actual lines. Collapsed by default;
+            tap to open and edit. */}
+        <button
+          type="button"
+          className="w-full flex items-center gap-2 border rounded-lg p-3 text-left"
+          onClick={toggleInputs}
+          data-testid="cf-inputs-toggle"
+          aria-expanded={!inputsCollapsed}
+        >
+          <ChevronDown className={`w-4 h-4 shrink-0 text-muted-foreground transition-transform ${inputsCollapsed ? "-rotate-90" : ""}`} />
+          <span className="flex-1 min-w-0">
+            <span className="text-sm font-medium">Cost plan &amp; inputs</span>
+            <span className="block text-[11px] text-muted-foreground">Budget vs actual by line and month — tap to {inputsCollapsed ? "open and edit" : "minimise"}</span>
+          </span>
+          <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+            {model.payments.length + (legacyLine ? 1 : 0)} lines
+          </span>
+        </button>
+
+        {!inputsCollapsed && (
+        <>
+        <div className="md:hidden space-y-3" data-testid="cf-mobile-inputs">
           <div className="border rounded-lg divide-y">
             <div className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-              <span>Costs</span><span className="text-right">Budget</span><span className="text-right">Actual</span>
+              <span>Costs · {ML(mobileMonth)}</span><span className="text-right">Budget</span><span className="text-right">Actual</span>
             </div>
             {(legacyLine ? [legacyLine, ...model.payments] : model.payments).map(l => (
               <div key={l.id} className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 px-3 py-1.5 text-xs" data-testid={`cf-m-line-${l.key}`}>
@@ -296,8 +310,9 @@ export function CashflowBoardSection() {
             Deal fees weighted NEG 50% · SOL 75% · EXC 90% · completed-uninvoiced 100% — move a deal or raise an invoice and this updates itself.
           </span>
         </div>
+        </>
+        )}
       </CardContent>
-      )}
     </Card>
   );
 }
