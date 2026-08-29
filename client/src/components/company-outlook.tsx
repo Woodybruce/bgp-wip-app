@@ -210,6 +210,31 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
           </div>
         </div>
 
+        {/* Month by month vs the last few years — moved above the costs
+            (Woody, 2026-08-29). */}
+        {chartData.length > 0 && (
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">Month by month vs prior years</p>
+            <div className="h-[240px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} minTickGap={24} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `£${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v: any) => money(Number(v))} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="billed" name="Billed (Xero)" stackId="fy" fill="#10b981" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="forecast" name="Forecast (deals + legacy)" stackId="fy" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
+                  <Line dataKey="cost" name="Costs" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                  {(history?.fyTotals || []).map((h, i) => (
+                    <Line key={h.fy} dataKey={`fy${h.fy}`} name={h.label} stroke={HIST_COLOURS[i] || "#94a3b8"} strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
+                  ))}
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
         {/* Costs — tap a row to see what's inside it */}
         <div className="space-y-2">
           <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Average monthly costs</p>
@@ -278,30 +303,6 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
             </span>
           </div>
         </div>
-
-        {/* Month by month vs the last few years */}
-        {chartData.length > 0 && (
-          <div>
-            <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">Month by month vs prior years</p>
-            <div className="h-[240px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                  <XAxis dataKey="label" tick={{ fontSize: 10 }} minTickGap={24} />
-                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `£${(v / 1000).toFixed(0)}k`} />
-                  <Tooltip formatter={(v: any) => money(Number(v))} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="billed" name="Billed (Xero)" stackId="fy" fill="#10b981" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="forecast" name="Forecast (deals + legacy)" stackId="fy" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
-                  <Line dataKey="cost" name="Costs" stroke="#f59e0b" strokeWidth={2} dot={false} />
-                  {(history?.fyTotals || []).map((h, i) => (
-                    <Line key={h.fy} dataKey={`fy${h.fy}`} name={h.label} stroke={HIST_COLOURS[i] || "#94a3b8"} strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
-                  ))}
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
 
         {/* (The "Basis:" footnote was deleted 2026-08-29 on Woody's
             instruction — the methodology lives in this comment instead:
