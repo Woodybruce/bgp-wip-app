@@ -23,7 +23,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { ConnectionStatus } from "@/components/connection-status";
 import DealVerdictAlarm from "@/components/deal-verdict-alarm";
-import { UpdatePrompt } from "@/components/update-prompt";
 import { GlobalSearch } from "@/components/global-search";
 import { NotificationCenter } from "@/components/notification-center";
 import { GlobalDropZone } from "@/components/global-drop-zone";
@@ -881,12 +880,9 @@ function AppContent() {
           Staff only: the client API gateway blocks /api/deal-verdicts, so
           mounting it for clients just 403s on every page load. */}
       {!((user as any)?.role === "Client" || (user as any)?.companyScopeId) && <DealVerdictAlarm />}
-      {/* Update banner re-enabled 2026-08-29 — with it off, a phone that
-          stays open rides a stale bundle for hours and nothing ever says a
-          new build shipped (Woody spent an afternoon screenshotting
-          already-fixed screens). It only shows once a new build has
-          actually installed, and nothing reloads until the user taps. */}
-      <UpdatePrompt />
+      {/* No update banner: new builds now auto-apply the moment they
+          install (index.html announceUpdate → skipWaiting → reload).
+          Woody, 2026-08-29: "Why are we doing update? Just do it." */}
       {/* Boundary around the whole authenticated shell: the full-page
           /chatbgp branch (and the mobile shells) render OUTSIDE Router's
           boundary, so a crash or a stale-deploy chunk failure there used

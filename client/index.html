@@ -74,18 +74,20 @@
       if ('serviceWorker' in navigator && !window.location.pathname.startsWith('/addin/')) {
         var refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', function() {
-          // Only fires once the user has accepted the update (skipWaiting
-          // below), so reloading here no longer kicks people out mid-task.
+          // Fires once the new SW takes over (skipWaiting below) — reload
+          // into the fresh build. Updates auto-apply (Woody, 2026-08-29).
           if (!refreshing) {
             refreshing = true;
             window.location.reload();
           }
         });
 
-        // Let the React layer know a new build is sitting in "waiting".
+        // Apply a waiting build straight away (Woody, 2026-08-29: "Why are
+        // we doing update? Just do it"). skipWaiting promotes the new SW;
+        // controllerchange (above) then reloads into the fresh build.
         function announceUpdate() {
           window.__bgpUpdateReady = true;
-          window.dispatchEvent(new CustomEvent('bgp:update-available'));
+          window.__bgpApplyUpdate();
         }
 
         // Called by the in-app "Update now" button. Promotes the waiting SW;
@@ -104,8 +106,7 @@
           navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).then(function(reg) {
             reg.update();
             setInterval(function() { reg.update(); }, 60000);
-            // A build was already waiting from a previous visit — offer it,
-            // but don't force it.
+            // A build was already waiting from a previous visit — apply it.
             if (reg.waiting && navigator.serviceWorker.controller) {
               announceUpdate();
             }
@@ -114,7 +115,7 @@
               if (newSw) {
                 newSw.addEventListener('statechange', function() {
                   // installed + an existing controller => this is an UPDATE,
-                  // not a first install. Surface it; the user decides when.
+                  // not a first install. Apply it immediately.
                   if (newSw.state === 'installed' && navigator.serviceWorker.controller) {
                     announceUpdate();
                   }
