@@ -47,6 +47,47 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+// Breadcrumbs for the group-photo flow land in the server log so we can see
+// how far a phone gets (picker opened → photo received → cropper → upload).
+function clog(tag: string, info?: Record<string, unknown>) {
+  try {
+    fetch("/api/client-log", {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ tag, ...info }),
+    }).catch(() => {});
+  } catch {}
+}
+
+// The group-photo file input lives OUTSIDE React. iOS backgrounds the PWA
+// while the photo picker is up; if the app re-renders or remounts in that
+// window, a React-owned <input> is destroyed and the picked file is
+// delivered to a detached element — silently lost (why Woody's uploads
+// never even reached the network, 2026-08-29). A module-owned input with a
+// native listener survives any remount; if the chat view remounted while
+// picking, the file is stashed and consumed on the next mount.
+let groupPicSink: ((f: File) => void) | null = null;
+let stashedGroupPic: File | null = null;
+function openGroupPicPicker() {
+  clog("group-pic:open");
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = "image/*";
+  inp.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;";
+  inp.addEventListener("change", () => {
+    const f = inp.files?.[0] || null;
+    clog("group-pic:change", { n: inp.files?.length ?? 0, size: f?.size, type: f?.type, sink: !!groupPicSink });
+    inp.remove();
+    if (!f) return;
+    if (groupPicSink) groupPicSink(f);
+    else stashedGroupPic = f;
+  });
+  document.body.appendChild(inp);
+  inp.click();
+}
+
 type ChatAction = {
   type: "model_run";
   runId: string;
@@ -1059,6 +1100,7 @@ function GroupPicCropper({ file, onCancel, onSave, onFallback }: { file: File; o
   useEffect(() => {
     const i = new window.Image(); // lucide's Image icon shadows the global
     i.onload = () => {
+      clog("group-pic:decoded", { w: i.naturalWidth, h: i.naturalHeight });
       const s = V / Math.min(i.naturalWidth, i.naturalHeight);
       setImg(i);
       setZoom(1);
@@ -1066,7 +1108,7 @@ function GroupPicCropper({ file, onCancel, onSave, onFallback }: { file: File; o
     };
     // Some formats (HEIC on older webviews) won't decode in the browser —
     // don't die silently: hand the original file back for a direct upload.
-    i.onerror = () => onFallback(file);
+    i.onerror = () => { clog("group-pic:decode-error"); onFallback(file); };
     i.src = url;
     const t = setTimeout(() => { if (!i.complete || !i.naturalWidth) onFallback(file); }, 8000);
     return () => clearTimeout(t);
@@ -2341,8 +2383,19 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const threadTitle = isDm ? dmName : (activeThread?.title || activeThread?.linkedName || (isActiveThreadAi ? "ChatBGP" : "Chat"));
   const headerInitials = isDm && dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
   const isGroup = !isActiveThreadAi && !isDm;
-  const groupPicFileRef = useRef<HTMLInputElement>(null);
   const [pendingGroupPic, setPendingGroupPic] = useState<File | null>(null);
+  useEffect(() => {
+    const sink = (f: File) => setPendingGroupPic(f);
+    groupPicSink = sink;
+    if (stashedGroupPic) {
+      // A photo was picked while this view was remounting — pick it up.
+      const f = stashedGroupPic;
+      stashedGroupPic = null;
+      clog("group-pic:stash-consumed", { size: f.size });
+      setPendingGroupPic(f);
+    }
+    return () => { if (groupPicSink === sink) groupPicSink = null; };
+  }, []);
   useEffect(() => {
     // Holds off the auto-update reload (index.html) while the cropper is up.
     if (pendingGroupPic) {
@@ -2358,6 +2411,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
 
   const handleGroupPicUpload = async (file: File) => {
     if (!threadId) return;
+    clog("group-pic:upload-start", { size: file.size });
     (window as any).__bgpBusy = true;
     const formData = new FormData();
     formData.append("file", file);
@@ -2406,7 +2460,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     }
     if (activeThread?.groupPicUrl) {
       return (
-        <button type="button" className="relative" onClick={() => groupPicFileRef.current?.click()} data-testid="button-group-pic">
+        <button type="button" className="relative" onClick={openGroupPicPicker} data-testid="button-group-pic">
           <img src={activeThread.groupPicUrl} alt="" className="w-10 h-10 rounded-full object-cover" />
           <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white/90 flex items-center justify-center">
             <Camera className="w-2.5 h-2.5 text-black" />
@@ -2415,7 +2469,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       );
     }
     return (
-      <button type="button" className="relative" onClick={() => groupPicFileRef.current?.click()} data-testid="button-group-pic">
+      <button type="button" className="relative" onClick={openGroupPicPicker} data-testid="button-group-pic">
         <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
           <Users className="w-5 h-5" />
         </div>
@@ -2459,7 +2513,6 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           onFallback={(f) => { setPendingGroupPic(null); toast({ title: "Couldn't preview that photo", description: "Uploading it as-is instead." }); handleGroupPicUpload(f); }}
         />
       )}
-      <input type="file" accept="image/*" className="hidden" data-testid="input-group-pic" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) setPendingGroupPic(f); e.target.value = ""; }} />
       {isActiveThreadAi && <MobileBottomNav />}
       {isActiveThreadAi ? (
         <div className="bg-white text-foreground pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2.5 px-4 shrink-0 border-b border-border">

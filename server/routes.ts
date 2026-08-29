@@ -1723,6 +1723,14 @@ export async function registerRoutes(
     }
   });
 
+  // Client-side breadcrumbs (group-photo picker debugging on phones) — the
+  // phone posts a tag per step so the flow is visible in the server log.
+  app.post("/api/client-log", requireAuth, (req, res) => {
+    const userId = req.session.userId || (req as any).tokenUserId;
+    console.log("[client-log]", userId, JSON.stringify(req.body).slice(0, 500));
+    res.json({ ok: true });
+  });
+
   app.post("/api/heartbeat", requireAuth, async (req, res) => {
     const userId = req.session.userId || (req as any).tokenUserId;
     if (!userId) return res.status(401).json({ ok: false });
