@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { Pill } from "@/components/ui/pill";
 import { type CashflowData, cashflowFetch, fmtCashflow as fmt } from "@/lib/cashflow-model";
+import { buildCompanyOutlook } from "@/lib/outlook-model";
 import { History } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, Legend,
@@ -71,6 +72,14 @@ export function HistoricalBillingsSection() {
   const samePoint = lastHistFy != null && data?.monthly?.[lastHistFy]
     ? data.monthly[lastHistFy].slice(0, monthsElapsed).reduce((s, v) => s + v, 0)
     : null;
+  // Forecast billing stacked on the YTD bar (Woody, 2026-08-29: "can you
+  // include forecast billing?") — the outlook's projected-year income
+  // (billed + weighted deal book + legacy Sage), same figure as the
+  // Income — projected year tile above.
+  const outlook = useMemo(() => buildCompanyOutlook(cashflow, data as any), [cashflow, data]);
+  const forecastRemainder = outlook && ytd != null
+    ? Math.max(0, Math.round(outlook.income.projectedFy - ytd))
+    : null;
 
   const selFy = fy ?? (data ? data.fys[data.fys.length - 1] : null);
   const prevFy = selFy != null ? selFy - 1 : null;
@@ -91,12 +100,13 @@ export function HistoricalBillingsSection() {
   const curTotal = data.fyTotals[selFy!] || 0;
   const prevTotal = data.fyTotals[prevFy!] || 0;
   const visible = showAll ? rows : rows.slice(0, 25);
-  const chartData: Array<{ name: string; total?: number; ytd?: number; prior?: number }> =
+  const chartData: Array<{ name: string; total?: number; ytd?: number; prior?: number; forecast?: number }> =
     data.fys.map((y) => ({ name: fyLabel(y), total: Math.round(data.fyTotals[y] || 0) }));
   if (ytd != null && ytd > 0) chartData.push({
     name: `${fyLabel(curFy)} so far`,
     ytd: Math.round(ytd),
     ...(samePoint != null && samePoint > 0 ? { prior: Math.round(samePoint) } : {}),
+    ...(forecastRemainder != null && forecastRemainder > 0 ? { forecast: forecastRemainder } : {}),
   });
 
   return (
@@ -157,7 +167,8 @@ export function HistoricalBillingsSection() {
               )}
               <Bar dataKey="total" name="Billed" fill="#b45309" radius={[3, 3, 0, 0]} />
               <Bar dataKey="prior" name={lastHistFy != null ? `${fyLabel(lastHistFy)} by this point` : "Last year by this point"} fill="#a8a29e" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="ytd" name="This year so far" fill="#10b981" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="ytd" name="This year so far" stackId="cur" fill="#10b981" />
+              <Bar dataKey="forecast" name="Forecast billing to come" stackId="cur" fill="#6ee7b7" radius={[3, 3, 0, 0]} />
               {ytd != null && ytd > 0 && <Legend wrapperStyle={{ fontSize: 11 }} />}
             </BarChart>
           </ResponsiveContainer>
