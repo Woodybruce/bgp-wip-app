@@ -81,17 +81,54 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 ## Rounds
 
 ### r415 · 2026-08-29 ~09:40 UTC · ROUND IN PROGRESS (heartbeat)
-- FULL round, rotation #2 client desktop 1440px. JOGQK NOT merged per
-  standing note. tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh
-  bgpsmoke restore). Two-bot 415 via run-round.sh: exit 0, 5 issues =
-  4 standing noise (2×400, 2×503) + 1 flow-failure
-  client-deal-party-link-gates "client lost the (allowed) deal Audit log
-  card" — reproduced manually as Mark: audit card PRESENT ×3 probes,
-  judged a round-load timing flake (fixed 2.5s sample); assertion
-  hardened to a 15s waitFor in two-bot-round.mjs (this commit).
-- Journey + finalised entry to follow. Side-quest this session (Woody,
-  live): reviewing the JOGQK Finance page in a worktree — read-only, no
-  pushes to JOGQK.
+- NOTE: this is the session the r416 watchdog presumed dead — it was
+  container-suspended 02:33–09:00 UTC, resumed and ran anyway. r416 (below)
+  already covered the rotation #2 FULL journey, so r415 finalises as the
+  regression + triage half only; entries stay newest-first.
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 415 via run-round.sh: exit 0, 5 issues = 4 standing noise
+  (2×400, 2×503) + 1 flow-failure client-deal-party-link-gates "client
+  lost the (allowed) deal Audit log card" — reproduced manually as Mark:
+  audit card PRESENT ×3 probes, judged a round-load timing flake (fixed
+  2.5s sample); assertion hardened to a 15s waitFor in two-bot-round.mjs
+  (this commit).
+- Side-quest this session (Woody, live): reviewing the JOGQK Finance page
+  in a worktree — read-only, no pushes to JOGQK.
+
+### r416 · 2026-08-29 ~07:15 UTC · FULL (rotation #2 client desktop 1440px)
+- Watchdog-spawned session; r415 stalled and pushed nothing, so r414 (LIGHT)
+  was the previous round → FULL this round.
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 416 via run-round.sh: exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400, 2×503). 0 raw 500/502/504 in dev-server
+  log; full 4xx/503 endpoint tally triaged — all noise-list (keyless
+  ai-briefing/ai-take/chatbgp/brand-gaps/OS 503s, hr-photo/sharepoint 404s,
+  M365 401s) or intentional rival-isolation/gate probes. 0 app bugs.
+- Journey (Mark @1440px, UI form login): "scope a new operator for a vacant
+  unit — browse the directory, self-add a non-slice brand, review its
+  profile, then check lettings progress and who to chase": login → Portfolio
+  dashboard (KPIs, tracker tile, tasks render) → Brand Intelligence →
+  Add-brand dialog → Testco Fashion (fixture ships it pre-added): Remove →
+  Add back → Added badge + name-becomes-link (UX #27 holds) + toast →
+  profile (renders, Compliance & KYC visible to client, no staff
+  Delete/Merge actions) → Letting Tracker (KPI row, 78 units) → deal detail
+  (parties, BGP contact Victoria Broadhead = the "who to chase" answer,
+  client files jail message intact). 15/15 checks, 0 pageerrors, 0 non-noise
+  4xx/5xx. NOT bugs: client sees Add unit / edit / delete on the tracker and
+  Edit on deal detail — intended parity ("client does as much as the agent",
+  Woody 2026-07; writes scope-checked server-side per CLIENT_ALLOWED_WRITES).
+  Journey net-zero on data: Testco Fashion re-added (fixture state verified
+  restored); two-bot's 2 QA probe deals match purge patterns for next round.
+- Bugs fixed: 0 (nothing broken found — regression + journey both clean).
+  Deferred: none. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: none. Harness
+  growth: none needed — client add-brand add/remove already covered API-side
+  (client-add-brand-from-directory, client-add-brand-remove-ui).
+- New flakes: none. Setup: pg_hba trust (r205) needed again on this fresh
+  container; bgp role created superuser so no ownership transfer needed.
+- Next: r416 was FULL → r417 may be LIGHT; then rotation #3 client mobile
+  390px. Real-device check of keyboard-up composer (r405) still open for
+  Woody.
 
 ### r414 · 2026-08-29 ~00:45 UTC · LIGHT (r413 had the journey)
 - Watchdog-spawned session. JOGQK NOT merged into staging per parent note.
