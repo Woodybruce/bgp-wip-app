@@ -62,6 +62,15 @@ export function HistoricalBillingsSection() {
   const ytd = cashflow?.xero?.fytdIncome ?? null;
   const now = new Date();
   const curFy = now.getUTCMonth() >= 4 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
+  // Same-point comparison (Woody, 2026-08-29: "the this year difference not
+  // working?") — the last full year's billings through the same fiscal
+  // month, so the YTD bar reads against a like-for-like number, not twelve
+  // months. fm 1 = May in the source data.
+  const monthsElapsed = ((now.getUTCMonth() - 4 + 12) % 12) + 1;
+  const lastHistFy = data?.fys?.length ? data.fys[data.fys.length - 1] : null;
+  const samePoint = lastHistFy != null && data?.monthly?.[lastHistFy]
+    ? data.monthly[lastHistFy].slice(0, monthsElapsed).reduce((s, v) => s + v, 0)
+    : null;
 
   const selFy = fy ?? (data ? data.fys[data.fys.length - 1] : null);
   const prevFy = selFy != null ? selFy - 1 : null;
@@ -82,9 +91,13 @@ export function HistoricalBillingsSection() {
   const curTotal = data.fyTotals[selFy!] || 0;
   const prevTotal = data.fyTotals[prevFy!] || 0;
   const visible = showAll ? rows : rows.slice(0, 25);
-  const chartData: Array<{ name: string; total?: number; ytd?: number }> =
+  const chartData: Array<{ name: string; total?: number; ytd?: number; prior?: number }> =
     data.fys.map((y) => ({ name: fyLabel(y), total: Math.round(data.fyTotals[y] || 0) }));
-  if (ytd != null && ytd > 0) chartData.push({ name: `${fyLabel(curFy)} so far`, ytd: Math.round(ytd) });
+  if (ytd != null && ytd > 0) chartData.push({
+    name: `${fyLabel(curFy)} so far`,
+    ytd: Math.round(ytd),
+    ...(samePoint != null && samePoint > 0 ? { prior: Math.round(samePoint) } : {}),
+  });
 
   return (
     <Card className="border rounded-xl" data-testid="historical-billings">
@@ -138,11 +151,12 @@ export function HistoricalBillingsSection() {
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.1} />
               <XAxis dataKey="name" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
               <YAxis tickFormatter={(v: number) => `£${(v / 1_000_000).toFixed(1)}m`} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} />
-              <Tooltip formatter={(v: any, name: any) => [`£${fmt(Number(v))}`, name === "ytd" ? "This year so far" : "Billed"]} />
+              <Tooltip formatter={(v: any, name: any) => [`£${fmt(Number(v))}`, name]} />
               {ytd != null && ytd > 0 && (
                 <ReferenceLine y={Math.round(ytd)} stroke="#10b981" strokeDasharray="4 4" ifOverflow="extendDomain" />
               )}
               <Bar dataKey="total" name="Billed" fill="#b45309" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="prior" name={lastHistFy != null ? `${fyLabel(lastHistFy)} by this point` : "Last year by this point"} fill="#a8a29e" radius={[3, 3, 0, 0]} />
               <Bar dataKey="ytd" name="This year so far" fill="#10b981" radius={[3, 3, 0, 0]} />
               {ytd != null && ytd > 0 && <Legend wrapperStyle={{ fontSize: 11 }} />}
             </BarChart>
