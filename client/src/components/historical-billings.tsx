@@ -244,8 +244,8 @@ export function HistoricalBillingsSection() {
                 {lineFys.map((y, i) => (
                   <Line key={y} type="monotone" dataKey={`fy${y}`} name={fyLabel(y)} stroke={HIST_STROKES[i] || "#a8a29e"} strokeWidth={1.25} strokeDasharray="4 4" dot={false} />
                 ))}
-                <Line type="monotone" dataKey="cur" name={`${fyLabel(curFy)} so far`} stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} />
-                <Line type="monotone" dataKey="fc" name="Forecast" stroke="#10b981" strokeWidth={2} strokeDasharray="5 4" dot={false} opacity={0.7} />
+                <Line type="monotone" dataKey="cur" name={`${fyLabel(curFy)} so far`} stroke="#dc2626" strokeWidth={2} dot={{ r: 2 }} />
+                <Line type="monotone" dataKey="fc" name="Forecast" stroke="#f472b6" strokeWidth={2} strokeDasharray="5 4" dot={false} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
               </LineChart>
             ) : (
@@ -257,8 +257,8 @@ export function HistoricalBillingsSection() {
                 {lineFys.map((y, i) => (
                   <Bar key={y} dataKey={`fy${y}`} name={fyLabel(y)} fill={HIST_STROKES[i] || "#a8a29e"} radius={[2, 2, 0, 0]} />
                 ))}
-                <Bar dataKey="cur" name={`${fyLabel(curFy)} so far`} stackId="cur" fill="#10b981" radius={[2, 2, 0, 0]} />
-                <Bar dataKey="fc" name="Forecast" stackId="cur" fill="#6ee7b7" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="cur" name={`${fyLabel(curFy)} so far`} stackId="cur" fill="#dc2626" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="fc" name="Forecast" stackId="cur" fill="#f472b6" radius={[2, 2, 0, 0]} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
               </BarChart>
             )}
