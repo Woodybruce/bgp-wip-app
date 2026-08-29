@@ -13,9 +13,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { Pill } from "@/components/ui/pill";
 import { type CashflowData, cashflowFetch, fmtCashflow as fmt } from "@/lib/cashflow-model";
+import { buildCompanyOutlook } from "@/lib/outlook-model";
 import { History } from "lucide-react";
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, Legend,
+  ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
 
 interface DimEntry { name: string; totals: Record<number, number> }
@@ -46,6 +47,16 @@ export function HistoricalBillingsSection() {
   const [fy, setFy] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
+  // Line (cumulative race by month) vs Bars (one bar per year) — Woody,
+  // 2026-08-29: "make it choice of line chart or bar chart". Sticks per
+  // device.
+  const [chartKind, setChartKind] = useState<"line" | "bar">(() => {
+    try { return localStorage.getItem("finance:hist-chart-kind") === "bar" ? "bar" : "line"; } catch { return "line"; }
+  });
+  const pickChartKind = (k: "line" | "bar") => {
+    setChartKind(k);
+    try { localStorage.setItem("finance:hist-chart-kind", k); } catch { /* private mode */ }
+  };
 
   const { data, isLoading } = useQuery<HistData>({
     queryKey: ["/api/historical-wip"],
@@ -59,18 +70,37 @@ export function HistoricalBillingsSection() {
     queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
     staleTime: 5 * 60 * 1000,
   });
-  const ytd = cashflow?.xero?.fytdIncome ?? null;
+  // Same cache entry the Finance page's headline cards use — the fallback
+  // when the cashflow snapshot's own Xero pull fails (a server restart or a
+  // rate-limited pull briefly nulls it, and the whole "so far" group used
+  // to vanish from the chart — Woody hit this 2026-08-29 12:35).
+  const { data: fin } = useQuery<any>({
+    queryKey: ["/api/xero/financials"],
+    staleTime: 5 * 60 * 1000,
+  });
+  const effectiveCashflow = useMemo<CashflowData | undefined>(() => {
+    if (!cashflow || cashflow.xero || !fin || fin.notConnected || !fin.headline) return cashflow;
+    return {
+      ...cashflow,
+      xero: {
+        cashTotal: fin.cashTotal ?? null,
+        fytdIncome: fin.headline.income,
+        fytdExpenses: fin.headline.operatingExpenses,
+        bankAccounts: fin.bankAccounts || [],
+        monthly: fin.monthly || [],
+      },
+    };
+  }, [cashflow, fin]);
+  const ytd = effectiveCashflow?.xero?.fytdIncome ?? null;
   const now = new Date();
   const curFy = now.getUTCMonth() >= 4 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
-  // Same-point comparison (Woody, 2026-08-29: "the this year difference not
-  // working?") — the last full year's billings through the same fiscal
-  // month, so the YTD bar reads against a like-for-like number, not twelve
-  // months. fm 1 = May in the source data.
+  // Cumulative race chart (Woody, 2026-08-29: "track how each billing year
+  // looks year to date as well as future — the bottom run should be the
+  // months in each year"). fm 1 = May in the source data. The forecast
+  // continuation comes from the outlook's per-month income, so its April
+  // endpoint IS the Income — projected year tile.
   const monthsElapsed = ((now.getUTCMonth() - 4 + 12) % 12) + 1;
-  const lastHistFy = data?.fys?.length ? data.fys[data.fys.length - 1] : null;
-  const samePoint = lastHistFy != null && data?.monthly?.[lastHistFy]
-    ? data.monthly[lastHistFy].slice(0, monthsElapsed).reduce((s, v) => s + v, 0)
-    : null;
+  const outlook = useMemo(() => buildCompanyOutlook(effectiveCashflow, data as any), [effectiveCashflow, data]);
 
   const selFy = fy ?? (data ? data.fys[data.fys.length - 1] : null);
   const prevFy = selFy != null ? selFy - 1 : null;
@@ -91,12 +121,48 @@ export function HistoricalBillingsSection() {
   const curTotal = data.fyTotals[selFy!] || 0;
   const prevTotal = data.fyTotals[prevFy!] || 0;
   const visible = showAll ? rows : rows.slice(0, 25);
-  const chartData: Array<{ name: string; total?: number; ytd?: number; prior?: number }> =
+  // One cumulative line per year, May → April. Recent full years dashed
+  // grey; this year solid green to today, then dashed green forecast out to
+  // April. fc starts at today's billed figure, so the first forecast step
+  // includes the rest of the current month.
+  const FM_LABELS = ["May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr"];
+  const lineFys = data.fys.slice(-3);
+  const nowIdx = monthsElapsed - 1;
+  const outlookCum: number[] = [];
+  if (outlook) {
+    let c = 0;
+    for (const om of outlook.months.slice(0, 12)) { c += om.income; outlookCum.push(Math.round(c)); }
+  }
+  const haveCur = ytd != null && ytd > 0 && outlookCum.length === 12;
+  const chartData = FM_LABELS.map((m, i) => {
+    const row: Record<string, number | string> = { m };
+    for (const y of lineFys) {
+      const arr = data.monthly[y];
+      if (arr) row[`fy${y}`] = Math.round(arr.slice(0, i + 1).reduce((s, v) => s + v, 0));
+    }
+    if (haveCur) {
+      if (i < nowIdx) row.cur = Math.min(outlookCum[i], Math.round(ytd!));
+      if (i === nowIdx) { row.cur = Math.round(ytd!); row.fc = Math.round(ytd!); }
+      if (i > nowIdx) row.fc = outlookCum[i];
+    }
+    return row;
+  });
+  const HIST_STROKES = ["#d6d3d1", "#a8a29e", "#57534e"];
+
+  // Bar mode: one bar per full year, then the current year as billed-so-far
+  // with the forecast stacked on top and last year's same-point figure in
+  // grey alongside.
+  const lastHistFy = data.fys.length ? data.fys[data.fys.length - 1] : null;
+  const samePoint = lastHistFy != null && data.monthly[lastHistFy]
+    ? Math.round(data.monthly[lastHistFy].slice(0, monthsElapsed).reduce((s, v) => s + v, 0))
+    : null;
+  const barData: Array<{ name: string; total?: number; ytd?: number; prior?: number; forecast?: number }> =
     data.fys.map((y) => ({ name: fyLabel(y), total: Math.round(data.fyTotals[y] || 0) }));
-  if (ytd != null && ytd > 0) chartData.push({
+  if (haveCur) barData.push({
     name: `${fyLabel(curFy)} so far`,
-    ytd: Math.round(ytd),
-    ...(samePoint != null && samePoint > 0 ? { prior: Math.round(samePoint) } : {}),
+    ytd: Math.round(ytd!),
+    ...(samePoint != null && samePoint > 0 ? { prior: samePoint } : {}),
+    ...(outlookCum[11] > Math.round(ytd!) ? { forecast: outlookCum[11] - Math.round(ytd!) } : {}),
   });
 
   return (
@@ -145,21 +211,39 @@ export function HistoricalBillingsSection() {
           </div>
         </div>
 
-        <div className="h-40">
+        <div className="flex items-center gap-1.5">
+          <Pill active={chartKind === "line"} onClick={() => pickChartKind("line")} data-testid="hist-chart-line">Line</Pill>
+          <Pill active={chartKind === "bar"} onClick={() => pickChartKind("bar")} data-testid="hist-chart-bar">Bars</Pill>
+        </div>
+
+        <div className="h-44">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.1} />
-              <XAxis dataKey="name" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
-              <YAxis tickFormatter={(v: number) => `£${(v / 1_000_000).toFixed(1)}m`} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} />
-              <Tooltip formatter={(v: any, name: any) => [`£${fmt(Number(v))}`, name]} />
-              {ytd != null && ytd > 0 && (
-                <ReferenceLine y={Math.round(ytd)} stroke="#10b981" strokeDasharray="4 4" ifOverflow="extendDomain" />
-              )}
-              <Bar dataKey="total" name="Billed" fill="#b45309" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="prior" name={lastHistFy != null ? `${fyLabel(lastHistFy)} by this point` : "Last year by this point"} fill="#a8a29e" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="ytd" name="This year so far" fill="#10b981" radius={[3, 3, 0, 0]} />
-              {ytd != null && ytd > 0 && <Legend wrapperStyle={{ fontSize: 11 }} />}
-            </BarChart>
+            {chartKind === "line" ? (
+              <LineChart data={chartData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.1} />
+                <XAxis dataKey="m" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <YAxis tickFormatter={(v: number) => `£${(v / 1_000_000).toFixed(1)}m`} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} />
+                <Tooltip formatter={(v: any, name: any) => [`£${fmt(Number(v))}`, name]} />
+                {lineFys.map((y, i) => (
+                  <Line key={y} type="monotone" dataKey={`fy${y}`} name={fyLabel(y)} stroke={HIST_STROKES[i] || "#a8a29e"} strokeWidth={1.25} strokeDasharray="4 4" dot={false} />
+                ))}
+                <Line type="monotone" dataKey="cur" name={`${fyLabel(curFy)} so far`} stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} />
+                <Line type="monotone" dataKey="fc" name="Forecast" stroke="#10b981" strokeWidth={2} strokeDasharray="5 4" dot={false} opacity={0.7} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+              </LineChart>
+            ) : (
+              <BarChart data={barData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.1} />
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <YAxis tickFormatter={(v: number) => `£${(v / 1_000_000).toFixed(1)}m`} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} />
+                <Tooltip formatter={(v: any, name: any) => [`£${fmt(Number(v))}`, name]} />
+                <Bar dataKey="total" name="Billed" fill="#b45309" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="prior" name={lastHistFy != null ? `${fyLabel(lastHistFy)} by this point` : "Last year by this point"} fill="#a8a29e" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="ytd" name="This year so far" stackId="cur" fill="#10b981" />
+                <Bar dataKey="forecast" name="Forecast to come" stackId="cur" fill="#6ee7b7" radius={[3, 3, 0, 0]} />
+                {haveCur && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              </BarChart>
+            )}
           </ResponsiveContainer>
         </div>
 
