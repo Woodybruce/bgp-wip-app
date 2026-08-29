@@ -2496,6 +2496,22 @@ async function markRound(page, cross) {
     if (r.leaked && r.leaked.length) throw new Error(`property agents leaked sensitive user fields to a client: ${r.leaked.join(', ')}`);
   });
 
+  // Staff-only boards must refuse client logins outright (r425): the landlord
+  // board rolls up every landlord's deal counts + total WIP fees, and the
+  // dedupe scan dumps contact emails/names across the ENTIRE CRM.
+  await step(page, p, 'client-staff-boards-403', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const get = async (url) => (await fetch(url, { credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        landlords: await get('/api/crm/landlords'),
+        dupes: await get('/api/crm/duplicates/scan'),
+      };
+    });
+    if (r.landlords !== 403) throw new Error(`client read the landlord fee board (expected 403, got ${r.landlords})`);
+    if (r.dupes !== 403) throw new Error(`client ran the CRM dedupe scan (expected 403, got ${r.dupes})`);
+  });
+
   // Clients may regenerate BGP Commentary on their OWN properties (terminal
   // side, 2026-08-03 — Mark hit a read-only 403 on Liverpool ONE), but a
   // foreign property must still refuse. Locally the own-property call gets

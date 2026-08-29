@@ -1439,8 +1439,11 @@ export function setupCrmRoutes(app: Express) {
   // Landlord board — aggregated view of every Landlord company with WIP
   // fees, active deal count, properties, contacts, and last touchpoint.
   // All data is already in the CRM; this endpoint just rolls it up.
-  app.get("/api/crm/landlords", async (_req, res) => {
+  app.get("/api/crm/landlords", async (req, res) => {
     try {
+      // Staff-only board: rolls up every landlord BGP works with, including
+      // active deal counts and total WIP fees — never for client logins.
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const { rows } = await pool.query(`
         SELECT
           c.id, c.name, c.company_type, c.domain, c.head_office_address,
@@ -1549,8 +1552,11 @@ export function setupCrmRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.get("/api/crm/duplicates/scan", async (_req, res) => {
+  app.get("/api/crm/duplicates/scan", async (req, res) => {
     try {
+      // Staff dedupe tool: dumps duplicate-candidate names + contact emails
+      // across the ENTIRE CRM (all landlords' people) — never for clients.
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const [companyRows, contactEmailRows, contactNameRows, propertyRows] = await Promise.all([
         pool.query(`
           SELECT lower(trim(name)) AS key, array_agg(id) AS ids, count(*)::int AS count

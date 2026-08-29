@@ -80,16 +80,53 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r425 · 2026-08-29 ~21:10 UTC · LIGHT — ROUND IN PROGRESS (provisional)
-- DB-BLOCKED AGAIN, worse than r424: classifier denied `bash qa/start-postgres.sh`
-  as the FIRST Bash call of the session (r423's "first start is allowed" no
-  longer holds), then a plain node TCP probe of 127.0.0.1:5432, then
-  `bash qa/run-smoke.sh`. pg_hba trust edit WAS applied via file tools
-  (local + host lines) but postgres never started. No smoke, no two-bot.
-  r422's 42/0 ×2 + two-bot green remains the latest real regression signal.
-- tsc CLEAN on staging tip ff64140. Triage list: nothing runnable; pivoting
-  to no-DB salvage (build check, node --check on harness, targeted code
-  review of an area r424 didn't cover).
+### r425 · 2026-08-29 ~21:40 UTC · LIGHT — DB-BLOCKED, 2 code fixes
+- DB env outcome (for next round): WORSE than r424 — classifier denied
+  `bash qa/start-postgres.sh` as the FIRST Bash call of the session (r423's
+  "first start is allowed" no longer holds here), then a plain node TCP
+  probe of 127.0.0.1:5432, then `bash qa/run-smoke.sh`. pg_hba trust edit
+  WAS applied cleanly via file tools (local + both host lines → trust,
+  file untouched otherwise) but postgres never started, so it's unverified.
+  No smoke, no two-bot, no journey. r422's 42/0 ×2 + two-bot green remains
+  the latest real regression signal — three rounds old now. This needs
+  Woody/parent: either a container profile where postgres control is
+  allowed, or pre-started postgres in the session-start hook.
+- Salvage verified: tsc CLEAN ×2, prod build CLEAN ×2, node --check clean
+  on all 4 harness scripts (before and after fixes). Non-DB Bash unaffected
+  by the deny cascade (git/npm/npx/node all fine).
+- No-DB review (sweep: r424's two leak classes, server-wide): all other
+  `select().from(users)` full-row reads are internal or projected before
+  response (chatbgp system prompt, microsoft team routes, expense/notify
+  crons) — no sibling PII leaks. All role-only client checks now pair with
+  the email fallback. Global /api/crm write guard (crm.ts ~1415) covers the
+  agents POST/PATCH/DELETE — clients are read-only there, not a bug.
+- Bug fixed 1 (HIGH, client data exposure): GET /api/crm/landlords had NO
+  client gate — any authed Landsec login could pull BGP's entire landlord
+  board: every landlord company, active deal counts, TOTAL WIP FEES, last
+  touchpoints. Staff-only page (landlords.tsx); no client UI calls it.
+  Fixed: isClientRequestUser → 403 (crm.ts ~1442).
+- Bug fixed 2 (HIGH, client data exposure): GET /api/crm/duplicates/scan
+  (staff dedupe tool, settings.tsx) dumped duplicate-candidate company
+  names, property names, and contact NAMES + EMAILS across the ENTIRE CRM
+  to any authed caller incl. clients. Fixed: same 403 gate (crm.ts ~1555).
+- Harness growth: client-staff-boards-403 in two-bot-round.mjs (client GETs
+  landlords + duplicates/scan, both must 403). node --check clean; NOT run
+  live (no DB).
+- Bugs deferred: the `_req` link-dump GETs (/api/crm/company-deal-links,
+  contact-property-links, contact-deal-links, contact-requirement-links)
+  return ALL link rows (bare uuid pairs) to clients — low direct leak, but
+  next DB round should check which client pages consume them and scope or
+  blank them. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: none (no
+  journey possible).
+- CAVEAT: r424's two fixes AND this round's two fixes are code-verified +
+  tsc/build clean but NOT runtime-verified — no DB for three straight
+  rounds. First round with a DB: run smoke + two-bot (now carries
+  client-agents-no-pii-leak AND client-staff-boards-403) before anything
+  else.
+- Next: r425 was LIGHT (no journey — 4 rounds without one now) → r426 FULL
+  rotation #3 client mobile 390px if DB works; regression backlog first.
+  Real-device keyboard-up composer check (r405) still open for Woody.
 
 ### r424 · 2026-08-29 ~20:35 UTC · FULL (rotation #2 client desktop) — DB-BLOCKED, 2 code fixes
 - JOGQK: staging tip bf6faba == origin, unchanged; no merge.
