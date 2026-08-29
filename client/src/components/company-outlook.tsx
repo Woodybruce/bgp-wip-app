@@ -143,7 +143,9 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Profit — projected year</p>
             <p className={`text-2xl font-semibold tabular-nums mt-1 ${profit.projectedFy < 0 ? "text-red-600 dark:text-red-400" : ""}`} data-testid="outlook-profit">{money(profit.projectedFy)}</p>
             <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-              {money(profit.perPartner)} each on top of the £145k salary · next 6 months: {money(profit.next6)}
+              {profit.perPartner > 0
+                ? `${money(profit.perPartner)} each on top of the £145k salary`
+                : "no profit share on today's book yet — deals won through the year fill this in"} · next 6 months: {money(profit.next6)}
             </p>
           </div>
         </div>

@@ -24,10 +24,12 @@ interface RemRow { fy: number; partner: string; salary: number; bonus: number; a
 interface RemData { rows: RemRow[]; partners: string[] }
 
 const FY_LABEL: Record<number, string> = { 2025: "FY 2024–25", 2026: "FY 2025–26", 2027: "FY 2026–27" };
+// "advances" stays the stored field key; the team calls them dividends
+// (Woody, 2026-08-29: "change the heads of cash advances to dividends").
 const FIELDS = [
   { key: "salary" as const, label: "Gross Salary" },
   { key: "bonus" as const, label: "Bonus" },
-  { key: "advances" as const, label: "Cash Advances" },
+  { key: "advances" as const, label: "Dividends" },
 ];
 
 export function PartnerRemunerationSection() {
@@ -78,7 +80,20 @@ export function PartnerRemunerationSection() {
   const forecast = useMemo(() => {
     const outlook = buildCompanyOutlook(cashflow, hist ?? null);
     if (!outlook) return null;
-    return { pool: outlook.profit.projectedFy, share: outlook.profit.perPartner };
+    // Second basis: what the year pays if billing keeps last year's pace —
+    // today's book alone can project a loss early in the year (no deals
+    // won yet for the later months), which reads as "broken" rather than
+    // "conservative" (Woody, 2026-08-29).
+    const lastFy = hist?.fys?.length ? hist.fys[hist.fys.length - 1] : null;
+    const lastFyTotal = lastFy != null ? hist!.fyTotals[String(lastFy)] || 0 : 0;
+    const pacePool = lastFyTotal ? Math.round(lastFyTotal - outlook.costs.projectedFy) : null;
+    return {
+      pool: outlook.profit.projectedFy,
+      share: outlook.profit.perPartner,
+      lastFyTotal: Math.round(lastFyTotal),
+      pacePool,
+      paceShare: pacePool != null ? Math.round(pacePool / 4) : null,
+    };
   }, [cashflow, hist]);
 
   if (isLoading) return <Skeleton className="h-40 w-full rounded-xl" />;
@@ -109,7 +124,7 @@ export function PartnerRemunerationSection() {
           Equity partners
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          Remuneration by fiscal year (May–April) — salary, bonus and cash advances per partner, with profits split equally between the four of you. Tap a figure to edit. Salaries £145k from 1 Apr 2026.
+          Salary, bonus and dividends per partner by fiscal year — tap a figure to edit.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -121,6 +136,46 @@ export function PartnerRemunerationSection() {
           ))}
         </div>
 
+        {/* Phone: one card per partner — the sideways table hid the names
+            and fought the scroll (Woody, 2026-08-29). */}
+        <div className="md:hidden space-y-2" data-testid="rem-mobile">
+          {yearRows.map(r => (
+            <div key={r.partner} className="border rounded-xl p-3" data-testid={`rem-card-${r.partner}`}>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-sm font-semibold">{r.partner}</span>
+                <span className="text-sm font-semibold tabular-nums">£{fmt(r.salary + r.bonus + r.advances)}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {FIELDS.map(f => (
+                  <div key={f.key}>
+                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground">{f.label}</p>
+                    {editCell && editCell.partner === r.partner && editCell.field === f.key ? (
+                      <input
+                        autoFocus
+                        inputMode="numeric"
+                        className="w-full text-xs border rounded px-1 py-1 bg-background tabular-nums"
+                        value={editValue}
+                        onChange={e => setEditValue(e.target.value)}
+                        onBlur={commitEdit}
+                        onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditCell(null); }}
+                      />
+                    ) : (
+                      <button className="text-xs tabular-nums py-1" onClick={() => beginEdit(r.partner, f.key, (r as any)[f.key])}>
+                        {(r as any)[f.key] ? `£${fmt((r as any)[f.key])}` : "—"}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="flex items-center justify-between px-1 text-xs">
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground">Total</span>
+            <span className="font-semibold tabular-nums">£{fmt(totals.salary + totals.bonus + totals.advances)}</span>
+          </div>
+        </div>
+
+        <div className="hidden md:block">
         <ScrollableTable minWidth={520}>
           <table className="w-full text-xs">
             <thead>
@@ -166,6 +221,7 @@ export function PartnerRemunerationSection() {
             </tbody>
           </table>
         </ScrollableTable>
+        </div>
 
         {/* The four per-partner forecast cards were retired 2026-08-28 —
             the Company outlook at the top of the page carries the live
@@ -173,7 +229,10 @@ export function PartnerRemunerationSection() {
             drawn. One line ties the two together. */}
         {fy === 2027 && forecast && (
           <p className="text-[11px] text-muted-foreground leading-relaxed" data-testid="rem-forecast">
-            Live forecast (from the Company outlook above): profit pool £{fmt(forecast.pool)} → £{fmt(forecast.share)} each on top of the £145k salary. Bonus and cash advances typed above are draws against that share.
+            {forecast.share > 0
+              ? <>Live forecast (from the Company outlook above): profit pool £{fmt(forecast.pool)} → £{fmt(forecast.share)} each on top of the £145k salary.</>
+              : <>No profit share on today's book yet — the deals currently on the boards don't cover the full year's costs, and deals won through the year fill this in. At last year's billing pace (£{fmt(forecast.lastFyTotal)}), the pool would be ≈ £{fmt(forecast.pacePool ?? 0)} → £{fmt(forecast.paceShare ?? 0)} each on top of the £145k salary.</>}
+            {" "}Bonus and dividends typed above are draws against that share.
           </p>
         )}
       </CardContent>
