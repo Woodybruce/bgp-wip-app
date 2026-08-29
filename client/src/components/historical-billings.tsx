@@ -12,10 +12,10 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { Pill } from "@/components/ui/pill";
-import { cashflowFetch, fmtCashflow as fmt } from "@/lib/cashflow-model";
+import { type CashflowData, cashflowFetch, fmtCashflow as fmt } from "@/lib/cashflow-model";
 import { History } from "lucide-react";
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, Legend,
 } from "recharts";
 
 interface DimEntry { name: string; totals: Record<number, number> }
@@ -52,6 +52,25 @@ export function HistoricalBillingsSection() {
     queryFn: async () => (await cashflowFetch("GET", "/api/historical-wip")).json(),
     staleTime: 60 * 60 * 1000,
   });
+  // This year so far, from Xero — overlaid on the historic years so the
+  // current pace reads against every full year (Woody, 2026-08-29).
+  const { data: cashflow } = useQuery<CashflowData>({
+    queryKey: ["/api/cashflow"],
+    queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const ytd = cashflow?.xero?.fytdIncome ?? null;
+  const now = new Date();
+  const curFy = now.getUTCMonth() >= 4 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
+  // Same-point comparison (Woody, 2026-08-29: "the this year difference not
+  // working?") — the last full year's billings through the same fiscal
+  // month, so the YTD bar reads against a like-for-like number, not twelve
+  // months. fm 1 = May in the source data.
+  const monthsElapsed = ((now.getUTCMonth() - 4 + 12) % 12) + 1;
+  const lastHistFy = data?.fys?.length ? data.fys[data.fys.length - 1] : null;
+  const samePoint = lastHistFy != null && data?.monthly?.[lastHistFy]
+    ? data.monthly[lastHistFy].slice(0, monthsElapsed).reduce((s, v) => s + v, 0)
+    : null;
 
   const selFy = fy ?? (data ? data.fys[data.fys.length - 1] : null);
   const prevFy = selFy != null ? selFy - 1 : null;
@@ -72,7 +91,13 @@ export function HistoricalBillingsSection() {
   const curTotal = data.fyTotals[selFy!] || 0;
   const prevTotal = data.fyTotals[prevFy!] || 0;
   const visible = showAll ? rows : rows.slice(0, 25);
-  const chartData = data.fys.map((y) => ({ name: fyLabel(y), total: Math.round(data.fyTotals[y] || 0) }));
+  const chartData: Array<{ name: string; total?: number; ytd?: number; prior?: number }> =
+    data.fys.map((y) => ({ name: fyLabel(y), total: Math.round(data.fyTotals[y] || 0) }));
+  if (ytd != null && ytd > 0) chartData.push({
+    name: `${fyLabel(curFy)} so far`,
+    ytd: Math.round(ytd),
+    ...(samePoint != null && samePoint > 0 ? { prior: Math.round(samePoint) } : {}),
+  });
 
   return (
     <Card className="border rounded-xl" data-testid="historical-billings">
@@ -80,10 +105,8 @@ export function HistoricalBillingsSection() {
         <CardTitle className="text-base flex items-center gap-2">
           <History className="w-4 h-4" />
           Historical billings
+          <span className="ml-auto text-[11px] font-normal text-muted-foreground">ex VAT</span>
         </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Invoiced fees from the Sage ledger, FY2019–FY2026 (fiscal years May–April, ex VAT, credits netted). Pick a year and a lens to see it against the year before. Client is the landlord group; Company is the occupier brand.
-        </p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
@@ -122,14 +145,20 @@ export function HistoricalBillingsSection() {
           </div>
         </div>
 
-        <div className="h-36">
+        <div className="h-40">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.1} />
               <XAxis dataKey="name" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
               <YAxis tickFormatter={(v: number) => `£${(v / 1_000_000).toFixed(1)}m`} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} />
-              <Tooltip formatter={(v: any) => [`£${fmt(Number(v))}`, "Billed"]} />
-              <Bar dataKey="total" fill="#b45309" radius={[3, 3, 0, 0]} />
+              <Tooltip formatter={(v: any, name: any) => [`£${fmt(Number(v))}`, name]} />
+              {ytd != null && ytd > 0 && (
+                <ReferenceLine y={Math.round(ytd)} stroke="#10b981" strokeDasharray="4 4" ifOverflow="extendDomain" />
+              )}
+              <Bar dataKey="total" name="Billed" fill="#b45309" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="prior" name={lastHistFy != null ? `${fyLabel(lastHistFy)} by this point` : "Last year by this point"} fill="#a8a29e" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="ytd" name="This year so far" fill="#10b981" radius={[3, 3, 0, 0]} />
+              {ytd != null && ytd > 0 && <Legend wrapperStyle={{ fontSize: 11 }} />}
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -144,6 +173,28 @@ export function HistoricalBillingsSection() {
           />
         )}
 
+        {/* Phone: card list — the same fix as the Equity partners table,
+            whose name column scrolled off-left inside a min-width table. */}
+        <div className="md:hidden space-y-1.5" data-testid="hist-mobile">
+          {visible.map((r) => (
+            <div key={r.name} className="border rounded-xl p-3" data-testid={`hist-card-${r.name}`}>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs font-medium min-w-0">{r.name}</p>
+                <p className="text-sm font-semibold tabular-nums shrink-0">{r.cur ? `£${fmt(r.cur)}` : "—"}</p>
+              </div>
+              <div className="flex items-center justify-between gap-3 mt-1 text-[11px] text-muted-foreground tabular-nums">
+                <span>{prevFy ? fyLabel(prevFy) : "Prior"} {r.prev ? `£${fmt(r.prev)}` : "—"}</span>
+                <span className={r.prev && r.cur >= r.prev ? "text-emerald-600" : r.prev ? "text-red-600" : ""}>{deltaPct(r.cur, r.prev)}</span>
+                <span>{curTotal && r.cur ? `${((r.cur / curTotal) * 100).toFixed(1)}% share` : "—"}</span>
+              </div>
+            </div>
+          ))}
+          {visible.length === 0 && (
+            <p className="py-4 text-center text-xs text-muted-foreground">Nothing billed under this lens in {fyLabel(selFy!)}{search ? " matching that search" : ""}.</p>
+          )}
+        </div>
+
+        <div className="hidden md:block">
         <ScrollableTable minWidth={560}>
           <table className="w-full text-xs">
             <thead>
@@ -171,6 +222,7 @@ export function HistoricalBillingsSection() {
             </tbody>
           </table>
         </ScrollableTable>
+        </div>
         {rows.length > 25 && !showAll && (
           <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowAll(true)} data-testid="hist-show-all">
             Show all {rows.length}

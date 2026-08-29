@@ -1,10 +1,12 @@
 // Cashflow forecast section on the Finance page (v3 — Woody, 2026-08-27:
 // one finance page, no password; Xero + the app are the receipts source of
 // truth; Wendy's workbook lines are costs only; a single manual LEGACY line
-// carries the pre-Xero (Sage-era) receivables — £219,670 ex VAT budgeted
-// Nov 2026 per Wendy's cashflow yellow cell (£263,604 inc VAT), incl. five
-// Landsec 30-Apr invoices. Everything on the board is ex VAT — Woody,
-// 2026-08-27: "we don't want to see VAT").
+// carries the pre-Xero (Sage-era) receivables — Wendy's cashflow yellow
+// cell, £263,604 inc VAT = £219,670 ex VAT budgeted Nov 2026 (Woody,
+// 2026-08-28 evening: "the number is in Wendy's sheet"); editable in
+// place if it moves, and it also feeds the Debtors card on the Finance
+// page. Everything on the board is ex VAT — Woody, 2026-08-27: "we
+// don't want to see VAT").
 // Receipts rows are read-only app data; the LEGACY line and the cost lines
 // are editable in place. The balance chain anchors on Xero's live cash.
 import { useMemo, useState } from "react";
@@ -20,7 +22,9 @@ import {
   CASHFLOW_MONTH_LABEL as ML, fmtCashflow as fmt,
 } from "@/lib/cashflow-model";
 import { useToast } from "@/hooks/use-toast";
-import { Banknote, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
+import { costBucketFor } from "@/lib/outlook-model";
+import { DisclosureRow } from "@/components/company-outlook";
+import { Banknote, ChevronDown, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine,
 } from "recharts";
@@ -32,6 +36,19 @@ export function CashflowBoardSection() {
   const [editCell, setEditCell] = useState<{ lineId: string; month: string; basis: "budget" | "actual" } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [mobileMonthIdx, setMobileMonthIdx] = useState<number | null>(null);
+  // The stats, chart and month summary always show; the typed INPUTS (the
+  // budget/actual lines) minimise instead, collapsed by default (Woody,
+  // 2026-08-29: "have this element always in show and minimise the inputs").
+  // Remembered per device.
+  const [inputsCollapsed, setInputsCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem("finance:cashflow-inputs-collapsed") !== "0"; } catch { return true; }
+  });
+  const toggleInputs = () => {
+    setInputsCollapsed(c => {
+      try { localStorage.setItem("finance:cashflow-inputs-collapsed", c ? "0" : "1"); } catch { /* private mode */ }
+      return !c;
+    });
+  };
 
   const { data, isLoading } = useQuery<CashflowData>({
     queryKey: ["/api/cashflow"],
@@ -58,6 +75,20 @@ export function CashflowBoardSection() {
   const model = useMemo(() => (data ? buildCashflowModel(data) : null), [data]);
   const unified = useMemo(() => (data && model ? buildUnifiedForecast(data, model) : null), [data, model]);
   const legacyLine = model?.receipts.find(l => l.key === "LEGACY") || null;
+
+  // Phone input groups — the same buckets as the outlook's cost dropdowns,
+  // so the plan reads in the same anatomy everywhere.
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const mobileGroups = useMemo(() => {
+    if (!model) return [];
+    return ([
+      { id: "basic", title: "Basic company costs", sub: "Rent, rates, suppliers — everything that isn't people" },
+      { id: "payroll", title: "Salaries & payroll", sub: "Wages, pensions, PAYE/NI, directors" },
+      { id: "commission", title: "Commissions", sub: "Commission & bonus payments" },
+      { id: "excluded", title: "VAT, tax & transfers", sub: "Pass-through lines — outside the outlook's cost totals" },
+    ] as const).map(d => ({ ...d, lines: model.payments.filter(l => costBucketFor(l.label) === d.id) }))
+      .filter(g => g.lines.length > 0);
+  }, [model]);
 
   const chartData = useMemo(() => {
     if (!unified) return [];
@@ -129,11 +160,10 @@ export function CashflowBoardSection() {
   return (
     <Card data-testid="finance-cashflow-section">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2"><Banknote className="w-4 h-4" /> Cashflow forecast</CardTitle>
-        <p className="text-xs text-muted-foreground">
-          All figures ex VAT. Cash in comes from the app — pipeline-weighted deal fees and Xero invoices due — plus the legacy pre-Xero (Sage-era) receivables, £219,670 due November per Wendy's cashflow, editable if that moves.
-          Cash out is the costs plan below (Wendy's forecast). The chain starts from {unified.anchor.source === "xero" ? "Xero's live cash at bank" : "the typed opening balance (Xero not connected)"}.
-        </p>
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Banknote className="w-4 h-4" /> Cashflow forecast
+          <span className="ml-auto text-[11px] font-normal text-muted-foreground">ex VAT</span>
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -174,28 +204,74 @@ export function CashflowBoardSection() {
             ] as Array<[string, number]>).map(([label, v]) => (
               <div key={label} className="flex items-center justify-between gap-2">
                 <span className="text-muted-foreground">{label}</span>
-                <span className={`font-mono tabular-nums ${v < 0 ? "text-red-700 dark:text-red-400" : ""}`}>{fmt(v)}</span>
+                <span className={`tabular-nums ${v < 0 ? "text-red-700 dark:text-red-400" : ""}`}>{fmt(v)}</span>
               </div>
             ))}
           </div>
-          <div className="border rounded-lg divide-y">
-            <div className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-              <span>Costs</span><span className="text-right">Budget</span><span className="text-right">Actual</span>
-            </div>
-            {(legacyLine ? [legacyLine, ...model.payments] : model.payments).map(l => (
-              <div key={l.id} className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 px-3 py-1.5 text-xs" data-testid={`cf-m-line-${l.key}`}>
-                <span className="truncate" title={l.label}>{l.key === "LEGACY" ? "Legacy receivables" : <><span className="text-muted-foreground mr-1">{l.key}</span>{l.label}</>}</span>
-                {(["budget", "actual"] as const).map(basis => {
-                  const v = model.get(l.id, mobileMonth, basis);
-                  return (
-                    <button key={basis} type="button" className={`text-right font-mono tabular-nums px-1 py-0.5 rounded active:bg-muted ${v !== undefined && v < 0 ? "text-red-700 dark:text-red-400" : ""}`} onClick={() => startEdit(l.id, mobileMonth, basis, v)}>
-                      {isEditing(l.id, mobileMonth, basis) ? editInput : (fmt(v) || <span className="text-muted-foreground/50">·</span>)}
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
+        </div>
+
+        {/* Inputs — the typed budget/actual lines. Collapsed by default;
+            tap to open and edit. */}
+        <button
+          type="button"
+          className="w-full flex items-center gap-2 border rounded-lg p-3 text-left"
+          onClick={toggleInputs}
+          data-testid="cf-inputs-toggle"
+          aria-expanded={!inputsCollapsed}
+        >
+          <ChevronDown className={`w-4 h-4 shrink-0 text-muted-foreground transition-transform ${inputsCollapsed ? "-rotate-90" : ""}`} />
+          <span className="flex-1 min-w-0">
+            <span className="text-sm font-medium">Cost plan &amp; inputs</span>
+            <span className="block text-[11px] text-muted-foreground">Budget vs actual by line and month — tap to {inputsCollapsed ? "open and edit" : "minimise"}</span>
+          </span>
+          <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+            {model.payments.length + (legacyLine ? 1 : 0)} lines
+          </span>
+        </button>
+
+        {!inputsCollapsed && (
+        <>
+        {/* Phone: the plan lines in the outlook's dropdown anatomy (Woody,
+            2026-08-29: "use the first design for the forecasting"), grouped
+            by the same buckets so the two surfaces read as one. Empty cells
+            show a dot because Wendy's workbook cell is empty — actuals-only
+            months and quarterly items are blank in her sheet too. */}
+        <div className="md:hidden space-y-2" data-testid="cf-mobile-inputs">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground px-1">Cost plan · {ML(mobileMonth)} · tap a figure to edit</p>
+          {(legacyLine ? [{ id: "legacy", title: "Legacy receivables", sub: "Pre-Xero Sage invoices still to collect", lines: [legacyLine] }, ...mobileGroups] : mobileGroups).map(g => {
+            const total = g.lines.reduce((s, l) => s + (model.get(l.id, mobileMonth, "actual") ?? model.get(l.id, mobileMonth, "budget") ?? 0), 0);
+            return (
+              <DisclosureRow
+                key={g.id}
+                id={`cf-${g.id}`}
+                title={g.title}
+                sub={g.sub}
+                headline={fmt(total)}
+                negative={total < 0}
+                open={openGroup === g.id}
+                onToggle={() => setOpenGroup(o => (o === g.id ? null : g.id))}
+              >
+                <div className="space-y-0.5">
+                  <div className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <span /><span className="text-right">Budget</span><span className="text-right">Actual</span>
+                  </div>
+                  {g.lines.map(l => (
+                    <div key={l.id} className="grid grid-cols-[1fr_5rem_5rem] items-center gap-1 py-0.5 text-xs" data-testid={`cf-m-line-${l.key}`}>
+                      <span className="truncate" title={l.label}>{l.key === "LEGACY" ? "Legacy receivables" : l.label}</span>
+                      {(["budget", "actual"] as const).map(basis => {
+                        const v = model.get(l.id, mobileMonth, basis);
+                        return (
+                          <button key={basis} type="button" className={`text-right font-mono tabular-nums px-1 py-0.5 rounded active:bg-muted ${v !== undefined && v < 0 ? "text-red-700 dark:text-red-400" : ""}`} onClick={() => startEdit(l.id, mobileMonth, basis, v)}>
+                            {isEditing(l.id, mobileMonth, basis) ? editInput : (fmt(v) || <span className="text-muted-foreground/50">·</span>)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </DisclosureRow>
+            );
+          })}
         </div>
 
         {/* Desktop grid */}
@@ -268,10 +344,9 @@ export function CashflowBoardSection() {
           ) : (
             <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => { setAddingLine(true); setNewLabel(""); }} data-testid="cf-add-cost"><Plus className="w-3.5 h-3.5" /> Cost line</Button>
           )}
-          <span className="text-[11px] text-muted-foreground ml-auto">
-            Deal fees weighted NEG 50% · SOL 75% · EXC 90% · completed-uninvoiced 100% — move a deal or raise an invoice and this updates itself.
-          </span>
         </div>
+        </>
+        )}
       </CardContent>
     </Card>
   );
@@ -281,7 +356,7 @@ function MiniStat({ label, value }: { label: string; value: number | null }) {
   return (
     <div className="border rounded-lg p-3">
       <p className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</p>
-      <p className={`text-lg font-semibold font-mono tabular-nums ${value != null && value < 0 ? "text-red-700 dark:text-red-400" : ""}`}>
+      <p className={`text-lg font-semibold tabular-nums ${value != null && value < 0 ? "text-red-700 dark:text-red-400" : ""}`}>
         {value != null ? `£${fmt(Math.round(value))}` : "—"}
       </p>
     </div>

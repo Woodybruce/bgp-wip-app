@@ -4,20 +4,19 @@
 // cached 15 min server-side).
 import { useQuery } from "@tanstack/react-query";
 import { CashflowBoardSection } from "@/components/cashflow-board";
+import { CompanyOutlookSection, DisclosureRow } from "@/components/company-outlook";
+import { cashflowFetch } from "@/lib/cashflow-model";
 import { HistoricalBillingsSection } from "@/components/historical-billings";
-import { useEffect } from "react";
+import { PartnerRemunerationSection } from "@/components/partner-remuneration";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { formatDate } from "@/lib/format";
-import { RefreshCw, Landmark, TrendingUp, Banknote, AlertTriangle, ExternalLink, Briefcase, ArrowRight } from "lucide-react";
-import {
-  ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
-} from "recharts";
+import { RefreshCw, AlertTriangle, ExternalLink } from "lucide-react";
 
 interface WipForecast {
   pipeline: Record<"NEG" | "SOL" | "EXC", { total: number; count: number }>;
@@ -135,122 +134,40 @@ function StatCard({ label, value, sub, negative }: { label: string; value: strin
   );
 }
 
-// Pipeline + forecast from the WIP board, cross-referenced against Xero
-// invoices. Rendered on its own so it still shows when Xero needs a
-// reconnect (it's built from the CRM, not the Xero API).
-function WipSection({ wip, projection }: { wip: WipForecast; projection?: Financials["projection"] }) {
-  const stages: Array<{ code: "EXC" | "SOL" | "NEG"; label: string }> = [
-    { code: "EXC", label: "Exchanged" },
-    { code: "SOL", label: "At solicitors" },
-    { code: "NEG", label: "Negotiating" },
-  ];
-  const proj = projection;
-  const projParts = proj ? [
-    { label: "Actual income", value: proj.actuals, color: "bg-emerald-500" },
-    { label: "To invoice", value: proj.toInvoice, color: "bg-sky-500" },
-    { label: "Weighted pipeline", value: proj.weightedPipeline, color: "bg-violet-500" },
-  ].filter(p => p.value > 0) : [];
-  const projTotal = proj?.total || 0;
-
+// Headline stat as the same disclosure row every other expandable number
+// on the page uses (Woody, 2026-08-29: "all needs some uniformity").
+// While open the row spans the full grid so the detail isn't crushed.
+function ExpandableStat({ label, value, sub, negative, children }: {
+  label: string; value: string; sub?: string; negative?: boolean; children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const slug = label.toLowerCase().replace(/\s+/g, "-");
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Deal pipeline</h2>
-        <Link href="/wip-report">
-          <span className="text-xs text-primary cursor-pointer inline-flex items-center gap-1" data-testid="finance-open-wip-report">
-            Open WIP report <ArrowRight className="w-3 h-3" />
-          </span>
-        </Link>
-      </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard
-          label="Completed — to invoice"
-          value={money(wip.toInvoice.total)}
-          sub={`${wip.toInvoice.count} deal(s) with no Xero invoice`}
-          negative={wip.toInvoice.total > 0}
-        />
-        {stages.map(s => (
-          <StatCard
-            key={s.code}
-            label={`${s.label} pipeline`}
-            value={money(wip.pipeline[s.code]?.total)}
-            sub={`${wip.pipeline[s.code]?.count || 0} deal(s) · weighted ${Math.round((wip.weights[s.code] || 0) * 100)}%`}
-          />
-        ))}
-      </div>
-
-      {proj && projTotal > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2"><Briefcase className="w-4 h-4" /> Projected year</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex h-8 w-full rounded-md overflow-hidden border">
-              {projParts.map((p, i) => (
-                <div
-                  key={i}
-                  className={`${p.color} h-full`}
-                  style={{ width: `${Math.max((p.value / projTotal) * 100, 1.5)}%` }}
-                  title={`${p.label}: ${money(p.value)}`}
-                />
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-              {projParts.map((p, i) => (
-                <span key={i} className="inline-flex items-center gap-1.5">
-                  <span className={`w-2.5 h-2.5 rounded-sm ${p.color}`} />
-                  {p.label} <span className="font-mono font-medium">{money(p.value)}</span>
-                </span>
-              ))}
-              <span className="ml-auto font-semibold">Projected total {money(projTotal)}</span>
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              Actual Xero income FY-to-date + completed-but-uninvoiced fees + pipeline weighted EXC 90% · SOL 75% · NEG 50%.
-              Unweighted pipeline {money(wip.unweightedPipeline)}; early-stage deals (pre-negotiation) excluded: {money(wip.earlyPipeline.total)} across {wip.earlyPipeline.count}.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {wip.toInvoice.deals.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-500" /> Completed, not yet invoiced</span>
-              <Badge variant="secondary" className="text-[10px]">{wip.toInvoice.count} deal(s) · {money(wip.toInvoice.total)}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-0.5">
-            {wip.toInvoice.deals.map(deal => (
-              <Link key={deal.id} href={`/deals/${deal.id}`}>
-                <div className="flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded hover:bg-muted cursor-pointer" data-testid={`finance-uninvoiced-${deal.id}`}>
-                  <span className="truncate pr-3">
-                    {deal.name}
-                    <span className="text-muted-foreground text-xs">
-                      {deal.agent ? ` · ${deal.agent}` : ""}{deal.completedAt ? ` · completed ${formatDate(deal.completedAt)}` : ""}
-                    </span>
-                  </span>
-                  <span className="font-mono shrink-0">{money(deal.fee)}</span>
-                </div>
-              </Link>
-            ))}
-            {wip.invoicedAwaitingPayment > 0 && (
-              <p className="text-[11px] text-muted-foreground pt-2">
-                Plus {money(wip.invoicedAwaitingPayment)} invoiced on completed deals still awaiting payment (in debtors above).
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
+    <div className={open ? "md:col-span-2" : ""}>
+      <DisclosureRow
+        id={`stat-${slug}`}
+        title={label}
+        sub={sub}
+        headline={value}
+        negative={negative}
+        open={open}
+        onToggle={() => setOpen(o => !o)}
+      >
+        {children}
+      </DisclosureRow>
     </div>
   );
 }
+
+// (The "Completed, not yet invoiced" card was retired 2026-08-29 — the
+// outlook's "Completed, to invoice" deal-book row opens to the same deals.)
 
 // Commission statements — the tiered scheme: billings (agent's fee split,
 // after BGP House's 15%) accumulate from 1 May in fee-due order; 0% to 2×
 // salary, then 30% / 40% / 50% bands; payable at month-end payroll once
 // the client has paid.
 function CommissionSection({ commissions }: { commissions: NonNullable<Financials["commissions"]> }) {
+  const [openAgent, setOpenAgent] = useState<string | null>(null);
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -259,46 +176,61 @@ function CommissionSection({ commissions }: { commissions: NonNullable<Financial
           <span className="text-xs font-normal text-muted-foreground">FY from {formatDate(commissions.fyStart)}</span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {commissions.statements.map((s, i) => {
+      <CardContent className="space-y-2">
+        {commissions.statements.map((s) => {
           const pct = s.multiple != null ? Math.min((s.multiple / 4) * 100, 100) : 0;
+          const slug = s.agent.toLowerCase().replace(/\s+/g, "-");
           return (
-            <div key={i} className="space-y-1.5" data-testid={`commission-statement-${s.agent.toLowerCase().replace(/\s+/g, "-")}`}>
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm font-medium truncate">{s.agent}</span>
-                  {s.multiple != null ? (
-                    <Badge variant="secondary" className="text-[10px]">{s.multiple}× salary</Badge>
-                  ) : (
-                    <Badge variant="outline" className="text-[10px] text-amber-600">no salary on file</Badge>
+            <div key={s.agent} data-testid={`commission-statement-${slug}`}>
+              <DisclosureRow
+                id={`agent-${slug}`}
+                title={s.agent}
+                sub={s.multiple != null
+                  ? `Billings ${money(s.billings)} · ${s.multiple}× salary · ${Math.round(s.currentRate * 100)}% band`
+                  : `Billings ${money(s.billings)} · no salary on file`}
+                headline={s.payable > 0 ? `${money(s.payable)} due` : money(s.earned)}
+                open={openAgent === slug}
+                onToggle={() => setOpenAgent(o => (o === slug ? null : slug))}
+              >
+                <div className="space-y-2">
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                    <span>Earned <span className="font-mono font-medium text-foreground">{money(s.earned)}</span></span>
+                    <span>Payable <span className="font-mono font-medium text-emerald-600 dark:text-emerald-400">{money(s.payable)}</span></span>
+                    {s.awaitingPayment > 0 && (
+                      <span>Awaiting client <span className="font-mono font-medium text-amber-600 dark:text-amber-400">{money(s.awaitingPayment)}</span></span>
+                    )}
+                  </div>
+                  {/* Progress to the salary-multiple thresholds (markers at 2×/3×/4×) */}
+                  {s.multiple != null && (
+                    <div className="relative h-2 rounded-full bg-muted overflow-hidden">
+                      <div className="absolute inset-y-0 left-0 bg-primary rounded-full" style={{ width: `${pct}%` }} />
+                      {[2, 3, 4].map(m => (
+                        <div key={m} className="absolute inset-y-0 w-px bg-background" style={{ left: `${(m / 4) * 100}%` }} title={`${m}× salary`} />
+                      ))}
+                    </div>
                   )}
-                  <Badge variant={s.currentRate > 0 ? "default" : "outline"} className="text-[10px]">
-                    {Math.round(s.currentRate * 100)}% band
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-4 text-sm">
-                  <span className="text-muted-foreground text-xs">Billings <span className="font-mono font-medium text-foreground">{money(s.billings)}</span></span>
-                  <span className="text-muted-foreground text-xs">Earned <span className="font-mono font-medium text-foreground">{money(s.earned)}</span></span>
-                  <span className="text-muted-foreground text-xs">Payable <span className="font-mono font-medium text-emerald-600 dark:text-emerald-400">{money(s.payable)}</span></span>
-                  {s.awaitingPayment > 0 && (
-                    <span className="text-muted-foreground text-xs">Awaiting client <span className="font-mono font-medium text-amber-600 dark:text-amber-400">{money(s.awaitingPayment)}</span></span>
+                  {s.nextThreshold && (
+                    <p className="text-[11px] text-muted-foreground">
+                      {money(s.nextThreshold.billingsAway)} of billings away from the {Math.round(s.nextThreshold.rate * 100)}% band ({s.nextThreshold.multiple}× salary).
+                    </p>
+                  )}
+                  {s.deals.length > 0 && (
+                    <div className="space-y-0.5">
+                      {s.deals.map(d => (
+                        <Link key={d.id} href={`/deals/${d.id}`}>
+                          <div className="flex items-center justify-between gap-3 text-xs py-1 px-1 -mx-1 rounded hover:bg-muted cursor-pointer">
+                            <span className="truncate">{d.name}</span>
+                            <span className="font-mono tabular-nums shrink-0 text-muted-foreground">
+                              {money(d.billing)} → {money(d.commission)}
+                              <span className={`ml-1.5 text-[10px] ${d.clientPaid ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>{d.clientPaid ? "paid" : "awaiting"}</span>
+                            </span>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
                   )}
                 </div>
-              </div>
-              {/* Progress to the salary-multiple thresholds (markers at 2×/3×/4×) */}
-              {s.multiple != null && (
-                <div className="relative h-2 rounded-full bg-muted overflow-hidden">
-                  <div className="absolute inset-y-0 left-0 bg-primary rounded-full" style={{ width: `${pct}%` }} />
-                  {[2, 3, 4].map(m => (
-                    <div key={m} className="absolute inset-y-0 w-px bg-background" style={{ left: `${(m / 4) * 100}%` }} title={`${m}× salary`} />
-                  ))}
-                </div>
-              )}
-              {s.nextThreshold && (
-                <p className="text-[11px] text-muted-foreground">
-                  {money(s.nextThreshold.billingsAway)} of billings away from the {Math.round(s.nextThreshold.rate * 100)}% band ({s.nextThreshold.multiple}× salary).
-                </p>
-              )}
+              </DisclosureRow>
             </div>
           );
         })}
@@ -384,152 +316,11 @@ function AppCostsSection() {
   );
 }
 
-// Costs & forecast — the other half of the projection. Income forecasting
-// comes from the WIP pipeline; this is the cost base (per-account P&L lines),
-// a run-rate projection to FY end (Wendy doesn't budget in Xero, so the
-// forecast is trailing-average based), committed bills, and near-term cash
-// flow both directions.
-function CostsSection({ costs, creditors, cashflow, recurring, projection }: {
-  costs: NonNullable<Financials["costs"]>;
-  creditors?: Financials["creditors"];
-  cashflow?: Financials["cashflow"];
-  recurring?: Financials["recurring"];
-  projection?: Financials["projection"];
-}) {
-  const cf = cashflow;
-  const cfCols = cf ? [
-    { label: "Overdue", in: cf.receiptsDue.overdue, out: cf.billsDue.overdue },
-    { label: "This month", in: cf.receiptsDue.thisMonth, out: cf.billsDue.thisMonth },
-    { label: "Next month", in: cf.receiptsDue.nextMonth, out: cf.billsDue.nextMonth },
-    { label: "Later", in: cf.receiptsDue.later, out: cf.billsDue.later },
-  ] : [];
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard
-          label="Cost run rate"
-          value={`${money(costs.runRate)}/mo`}
-          sub={costs.runRateBasisMonths > 0 ? `Avg of last ${costs.runRateBasisMonths} full month(s)` : "Current month so far"}
-        />
-        <StatCard
-          label="Projected FY costs"
-          value={money(costs.projectedFyCosts)}
-          sub={`${money(costs.fytdExpenses)} to date + ${costs.monthsRemaining} mo at run rate`}
-        />
-        {projection?.projectedNet != null && (
-          <StatCard
-            label="Projected FY net"
-            value={money(projection.projectedNet)}
-            negative={projection.projectedNet < 0}
-            sub={`Projected income ${money(projection.total)} − costs`}
-          />
-        )}
-        {creditors && (
-          <StatCard
-            label="Bills outstanding"
-            value={money(creditors.outstanding)}
-            negative={creditors.buckets.overdue > 0}
-            sub={creditors.buckets.overdue > 0 ? `${money(creditors.buckets.overdue)} overdue` : `${creditors.billCount} open bill(s)`}
-          />
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Where the money goes */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Where the money goes — FY to date</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-0.5">
-            {costs.topLines.map((c, i) => (
-              <div key={i} className="flex items-center gap-2 text-sm py-0.5">
-                <span className="truncate flex-1">{c.label}</span>
-                <span className="text-[11px] text-muted-foreground w-9 text-right shrink-0">{c.share}%</span>
-                <span className="font-mono shrink-0 w-24 text-right">{money(c.fytd)}</span>
-              </div>
-            ))}
-            {costs.movers.length > 0 && (
-              <div className="pt-3">
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Biggest movers vs 3-month average</p>
-                {costs.movers.map((m, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                    <span className="truncate pr-3">{m.label}</span>
-                    <span className={`font-mono shrink-0 ${m.delta > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                      {m.delta > 0 ? "+" : ""}{money(m.delta)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <div className="space-y-4">
-          {/* Near-term cash flow */}
-          {cf && (
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Cash due in vs out</CardTitle></CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-4 gap-2 text-center">
-                  {cfCols.map((c, i) => (
-                    <div key={i} className="rounded-md border p-2">
-                      <p className="text-[10px] text-muted-foreground">{c.label}</p>
-                      <p className="text-xs font-mono text-emerald-600 dark:text-emerald-400">+{money(c.in)}</p>
-                      <p className="text-xs font-mono text-red-600 dark:text-red-400">−{money(c.out)}</p>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-[11px] text-muted-foreground mt-2">
-                  Invoices due in vs bills due out, by due date. Bills are already inside the P&L cost figures — this is timing, not extra cost.
-                </p>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Largest open bills */}
-          {creditors && creditors.top.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center justify-between">
-                  <span>Largest open bills</span>
-                  <Badge variant="secondary" className="text-[10px]">{creditors.billCount} bill(s)</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-0.5">
-                {creditors.top.map((b, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                    <span className="truncate pr-3">{b.contact} <span className="text-muted-foreground text-xs">{b.number}{b.due ? ` · due ${formatDate(b.due)}` : ""}</span></span>
-                    <span className="font-mono shrink-0">{money(b.amount)}</span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Recurring commitments */}
-          {recurring && (recurring.monthlyBills > 0 || recurring.bills.length > 0) && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center justify-between">
-                  <span>Recurring commitments</span>
-                  <Badge variant="secondary" className="text-[10px]">{money(recurring.monthlyBills)}/mo</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-0.5">
-                {recurring.bills.map((r, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                    <span className="truncate pr-3">{r.contact}{r.reference ? <span className="text-muted-foreground text-xs"> · {r.reference}</span> : null}</span>
-                    <span className="font-mono shrink-0">{money(r.monthly)}/mo</span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+// (The cash-management block — Bills outstanding, Cash due in vs out,
+// largest open bills, recurring commitments — was retired 2026-08-29.
+// Woody: double counting and dead data (BGP doesn't run bills through
+// Xero, so AP was always £0, and cash due in duplicated the Debtors
+// dropdown). The Debtors headline stat is the one receivables view.)
 
 export default function FinancePage() {
   const { toast } = useToast();
@@ -537,6 +328,25 @@ export default function FinancePage() {
     queryKey: ["/api/xero/financials"],
     staleTime: 5 * 60 * 1000,
   });
+
+  // Pre-Xero (Sage-era) receivables — the editable LEGACY line on the
+  // cashflow board below. Woody, 2026-08-28: the Debtors card must show
+  // Xero + Sage together; he types the confirmed Sage figure on the board.
+  const { data: cfData } = useQuery<{ lines: Array<{ id: string; key: string }>; cells: Array<{ line_id: string; month: string; basis: string; amount: number }> }>({
+    queryKey: ["/api/cashflow"],
+    queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const sageOutstanding = useMemo(() => {
+    const line = cfData?.lines?.find(l => l.key === "LEGACY");
+    if (!line) return 0;
+    const byMonth: Record<string, { a?: number; b?: number }> = {};
+    for (const c of cfData!.cells || []) {
+      if (c.line_id !== line.id) continue;
+      (byMonth[c.month] ||= {})[c.basis === "actual" ? "a" : "b"] = Number(c.amount) || 0;
+    }
+    return Object.values(byMonth).reduce((s, m) => s + (m.a ?? m.b ?? 0), 0);
+  }, [cfData]);
 
   // The Xero OAuth callback lands back here with ?xero=connected or
   // ?xero_error=… — surface the outcome and, on success, force a live
@@ -605,9 +415,10 @@ export default function FinancePage() {
         {/* The pipeline, commission and cashflow-forecast halves come from
             the CRM / local DB, so they work regardless of the Xero
             connection state. */}
+        <CompanyOutlookSection />
         <CashflowBoardSection />
         <HistoricalBillingsSection />
-        {data.wip && <WipSection wip={data.wip} />}
+        <PartnerRemunerationSection />
         {data.commissions && data.commissions.statements.length > 0 && (
           <CommissionSection commissions={data.commissions} />
         )}
@@ -634,95 +445,143 @@ export default function FinancePage() {
         </Button>
       </div>
 
-      {/* Headline stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="Income FYTD" value={money(h.income)} />
-        <StatCard
-          label="Net profit FYTD"
-          value={money(h.netProfit)}
-          negative={(h.netProfit ?? 0) < 0}
-          sub={h.operatingExpenses != null ? `Expenses ${money(h.operatingExpenses)}` : undefined}
-        />
-        <StatCard label="Cash at bank" value={money(data.cashTotal)} sub={`${data.bankAccounts?.length || 0} account(s)`} />
-        <StatCard
-          label="Debtors outstanding"
-          value={money(d?.outstanding)}
-          negative={(d?.overdue ?? 0) > 0}
-          sub={d ? `${money(d.overdue)} overdue` : undefined}
-        />
-      </div>
-
-      {/* WIP pipeline + projection (CRM ⇄ Xero cross-reference) */}
-      {data.wip && <WipSection wip={data.wip} projection={data.projection} />}
-
-      {/* Cashflow forecast — the app + Xero drive receipts, the typed
-          lines below are Wendy's costs plan (Woody, 2026-08-27). */}
-      <CashflowBoardSection />
-      <HistoricalBillingsSection />
-
-      {/* (Data-health card removed — Woody, 2026-08-23: a weekly fix-list
-          email to equity@ replaced it; see runWipHealthEmail. The live list
-          stays on WIP report → Needs Attention.) */}
-
-      {/* Costs & forecast — cost base, run-rate projection, bills, cash flow */}
-      {data.costs && (
-        <CostsSection
-          costs={data.costs}
-          creditors={data.creditors}
-          cashflow={data.cashflow}
-          recurring={data.recurring}
-          projection={data.projection}
-        />
-      )}
-
-      {/* Paid this FY — when the client's money actually landed. */}
-      {data.paid && data.paid.count > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center justify-between">
-                <span>Paid this year</span>
-                <Badge variant="secondary" className="text-[10px]">{data.paid.count} invoice(s) · {money(data.paid.totalPaid)} ex VAT</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-0.5">
+      {/* Headline stats — tap a row to see what's behind the number */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
+        <ExpandableStat label="Income FYTD" value={money(h.income)} sub="Tap for the invoices">
+          {data.paid && data.paid.count > 0 ? (
+            <div className="space-y-0.5">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground pb-1">Paid this year · {data.paid.count} invoice(s) · {money(data.paid.totalPaid)}</p>
               {data.paid.recent.map((p, i) => {
                 const row = (
                   <div className={`flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded ${p.dealId ? "hover:bg-muted cursor-pointer" : ""}`}>
                     <span className="truncate pr-3">
                       {p.label}
-                      <span className="text-muted-foreground text-xs">
-                        {p.number ? ` · ${p.number}` : ""}{p.paidOn ? ` · paid ${formatDate(p.paidOn)}` : ""}
-                      </span>
+                      <span className="text-muted-foreground text-xs">{p.number ? ` · ${p.number}` : ""}{p.paidOn ? ` · paid ${formatDate(p.paidOn)}` : ""}</span>
                     </span>
                     <span className="font-mono shrink-0">{money(p.amount)}</span>
                   </div>
                 );
-                return p.dealId
-                  ? <Link key={i} href={`/deals/${p.dealId}`}>{row}</Link>
-                  : <div key={i}>{row}</div>;
+                return p.dealId ? <Link key={i} href={`/deals/${p.dealId}`}>{row}</Link> : <div key={i}>{row}</div>;
               })}
-              {data.paid.unmatchedCount > 0 && (
-                <p className="text-[11px] text-muted-foreground pt-2">
-                  {data.paid.unmatchedCount} paid invoice(s) aren't linked to a deal in the app (raised directly in Xero).
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Cash collected</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-semibold tracking-tight">{money(data.paid.totalPaid)}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {data.paid.count} invoice(s) fully paid this financial year (ex VAT). Commission statements below pay out at month-end payroll once these land.
+              <p className="text-[11px] text-muted-foreground pt-2">
+                The rest of the FYTD income is invoiced but unpaid — it's in Debtors outstanding.
+                {data.paid.unmatchedCount > 0 ? ` ${data.paid.unmatchedCount} paid invoice(s) aren't linked to a deal in the app (raised directly in Xero).` : ""}
               </p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            </div>
+          ) : <p className="text-xs text-muted-foreground">No fully paid invoices this financial year yet.</p>}
+        </ExpandableStat>
+        <ExpandableStat
+          label="Net profit FYTD"
+          value={money(h.netProfit)}
+          negative={(h.netProfit ?? 0) < 0}
+          sub={h.operatingExpenses != null ? `Expenses ${money(h.operatingExpenses)}` : "Tap for the P&L"}
+        >
+          <div className="space-y-3">
+            {(data.pnlSections || []).filter(s => s.rows.length > 0).map((sec, i) => (
+              <div key={i}>
+                {sec.title && <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">{sec.title}</p>}
+                <div className="space-y-0.5">
+                  {sec.rows.map((r, j) => (
+                    <div key={j} className={`flex items-center justify-between text-sm py-0.5 ${r.isTotal ? "font-semibold border-t mt-1 pt-1" : ""}`}>
+                      <span className="truncate pr-3">{r.label}</span>
+                      <span className="font-mono shrink-0">{money(r.values[0])}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {(data.pnlSections || []).length === 0 && <p className="text-xs text-muted-foreground">P&L lines unavailable right now.</p>}
+          </div>
+        </ExpandableStat>
+        <ExpandableStat label="Cash at bank" value={money(data.cashTotal)} sub={`${data.bankAccounts?.length || 0} account(s) — tap to list`}>
+          <div className="space-y-1">
+            {(data.bankAccounts || []).map((a, i) => (
+              <div key={i} className="flex items-center justify-between text-sm py-0.5">
+                <span className="truncate pr-3">{a.name}</span>
+                <span className="font-mono shrink-0">{money(a.balance)}</span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between text-sm font-semibold border-t mt-1 pt-1.5">
+              <span>Total cash</span>
+              <span className="font-mono">{money(data.cashTotal)}</span>
+            </div>
+            {data.balanceSheet?.netAssets != null && (
+              <p className="text-xs text-muted-foreground pt-2">
+                Net assets {money(data.balanceSheet.netAssets)}
+                {data.balanceSheet.totalAssets != null ? ` · total assets ${money(data.balanceSheet.totalAssets)}` : ""}
+              </p>
+            )}
+          </div>
+        </ExpandableStat>
+        <ExpandableStat
+          label="Debtors outstanding"
+          value={money((d?.outstanding ?? 0) + sageOutstanding)}
+          negative={(d?.overdue ?? 0) > 0}
+          sub={`${money(d?.overdue ?? 0)} overdue · pre-Xero (Sage) ${money(sageOutstanding)}`}
+        >
+          {d ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-4 gap-2 text-center">
+                {[
+                  { label: "Current", v: d.buckets.current },
+                  { label: "1–30d", v: d.buckets.d1to30 },
+                  { label: "31–60d", v: d.buckets.d31to60 },
+                  { label: "60d+", v: d.buckets.d60plus },
+                ].map((b, i) => (
+                  <div key={i} className="rounded-md border p-2">
+                    <p className="text-[10px] text-muted-foreground">{b.label}</p>
+                    <p className={`text-sm font-semibold font-mono ${i >= 2 && b.v > 0 ? "text-red-600 dark:text-red-400" : ""}`}>{money(b.v)}</p>
+                  </div>
+                ))}
+              </div>
+              {d.top.length > 0 && (
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Largest overdue</p>
+                  <div className="space-y-0.5">
+                    {d.top.map((inv, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm py-0.5">
+                        <span className="truncate pr-3">{inv.contact} <span className="text-muted-foreground text-xs">{inv.number}{inv.due ? ` · due ${formatDate(inv.due)}` : ""}</span></span>
+                        <span className="font-mono shrink-0">{money(inv.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                Plus {money(sageOutstanding)} pre-Xero (Sage) receivables from Wendy's cashflow — edit on the Legacy line of the cashflow board below.
+              </p>
+            </div>
+          ) : <p className="text-xs text-muted-foreground">No open invoices.</p>}
+        </ExpandableStat>
+      </div>
+
+      {/* Company outlook — front and centre (Woody, 2026-08-28): income
+          forecast + actuals, cost base, computed commissions, prior years,
+          breakeven and the per-partner picture. Fed the page's own Xero
+          numbers as a fallback so it can never disagree with the headline
+          cards when the cashflow snapshot hiccups. */}
+      <CompanyOutlookSection
+        xeroFallback={{
+          cashTotal: data.cashTotal ?? null,
+          fytdIncome: h.income ?? null,
+          fytdExpenses: h.operatingExpenses ?? null,
+          monthly: data.monthly || [],
+          bankAccounts: data.bankAccounts || [],
+        }}
+      />
+
+      {/* Cashflow forecast — the app + Xero drive receipts, the typed
+          lines below are Wendy's costs plan (Woody, 2026-08-27). */}
+      <CashflowBoardSection />
+      <HistoricalBillingsSection />
+      <PartnerRemunerationSection />
+
+      {/* (Data-health card removed — Woody, 2026-08-23: a weekly fix-list
+          email to equity@ replaced it; see runWipHealthEmail. The live list
+          stays on WIP report → Needs Attention.) */}
+
+      {/* (The "Paid this year" card moved into the Income FYTD dropdown,
+          2026-08-29.) */}
 
       {/* Commission statements — Woody's tiered scheme */}
       {data.commissions && data.commissions.statements.length > 0 && (
@@ -758,117 +617,8 @@ export default function FinancePage() {
         </div>
       )}
 
-      {/* Monthly P&L chart */}
-      {(data.monthly?.length || 0) > 1 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Month by month</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={data.monthly}>
-                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `£${(v / 1000).toFixed(0)}k`} />
-                  <Tooltip formatter={(v: any) => money(Number(v))} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="income" name="Income" fill="#10b981" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="expenses" name="Expenses" fill="#f59e0b" radius={[3, 3, 0, 0]} />
-                  <Line dataKey="netProfit" name="Net profit" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* P&L summary */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Profit &amp; Loss — financial year to date</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            {(data.pnlSections || []).filter(s => s.rows.length > 0).map((sec, i) => (
-              <div key={i}>
-                {sec.title && <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">{sec.title}</p>}
-                <div className="space-y-0.5">
-                  {sec.rows.map((r, j) => (
-                    <div key={j} className={`flex items-center justify-between text-sm py-0.5 ${r.isTotal ? "font-semibold border-t mt-1 pt-1" : ""}`}>
-                      <span className="truncate pr-3">{r.label}</span>
-                      <span className="font-mono shrink-0">{money(r.values[0])}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        <div className="space-y-4">
-          {/* Bank accounts */}
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Banknote className="w-4 h-4" /> Cash position</CardTitle></CardHeader>
-            <CardContent className="space-y-1">
-              {(data.bankAccounts || []).map((a, i) => (
-                <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                  <span className="truncate pr-3">{a.name}</span>
-                  <span className="font-mono shrink-0">{money(a.balance)}</span>
-                </div>
-              ))}
-              <div className="flex items-center justify-between text-sm font-semibold border-t mt-1 pt-1.5">
-                <span>Total cash</span>
-                <span className="font-mono">{money(data.cashTotal)}</span>
-              </div>
-              {data.balanceSheet?.netAssets != null && (
-                <p className="text-xs text-muted-foreground pt-2">
-                  Net assets {money(data.balanceSheet.netAssets)}
-                  {data.balanceSheet.totalAssets != null ? ` · total assets ${money(data.balanceSheet.totalAssets)}` : ""}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Aged debtors */}
-          {d && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center justify-between">
-                  <span>Aged debtors</span>
-                  <Badge variant="secondary" className="text-[10px]">{d.invoiceCount} open invoice(s)</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="grid grid-cols-4 gap-2 text-center">
-                  {[
-                    { label: "Current", v: d.buckets.current },
-                    { label: "1–30d", v: d.buckets.d1to30 },
-                    { label: "31–60d", v: d.buckets.d31to60 },
-                    { label: "60d+", v: d.buckets.d60plus },
-                  ].map((b, i) => (
-                    <div key={i} className="rounded-md border p-2">
-                      <p className="text-[10px] text-muted-foreground">{b.label}</p>
-                      <p className={`text-sm font-semibold font-mono ${i >= 2 && b.v > 0 ? "text-red-600 dark:text-red-400" : ""}`}>{money(b.v)}</p>
-                    </div>
-                  ))}
-                </div>
-                {d.top.length > 0 && (
-                  <div>
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Largest overdue</p>
-                    <div className="space-y-0.5">
-                      {d.top.map((inv, i) => (
-                        <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                          <span className="truncate pr-3">{inv.contact} <span className="text-muted-foreground text-xs">{inv.number}{inv.due ? ` · due ${formatDate(inv.due)}` : ""}</span></span>
-                          <span className="font-mono shrink-0">{money(inv.amount)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </div>
+      {/* (The bottom P&L / Cash position / Aged debtors grid moved into
+          the headline stat dropdowns, 2026-08-29.) */}
 
       {/* What the app itself costs to run (AI + data APIs) */}
       <AppCostsSection />

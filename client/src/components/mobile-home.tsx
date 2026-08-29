@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
@@ -204,11 +204,29 @@ export default function MobileHome() {
   // Equity directors (Woody, Jack, Rupert, Charlotte) get the company
   // finance tile — server-gated API, so the query only runs for them.
   const isEquity = isEquityUser(user) && !isClientHome;
-  const { data: equityFin } = useQuery<any>({
+  const { data: equityFin, isFetched: equityFinFetched } = useQuery<any>({
     queryKey: ["/api/xero/financials"],
     enabled: isEquity,
     staleTime: 5 * 60 * 1000,
   });
+  // Pre-Xero (Sage) receivables from the cashflow board's LEGACY line, so
+  // the tile's Debtors figure matches the Finance page's to the pound.
+  const { data: equityCf } = useQuery<any>({
+    queryKey: ["/api/cashflow"],
+    queryFn: () => apiRequest("GET", "/api/cashflow").then(r => r.json()),
+    enabled: isEquity,
+    staleTime: 5 * 60 * 1000,
+  });
+  const sageOutstanding = useMemo(() => {
+    const line = equityCf?.lines?.find((l: any) => l.key === "LEGACY");
+    if (!line) return 0;
+    const byMonth: Record<string, { a?: number; b?: number }> = {};
+    for (const c of equityCf!.cells || []) {
+      if (c.line_id !== line.id) continue;
+      (byMonth[c.month] ||= {})[c.basis === "actual" ? "a" : "b"] = Number(c.amount) || 0;
+    }
+    return Object.values(byMonth).reduce((s, m) => s + (m.a ?? m.b ?? 0), 0);
+  }, [equityCf]);
   // Personal (my billing) vs Company (equity finance) tab on the combined
   // finance tile — Company is the default (Woody, 2026-08-22), an explicit
   // switch to Personal sticks per device.
@@ -244,7 +262,7 @@ export default function MobileHome() {
   };
   const { data: alerts = [] } = useQuery<Alert[]>({ queryKey: ["/api/daily-digest"] });
   const { data: tasks = [] } = useQuery<Task[]>({ queryKey: ["/api/tasks"] });
-  const { data: commission } = useQuery<Commission>({
+  const { data: commission, isFetched: commissionFetched } = useQuery<Commission>({
     queryKey: [`/api/hr/staff/${user?.id}/commission`],
     queryFn: () => apiRequest("GET", `/api/hr/staff/${user?.id}/commission`).then(r => r.json()),
     enabled: !!user?.id && !isClientHome,
@@ -379,6 +397,17 @@ export default function MobileHome() {
           combined into one board with tabs (Woody, 2026-08-22). Non-equity
           staff only ever see Personal; the tabs appear when both apply. */}
       {(() => {
+        // Wait for BOTH feeds before rendering, so the tile appears once,
+        // fully formed — previously it flashed up as untabbed "Equity
+        // finance" and then re-rendered with the Personal/Company tabs when
+        // the commission figures landed a beat later (Woody, 2026-08-29:
+        // "says equity finance, it's a glitch, then returns to personal
+        // and company").
+        const commissionSettled = isClientHome || !user?.id || commissionFetched;
+        const equitySettled = !isEquity || equityFinFetched;
+        if (!commissionSettled || !equitySettled) {
+          return <div className="rounded-2xl bg-[hsl(var(--mobile-chrome))] h-[104px] animate-pulse" data-testid="mobile-home-finance-loading" />;
+        }
         const equityOk = isEquity && equityFin && !equityFin.notConnected && !equityFin.needsReconnect;
         if (!commission && !equityOk) return null;
         const showTabs = !!commission && equityOk;
@@ -457,34 +486,41 @@ export default function MobileHome() {
                   )}
                 </>
               ) : (
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <div>
-                    <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.headline?.income || 0).toLocaleString("en-GB")}</p>
+                    <p className="text-base font-bold tabular-nums leading-tight">£{Math.round(equityFin.headline?.income || 0).toLocaleString("en-GB")}</p>
                     <p className="text-[10px] opacity-70">Income FYTD</p>
                   </div>
                   <div>
-                    <p className={`text-lg font-bold tabular-nums leading-tight ${(equityFin.headline?.netProfit || 0) < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                    <p className={`text-base font-bold tabular-nums leading-tight ${(equityFin.headline?.netProfit || 0) < 0 ? "text-red-400" : "text-emerald-400"}`}>
                       £{Math.round(equityFin.headline?.netProfit || 0).toLocaleString("en-GB")}
                     </p>
                     <p className="text-[10px] opacity-70">Net FYTD</p>
                   </div>
                   <div>
-                    <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.cashTotal || 0).toLocaleString("en-GB")}</p>
+                    <p className={`text-base font-bold tabular-nums leading-tight ${(equityFin.debtors?.overdue || 0) > 0 ? "text-amber-400" : ""}`}>
+                      £{Math.round((equityFin.debtors?.outstanding || 0) + sageOutstanding).toLocaleString("en-GB")}
+                    </p>
+                    <p className="text-[10px] opacity-70">Debtors</p>
+                  </div>
+                  <div>
+                    <p className="text-base font-bold tabular-nums leading-tight">£{Math.round(equityFin.cashTotal || 0).toLocaleString("en-GB")}</p>
                     <p className="text-[10px] opacity-70">Cash at bank</p>
                   </div>
-                  {equityFin.projection?.projectedNet != null ? (
+                  {equityFin.projection?.projectedNet != null && (
                     <div>
-                      <p className={`text-lg font-bold tabular-nums leading-tight ${equityFin.projection.projectedNet < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                      <p className={`text-base font-bold tabular-nums leading-tight ${equityFin.projection.projectedNet < 0 ? "text-red-400" : "text-emerald-400"}`}>
                         £{Math.round(equityFin.projection.projectedNet).toLocaleString("en-GB")}
                       </p>
                       <p className="text-[10px] opacity-70">Projected FY net</p>
                     </div>
-                  ) : (
-                    <div>
-                      <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.debtors?.outstanding || 0).toLocaleString("en-GB")}</p>
-                      <p className="text-[10px] opacity-70">Debtors</p>
-                    </div>
                   )}
+                  <div>
+                    <p className={`text-base font-bold tabular-nums leading-tight ${(equityFin.debtors?.buckets?.d60plus || 0) > 0 ? "text-red-400" : ""}`}>
+                      £{Math.round(equityFin.debtors?.buckets?.d60plus || 0).toLocaleString("en-GB")}
+                    </p>
+                    <p className="text-[10px] opacity-70">Overdue 60d+</p>
+                  </div>
                 </div>
               )}
             </button>

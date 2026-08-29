@@ -9,6 +9,8 @@ export interface CashflowLine { id: string; key: string; label: string; section:
 export interface CashflowCell { line_id: string; month: string; basis: "budget" | "actual"; amount: number }
 export interface CashflowXero {
   asAt?: string; orgName?: string; cashTotal: number | null;
+  fytdIncome?: number | null;
+  fytdExpenses?: number | null;
   bankAccounts: Array<{ name: string; balance: number }>;
   monthly: Array<{ month: string; income: number; expenses: number; netProfit: number }>;
   arByMonth?: Record<string, number>;
@@ -19,8 +21,19 @@ export interface CashflowXero {
 export interface CashflowDeals {
   byMonth: Record<string, { weighted: number; count: number }>;
   undated: { weighted: number; count: number };
+  byStage?: Record<string, { weighted: number; unweighted: number; count: number; deals?: Array<{ id: string; name: string; fee: number; weighted: number }> }>;
 }
-export interface CashflowData { lines: CashflowLine[]; cells: CashflowCell[]; months: string[]; xero: CashflowXero | null; deals: CashflowDeals | null }
+export interface CommissionOutlook {
+  fyStart: string;
+  earned: number;
+  payable: number;
+  awaiting: number;
+  projectedForward: number;
+  projectedFyTotal: number;
+  byAgent: Array<{ agent: string; salary: number | null; billings: number; forwardBillings: number; earned: number; projectedForward: number }>;
+  missingSplits?: { count: number; fee: number };
+}
+export interface CashflowData { lines: CashflowLine[]; cells: CashflowCell[]; months: string[]; xero: CashflowXero | null; deals: CashflowDeals | null; commissionOutlook?: CommissionOutlook | null }
 
 export async function cashflowFetch(method: string, url: string, body?: unknown): Promise<Response> {
   const headers: Record<string, string> = { ...getAuthHeaders() };
@@ -87,15 +100,23 @@ export function buildCashflowModel(data: CashflowData): CashflowModel {
 // string) onto the board's YYYY-MM month keys, so forecast and Xero rows
 // can be compared side by side.
 export function xeroLabelToMonth(label: string): string | null {
+  // Month-name forms first: "Aug-26" fed to new Date() parses as 26 Aug
+  // 2001 (day-of-month + two-digit year), silently landing the month
+  // outside the FY — the named-month regex reads it correctly. Note
+  // "31 Aug 26" also hits the regex ("Aug 26" → 2026-08), which matches
+  // what Date() would have said. Pure date strings fall through to Date().
+  const m = label.match(/([A-Za-z]{3,9})[\s-]+(\d{2,4})/);
+  if (m) {
+    const idx = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+      .indexOf(m[1].slice(0, 3).toLowerCase());
+    if (idx >= 0) {
+      const yn = m[2].length === 2 ? `20${m[2]}` : m[2];
+      return `${yn}-${String(idx + 1).padStart(2, "0")}`;
+    }
+  }
   const d = new Date(label);
   if (!isNaN(d.getTime())) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  const m = label.match(/([A-Za-z]{3,9})[\s-]+(\d{2,4})/);
-  if (!m) return null;
-  const idx = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-    .indexOf(m[1].slice(0, 3).toLowerCase());
-  if (idx < 0) return null;
-  const y = m[2].length === 2 ? `20${m[2]}` : m[2];
-  return `${y}-${String(idx + 1).padStart(2, "0")}`;
+  return null;
 }
 
 // App-linked projection: for the current and future months, what the app

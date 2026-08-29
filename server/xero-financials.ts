@@ -25,6 +25,33 @@ import { buildCommissionStatements } from "./commission-engine";
 const CACHE_TTL_MS = 15 * 60_000;
 let cache: { at: number; payload: any } | null = null;
 
+// One Xero pull shared by every caller. /api/xero/financials and the
+// cashflow board's snapshot used to fire two separate full pulls
+// concurrently on a Finance page load and trip Xero's per-minute rate
+// limit — prod logs 2026-08-28: "Xero API error: 429", the outlook showed
+// "£0 billed so far" under a healthy headline card. Concurrent callers now
+// share one in-flight build; results are cached 15 min (the route's richer
+// cached payload is reused when fresh — it's a superset).
+let inFlightBuild: Promise<any | null> | null = null;
+let bareCache: { at: number; payload: any | null } | null = null;
+export async function buildFinancialsShared(force = false): Promise<any | null> {
+  if (!force) {
+    if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.payload;
+    if (bareCache && Date.now() - bareCache.at < CACHE_TTL_MS) return bareCache.payload;
+  }
+  if (inFlightBuild) return inFlightBuild;
+  inFlightBuild = (async () => {
+    try {
+      const payload = await withSystemXero((session) => buildFinancials(session));
+      bareCache = { at: Date.now(), payload: payload ?? null };
+      return payload ?? null;
+    } finally {
+      inFlightBuild = null;
+    }
+  })();
+  return inFlightBuild;
+}
+
 // ── Xero report parsing ─────────────────────────────────────────────────
 // Reports come back as nested Rows: Header → Section(title) → Row /
 // SummaryRow, each with Cells [{ Value }]. We flatten to sections with
@@ -635,7 +662,7 @@ export function registerXeroFinancialRoutes(app: Express): void {
 
       let payload: any;
       try {
-        payload = await withSystemXero((session) => buildFinancials(session));
+        payload = await buildFinancialsShared(req.query.refresh === "1");
       } catch (e: any) {
         const msg = String(e?.message || "");
         // Anything that smells like an auth/consent problem — old token
