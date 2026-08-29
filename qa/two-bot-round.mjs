@@ -4914,9 +4914,11 @@ async function markRound(page, cross) {
       if (await page.locator('[data-testid="toggle-deal-timeline"]').count()) {
         throw new Error('client sees the Timeline card (its timeline read is gateway-403)');
       }
-      if (!(await page.locator('[data-testid="toggle-deal-audit"]').count())) {
-        throw new Error('client lost the (allowed) deal Audit log card');
-      }
+      // r415: wait, don't sample — under round load the audit query can
+      // resolve after the fixed 2.5s pause (one flaked flow-failure).
+      await page.locator('[data-testid="toggle-deal-audit"]').first()
+        .waitFor({ state: 'attached', timeout: 15000 })
+        .catch(() => { throw new Error('client lost the (allowed) deal Audit log card'); });
       // Link a tenant through the inline picker, then undo. The AML kick is
       // client-side logic, so this must go through the real UI.
       await page.locator('button:has-text("Link tenant")').locator('visible=true').first().click();
