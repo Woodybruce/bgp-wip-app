@@ -80,6 +80,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r417 · 2026-08-29 ~09:30 UTC · ROUND IN PROGRESS (provisional)
+- LIGHT round (r416 was FULL). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1,
+  fresh bgpsmoke restore). Two-bot 417 running via run-round.sh; triage to
+  follow. Final entry replaces this one.
+
 ### r416 · 2026-08-29 ~07:15 UTC · FULL (rotation #2 client desktop 1440px)
 - Watchdog-spawned session; r415 stalled and pushed nothing, so r414 (LIGHT)
   was the previous round → FULL this round.
