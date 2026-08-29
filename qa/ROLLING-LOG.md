@@ -80,17 +80,46 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r422 · 2026-08-29 ~19:50 UTC · FULL (rotation #1 staff desktop 1440px) — IN PROGRESS
+### r422 · 2026-08-29 ~20:00 UTC · FULL (rotation #1 staff desktop 1440px)
 - JOGQK check: origin tip still 5e2608d, already merged into staging — no merge.
-- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore). Two-bot 422 via
-  run-round.sh: exit 0, ALL scenarios ok, 4 issues = standing noise signature
-  (2×400 rocketreach/tracker-gate-probe, 2×503 keyless AI). Dev-log tally:
-  0 raw 500/502/504.
-- Journey next: Victoria desktop 1440px — chat-panel DM naming/unread (desktop
-  side of the r420 fix) + desk work. Note: group-photo cropper is mobile-only;
-  desktop chat-panel only displays groupPicUrl.
-- Setup: pg_hba trust needed again (via file-tool edit — sed-on-/etc blocked);
-  setup-dev-db.sh worked as intended.
+- Smoke GREEN 42/0 ×2 (FRESH_BUILD=1 both — before and after the fix).
+  Two-bot 422 via run-round.sh: exit 0, ALL scenarios ok, 4 issues = standing
+  noise signature (2×400 rocketreach/tracker-gate-probe, 2×503 keyless AI).
+  Dev-log tally: 0 raw 500/502/504. tsc clean.
+- Journey (Victoria + Alex @1440px, UI form logins): "DM Alex about a viewing,
+  both sides; unread round-trip; then a group chat with Alex + Jack" — chat
+  toggle → New Message → pick Alex → send → Alex side: header unread badge,
+  card + header naming, reply → Victoria side: unread appears + clears on
+  read → fresh 2-member group ("Alex, Jack" header). 10/10 checks green
+  AFTER the fix below; 0 pageerrors, 0 non-noise 4xx/5xx. Screenshots
+  eyeballed both sides. Note: group-photo cropper is mobile-only; desktop
+  chat-panel only displays groupPicUrl (r421's "cropper on desktop"
+  candidate is N/A).
+- Bug fixed (1, first journey pass caught it): a DM created from the DESKTOP
+  chat panel still rendered on the recipient's side titled with THEIR OWN
+  name — chat-panel handleCreate titles chats with FIRST names ("Alex"),
+  but the r420 auto-name guard only matches members' FULL names, so the
+  title read as custom. Fix: (a) desktop create now stores the full name
+  for a single-pick 1:1 (same rule as mobile); (b) the auto-name guard in
+  all three display sites (chat-panel list card + panel header,
+  mobile-app list card) also treats a member's FIRST name as an auto-name —
+  covers existing desktop-created DMs in prod data. Verified visually both
+  sides; journey re-run 10/10.
+- Harness growth: none cheap — the fix is client-side title derivation +
+  render guard (no API surface); staff-dm-creator-member-row already covers
+  the server half from r420.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: UX-NOTES
+  #117 (desktop New Message says "Create Group (1 member)" for a 1:1;
+  mobile says "Start Chat"). New flakes: none.
+- Setup: pg_hba trust needed again (via file-tool edit — sed-on-/etc
+  blocked); setup-dev-db.sh worked as intended. Alex login via admin
+  password-reset endpoint as woody@ (temp password; hash NOT restored —
+  throwaway DB, next round re-restores the fixture). Journey threads
+  cleaned up in-round via DELETE /api/chat/threads/:id.
+- Next: r422 was FULL → r423 may be LIGHT; then rotation #2 client desktop
+  1440px. Real-device check of keyboard-up composer (r405) still open for
+  Woody.
 
 ### r421 · 2026-08-29 ~18:10 UTC · LIGHT (r420 had the journey)
 - Respawn of the r421 attempt that died on an unapprovable psql prompt.

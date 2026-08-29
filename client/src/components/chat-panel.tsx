@@ -783,11 +783,13 @@ function NewGroupView({ allUsers, currentUserId, onCreate }: {
 
   const handleCreate = () => {
     if (selectedIds.size === 0) return;
-    const title = groupName.trim() || Array.from(selectedIds)
-      .map(id => allUsers.find(u => u.id === id)?.name?.split(" ")[0])
-      .filter(Boolean)
-      .join(", ");
-    onCreate(title, Array.from(selectedIds));
+    const ids = Array.from(selectedIds);
+    // One person and no typed name = a one-to-one: use their FULL name so
+    // the auto-name display guard recognises it (same rule as mobile).
+    const title = groupName.trim() || (ids.length === 1
+      ? (ids[0] === "__chatbgp__" ? "ChatBGP" : allUsers.find(u => u.id === ids[0])?.name || "Chat")
+      : ids.map(id => allUsers.find(u => u.id === id)?.name?.split(" ")[0]).filter(Boolean).join(", "));
+    onCreate(title, ids);
   };
 
   return (
@@ -1045,9 +1047,10 @@ function ThreadCard({ thread, onClick, onDelete, currentUserId, userPics }: { th
   const dmName = isDm ? otherMembers[0].name : null;
   const dmInitials = dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
   // Auto-titled 1:1s carry the creator's pick of name — the other member's
-  // own name on their side. Member-name titles (and the old "Group Chat"
-  // default) count as auto-names: show the other person instead.
-  const autoNamed = !thread.title || thread.title === "Group Chat" || thread.members.some(m => m.name === thread.title);
+  // own name on their side. Member-name titles, first-name titles (old
+  // desktop create stored first names only) and the old "Group Chat"
+  // default count as auto-names: show the other person instead.
+  const autoNamed = !thread.title || thread.title === "Group Chat" || thread.members.some(m => m.name === thread.title || m.name.split(" ")[0] === thread.title);
   const displayTitle = (isDm && autoNamed ? dmName : thread.title) || dmName || "New conversation";
   const dmPic = isDm && otherMembers[0] ? userPics?.[otherMembers[0].id] : null;
 
@@ -2732,7 +2735,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   // Same auto-name rule as the list cards: a 1:1 titled with a member's name
   // (or the old "Group Chat" default) shows the OTHER person for this viewer.
   const headerOthers = threadMembers.filter(m => m.id !== currentUser?.id);
-  const headerAutoNamed = !activeThread?.title || activeThread.title === "Group Chat" || threadMembers.some(m => m.name === activeThread.title);
+  const headerAutoNamed = !activeThread?.title || activeThread.title === "Group Chat" || threadMembers.some(m => m.name === activeThread.title || m.name.split(" ")[0] === activeThread.title);
   const headerDmName = !isActiveThreadAi && headerOthers.length === 1 && headerAutoNamed ? headerOthers[0].name : null;
   const headerTitle = view === "new-group"
     ? "New message"

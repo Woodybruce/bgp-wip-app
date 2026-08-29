@@ -16,6 +16,13 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+117. 2026-08-29 · BGP staff / desktop 1440px (QA r422) · "message a colleague
+    from the desktop chat panel" · Picking one person in New Message shows a
+    button labelled "Create Group (1 member)" — the user is starting a 1:1,
+    not a group; mobile already says "Start Chat" for a single pick ·
+    Suggest: mirror mobile's label on desktop — "Start Chat" when exactly one
+    member is selected, "Create Group (N members)" otherwise.
+
 116. 2026-08-28 · BGP staff / desktop 1440px (QA r413) · "log yesterday's
     viewing with the brand, then record the offer they made" · Both steps
     work, but they are two fully separate dialogs: after saving a viewing
