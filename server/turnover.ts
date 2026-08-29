@@ -132,6 +132,13 @@ router.post("/api/turnover", requireAuth, async (req: Request, res: Response) =>
 router.get("/api/turnover/stats/summary", requireAuth, async (req: Request, res: Response) => {
   try {
     const pool = await getPool();
+    // Firm-wide aggregates over the whole turnover book — BGP intel. The
+    // client board only uses the sliced list GET, so scoped callers get 403
+    // (same rule as the ChatBGP query_turnover block).
+    const { resolveCompanyScope } = await import("./company-scope");
+    if (await resolveCompanyScope(req as any)) {
+      return res.status(403).json({ error: "Not available for client accounts" });
+    }
     const result = await pool.query(`
       SELECT 
         COUNT(*) as total_entries,
@@ -342,6 +349,16 @@ router.get("/api/turnover/:id", requireAuth, async (req: Request, res: Response)
     const pool = await getPool();
     const result = await pool.query("SELECT * FROM turnover_data WHERE id = $1", [req.params.id]);
     if (!result.rows[0]) return res.status(404).json({ error: "Not found" });
+    // Scoped callers may only read rows for brands in their visible slice —
+    // same rule as the list GET above.
+    const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    if (scope) {
+      const cid = result.rows[0].company_id;
+      if (!cid || !(await isClientVisibleBrand(cid, scope))) {
+        return res.status(403).json({ error: "Not available for client accounts" });
+      }
+    }
     res.json(result.rows[0]);
   } catch (err: any) {
     res.status(500).json({ error: err.message });

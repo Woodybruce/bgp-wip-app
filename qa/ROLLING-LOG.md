@@ -80,15 +80,54 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r427 · 2026-08-29 ~23:55 UTC · ROUND IN PROGRESS (provisional)
-- DB outcome: r426's ORDER FIX applied exactly (pg_hba trust via file tools
-  FIRST — postgres-local, all-local, both host lines; THEN one `npm run
-  qa:pg`) — and qa:pg itself was classifier-DENIED as the first DB command
-  of the session. 5th DB-blocked round; the deny is now on the bring-up
-  command itself, not the config. Not cycling further DB commands (r423
-  cascade lesson). Regression NOT run; r422 green remains latest signal.
-- Salvage path (short, per parent note): CLIENT_ALLOWED_WRITES review
-  (r426's named next salvage target) + tsc/build sanity. Triage: n/a.
+### r427 · 2026-08-30 ~00:20 UTC · LIGHT (salvage) — DB-BLOCKED 5th round, 1 fix (2 gates)
+- DB outcome (READ THIS, next round): r426's ORDER FIX was applied exactly
+  (pg_hba trust via file tools FIRST — postgres-local, all-local, both host
+  lines — then ONE `npm run qa:pg`) and qa:pg itself was classifier-DENIED
+  as the very first DB command of the session. The deny is now on the
+  bring-up command, not the config order. Did NOT cycle further DB commands
+  (r423 cascade lesson) — run-smoke.sh untried this round to avoid burning
+  it. 5th DB-blocked round; this is now firmly a container-profile problem
+  for Woody/parent (pre-started postgres in the session-start hook is the
+  clean fix). Regression NOT run; r422's 42/0 ×2 + two-bot green remains
+  the latest real signal — five rounds old.
+- Salvage: CLIENT_ALLOWED_WRITES / ALLOWED_API review (r426's named
+  target). Verified clean: /api/config/* (no write routes exist — allowance
+  inert), /api/favorite-instructions (all per-user SQL), /api/tasks (list/
+  patch/delete/reorder user_id-scoped; POST assignment jailed to
+  getClientVisibleUserIds), gateway deal/contact-link/image-studio carve-outs
+  all still hole-free on read-through.
+- Bug fixed (1 fix, 2 gates — MED, client data exposure): the client-allowed
+  GET prefix /api/turnover also exposed two UNSCOPED reads (the list GET is
+  properly sliced; these weren't): GET /api/turnover/stats/summary
+  aggregated the ENTIRE turnover book (counts, avg turnover, by category/
+  source — BGP intel, same class as r426's blocked query_turnover tool) to
+  any authed client, and GET /api/turnover/:id returned ANY single turnover
+  row by id (non-enumerable nanoid, low practical reach — but a slice-listed
+  id pattern plus guessing isn't a gate). Fixed in server/turnover.ts:
+  stats/summary → 403 for scoped callers; /:id → isClientVisibleBrand check
+  (same rule as the list slice). No client UI consumer of either
+  (turnover-board.tsx only uses the sliced list + find-stores + staff-gated
+  writes), so nothing visible changes for Mark. tsc clean, build clean,
+  NOT runtime-verified (no DB).
+- Harness growth: client-turnover-scope in two-bot-round.mjs (client list
+  GET must stay 200, stats/summary must 403). node --check clean; not run
+  live (no DB).
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions added: none
+  (no journey possible).
+- CAVEAT stack now: r424 ×2 + r425 ×2 + r426 ×1 + r427 ×1 fixes are
+  tsc/build-clean but NOT runtime-verified. First round with a DB: run
+  smoke + two-bot (carries client-agents-no-pii-leak,
+  client-staff-boards-403, client-link-dumps-403, client-turnover-scope)
+  BEFORE anything else, then e2e-group-pic.
+- Next: r427 had no journey → r428 FULL, rotation #2 client desktop 1440px
+  (FIVE rounds overdue) if the DB ever comes up; exercise the r426 tool
+  gates + this round's turnover gates live. If still DB-blocked, salvage
+  is nearly mined out — next candidates: CLIENT_ALLOWED_API read prefixes
+  with sub-routes (the /api/turnover pattern may repeat under
+  /api/unit-briefs or /api/insights). Real-device keyboard-up composer
+  check (r405) still open for Woody.
 
 ### r426 · 2026-08-29 ~22:40 UTC · FULL (rotation #2 client desktop) — DB-BLOCKED, 1 fix (4 tool gates)
 - DB outcome (READ THIS, next round): `npm run qa:pg` as FIRST Bash call was

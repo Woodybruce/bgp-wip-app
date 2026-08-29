@@ -2531,6 +2531,22 @@ async function markRound(page, cross) {
     }
   });
 
+  // Turnover board (r427): the client list GET stays sliced-and-open, but the
+  // firm-wide stats aggregate must refuse scoped callers — same intel class
+  // as the blocked query_turnover ChatBGP tool (r426).
+  await step(page, p, 'client-turnover-scope', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const get = async (url) => (await fetch(url, { credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        list: await get('/api/turnover'),
+        stats: await get('/api/turnover/stats/summary'),
+      };
+    });
+    if (r.list !== 200) throw new Error(`client turnover board list broke (expected 200, got ${r.list})`);
+    if (r.stats !== 403) throw new Error(`client read firm-wide turnover stats (expected 403, got ${r.stats})`);
+  });
+
   // Clients may regenerate BGP Commentary on their OWN properties (terminal
   // side, 2026-08-03 — Mark hit a read-only 403 on Liverpool ONE), but a
   // foreign property must still refuse. Locally the own-property call gets
