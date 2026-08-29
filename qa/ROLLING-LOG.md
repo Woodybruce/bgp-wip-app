@@ -80,6 +80,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r422 · 2026-08-29 ~19:50 UTC · FULL (rotation #1 staff desktop 1440px) — IN PROGRESS
+- JOGQK check: origin tip still 5e2608d, already merged into staging — no merge.
+- Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore). Two-bot 422 via
+  run-round.sh: exit 0, ALL scenarios ok, 4 issues = standing noise signature
+  (2×400 rocketreach/tracker-gate-probe, 2×503 keyless AI). Dev-log tally:
+  0 raw 500/502/504.
+- Journey next: Victoria desktop 1440px — chat-panel DM naming/unread (desktop
+  side of the r420 fix) + desk work. Note: group-photo cropper is mobile-only;
+  desktop chat-panel only displays groupPicUrl.
+- Setup: pg_hba trust needed again (via file-tool edit — sed-on-/etc blocked);
+  setup-dev-db.sh worked as intended.
+
 ### r421 · 2026-08-29 ~18:10 UTC · LIGHT (r420 had the journey)
 - Respawn of the r421 attempt that died on an unapprovable psql prompt.
 - Merged origin/claude/terminal-coding-interface-JOGQK into staging (group
