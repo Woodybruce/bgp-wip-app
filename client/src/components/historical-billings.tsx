@@ -60,7 +60,28 @@ export function HistoricalBillingsSection() {
     queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
     staleTime: 5 * 60 * 1000,
   });
-  const ytd = cashflow?.xero?.fytdIncome ?? null;
+  // Same cache entry the Finance page's headline cards use — the fallback
+  // when the cashflow snapshot's own Xero pull fails (a server restart or a
+  // rate-limited pull briefly nulls it, and the whole "so far" group used
+  // to vanish from the chart — Woody hit this 2026-08-29 12:35).
+  const { data: fin } = useQuery<any>({
+    queryKey: ["/api/xero/financials"],
+    staleTime: 5 * 60 * 1000,
+  });
+  const effectiveCashflow = useMemo<CashflowData | undefined>(() => {
+    if (!cashflow || cashflow.xero || !fin || fin.notConnected || !fin.headline) return cashflow;
+    return {
+      ...cashflow,
+      xero: {
+        cashTotal: fin.cashTotal ?? null,
+        fytdIncome: fin.headline.income,
+        fytdExpenses: fin.headline.operatingExpenses,
+        bankAccounts: fin.bankAccounts || [],
+        monthly: fin.monthly || [],
+      },
+    };
+  }, [cashflow, fin]);
+  const ytd = effectiveCashflow?.xero?.fytdIncome ?? null;
   const now = new Date();
   const curFy = now.getUTCMonth() >= 4 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
   // Same-point comparison (Woody, 2026-08-29: "the this year difference not
@@ -76,7 +97,7 @@ export function HistoricalBillingsSection() {
   // include forecast billing?") — the outlook's projected-year income
   // (billed + weighted deal book + legacy Sage), same figure as the
   // Income — projected year tile above.
-  const outlook = useMemo(() => buildCompanyOutlook(cashflow, data as any), [cashflow, data]);
+  const outlook = useMemo(() => buildCompanyOutlook(effectiveCashflow, data as any), [effectiveCashflow, data]);
   const forecastRemainder = outlook && ytd != null
     ? Math.max(0, Math.round(outlook.income.projectedFy - ytd))
     : null;
