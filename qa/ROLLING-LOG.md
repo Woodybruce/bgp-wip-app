@@ -80,13 +80,33 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r417 · 2026-08-29 ~09:30 UTC · ROUND IN PROGRESS (provisional)
-- LIGHT round (r416 was FULL). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1,
-  fresh bgpsmoke restore). Two-bot 417 running via run-round.sh; triage to
-  follow. Final entry replaces this one. NOTE: two-bot 417 started from the
-  pre-merge harness (before r415's audit-card waitFor hardening landed) —
-  if client-deal-party-link-gates flags the audit card, that's the known
-  r415 sample flake, not a regression.
+### r417 · 2026-08-29 ~10:00 UTC · LIGHT (r416 had the journey)
+- Watchdog-spawned session (parent note: r416 finished 06:59 without a
+  successor). tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke
+  restore). Two-bot 417 via run-round.sh: exit 0, ALL scenarios ok
+  (client-deal-party-link-gates ok on the PRE-merge harness — r415's
+  audit-card flake didn't fire; the hardened waitFor is now merged in for
+  future rounds, node --check clean). 4 issues = standing noise signature
+  (2×400 rocketreach/gate-probe, 2×503 keyless AI). 0 raw 500/502/504 in
+  dev-server log; full 4xx/503 endpoint tally triaged — all noise-list
+  (keyless ai-briefing/ai-take/chatbgp/brand-gaps/OS/rocketreach-refresh
+  503s, sharepoint/hr-photo 404s, M365 401s) or intentional
+  rival-isolation/write-guard/gate probes (403s, verdict/bulk-op 400s).
+  0 app bugs.
+- Mid-round merge: r415's resurrected session pushed its final entry +
+  harness hardening while this round's heartbeat was staged; merged
+  (newest-first order kept), no force-push.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions added: none. New flakes: none. Leftovers: 2 QA
+  probe deals match purge patterns — next round's run-round.sh sweeps them.
+- Setup: pg_hba trust (r205) needed again on this fresh container; bgp
+  role created superuser so no ownership transfer needed.
+- Next: r417 was LIGHT → r418 FULL rotation #3 client mobile 390px (staff
+  mobile #4 after). Real-device check of keyboard-up composer (r405) still
+  open for Woody. r415's JOGQK Finance findings (Income-FYTD cache race,
+  app-costs requireAdmin vs equity gate, stale ChatBGP app-map Finance
+  line) live on JOGQK — for the parent session, not staging rounds.
 
 ### r415 · 2026-08-29 ~10:30 UTC · regression-only (journey ceded to r416)
 - NOTE: this is the session the r416 watchdog presumed dead — it was
