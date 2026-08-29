@@ -881,9 +881,12 @@ function AppContent() {
           Staff only: the client API gateway blocks /api/deal-verdicts, so
           mounting it for clients just 403s on every page load. */}
       {!((user as any)?.role === "Client" || (user as any)?.companyScopeId) && <DealVerdictAlarm />}
-      {/* Update banner disabled — was misfiring. Service worker still
-          refreshes the bundle on its own on next reload. */}
-      {/* <UpdatePrompt /> */}
+      {/* Update banner re-enabled 2026-08-29 — with it off, a phone that
+          stays open rides a stale bundle for hours and nothing ever says a
+          new build shipped (Woody spent an afternoon screenshotting
+          already-fixed screens). It only shows once a new build has
+          actually installed, and nothing reloads until the user taps. */}
+      <UpdatePrompt />
       {/* Boundary around the whole authenticated shell: the full-page
           /chatbgp branch (and the mobile shells) render OUTSIDE Router's
           boundary, so a crash or a stale-deploy chunk failure there used
