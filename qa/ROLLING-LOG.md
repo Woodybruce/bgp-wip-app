@@ -80,6 +80,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r414 · 2026-08-29 ~00:45 UTC · LIGHT — ROUND IN PROGRESS (provisional)
+- Watchdog-spawned session. JOGQK NOT merged into staging per parent note.
+- tsc clean. Smoke GREEN 42/0 (FRESH_BUILD=1, fresh bgpsmoke restore).
+  Two-bot 414 via run-round.sh: exit 0, ALL scenarios ok. 4 issues =
+  standing noise signature (2×400, 2×503). 0 raw 500/502/504 in dev-server
+  log; full 4xx/503 endpoint tally triaged — all noise-list (keyless
+  ai-briefing/ai-take/chatbgp/brand-gaps/OS 503s, hr-photo/sharepoint 404s,
+  M365 401s) or intentional probes (403 rival-isolation, cashflow/unlock
+  404 = retired-endpoint PASS probe, bulk-op/gate 400s). 0 app bugs so far.
+- Triage done; light-round remainder (deferred-bug check, log finalise)
+  in progress.
+
 ### r413 · 2026-08-28 ~23:30 UTC · FULL (rotation #1 staff desktop 1440px)
 - Watchdog-spawned session. JOGQK NOT merged into staging per parent note
   (Company outlook on Finance, page dedupe, shared Xero pull, collapsible
