@@ -82,6 +82,10 @@ export const queryClient = new QueryClient({
       refetchOnReconnect: true,
       refetchOnMount: true,
       staleTime: 15 * 1000,
+      // Keep unused queries in memory for a day so the persisted-cache
+      // restore (query-persist.ts, maxAge 24h) has something to restore
+      // into — the v5 default of 5 minutes would silently drop most of it.
+      gcTime: 24 * 60 * 60 * 1000,
       retry: (failureCount, error) => {
         if (error instanceof Error) {
           const match = error.message.match(/^(\d{3}):/);
