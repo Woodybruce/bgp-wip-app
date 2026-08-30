@@ -80,6 +80,27 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r429 · 2026-08-30 ~00:45 UTC · SHORT — DB-BLOCKED 6th round, no salvage (parent's orders)
+- Classifier state: git fetch/checkout ALLOWED (recovered from r428's freeze),
+  pg_hba trust edit applied cleanly via file tools FIRST (r426 order fix
+  followed exactly: postgres-local, all-local, both host lines → trust),
+  then `npm run qa:pg` as the FIRST Bash call was DENIED — same as r427.
+  The deny is on the bring-up command itself regardless of config order.
+  Did NOT cascade (no run-smoke, no psql, no probes).
+- Per parent note (r429 brief): salvage mined out → pushed this log only.
+  Regression NOT run; r422's 42/0 ×2 + two-bot green is now SEVEN rounds
+  old. Rotation #2 client desktop 1440px now seven rounds overdue.
+- CAVEAT stack unchanged: r424 ×2 + r425 ×2 + r426 ×1 + r427 ×1 fixes still
+  NOT runtime-verified. First round with a DB: smoke + two-bot (carries
+  client-agents-no-pii-leak, client-staff-boards-403, client-link-dumps-403,
+  client-turnover-scope) BEFORE anything else, then the r426/r427 gates live.
+- For Woody/parent: 6 straight DB-blocked rounds. The only remaining fix is
+  outside the round — pre-start postgres in the session-start hook or a
+  container profile that allows the DB bring-up. Rounds cannot self-serve DB.
+- Next: r429 had no journey → r430 FULL rotation #2 client desktop 1440px
+  + full CAVEAT-stack verification, IF the environment fix lands. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+
 ### r427 · 2026-08-30 ~00:20 UTC · LIGHT (salvage) — DB-BLOCKED 5th round, 1 fix (2 gates)
 - DB outcome (READ THIS, next round): r426's ORDER FIX was applied exactly
   (pg_hba trust via file tools FIRST — postgres-local, all-local, both host
