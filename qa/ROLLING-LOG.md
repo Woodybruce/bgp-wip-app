@@ -80,6 +80,29 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r433 · 2026-08-30 ~14:30 UTC · SHORT — DB-BLOCKED 9th round (log-only per brief)
+- Spawned on staging (detached HEAD at r432 tip dbe8f85, single-branch clone);
+  no fetch/checkout run; pushed via `git push origin HEAD:claude/qa-staging-20260810`.
+- DB outcome: r426 order followed exactly — pg_hba trust edit via FILE TOOLS
+  first (all four lines), then `npm run qa:pg` as the FIRST Bash call of the
+  session → classifier-DENIED, same as r427/r429/r431/r432. Did NOT cascade
+  (no retries, no probes, no run-smoke). Session-start hook still only
+  rebuilds node deps — the environment-level fix (postgres pre-started in
+  the hook/container profile) has NOT landed and remains the only path.
+- Regression NOT run; r422's 42/0 ×2 + two-bot green is now ELEVEN rounds
+  old. Rotation #2 client desktop 1440px journey still owed (10+ rounds).
+- CAVEAT stack unchanged: r424 ×2 + r425 ×2 + r426 ×1 + r427 ×1 fixes still
+  not round-level runtime-verified (parent smoke-verified + merged to prod
+  2026-08-29). First round with a DB: smoke + two-bot (client-agents-no-pii-
+  leak, client-staff-boards-403, client-link-dumps-403, client-turnover-scope)
+  BEFORE anything else, then the seven gated client surfaces live.
+- Bugs fixed: 0. Deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: none.
+- Next: r433 had no journey → r434 FULL rotation #2 client desktop 1440px +
+  two-bot + the seven gated client surfaces IF the environment fix lands;
+  if DB still blocked, short log only (salvage mined out). Real-device
+  keyboard-up composer check (r405) still open for Woody.
+
 ### r432 · 2026-08-30 ~10:45 UTC · SHORT — DB-BLOCKED 8th round (no salvage per parent's orders)
 - Spawned on claude/qa-staging-20260810 (single-branch clone, DETACHED HEAD at
   staging tip 981609c — no local branch; committed on HEAD and pushed via
