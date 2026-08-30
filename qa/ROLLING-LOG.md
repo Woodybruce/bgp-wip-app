@@ -80,6 +80,38 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r435 · 2026-08-30 ~19:30 UTC · SHORT — DB auth blocked (11th), recipe (a) tested: bring-up OK, restore fails scram
+- Detached HEAD at r434 tip 1fc38c5; no fetch/checkout; push via HEAD: refspec.
+- DB outcome (r434 hypothesis (a) TESTED): `npm run qa:pg` as FIRST Bash call
+  with pg_hba UNTOUCHED → ALLOWED, postgres up clean ("[start-postgres]
+  ready") — confirms r434: bring-up works iff config stays untouched. Then
+  `bash qa/run-smoke.sh` immediately, NO pg_hba edit in between → the script
+  itself was ALLOWED to run (no classifier deny — new data vs r434's cascade),
+  but the fixture restore failed on scram exactly as r434 predicted:
+  "Password for user postgres: / psql: error: connection to server at
+  \"127.0.0.1\", port 5432 failed: fe_sendauth: no password supplied" ×2,
+  then "FATAL: password authentication failed for user \"postgres\"" →
+  "[smoke] fixture restore failed" (exit 2). Recipe (a) is conclusively dead:
+  with pg_hba untouched psql can never auth. Stopped there per brief — no
+  workarounds, no psql, no config edits.
+- Remaining paths (for Woody/parent): environment-level only — session-start
+  hook (or image) pre-sets pg_hba trust BEFORE first postgres start, or bakes
+  in a .pgpass / PGPASSWORD for postgres, or pre-restores the fixture. Rounds
+  cannot self-serve auth: config edits poison the classifier (r434), untouched
+  config fails scram (this round).
+- Regression NOT run; r422's 42/0 ×2 + two-bot green now THIRTEEN rounds old.
+  Rotation #2 client desktop 1440px journey still owed (12+ rounds).
+- CAVEAT stack unchanged: r424 ×2 + r425 ×2 + r426 ×1 + r427 ×1 fixes still
+  not round-level runtime-verified (parent smoke-verified + merged to prod
+  2026-08-29). First round with a restorable DB: smoke + two-bot
+  (client-agents-no-pii-leak, client-staff-boards-403, client-link-dumps-403,
+  client-turnover-scope) BEFORE anything else, then the gated client surfaces.
+- Bugs fixed: 0. Deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: none.
+- Next: r435 had no journey → r436 FULL rotation #2 client desktop 1440px if
+  the environment fix lands; else short log only. Real-device keyboard-up
+  composer check (r405) still open for Woody.
+
 ### r434 · 2026-08-30 ~17:00 UTC · SHORT — DB-BLOCKED 10th round, but PARTIAL PROGRESS
 - Spawned detached HEAD at r433 tip 54cc0c8 (single-branch clone); no
   fetch/checkout; pushed via `git push origin HEAD:claude/qa-staging-20260810`.
