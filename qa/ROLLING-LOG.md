@@ -110,6 +110,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   blocked, push a short log only and end (salvage mined out). Real-device
   keyboard-up composer check (r405) still open for Woody.
 
+### r430 · 2026-08-30 ~02:45 UTC · ABORTED — appended parent-side (round couldn't push)
+- qa:pg denied as first Bash call despite exact r426 order fix; git
+  fetch/checkout also denied (cascade now includes git); single-branch
+  JOGQK clone, no staging access, nothing pushed from the container.
+- Round's recommendation: a session-start hook that pre-starts postgres
+  and pre-checks-out staging, OR provision rounds with staging as the
+  source branch — the parent adopted the latter from r431 onward.
+- r422's 42/0 ×2 + two-bot green remains the latest ROUND-level signal.
+  Parent-side note: the r424–r427 fix stack WAS smoke-verified 42/0 in
+  the parent container before each production merge; what's outstanding
+  is round-level two-bot/browser coverage of those fixes.
+
 ### r429 · 2026-08-30 ~00:45 UTC · SHORT — DB-BLOCKED 6th round, no salvage (parent's orders)
 - Classifier state: git fetch/checkout ALLOWED (recovered from r428's freeze),
   pg_hba trust edit applied cleanly via file tools FIRST (r426 order fix
