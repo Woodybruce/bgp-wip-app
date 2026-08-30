@@ -1813,6 +1813,55 @@ export function registerImageStudioRoutes(app: Express) {
   // Public-ish brand logo lookup — used by Brand Explorer thumbnails.
   // Returns the most recent Image Studio logo for the given brand name.
   // 404 → frontend falls back to Clearbit. Auth required, but not admin.
+  // Self-filling logo cache. A phone opening the Brands grid fires ~2,000
+  // logo <img> requests in under a minute; redirecting every miss to
+  // logo.dev sent 1,582 parallel fetches from ONE device (2026-08-30),
+  // which logo.dev throttles — blank tiles. Instead, each miss also queues
+  // a server-side fetch (4 concurrent, deduped, 10-min negative cache) that
+  // stores the logo into the Brands library via storeImageFromBuffer, so
+  // every later request — any device — is a local 200 and logo.dev sees
+  // each brand at most once.
+  const logoDevQueued = new Set<string>();
+  const logoDevFailedAt = new Map<string, number>();
+  let logoDevActive = 0;
+  const LOGO_DEV_MAX_CONCURRENT = 4;
+  function queueLogoDevCache(name: string, domain: string) {
+    const token = process.env.LOGO_DEV_TOKEN;
+    if (!token || !domain) return;
+    const key = domain.toLowerCase();
+    const failed = logoDevFailedAt.get(key);
+    if (failed && Date.now() - failed < 10 * 60 * 1000) return;
+    if (logoDevQueued.has(key) || logoDevQueued.size > 2000) return;
+    logoDevQueued.add(key);
+    (async () => {
+      while (logoDevActive >= LOGO_DEV_MAX_CONCURRENT) await new Promise(r => setTimeout(r, 250));
+      logoDevActive++;
+      try {
+        const r = await fetch(`https://img.logo.dev/${encodeURIComponent(domain)}?token=${token}&size=256&format=png`, { signal: AbortSignal.timeout(10_000) });
+        const mime = r.headers.get("content-type") || "";
+        if (!r.ok || !mime.startsWith("image/")) { logoDevFailedAt.set(key, Date.now()); return; }
+        const buffer = Buffer.from(await r.arrayBuffer());
+        if (buffer.length < 100) { logoDevFailedAt.set(key, Date.now()); return; }
+        await storeImageFromBuffer({
+          buffer,
+          fileName: `${name} — Logo`,
+          category: "Brands",
+          tags: ["brand-logo", "logo-dev-cache"],
+          description: `Brand logo for ${name}, cached from logo.dev (${domain})`,
+          source: "logo-dev-cache",
+          brandName: name,
+          mimeType: mime,
+          filenameHint: name,
+        });
+      } catch {
+        logoDevFailedAt.set(key, Date.now());
+      } finally {
+        logoDevActive--;
+        logoDevQueued.delete(key);
+      }
+    })().catch(() => {});
+  }
+
   app.get("/api/brand-logo/:name", requireAuth, async (req: Request, res: Response) => {
     try {
       const name = String(req.params.name || "").trim();
@@ -1867,6 +1916,7 @@ export function registerImageStudioRoutes(app: Express) {
           if (slug.length >= 3) effectiveDomain = `${slug}.com`;
         }
         if (effectiveDomain) {
+          queueLogoDevCache(name, effectiveDomain);
           const token = process.env.LOGO_DEV_TOKEN;
           const target = token
             ? `https://img.logo.dev/${encodeURIComponent(effectiveDomain)}?token=${token}&size=256&format=png`
@@ -1911,6 +1961,7 @@ export function registerImageStudioRoutes(app: Express) {
         if (slug.length >= 3) effectiveDomain = `${slug}.com`;
       }
       if (effectiveDomain) {
+        queueLogoDevCache(name, effectiveDomain);
         const token = process.env.LOGO_DEV_TOKEN;
         const target = token
           ? `https://img.logo.dev/${encodeURIComponent(effectiveDomain)}?token=${token}&size=256&format=png`
