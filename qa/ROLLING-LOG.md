@@ -80,6 +80,36 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r431 · 2026-08-30 ~06:20 UTC · SHORT — DB-BLOCKED 7th round (parent's orders: no salvage)
+- Spawned directly ON claude/qa-staging-20260810 (r430's suggestion) — branch
+  verified with `git branch --show-current`, no fetch/checkout run (r428/r430
+  froze on those). JOGQK merge skipped — single-branch clone; parent says
+  staging app code is level with JOGQK at 46da080e anyway.
+- DB outcome: pg_hba trust edit applied cleanly via FILE TOOLS first (r426
+  order fix, all four lines — postgres-local, all-local, both host lines),
+  then `npm run qa:pg` as the FIRST Bash call of the session → classifier-
+  DENIED, same as r427/r429. Spawning on the staging branch did NOT change
+  the deny. Did NOT cascade (no run-smoke, no psql, no probes, no retries).
+- Regression NOT run; r422's 42/0 ×2 + two-bot green is now NINE rounds old.
+  Rotation #2 client desktop 1440px journey still owed (8+ rounds).
+- CAVEAT stack unchanged: r424 ×2 + r425 ×2 + r426 ×1 + r427 ×1 fixes still
+  NOT runtime-verified (parent smoke-verified + merged them to production
+  2026-08-29 per r431 brief, but round-level smoke + two-bot — carrying
+  client-agents-no-pii-leak, client-staff-boards-403, client-link-dumps-403,
+  client-turnover-scope — has still never run against them in a round).
+- For Woody/parent: 7 straight DB-blocked rounds; branch-spawn didn't fix it.
+  The deny is on the DB bring-up Bash command itself, in every configuration
+  tried. Only remaining fix: pre-start postgres (and ideally restore the
+  fixture) in the session-start hook / container profile, so rounds never
+  issue a DB control command at all.
+- Bugs fixed: 0. Deferred: none new. Carried (data, staff decision):
+  Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+  Suggestions added: none (no journey possible).
+- Next: r431 had no journey → r432 FULL rotation #2 client desktop 1440px
+  + full CAVEAT-stack verification IF the environment fix lands; if DB still
+  blocked, push a short log only and end (salvage mined out). Real-device
+  keyboard-up composer check (r405) still open for Woody.
+
 ### r429 · 2026-08-30 ~00:45 UTC · SHORT — DB-BLOCKED 6th round, no salvage (parent's orders)
 - Classifier state: git fetch/checkout ALLOWED (recovered from r428's freeze),
   pg_hba trust edit applied cleanly via file tools FIRST (r426 order fix
