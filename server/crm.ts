@@ -10126,6 +10126,13 @@ Rules:
     result.error = err.message;
   } finally {
     autoTurnoverLastRun = new Date();
+    // Same boot-churn guard as auto-enrich: a redeploy must not re-run the
+    // cycle (each one spends Claude research calls on 4 brands).
+    pool.query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ('auto_turnover:last_run', $1, now())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`,
+      [JSON.stringify({ at: autoTurnoverLastRun.toISOString() })],
+    ).catch((err: any) => console.warn("[auto-turnover] last-run persist failed:", err.message));
     autoTurnoverLastResult = result;
     autoTurnoverRunning = false;
   }
@@ -10136,8 +10143,29 @@ export function startAutoTurnoverResearch() {
   autoTurnoverEnabled = true;
   console.log(`[auto-turnover] Started — running every ${AUTO_TURNOVER_INTERVAL_HOURS} hours (batch size: ${AUTO_TURNOVER_BATCH_SIZE})`);
 
-  // Initial run 90 seconds after server start (after auto-enrich has kicked off)
-  setTimeout(() => {
+  // Initial run 90 seconds after server start (after auto-enrich has kicked
+  // off) — but only if the persisted last run is older than the interval,
+  // so deploy churn can't multiply the spend (same guard as auto-enrich).
+  setTimeout(async () => {
+    try {
+      const r = await pool.query(`SELECT value FROM system_settings WHERE key = 'auto_turnover:last_run'`);
+      const at = r.rows[0]?.value?.at ? new Date(r.rows[0].value.at) : null;
+      if (at && !isNaN(at.getTime())) {
+        const elapsedMs = Date.now() - at.getTime();
+        const intervalMs = AUTO_TURNOVER_INTERVAL_HOURS * 60 * 60 * 1000;
+        if (elapsedMs < intervalMs) {
+          autoTurnoverLastRun = at;
+          const waitMs = intervalMs - elapsedMs;
+          console.log(`[auto-turnover] Last cycle ${Math.round(elapsedMs / 60000)}min ago — first run in ${Math.round(waitMs / 60000)}min`);
+          setTimeout(() => {
+            runAutoTurnoverCycle().catch(err => console.error("[auto-turnover] Deferred initial run error:", err.message));
+          }, waitMs);
+          return;
+        }
+      }
+    } catch (err: any) {
+      console.warn("[auto-turnover] last-run lookup failed, running initial cycle:", err.message);
+    }
     runAutoTurnoverCycle().catch(err => console.error("[auto-turnover] Initial run error:", err.message));
   }, 90000);
 
