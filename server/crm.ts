@@ -9843,6 +9843,15 @@ async function runAutoEnrichmentCycle() {
 
     autoEnrichLastRun = new Date();
     autoEnrichLastResult = result;
+    // Persist across restarts — each deploy boots a fresh process, and the
+    // 60s initial run used to fire a full cycle EVERY boot. On a heavy
+    // deploy day (~20 boots, 2026-08-29) that ran ~20 extra store-research
+    // batches and spent ~£380 of Google Places Text Search in a day.
+    pool.query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ('auto_enrich:last_run', $1, now())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`,
+      [JSON.stringify({ at: autoEnrichLastRun.toISOString() })],
+    ).catch((err: any) => console.warn("[auto-enrich] last-run persist failed:", err.message));
 
     const hasActivity = (result.aiCompanies?.processed > 0 || result.aiContacts?.processed > 0 || result.typeClassify?.processed > 0 || result.stores?.processed > 0);
     if (hasActivity) {
@@ -9945,7 +9954,30 @@ export function startAutoEnrichment() {
   autoEnrichEnabled = true;
   console.log(`[auto-enrich] Started — running every ${AUTO_ENRICH_INTERVAL_HOURS} hours (batch size: ${AUTO_ENRICH_BATCH_SIZE})`);
 
-  setTimeout(() => {
+  // The initial run must respect the persisted last-run time: a boot is NOT
+  // a schedule tick. Without this every deploy re-ran a cycle 60s after
+  // boot, and deploy churn multiplied Google Places spend (£380 Text Search
+  // anomaly, 2026-08-29).
+  setTimeout(async () => {
+    try {
+      const r = await pool.query(`SELECT value FROM system_settings WHERE key = 'auto_enrich:last_run'`);
+      const at = r.rows[0]?.value?.at ? new Date(r.rows[0].value.at) : null;
+      if (at && !isNaN(at.getTime())) {
+        const elapsedMs = Date.now() - at.getTime();
+        const intervalMs = AUTO_ENRICH_INTERVAL_HOURS * 60 * 60 * 1000;
+        if (elapsedMs < intervalMs) {
+          autoEnrichLastRun = at;
+          const waitMs = intervalMs - elapsedMs;
+          console.log(`[auto-enrich] Last cycle ${Math.round(elapsedMs / 60000)}min ago — first run in ${Math.round(waitMs / 60000)}min`);
+          setTimeout(() => {
+            runAutoEnrichmentCycle().catch(err => console.error("[auto-enrich] Deferred initial run error:", err.message));
+          }, waitMs);
+          return;
+        }
+      }
+    } catch (err: any) {
+      console.warn("[auto-enrich] last-run lookup failed, running initial cycle:", err.message);
+    }
     runAutoEnrichmentCycle().catch(err => console.error("[auto-enrich] Initial run error:", err.message));
   }, 60000);
 
