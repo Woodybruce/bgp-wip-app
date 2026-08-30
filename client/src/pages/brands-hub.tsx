@@ -1148,6 +1148,7 @@ interface MarketCommentary {
   generatedAt: string;
   cached?: boolean;
   stale?: boolean;
+  generating?: boolean;
 }
 
 function MarketCommentaryBoard({
@@ -1182,6 +1183,10 @@ function MarketCommentaryBoard({
       return res.json();
     },
     staleTime: 60 * 60 * 1000, // 1h — server has 24h TTL, this just stops refetch on tab switch
+    // First-ever visit to a scope: the server replies {generating:true}
+    // straight away and writes the commentary in the background — poll
+    // until the row lands instead of blocking the page on a 20-60s wait.
+    refetchInterval: (query) => (query.state.data?.generating ? 8000 : false),
   });
 
   const regenMut = useMutation({
@@ -1206,9 +1211,17 @@ function MarketCommentaryBoard({
   });
 
   if (isLoading) {
-    return <Skeleton className="h-48 w-full rounded-xl" />;
+    return <Skeleton className="h-12 w-full rounded-xl" />;
   }
   if (!data) return null;
+  if (data.generating || !data.content) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+        <Sparkles className="w-4 h-4 shrink-0 animate-pulse" />
+        <span>Market view for {scopeLabel} is being written — it'll appear here in a minute.</span>
+      </div>
+    );
+  }
 
   const c = data.content;
   const generatedAgo = (() => {

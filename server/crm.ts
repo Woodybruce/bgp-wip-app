@@ -8760,6 +8760,29 @@ Rules:
     };
   }
 
+  // Generation takes 20-60s (Claude call). Never run it inside the GET —
+  // the phone shows a full-screen skeleton for the whole wait and users
+  // abort before the response lands (Woody, 2026-08-30: "still taking ages
+  // to load" — zero completed market-commentary requests in the prod logs).
+  // Instead: serve whatever row exists immediately and refresh it in the
+  // background; when no row exists yet, reply {generating:true} fast and
+  // let the client poll.
+  const mcInFlight = new Set<string>();
+  function kickMarketCommentary(opts: {
+    scopeKey: string;
+    scopeLabel: string;
+    scopeType: "top" | "sub";
+    parentKey?: string | null;
+    parentLabel?: string | null;
+    matches: string[];
+  }) {
+    if (mcInFlight.has(opts.scopeKey)) return;
+    mcInFlight.add(opts.scopeKey);
+    generateMarketCommentary(opts)
+      .catch((err: any) => console.error("[market-commentary] background generation failed:", err.message))
+      .finally(() => mcInFlight.delete(opts.scopeKey));
+  }
+
   app.get("/api/brands/market-commentary", requireAuth, async (req, res) => {
     try {
       const scopeKey = String(req.query.scope || "").trim();
@@ -8787,48 +8810,30 @@ Rules:
       if (existing) {
         const ageMs = Date.now() - new Date(existing.generated_at).getTime();
         const fresh = ageMs < MARKET_COMMENTARY_TTL_HOURS * 60 * 60 * 1000;
-        if (fresh) {
-          return res.json({
-            scopeKey: existing.scope_key,
-            scopeLabel: existing.scope_label,
-            scopeType: existing.scope_type,
-            parentKey: existing.parent_key,
-            parentLabel: existing.parent_label,
-            content: existing.content,
-            brandCount: existing.brand_count,
-            newsCount: existing.news_count,
-            generatedAt: existing.generated_at,
-            cached: true,
-          });
+        if (!fresh && matches.length > 0) {
+          kickMarketCommentary({ scopeKey, scopeLabel, scopeType, parentKey, parentLabel, matches });
         }
+        return res.json({
+          scopeKey: existing.scope_key,
+          scopeLabel: existing.scope_label,
+          scopeType: existing.scope_type,
+          parentKey: existing.parent_key,
+          parentLabel: existing.parent_label,
+          content: existing.content,
+          brandCount: existing.brand_count,
+          newsCount: existing.news_count,
+          generatedAt: existing.generated_at,
+          cached: true,
+          ...(fresh ? {} : { stale: true }),
+        });
       }
 
       if (matches.length === 0) {
-        // No cache and no matches provided — return existing stale row if any,
-        // otherwise indicate the client must supply matches to generate.
-        if (existing) {
-          return res.json({
-            scopeKey: existing.scope_key,
-            scopeLabel: existing.scope_label,
-            scopeType: existing.scope_type,
-            parentKey: existing.parent_key,
-            parentLabel: existing.parent_label,
-            content: existing.content,
-            brandCount: existing.brand_count,
-            newsCount: existing.news_count,
-            generatedAt: existing.generated_at,
-            cached: true,
-            stale: true,
-          });
-        }
         return res.status(400).json({ error: "matches[] required to generate commentary" });
       }
 
-      const result = await generateMarketCommentary({
-        scopeKey, scopeLabel, scopeType,
-        parentKey, parentLabel, matches,
-      });
-      res.json({ ...result, cached: false });
+      kickMarketCommentary({ scopeKey, scopeLabel, scopeType, parentKey, parentLabel, matches });
+      res.json({ scopeKey, scopeLabel, scopeType, generating: true });
     } catch (err: any) {
       console.error("[market-commentary]", err.message);
       res.status(500).json({ error: err.message });
