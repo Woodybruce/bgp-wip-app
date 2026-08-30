@@ -80,6 +80,34 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r432 · 2026-08-30 ~10:45 UTC · SHORT — DB-BLOCKED 8th round (no salvage per parent's orders)
+- Spawned on claude/qa-staging-20260810 (single-branch clone, DETACHED HEAD at
+  staging tip 981609c — no local branch; committed on HEAD and pushed via
+  `git push origin HEAD:claude/qa-staging-20260810`). Verified no fetch/checkout
+  run. JOGQK merge skipped — single-branch clone.
+- DB outcome: r426 order followed exactly — pg_hba trust edit via FILE TOOLS
+  first (all four lines: postgres-local, all-local, both host lines), then
+  `npm run qa:pg` as the FIRST Bash call of the session → classifier-DENIED,
+  same as r427/r429/r431. Did NOT cascade (no run-smoke, no psql, no probes,
+  no second attempt). 8th straight DB-blocked round; branch-spawn + file-tool
+  config order conclusively do not fix it. Environment-level fix (postgres
+  pre-started in the session-start hook / container profile) remains the only
+  path — the session-start hook currently only rebuilds node deps.
+- Regression NOT run; r422's 42/0 ×2 + two-bot green is now TEN rounds old.
+  Rotation #2 client desktop 1440px journey still owed (9+ rounds).
+- CAVEAT stack unchanged: r424 ×2 + r425 ×2 + r426 ×1 + r427 ×1 fixes still
+  not round-level runtime-verified (parent smoke-verified + merged to prod
+  2026-08-29). First round with a DB: smoke + two-bot (client-agents-no-pii-
+  leak, client-staff-boards-403, client-link-dumps-403, client-turnover-scope)
+  BEFORE anything else, then the seven gated client surfaces live per the
+  r432 brief.
+- Bugs fixed: 0. Deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: none.
+- Next: r432 had no journey → r433 FULL rotation #2 client desktop 1440px +
+  two-bot + the seven gated client surfaces IF the environment fix lands;
+  if DB still blocked, short log only. Real-device keyboard-up composer
+  check (r405) still open for Woody.
+
 ### r431 · 2026-08-30 ~06:20 UTC · SHORT — DB-BLOCKED 7th round (parent's orders: no salvage)
 - Spawned directly ON claude/qa-staging-20260810 (r430's suggestion) — branch
   verified with `git branch --show-current`, no fetch/checkout run (r428/r430
