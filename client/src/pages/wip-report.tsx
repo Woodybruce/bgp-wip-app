@@ -1115,6 +1115,35 @@ export default function WipReport() {
     return [...byDeal.values()];
   }, [filteredEntries]);
 
+  // Phone at-a-glance boards — fees by month and stage mix, computed from
+  // the same merged rows the list shows so the story matches the detail.
+  const phoneMonthly = useMemo(() => {
+    const byMonth = new Map<string, { wip: number; invoiced: number; count: number }>();
+    for (const e of mergedDetailEntries) {
+      const key = e.month || "TBC";
+      const cur = byMonth.get(key) || { wip: 0, invoiced: 0, count: 0 };
+      cur.wip += e.amtWip || 0;
+      cur.invoiced += e.amtInvoice || 0;
+      cur.count += 1;
+      byMonth.set(key, cur);
+    }
+    return [...byMonth.entries()]
+      .map(([month, v]) => ({ month, ...v, total: v.wip + v.invoiced }))
+      .sort((a, b) => (a.month === "TBC" ? 1 : b.month === "TBC" ? -1 : getMonthSortKey(a.month) - getMonthSortKey(b.month)));
+  }, [mergedDetailEntries]);
+
+  const phoneStages = useMemo(() => {
+    const byStage = new Map<string, { total: number; count: number }>();
+    for (const e of mergedDetailEntries) {
+      if (!e.dealStatus) continue;
+      const cur = byStage.get(e.dealStatus) || { total: 0, count: 0 };
+      cur.total += (e.amtWip || 0) + (e.amtInvoice || 0);
+      cur.count += 1;
+      byStage.set(e.dealStatus, cur);
+    }
+    return [...byStage.entries()].map(([status, v]) => ({ status, ...v })).sort((a, b) => b.total - a.total);
+  }, [mergedDetailEntries]);
+
   const sortedDetailEntries = useMemo(() => {
     const sorted = [...mergedDetailEntries];
     sorted.sort((a, b) => {
@@ -1442,6 +1471,97 @@ export default function WipReport() {
               >
                 <X className="h-3 w-3" /> Reset filters
               </button>
+            )}
+          </div>
+
+          {/* Phone at-a-glance — the desktop report leans on the wide table;
+              on a phone the story comes first: totals, fees by month, stage
+              mix, each tappable to filter the deal list below (Woody,
+              2026-08-31: "stopped being charts and now just lists"). */}
+          <div className="md:hidden space-y-3 no-print" data-testid="wip-phone-summary">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-card border border-border rounded-lg p-3" data-testid="wip-phone-tile-wip">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">WIP</p>
+                <p className="text-lg font-mono font-semibold text-foreground">{formatFullCurrency(totalWip)}</p>
+                <p className="text-[10px] text-muted-foreground">{sortedDetailEntries.length} deal{sortedDetailEntries.length !== 1 ? "s" : ""}</p>
+              </div>
+              <div className="bg-card border border-border rounded-lg p-3" data-testid="wip-phone-tile-invoiced">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Invoiced</p>
+                <p className="text-lg font-mono font-semibold text-green-700">{formatFullCurrency(totalInvoiced)}</p>
+                <p className="text-[10px] text-muted-foreground">of {formatFullCurrency(totalNetFees)} total</p>
+              </div>
+            </div>
+            {phoneMonthly.length > 1 && (
+              <div className="bg-card border border-border rounded-lg overflow-hidden">
+                <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Net fees by month</span>
+                  <span className="text-[10px] text-muted-foreground">tap to filter</span>
+                </div>
+                <div className="p-3 space-y-1">
+                  {(() => {
+                    const shown = phoneMonthly.slice(0, 14);
+                    const maxM = Math.max(...shown.map(m => m.total), 1);
+                    return shown.map(m => {
+                      const tappable = m.month !== "TBC";
+                      const active = selectedMonths.has(m.month);
+                      const bar = (
+                        <>
+                          <span className="text-[11px] text-muted-foreground w-12 text-left shrink-0 font-medium">{m.month}</span>
+                          <div className="flex-1 h-4 bg-muted rounded overflow-hidden flex">
+                            {m.wip > 0 && <div className="h-full" style={{ width: `${(m.wip / maxM) * 100}%`, backgroundColor: active ? "#16a34a" : "#86efac" }} />}
+                            {m.invoiced > 0 && <div className="h-full" style={{ width: `${(m.invoiced / maxM) * 100}%`, backgroundColor: active ? "#15803d" : "#22c55e" }} />}
+                          </div>
+                          <span className="text-[11px] font-mono text-muted-foreground w-14 text-right shrink-0">{formatCurrency(m.total)}</span>
+                        </>
+                      );
+                      if (!tappable) {
+                        return <div key={m.month} className="w-full flex items-center gap-2 px-1 py-1">{bar}</div>;
+                      }
+                      return (
+                        <button
+                          key={m.month}
+                          className={`w-full flex items-center gap-2 rounded px-1 py-1 transition-colors ${active ? "bg-green-50 ring-1 ring-green-300" : "active:bg-muted"}`}
+                          onClick={() => setSelectedMonths(prev => {
+                            const next = new Set(prev);
+                            if (next.has(m.month)) next.delete(m.month); else next.add(m.month);
+                            return next;
+                          })}
+                          data-testid={`wip-phone-month-${m.month}`}
+                        >
+                          {bar}
+                        </button>
+                      );
+                    });
+                  })()}
+                  <div className="flex items-center gap-3 pt-1.5 border-t mt-1 text-[10px] text-muted-foreground">
+                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded" style={{ backgroundColor: "#86efac" }} />WIP</span>
+                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded" style={{ backgroundColor: "#22c55e" }} />Invoiced</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            {phoneStages.length > 1 && (
+              <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+                {phoneStages.map(s => {
+                  const code = legacyToCode(s.status);
+                  const label = code && code === s.status ? DEAL_STATUS_LABELS[code] : s.status;
+                  return (
+                    <Pill
+                      key={s.status}
+                      active={selectedStatuses.has(s.status)}
+                      onClick={() => setSelectedStatuses(prev => {
+                        const next = new Set(prev);
+                        if (next.has(s.status)) next.delete(s.status); else next.add(s.status);
+                        return next;
+                      })}
+                      className="shrink-0"
+                      data-testid={`wip-phone-stage-${s.status}`}
+                    >
+                      {label} · {formatCurrency(s.total)} · {s.count}
+                    </Pill>
+                  );
+                })}
+              </div>
             )}
           </div>
 
