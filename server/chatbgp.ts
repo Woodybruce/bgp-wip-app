@@ -99,12 +99,60 @@ async function ingestNonPdfBody(response: globalThis.Response, targetUrl: string
           const XLSX = (await import("xlsx")).default;
           const wb = XLSX.read(data, { type: "buffer" });
           title = e.entryName.replace(/^.*\//, "").replace(/\.(xlsx|xls|csv)$/i, "");
+          // Stage EVERY row into Postgres so sql_query can work over the
+          // whole file — the preview below is capped, but a 3,700-row
+          // operator database is only useful if all of it is queryable
+          // (Woody, 2026-08-31: "it needs to have all the tools you do").
+          // Re-ingesting the same file replaces its previous rows.
+          const ingestKey = e.entryName.replace(/^.*\//, "").toLowerCase().replace(/\.(xlsx|xls|csv)$/i, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "spreadsheet";
+          let staged: { loaded: boolean; error?: string } = { loaded: false };
+          try {
+            const { pool } = await import("./db");
+            await pool.query(`
+              CREATE TABLE IF NOT EXISTS ingested_spreadsheet_rows (
+                id BIGSERIAL PRIMARY KEY,
+                ingest_key TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                sheet_name TEXT NOT NULL,
+                row_num INTEGER NOT NULL,
+                data JSONB NOT NULL,
+                source_url TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+              );
+              CREATE INDEX IF NOT EXISTS idx_ingested_rows_key ON ingested_spreadsheet_rows (ingest_key, sheet_name);`);
+            for (const sheetName of wb.SheetNames.slice(0, 5)) {
+              const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: null });
+              if (!rows.length) continue;
+              await pool.query(`DELETE FROM ingested_spreadsheet_rows WHERE ingest_key = $1 AND sheet_name = $2`, [ingestKey, sheetName]);
+              const capped = rows.slice(0, 20000);
+              for (let i = 0; i < capped.length; i += 500) {
+                const batch = capped.slice(i, i + 500);
+                const values: string[] = [];
+                const params: any[] = [];
+                batch.forEach((row, j) => {
+                  const base = j * 6;
+                  values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
+                  params.push(ingestKey, e.entryName, sheetName, i + j + 1, JSON.stringify(row), targetUrl.slice(0, 500));
+                });
+                await pool.query(`INSERT INTO ingested_spreadsheet_rows (ingest_key, file_name, sheet_name, row_num, data, source_url) VALUES ${values.join(", ")}`, params);
+              }
+              staged = { loaded: true };
+            }
+          } catch (stageErr: any) {
+            staged = { loaded: false, error: stageErr?.message };
+          }
           for (const sheetName of wb.SheetNames.slice(0, 5)) {
+            const sheetRows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: null });
+            const headers = sheetRows.length ? Object.keys(sheetRows[0]) : [];
             const csv = XLSX.utils.sheet_to_csv(wb.Sheets[sheetName]);
             const lines = csv.split("\n").filter(l => l.replace(/,/g, "").trim());
+            const stagedNote = staged.loaded && sheetRows.length
+              ? `\nFULL SHEET QUERYABLE: all ${Math.min(sheetRows.length, 20000)} rows are staged in Postgres — use sql_query on ingested_spreadsheet_rows WHERE ingest_key = '${ingestKey}' AND sheet_name = '${sheetName}'. Each row's cells are in the jsonb "data" column keyed by header, e.g. SELECT data->>'${(headers[0] || "Column").replace(/'/g, "''")}' FROM ingested_spreadsheet_rows WHERE ingest_key = '${ingestKey}'. Columns: ${headers.slice(0, 25).join(", ")}. Use this for any cross-referencing or filtering over the whole file instead of the preview above.`
+              : (staged.error ? `\n(Could not stage full rows for SQL: ${staged.error} — only the preview above is available.)` : "");
             parts.push(`--- ${e.entryName} · sheet "${sheetName}" · ${lines.length} data rows ---\n` +
               lines.slice(0, 400).join("\n") +
-              (lines.length > 400 ? `\n… ${lines.length - 400} more rows not shown — tell the user how much of the file you could see.` : ""));
+              (lines.length > 400 ? `\n… ${lines.length - 400} more preview rows not shown.` : "") +
+              stagedNote);
           }
         } else if (name.endsWith(".pdf")) {
           const { PDFParse } = await import("pdf-parse");
@@ -4196,7 +4244,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "ingest_url",
-      description: "Fetch and read content from an external URL — works with PDFs, research reports, web pages, and ZIP downloads (unpacks in memory and reads the spreadsheets/PDFs/text inside — e.g. the Propel multi-site database ZIP; spreadsheet content comes back as CSV rows, capped, so say when you could only see part of a big file). Use when the user shares a link and wants you to read, summarise, or add it to the news feed. Can also save the content as a news article.",
+      description: "Fetch and read content from an external URL — works with PDFs, research reports, web pages, and ZIP downloads (unpacks in memory and reads the spreadsheets/PDFs/text inside — e.g. the Propel multi-site database ZIP). Spreadsheets found in a ZIP are ALSO staged in full into the ingested_spreadsheet_rows table, so after ingesting you can cross-reference or filter EVERY row with sql_query (the tool result tells you the ingest_key and columns) — the inline preview is only the first slice. Use when the user shares a link and wants you to read, summarise, cross-reference, or add it to the news feed. Can also save the content as a news article.",
       parameters: {
         type: "object",
         properties: {
