@@ -951,7 +951,11 @@ export function setupXeroRoutes(app: Express) {
 
       for (const inv of toSync) {
         try {
-          const xeroRes = await xeroApi(req.session, `/Invoices/${inv.xeroInvoiceId}`);
+          // Status pull, not a write — fall back to the firm-wide Xero
+          // session like the read endpoints do. A fresh login has no
+          // per-session Xero tokens, which made every invoice fail with
+          // "Not connected" ("Synced 0, 70 failed", Woody 2026-08-31).
+          const xeroRes = await xeroApiWithFallback(req.session, `/Invoices/${inv.xeroInvoiceId}`);
           const xeroInvoice = xeroRes.Invoices?.[0];
           if (!xeroInvoice) continue;
 
