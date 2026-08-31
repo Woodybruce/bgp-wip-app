@@ -105,6 +105,20 @@ async function ingestNonPdfBody(response: globalThis.Response, targetUrl: string
           // (Woody, 2026-08-31: "it needs to have all the tools you do").
           // Re-ingesting the same file replaces its previous rows.
           const ingestKey = e.entryName.replace(/^.*\//, "").toLowerCase().replace(/\.(xlsx|xls|csv)$/i, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "spreadsheet";
+          // Sheets without a header row (the Propel "Company" sheet) would
+          // otherwise get keyed by the first data row's values — detect that
+          // and fall back to column letters so SQL keys stay sane.
+          const readSheetRows = (sheet: any): { rows: any[]; headerless: boolean } => {
+            let rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null });
+            if (rows.length) {
+              const keys = Object.keys(rows[0]);
+              const suspect = keys.filter(k => /^__EMPTY/.test(k) || /^\d+(\.\d+)?$/.test(String(k).trim())).length;
+              if (suspect >= Math.max(1, Math.floor(keys.length * 0.2))) {
+                return { rows: XLSX.utils.sheet_to_json(sheet, { defval: null, header: "A" }), headerless: true };
+              }
+            }
+            return { rows, headerless: false };
+          };
           let staged: { loaded: boolean; error?: string } = { loaded: false };
           try {
             const { pool } = await import("./db");
@@ -121,7 +135,7 @@ async function ingestNonPdfBody(response: globalThis.Response, targetUrl: string
               );
               CREATE INDEX IF NOT EXISTS idx_ingested_rows_key ON ingested_spreadsheet_rows (ingest_key, sheet_name);`);
             for (const sheetName of wb.SheetNames.slice(0, 5)) {
-              const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: null });
+              const { rows } = readSheetRows(wb.Sheets[sheetName]);
               if (!rows.length) continue;
               await pool.query(`DELETE FROM ingested_spreadsheet_rows WHERE ingest_key = $1 AND sheet_name = $2`, [ingestKey, sheetName]);
               const capped = rows.slice(0, 20000);
@@ -142,12 +156,12 @@ async function ingestNonPdfBody(response: globalThis.Response, targetUrl: string
             staged = { loaded: false, error: stageErr?.message };
           }
           for (const sheetName of wb.SheetNames.slice(0, 5)) {
-            const sheetRows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: null });
+            const { rows: sheetRows, headerless } = readSheetRows(wb.Sheets[sheetName]);
             const headers = sheetRows.length ? Object.keys(sheetRows[0]) : [];
             const csv = XLSX.utils.sheet_to_csv(wb.Sheets[sheetName]);
             const lines = csv.split("\n").filter(l => l.replace(/,/g, "").trim());
             const stagedNote = staged.loaded && sheetRows.length
-              ? `\nFULL SHEET QUERYABLE: all ${Math.min(sheetRows.length, 20000)} rows are staged in Postgres — use sql_query on ingested_spreadsheet_rows WHERE ingest_key = '${ingestKey}' AND sheet_name = '${sheetName}'. Each row's cells are in the jsonb "data" column keyed by header, e.g. SELECT data->>'${(headers[0] || "Column").replace(/'/g, "''")}' FROM ingested_spreadsheet_rows WHERE ingest_key = '${ingestKey}'. Columns: ${headers.slice(0, 25).join(", ")}. Use this for any cross-referencing or filtering over the whole file instead of the preview above.`
+              ? `\nFULL SHEET QUERYABLE: all ${Math.min(sheetRows.length, 20000)} rows are staged in Postgres — use sql_query on ingested_spreadsheet_rows WHERE ingest_key = '${ingestKey}' AND sheet_name = '${sheetName}'. Each row's cells are in the jsonb "data" column${headerless ? " keyed by COLUMN LETTER (A, B, C…) because this sheet has no header row — work out what each column holds from the preview rows above" : " keyed by header"}, e.g. SELECT data->>'${(headers[0] || "Column").replace(/'/g, "''")}' FROM ingested_spreadsheet_rows WHERE ingest_key = '${ingestKey}'. Columns: ${headers.slice(0, 25).join(", ")}. Use this for any cross-referencing or filtering over the whole file instead of the preview above.`
               : (staged.error ? `\n(Could not stage full rows for SQL: ${staged.error} — only the preview above is available.)` : "");
             parts.push(`--- ${e.entryName} · sheet "${sheetName}" · ${lines.length} data rows ---\n` +
               lines.slice(0, 400).join("\n") +
