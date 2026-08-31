@@ -77,19 +77,18 @@ declare module "express" {
 
 const PgStore = connectPgSimple(session);
 
-// Staff live in the app on their phones — an 8h lifetime forced a full
+// Everyone lives in the app on their phones — an 8h lifetime forced a full
 // sign-in every morning, which the persisted-data cache then masked as a
 // dead-looking app (Woody, 2026-08-31: "Chat taking ages to load" — every
-// request in the prod log was a 401). Staff sessions/tokens now last 30
-// rolling days like any phone app; external Client logins keep the
-// original 8h posture.
-const STAFF_AUTH_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
-const CLIENT_AUTH_LIFETIME_MS = 8 * 60 * 60 * 1000;
-function authLifetimeMs(role?: string | null): number {
-  return role === "Client" ? CLIENT_AUTH_LIFETIME_MS : STAFF_AUTH_LIFETIME_MS;
+// request in the prod log was a 401). Sessions/tokens last 30 rolling days
+// like any phone app — staff and Client (Landsec) logins alike (Woody,
+// 2026-08-31: "same for landsec").
+const AUTH_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+function authLifetimeMs(_role?: string | null): number {
+  return AUTH_LIFETIME_MS;
 }
 
-async function createAuthToken(userId: string, ttlMs: number = CLIENT_AUTH_LIFETIME_MS): Promise<string> {
+async function createAuthToken(userId: string, ttlMs: number = AUTH_LIFETIME_MS): Promise<string> {
   const token = crypto.randomBytes(48).toString("hex");
   const expiresAt = new Date(Date.now() + ttlMs);
   await pool.query(
