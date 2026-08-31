@@ -1571,7 +1571,7 @@ export default function WipReport() {
               </div>
             )}
             {phoneStages.length > 0 && (
-              <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+              <div className="flex flex-wrap gap-1.5">
                 {phoneStages.map(s => {
                   const code = legacyToCode(s.status);
                   const label = code && code === s.status ? DEAL_STATUS_LABELS[code] : s.status;
