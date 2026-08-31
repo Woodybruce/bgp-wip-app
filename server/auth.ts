@@ -77,9 +77,21 @@ declare module "express" {
 
 const PgStore = connectPgSimple(session);
 
-async function createAuthToken(userId: string): Promise<string> {
+// Staff live in the app on their phones — an 8h lifetime forced a full
+// sign-in every morning, which the persisted-data cache then masked as a
+// dead-looking app (Woody, 2026-08-31: "Chat taking ages to load" — every
+// request in the prod log was a 401). Staff sessions/tokens now last 30
+// rolling days like any phone app; external Client logins keep the
+// original 8h posture.
+const STAFF_AUTH_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+const CLIENT_AUTH_LIFETIME_MS = 8 * 60 * 60 * 1000;
+function authLifetimeMs(role?: string | null): number {
+  return role === "Client" ? CLIENT_AUTH_LIFETIME_MS : STAFF_AUTH_LIFETIME_MS;
+}
+
+async function createAuthToken(userId: string, ttlMs: number = CLIENT_AUTH_LIFETIME_MS): Promise<string> {
   const token = crypto.randomBytes(48).toString("hex");
-  const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 hours
+  const expiresAt = new Date(Date.now() + ttlMs);
   await pool.query(
     "INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)",
     [token, userId, expiresAt]
@@ -272,7 +284,8 @@ export function setupAuth(app: Express) {
         req.session.regenerate((err) => err ? reject(err) : resolve());
       });
       req.session.userId = created.id;
-      const token = await createAuthToken(created.id);
+      req.session.cookie.maxAge = authLifetimeMs((created as any).role);
+      const token = await createAuthToken(created.id, authLifetimeMs((created as any).role));
       req.session.save(() => {
         const { password: _, ...safe } = created as any;
         res.json({ ...safe, token });
@@ -317,8 +330,9 @@ export function setupAuth(app: Express) {
       });
     });
     req.session.userId = user.id;
+    req.session.cookie.maxAge = authLifetimeMs((user as any).role);
 
-    const token = await createAuthToken(user.id);
+    const token = await createAuthToken(user.id, authLifetimeMs((user as any).role));
     trackLogin(user.id, 'password');
     ensureAdminFlag(user.id, user.email || user.username || "");
 
@@ -368,16 +382,18 @@ export function setupAuth(app: Express) {
     });
   });
 
-  // Mint a fresh bearer token off a still-valid session. Auth tokens expire
-  // after 8h while the session cookie lives much longer, so the token in
-  // localStorage routinely goes stale — the WebSocket then loops "Invalid
-  // token" and token-authed links (mobile downloads) 401. The client calls
-  // this to self-heal instead of requiring a fresh sign-in.
+  // Mint a fresh bearer token off a still-valid session, so a stale token
+  // in localStorage self-heals (WebSocket "Invalid token" loops, 401ing
+  // token-authed mobile downloads) instead of requiring a fresh sign-in.
+  // Also re-extends the session cookie to the role's full lifetime.
   app.post("/api/auth/refresh-token", async (req: Request, res: Response) => {
     const userId = req.session.userId;
     if (!userId) return res.status(401).json({ message: "No active session" });
     try {
-      const token = await createAuthToken(userId);
+      const user = await storage.getUser(userId);
+      const ttl = authLifetimeMs((user as any)?.role);
+      req.session.cookie.maxAge = ttl;
+      const token = await createAuthToken(userId, ttl);
       res.json({ token });
     } catch (err: any) {
       console.error("[auth] refresh-token error:", err?.message);
@@ -753,7 +769,8 @@ export function setupAuth(app: Express) {
       }
 
       req.session.userId = userId;
-      const token = await createAuthToken(userId);
+      req.session.cookie.maxAge = authLifetimeMs((user as any).role);
+      const token = await createAuthToken(userId, authLifetimeMs((user as any).role));
 
       req.session.save((err) => {
         if (err) console.error("SSO exchange session save error:", err);
