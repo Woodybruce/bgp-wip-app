@@ -16,6 +16,14 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+124. 2026-09-01 · BGP staff / desktop 1440px (QA r442) · scanning Image
+    Studio's LIBRARY tab · the sidebar category "Uncategorised" said 1 while
+    the albums view showed an "Uncategorised" folder with 2 photos beside an
+    "All 2" count — the sidebar counts images whose CATEGORY is
+    Uncategorised, the album groups images with NO ADDRESS, two different
+    meanings sharing one label on the same screen · rename the album folder
+    (e.g. "No address") or count both by the same rule.
+
 123. 2026-09-01 · staff + client / unit Files dialog (QA r438) · generated an
     info sheet on a unit whose particulars fields are all empty · the PDF
     prints the "PARTICULARS" heading + rule with nothing under it — a
