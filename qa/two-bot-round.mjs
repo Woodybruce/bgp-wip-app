@@ -13,7 +13,14 @@
 //         names fall back to the legacy dev-fixture IDs.
 
 import { chromium } from '../node_modules/playwright/index.mjs';
-import { mkdirSync, appendFileSync, existsSync } from 'fs';
+import { mkdirSync, appendFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
+
+// Chunked runs (600s foreground-exec cap, r447): QA_PERSONAS picks which
+// persona rounds run; QA_CROSS_FILE persists the shared `cross` state between
+// chunks so staff-creates → client-sees/rival-403 checks still line up.
+const PERSONAS = (process.env.QA_PERSONAS || 'victoria,mark,woody,nick,sam')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+const CROSS_FILE = process.env.QA_CROSS_FILE || '';
 
 const BASE = 'http://localhost:5000';
 const ROUND = parseInt(process.argv[2] || '1', 10);
@@ -6030,8 +6037,9 @@ attachCollectors(vPage, 'victoria');
 attachCollectors(mPage, 'mark');
 
 const cross = { dealStamp: null };
-await victoriaRound(vPage, cross).catch((e) => logIssue('victoria', 'round', 'harness-crash', e.message));
-await markRound(mPage, cross).catch((e) => logIssue('mark', 'round', 'harness-crash', e.message));
+if (CROSS_FILE && existsSync(CROSS_FILE)) Object.assign(cross, JSON.parse(readFileSync(CROSS_FILE, 'utf8')));
+if (PERSONAS.includes('victoria')) await victoriaRound(vPage, cross).catch((e) => logIssue('victoria', 'round', 'harness-crash', e.message));
+if (PERSONAS.includes('mark')) await markRound(mPage, cross).catch((e) => logIssue('mark', 'round', 'harness-crash', e.message));
 
 // Extended personas — each with its own context so sessions never bleed.
 for (const [name, user, fn] of [
@@ -6039,6 +6047,7 @@ for (const [name, user, fn] of [
   ['nick', INVESTMENT_USER, nickRound],
   ['sam', RIVAL_CLIENT_USER, samRound],
 ]) {
+  if (!PERSONAS.includes(name)) continue;
   currentScenario[name] = 'startup';
   try {
     const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
@@ -6053,6 +6062,7 @@ for (const [name, user, fn] of [
 }
 
 await browser.close();
+if (CROSS_FILE) writeFileSync(CROSS_FILE, JSON.stringify(cross));
 
 const byKind = {};
 for (const i of issues) byKind[i.kind] = (byKind[i.kind] || 0) + 1;
