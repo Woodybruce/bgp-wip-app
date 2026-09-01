@@ -80,18 +80,37 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r449 · 2026-09-01 ~22:30 UTC · LIGHT — round in progress (provisional)
-- Bring-up: canonical recipe held 14th consecutive time. Regression: smoke
-  GREEN 42/0. Two-bot 3 chunks exit 0: victoria 65 ok (incl. FIRST harness
-  run of r448's staff-mobile-page-actions-reachable — PASSED), mark 150 ok,
-  ext 18 ok; 12 issues = exact standing noise signature. Server logs 0 raw
-  5xx. Sweep 11/11 at 390px.
-- Triage: 0 app bugs. One HARNESS-INFRA trap found + fixed in the runner
-  (not the app): capturing dev-server stdout via a pipe while spawnSync
-  blocks the loop freezes the server at ~64KB of logs and collapses the
-  chromium session — log the server to a FILE. Killed the victoria chunk
-  twice at the same scenario before diagnosis.
-- Remaining: re-verify r448's two fixes visually; deferred-bug check.
+### r449 · 2026-09-01 ~22:50 UTC · LIGHT (r448 had the journey) — GREEN
+- Bring-up: canonical recipe held 14th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round 449
+  as 3 foreground chunks: victoria 65 ok / mark 150 ok / woody,nick,sam 18
+  ok, exit 0 all chunks; 12 logged issues = the exact standing noise
+  signature (rocketreach 400, invalid-tracker probe 400, brand-gaps/
+  live-intel + commentary-regen 503 keyless, 8×403 probe-by-design scope
+  rows). Server logs: 0 raw 500/502/504. phone-overflow-sweep 11/11 routes
+  fit at 390px. Triage: 0 app bugs.
+- r448's TWO FIXES RE-VERIFIED: (1) staff-mobile-page-actions-reachable
+  PASSED its first full harness run, and visually at 390px the Image Studio
+  action row wraps to two rows with Upload fully on-screen (rect 155-251 in
+  390); (2) WIP title wraps "— National Leasing" as a unit, no orphaned em
+  dash, sw==iw at 390px. Screenshots taken.
+- HARNESS-INFRA flake found + solved (runner pattern, not the app or
+  two-bot): capturing the dev server's stdout via a PIPE while the runner
+  blocks in spawnSync freezes the server once ~64KB of log output fills the
+  pipe, and the chromium session then collapses — every remaining scenario
+  logs "Target page, context or browser has been closed", deterministically
+  at the same scenario (killed the victoria chunk twice before diagnosis).
+  Rule: the chunk runner must send dev-server stdio to a FILE (openSync fd),
+  never a pipe. two-bot itself grew opt-in QA_DEBUG hooks (step timestamps +
+  page close/crash/browser-disconnect events) — inert without QA_DEBUG=1,
+  used to pin this down; keep them.
+- No journey (LIGHT). No deferred bugs to pick up (r448 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey this round). New flakes: the
+  pipe-freeze rule above. Real-device keyboard-up composer check (r405)
+  still open for Woody.
+- Next: r449 was LIGHT → r450 FULL, rotation #1 BGP staff desktop 1440px.
 
 ### r448 · 2026-09-01 ~21:50 UTC · FULL — rotation #4 BGP staff mobile 390px · 2 bugs fixed
 - Bring-up: canonical recipe held 13th consecutive time (qa:pg once →
