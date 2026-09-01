@@ -3759,19 +3759,15 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     const labelPane = map.createPane("labelPane");
     labelPane.style.zIndex = "500";
 
-    // Base layers: a clean light map (CARTO) and a satellite view (Esri
-    // World Imagery — free for reasonable use). Each is bundled with its
-    // own labels overlay on labelPane so the labels stay above buildings,
-    // UPRN dots, and site outlines in the other panes.
-    const mapTiles = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png", {
-      attribution: '&copy; OSM &copy; CARTO',
-      subdomains: "abcd",
+    // Base layers: a clean street map (OSM — CARTO's basemaps started
+    // demanding an API key 2026-09-01 and watermarked every tile
+    // "API KEY REQUIRED") and a satellite view (Esri World Imagery — free
+    // for reasonable use). The satellite view keeps its labels overlay on
+    // labelPane; OSM carries its labels baked into the tiles.
+    const mapTiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 20,
-    });
-    const mapLabels = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png", {
-      subdomains: "abcd",
-      maxZoom: 20,
-      pane: "labelPane",
+      maxNativeZoom: 19,
     });
     const satTiles = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
       attribution: "Tiles &copy; Esri",
@@ -3789,7 +3785,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       pane: "labelPane",
     });
 
-    const mapBase = L.layerGroup([mapTiles, mapLabels]);
+    const mapBase = L.layerGroup([mapTiles]);
     const satBase = L.layerGroup([satTiles, satRoads, satPlaces]);
     mapBase.addTo(map);
     baseLayerRef.current = { map: mapBase, sat: satBase };

@@ -30,6 +30,11 @@ process.on("uncaughtException", (err: any) => {
 });
 import { registerRoutes } from "./routes";
 import { pool } from "./db";
+import { installGoogleBudgetGuard } from "./google-budget";
+
+// £200/day hard cap on Google Maps/Places spend (Woody, 2026-09-01) —
+// installed before anything can fire an outbound googleapis call.
+installGoogleBudgetGuard();
 
 // Auto-migrate: add columns/tables that may be missing after database restore.
 // CRITICAL: each statement runs in its own try/catch so one failure (e.g. an

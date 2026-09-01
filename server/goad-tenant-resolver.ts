@@ -241,9 +241,13 @@ router.post("/api/goad/tenant-create", requireAuth, async (req: Request, res: Re
     const ins = await pool.query<{ id: string }>(
       `INSERT INTO crm_companies (name, company_type, domain, domain_url, head_office_address,
                                   uk_entity_name, companies_house_number, phone)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
        RETURNING id`,
-      [fascia, companyType, domain, website || null, headOfficeAddress, entityName, chNumber, phone],
+      // head_office_address is jsonb — a bare string threw "invalid input
+      // syntax for type json" on every map Add to CRM (Woody, 2026-09-01).
+      // Readers join {street, city, country}, so the formatted Places
+      // address rides in street.
+      [fascia, companyType, domain, website || null, headOfficeAddress ? JSON.stringify({ street: headOfficeAddress }) : null, entityName, chNumber, phone],
     );
     const companyId = ins.rows[0].id;
 
