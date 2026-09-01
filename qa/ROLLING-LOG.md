@@ -107,6 +107,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
   flakes: none. Real-device keyboard-up composer check (r405) still open
   for Woody.
+- SECOND MID-ROUND MERGE VERIFIED: c7356c1 (JOGQK merge — tracker rework:
+  Marketing pill labels, per-row withdraw ban icon, Area & Costs merged
+  column, 2-line actions cluster, scrolling comments; app-map updated with
+  it). Re-verified: tsc clean, targeted tracker check green (desktop
+  1440px 84 rows, Marketing group/pills + new actions cluster render, no
+  pageerrors; /available 390px sw==iw), smoke GREEN 42/0 on FRESH_BUILD.
+  r444 should run the full two-bot on this tree (this round's two-bot ran
+  pre-merge).
 - Next: rotation #2 Landsec client desktop (r443 was LIGHT → r444 FULL).
 
 ### r442 · 2026-09-01 ~17:15 UTC · FULL — rotation #1 BGP staff desktop 1440px · 1 bug fixed
