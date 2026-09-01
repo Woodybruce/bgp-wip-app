@@ -80,6 +80,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r436 · 2026-09-01 · PROVISIONAL — DB FIX VALIDATED, full round in progress
+- First round with the qa/start-postgres.sh password fix: `npm run qa:pg`
+  once → "[start-postgres] postgres role password set for host connections"
+  → `bash qa/run-smoke.sh` → fixture restore SUCCEEDED (no scram failure),
+  smoke 42 checks / 0 failures. The 11-round DB auth blockade is over.
+- two-bot round 436 running; client desktop 1440px journey (rotation #2,
+  owed 13 rounds) next. Final entry replaces this one.
+
 ### r435 · 2026-08-30 ~19:30 UTC · SHORT — DB auth blocked (11th), recipe (a) tested: bring-up OK, restore fails scram
 - Detached HEAD at r434 tip 1fc38c5; no fetch/checkout; push via HEAD: refspec.
 - DB outcome (r434 hypothesis (a) TESTED): `npm run qa:pg` as FIRST Bash call
