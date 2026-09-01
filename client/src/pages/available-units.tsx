@@ -21,7 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins, Flame,
-  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical } from "lucide-react";
+  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical, Ban } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -352,8 +352,7 @@ export default function AvailableUnitsPage() {
     { key: "priority", label: "Priority" },
     { key: "agent", label: "Agent" },
     { key: "comments", label: "Comments" },
-    { key: "floorAreas", label: "Floor Areas" },
-    { key: "costs", label: "Costs" },
+    { key: "areaCosts", label: "Area & Costs" },
   ];
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(localStorage.getItem("bgp_letting_hidden_cols") || "[]")); } catch { return new Set(); }
@@ -1626,7 +1625,7 @@ export default function AvailableUnitsPage() {
                 data-testid={`stat-chip-${s.toLowerCase()}`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
-                {DEAL_STATUS_LABELS[s]} <span className="opacity-70 font-mono tabular-nums">{count}</span>
+                {DEAL_PIPELINE_LABELS[s]} <span className="opacity-70 font-mono tabular-nums">{count}</span>
               </Pill>
             );
           })}
@@ -1651,7 +1650,7 @@ export default function AvailableUnitsPage() {
                 data-testid={`stat-card-${s.toLowerCase()}`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
-                {DEAL_STATUS_LABELS[s]} <span className="font-mono normal-case opacity-60 tabular-nums">{count}</span>
+                {DEAL_PIPELINE_LABELS[s]} <span className="font-mono normal-case opacity-60 tabular-nums">{count}</span>
               </Pill>
             );
           })}
@@ -1685,7 +1684,7 @@ export default function AvailableUnitsPage() {
                   data-testid={`bulk-status-${s.toLowerCase()}`}
                 >
                   <span className={`w-2 h-2 rounded-full mr-2 ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
-                  {DEAL_STATUS_LABELS[s]}
+                  {DEAL_PIPELINE_LABELS[s]}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -1727,7 +1726,7 @@ export default function AvailableUnitsPage() {
                 {viewAll && code !== prevCode && (
                   <div className="flex items-center gap-2 pt-2 text-xs font-semibold uppercase tracking-wide" data-testid={`mobile-status-group-${code.toLowerCase()}`}>
                     <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[code] || "bg-gray-400"}`} />
-                    {DEAL_STATUS_LABELS[code]}
+                    {DEAL_PIPELINE_LABELS[code]}
                     <span className="text-muted-foreground font-normal normal-case tracking-normal tabular-nums">
                       {filtered.filter(x => (effByUnit[x.id] || "AVA") === code).length}
                     </span>
@@ -1745,7 +1744,7 @@ export default function AvailableUnitsPage() {
                     </div>
                     <Badge variant="secondary" className="shrink-0 text-[10px] px-2 py-0.5 gap-1.5">
                       <span className={`inline-block w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[code] || "bg-gray-400"}`} />
-                      {DEAL_STATUS_LABELS[code] || code}
+                      {DEAL_PIPELINE_LABELS[code] || code}
                     </Badge>
                   </div>
                   {rows.length > 0 && (
@@ -1822,16 +1821,15 @@ export default function AvailableUnitsPage() {
                 {showCol("category") && <TableHead className="w-[144px] min-w-[144px]">Category</TableHead>}
                 {showCol("priority") && <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>}
                 {showCol("agent") && <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>}
-                {showCol("comments") && <TableHead className="min-w-[200px]">Comments</TableHead>}
-                {showCol("floorAreas") && <TableHead className="w-[112px] min-w-[112px]">Floor Areas</TableHead>}
-                {showCol("costs") && <TableHead className="w-[112px] min-w-[112px] text-right">Costs</TableHead>}
-                <TableHead className="w-[170px] min-w-[170px] sticky right-0 z-20 border-l bg-card">Actions &amp; Activity</TableHead>
+                {showCol("comments") && <TableHead className="w-[150px] min-w-[140px]">Comments</TableHead>}
+                {showCol("areaCosts") && <TableHead className="w-[130px] min-w-[130px]">Area &amp; Costs</TableHead>}
+                <TableHead className="w-[205px] min-w-[205px] sticky right-0 z-20 border-l bg-card">Actions &amp; Activity</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "floorAreas", "costs"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1853,10 +1851,10 @@ export default function AvailableUnitsPage() {
                     <Fragment key={u.id}>
                     {viewAll && rowCode !== prevRowCode && (
                       <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
-                        <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "floorAreas", "costs"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
+                        <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
                           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
                             <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
-                            {DEAL_STATUS_LABELS[rowCode]}
+                            {DEAL_PIPELINE_LABELS[rowCode]}
                             <span className="text-muted-foreground font-normal normal-case tracking-normal tabular-nums">
                               {filtered.filter(x => (effByUnit[x.id] || "AVA") === rowCode).length}
                             </span>
@@ -2135,22 +2133,48 @@ export default function AvailableUnitsPage() {
                           }
                         />
                       )}
-                      {showCol("floorAreas") && (
+                      {showCol("areaCosts") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1">
-                        <div className="space-y-0.5">
-                          {deal ? (
-                            [
+                        {/* Area + Costs in one column (Woody, 2026-09-01) —
+                            the cell shows Total sf + Rent; EVERYTHING else
+                            (per-floor areas incl. ITZA for retail, rates,
+                            SC, unit details) edits inside the popover. */}
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              className="w-full text-left flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs"
+                              data-testid={`costs-cell-${u.id}`}
+                            >
+                              <span className="font-mono text-[11px] tabular-nums">
+                                {(deal?.totalAreaSqft ?? u.sqft) != null
+                                  ? `${Number(deal?.totalAreaSqft ?? u.sqft).toLocaleString("en-GB")} sf`
+                                  : <span className="text-muted-foreground">— sf</span>}
+                              </span>
+                              {u.askingRent != null ? (
+                                <span className="font-mono text-[11px] tabular-nums">£{Number(u.askingRent).toLocaleString("en-GB")}</span>
+                              ) : (
+                                <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+                                  <Plus className="w-3 h-3" /> Details
+                                </span>
+                              )}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[320px] p-3 space-y-2.5 max-h-[70vh] overflow-y-auto" align="end">
+                            <p className="text-xs font-semibold">Areas</p>
+                            {(deal ? [
                               { label: "GF", value: deal.gfAreaSqft, field: "gfAreaSqft", show: true },
-                              { label: "FF", value: deal.ffAreaSqft, field: "ffAreaSqft", show: true },
-                              { label: "Bsmt", value: deal.basementAreaSqft, field: "basementAreaSqft", show: true },
+                              { label: "FF", value: deal.ffAreaSqft, field: "ffAreaSqft", show: !isRetailAssetClass(deal.assetClass) || deal.ffAreaSqft != null },
+                              { label: "Bsmt", value: deal.basementAreaSqft, field: "basementAreaSqft", show: !isRetailAssetClass(deal.assetClass) || deal.basementAreaSqft != null },
                               { label: "ITZA", value: deal.itzaAreaSqft, field: "itzaAreaSqft", show: isRetailAssetClass(deal.assetClass) },
                               { label: deal.areaBasis || areaBasisFromAssetClass(deal.assetClass), value: deal.totalAreaSqft, field: "totalAreaSqft", show: true },
-                            ].filter(r => r.show).map(({ label, value, field }) => (
-                              <div key={field} className="flex items-center gap-1.5">
-                                <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">{label}</span>
+                            ].filter(r => r.show) : [{ label: "Total", value: u.sqft, field: "sqft", show: true }]).map(({ label, value, field }) => (
+                              <div key={field} className="grid grid-cols-[100px_1fr] items-center gap-2">
+                                <Label className="text-xs text-muted-foreground">{label}</Label>
                                 <InlineNumber
                                   value={value}
                                   onSave={v => {
+                                    if (!deal) { inlineUpdate(u.id, "sqft", v); return; }
                                     dealInlineUpdate.mutate({ id: deal.id, field, value: v });
                                     // Auto-sum GF+FF+Bsmt into Total (mirrors Deals board logic)
                                     if (field === "gfAreaSqft" || field === "ffAreaSqft" || field === "basementAreaSqft") {
@@ -2164,57 +2188,10 @@ export default function AvailableUnitsPage() {
                                     if (field === "totalAreaSqft") inlineUpdate(u.id, "sqft", v);
                                   }}
                                   suffix=" sf"
-                                  className="text-xs"
                                 />
                               </div>
-                            ))
-                          ) : (
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">Total</span>
-                              <InlineNumber
-                                value={u.sqft}
-                                onSave={v => inlineUpdate(u.id, "sqft", v)}
-                                suffix=" sf"
-                                className="text-xs"
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-                      )}
-                      {showCol("costs") && (
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 text-right">
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <button
-                              type="button"
-                              className="w-full text-right flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs"
-                              data-testid={`costs-cell-${u.id}`}
-                            >
-                              {[
-                                { label: "Rent", value: u.askingRent },
-                                { label: "Rates", value: u.ratesPa },
-                                { label: "SC",    value: u.serviceChargePa },
-                              ].filter(r => r.value != null).length === 0 ? (
-                                <span className="text-muted-foreground text-[11px] flex items-center gap-1 justify-end">
-                                  <Plus className="w-3 h-3" /> Costs / details
-                                </span>
-                              ) : (
-                                [
-                                  { label: "Rent",  value: u.askingRent },
-                                  { label: "Rates", value: u.ratesPa },
-                                  { label: "SC",    value: u.serviceChargePa },
-                                ].filter(r => r.value != null).map(r => (
-                                  <div key={r.label} className="flex items-center gap-1 justify-end">
-                                    <span className="text-[9px] uppercase text-muted-foreground tracking-wide shrink-0">{r.label}</span>
-                                    <span className="font-mono text-[11px]">£{Number(r.value).toLocaleString("en-GB")}</span>
-                                  </div>
-                                ))
-                              )}
-                            </button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-[320px] p-3 space-y-2.5 max-h-[70vh] overflow-y-auto" align="end">
-                            <p className="text-xs font-semibold">Costs</p>
+                            ))}
+                            <p className="text-xs font-semibold border-t pt-2">Costs</p>
                             <div className="grid grid-cols-[100px_1fr] items-center gap-2">
                               <Label className="text-xs text-muted-foreground">Quoting Rent</Label>
                               <InlineNumber value={u.askingRent} onSave={v => inlineUpdate(u.id, "askingRent", v)} prefix="£" />
@@ -2325,8 +2302,6 @@ export default function AvailableUnitsPage() {
                               <Flame className="h-3.5 w-3.5" />
                               {interestCounts[u.id] || 0}
                             </Button>
-                          </div>
-                          <div className="flex gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
@@ -2347,6 +2322,8 @@ export default function AvailableUnitsPage() {
                             >
                               <FileBadge className="h-3.5 w-3.5" />
                             </Button>
+                          </div>
+                          <div className="flex gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
@@ -2367,8 +2344,6 @@ export default function AvailableUnitsPage() {
                             >
                               <Sparkles className="h-3.5 w-3.5" />
                             </Button>
-                          </div>
-                          <div className="flex gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
@@ -2393,6 +2368,25 @@ export default function AvailableUnitsPage() {
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
+                            {/* Withdrawn left the Deal Status dropdown
+                                (2026-09-01) — this is the per-row way to
+                                kill a deal; bulk Change Status can revive. */}
+                            {rowCode !== "WIT" && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                                onClick={() => {
+                                  if (confirm(`Withdraw ${u.unitName || "this unit"}? The deal moves to Withdrawn (reversible via bulk Change Status).`)) {
+                                    inlineUpdate(u.id, "marketingStatus", "WIT");
+                                  }
+                                }}
+                                data-testid={`button-withdraw-${u.id}`}
+                                title="Withdraw deal"
+                              >
+                                <Ban className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="sm"
