@@ -80,19 +80,34 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r443 · 2026-09-01 ~17:45 UTC · LIGHT (r442 had the journey) — ROUND IN PROGRESS
-- Provisional heartbeat entry. Bring-up: canonical recipe held 8th
-  consecutive time (qa:pg once → run-smoke restore clean). Regression:
-  smoke GREEN 42/0. Two-bot round 443: exit 0, 232 [ok] scenario lines
-  (victoria/mark/woody/nick/sam), 12 logged issues = the exact standing
-  noise signature (rocketreach 400, invalid-tracker probe 400,
-  brand-gaps/live-intel + commentary-regen 503 keyless, 8×403
-  probe-by-design scope rows). Server log: 0 raw 500/502/504 (one "500"
-  grep hit = news-feed log text, r413 class).
+### r443 · 2026-09-01 ~18:15 UTC · LIGHT (r442 had the journey) — GREEN
+- Bring-up: canonical recipe held 8th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
+  443: exit 0, 232 [ok] scenario lines (victoria/mark/woody/nick/sam),
+  12 logged issues = the exact standing noise signature (rocketreach 400,
+  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
+  keyless, 8×403 probe-by-design scope rows). Server log: 0 raw
+  500/502/504 (one "500" grep hit = news-feed log text, r413 class).
+  0 app bugs.
 - staff-brands-hub-turnover-brands-only (new in r442) PASSED its first
-  full harness run. r440/r438 fixes hold.
-- Remaining this round: phone-overflow-sweep, deferred-bug check, final
-  entry.
+  full harness run. r440's add-unit-dialog + r438's dialog/roll-up fixes
+  hold.
+- MID-ROUND MERGE VERIFIED: heartbeat push collided with a parent-side
+  commit 3fb2741 (shorter target-status labels — Meeting/Inspection/HOTs
+  display map — + tighter tracker column widths, "Existing Tenant" →
+  "Tenant"); merged it in (b237b96) and re-verified the merged tree:
+  tsc clean, phone-overflow-sweep 11/11 routes fit at 390px, targeted
+  tracker check green (desktop 1440px renders 85 rows with single-line
+  "Tenant" header + no pageerrors; /available 390px sw==iw), smoke GREEN
+  42/0 again on FRESH_BUILD.
+- qa/phone-overflow-sweep.mjs ran as part of regression for the first
+  time (per r442 note) — keep it in the round.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: rotation #2 Landsec client desktop (r443 was LIGHT → r444 FULL).
 
 ### r442 · 2026-09-01 ~17:15 UTC · FULL — rotation #1 BGP staff desktop 1440px · 1 bug fixed
 - Bring-up: canonical recipe held 7th consecutive time (qa:pg once →
