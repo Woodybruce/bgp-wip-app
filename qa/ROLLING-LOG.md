@@ -80,6 +80,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r444 · 2026-09-01 ~18:40 UTC · FULL — rotation #2 Landsec client desktop 1440px · ROUND IN PROGRESS
+- Bring-up: canonical recipe held 9th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0.
+- Two-bot round 444 (FIRST full two-bot on the merged c7356c1 tracker-rework
+  tree, per r443 note): exit 0, 232 [ok] scenario lines, 12 logged issues =
+  the exact standing noise signature (rocketreach 400, invalid-tracker probe
+  400, brand-gaps/live-intel + commentary-regen 503 keyless, 8×403
+  probe-by-design scope rows). Server log: 0 raw 500/502/504 (one "500"
+  grep hit = news-feed log text, r413 class). phone-overflow-sweep 11/11
+  routes fit at 390px. Triage: 0 app bugs from the harness.
+- Journey (Mark @1440px, quarterly-review prep: dashboard → Bluewater
+  tenancy schedule → brand slice + self-add brand → brand profile → news
+  → tasks): IN PROGRESS.
+
 ### r443 · 2026-09-01 ~18:15 UTC · LIGHT (r442 had the journey) — GREEN
 - Bring-up: canonical recipe held 8th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
