@@ -3054,6 +3054,7 @@ import dealStagesRouter from "./deal-stages";
 import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
 import propertyPlansRouter from "./property-plans";
+import unitInfoSheetRouter from "./unit-info-sheet";
 import propertyAssetBriefRouter from "./property-asset-brief";
 import { registerPropertyBrochureRoutes } from "./property-brochures";
 import leasingScheduleRouter from "./leasing-schedule";
@@ -4082,6 +4083,7 @@ app.use("/api/branding/assets", express.static(
   app.use(leasingPitchRouter);
   app.use(cadRouter);
   app.use(propertyPlansRouter);
+  app.use(unitInfoSheetRouter);
   app.use(propertyAssetBriefRouter);
 
   await registerRoutes(httpServer, app);

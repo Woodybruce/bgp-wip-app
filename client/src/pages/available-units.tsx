@@ -3602,6 +3602,45 @@ function MarketingFilesDialog({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadCategory, setUploadCategory] = useState<"brochure" | "floorplan" | "photo">("brochure");
+  const [sheetOpts, setSheetOpts] = useState({ floorplans: true, schemePlan: true, brochure: false, photos: true });
+  const [generatingSheet, setGeneratingSheet] = useState(false);
+
+  // Scheme plans live on the property record — count them so the info
+  // sheet tick-box can say what exists.
+  const { data: schemePlansData } = useQuery<{ plans: any[] }>({
+    queryKey: ["/api/properties", unit?.propertyId, "plans"],
+    queryFn: async () => {
+      const r = await fetch(`/api/properties/${unit!.propertyId}/plans`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return { plans: [] };
+      return r.json();
+    },
+    enabled: !!unit?.propertyId,
+    staleTime: 60_000,
+  });
+  const schemePlanCount = schemePlansData?.plans?.length || 0;
+
+  const catOf = (f: UnitMarketingFile) => (((f as any).category === "brochure" && f.mimeType?.startsWith("image/")) ? "photo" : ((f as any).category || "brochure"));
+  const counts = {
+    floorplans: files.filter(f => catOf(f) === "floorplan").length,
+    brochure: files.filter(f => catOf(f) === "brochure" && (f.fileType || "") !== "infosheet").length,
+    photos: files.filter(f => catOf(f) === "photo").length,
+  };
+
+  const generateSheet = useCallback(async () => {
+    if (!unit) return;
+    setGeneratingSheet(true);
+    try {
+      const res = await apiRequest("POST", `/api/available-units/${unit.id}/info-sheet`, sheetOpts);
+      const j = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit.id, "files"] });
+      toast({ title: "Info sheet created", description: `${j.pages} page${j.pages !== 1 ? "s" : ""} — saved to this unit's Files` });
+      if (j.file?.filePath) window.open(`${j.file.filePath}?view=1`, "_blank");
+    } catch (e: any) {
+      toast({ title: "Info sheet failed", description: e.message, variant: "destructive" });
+    } finally {
+      setGeneratingSheet(false);
+    }
+  }, [unit, sheetOpts, toast]);
 
   const uploadFile = useCallback(async (file: globalThis.File) => {
     if (!unit) return;
@@ -3711,6 +3750,36 @@ function MarketingFilesDialog({
             >
               <Sparkles className="h-4 w-4" />
               Create in Doc Studio
+            </Button>
+          </div>
+
+          {/* Info sheet — tick what to include, generate a landlord-branded
+              PDF of the unit particulars for agents/tenants (Woody +
+              Landsec, 2026-09-01). Output saves back into these Files. */}
+          <div className="border rounded-lg p-3 space-y-2" data-testid="info-sheet-panel">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Info sheet</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+              {([
+                ["floorplans", `Unit floor plans (${counts.floorplans})`, counts.floorplans > 0],
+                ["schemePlan", `Scheme plan (${schemePlanCount})`, schemePlanCount > 0],
+                ["brochure", `Brochure (${counts.brochure})`, counts.brochure > 0],
+                ["photos", `Photos (${Math.min(counts.photos, 6)})`, counts.photos > 0],
+              ] as const).map(([key, label, available]) => (
+                <label key={key} className={`flex items-center gap-2 text-xs ${available ? "text-foreground cursor-pointer" : "text-muted-foreground/50"}`}>
+                  <Checkbox
+                    className="h-3.5 w-3.5"
+                    disabled={!available}
+                    checked={available && sheetOpts[key]}
+                    onCheckedChange={(v) => setSheetOpts(o => ({ ...o, [key]: v === true }))}
+                    data-testid={`sheet-inc-${key}`}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+            <Button size="sm" className="w-full gap-2" onClick={generateSheet} disabled={generatingSheet} data-testid="button-generate-info-sheet">
+              <FileText className="h-4 w-4" />
+              {generatingSheet ? "Generating…" : "Generate info sheet PDF"}
             </Button>
           </div>
 
