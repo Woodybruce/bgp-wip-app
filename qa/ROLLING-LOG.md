@@ -80,7 +80,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r436 · 2026-09-01 ~11:45 UTC · FULL (rotation #2 client desktop 1440px) — DB FIX VALIDATED, 1 fix
+### r437 · 2026-09-01 ~12:30 UTC · LIGHT — ROUND IN PROGRESS (provisional)
+- r436 recipe held again: qa:pg once → run-smoke.sh restored clean, no
+  scram failure. Regression: smoke GREEN 42/0 (reused dist build).
+- two-bot round 437 running against tsx dev server on :5000 (bgpsmoke,
+  personas seeded). Interim jsonl shows only probe-by-design 403 rows +
+  keyless 503s so far. Triage + final entry to follow.
+- Also owed this round: one API-level probe of POST
+  /api/available-units/:id/info-sheet — NOTE: no such route exists in this
+  staging clone (grep across repo = 0 hits), so expecting 404; generator
+  likely shipped to JOGQK and is not yet merged into staging.
 - QA:PG PASSWORD FIX WORKED: `npm run qa:pg` once → "postgres role password
   set for host connections" → run-smoke.sh restored the fixture with NO
   scram failure. The 11-round DB blockade (r423–r435) is over; this recipe
