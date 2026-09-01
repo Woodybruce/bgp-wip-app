@@ -80,6 +80,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r440 · 2026-09-01 ~14:45 UTC · FULL — ROUND IN PROGRESS (provisional)
+- Bring-up: canonical recipe held 5th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0.
+- Two-bot round 440: ALL scenarios ok (victoria/mark/woody/nick/sam),
+  12 logged issues, every one a known class: rocketreach 400,
+  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
+  (keyless), 8×403 probe-by-design scope rows. Whole-round server log:
+  0 raw 500/502/504; 403s flat at 1-5 per route. Triage: 0 app bugs.
+- Next in this round: rotation #4 staff mobile 390px journey (tasks,
+  tracker, requirements, deals, calendar). Final entry replaces this one.
+
 ### r439 · 2026-09-01 ~14:10 UTC · LIGHT (r438 had the journey) — GREEN
 - Bring-up: canonical recipe held 4th consecutive time (qa:pg once →
   run-smoke restore clean, no scram failure). Regression: smoke GREEN 42/0.
