@@ -1592,7 +1592,7 @@ export default function AvailableUnitsPage() {
                 <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide px-1 pb-1">Show columns</p>
                 {LETTING_COLS.map((c) => (
                   <label key={c.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-gray-50 cursor-pointer text-xs text-gray-700">
-                    <Checkbox checked={showCol(c.key)} onCheckedChange={() => toggleColVis(c.key)} className="h-3.5 w-3.5" />
+                    <Checkbox checked={showCol(c.key)} onCheckedChange={() => toggleColVis(c.key)} className="h-4 w-4" data-no-min-touch />
                     <span>{c.label}</span>
                   </label>
                 ))}
@@ -3766,8 +3766,12 @@ function MarketingFilesDialog({
                 ["photos", `Photos (${Math.min(counts.photos, 6)})`, counts.photos > 0],
               ] as const).map(([key, label, available]) => (
                 <label key={key} className={`flex items-center gap-2 text-xs ${available ? "text-foreground cursor-pointer" : "text-muted-foreground/50"}`}>
+                  {/* data-no-min-touch: the mobile 44px tap-target rule
+                      ballooned these into tall bars — h-3.5 doesn't match
+                      the rule's h-4 size-class exemption. */}
                   <Checkbox
-                    className="h-3.5 w-3.5"
+                    className="h-4 w-4 shrink-0"
+                    data-no-min-touch
                     disabled={!available}
                     checked={available && sheetOpts[key]}
                     onCheckedChange={(v) => setSheetOpts(o => ({ ...o, [key]: v === true }))}

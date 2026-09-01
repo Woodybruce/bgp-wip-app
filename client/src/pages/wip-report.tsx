@@ -1678,7 +1678,7 @@ export default function WipReport() {
                         <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-1 pb-1">Show columns</p>
                         {WIP_DETAIL_COLS.map((c) => (
                           <label key={c.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-muted cursor-pointer text-xs text-muted-foreground">
-                            <Checkbox checked={showCol(c.key)} onCheckedChange={() => toggleWipCol(c.key)} className="h-3.5 w-3.5" />
+                            <Checkbox checked={showCol(c.key)} onCheckedChange={() => toggleWipCol(c.key)} className="h-4 w-4" data-no-min-touch />
                             <span>{c.label}</span>
                           </label>
                         ))}
