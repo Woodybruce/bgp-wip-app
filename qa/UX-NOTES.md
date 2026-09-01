@@ -16,6 +16,13 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+127. 2026-09-01 · BGP staff / mobile 390px (QA r448) · searching landlords in
+    CRM (Contacts → landlord search) · a query with no hits ("sa") empties
+    the list to a bare blank area — only the small "0 results" counter next
+    to the search box says anything, and on the phone it's easy to miss ·
+    show a proper empty state in the list area ("No landlords match — clear
+    search"), like the contacts card list already has.
+
 126. 2026-09-01 · Landsec client / mobile 390px (QA r446) · opening the full
     Bluewater tenancy schedule on the phone · the page shows two stacked
     headers (the shell's "Tenancy Schedule" bar, then the page's own

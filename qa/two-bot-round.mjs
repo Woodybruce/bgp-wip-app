@@ -532,6 +532,38 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r448: the fullHeight PageLayout header actions row had no flex-wrap, so
+  // Image Studio's Upload button sat entirely off-screen at 390px (clipped,
+  // not scrollable — untappable on a phone). The row wraps now; assert the
+  // Upload button lands inside the viewport.
+  await step(page, p, 'staff-mobile-page-actions-reachable', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/image-studio`, nav);
+      await mob.waitForTimeout(3500);
+      const m = await mob.evaluate(() => {
+        const btn = document.querySelector('[data-testid="button-upload"]');
+        if (!btn) return { missing: true };
+        const r = btn.getBoundingClientRect();
+        return { left: r.left, right: r.right, iw: window.innerWidth };
+      });
+      if (m.missing) throw new Error('Image Studio Upload button not rendered at 390px');
+      if (m.right > m.iw + 4 || m.left < -4) throw new Error(`Image Studio Upload button off-screen at 390px: left ${Math.round(m.left)} right ${Math.round(m.right)} viewport ${m.iw}`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // 4e. The retired Leasing Schedule shows its archived banner and the
   // banner's Letting Tracker link goes somewhere real (it shipped pointing
   // at /available-units, which has no route).

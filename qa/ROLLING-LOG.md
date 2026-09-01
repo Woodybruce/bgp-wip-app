@@ -80,18 +80,54 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r448 · 2026-09-01 ~21:10 UTC · FULL — rotation #4 BGP staff mobile 390px — ROUND IN PROGRESS
-- Provisional heartbeat. Bring-up: canonical recipe held 13th consecutive
-  time (qa:pg once → run-smoke restore clean). Regression: smoke GREEN 42/0.
-  Two-bot round 448 as 3 foreground chunks (QA_PERSONAS victoria / mark /
-  woody,nick,sam + QA_CROSS_FILE, r447 pattern; dev server spawned as a
-  child of a scratchpad node runner — setsid/& stay off the Bash command
-  line): exit 0 all chunks. 12 logged issues = the exact standing noise
-  signature (rocketreach 400, invalid-tracker probe 400, brand-gaps/
-  live-intel + commentary-regen 503 keyless, 8×403 probe-by-design scope
-  rows). Server log: 0 raw 500/502/504. phone-overflow-sweep 11/11 routes
-  fit at 390px. Triage: 0 app bugs.
-- Journey (staff mobile 390px, victoria) still to run this round.
+### r448 · 2026-09-01 ~21:50 UTC · FULL — rotation #4 BGP staff mobile 390px · 2 bugs fixed
+- Bring-up: canonical recipe held 13th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0 ×2 (before, and
+  FRESH_BUILD=1 after the fixes). Two-bot round 448 as 3 foreground chunks
+  (QA_PERSONAS victoria / mark / woody,nick,sam + QA_CROSS_FILE, r447
+  pattern; dev server spawned as a CHILD of a scratchpad node runner —
+  setsid/& never on the Bash command line, works clean): exit 0 all
+  chunks, 12 logged issues = the exact standing noise signature
+  (rocketreach 400, invalid-tracker probe 400, brand-gaps/live-intel +
+  commentary-regen 503 keyless, 8×403 probe-by-design scope rows). Server
+  log: 0 raw 500/502/504. phone-overflow-sweep 11/11 routes fit at 390px.
+  Triage: 0 app bugs from the harness.
+- Journey (Victoria @390px iPhone UA, "evening catch-up on the phone: news
+  scan, find a contact, comps ahead of a pitch, WIP report, Bluewater
+  property page, Image Studio"): home → /news (cards clean) → /contacts
+  (CRM slice, search, Hammerson card → /companies/:id) → /comps →
+  /wip-report → /properties/:bluewater (phone section switcher, ownership
+  panel — renders fine; takes ~3.5s on dev-server first hit, lazy-chunk
+  compile, don't mistake the skeleton for a hang) → /image-studio. 0
+  pageerrors, 0 non-noise 4xx/5xx, no h-overflow anywhere.
+- BUG FIXED 1 (real user impact): fullHeight PageLayout's header-actions
+  row had NO flex-wrap (the non-fullHeight variant has it), so at 390px
+  Image Studio's four action buttons ran past the right edge — Upload sat
+  fully off-screen (rect 466-563px in a 390px viewport), unreachable and
+  not scrollable. Same clipped row on /deals, /properties, /kyc-clouseau
+  (all fullHeight + actions). One-line fix in page-layout.tsx (flex-wrap +
+  sm:flex-shrink-0, matching the other variant). Verified live: Upload on
+  screen at 390px, tap opens the dialog; deals/wip still sw==iw. NOTE:
+  phone-overflow-sweep can never catch this class — clipped content
+  doesn't extend scrollWidth. New two-bot scenario
+  staff-mobile-page-actions-reachable locks it (Upload bounding rect
+  inside viewport); assertion logic verified live pre-commit, watch its
+  first full harness run r449.
+- BUG FIXED 2 (micro): WIP Report title wrapped "WIP Report — | National
+  Leasing" at 390px, orphaning the em dash at the end of line 1 —
+  whitespace-nowrap on the team-label span (wip-report.tsx) so "— National
+  Leasing" wraps as a unit. Verified live.
+- NOT bugs: "BGP CLIENTS 0" chip on CRM (fixture landlords are all plain
+  company_type='Landlord', is_portfolio_account=false — prod Landsec
+  carries the flag); /property/:id 404 (real route is /properties/:id);
+  comps list showing this round's QA-COMP probe (purged next round, r442
+  precedent).
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 127
+  (CRM landlord search 0-hit state is a blank area on the phone).
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- New flakes: none. tsc clean, FRESH_BUILD smoke re-green post-fix.
+- Next: r448 had the journey → r449 LIGHT; then rotation #1 staff desktop.
 
 ### r447 · 2026-09-01 ~22:20 UTC · LIGHT (r446 had the journey) — GREEN
 - Bring-up: canonical recipe held 12th consecutive time (qa:pg once →

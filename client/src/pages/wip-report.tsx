@@ -1360,7 +1360,7 @@ export default function WipReport() {
                       ? (activeTeam === "all" ? "All Teams" : activeTeam)
                       : wipUserTeam;
                 return teamLabel ? (
-                  <span className="text-base font-normal text-muted-foreground ml-2">— {teamLabel}</span>
+                  <span className="text-base font-normal text-muted-foreground ml-2 whitespace-nowrap">— {teamLabel}</span>
                 ) : null;
               })()}
             </h1>
