@@ -80,6 +80,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r450 · 2026-09-01 ~23:40 UTC · FULL (rotation #1 staff desktop 1440px) — ROUND IN PROGRESS
+- Provisional heartbeat entry. Bring-up: canonical recipe held 15th
+  consecutive time (qa:pg once → run-smoke restore clean). Regression:
+  smoke GREEN 42/0. Two-bot round 450 as 3 foreground chunks (r447
+  pattern, dev-server stdio to a FILE per r449 rule): victoria / mark /
+  woody,nick,sam all exit 0; 12 logged issues = the exact standing noise
+  signature (rocketreach 400, invalid-tracker probe 400, brand-gaps/
+  live-intel + commentary-regen 503 keyless, 8×403 probe-by-design scope
+  rows). Server logs: 0 raw 500/502/504 (one grep hit = news-feed log
+  text, r413 class). phone-overflow-sweep 11/11 routes fit at 390px.
+  Triage: 0 app bugs from the harness.
+- Journey (staff desktop 1440px, Victoria, tracker/WIP surfaces) to follow;
+  final entry replaces this one.
+
 ### r449 · 2026-09-01 ~22:50 UTC · LIGHT (r448 had the journey) — GREEN
 - Bring-up: canonical recipe held 14th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round 449
