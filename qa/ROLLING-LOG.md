@@ -80,6 +80,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r442 · 2026-09-01 ~16:30 UTC · FULL (rotation #1 staff desktop 1440px) — ROUND IN PROGRESS
+- Provisional heartbeat. Bring-up: canonical recipe held 7th consecutive
+  time (qa:pg once → run-smoke restore clean). Regression: smoke GREEN 42/0.
+- Two-bot round 442: running (214+ steps ok at heartbeat, no failures
+  printed yet). Triage to follow.
+- Harness growth (parent request, this round): NEW qa/phone-overflow-sweep.mjs
+  — staff login at iPhone 13 width (390px, mobile UA+touch), SPA-navigates
+  /, /deals, /deals/list, /deals/letting, /deals/investment,
+  /deals/properties, /brands, /contacts, /news, /tasks, /wip-report and
+  asserts documentElement.scrollWidth <= innerWidth per route; reports the
+  widest offender on failure, exit non-zero on any failure. First run +
+  result later this round.
+- Journey planned: Victoria @1440px "afternoon deal-push" (WIP report →
+  deals board → deal detail → brand profile pitch prep → contacts → news →
+  Image Studio).
+
 ### r441 · 2026-09-01 ~15:50 UTC · LIGHT (r440 had the journey) — GREEN
 - Bring-up: canonical recipe held 6th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0.
