@@ -80,26 +80,35 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r447 · 2026-09-01 ~22:05 UTC · LIGHT (r446 had the journey) — ROUND IN PROGRESS
-- Provisional heartbeat. Bring-up: canonical recipe held 12th consecutive
-  time (qa:pg once → run-smoke restore clean). Regression: smoke GREEN
-  42/0. Two-bot round 447 ran on the MERGED tracker-filler-column tree
-  (4da9811/446ed73, per r446 note) — FIRST full two-bot on it: exit 0
-  across all chunks, 232 [ok] scenario lines (victoria/mark/woody/nick/
-  sam), 12 logged issues = the exact standing noise signature (rocketreach
-  400, invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen
-  503 keyless, 8×403 probe-by-design scope rows). Server logs: 0 raw
-  500/502/504 (only news-feed text / port line / UUID substring grep hits).
+### r447 · 2026-09-01 ~22:20 UTC · LIGHT (r446 had the journey) — GREEN
+- Bring-up: canonical recipe held 12th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
+  447 ran on the MERGED tracker-filler-column tree (4da9811/446ed73, per
+  r446 note) — FIRST full two-bot on it: exit 0 across all chunks, 232
+  [ok] scenario lines (victoria/mark/woody/nick/sam), 12 logged issues =
+  the exact standing noise signature (rocketreach 400, invalid-tracker
+  probe 400, brand-gaps/live-intel + commentary-regen 503 keyless, 8×403
+  probe-by-design scope rows). Server logs: 0 raw 500/502/504 (only
+  news-feed text / port line / UUID substring grep hits).
   phone-overflow-sweep 11/11 routes fit at 390px. Triage: 0 app bugs.
+- r437 OPEN FLAG RESOLVED: the unit info-sheet generator is now in staging
+  (server/unit-info-sheet.ts, arrived via the JOGQK merges) and
+  client-info-sheet-roundtrip PASSED at runtime this round (own unit 200 +
+  sane page count, rival unit gated). No re-probe owed.
 - Harness change (infra, this round): setsid/background launches are now
   classifier-blocked, so the r445 "wrapper that outlives the Bash window"
   pattern is dead. two-bot-round.mjs grew QA_PERSONAS (persona-list env
-  filter) + QA_CROSS_FILE (persists the shared `cross` state as JSON)
-  so the round runs as 3 foreground chunks — victoria / mark /
-  woody,nick,sam — each under the 600s exec cap with its own dev-server
-  boot (same DB, so cross-checks still line up). Default behaviour
-  unchanged (no env vars = all personas, no cross file).
-- Final entry to follow (deferred-bug pass; no journey — LIGHT). · 2026-09-01 ~20:50 UTC · FULL — rotation #3 Landsec client mobile 390px — GREEN
+  filter) + QA_CROSS_FILE (persists the shared `cross` state as JSON) so
+  the round runs as 3 foreground chunks — victoria / mark / woody,nick,sam
+  — each under the 600s exec cap with its own dev-server boot (same DB, so
+  cross-checks still line up). Default behaviour unchanged (no env vars =
+  all personas, no cross file). Chunk [ok] split this round: 64/150/18.
+- No journey (LIGHT). No deferred bugs to pick up (r446 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey this round). New flakes: none.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r447 was LIGHT → r448 FULL, rotation #4 BGP staff mobile 390px. · 2026-09-01 ~20:50 UTC · FULL — rotation #3 Landsec client mobile 390px — GREEN
 - Bring-up: canonical recipe held 11th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
   446: exit 0, 232 [ok] scenario lines (victoria/mark/woody/nick/sam),
