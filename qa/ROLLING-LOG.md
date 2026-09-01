@@ -80,6 +80,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r448 · 2026-09-01 ~21:10 UTC · FULL — rotation #4 BGP staff mobile 390px — ROUND IN PROGRESS
+- Provisional heartbeat. Bring-up: canonical recipe held 13th consecutive
+  time (qa:pg once → run-smoke restore clean). Regression: smoke GREEN 42/0.
+  Two-bot round 448 as 3 foreground chunks (QA_PERSONAS victoria / mark /
+  woody,nick,sam + QA_CROSS_FILE, r447 pattern; dev server spawned as a
+  child of a scratchpad node runner — setsid/& stay off the Bash command
+  line): exit 0 all chunks. 12 logged issues = the exact standing noise
+  signature (rocketreach 400, invalid-tracker probe 400, brand-gaps/
+  live-intel + commentary-regen 503 keyless, 8×403 probe-by-design scope
+  rows). Server log: 0 raw 500/502/504. phone-overflow-sweep 11/11 routes
+  fit at 390px. Triage: 0 app bugs.
+- Journey (staff mobile 390px, victoria) still to run this round.
+
 ### r447 · 2026-09-01 ~22:20 UTC · LIGHT (r446 had the journey) — GREEN
 - Bring-up: canonical recipe held 12th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
@@ -108,7 +121,9 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
   L130 ×2). Suggestions: none (no journey this round). New flakes: none.
   Real-device keyboard-up composer check (r405) still open for Woody.
-- Next: r447 was LIGHT → r448 FULL, rotation #4 BGP staff mobile 390px. · 2026-09-01 ~20:50 UTC · FULL — rotation #3 Landsec client mobile 390px — GREEN
+- Next: r447 was LIGHT → r448 FULL, rotation #4 BGP staff mobile 390px.
+
+### r446 · 2026-09-01 ~20:50 UTC · FULL — rotation #3 Landsec client mobile 390px — GREEN
 - Bring-up: canonical recipe held 11th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
   446: exit 0, 232 [ok] scenario lines (victoria/mark/woody/nick/sam),
