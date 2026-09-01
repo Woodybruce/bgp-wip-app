@@ -2844,6 +2844,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.get("/api/crm/properties/:id/agents", async (req, res) => {
     try {
+      // Clients may read the agent list on their OWN properties only (the
+      // "who do I chase" list); rival property IDs stay sealed.
+      if (await isClientRequestUser(req)) {
+        const scope = await resolveCompanyScope(req);
+        if (!scope || !(await isPropertyInScope(scope, req.params.id))) {
+          return res.status(403).json({ error: "Not available for client accounts" });
+        }
+      }
       const links = await db.select().from(crmPropertyAgents).where(eq(crmPropertyAgents.propertyId, req.params.id));
       const userIds = links.map(l => l.userId).filter(Boolean);
       if (userIds.length === 0) return res.json([]);

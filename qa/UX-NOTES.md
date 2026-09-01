@@ -16,6 +16,27 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+121. 2026-09-01 · Landsec client / desktop 1440px (QA r436) · "see how my
+    Bluewater lettings are progressing" · property page header metadata
+    (Status, Asset Class, BGP Team, Website, Area) all rendered as bare
+    em-dashes on the fixture — five "—" fields at the very top make the page
+    look unfinished to a client · hide unset header fields (or collapse the
+    block) instead of printing dash placeholders.
+
+120. 2026-09-01 · Landsec client / desktop 1440px (QA r436) · scanning the
+    Letting Tracker for progress · every Available row shows two adjacent
+    pills that both read "Available" (Unit Status + Deal Status) — across 75
+    rows the duplication is noise and hides the rows where the two actually
+    differ · collapse to one pill when the values match, or visually
+    de-emphasise the duplicate.
+
+119. 2026-09-01 · Landsec client / desktop 1440px (QA r436) · followed a
+    /turnover link while logged in as a client · the client shell doesn't
+    register the route, so the app silently bounced to the dashboard — no
+    message, looks like a broken link (the /api/turnover data itself is
+    correctly slice-scoped) · show a "not available for client accounts"
+    notice (or a client turnover slice page) instead of a silent redirect.
+
 118. 2026-08-29 · Landsec client / ChatBGP (QA r426, code review — no browser
     this round) · "ask ChatBGP how my F&B tenants at Bluewater are trading" ·
     query_turnover was reachable from client chat but read the WHOLE turnover

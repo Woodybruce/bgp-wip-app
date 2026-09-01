@@ -3696,7 +3696,10 @@ app.use("/api/branding/assets", express.static(
     // them to the caller's own portfolio (same pattern as property-agents).
     /^\/api\/crm\/(contact-property-links|contact-deal-links|contact-requirement-links|company-deal-links)\b/,
     /^\/api\/crm\/companies\/[^/]+\/trading-entities/,
-    /^\/api\/crm\/properties\/[^/]+\/agents/,
+    // properties/:id/agents is no longer blocked: the handler serves the
+    // client-safe display projection and scope-checks the property (the
+    // "who do I chase" agent list); writes stay staff-only via the write
+    // allowlist (no /api/crm/properties entry there).
     // all-viewings / all-offers (+counts) are now SCOPED per caller in
     // routes.ts, so clients get letting activity on their OWN units — the
     // tracker's viewings/offers controls need them to render. matches is
