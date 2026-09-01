@@ -77,6 +77,11 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
   visibleCols?: { status?: boolean; category?: boolean; priority?: boolean; agent?: boolean; client?: boolean; comments?: boolean };
 }) {
   const vis = { status: true, category: true, priority: true, agent: true, client: true, comments: true, ...(visibleCols || {}) };
+  // Unlinked operators (free-text, no CRM brand) render plain — clicking
+  // one opens a brand search seeded with the name to link or create it
+  // (Woody, 2026-09-01: "Sticks and Sushi … are black … can have ability
+  // to create a brand or edit when I click one?").
+  const [linkingBrand, setLinkingBrand] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -170,11 +175,35 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
     <>
       <TableCell className="text-xs font-medium">
         <div className="flex items-center gap-1">
+          {!t.companyId && linkingBrand ? (
+            <BrandSearchInput
+              className="h-6 w-[160px] text-[11px]"
+              placeholder="Link or create brand…"
+              value=""
+              allowCreate
+              openOnMount
+              initialQuery={t.operatorName || ""}
+              onPick={p => {
+                setLinkingBrand(false);
+                if (p.companyId) patchTarget({ companyId: p.companyId, operatorName: p.name });
+              }}
+              testId={`link-brand-${t.id}`}
+            />
+          ) : (
           <span className="truncate">
             {t.companyId ? (
               <a href={`/companies/${t.companyId}`} className="hover:underline text-primary">{t.operatorName}</a>
-            ) : t.operatorName}
+            ) : (
+              <button
+                type="button"
+                className="text-left hover:underline underline-offset-2 decoration-dotted"
+                title={`"${t.operatorName}" isn't in the brand list — click to link or create it`}
+                onClick={() => setLinkingBrand(true)}
+                data-testid={`button-link-brand-${t.id}`}
+              >{t.operatorName}</button>
+            )}
           </span>
+          )}
           {showDelete && (
             <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 opacity-40 hover:opacity-100" onClick={deleteTarget} data-testid={`button-delete-target-${t.id}`}>
               <Trash2 className="h-3 w-3 text-muted-foreground" />

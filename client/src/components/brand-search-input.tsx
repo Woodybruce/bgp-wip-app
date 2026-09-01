@@ -21,7 +21,7 @@ export interface BrandPick {
   companyType?: string | null;
 }
 
-export function BrandSearchInput({ value, companyId, onPick, placeholder = "Search brands…", className = "", testId, allowCreate = false, iconOnly = false, inline = false }: {
+export function BrandSearchInput({ value, companyId, onPick, placeholder = "Search brands…", className = "", testId, allowCreate = false, iconOnly = false, inline = false, openOnMount = false, initialQuery = "" }: {
   value: string;
   companyId?: string | null;
   onPick: (pick: BrandPick) => void;
@@ -33,9 +33,15 @@ export function BrandSearchInput({ value, companyId, onPick, placeholder = "Sear
   iconOnly?: boolean;
   /** Render the dropdown inline (no Popover portal) — required inside Radix Dialogs. */
   inline?: boolean;
+  /** Open the search immediately on mount — for click-to-link flows where
+      the trigger click already happened on the calling side. */
+  openOnMount?: boolean;
+  /** Seed the search box (e.g. the unlinked operator name) so matches and
+      the create row show without retyping. */
+  initialQuery?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(!!openOnMount);
+  const [query, setQuery] = useState(initialQuery);
   const [creating, setCreating] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();

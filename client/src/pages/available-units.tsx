@@ -46,7 +46,6 @@ import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { TargetRowCells, LETTING_CATEGORIES, targetStatusLabel } from "@/components/target-operators-table";
 import { useTeam } from "@/lib/team-context";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
-import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
@@ -61,6 +60,13 @@ import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-all
 
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 const MARKETING_STATUSES = LETTING_STATUSES;
+// The per-row Deal Status dropdown offers the deal pipeline only (Woody,
+// 2026-09-01): Opportunity/Available belong to Unit Status, Withdrawn moved
+// to the bulk Change Status menu (historic WIT rows keep their chip). AVA
+// reads as "Marketing" on this board — same stored code (legacyToCode
+// already maps "marketing" → AVA), so WIP / deals boards are untouched.
+const DEAL_PIPELINE_STATUSES: DealStatusCode[] = ["AVA", "NEG", "HOT", "SOL", "EXC", "COM", "INV"];
+const DEAL_PIPELINE_LABELS: Record<string, string> = { ...DEAL_STATUS_LABELS, AVA: "Marketing" };
 // Feedback (2026-08-14): a unit itself is only ever an Opportunity or
 // Available — everything past that (NEG/HOT/SOL/…) is the DEAL's status,
 // which drives the boards. The unit-stage select offers just these two;
@@ -345,14 +351,9 @@ export default function AvailableUnitsPage() {
     { key: "category", label: "Category" },
     { key: "priority", label: "Priority" },
     { key: "agent", label: "Agent" },
-    { key: "clientContact", label: "Client Contact" },
     { key: "comments", label: "Comments" },
     { key: "floorAreas", label: "Floor Areas" },
     { key: "costs", label: "Costs" },
-    { key: "dealType", label: "Deal Type" },
-    { key: "activity", label: "Activity" },
-    { key: "files", label: "Files" },
-    { key: "brief", label: "Brief" },
   ];
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(localStorage.getItem("bgp_letting_hidden_cols") || "[]")); } catch { return new Set(); }
@@ -687,7 +688,7 @@ export default function AvailableUnitsPage() {
   // client logins, staff viewing-as-client, the sidebar team switched to a
   // client team (Landsec), or the toolbar team filter set to one: every
   // row is that client, so the column says nothing.
-  const targetBlockSpan = 1 + ["dealStatus", "category", "priority", "agent", "clientContact", "comments"].filter((k) => showCol(k)).length;
+  const targetBlockSpan = 1 + ["dealStatus", "category", "priority", "agent", "comments"].filter((k) => showCol(k)).length;
   const hideClientCol = isClientTracker
     || !!(auUser as any)?.companyScopeId
     || !!teamFilteredPropertyIds
@@ -1818,21 +1819,16 @@ export default function AvailableUnitsPage() {
                 {showCol("category") && <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>}
                 {showCol("priority") && <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>}
                 {showCol("agent") && <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>}
-                {showCol("clientContact") && <TableHead className="w-[140px] min-w-[140px]">Client Contact</TableHead>}
                 {showCol("comments") && <TableHead className="min-w-[200px]">Comments</TableHead>}
                 {showCol("floorAreas") && <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>}
                 {showCol("costs") && <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>}
-                {showCol("dealType") && <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>}
-                {showCol("activity") && <TableHead className="w-[100px] min-w-[100px] text-center">Activity</TableHead>}
-                {showCol("files") && <TableHead className="w-[90px] min-w-[90px]">Files</TableHead>}
-                {showCol("brief") && <TableHead className="w-[90px] min-w-[90px]">Brief</TableHead>}
-                <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
+                <TableHead className="w-[140px] min-w-[140px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "floorAreas", "costs"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1854,7 +1850,7 @@ export default function AvailableUnitsPage() {
                     <Fragment key={u.id}>
                     {viewAll && rowCode !== prevRowCode && (
                       <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
-                        <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
+                        <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "floorAreas", "costs"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
                           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
                             <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
                             {DEAL_STATUS_LABELS[rowCode]}
@@ -1976,12 +1972,34 @@ export default function AvailableUnitsPage() {
                       </TableCell>
                       {showCol("existingTenant") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[150px]">
+                        {/* The name itself is derived from the tenancy
+                            schedule (read-only) — but if it isn't a CRM
+                            brand yet, the + adds it (Woody, 2026-09-01). */}
                         {(() => {
                           const et = String((u as any).existingTenant || "").trim();
                           const vacant = !et || /^vacant$/i.test(et);
-                          return vacant
-                            ? <span className="text-xs text-muted-foreground italic">Vacant</span>
-                            : <span className="text-xs truncate block" title={et}>{et}</span>;
+                          if (vacant) return <span className="text-xs text-muted-foreground italic">Vacant</span>;
+                          const match = crmCompanies.find(c => (c.name || "").trim().toLowerCase() === et.toLowerCase());
+                          return (
+                            <span className="text-xs truncate flex items-center gap-1 group/et" title={et}>
+                              {match ? (
+                                <a href={`/companies/${match.id}`} className="truncate hover:underline text-primary">{et}</a>
+                              ) : (
+                                <>
+                                  <span className="truncate">{et}</span>
+                                  <button
+                                    type="button"
+                                    className="p-0.5 rounded shrink-0 opacity-0 group-hover/et:opacity-60 hover:!opacity-100 transition-opacity"
+                                    title={`Add "${et}" to the brand list`}
+                                    onClick={() => createCompany(et)}
+                                    data-testid={`button-add-existing-tenant-brand-${u.id}`}
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                  </button>
+                                </>
+                              )}
+                            </span>
+                          );
                         })()}
                       </TableCell>
                       )}
@@ -2014,16 +2032,17 @@ export default function AvailableUnitsPage() {
                       <TableCell rowSpan={unitRowSpan} className="px-1.5">
                         <InlineLabelSelect
                           value={rowCode}
-                          options={MARKETING_STATUSES}
+                          options={DEAL_PIPELINE_STATUSES}
                           colorMap={STATUS_LABEL_COLORS}
-                          labelMap={DEAL_STATUS_LABELS}
+                          labelMap={DEAL_PIPELINE_LABELS}
                           onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
                           allowClear={false}
                         />
                       </TableCell>
                       )}
                       {!hideClientCol && showCol("client") && (
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[140px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[150px]">
+                        <div className="flex flex-col gap-0.5">
                         {deal ? (() => {
                           const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");
                           const field = isTenantRep ? "tenantId" : "landlordId";
@@ -2051,6 +2070,14 @@ export default function AvailableUnitsPage() {
                             placeholder="Link client"
                           />
                         )}
+                        {/* Client contact folded under the company (Woody,
+                            2026-09-01) — stored on the unit's targets. */}
+                        <UnitClientContactLine
+                          targets={unitTargets}
+                          clientCompanyId={unitClientCompanyId}
+                          onChanged={() => invalidateBriefs(u.id)}
+                        />
+                        </div>
                       </TableCell>
                       )}
                       {unitTargets.length === 0 ? (
@@ -2092,7 +2119,7 @@ export default function AvailableUnitsPage() {
                           target={unitTargets[0]}
                           clientCompanyId={unitClientCompanyId}
                           onChanged={() => invalidateBriefs(u.id)}
-                          visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: showCol("clientContact"), comments: showCol("comments") }}
+                          visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: false, comments: showCol("comments") }}
                           operatorExtra={
                             <BrandSearchInput
                               iconOnly
@@ -2251,171 +2278,129 @@ export default function AvailableUnitsPage() {
                         </Popover>
                       </TableCell>
                       )}
-                      {showCol("dealType") && (
-                      <TableCell rowSpan={unitRowSpan}>
-                        {/* No backing deal yet → still editable: the unit
-                            PATCH auto-creates the deal when a type is set,
-                            so this cell can never be a dead dash. */}
-                        <InlineLabelSelect
-                          value={deal?.dealType || null}
-                          options={CRM_OPTIONS.dealType}
-                          colorMap={DEAL_TYPE_COLORS}
-                          onSave={(v) => {
-                            if (deal) dealInlineUpdate.mutate({ id: deal.id, field: "dealType", value: v || null });
-                            else if (v) inlineUpdate(u.id, "dealType", v);
-                          }}
-                        />
-                      </TableCell>
-                      )}
-                      {showCol("activity") && (
-                      <TableCell rowSpan={unitRowSpan} className="text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs gap-1"
-                            onClick={() => setViewingsUnit(u)}
-                            title="Viewings"
-                            data-testid={`button-viewings-${u.id}`}
-                          >
-                            <CalendarDays className="h-3.5 w-3.5" />
-                            {viewingsCounts[u.id] || 0}
-                          </Button>
-                          <span className="text-[9px] text-muted-foreground/60">·</span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs gap-1"
-                            onClick={() => setOffersUnit(u)}
-                            title="Offers"
-                            data-testid={`button-offers-${u.id}`}
-                          >
-                            <HandCoins className="h-3.5 w-3.5" />
-                            {offersCounts[u.id] || 0}
-                          </Button>
-                          <span className="text-[9px] text-muted-foreground/60">·</span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs gap-1"
-                            onClick={() => setInterestUnit(u)}
-                            title="Interest — brands who've expressed interest by email"
-                            data-testid={`button-interest-${u.id}`}
-                          >
-                            <Flame className="h-3.5 w-3.5" />
-                            {interestCounts[u.id] || 0}
-                          </Button>
-                        </div>
-                      </TableCell>
-                      )}
-                      {showCol("files") && (
-                      <TableCell rowSpan={unitRowSpan}>
-                        <div className="flex flex-col items-start">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs gap-1"
-                          onClick={() => setFilesUnit(u)}
-                          data-testid={`button-files-${u.id}`}
-                        >
-                          <FileText className="h-3.5 w-3.5" />
-                          Files
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs gap-1"
-                          onClick={() => setHotsUnit(u)}
-                          title="Heads of Terms"
-                          data-testid={`button-hots-${u.id}`}
-                        >
-                          <FileBadge className="h-3.5 w-3.5" />
-                          HOTs
-                        </Button>
-                        </div>
-                      </TableCell>
-                      )}
-                      {showCol("brief") && (
-                      <TableCell rowSpan={unitRowSpan}>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs gap-1"
-                          onClick={() => setBriefUnit(u)}
-                          data-testid={`button-brief-${u.id}`}
-                        >
-                          <Target className="h-3.5 w-3.5" />
-                          Brief
-                        </Button>
-                      </TableCell>
-                      )}
+                      {/* Deal Type column dropped (Woody, 2026-09-01: "it's a
+                          letting tracker, they are all lettings") — the type
+                          still sets from the unit form / deal page. */}
                       <TableCell rowSpan={unitRowSpan} className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
-                        <div className="flex gap-1">
-                          {/* Viewing/Offer also live in the activity column,
-                              which scrolls off-screen at 1440px — keep a way
-                              to log them in the pinned cluster (UX #100). */}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                            onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }}
-                            data-testid={`button-log-viewing-${u.id}`}
-                            title="Log a viewing"
-                          >
-                            <CalendarDays className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                            onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }}
-                            data-testid={`button-log-offer-${u.id}`}
-                            title="Log an offer"
-                          >
-                            <HandCoins className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                            onClick={() => setMatchItem(u)}
-                            data-testid={`button-match-${u.id}`}
-                            title="Find matching requirements"
-                          >
-                            <Sparkles className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0"
-                            onClick={() => {
-                              const pName = propertyMap[u.propertyId]?.name || "the property";
-                              const prompt = `Tell me about unit ${u.unitName || u.id} at ${pName} — current letting status, targeting and anything relevant from the CRM.`;
-                              window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
-                            }}
-                            data-testid={`button-ask-ai-${u.id}`}
-                            title="Ask ChatBGP about this unit"
-                          >
-                            <MessageSquare className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0"
-                            onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
-                            data-testid={`button-edit-${u.id}`}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0 text-destructive"
-                            onClick={() => setDeleteItem(u)}
-                            data-testid={`button-delete-${u.id}`}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
+                        {/* Everything actionable in one pinned cluster —
+                            activity counts, files/HOTs/brief and row actions
+                            (Woody, 2026-09-01 "all in one"; supersedes the
+                            separate Activity/Files/Brief columns + UX #100).
+                            Counts open the list dialogs; adding lives inside. */}
+                        <div className="flex flex-col gap-0.5 items-start">
+                          <div className="flex gap-0.5">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
+                              onClick={() => setViewingsUnit(u)}
+                              title="Viewings"
+                              data-testid={`button-viewings-${u.id}`}
+                            >
+                              <CalendarDays className="h-3.5 w-3.5" />
+                              {viewingsCounts[u.id] || 0}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
+                              onClick={() => setOffersUnit(u)}
+                              title="Offers"
+                              data-testid={`button-offers-${u.id}`}
+                            >
+                              <HandCoins className="h-3.5 w-3.5" />
+                              {offersCounts[u.id] || 0}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
+                              onClick={() => setInterestUnit(u)}
+                              title="Interest — brands who've expressed interest by email"
+                              data-testid={`button-interest-${u.id}`}
+                            >
+                              <Flame className="h-3.5 w-3.5" />
+                              {interestCounts[u.id] || 0}
+                            </Button>
+                          </div>
+                          <div className="flex gap-0.5">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => setFilesUnit(u)}
+                              title="Files — brochures, floor plans, photos, info sheet"
+                              data-testid={`button-files-${u.id}`}
+                            >
+                              <FileText className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => setHotsUnit(u)}
+                              title="Heads of Terms"
+                              data-testid={`button-hots-${u.id}`}
+                            >
+                              <FileBadge className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => setBriefUnit(u)}
+                              title="Targeting brief"
+                              data-testid={`button-brief-${u.id}`}
+                            >
+                              <Target className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                          <div className="flex gap-0.5">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => setMatchItem(u)}
+                              data-testid={`button-match-${u.id}`}
+                              title="Find matching requirements"
+                            >
+                              <Sparkles className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0"
+                              onClick={() => {
+                                const pName = propertyMap[u.propertyId]?.name || "the property";
+                                const prompt = `Tell me about unit ${u.unitName || u.id} at ${pName} — current letting status, targeting and anything relevant from the CRM.`;
+                                window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
+                              }}
+                              data-testid={`button-ask-ai-${u.id}`}
+                              title="Ask ChatBGP about this unit"
+                            >
+                              <MessageSquare className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0"
+                              onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
+                              data-testid={`button-edit-${u.id}`}
+                              title="Edit unit form (everything is also editable in the row)"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-destructive"
+                              onClick={() => setDeleteItem(u)}
+                              data-testid={`button-delete-${u.id}`}
+                              title="Delete unit"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -2425,7 +2410,7 @@ export default function AvailableUnitsPage() {
                           target={t}
                           clientCompanyId={unitClientCompanyId}
                           onChanged={() => invalidateBriefs(u.id)}
-                          visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: showCol("clientContact"), comments: showCol("comments") }}
+                          visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: false, comments: showCol("comments") }}
                         />
                       </TableRow>
                     ))}
@@ -3588,6 +3573,65 @@ function UnitMatchesDialog({ unit, onClose }: { unit: AvailableUnit | null; onCl
         </ScrollArea>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Client company + client-side contact merged into one column (Woody,
+// 2026-09-01 "combine the client with the client contact"). The contact is
+// stored per target (unit_brief_targets.clientContactId) — this line shows
+// the first target's contact and saves to every target so the unit reads as
+// one client line. Hidden until the unit has a target to store it on.
+function UnitClientContactLine({ targets, clientCompanyId, onChanged }: {
+  targets: any[];
+  clientCompanyId: string | null;
+  onChanged: () => void;
+}) {
+  const { toast } = useToast();
+  const { data: clientContacts = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/contacts", "by-company", clientCompanyId],
+    queryFn: async () => {
+      const r = await fetch(`/api/crm/contacts?companyId=${clientCompanyId}&limit=500`, { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      const d = await r.json();
+      return Array.isArray(d) ? d : (d.contacts || []);
+    },
+    enabled: !!clientCompanyId && targets.length > 0,
+    staleTime: 60_000,
+  });
+  const current = targets.find((t: any) => t.clientContactId)?.clientContactId || null;
+  const options = useMemo(() => {
+    const all = clientContacts
+      .map((c: any) => ({ id: String(c.id), name: c.name || [c.firstName, c.lastName].filter(Boolean).join(" "), role: String(c.role || "").trim().toLowerCase() }))
+      .filter(c => c.name);
+    // Directors only where the client has them — same rule as the old
+    // Client Contact column (Woody, 2026-08-04).
+    const directors = all.filter(c => c.role === "director");
+    let pool = directors.length > 0 ? directors : all;
+    if (current && !pool.some(c => c.id === String(current))) {
+      const cur = all.find(c => c.id === String(current));
+      if (cur) pool = [...pool, cur];
+    }
+    return pool.map(({ id, name }) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [clientContacts, current]);
+  if (!clientCompanyId || targets.length === 0) return null;
+  const save = async (v: string | null) => {
+    try {
+      await Promise.all(targets.map((t: any) => apiRequest("PATCH", `/api/unit-briefs/targets/${t.id}`, { clientContactId: v })));
+      onChanged();
+    } catch (e: any) {
+      toast({ title: "Couldn't update client contact", description: e?.message, variant: "destructive" });
+    }
+  };
+  return (
+    <div className="text-xs text-muted-foreground">
+      <InlineLinkSelect
+        value={current}
+        options={options}
+        href={current ? `/contacts/${current}` : undefined}
+        onSave={save}
+        placeholder="Link contact"
+      />
+    </div>
   );
 }
 
