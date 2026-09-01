@@ -80,16 +80,29 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r437 · 2026-09-01 ~12:30 UTC · LIGHT — ROUND IN PROGRESS (provisional)
-- r436 recipe held again: qa:pg once → run-smoke.sh restored clean, no
-  scram failure. Regression: smoke GREEN 42/0 (reused dist build).
-- two-bot round 437 running against tsx dev server on :5000 (bgpsmoke,
-  personas seeded). Interim jsonl shows only probe-by-design 403 rows +
-  keyless 503s so far. Triage + final entry to follow.
-- Also owed this round: one API-level probe of POST
-  /api/available-units/:id/info-sheet — NOTE: no such route exists in this
-  staging clone (grep across repo = 0 hits), so expecting 404; generator
-  likely shipped to JOGQK and is not yet merged into staging.
+### r437 · 2026-09-01 ~12:45 UTC · LIGHT (r436 had the journey) — GREEN
+- r436 canonical recipe held again, second consecutive clean bring-up:
+  qa:pg once → run-smoke.sh restored with no scram failure. Regression:
+  smoke GREEN 42/0. Two-bot round 437: ALL scenarios ok (victoria/mark/
+  woody/nick/sam), 12 logged issues, every one a known class: rocketreach
+  400, invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen
+  503 (keyless), 8×403 all probe-by-design scope rows (agents rival-403,
+  staff-boards, link-dumps, turnover-scope — the r424-r427+r436 gates all
+  hold at runtime). Server log for the whole round: 0 raw 500/502/504;
+  403s flat at 1-3 per route (no storm). 0 app bugs.
+- Info-sheet check (per brief): POST /api/available-units/:id/info-sheet
+  on fixture unit 99999999-3333… as staff → HTTP 404 {"message":"Not
+  found"}. The route exists NOWHERE in this staging clone (repo-wide grep
+  0 hits) — the generator shipped to JOGQK only and is NOT in staging yet.
+  FLAG for parent/Woody: merge JOGQK → staging so rounds can cover it;
+  until then rounds can't test it (no fetch allowed in-session).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey this round).
+- New flakes: none. Real-device keyboard-up composer check (r405) still
+  open for Woody.
+- Next: rotation #3 Landsec client mobile 390px (r437 was LIGHT → r438
+  FULL); re-probe info-sheet once staging has the JOGQK merge.
 - QA:PG PASSWORD FIX WORKED: `npm run qa:pg` once → "postgres role password
   set for host connections" → run-smoke.sh restored the fixture with NO
   scram failure. The 11-round DB blockade (r423–r435) is over; this recipe
