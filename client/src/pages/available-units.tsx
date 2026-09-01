@@ -1806,9 +1806,12 @@ export default function AvailableUnitsPage() {
                 <TableHead className="w-[200px] min-w-[180px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
                   Property / Unit{sortBy === "property" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                 </TableHead>
-                {showCol("existingTenant") && <TableHead className="w-[140px] min-w-[140px]">Existing Tenant</TableHead>}
-                {showCol("unitStatus") && <TableHead className="w-[120px] min-w-[120px]">Unit Status</TableHead>}
-                {showCol("pipelineStatus") && <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>}
+                {/* "Existing Tenant" wrapped to two lines and sat out of
+                    line with the other headers (Woody, 2026-09-01) — one
+                    word, tighter column. */}
+                {showCol("existingTenant") && <TableHead className="w-[110px] min-w-[100px] whitespace-nowrap" title="Existing tenant — from the tenancy schedule">Tenant</TableHead>}
+                {showCol("unitStatus") && <TableHead className="w-[110px] min-w-[110px]">Unit Status</TableHead>}
+                {showCol("pipelineStatus") && <TableHead className="w-[112px] min-w-[112px]">Deal Status</TableHead>}
                 {!hideClientCol && showCol("client") && (
                   <TableHead className="w-[150px] min-w-[150px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
@@ -1816,12 +1819,12 @@ export default function AvailableUnitsPage() {
                 )}
                 <TableHead className="w-[170px] min-w-[170px]">Target Tenant</TableHead>
                 {showCol("dealStatus") && <TableHead className="w-[130px] min-w-[130px]">Target Status</TableHead>}
-                {showCol("category") && <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>}
+                {showCol("category") && <TableHead className="w-[144px] min-w-[144px]">Category</TableHead>}
                 {showCol("priority") && <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>}
                 {showCol("agent") && <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>}
                 {showCol("comments") && <TableHead className="min-w-[200px]">Comments</TableHead>}
-                {showCol("floorAreas") && <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>}
-                {showCol("costs") && <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>}
+                {showCol("floorAreas") && <TableHead className="w-[112px] min-w-[112px]">Floor Areas</TableHead>}
+                {showCol("costs") && <TableHead className="w-[112px] min-w-[112px] text-right">Costs</TableHead>}
                 <TableHead className="w-[170px] min-w-[170px] sticky right-0 z-20 border-l bg-card">Actions &amp; Activity</TableHead>
               </TableRow>
             </TableHeader>
@@ -1971,7 +1974,7 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                       {showCol("existingTenant") && (
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[150px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[110px]">
                         {/* The name itself is derived from the tenancy
                             schedule (read-only) — but if it isn't a CRM
                             brand yet, the + adds it (Woody, 2026-09-01). */}

@@ -22,10 +22,18 @@ import { BrandSearchInput } from "@/components/brand-search-input";
 import { InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 
-// Display rename (Woody's team, 2026-08): "Passed" reads as "Rejected" in the
-// UI. The stored value and API keep "Passed" so existing rows don't need a
-// migration.
-export const targetStatusLabel = (s: string) => (s === "Passed" ? "Rejected" : s);
+// Display renames — the stored values and API keep the long names so
+// existing rows don't need a migration. "Passed" reads as "Rejected"
+// (Woody's team, 2026-08); "Meeting Held" / "Inspection Done" / "Heads of
+// Terms" truncated in the 124px status chip (Woody, 2026-09-01: "Meeting
+// instead of Meeting Held, Inspection instead of Inspection Done").
+const TARGET_STATUS_DISPLAY: Record<string, string> = {
+  "Passed": "Rejected",
+  "Meeting Held": "Meeting",
+  "Inspection Done": "Inspection",
+  "Heads of Terms": "HOTs",
+};
+export const targetStatusLabel = (s: string) => TARGET_STATUS_DISPLAY[s] || s;
 
 export const TARGET_STATUS_COLORS: Record<string, string> = {
   "Identified": "bg-gray-500",
