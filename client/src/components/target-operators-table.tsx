@@ -286,7 +286,7 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
       </TableCell>
       )}
       {vis.comments && (
-      <TableCell className="text-xs max-w-[220px]">
+      <TableCell className="text-xs max-w-[150px]">
         <TargetComments
           comments={t.comments}
           onAdd={text => {
@@ -433,7 +433,10 @@ function TargetComments({ comments, onAdd, onReplace }: {
   };
 
   return (
-    <div className="space-y-1 min-w-[160px]">
+    <div className="space-y-1 min-w-[120px]">
+      {/* Long threads scroll instead of stretching the row (Woody,
+          2026-09-01) — the add-comment input stays outside the scroll. */}
+      <div className="max-h-[76px] overflow-y-auto space-y-1">
       {list.map((c, i) => editIdx === i ? (
         <input
           key={i}
@@ -464,6 +467,7 @@ function TargetComments({ comments, onAdd, onReplace }: {
           )}
         </div>
       ))}
+      </div>
       <input
         value={draft}
         onChange={e => setDraft(e.target.value)}
