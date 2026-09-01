@@ -80,6 +80,26 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r439 · 2026-09-01 ~14:10 UTC · LIGHT (r438 had the journey) — GREEN
+- Bring-up: canonical recipe held 4th consecutive time (qa:pg once →
+  run-smoke restore clean, no scram failure). Regression: smoke GREEN 42/0.
+- Two-bot round 439: ALL scenarios ok (victoria/mark/woody/nick/sam),
+  12 logged issues, every one a known class: rocketreach 400,
+  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
+  (keyless), 8×403 probe-by-design scope rows. Whole-round server log:
+  0 raw 500/502/504; 403s flat at 1-3 per route (write-guard probes, no
+  storm); 503s all keyless classes (chatbgp, os/sites, land-registry
+  resolve, contact verify). 0 app bugs.
+- client-info-sheet-roundtrip (new in r438) PASSED its first harness run —
+  own-200 / lands-in-files / rival-403 all hold.
+- r438's dialog-width (ui/dialog.tsx grid-cols-1) and tracker roll-up
+  (deal-wins buckets) fixes hold under the full harness.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey this round). New flakes: none.
+- Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: rotation #4 BGP staff mobile 390px (r439 was LIGHT → r440 FULL).
+
 ### r438 · 2026-09-01 ~13:40 UTC · FULL — rotation #3 Landsec client mobile 390px · 2 bugs fixed
 - Bring-up: canonical recipe held 3rd time (qa:pg once → run-smoke restore
   clean). Regression: smoke GREEN 42/0 (again post-fix on FRESH_BUILD).
