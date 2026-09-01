@@ -80,13 +80,43 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r436 · 2026-09-01 · PROVISIONAL — DB FIX VALIDATED, full round in progress
-- First round with the qa/start-postgres.sh password fix: `npm run qa:pg`
-  once → "[start-postgres] postgres role password set for host connections"
-  → `bash qa/run-smoke.sh` → fixture restore SUCCEEDED (no scram failure),
-  smoke 42 checks / 0 failures. The 11-round DB auth blockade is over.
-- two-bot round 436 running; client desktop 1440px journey (rotation #2,
-  owed 13 rounds) next. Final entry replaces this one.
+### r436 · 2026-09-01 ~11:45 UTC · FULL (rotation #2 client desktop 1440px) — DB FIX VALIDATED, 1 fix
+- QA:PG PASSWORD FIX WORKED: `npm run qa:pg` once → "postgres role password
+  set for host connections" → run-smoke.sh restored the fixture with NO
+  scram failure. The 11-round DB blockade (r423–r435) is over; this recipe
+  (qa:pg once → straight to run-smoke.sh, zero config touches) is now the
+  canonical bring-up. Dev server for browser work: tsx against
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke (NODE_ENV=
+  development for cookie auth), seed-personas applied first.
+- Regression: smoke 42/0 ×2 (pre-fix and again post-fix on a FRESH_BUILD
+  prod bundle). two-bot round 436: 71 ok / 1 real failure. The r424–r427
+  caveat stack is now runtime-verified — all those scenarios passed.
+- BUG FIXED (the two-bot failure): GET /api/crm/properties/:id/agents
+  403'd for clients — the "who do I chase" agent list their property page
+  depends on. The crm.ts handler was deliberately client-safe (display-
+  field projection, r424) but a CLIENT_BLOCKED_SUBPATHS entry in
+  server/index.ts still sealed the route. Removed the entry; added a
+  scope-jail in the handler (isPropertyInScope, rival property → 403);
+  writes stay staff-only (no /api/crm/properties in CLIENT_ALLOWED_WRITES).
+  Verified live: own property 200 + no sensitive keys, rival 403,
+  tsc clean, smoke 42/0 on the rebuilt bundle. two-bot scenario
+  client-agents-no-pii-leak extended with the rival-property 403 assert.
+- Journey (Mark, 1440px, "how are my Bluewater lettings progressing / who
+  do I chase"): dashboard tracker widget → Bluewater page → Letting Tracker
+  (76/78 units, FY viewings/offers strips, status pills) → Linked Contacts
+  answers who-to-chase → gates: /api/crm/landlords 403, duplicates/scan
+  403, turnover API slice-scoped (page route not in client shell — UX 119),
+  ChatBGP keyless → polite "Not Connected" empty state. No error
+  boundaries, no unexpected 5xx, no real console errors.
+- Triage noise (all known classes): rocketreach 400, brand-gaps/live-intel
+  + bgp-commentary/regenerate 503 (keyless), probe-by-design 4xx rows.
+- Bugs fixed: 1 (above). Deferred: none new. Carried (data, staff
+  decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+- Suggestions: UX-NOTES 119 (client /turnover silent bounce), 120 (double
+  "Available" pills on tracker rows), 121 (dash-placeholder property header
+  fields). Real-device keyboard-up composer check (r405) still open.
+- Next: rotation #3 Landsec client mobile 390px (last visited r420-era);
+  DB recipe above should just work.
 
 ### r435 · 2026-08-30 ~19:30 UTC · SHORT — DB auth blocked (11th), recipe (a) tested: bring-up OK, restore fails scram
 - Detached HEAD at r434 tip 1fc38c5; no fetch/checkout; push via HEAD: refspec.

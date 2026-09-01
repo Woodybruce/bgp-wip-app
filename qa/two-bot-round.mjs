@@ -2494,6 +2494,15 @@ async function markRound(page, cross) {
     });
     if (r.status && r.status >= 400) throw new Error(`client agents fetch failed (${r.status})`);
     if (r.leaked && r.leaked.length) throw new Error(`property agents leaked sensitive user fields to a client: ${r.leaked.join(', ')}`);
+    // r436: the gateway block came off this route (it 403'd the client's own
+    // list); the handler now scope-checks instead — a rival property's agent
+    // list must still refuse. Fixed rival-property id from qa/seed-personas.sql.
+    const rival = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/properties/99999999-2222-2222-2222-222222222222/agents', { credentials: 'include', headers: auth }).catch(() => ({ status: 0 }));
+      return res.status;
+    });
+    if (rival !== 403) throw new Error(`rival property agent list not sealed (expected 403, got ${rival})`);
   });
 
   // Staff-only boards must refuse client logins outright (r425): the landlord
