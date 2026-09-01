@@ -14,6 +14,13 @@ DB="${SMOKE_DB:-bgpsmoke}"
 PORT="${SMOKE_PORT:-5100}"
 PG=(${SMOKE_PG:--h 127.0.0.1 -U postgres})
 
+# start-postgres.sh sets this password on the postgres role so host
+# connections authenticate in containers that require one (added after
+# r434). Ignored where the container allows passwordless connections.
+QA_PG_PASSWORD="${QA_PG_PASSWORD:-qa-local-pg}"
+export PGPASSWORD="${PGPASSWORD:-$QA_PG_PASSWORD}"
+DB_URL="postgresql://postgres:$QA_PG_PASSWORD@127.0.0.1:5432/$DB"
+
 # 1. Fresh DB from the committed fixture.
 psql "${PG[@]}" -c "drop database if exists $DB;" >/dev/null
 psql "${PG[@]}" -c "create database $DB;" >/dev/null
@@ -26,7 +33,7 @@ if [ ! -f dist/index.cjs ] || [ "${FRESH_BUILD:-}" = "1" ]; then
 fi
 
 # 3. Start the app the way CI does: minimal env, no AI keys.
-DATABASE_URL="postgresql://postgres@127.0.0.1:5432/$DB" \
+DATABASE_URL="$DB_URL" \
 PGSSLMODE=disable \
 PORT="$PORT" NODE_ENV=production SESSION_SECRET=smoke-local HOST=0.0.0.0 \
   node dist/index.cjs >/tmp/smoke-app.log 2>&1 &
@@ -41,4 +48,4 @@ curl -s -o /dev/null --max-time 2 "http://localhost:$PORT/" \
   || { echo "[smoke] app did not come up on :$PORT — see /tmp/smoke-app.log"; exit 2; }
 
 # 4. Run the suite (exit code propagates).
-SMOKE_BASE="http://localhost:$PORT" DATABASE_URL="postgresql://postgres@127.0.0.1:5432/$DB" node qa/smoke.mjs
+SMOKE_BASE="http://localhost:$PORT" DATABASE_URL="$DB_URL" node qa/smoke.mjs
