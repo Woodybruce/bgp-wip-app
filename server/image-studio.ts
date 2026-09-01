@@ -2180,6 +2180,9 @@ export function registerImageStudioRoutes(app: Express) {
         "DELETE FROM image_studio_collection_images WHERE image_id = $1",
         [req.params.id]
       );
+      // And property gallery links — orphaned property_imagery_assets rows
+      // left galleries pointing at deleted images (Westgate, 2026-09-01).
+      await db.delete(propertyImageryAssets).where(eq(propertyImageryAssets.imageStudioId, req.params.id as string));
       await db.delete(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       res.json({ success: true });
     } catch (e: any) {
