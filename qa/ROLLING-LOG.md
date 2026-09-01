@@ -80,6 +80,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r443 · 2026-09-01 ~17:45 UTC · LIGHT (r442 had the journey) — ROUND IN PROGRESS
+- Provisional heartbeat entry. Bring-up: canonical recipe held 8th
+  consecutive time (qa:pg once → run-smoke restore clean). Regression:
+  smoke GREEN 42/0. Two-bot round 443: exit 0, 232 [ok] scenario lines
+  (victoria/mark/woody/nick/sam), 12 logged issues = the exact standing
+  noise signature (rocketreach 400, invalid-tracker probe 400,
+  brand-gaps/live-intel + commentary-regen 503 keyless, 8×403
+  probe-by-design scope rows). Server log: 0 raw 500/502/504 (one "500"
+  grep hit = news-feed log text, r413 class).
+- staff-brands-hub-turnover-brands-only (new in r442) PASSED its first
+  full harness run. r440/r438 fixes hold.
+- Remaining this round: phone-overflow-sweep, deferred-bug check, final
+  entry.
+
 ### r442 · 2026-09-01 ~17:15 UTC · FULL — rotation #1 BGP staff desktop 1440px · 1 bug fixed
 - Bring-up: canonical recipe held 7th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0 ×2 (before, and
