@@ -80,6 +80,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r446 · 2026-09-01 ~20:30 UTC · FULL — rotation #3 Landsec client mobile 390px — ROUND IN PROGRESS
+- Bring-up: canonical recipe held 11th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
+  446: exit 0, 232 [ok] scenario lines (victoria/mark/woody/nick/sam),
+  12 logged issues = the exact standing noise signature (rocketreach 400,
+  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
+  keyless, 8×403 probe-by-design scope rows). Server log: 0 raw
+  500/502/504 (one "500" grep hit = news-feed log text, r413 class).
+  phone-overflow-sweep 11/11 routes fit at 390px. Triage: 0 app bugs.
+- Journey (Mark @390px, brand-intel prep) in progress — final entry to
+  replace this one.
+
 ### r445 · 2026-09-01 ~19:15 UTC · LIGHT (r444 had the journey) — GREEN
 - Bring-up: canonical recipe held 10th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
