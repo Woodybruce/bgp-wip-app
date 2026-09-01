@@ -16,6 +16,19 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+123. 2026-09-01 · staff + client / unit Files dialog (QA r438) · generated an
+    info sheet on a unit whose particulars fields are all empty · the PDF
+    prints the "PARTICULARS" heading + rule with nothing under it — a
+    visibly empty page-1 body that an agent could accidentally issue ·
+    suppress the heading when no particulars rows exist, or warn "this unit
+    has no area/rent/EPC recorded" before generating.
+
+122. 2026-09-01 · Landsec client / mobile 390px (QA r438) · tapped "Files"
+    on a tracker unit card wanting the brochure · the dialog's second
+    action is "Create in Doc Studio", which opens the staff Document Studio
+    in a new tab — on the phone shell that's a dead end for a client ·
+    hide the Doc Studio button for client logins (staff keep it).
+
 121. 2026-09-01 · Landsec client / desktop 1440px (QA r436) · "see how my
     Bluewater lettings are progressing" · property page header metadata
     (Status, Asset Class, BGP Team, Website, Area) all rendered as bare

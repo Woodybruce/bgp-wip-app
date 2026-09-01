@@ -277,10 +277,23 @@ export default function MobileHome() {
     enabled: showPortfolioHome,
   });
   const clientUnits = Array.isArray(clientUnitsRaw) ? clientUnitsRaw : [];
+  // The linked deal's status wins over the unit's marketing status — same
+  // rule as the Letting Tracker page this widget deep-links to. Buckets
+  // cover the whole pipeline so a negotiating unit still shows in the
+  // roll-up: Available = OPP+AVA, Under offer = NEG..EXC, Let = COM+INV.
+  const { data: clientDealsRaw } = useQuery<any[]>({
+    queryKey: ["/api/crm/deals"],
+    staleTime: 2 * 60 * 1000,
+    enabled: showPortfolioHome,
+  });
+  const dealStatusById: Record<string, string | null> = {};
+  for (const d of (Array.isArray(clientDealsRaw) ? clientDealsRaw : [])) dealStatusById[d.id] = d.status;
+  const effOf = (u: any) =>
+    (u.dealId ? legacyToCode(dealStatusById[u.dealId]) : null) || legacyToCode(u.marketingStatus) || "AVA";
   const unitStats = {
-    available: clientUnits.filter(u => legacyToCode(u.marketingStatus) === "AVA").length,
-    underOffer: clientUnits.filter(u => legacyToCode(u.marketingStatus) === "SOL").length,
-    let: clientUnits.filter(u => legacyToCode(u.marketingStatus) === "COM").length,
+    available: clientUnits.filter(u => ["OPP", "AVA"].includes(effOf(u))).length,
+    underOffer: clientUnits.filter(u => ["NEG", "HOT", "SOL", "EXC"].includes(effOf(u))).length,
+    let: clientUnits.filter(u => ["COM", "INV"].includes(effOf(u))).length,
     total: clientUnits.length,
   };
   const { data: wipResp } = useQuery<any>({ queryKey: ["/api/wip"], staleTime: 5 * 60 * 1000, enabled: !isClientHome });

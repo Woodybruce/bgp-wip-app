@@ -3715,7 +3715,7 @@ function MarketingFilesDialog({
               </Pill>
             ))}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -3790,7 +3790,10 @@ function MarketingFilesDialog({
               <p className="text-xs mt-1">Upload a brochure, floor plan or photo — or create one in Document Studio</p>
             </div>
           ) : (
-            <ScrollArea className="max-h-[300px]">
+            // plain overflow div, not ScrollArea — Radix's display:table
+            // viewport sizes to the untruncated filename and pushes the
+            // dialog wider than the phone (r438)
+            <div className="max-h-[300px] overflow-y-auto">
               <div className="space-y-3">
                 {([["brochure", "Brochures"], ["floorplan", "Floor plans"], ["photo", "Photos"], ["other", "Other"]] as const).map(([key, heading]) => {
                   // Legacy rows predate the category column and all default
@@ -3848,7 +3851,7 @@ function MarketingFilesDialog({
                   );
                 })}
               </div>
-            </ScrollArea>
+            </div>
           )}
         </div>
       </DialogContent>

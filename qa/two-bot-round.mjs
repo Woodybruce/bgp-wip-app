@@ -66,7 +66,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -4722,6 +4722,37 @@ async function markRound(page, cross) {
     }, foreignContact);
     const cleaked = cr.filter((x) => x.ok);
     if (cleaked.length) throw new Error(`client can read a foreign ${cleaked.map((x) => x.ep).join(', ')} (cross-tenant leak)`);
+  });
+
+  // Unit info-sheet generator (staging sync 2026-09-01): client generates a
+  // landlord-branded particulars PDF on their OWN unit (tracker parity), the
+  // sheet lands in that unit's Files as fileType=infosheet, and the same POST
+  // on a rival's unit refuses. Cleans up its own file row.
+  await step(page, p, 'client-info-sheet-roundtrip', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const json = { ...auth, 'Content-Type': 'application/json' };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const own = (Array.isArray(units) ? units : []).find((u) => u.propertyId === window.QA_FIX.bluewater);
+      if (!own) return { err: 'no Bluewater unit visible to client' };
+      const gen = await fetch(`/api/available-units/${own.id}/info-sheet`, {
+        method: 'POST', credentials: 'include', headers: json, body: JSON.stringify({ photos: false }) });
+      const genBody = gen.ok ? await gen.json() : { message: (await gen.text()).slice(0, 120) };
+      let inFiles = false, cleanup = 0;
+      if (gen.ok && genBody.file?.id) {
+        const files = await (await fetch(`/api/available-units/${own.id}/files`, { headers: auth })).json();
+        inFiles = Array.isArray(files) && files.some((f) => f.id === genBody.file.id && f.fileType === 'infosheet');
+        cleanup = (await fetch(`/api/available-units/files/${genBody.file.id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status;
+      }
+      const rival = await fetch('/api/available-units/99999999-3333-3333-3333-333333333333/info-sheet', {
+        method: 'POST', credentials: 'include', headers: json, body: JSON.stringify({}) });
+      return { genOk: gen.ok, genStatus: gen.status, pages: genBody.pages, inFiles, cleanup, rivalStatus: rival.status, rivalOk: rival.ok };
+    });
+    if (r.err) throw new Error(r.err);
+    if (!r.genOk) throw new Error(`own-unit info-sheet POST failed: HTTP ${r.genStatus}`);
+    if (!r.pages || r.pages < 2) throw new Error(`info-sheet generated but suspicious page count: ${r.pages}`);
+    if (!r.inFiles) throw new Error('generated info sheet did not land in the unit Files list as fileType=infosheet');
+    if (r.rivalOk) throw new Error(`client generated an info sheet on a RIVAL landlord's unit (HTTP ${r.rivalStatus})`);
   });
 
   // Image Studio bulk-assign-property with a VALID payload (the destructive-

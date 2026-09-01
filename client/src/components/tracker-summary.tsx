@@ -24,7 +24,7 @@ const LIVE_CODES = new Set<DealStatusCode>(["OPP", "REP", "AVA", "NEG", "SOL", "
 
 type Unit = {
   id: string; propertyId: string; unitName: string | null; sqft: number | null;
-  askingRent: number | null; marketingStatus: string | null;
+  askingRent: number | null; marketingStatus: string | null; dealId?: string | null;
 };
 
 function useTrackerUnits(propertyId?: string, propertyIds?: string[]) {
@@ -37,6 +37,18 @@ function useTrackerUnits(propertyId?: string, propertyIds?: string[]) {
       return r.json();
     },
   });
+  // The linked deal's status wins over the unit's own marketing status —
+  // same rule as the Letting Tracker page (effByUnit), so the summary
+  // never disagrees with the board it deep-links to.
+  const { data: deals = [] } = useQuery<{ id: string; status: string | null }[]>({
+    queryKey: ["/api/crm/deals"],
+  });
+  const effOf = useMemo(() => {
+    const byId: Record<string, string | null> = {};
+    for (const d of deals) byId[d.id] = d.status;
+    return (u: Unit): DealStatusCode =>
+      (u.dealId ? legacyToCode(byId[u.dealId]) : null) || legacyToCode(u.marketingStatus) || "AVA";
+  }, [deals]);
   const scoped = useMemo(
     () => (propertyIds && propertyIds.length ? units.filter(u => propertyIds.includes(u.propertyId)) : units),
     [units, propertyIds],
@@ -45,13 +57,13 @@ function useTrackerUnits(propertyId?: string, propertyIds?: string[]) {
     const c = {} as Record<DealStatusCode, number>;
     for (const s of LETTING_STATUSES) c[s] = 0;
     for (const u of scoped) {
-      const code = legacyToCode(u.marketingStatus) || "AVA";
+      const code = effOf(u);
       if (c[code] !== undefined) c[code]++;
     }
     return c;
-  }, [scoped]);
-  const live = useMemo(() => scoped.filter(u => LIVE_CODES.has(legacyToCode(u.marketingStatus) || "AVA")), [scoped]);
-  return { units: scoped, live, counts, isLoading };
+  }, [scoped, effOf]);
+  const live = useMemo(() => scoped.filter(u => LIVE_CODES.has(effOf(u))), [scoped, effOf]);
+  return { units: scoped, live, counts, effOf, isLoading };
 }
 
 function trackerHref(propertyId?: string, status?: DealStatusCode) {
@@ -70,7 +82,7 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
   // stretch so the two columns match (Woody, 2026-08-19).
   tall?: boolean;
 }) {
-  const { live, counts, isLoading } = useTrackerUnits(propertyId, propertyIds);
+  const { live, counts, effOf, isLoading } = useTrackerUnits(propertyId, propertyIds);
 
   if (variant === "strip") {
     return (
@@ -128,8 +140,8 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
               <span className="text-xs font-medium truncate">{u.unitName || "—"}</span>
               <span className="flex items-center gap-1.5 shrink-0 text-[10px] text-muted-foreground">
                 {u.sqft ? `${Number(u.sqft).toLocaleString()} sqft` : ""}
-                <Badge variant="outline" className={`text-[9px] ${DEAL_STATUS_BADGE_COLORS[legacyToCode(u.marketingStatus) || "AVA"] || ""}`}>
-                  {DEAL_STATUS_LABELS[legacyToCode(u.marketingStatus) || "AVA"]}
+                <Badge variant="outline" className={`text-[9px] ${DEAL_STATUS_BADGE_COLORS[effOf(u)] || ""}`}>
+                  {DEAL_STATUS_LABELS[effOf(u)]}
                 </Badge>
               </span>
             </Link>

@@ -80,19 +80,50 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r438 · 2026-09-01 ~13:10 UTC · ROUND IN PROGRESS (provisional)
-- FULL round, rotation #3 Landsec client mobile 390px; staging now carries
-  the JOGQK sync merge (f7540fb) so the unit info-sheet generator is HERE —
-  browser check planned this round.
+### r438 · 2026-09-01 ~13:40 UTC · FULL — rotation #3 Landsec client mobile 390px · 2 bugs fixed
 - Bring-up: canonical recipe held 3rd time (qa:pg once → run-smoke restore
-  clean). Regression: smoke GREEN 42/0.
-- two-bot round 438: ALL scenarios ok (victoria/mark/woody/nick/sam),
-  12 logged issues, every one a known class: rocketreach 400,
-  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
-  (keyless), 8×403 probe-by-design scope rows. Server log: 0 raw 500/502/504.
-  Triage: 0 app bugs.
-- Remaining this round: client-mobile journey + info-sheet browser check;
-  final entry replaces this one.
+  clean). Regression: smoke GREEN 42/0 (again post-fix on FRESH_BUILD).
+  two-bot round 438: ALL scenarios ok, 12 logged issues all known classes
+  (rocketreach 400, invalid-tracker 400, 2× keyless 503, 8×403 probes).
+  Server log: 0 raw 500/502/504. Triage: 0 app bugs from the harness.
+- Info-sheet check (per brief — staging now has the JOGQK sync, f7540fb):
+  GREEN end-to-end in the browser as staff (Files dialog → tick-boxes →
+  generate → toast → PDF row lands in unit Files) and read back: valid
+  %PDF, Landsec-branded band, scheme plan page, misrep page. Client POST
+  on OWN unit 200 (tracker parity, write-allowlisted + scope-jailed);
+  rival unit 403. New two-bot scenario client-info-sheet-roundtrip locks
+  own-200/lands-in-files/rival-403 (cleans up its file row).
+- Journey (Mark, 390px phone, "on the train: how are my Bluewater lettings
+  going?"): mobile home → tracker widget → /available card list → unit
+  Files + Viewings dialogs. Phone shell keys off UA, not just viewport
+  (Playwright needs the iPhone userAgent or you get the desktop shell).
+- BUG FIXED 1: every Dialog overflowed the 390px phone — DialogContent is
+  a grid with an implicit auto column, so the column sized to the widest
+  child's min-content (Files dialog scrolled 592px wide in a 374px box;
+  Viewings' Time input + Save button clipped offscreen). Fix: grid-cols-1
+  on ui/dialog.tsx (minmax(0,1fr) pins children to the dialog width) +
+  flex-wrap on the Files dialog button row + Files list ScrollArea →
+  plain overflow div (Radix's display:table viewport re-widened it).
+  Verified: scrollWidth == clientWidth on both dialogs, screenshots clean.
+- BUG FIXED 2: tracker roll-up widgets disagreed with the tracker — the
+  mobile portfolio widget said "78 Available / 0 Under offer" while the
+  tracker page showed 77 Available + 1 Negotiating (fixture unit MSU9:
+  marketingStatus=AVA but linked deal NEG; the page's effByUnit rule is
+  deal-status-wins, the widgets counted raw marketingStatus). Fixed
+  mobile-home.tsx + tracker-summary.tsx to the same deal-wins rule
+  (shared ["/api/crm/deals"] query cache). Mobile widget buckets now
+  cover the pipeline (Available=OPP+AVA, Under offer=NEG..EXC,
+  Let=COM+INV) so a negotiating unit shows in the roll-up — flag to
+  Woody if he'd rather keep strict AVA/SOL/COM buckets. Verified live:
+  widget reads 77/1/0/78, matches the tracker.
+- Suggestions: UX-122 (client sees staff "Create in Doc Studio" in Files
+  dialog — dead end on phone), UX-123 (info sheet prints an empty
+  PARTICULARS block when the unit has no data). Carried: Bluewater SPINE
+  duplicates (staff decision). Real-device keyboard-up check (r405) open.
+- New flakes: none. Note: run-smoke's DB drop fails while the dev server
+  holds bgpsmoke connections — kill the tsx pid first.
+- Next: rotation #4 BGP staff mobile 390px (r438 had the journey → r439
+  LIGHT). Watch client-info-sheet-roundtrip on its first harness run.
 
 ### r437 · 2026-09-01 ~12:45 UTC · LIGHT (r436 had the journey) — GREEN
 - r436 canonical recipe held again, second consecutive clean bring-up:
