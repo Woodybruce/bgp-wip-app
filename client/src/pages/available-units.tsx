@@ -2983,15 +2983,17 @@ export default function AvailableUnitsPage() {
           <div className="border-t pt-3 space-y-2">
             <p className="text-xs font-medium">Log interest</p>
             <div className="grid grid-cols-2 gap-2">
-              <CrmPicker
-                items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
-                value={interestForm.companyId}
-                valueName={interestForm.companyName}
-                onSelect={(id, name) => setInterestForm(f => ({ ...f, companyId: id, companyName: name }))}
-                placeholder="Company / brand"
-                testId="interest-company"
-              />
-              <Input type="date" value={interestForm.interestDate} onChange={e => setInterestForm(f => ({ ...f, interestDate: e.target.value }))} data-testid="interest-date" />
+              <div className="min-w-0">
+                <CrmPicker
+                  items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                  value={interestForm.companyId}
+                  valueName={interestForm.companyName}
+                  onSelect={(id, name) => setInterestForm(f => ({ ...f, companyId: id, companyName: name }))}
+                  placeholder="Company / brand"
+                  testId="interest-company"
+                />
+              </div>
+              <Input type="date" className="min-w-0" value={interestForm.interestDate} onChange={e => setInterestForm(f => ({ ...f, interestDate: e.target.value }))} data-testid="interest-date" />
             </div>
             <Input value={interestForm.notes} onChange={e => setInterestForm(f => ({ ...f, notes: e.target.value }))} placeholder="Note (e.g. rang about this unit — wants floorplans)" data-testid="interest-notes" />
             <Button
