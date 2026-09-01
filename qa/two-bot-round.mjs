@@ -5761,6 +5761,28 @@ async function woodyRound(page, cross) {
     if (!r.ok) throw new Error(`lr-bg status/guard check failed (${r.why})`);
   });
 
+  // Brand Intelligence overview: Turnover Leaders is a BRAND widget — a
+  // landlord with turnover_data rows must not appear in topTurnover, and the
+  // leaderboard must agree with the "With Turnover Data" stat (r442: the
+  // staff query had no tenant filter, so Hammerson ranked as a "brand").
+  await step(page, p, 'staff-brands-hub-turnover-brands-only', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/brands/hub', { credentials: 'include', headers: auth });
+      if (res.status !== 200) return { ok: false, why: `hub GET expected 200, got ${res.status}` };
+      const body = await res.json();
+      const rows = body.topTurnover || [];
+      const nonTenant = rows.find((t) => t.company_type && !/^tenant -/i.test(t.company_type));
+      if (nonTenant) return { ok: false, why: `non-tenant in Turnover Leaders: ${nonTenant.company_name} (${nonTenant.company_type})` };
+      const linked = rows.filter((t) => t.company_id).length;
+      const stat = parseInt(body.stats?.brands_with_turnover || '0', 10);
+      // topTurnover is capped at 20 rows — only compare when uncapped.
+      if (rows.length < 20 && linked !== stat) return { ok: false, why: `leaderboard linked count ${linked} != brands_with_turnover stat ${stat}` };
+      return { ok: true };
+    });
+    if (!r.ok) throw new Error(`brands-hub turnover leaders check failed (${r.why})`);
+  });
+
   // Consultant external fee-split (r397, Woody 2026-08-27): "Consultant" is
   // selectable in every split picker, saves as a name-only allocation
   // (agent_user_id stays null — never enters staff commission) and shows on

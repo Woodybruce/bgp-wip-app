@@ -80,21 +80,55 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r442 · 2026-09-01 ~16:30 UTC · FULL (rotation #1 staff desktop 1440px) — ROUND IN PROGRESS
-- Provisional heartbeat. Bring-up: canonical recipe held 7th consecutive
-  time (qa:pg once → run-smoke restore clean). Regression: smoke GREEN 42/0.
-- Two-bot round 442: running (214+ steps ok at heartbeat, no failures
-  printed yet). Triage to follow.
-- Harness growth (parent request, this round): NEW qa/phone-overflow-sweep.mjs
-  — staff login at iPhone 13 width (390px, mobile UA+touch), SPA-navigates
-  /, /deals, /deals/list, /deals/letting, /deals/investment,
-  /deals/properties, /brands, /contacts, /news, /tasks, /wip-report and
-  asserts documentElement.scrollWidth <= innerWidth per route; reports the
-  widest offender on failure, exit non-zero on any failure. First run +
-  result later this round.
-- Journey planned: Victoria @1440px "afternoon deal-push" (WIP report →
-  deals board → deal detail → brand profile pitch prep → contacts → news →
-  Image Studio).
+### r442 · 2026-09-01 ~17:15 UTC · FULL — rotation #1 BGP staff desktop 1440px · 1 bug fixed
+- Bring-up: canonical recipe held 7th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0 ×2 (before, and
+  FRESH_BUILD=1 after the fix).
+- Two-bot round 442: exit 0, ALL scenarios ok (victoria/mark/woody/nick/
+  sam), 12 logged issues, every one a known class: rocketreach 400,
+  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
+  (keyless), 8×403 probe-by-design scope rows. Whole-round server log:
+  0 raw 500/502/504 (the one "500" grep hit was news-feed log text, r413
+  class); 403s flat at 1-3 per route. 0 app bugs from the harness.
+- NEW HARNESS (parent request): qa/phone-overflow-sweep.mjs — staff login
+  at iPhone 13 width (390px, mobile UA + isMobile + hasTouch), SPA-navigates
+  (pushState, full-goto fallback) /, /deals, /deals/list, /deals/letting,
+  /deals/investment, /deals/properties, /brands, /contacts, /news, /tasks,
+  /wip-report; asserts documentElement.scrollWidth <= innerWidth per route,
+  prints the widest offender on failure, exit non-zero on any failure.
+  FIRST RUN: all 11 routes PASS at 390px (routes confirmed real deals-hub
+  tabs, not 404 fallthroughs). Future rounds: run it as part of regression
+  (needs the dev server on :5000).
+- Journey (Victoria @1440px, "afternoon deal-push: WIP report, deals board,
+  open a live deal, pitch prep on a brand, find a contact, scan news,
+  glance at Image Studio"): dashboard → /wip-report (filters, totals) →
+  /deals hub → /deals/letting (81 units, FY strips) → /deals/list → deal
+  detail (U124 — parties, KYC, files rail) → /brands → Honi Poke profile
+  (keyless degradations all polite) → /contacts (CRM cards) → /news →
+  /image-studio. 0 pageerrors, 0 blank pages, 0 non-noise 4xx/5xx.
+- BUG FIXED: Brand Intelligence "Turnover Leaders" listed LANDLORDS — the
+  staff topTurnover query (server/crm.ts /api/brands/hub) joined
+  turnover_data to crm_companies with NO tenant filter, so Hammerson
+  (landlord, QA-seeded turnover row) ranked as a "brand" and the widget
+  badge (2) contradicted the "With Turnover Data" stat tile (1) on the same
+  screen. Fix: leaderboard now keeps unlinked research rows but requires
+  company_type ILIKE 'Tenant -%' on linked ones (Turnover BOARD tab
+  unchanged — that's the raw data-management view). Verified via API
+  (staff: Honi Poke only, stat==badge; client slice unchanged) + visually
+  at 1440px. tsc clean, rebuilt, smoke re-green. New two-bot scenario
+  staff-brands-hub-turnover-brands-only locks it (no non-tenant in
+  topTurnover + leaderboard/stat agreement when uncapped); dry-run green.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). NOT bugs: WIP
+  report showed the round's own QA-R442 probe deal (purged next round);
+  Image Studio sidebar-vs-album "Uncategorised" mismatch is two deliberate
+  definitions colliding → UX-NOTES 124, not a code fix.
+- Suggestions: UX-NOTES 124 (Image Studio "Uncategorised" label means
+  category in the sidebar but address-less in albums view). Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- New flakes: none. Watch staff-brands-hub-turnover-brands-only on its
+  first full harness run (r443).
+- Next: r442 had the journey → r443 LIGHT; then rotation #2 client desktop.
 
 ### r441 · 2026-09-01 ~15:50 UTC · LIGHT (r440 had the journey) — GREEN
 - Bring-up: canonical recipe held 6th consecutive time (qa:pg once →

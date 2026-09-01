@@ -8239,7 +8239,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           c.company_type, c.domain
         FROM turnover_data t
         LEFT JOIN crm_companies c ON c.id = t.company_id
-        WHERE t.turnover IS NOT NULL AND (c.id IS NULL OR c.merged_into_id IS NULL)
+        WHERE t.turnover IS NOT NULL
+          AND (c.id IS NULL OR (c.merged_into_id IS NULL AND c.company_type ILIKE 'Tenant -%'))
         ORDER BY t.company_id, t.period DESC, t.turnover DESC
       `).then(r => r.rows);
 
