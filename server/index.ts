@@ -47,6 +47,8 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_secondary_color TEXT`,
     // Targeting brief: images attached from Image Studio.
     `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS image_ids TEXT[]`,
+    // Unit Files dialog sections: brochure | floorplan | photo | other.
+    `ALTER TABLE unit_marketing_files ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'brochure'`,
     // Heads of Terms: each property carries a standard HOTs template;
     // each tracker unit carries its negotiated instance.
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS hots_template TEXT`,

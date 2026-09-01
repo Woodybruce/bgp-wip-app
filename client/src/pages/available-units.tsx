@@ -1760,7 +1760,7 @@ export default function AvailableUnitsPage() {
                       viewing, register an interested tenant + comment, edit. */}
                   <div className="flex items-center flex-wrap gap-1 pt-2 border-t">
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
-                      <Eye className="w-3.5 h-3.5" /> Brochure
+                      <Eye className="w-3.5 h-3.5" /> Files
                     </Button>
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
                       <CalendarDays className="w-3.5 h-3.5" /> Viewing{vCount ? ` (${vCount})` : ""}
@@ -3601,6 +3601,7 @@ function MarketingFilesDialog({
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadCategory, setUploadCategory] = useState<"brochure" | "floorplan" | "photo">("brochure");
 
   const uploadFile = useCallback(async (file: globalThis.File) => {
     if (!unit) return;
@@ -3608,10 +3609,12 @@ function MarketingFilesDialog({
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("category", uploadCategory);
       const res = await fetch(`/api/available-units/${unit.id}/files`, {
         method: "POST",
         body: formData,
         credentials: "include",
+        headers: { ...getAuthHeaders() },
       });
       if (!res.ok) throw new Error("Upload failed");
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit.id, "files"] });
@@ -3621,7 +3624,7 @@ function MarketingFilesDialog({
     } finally {
       setUploading(false);
     }
-  }, [unit, toast]);
+  }, [unit, toast, uploadCategory]);
 
   const deleteFile = useCallback(async (fileId: string) => {
     if (!unit) return;
@@ -3654,15 +3657,25 @@ function MarketingFilesDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Marketing Files
+            <FileText className="h-5 w-5 shrink-0" />
+            Files
           </DialogTitle>
-          <DialogDescription>
-            {propertyName} — {unit?.unitName}
+          <DialogDescription className="truncate">
+            {unit?.unitName} · {propertyName}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* One Files home per unit, sectioned rather than separate
+              folders (Woody, 2026-09-01) — pick what you're uploading,
+              the list below groups by section. */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {([["brochure", "Brochure"], ["floorplan", "Floor plan"], ["photo", "Photo"]] as const).map(([key, label]) => (
+              <Pill key={key} active={uploadCategory === key} onClick={() => setUploadCategory(key)} data-testid={`files-cat-${key}`}>
+                {label}
+              </Pill>
+            ))}
+          </div>
           <div className="flex gap-2">
             <input
               ref={fileInputRef}
@@ -3685,7 +3698,7 @@ function MarketingFilesDialog({
               data-testid="button-upload-brochure"
             >
               <Upload className="h-4 w-4" />
-              {uploading ? "Uploading..." : "Upload Brochure"}
+              {uploading ? "Uploading..." : `Upload ${uploadCategory === "floorplan" ? "floor plan" : uploadCategory}`}
             </Button>
             <Button
               variant="outline"
@@ -3704,13 +3717,25 @@ function MarketingFilesDialog({
           {files.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <File className="h-10 w-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">No marketing files yet</p>
-              <p className="text-xs mt-1">Upload a brochure or create one in Document Studio</p>
+              <p className="text-sm">No files yet</p>
+              <p className="text-xs mt-1">Upload a brochure, floor plan or photo — or create one in Document Studio</p>
             </div>
           ) : (
             <ScrollArea className="max-h-[300px]">
-              <div className="space-y-2">
-                {files.map(f => (
+              <div className="space-y-3">
+                {([["brochure", "Brochures"], ["floorplan", "Floor plans"], ["photo", "Photos"], ["other", "Other"]] as const).map(([key, heading]) => {
+                  // Legacy rows predate the category column and all default
+                  // to brochure — images among them read as photos.
+                  const sectionFiles = files.filter(f => {
+                    const cat = ((f as any).category === "brochure" && f.mimeType?.startsWith("image/")) ? "photo" : ((f as any).category || "brochure");
+                    return cat === key;
+                  });
+                  if (sectionFiles.length === 0) return null;
+                  return (
+                    <div key={key}>
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">{heading} · {sectionFiles.length}</p>
+                      <div className="space-y-2">
+                        {sectionFiles.map(f => (
                   <div
                     key={f.id}
                     className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30 hover:bg-muted/60 transition-colors group cursor-pointer"
@@ -3749,6 +3774,10 @@ function MarketingFilesDialog({
                     </div>
                   </div>
                 ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </ScrollArea>
           )}

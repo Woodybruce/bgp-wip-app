@@ -6748,6 +6748,11 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
       await saveFile(`marketing-files/${uniqueName}`, req.file.buffer, req.file.mimetype, req.file.originalname);
       const { unitMarketingFiles } = await import("@shared/schema");
+      // Files dialog section — explicit choice wins; images default to
+      // photo, everything else to brochure.
+      const category = ["brochure", "floorplan", "photo", "other"].includes(req.body?.category)
+        ? req.body.category
+        : ((req.file.mimetype || "").startsWith("image/") ? "photo" : "brochure");
       const [file] = await db.insert(unitMarketingFiles).values({
         unitId: req.params.id,
         fileName: req.file.originalname,
@@ -6755,6 +6760,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
         fileType: "upload",
         fileSize: req.file.size,
         mimeType: req.file.mimetype,
+        category,
       }).returning();
       // Photos uploaded against a tracker unit also land in the Image
       // Gallery, filed under the property (and tagged with the unit) so
