@@ -3084,7 +3084,9 @@ export default function AvailableUnitsPage() {
           {addViewingOpen ? (
             <div className="border rounded-lg p-3 space-y-3">
               <div className="text-sm font-medium">{editingViewingId ? "Edit Viewing" : "Add Viewing"}</div>
-              <div className="grid grid-cols-2 gap-3">
+              {/* Pickers stack full-width on phones — half-width triggers
+                  truncated their own placeholders ("Select com…"). */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Company</Label>
                   <CrmPicker
@@ -3124,7 +3126,7 @@ export default function AvailableUnitsPage() {
                 <Label className="text-xs">Attendees</Label>
                 <Input value={viewingForm.attendees} onChange={e => setViewingForm(f => ({ ...f, attendees: e.target.value }))} placeholder="Who attended" data-testid="viewing-attendees" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Outcome</Label>
                   <Select value={viewingForm.outcome} onValueChange={v => setViewingForm(f => ({ ...f, outcome: v }))}>
@@ -3217,7 +3219,7 @@ export default function AvailableUnitsPage() {
           {addOfferOpen ? (
             <div className="border rounded-lg p-3 space-y-3">
               <div className="text-sm font-medium">{editingOfferId ? "Edit Offer" : "Add Offer"}</div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Company</Label>
                   <CrmPicker
@@ -3265,7 +3267,7 @@ export default function AvailableUnitsPage() {
                   <Input value={offerForm.breakOption} onChange={e => setOfferForm(f => ({ ...f, breakOption: e.target.value }))} placeholder="e.g. Year 5" data-testid="offer-break" />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Premium (£)</Label>
                   <CurrencyInput value={offerForm.premium} onChange={v => setOfferForm(f => ({ ...f, premium: v }))} placeholder="0" prefix="£" testId="offer-premium" />
@@ -4067,9 +4069,9 @@ function UnitFormDialog({
               );
             })()}
           </div>
-          <div>
+          <div className="min-w-0">
             <Label>Available Date</Label>
-            <Input type="date" value={form.availableDate} onChange={e => upd("availableDate", e.target.value)} />
+            <Input type="date" className="min-w-0" value={form.availableDate} onChange={e => upd("availableDate", e.target.value)} />
           </div>
           <div className="col-span-2">
             <Label>BGP Contact</Label>
