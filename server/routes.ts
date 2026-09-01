@@ -6816,6 +6816,31 @@ These terms are indicative only and do not constitute a binding agreement.`;
     }
   });
 
+  // Re-file a marketing file into a different section (brochure / floorplan
+  // / photo / other) — files land in the wrong bucket and need moving from
+  // the Files dialog (Woody, 2026-09-01).
+  app.patch("/api/available-units/files/:fileId", requireAuth, async (req, res) => {
+    try {
+      const category = String(req.body?.category || "");
+      if (!["brochure", "floorplan", "photo", "other"].includes(category)) {
+        return res.status(400).json({ message: "Invalid category" });
+      }
+      const { unitMarketingFiles } = await import("@shared/schema");
+      const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId as string));
+      if (!file) return res.status(404).json({ message: "File not found" });
+      {
+        const fileUnit = await storage.getAvailableUnit(file.unitId);
+        if (await assertUnitInClientScope(req, fileUnit?.propertyId)) {
+          return res.status(403).json({ message: "Unit is outside your portfolio" });
+        }
+      }
+      await db.update(unitMarketingFiles).set({ category }).where(eq(unitMarketingFiles.id, req.params.fileId as string));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to update file" });
+    }
+  });
+
   // --- Unit Viewings ---
   app.get("/api/available-units/:id/viewings", requireAuth, async (req, res) => {
     try {

@@ -21,7 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins, Flame,
-  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2 } from "lucide-react";
+  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -1822,7 +1822,7 @@ export default function AvailableUnitsPage() {
                 {showCol("comments") && <TableHead className="min-w-[200px]">Comments</TableHead>}
                 {showCol("floorAreas") && <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>}
                 {showCol("costs") && <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>}
-                <TableHead className="w-[140px] min-w-[140px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
+                <TableHead className="w-[170px] min-w-[170px] sticky right-0 z-20 border-l bg-card">Actions &amp; Activity</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -2287,12 +2287,12 @@ export default function AvailableUnitsPage() {
                             (Woody, 2026-09-01 "all in one"; supersedes the
                             separate Activity/Files/Brief columns + UX #100).
                             Counts open the list dialogs; adding lives inside. */}
-                        <div className="flex flex-col gap-0.5 items-start">
-                          <div className="flex gap-0.5">
+                        <div className="flex flex-col gap-1 items-start">
+                          <div className="flex gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
+                              className="h-7 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
                               onClick={() => setViewingsUnit(u)}
                               title="Viewings"
                               data-testid={`button-viewings-${u.id}`}
@@ -2303,7 +2303,7 @@ export default function AvailableUnitsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
+                              className="h-7 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
                               onClick={() => setOffersUnit(u)}
                               title="Offers"
                               data-testid={`button-offers-${u.id}`}
@@ -2314,7 +2314,7 @@ export default function AvailableUnitsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
+                              className="h-7 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
                               onClick={() => setInterestUnit(u)}
                               title="Interest — brands who've expressed interest by email"
                               data-testid={`button-interest-${u.id}`}
@@ -2323,11 +2323,11 @@ export default function AvailableUnitsPage() {
                               {interestCounts[u.id] || 0}
                             </Button>
                           </div>
-                          <div className="flex gap-0.5">
+                          <div className="flex gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                               onClick={() => setFilesUnit(u)}
                               title="Files — brochures, floor plans, photos, info sheet"
                               data-testid={`button-files-${u.id}`}
@@ -2337,7 +2337,7 @@ export default function AvailableUnitsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                               onClick={() => setHotsUnit(u)}
                               title="Heads of Terms"
                               data-testid={`button-hots-${u.id}`}
@@ -2347,29 +2347,29 @@ export default function AvailableUnitsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                               onClick={() => setBriefUnit(u)}
                               title="Targeting brief"
                               data-testid={`button-brief-${u.id}`}
                             >
                               <Target className="h-3.5 w-3.5" />
                             </Button>
-                          </div>
-                          <div className="flex gap-0.5">
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                               onClick={() => setMatchItem(u)}
                               data-testid={`button-match-${u.id}`}
                               title="Find matching requirements"
                             >
                               <Sparkles className="h-3.5 w-3.5" />
                             </Button>
+                          </div>
+                          <div className="flex gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 w-6 p-0"
+                              className="h-7 w-7 p-0"
                               onClick={() => {
                                 const pName = propertyMap[u.propertyId]?.name || "the property";
                                 const prompt = `Tell me about unit ${u.unitName || u.id} at ${pName} — current letting status, targeting and anything relevant from the CRM.`;
@@ -2383,7 +2383,7 @@ export default function AvailableUnitsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 w-6 p-0"
+                              className="h-7 w-7 p-0"
                               onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
                               data-testid={`button-edit-${u.id}`}
                               title="Edit unit form (everything is also editable in the row)"
@@ -2393,7 +2393,7 @@ export default function AvailableUnitsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 w-6 p-0 text-destructive"
+                              className="h-7 w-7 p-0 text-destructive"
                               onClick={() => setDeleteItem(u)}
                               data-testid={`button-delete-${u.id}`}
                               title="Delete unit"
@@ -3646,7 +3646,11 @@ function MarketingFilesDialog({
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploadCategory, setUploadCategory] = useState<"brochure" | "floorplan" | "photo">("brochure");
+  // The pills FILTER the list (and aim uploads) — they looked like filters
+  // and weren't, which read as broken (Woody, 2026-09-01). Files sit front
+  // and centre; the info-sheet generator collapses below them.
+  const [section, setSection] = useState<"all" | "brochure" | "floorplan" | "photo">("all");
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetOpts, setSheetOpts] = useState({ floorplans: true, schemePlan: true, brochure: false, photos: true });
   const [generatingSheet, setGeneratingSheet] = useState(false);
   // In-app preview instead of window.open — in the iOS home-screen app a
@@ -3736,9 +3740,12 @@ function MarketingFilesDialog({
     if (!unit) return;
     setUploading(true);
     try {
+      // Active section aims the upload; on "All", images land in Photos
+      // and documents in Brochures.
+      const category = section !== "all" ? section : (file.type.startsWith("image/") ? "photo" : "brochure");
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("category", uploadCategory);
+      formData.append("category", category);
       const res = await fetch(`/api/available-units/${unit.id}/files`, {
         method: "POST",
         body: formData,
@@ -3753,7 +3760,17 @@ function MarketingFilesDialog({
     } finally {
       setUploading(false);
     }
-  }, [unit, toast, uploadCategory]);
+  }, [unit, toast, section]);
+
+  const moveFile = useCallback(async (fileId: string, category: string) => {
+    if (!unit) return;
+    try {
+      await apiRequest("PATCH", `/api/available-units/files/${fileId}`, { category });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit.id, "files"] });
+    } catch (e: any) {
+      toast({ title: "Couldn't move file", description: e.message, variant: "destructive" });
+    }
+  }, [unit, toast]);
 
   const deleteFile = useCallback(async (fileId: string) => {
     if (!unit) return;
@@ -3796,13 +3813,16 @@ function MarketingFilesDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* One Files home per unit, sectioned rather than separate
-              folders (Woody, 2026-09-01) — pick what you're uploading,
-              the list below groups by section. */}
+          {/* Files come first (Woody, 2026-09-01: "file share front and
+              central"). The pills genuinely FILTER the list and aim
+              uploads; the info-sheet generator collapses below. */}
           <div className="flex flex-wrap items-center gap-1.5">
-            {([["brochure", "Brochure"], ["floorplan", "Floor plan"], ["photo", "Photo"]] as const).map(([key, label]) => (
-              <Pill key={key} active={uploadCategory === key} onClick={() => setUploadCategory(key)} data-testid={`files-cat-${key}`}>
-                {label}
+            <Pill active={section === "all"} onClick={() => setSection("all")} data-testid="files-cat-all">
+              All <span className="opacity-70 font-mono tabular-nums">{files.length}</span>
+            </Pill>
+            {([["brochure", "Brochures"], ["floorplan", "Floor plans"], ["photo", "Photos"]] as const).map(([key, label]) => (
+              <Pill key={key} active={section === key} onClick={() => setSection(key)} data-testid={`files-cat-${key}`}>
+                {label} <span className="opacity-70 font-mono tabular-nums">{files.filter(f => catOf(f) === key).length}</span>
               </Pill>
             ))}
           </div>
@@ -3828,7 +3848,7 @@ function MarketingFilesDialog({
               data-testid="button-upload-brochure"
             >
               <Upload className="h-4 w-4" />
-              {uploading ? "Uploading..." : `Upload ${uploadCategory === "floorplan" ? "floor plan" : uploadCategory}`}
+              {uploading ? "Uploading..." : `Upload ${section === "all" ? "file" : section === "floorplan" ? "floor plan" : section}`}
             </Button>
             <Button
               variant="outline"
@@ -3844,40 +3864,6 @@ function MarketingFilesDialog({
             </Button>
           </div>
 
-          {/* Info sheet — tick what to include, generate a landlord-branded
-              PDF of the unit particulars for agents/tenants (Woody +
-              Landsec, 2026-09-01). Output saves back into these Files. */}
-          <div className="border rounded-lg p-3 space-y-2" data-testid="info-sheet-panel">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Info sheet</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
-              {([
-                ["floorplans", `Unit floor plans (${counts.floorplans})`, counts.floorplans > 0],
-                ["schemePlan", `Scheme plan (${schemePlanCount})`, schemePlanCount > 0],
-                ["brochure", `Brochure (${counts.brochure})`, counts.brochure > 0],
-                ["photos", `Photos (${Math.min(counts.photos, 6)})`, counts.photos > 0],
-              ] as const).map(([key, label, available]) => (
-                <label key={key} className={`flex items-center gap-2 text-xs ${available ? "text-foreground cursor-pointer" : "text-muted-foreground/50"}`}>
-                  {/* data-no-min-touch: the mobile 44px tap-target rule
-                      ballooned these into tall bars — h-3.5 doesn't match
-                      the rule's h-4 size-class exemption. */}
-                  <Checkbox
-                    className="h-4 w-4 shrink-0"
-                    data-no-min-touch
-                    disabled={!available}
-                    checked={available && sheetOpts[key]}
-                    onCheckedChange={(v) => setSheetOpts(o => ({ ...o, [key]: v === true }))}
-                    data-testid={`sheet-inc-${key}`}
-                  />
-                  <span>{label}</span>
-                </label>
-              ))}
-            </div>
-            <Button size="sm" className="w-full gap-2" onClick={generateSheet} disabled={generatingSheet} data-testid="button-generate-info-sheet">
-              <FileText className="h-4 w-4" />
-              {generatingSheet ? "Generating…" : "Generate info sheet PDF"}
-            </Button>
-          </div>
-
           {files.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <File className="h-10 w-10 mx-auto mb-2 opacity-30" />
@@ -3888,15 +3874,11 @@ function MarketingFilesDialog({
             // plain overflow div, not ScrollArea — Radix's display:table
             // viewport sizes to the untruncated filename and pushes the
             // dialog wider than the phone (r438)
-            <div className="max-h-[300px] overflow-y-auto">
+            <div className="max-h-[45dvh] overflow-y-auto">
               <div className="space-y-3">
                 {([["brochure", "Brochures"], ["floorplan", "Floor plans"], ["photo", "Photos"], ["other", "Other"]] as const).map(([key, heading]) => {
-                  // Legacy rows predate the category column and all default
-                  // to brochure — images among them read as photos.
-                  const sectionFiles = files.filter(f => {
-                    const cat = ((f as any).category === "brochure" && f.mimeType?.startsWith("image/")) ? "photo" : ((f as any).category || "brochure");
-                    return cat === key;
-                  });
+                  if (section !== "all" && key !== section) return null;
+                  const sectionFiles = files.filter(f => catOf(f) === key);
                   if (sectionFiles.length === 0) return null;
                   return (
                     <div key={key}>
@@ -3905,7 +3887,7 @@ function MarketingFilesDialog({
                         {sectionFiles.map(f => (
                   <div
                     key={f.id}
-                    className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30 hover:bg-muted/60 transition-colors group cursor-pointer"
+                    className="flex items-center gap-2 p-3 rounded-lg border bg-muted/30 hover:bg-muted/60 transition-colors cursor-pointer"
                     onClick={() => openFile(f)}
                     data-testid={`file-item-${f.id}`}
                   >
@@ -3917,7 +3899,32 @@ function MarketingFilesDialog({
                         {f.createdAt && ` · ${new Date(f.createdAt).toLocaleDateString("en-GB")}`}
                       </p>
                     </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* Always visible — hover-only actions don't exist on
+                        a phone (Woody, 2026-09-01). */}
+                    <div className="flex gap-0.5 shrink-0">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            onClick={(e) => e.stopPropagation()}
+                            title="Move to another section"
+                            data-testid={`button-move-file-${f.id}`}
+                          >
+                            <MoreVertical className="h-3.5 w-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                          {([["brochure", "Move to Brochures"], ["floorplan", "Move to Floor plans"], ["photo", "Move to Photos"], ["other", "Move to Other"]] as const)
+                            .filter(([k]) => k !== catOf(f))
+                            .map(([k, label]) => (
+                              <DropdownMenuItem key={k} onClick={() => moveFile(f.id, k)} data-testid={`move-file-${f.id}-${k}`}>
+                                {label}
+                              </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -3948,6 +3955,55 @@ function MarketingFilesDialog({
               </div>
             </div>
           )}
+
+          {/* Info sheet — collapsed below the files (Woody, 2026-09-01:
+              files front and centre, "info sheet generate as an
+              expansion"). Output saves back into these Files. */}
+          <div className="border rounded-lg" data-testid="info-sheet-panel">
+            <button
+              type="button"
+              className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-semibold"
+              onClick={() => setSheetOpen(o => !o)}
+              data-testid="button-toggle-info-sheet"
+            >
+              <span className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-muted-foreground" />
+                Info sheet — branded PDF for agents/tenants
+              </span>
+              {sheetOpen ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+            </button>
+            {sheetOpen && (
+              <div className="px-3 pb-3 space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+                  {([
+                    ["floorplans", `Unit floor plans (${counts.floorplans})`, counts.floorplans > 0],
+                    ["schemePlan", `Scheme plan (${schemePlanCount})`, schemePlanCount > 0],
+                    ["brochure", `Brochure (${counts.brochure})`, counts.brochure > 0],
+                    ["photos", `Photos (${Math.min(counts.photos, 6)})`, counts.photos > 0],
+                  ] as const).map(([key, label, available]) => (
+                    <label key={key} className={`flex items-center gap-2 text-xs ${available ? "text-foreground cursor-pointer" : "text-muted-foreground/50"}`}>
+                      {/* data-no-min-touch: the mobile 44px tap-target rule
+                          ballooned these into tall bars — h-3.5 doesn't match
+                          the rule's h-4 size-class exemption. */}
+                      <Checkbox
+                        className="h-4 w-4 shrink-0"
+                        data-no-min-touch
+                        disabled={!available}
+                        checked={available && sheetOpts[key]}
+                        onCheckedChange={(v) => setSheetOpts(o => ({ ...o, [key]: v === true }))}
+                        data-testid={`sheet-inc-${key}`}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <Button size="sm" className="w-full gap-2" onClick={generateSheet} disabled={generatingSheet} data-testid="button-generate-info-sheet">
+                  <FileText className="h-4 w-4" />
+                  {generatingSheet ? "Generating…" : "Generate info sheet PDF"}
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
