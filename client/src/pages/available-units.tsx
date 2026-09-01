@@ -3028,10 +3028,14 @@ export default function AvailableUnitsPage() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CalendarDays className="h-5 w-5" />
-              Viewings — {viewingsUnit ? `${propertyMap[viewingsUnit.propertyId]?.name || "Property"}, ${viewingsUnit.unitName}` : ""}
+              <CalendarDays className="h-5 w-5 shrink-0" />
+              Viewings
             </DialogTitle>
-            <DialogDescription>Track all viewings for this unit</DialogDescription>
+            {/* Property names carry full addresses — a truncating one-liner
+                beats the four-line title it produced on phones. */}
+            <DialogDescription className="truncate">
+              {viewingsUnit ? `${viewingsUnit.unitName} · ${propertyMap[viewingsUnit.propertyId]?.name || "Property"}` : "Track all viewings for this unit"}
+            </DialogDescription>
           </DialogHeader>
 
           {viewingsForUnit.length === 0 && !addViewingOpen && (
@@ -3104,14 +3108,16 @@ export default function AvailableUnitsPage() {
                   />
                 </div>
               </div>
+              {/* min-w-0 — iOS date/time inputs refuse to shrink below their
+                  intrinsic width and pushed the Time field off-screen at 390px. */}
               <div className="grid grid-cols-2 gap-3">
-                <div>
+                <div className="min-w-0">
                   <Label className="text-xs">Date</Label>
-                  <Input type="date" value={viewingForm.viewingDate} onChange={e => setViewingForm(f => ({ ...f, viewingDate: e.target.value }))} data-testid="viewing-date" />
+                  <Input type="date" className="min-w-0" value={viewingForm.viewingDate} onChange={e => setViewingForm(f => ({ ...f, viewingDate: e.target.value }))} data-testid="viewing-date" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <Label className="text-xs">Time</Label>
-                  <Input type="time" value={viewingForm.viewingTime} onChange={e => setViewingForm(f => ({ ...f, viewingTime: e.target.value }))} data-testid="viewing-time" />
+                  <Input type="time" className="min-w-0" value={viewingForm.viewingTime} onChange={e => setViewingForm(f => ({ ...f, viewingTime: e.target.value }))} data-testid="viewing-time" />
                 </div>
               </div>
               <div>
@@ -3152,10 +3158,12 @@ export default function AvailableUnitsPage() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <HandCoins className="h-5 w-5" />
-              Offers — {offersUnit ? `${propertyMap[offersUnit.propertyId]?.name || "Property"}, ${offersUnit.unitName}` : ""}
+              <HandCoins className="h-5 w-5 shrink-0" />
+              Offers
             </DialogTitle>
-            <DialogDescription>Track all offers received for this unit</DialogDescription>
+            <DialogDescription className="truncate">
+              {offersUnit ? `${offersUnit.unitName} · ${propertyMap[offersUnit.propertyId]?.name || "Property"}` : "Track all offers received for this unit"}
+            </DialogDescription>
           </DialogHeader>
 
           {offersForUnit.length === 0 && !addOfferOpen && (
@@ -3234,11 +3242,11 @@ export default function AvailableUnitsPage() {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div>
+                <div className="min-w-0">
                   <Label className="text-xs">Date</Label>
-                  <Input type="date" value={offerForm.offerDate} onChange={e => setOfferForm(f => ({ ...f, offerDate: e.target.value }))} data-testid="offer-date" />
+                  <Input type="date" className="min-w-0" value={offerForm.offerDate} onChange={e => setOfferForm(f => ({ ...f, offerDate: e.target.value }))} data-testid="offer-date" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <Label className="text-xs">Rent p.a. (£)</Label>
                   <CurrencyInput value={offerForm.rentPa} onChange={v => setOfferForm(f => ({ ...f, rentPa: v }))} placeholder="0" prefix="£" testId="offer-rent" />
                 </div>
