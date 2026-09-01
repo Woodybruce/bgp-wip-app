@@ -80,6 +80,28 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r445 · 2026-09-01 ~19:15 UTC · LIGHT (r444 had the journey) — GREEN
+- Bring-up: canonical recipe held 10th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
+  445: exit 0, 232 [ok] scenario lines (victoria/mark/woody/nick/sam),
+  12 logged issues = the exact standing noise signature (rocketreach 400,
+  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
+  keyless, 8×403 probe-by-design scope rows). Server log: 0 raw
+  500/502/504 (one "500" grep hit = news-feed log text, r413 class).
+  phone-overflow-sweep 11/11 routes fit at 390px. 0 app bugs.
+- No journey (LIGHT). No deferred bugs to pick up (r444 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Harness note: two-bot (~13 min) outlives a 600s foreground Bash window;
+  run it via a wrapper that logs to a file and let it finish (this round's
+  wrapper pattern: seed-personas → tsx dev server on :5000 w/ trap-kill →
+  two-bot → sweep).
+- Next: r445 was LIGHT → r446 FULL, rotation #3 Landsec client mobile
+  390px.
+
 ### r444 · 2026-09-01 ~19:00 UTC · FULL — rotation #2 Landsec client desktop 1440px — GREEN
 - Bring-up: canonical recipe held 9th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0.
