@@ -80,16 +80,42 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r440 · 2026-09-01 ~14:45 UTC · FULL — ROUND IN PROGRESS (provisional)
+### r440 · 2026-09-01 ~15:30 UTC · FULL — rotation #4 BGP staff mobile 390px · 1 bug fixed
 - Bring-up: canonical recipe held 5th consecutive time (qa:pg once →
-  run-smoke restore clean). Regression: smoke GREEN 42/0.
+  run-smoke restore clean). Regression: smoke GREEN 42/0 ×2 (before, and
+  FRESH_BUILD=1 after the fix).
 - Two-bot round 440: ALL scenarios ok (victoria/mark/woody/nick/sam),
   12 logged issues, every one a known class: rocketreach 400,
   invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
   (keyless), 8×403 probe-by-design scope rows. Whole-round server log:
-  0 raw 500/502/504; 403s flat at 1-5 per route. Triage: 0 app bugs.
-- Next in this round: rotation #4 staff mobile 390px journey (tasks,
-  tracker, requirements, deals, calendar). Final entry replaces this one.
+  0 raw 500/502/504; 403s flat at 1-5 per route. Triage: 0 harness bugs.
+- Journey (Victoria, 390px iPhone, "out of the office: home screen, knock
+  off a task, add a follow-up, check the tracker, requirements, open a
+  live deal, calendar"): mobile home → /tasks (quick-add lands, AI
+  briefing settles to its Generate fallback after the documented keyless
+  retry backoff) → /available (pills wrap, unit cards clean) → Files /
+  Viewing / Offer / Interest dialogs all fit (r438 grid-cols-1 fix holds
+  staff-side) → /requirements → /deals → deal detail → /calendar. No
+  h-overflow on any page; only noise-class console rows.
+- BUG FIXED: tracker "Add Available Unit" dialog h-scrolled at 390px
+  (scrollWidth 580 vs 372) — the "Show all fields (rates, service
+  charge, …)" ghost Button's whitespace-nowrap label forced a 556px
+  min-content column through the grid-cols-2 form. Added whitespace-normal
+  h-auto text-left to the toggle (available-units.tsx). Verified live:
+  dialog sw==cw collapsed AND expanded, label wraps to two lines. tsc
+  clean, rebuilt, smoke re-green. New two-bot scenario
+  staff-mobile-add-unit-dialog locks it (assert dialog sw<=cw at 390px);
+  assertions dry-run green standalone.
+- HARNESS LESSON: Playwright mobile contexts need hasTouch:true (+
+  isMobile) or useIsMobile's isTouchDevice() bails and you get the DESKTOP
+  shell at 390px — iPhone UA alone is not enough. First journey pass
+  burned ~10min on that false desktop-shell render.
+- Bugs deferred: none new. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions:
+  none new. Real-device keyboard-up composer check (r405) still open.
+- New flakes: none. Watch staff-mobile-add-unit-dialog on its first full
+  harness run (r441).
+- Next: r440 had the journey → r441 LIGHT; then rotation #1 staff desktop.
 
 ### r439 · 2026-09-01 ~14:10 UTC · LIGHT (r438 had the journey) — GREEN
 - Bring-up: canonical recipe held 4th consecutive time (qa:pg once →

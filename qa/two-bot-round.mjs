@@ -495,6 +495,36 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r440: the tracker's Add Available Unit dialog overflowed the 390px
+  // phone — the "Show all fields (…)" ghost button's whitespace-nowrap label
+  // forced a 556px min-content column, so the whole form h-scrolled. The
+  // button now wraps; assert the dialog never exceeds its own box again.
+  await step(page, p, 'staff-mobile-add-unit-dialog', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/available`, nav);
+      await mob.waitForTimeout(3500);
+      await mob.locator('button:has-text("Add unit")').first().click();
+      await mob.waitForTimeout(1200);
+      const dlg = mob.locator('[role="dialog"]').last();
+      if (!(await dlg.count())) throw new Error('Add unit dialog did not open at 390px');
+      const m = await dlg.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
+      if (m.sw > m.cw + 4) throw new Error(`Add unit dialog overflows at 390px: scrollWidth ${m.sw} > ${m.cw}`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // 4e. The retired Leasing Schedule shows its archived banner and the
   // banner's Letting Tracker link goes somewhere real (it shipped pointing
   // at /available-units, which has no route).

@@ -4288,7 +4288,7 @@ function UnitFormDialog({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="text-xs text-muted-foreground"
+                className="text-xs text-muted-foreground whitespace-normal h-auto text-left"
                 onClick={() => setShowAllFields(!showAllFields)}
                 data-testid="toggle-show-all-fields"
               >
