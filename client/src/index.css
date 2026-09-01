@@ -888,6 +888,25 @@ a:not([class]):not(:has(button)):hover {
     padding-top: 0.625rem;
     padding-bottom: 0.625rem;
   }
+
+  /* iOS WebKit date/time inputs ignore min-width:0 and bulge out of
+     two-column dialog grids on REAL devices (Chromium emulation doesn't
+     reproduce it — Woody's iPhone, 2026-09-01: Interest/Viewings/Offers
+     dialogs). appearance:none makes WebKit lay them out like text fields
+     so they respect the grid track; the shadcn Input classes already
+     supply border/height/padding, and the value stays left-aligned via
+     the shadow-part rule below. */
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  input[type="month"] {
+    -webkit-appearance: none;
+    appearance: none;
+    min-width: 0;
+  }
+  input::-webkit-date-and-time-value {
+    text-align: left;
+  }
 }
 
 /* Disable hover visual effects on pure touch devices */
