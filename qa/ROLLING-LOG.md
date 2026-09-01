@@ -80,7 +80,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r446 · 2026-09-01 ~20:30 UTC · FULL — rotation #3 Landsec client mobile 390px — ROUND IN PROGRESS
+### r446 · 2026-09-01 ~20:50 UTC · FULL — rotation #3 Landsec client mobile 390px — GREEN
 - Bring-up: canonical recipe held 11th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
   446: exit 0, 232 [ok] scenario lines (victoria/mark/woody/nick/sam),
@@ -89,8 +89,30 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   keyless, 8×403 probe-by-design scope rows). Server log: 0 raw
   500/502/504 (one "500" grep hit = news-feed log text, r413 class).
   phone-overflow-sweep 11/11 routes fit at 390px. Triage: 0 app bugs.
-- Journey (Mark @390px, brand-intel prep) in progress — final entry to
-  replace this one.
+- Journey (Mark @390px iPhone UA, brand-intel prep: home → Brands slice
+  (9 brands, category chips) → Honi Poke profile (pill tabs, Compliance
+  & KYC panel visible, staff words absent) → CONTACTS "add role…" probe
+  (client PUT /api/crm/contacts/:id 200 — INTENDED, allowlisted
+  server/index.ts:3625, scope-jailed in crm.ts; rival gates green in
+  two-bot) → COMPLIANCE + INTEL tabs → Add-brand dialog (374px wide, no
+  overflow) → Testco Jewellers add roundtrip (POST add-brand 200, 9→10 +
+  Luxury chip appears → DELETE 200, back to 9) → Bluewater property page
+  → full tenancy schedule (200 units, stat strip, no h-overflow at any
+  scroll depth) → News tab → Tasks tab + open task): 0 pageerrors,
+  0 non-noise 4xx/5xx, 0 overflow on every surface, 0 bugs. Home widget
+  still 77/1/0/78 (r438 fix holds).
+- Harness note (Playwright, not app): brand-card taps need force:true —
+  the news-feed images below keep shifting layout so the stability check
+  spins; synthetic el.click() does not navigate (cards are div+handler,
+  no <a href>).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 126 (tenancy schedule on the
+  phone stacks two headers + dangling "· Bluewater" title fragment).
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- New flakes: none.
+- Next: r446 had the journey → r447 LIGHT; then rotation #4 staff mobile
+  390px.
 
 ### r445 · 2026-09-01 ~19:15 UTC · LIGHT (r444 had the journey) — GREEN
 - Bring-up: canonical recipe held 10th consecutive time (qa:pg once →

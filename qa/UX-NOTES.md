@@ -16,6 +16,15 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+126. 2026-09-01 · Landsec client / mobile 390px (QA r446) · opening the full
+    Bluewater tenancy schedule on the phone · the page shows two stacked
+    headers (the shell's "Tenancy Schedule" bar, then the page's own
+    "Back to property / Tenancy Schedule" block) and the two-line page
+    title leaves "· Bluewater Shopping Centre" hanging awkwardly in the
+    right gutter · on the phone shell, collapse to the shell header alone
+    (or one compact "Tenancy Schedule · Bluewater" line) so the schedule
+    starts a screen-height sooner.
+
 125. 2026-09-01 · Landsec client / desktop 1440px (QA r444) · reading the
     Bluewater tenancy schedule stat strip during quarterly-review prep ·
     "PASSING RENT" shows "—" when no rent is recorded but the neighbouring
