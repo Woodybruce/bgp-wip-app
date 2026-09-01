@@ -898,7 +898,16 @@ export default function WipReport() {
   const WIP_LEAD_KEYS = ["dealRef", "ref", "client", "tenant", "project", "billingEntity", "team"];
   const WIP_TRAIL_KEYS = ["dealDate", "dealType", "agent", "dealStatus", "stage"];
   const [hiddenWipCols, setHiddenWipCols] = useState<Set<string>>(() => {
-    try { return new Set<string>(JSON.parse(localStorage.getItem("bgp_wip_hidden_cols") || "[]")); } catch { return new Set(); }
+    // v2 (2026-09-01): Billing Entity + Fee Split are blank on most rows and
+    // squeezed Client/Tenant/Property into truncation (Woody: "WIP report is
+    // fucked") — hide them once for everyone, carrying over any earlier
+    // hides; the Columns menu brings them back per browser.
+    try {
+      const v2 = localStorage.getItem("bgp_wip_hidden_cols_v2");
+      if (v2 !== null) return new Set<string>(JSON.parse(v2));
+      const v1: string[] = JSON.parse(localStorage.getItem("bgp_wip_hidden_cols") || "[]");
+      return new Set<string>([...v1, "billingEntity", "amtInvoice"]);
+    } catch { return new Set(["billingEntity", "amtInvoice"]); }
   });
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const [expandedBoards, setExpandedBoards] = useState<Set<string>>(new Set());
@@ -912,7 +921,7 @@ export default function WipReport() {
   const toggleWipCol = (k: string) => setHiddenWipCols((prev) => {
     const n = new Set(prev);
     if (n.has(k)) n.delete(k); else n.add(k);
-    try { localStorage.setItem("bgp_wip_hidden_cols", JSON.stringify([...n])); } catch {}
+    try { localStorage.setItem("bgp_wip_hidden_cols_v2", JSON.stringify([...n])); } catch {}
     return n;
   });
 
@@ -1823,7 +1832,7 @@ export default function WipReport() {
                       </td>
                       )}
                       {colVisible("ref") && (
-                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[180px]">
+                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[210px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
                             <span className="text-primary hover:underline cursor-pointer" data-testid={`link-deal-${e.dealId}`}>{e.ref || "—"}</span>
@@ -1832,21 +1841,21 @@ export default function WipReport() {
                       </td>
                       )}
                       {colVisible("client") && (
-                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[130px]">
+                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[170px]">
                         {e.client && e.clientId ? (
                           <Link href={`/companies/${e.clientId}`}><span className="hover:underline hover:text-primary cursor-pointer">{e.client}</span></Link>
                         ) : (e.client || "—")}
                       </td>
                       )}
                       {colVisible("tenant") && (
-                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">
+                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[170px]">
                         {e.tenant && e.tenantId ? (
                           <Link href={`/companies/${e.tenantId}`}><span className="hover:underline hover:text-primary cursor-pointer">{e.tenant}</span></Link>
                         ) : (e.tenant || "—")}
                       </td>
                       )}
                       {colVisible("project") && (
-                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">
+                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[170px]">
                         {e.project && e.propertyId ? (
                           <Link href={`/properties/${e.propertyId}`}><span className="hover:underline hover:text-primary cursor-pointer">{e.project}</span></Link>
                         ) : (e.project || "—")}
