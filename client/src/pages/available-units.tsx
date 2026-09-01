@@ -1801,35 +1801,45 @@ export default function AvailableUnitsPage() {
                     data-testid="checkbox-select-all-units"
                   />
                 </TableHead>
-                {showCol("ref") && <TableHead className="w-[56px]">Ref</TableHead>}
-                <TableHead className="w-[200px] min-w-[180px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
+                {showCol("ref") && <TableHead className="w-[48px] px-1.5">Ref</TableHead>}
+                {/* Left block runs tight (Woody, 2026-09-01: "all need to be
+                    reduced in width") — Target Tenant and Comments carry no
+                    fixed width, so THEY absorb spare page width instead of
+                    every column inflating evenly. */}
+                <TableHead className="w-[160px] min-w-[150px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
                   Property / Unit{sortBy === "property" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                 </TableHead>
                 {/* "Existing Tenant" wrapped to two lines and sat out of
                     line with the other headers (Woody, 2026-09-01) — one
                     word, tighter column. */}
-                {showCol("existingTenant") && <TableHead className="w-[110px] min-w-[100px] whitespace-nowrap" title="Existing tenant — from the tenancy schedule">Tenant</TableHead>}
-                {showCol("unitStatus") && <TableHead className="w-[110px] min-w-[110px]">Unit Status</TableHead>}
-                {showCol("pipelineStatus") && <TableHead className="w-[112px] min-w-[112px]">Deal Status</TableHead>}
+                {showCol("existingTenant") && <TableHead className="w-[90px] min-w-[80px] whitespace-nowrap" title="Existing tenant — from the tenancy schedule">Tenant</TableHead>}
+                {showCol("unitStatus") && <TableHead className="w-[100px] min-w-[96px]">Unit Status</TableHead>}
+                {showCol("pipelineStatus") && <TableHead className="w-[104px] min-w-[100px]">Deal Status</TableHead>}
                 {!hideClientCol && showCol("client") && (
-                  <TableHead className="w-[150px] min-w-[150px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
+                  <TableHead className="w-[128px] min-w-[120px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                   </TableHead>
                 )}
-                <TableHead className="w-[170px] min-w-[170px]">Target Tenant</TableHead>
+                <TableHead className="w-[180px] min-w-[170px]">Target Tenant</TableHead>
                 {showCol("dealStatus") && <TableHead className="w-[130px] min-w-[130px]">Target Status</TableHead>}
                 {showCol("category") && <TableHead className="w-[144px] min-w-[144px]">Category</TableHead>}
                 {showCol("priority") && <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>}
                 {showCol("agent") && <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>}
-                {showCol("comments") && <TableHead className="w-[150px] min-w-[140px]">Comments</TableHead>}
+                {showCol("comments") && <TableHead className="w-[160px] min-w-[140px]">Comments</TableHead>}
                 {showCol("areaCosts") && <TableHead className="w-[130px] min-w-[130px]">Area &amp; Costs</TableHead>}
+                {/* Width-less filler — on wide screens the table's spare
+                    width lands HERE, next to the pinned cluster, instead of
+                    inflating a data column and shoving the rest under the
+                    sticky overlay (Woody, 2026-09-01 "target tenant still
+                    not right"). */}
+                <TableHead className="p-0" aria-hidden />
                 <TableHead className="w-[205px] min-w-[205px] sticky right-0 z-20 border-l bg-card">Actions &amp; Activity</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1851,7 +1861,7 @@ export default function AvailableUnitsPage() {
                     <Fragment key={u.id}>
                     {viewAll && rowCode !== prevRowCode && (
                       <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
-                        <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
+                        <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
                           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
                             <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
                             {DEAL_PIPELINE_LABELS[rowCode]}
@@ -1972,7 +1982,7 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                       {showCol("existingTenant") && (
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[110px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[90px]">
                         {/* The name itself is derived from the tenancy
                             schedule (read-only) — but if it isn't a CRM
                             brand yet, the + adds it (Woody, 2026-09-01). */}
@@ -2261,6 +2271,7 @@ export default function AvailableUnitsPage() {
                       {/* Deal Type column dropped (Woody, 2026-09-01: "it's a
                           letting tracker, they are all lettings") — the type
                           still sets from the unit form / deal page. */}
+                      <TableCell rowSpan={unitRowSpan} className="p-0" aria-hidden />
                       <TableCell rowSpan={unitRowSpan} className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
                         {/* Everything actionable in one pinned cluster —
                             activity counts, files/HOTs/brief and row actions
