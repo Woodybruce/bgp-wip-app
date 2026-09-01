@@ -80,6 +80,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r438 · 2026-09-01 ~13:10 UTC · ROUND IN PROGRESS (provisional)
+- FULL round, rotation #3 Landsec client mobile 390px; staging now carries
+  the JOGQK sync merge (f7540fb) so the unit info-sheet generator is HERE —
+  browser check planned this round.
+- Bring-up: canonical recipe held 3rd time (qa:pg once → run-smoke restore
+  clean). Regression: smoke GREEN 42/0.
+- two-bot round 438: ALL scenarios ok (victoria/mark/woody/nick/sam),
+  12 logged issues, every one a known class: rocketreach 400,
+  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
+  (keyless), 8×403 probe-by-design scope rows. Server log: 0 raw 500/502/504.
+  Triage: 0 app bugs.
+- Remaining this round: client-mobile journey + info-sheet browser check;
+  final entry replaces this one.
+
 ### r437 · 2026-09-01 ~12:45 UTC · LIGHT (r436 had the journey) — GREEN
 - r436 canonical recipe held again, second consecutive clean bring-up:
   qa:pg once → run-smoke.sh restored with no scram failure. Regression:
