@@ -1275,6 +1275,27 @@ async function victoriaRound(page, cross) {
     if (!r.hasEntries) throw new Error('staff WIP report returned no entries array (shape broken)');
   });
 
+  // r450: WIP "Client" fell back to the property's landlord in the name
+  // chain, but the handler's properties select dropped landlord_id — so
+  // deals with no direct counterparty (the fixture's Bluewater deals)
+  // showed "—" instead of Landsec. Lock the fallback: any WIP entry whose
+  // property is Bluewater must carry a client name + linkable clientId.
+  await step(page, p, 'staff-wip-client-landlord-fallback', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/wip', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      const rows = (body?.entries || []).filter((e) => /bluewater/i.test(e.project || ''));
+      if (!rows.length) return { ok: true, skip: true };
+      const missing = rows.filter((e) => !e.client || !e.clientId);
+      return { ok: true, total: rows.length, missing: missing.map((e) => e.ref) };
+    });
+    if (!r.ok) throw new Error(`WIP fetch failed (${r.status})`);
+    if (r.skip) return;
+    if (r.missing.length) throw new Error(`WIP Bluewater rows missing landlord-fallback client: ${r.missing.join(', ')}`);
+  });
+
   // Deal-report v2 (BGP-branded 2-week deal PDF): a staff user pulls the
   // recent-deals feed and renders a real PDF. This exercises the pdfkit/
   // workbook builder end-to-end — the same class of code that 500'd on the
@@ -1673,6 +1694,30 @@ async function victoriaRound(page, cross) {
     if (r.skip) return;
     if (!r.ok) throw new Error(`tracker inline PATCH failed (${r.why})`);
     if (!r.persisted) throw new Error('tracker inline PATCH did not persist the detail field');
+  });
+
+  // r450: the tracker's desktop status-pill row sat in a vertical-only
+  // ScrollArea, so pills past the viewport edge (Invoiced at 1440px) were
+  // clipped with no way to scroll to them. Now a plain overflow-x-auto
+  // container — the last pill must be reachable by scrolling its own row,
+  // and the page itself must not scroll sideways.
+  await step(page, p, 'staff-tracker-status-pills-reachable', async () => {
+    await page.goto(`${BASE}/available`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    const r = await page.evaluate(() => {
+      const chip = document.querySelector('[data-testid="stat-card-inv"]');
+      if (!chip) return { skip: true }; // compact/mobile variant renders stat-chip-*
+      const wrap = chip.parentElement.parentElement;
+      wrap.scrollLeft = wrap.scrollWidth;
+      const rect = chip.getBoundingClientRect();
+      return {
+        reachable: rect.right <= window.innerWidth + 1 && rect.width > 0,
+        pageScrolls: document.documentElement.scrollWidth > window.innerWidth + 1,
+      };
+    });
+    if (r.skip) return;
+    if (!r.reachable) throw new Error('tracker Invoiced status pill is clipped/unreachable on desktop');
+    if (r.pageScrolls) throw new Error('tracker page scrolls sideways (pill row must scroll inside its own container)');
   });
 
   // r257: a signed-in user parked at the literal /login URL used to hit

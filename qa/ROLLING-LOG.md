@@ -80,19 +80,59 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r450 · 2026-09-01 ~23:40 UTC · FULL (rotation #1 staff desktop 1440px) — ROUND IN PROGRESS
-- Provisional heartbeat entry. Bring-up: canonical recipe held 15th
-  consecutive time (qa:pg once → run-smoke restore clean). Regression:
-  smoke GREEN 42/0. Two-bot round 450 as 3 foreground chunks (r447
-  pattern, dev-server stdio to a FILE per r449 rule): victoria / mark /
-  woody,nick,sam all exit 0; 12 logged issues = the exact standing noise
-  signature (rocketreach 400, invalid-tracker probe 400, brand-gaps/
+### r450 · 2026-09-01 ~23:55 UTC · FULL — rotation #1 BGP staff desktop 1440px · 2 bugs fixed
+- Bring-up: canonical recipe held 15th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0 ×2 (before, and
+  FRESH_BUILD=1 after the fixes). Two-bot round 450 as 3 foreground chunks
+  (r447 pattern, dev-server stdio to a FILE per r449 rule): victoria /
+  mark / woody,nick,sam all exit 0; 12 logged issues = the exact standing
+  noise signature (rocketreach 400, invalid-tracker probe 400, brand-gaps/
   live-intel + commentary-regen 503 keyless, 8×403 probe-by-design scope
   rows). Server logs: 0 raw 500/502/504 (one grep hit = news-feed log
   text, r413 class). phone-overflow-sweep 11/11 routes fit at 390px.
   Triage: 0 app bugs from the harness.
-- Journey (staff desktop 1440px, Victoria, tracker/WIP surfaces) to follow;
-  final entry replaces this one.
+- Journey (Victoria @1440px, "Tuesday-morning letting review: dashboard →
+  Letting Tracker (new Actions & Activity cluster, Marketing labels, Files
+  dialog) → WIP report (cross-filter boards, Columns menu) → global search
+  → leasing schedule"): tracker renders 81 units with the consolidated
+  cluster fully labelled (tooltips on every icon), Files dialog clean
+  (tabs + upload + info-sheet row), WIP TEAM cross-filter works (6→2 rows,
+  chip badge "TEAM 1"), Columns 12/14 = Billing Entity + Fee Split
+  default-hidden as intended, search deal-name rows fine, leasing board's
+  ARCHIVED banner correct. 0 pageerrors, 0 non-noise 4xx/5xx.
+- BUG FIXED 1 (desktop tracker): the status-pill row sat in a ScrollArea
+  whose default ScrollBar is vertical-only — the row (1218px) clips at the
+  viewport with NO way to scroll, so the Invoiced pill was unreachable at
+  1440px (Withdrawn/Completed too at 1280px). Swapped to the house
+  overflow-x-auto container (available-units.tsx; DESIGN.md "wide things
+  scroll inside their own containers"). Verified live at 1440 + 1280:
+  pill reachable + clickable (filters to the INV group), page never
+  h-scrolls. New scenario staff-tracker-status-pills-reachable.
+- BUG FIXED 2 (WIP report): "Client" column showed "—" for every deal
+  without a direct counterparty even when the property's landlord is
+  known — the /api/wip handler's comment promises the property-landlord
+  fallback, but its properties select only fetched {id, name}, so
+  propLandlordId was always undefined (server/crm.ts 7038). Added
+  landlordId to the select. Verified via API + visually: the fixture's 3
+  Bluewater deals now show Landsec, linked. New scenario
+  staff-wip-client-landlord-fallback. Both new scenarios PASSED inside a
+  full victoria chunk re-run post-fix.
+- NOT bugs: WIP TEAM board "£0" rows (fees sit on team-less deals →
+  UX-NOTES 128); QA-R450 probe deal visible in WIP/comps (purged next
+  round, r442 precedent).
+- New flake (runner infra): killing the chunk-runner's `npx tsx` wrapper
+  PID can ORPHAN the tsx child, which keeps :5000 and a bgpsmoke
+  connection — later spawns silently lose the port race and probes then
+  talk to STALE SERVER CODE (burned ~10 min re-verifying fix 2), and the
+  next smoke restore fails "database in use". Before trusting a
+  server-side re-verify or a restore, ps for "tsx server" and kill the
+  child PIDs.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 128.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- tsc clean ×2, FRESH_BUILD smoke re-green post-fix.
+- Next: r450 had the journey → r451 LIGHT (watch the two new scenarios'
+  first standard-order run); then rotation #2 Landsec client desktop.
 
 ### r449 · 2026-09-01 ~22:50 UTC · LIGHT (r448 had the journey) — GREEN
 - Bring-up: canonical recipe held 14th consecutive time (qa:pg once →

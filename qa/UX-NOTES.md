@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+128. 2026-09-01 · BGP staff / desktop 1440px (QA r450) · using the WIP
+    report's TEAM cross-filter board to see how the teams are tracking ·
+    the board opened showing "National £0" and "National Leasing £0" while
+    the headline right above says "Total net fees: £250,000" — the only
+    fee-bearing deal has no team set, so both team rows read £0 and the
+    board looks broken even though the filter itself works · either bucket
+    fee-bearing deals with no team into a visible "No team" row on the
+    board (like the Client board's "—" handling), or show the deal count
+    next to each row so £0 with 2 deals reads as "fees not filled in",
+    not "nothing happening".
+
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 

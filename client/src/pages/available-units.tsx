@@ -1631,7 +1631,7 @@ export default function AvailableUnitsPage() {
           })}
         </div>
       ) : (
-      <ScrollArea className="w-full">
+      <div className="w-full overflow-x-auto">
         <div className="flex items-center gap-1.5 pb-1">
           <Pill
             active={viewAll}
@@ -1655,7 +1655,7 @@ export default function AvailableUnitsPage() {
             );
           })}
         </div>
-      </ScrollArea>
+      </div>
       )}
 
       {selectedIds.size > 0 && (
