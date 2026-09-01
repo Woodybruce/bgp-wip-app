@@ -30,6 +30,11 @@ process.on("uncaughtException", (err: any) => {
 });
 import { registerRoutes } from "./routes";
 import { pool } from "./db";
+import { installGoogleBudgetGuard } from "./google-budget";
+
+// £200/day hard cap on Google Maps/Places spend (Woody, 2026-09-01) —
+// installed before anything can fire an outbound googleapis call.
+installGoogleBudgetGuard();
 
 // Auto-migrate: add columns/tables that may be missing after database restore.
 // CRITICAL: each statement runs in its own try/catch so one failure (e.g. an
@@ -47,6 +52,8 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_secondary_color TEXT`,
     // Targeting brief: images attached from Image Studio.
     `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS image_ids TEXT[]`,
+    // Unit Files dialog sections: brochure | floorplan | photo | other.
+    `ALTER TABLE unit_marketing_files ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'brochure'`,
     // Heads of Terms: each property carries a standard HOTs template;
     // each tracker unit carries its negotiated instance.
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS hots_template TEXT`,
@@ -3047,6 +3054,7 @@ import dealStagesRouter from "./deal-stages";
 import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
 import propertyPlansRouter from "./property-plans";
+import unitInfoSheetRouter from "./unit-info-sheet";
 import propertyAssetBriefRouter from "./property-asset-brief";
 import { registerPropertyBrochureRoutes } from "./property-brochures";
 import leasingScheduleRouter from "./leasing-schedule";
@@ -4078,6 +4086,7 @@ app.use("/api/branding/assets", express.static(
   app.use(leasingPitchRouter);
   app.use(cadRouter);
   app.use(propertyPlansRouter);
+  app.use(unitInfoSheetRouter);
   app.use(propertyAssetBriefRouter);
 
   await registerRoutes(httpServer, app);

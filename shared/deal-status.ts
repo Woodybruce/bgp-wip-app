@@ -73,10 +73,13 @@ export const DEAL_STATUS_DOT_COLORS: Record<DealStatusCode, string> = {
 export const LETTING_STATUSES: DealStatusCode[]    = ["OPP", "AVA", "NEG", "HOT", "SOL", "EXC", "COM", "WIT", "INV"];
 export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"];
 // WIP report covers every fee-bearing stage including pre-deal pipeline.
-// REP + AVA + NEG live on the Letting Tracker side; SOL+ live on the
-// Deals Board. Both feed the WIP report (visual reflection of both
-// boards per the post-Sage model).
-export const WIP_STATUSES: DealStatusCode[]        = ["REP", "AVA", "NEG", "HOT", "SOL", "EXC", "COM", "INV"];
+// AVA + NEG live on the Letting Tracker side; SOL+ live on the Deals
+// Board. Both feed the WIP report (visual reflection of both boards per
+// the post-Sage model). REP dropped from WIP (Woody, 2026-08-31: "delete
+// reporting" — matching Alex's 2026-08-12 letting-tracker call); REP
+// deals stay on the Investment tracker and deal pages, they just don't
+// count as WIP.
+export const WIP_STATUSES: DealStatusCode[]        = ["AVA", "NEG", "HOT", "SOL", "EXC", "COM", "INV"];
 export const DEAL_PAGE_STATUSES: DealStatusCode[]  = [...DEAL_STATUS_CODES];
 
 // INV is set automatically when a Xero invoice syncs onto the deal — UI should

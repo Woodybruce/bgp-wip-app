@@ -1628,6 +1628,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   });
 
   const [pendingDeleteMsgId, setPendingDeleteMsgId] = useState<string | null>(null);
+  const [confirmUnlink, setConfirmUnlink] = useState(false);
 
   const aiSendMutation = useMutation({
     mutationFn: async ({ newMessages, files, tid }: { newMessages: LocalChatMessage[]; files: File[]; tid: string | null }) => {
@@ -2631,22 +2632,32 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 </div>
               )}
               {activeThread?.linkedName && activeThread?.linkedType && activeThread?.linkedId && (
-                <button
-                  onClick={() => {
-                    const t = activeThread.linkedType;
-                    const id = activeThread.linkedId;
-                    if (t === "property") navigate(`/properties/${id}`);
-                    else if (t === "deal") navigate(`/deals/${id}`);
-                    else if (t === "company") navigate(`/companies/${id}`);
-                  }}
-                  className="flex items-center gap-1 mt-1 px-2 py-0.5 -ml-0.5 rounded-full bg-white/5 hover:bg-white/10 active:bg-white/15 transition-colors max-w-full"
-                  data-testid="button-mobile-chat-linked"
-                >
-                  <Link2 className="w-3 h-3 text-gray-300 shrink-0" />
-                  <span className="text-[11px] text-gray-200 truncate">
-                    Open {activeThread.linkedType === "property" ? "property" : activeThread.linkedType === "deal" ? "deal" : activeThread.linkedType}: {activeThread.linkedName}
-                  </span>
-                </button>
+                <div className="flex items-center gap-1 mt-1 max-w-full">
+                  <button
+                    onClick={() => {
+                      const t = activeThread.linkedType;
+                      const id = activeThread.linkedId;
+                      if (t === "property") navigate(`/properties/${id}`);
+                      else if (t === "deal") navigate(`/deals/${id}`);
+                      else if (t === "company") navigate(`/companies/${id}`);
+                    }}
+                    className="flex items-center gap-1 px-2 py-0.5 -ml-0.5 rounded-full bg-white/5 hover:bg-white/10 active:bg-white/15 transition-colors min-w-0"
+                    data-testid="button-mobile-chat-linked"
+                  >
+                    <Link2 className="w-3 h-3 text-gray-300 shrink-0" />
+                    <span className="text-[11px] text-gray-200 truncate">
+                      Open {activeThread.linkedType === "property" ? "property" : activeThread.linkedType === "deal" ? "deal" : activeThread.linkedType}: {activeThread.linkedName}
+                    </span>
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setConfirmUnlink(true); }}
+                    className="w-5 h-5 rounded-full bg-white/5 hover:bg-white/10 active:bg-white/15 flex items-center justify-center shrink-0"
+                    data-testid="button-mobile-chat-unlink"
+                    aria-label="Remove link from chat"
+                  >
+                    <X className="w-3 h-3 text-gray-300" />
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -3157,6 +3168,38 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => { if (pendingDeleteMsgId) { deleteMessageMutation.mutate(pendingDeleteMsgId); setPendingDeleteMsgId(null); } }} className="bg-red-600 hover:bg-red-700">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={confirmUnlink} onOpenChange={setConfirmUnlink}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove linked {activeThread?.linkedType || "record"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              This only removes {activeThread?.linkedName ? `"${activeThread.linkedName}"` : "the link"} from this chat's header — the {activeThread?.linkedType || "record"} itself stays in the CRM.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              onClick={async () => {
+                setConfirmUnlink(false);
+                try {
+                  await apiRequest("PUT", `/api/chat/threads/${threadId}`, {
+                    linkedType: null, linkedId: null, linkedName: null,
+                    propertyId: null, propertyName: null,
+                  });
+                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+                  toast({ title: "Link removed from chat" });
+                } catch (err: any) {
+                  toast({ title: "Couldn't remove the link", description: err?.message, variant: "destructive" });
+                }
+              }}
+            >
+              Remove
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

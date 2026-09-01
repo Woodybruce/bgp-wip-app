@@ -8,8 +8,10 @@
 //      ERV, EPC, tenancy schedule, investment highlights, agent contact).
 //   3. Files images into image_studio_images + property_imagery_assets
 //      with the vision-detected kind (no keyword fallback needed).
-//   4. Geocodes the address and merges fields into crm_properties — only
-//      filling blanks unless vision returned high confidence.
+//   4. Geocodes the address and merges fields into crm_properties —
+//      STRICTLY filling blanks; existing values are never overwritten
+//      (the old high-confidence override renamed a scheme record from a
+//      unit brochure, 2026-09-01).
 //   5. Inserts tenancy schedule rows into tenancy_schedule_units with a
 //      [brochure:<id>] marker on the comments so re-ingest can wipe + replace
 //      without touching hand-edited rows.
@@ -331,15 +333,19 @@ async function mergePropertyFields(args: {
   const [existing] = await db.select().from(crmProperties).where(eq(crmProperties.id, args.propertyId));
   if (!existing) return { fieldsUpdated: [], geocoded: false };
 
-  const highConfidence = e.confidence === "high";
   const updates: Record<string, any> = {};
   const fieldsUpdated: string[] = [];
 
+  // Fill BLANKS ONLY — never overwrite an existing value, whatever the
+  // vision confidence. The old high-confidence override let a Neal's Yard
+  // as-built plan RENAME Landsec's Westgate property record to "Neal's
+  // Yard Remedies" (Luke, 2026-09-01): a unit-level brochure is not an
+  // authority on an established scheme record.
   const fill = (column: string, currentValue: any, newValue: any) => {
     if (newValue === null || newValue === undefined) return;
     if (typeof newValue === "string" && !newValue.trim()) return;
     const isEmpty = currentValue == null || (typeof currentValue === "string" && !currentValue.trim());
-    if (isEmpty || highConfidence) {
+    if (isEmpty) {
       updates[column] = newValue;
       fieldsUpdated.push(column);
     }

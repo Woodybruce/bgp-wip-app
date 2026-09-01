@@ -3,6 +3,8 @@ import { Switch, Route, useLocation } from "wouter";
 import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
 import { isEquityUser } from "./lib/utils";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
+import { persistOptions } from "@/lib/query-persist";
 import { MessageSquare, ArrowLeft, Sparkles, Menu, Smartphone } from "lucide-react";
 import { Toaster } from "@/components/ui/toaster";
 import { HandwritingPanel, HandwritingToggle } from "@/components/handwriting-panel";
@@ -935,9 +937,13 @@ function OldUrlBanner() {
 }
 
 function App() {
+  // Persisted cache = instant paint from last-known data on open; plain
+  // in-memory provider when localStorage is unavailable (private mode).
+  const Provider: any = persistOptions ? PersistQueryClientProvider : QueryClientProvider;
+  const providerProps: any = persistOptions ? { client: queryClient, persistOptions } : { client: queryClient };
   return (
     <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
+      <Provider {...providerProps}>
         <TeamProvider>
           <BrandProvider>
             <TooltipProvider>
@@ -951,7 +957,7 @@ function App() {
             </TooltipProvider>
           </BrandProvider>
         </TeamProvider>
-      </QueryClientProvider>
+      </Provider>
     </ThemeProvider>
   );
 }

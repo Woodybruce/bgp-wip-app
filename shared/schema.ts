@@ -1928,6 +1928,9 @@ export const unitMarketingFiles = pgTable("unit_marketing_files", {
   fileType: text("file_type").notNull().default("upload"),
   fileSize: integer("file_size"),
   mimeType: text("mime_type"),
+  // brochure | floorplan | photo | other — the Files dialog's sections
+  // (Woody, 2026-09-01: one Files home per unit, not separate folders).
+  category: text("category").notNull().default("brochure"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

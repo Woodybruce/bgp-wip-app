@@ -76,6 +76,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { clearPersistedQueries } from "@/lib/query-persist";
 import { useTeam, TEAMS } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
@@ -371,6 +372,7 @@ export function AppSidebar() {
     await apiRequest("POST", "/api/auth/logout");
     localStorage.removeItem("bgp_auth_token");
     localStorage.removeItem("bgp_active_team");
+    clearPersistedQueries();
     queryClient.clear();
     window.location.href = "/";
   };

@@ -1,4 +1,33 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { clearPersistedQueries } from "./query-persist";
+
+// When the session has expired, EVERY api call 401s — but the persisted
+// cache has already painted a real-looking app, so without this the user
+// stares at a dead shell until the auth/me refetch finally lands (15s+ on
+// Woody's phone, 2026-08-31, "Chat taking ages to load"). Any 401 triggers
+// an immediate auth/me re-probe (NOT a hard logout — endpoints like an
+// unlinked Microsoft calendar 401 while the session is fine); only a null
+// probe result drops the app to the login screen, clearing the persisted
+// cache so the next paint is honest. Debounced so a burst of 401s on a
+// dead session probes once.
+let authProbeAt = 0;
+function probeAuthOn401() {
+  const now = Date.now();
+  if (now - authProbeAt < 5000) return;
+  authProbeAt = now;
+  queryClient
+    .fetchQuery({
+      queryKey: ["/api/auth/me"],
+      queryFn: getQueryFn({ on401: "returnNull" }),
+      staleTime: 0,
+    })
+    .then((me) => {
+      if (!me) {
+        try { clearPersistedQueries(); } catch {}
+      }
+    })
+    .catch(() => {});
+}
 
 export function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -19,6 +48,9 @@ async function throwIfResNotOk(res: Response) {
     try { const j = JSON.parse(text); msg = j.error || j.message || text; } catch {}
     if (res.status === 403 && /read-only access for client/i.test(msg)) {
       msg = "This is a read-only view — changes are managed by your BGP team.";
+    }
+    if (res.status === 401 && res.url.includes("/api/") && !res.url.includes("/api/auth/")) {
+      probeAuthOn401();
     }
     throw new Error(`${res.status}: ${msg}`);
   }
@@ -82,6 +114,10 @@ export const queryClient = new QueryClient({
       refetchOnReconnect: true,
       refetchOnMount: true,
       staleTime: 15 * 1000,
+      // Keep unused queries in memory for a day so the persisted-cache
+      // restore (query-persist.ts, maxAge 24h) has something to restore
+      // into — the v5 default of 5 minutes would silently drop most of it.
+      gcTime: 24 * 60 * 60 * 1000,
       retry: (failureCount, error) => {
         if (error instanceof Error) {
           const match = error.message.match(/^(\d{3}):/);

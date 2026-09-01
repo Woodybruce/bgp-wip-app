@@ -64,7 +64,8 @@ export function BrandPortfolioMap({
         doubleClickZoom: true,
       }).setView([54.0, -2.0], 5);
       L.control.zoom({ position: "topright" }).addTo(mapInstance.current);
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+      // OSM — CARTO basemaps started requiring an API key (2026-09-01).
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
       }).addTo(mapInstance.current);
     } else {

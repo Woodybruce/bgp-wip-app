@@ -901,6 +901,7 @@ export default function WipReport() {
     try { return new Set<string>(JSON.parse(localStorage.getItem("bgp_wip_hidden_cols") || "[]")); } catch { return new Set(); }
   });
   const [colMenuOpen, setColMenuOpen] = useState(false);
+  const [expandedBoards, setExpandedBoards] = useState<Set<string>>(new Set());
   const showCol = (k: string) => !hiddenWipCols.has(k);
   // When the Deal Status filter is narrowed to Invoiced only, every row is a
   // done deal — the Target Month column is meaningless, so drop it entirely.
@@ -1003,50 +1004,54 @@ export default function WipReport() {
   }, [activeTab, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears, detailSort]);
 
   // A dropdown with nothing ticked applies no filter; any tick narrows.
-  const filteredEntries = useMemo(() => {
+  // One predicate for the list AND the phone boards. `skip` leaves out one
+  // dimension's own filter so a board can stay complete while every other
+  // filter still applies to it — Power BI-style cross-filtering (the old
+  // Equity_WIP report every board tapped through, Woody 2026-08-31).
+  const entryMatches = useCallback((e: WipDealEntry, skip?: "client" | "team" | "month" | "agent" | "project" | "status") => {
     const q = searchText.trim().toLowerCase();
-    return entries.filter((e) => {
-      if (q) {
-        const hay = [e.ref, e.client, e.tenant, e.project, e.billingEntity, e.agent, e.team, e.dealRef ? `#${e.dealRef}` : "", e.dealRef ? String(e.dealRef) : ""]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!hay.includes(q)) return false;
+    if (q) {
+      const hay = [e.ref, e.client, e.tenant, e.project, e.billingEntity, e.agent, e.team, e.dealRef ? `#${e.dealRef}` : "", e.dealRef ? String(e.dealRef) : ""]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    if (skip !== "client" && selectedClients.size > 0) {
+      if (!e.client || !selectedClients.has(e.client)) return false;
+    }
+    if (skip !== "team" && selectedTeams.size > 0) {
+      if (!e.team) return false;
+      const entryTeams = (e.team as string).split(",").map(t => t.trim()).filter(Boolean);
+      if (!entryTeams.some(t => selectedTeams.has(t))) return false;
+    }
+    if (selectedFiscalYears.size > 0) {
+      const rawFy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
+      const fy = rawFy || (e.month ? getFiscalYear(e.month) : null);
+      if (fy) {
+        if (!selectedFiscalYears.has(fy)) return false;
+      } else {
+        if (!selectedFiscalYears.has(0)) return false;
       }
-      if (selectedClients.size > 0) {
-        if (!e.client || !selectedClients.has(e.client)) return false;
-      }
-      if (selectedTeams.size > 0) {
-        if (!e.team) return false;
-        const entryTeams = (e.team as string).split(",").map(t => t.trim()).filter(Boolean);
-        if (!entryTeams.some(t => selectedTeams.has(t))) return false;
-      }
-      if (selectedFiscalYears.size > 0) {
-        const rawFy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
-        const fy = rawFy || (e.month ? getFiscalYear(e.month) : null);
-        if (fy) {
-          if (!selectedFiscalYears.has(fy)) return false;
-        } else {
-          if (!selectedFiscalYears.has(0)) return false;
-        }
-      }
-      if (selectedMonths.size > 0) {
-        if (e.month && !selectedMonths.has(e.month)) return false;
-      }
-      if (selectedAgents.size > 0) {
-        if (!e.agent) return false;
-        const agentParts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean);
-        if (!agentParts.some(a => selectedAgents.has(a))) return false;
-      }
-      if (selectedProjects.size > 0) {
-        if (!e.project || !selectedProjects.has(e.project)) return false;
-      }
-      if (selectedStatuses.size > 0) {
-        if (!e.dealStatus || !selectedStatuses.has(e.dealStatus)) return false;
-      }
-      return true;
-    });
-  }, [entries, searchText, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears]);
+    }
+    if (skip !== "month" && selectedMonths.size > 0) {
+      if (e.month && !selectedMonths.has(e.month)) return false;
+    }
+    if (skip !== "agent" && selectedAgents.size > 0) {
+      if (!e.agent) return false;
+      const agentParts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean);
+      if (!agentParts.some(a => selectedAgents.has(a))) return false;
+    }
+    if (skip !== "project" && selectedProjects.size > 0) {
+      if (!e.project || !selectedProjects.has(e.project)) return false;
+    }
+    if (skip !== "status" && selectedStatuses.size > 0) {
+      if (!e.dealStatus || !selectedStatuses.has(e.dealStatus)) return false;
+    }
+    return true;
+  }, [searchText, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears]);
+
+  const filteredEntries = useMemo(() => entries.filter((e) => entryMatches(e)), [entries, entryMatches]);
 
   const totalWip = useMemo(
     () => filteredEntries.reduce((s, e) => s + (e.amtWip || 0), 0),
@@ -1114,6 +1119,60 @@ export default function WipReport() {
     }
     return [...byDeal.values()];
   }, [filteredEntries]);
+
+  // Phone at-a-glance boards — Power BI-style: each board is computed with
+  // every filter EXCEPT its own dimension applied, so tapping a month keeps
+  // the other months visible (highlighted, not vanished) and the Client /
+  // Property / Team / Contact boards cross-filter each other.
+  const phoneMonthly = useMemo(() => {
+    const byMonth = new Map<string, { wip: number; invoiced: number; deals: Set<string> }>();
+    for (const e of entries) {
+      if (!entryMatches(e, "month")) continue;
+      const key = e.month || "TBC";
+      const cur = byMonth.get(key) || { wip: 0, invoiced: 0, deals: new Set<string>() };
+      cur.wip += e.amtWip || 0;
+      cur.invoiced += e.amtInvoice || 0;
+      cur.deals.add(e.dealId || e.id);
+      byMonth.set(key, cur);
+    }
+    return [...byMonth.entries()]
+      .map(([month, v]) => ({ month, wip: v.wip, invoiced: v.invoiced, count: v.deals.size, total: v.wip + v.invoiced }))
+      .sort((a, b) => (a.month === "TBC" ? 1 : b.month === "TBC" ? -1 : getMonthSortKey(a.month) - getMonthSortKey(b.month)));
+  }, [entries, entryMatches]);
+
+  const phoneStages = useMemo(() => {
+    const byStage = new Map<string, { total: number; deals: Set<string> }>();
+    for (const e of entries) {
+      if (!e.dealStatus || !entryMatches(e, "status")) continue;
+      const cur = byStage.get(e.dealStatus) || { total: 0, deals: new Set<string>() };
+      cur.total += (e.amtWip || 0) + (e.amtInvoice || 0);
+      cur.deals.add(e.dealId || e.id);
+      byStage.set(e.dealStatus, cur);
+    }
+    return [...byStage.entries()].map(([status, v]) => ({ status, total: v.total, count: v.deals.size })).sort((a, b) => b.total - a.total);
+  }, [entries, entryMatches]);
+
+  const phoneBoards = useMemo(() => {
+    const build = (skip: "client" | "project" | "team" | "agent", keyOf: (e: WipDealEntry) => string[]) => {
+      const agg = new Map<string, number>();
+      for (const e of entries) {
+        if (!entryMatches(e, skip)) continue;
+        const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
+        const keys = keyOf(e);
+        // Teams get the full fee each (matching the Team filter card);
+        // agents split evenly (matching filterFees).
+        const share = skip === "agent" && keys.length > 0 ? fee / keys.length : fee;
+        for (const k of keys) agg.set(k, (agg.get(k) || 0) + share);
+      }
+      return [...agg.entries()].map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
+    };
+    return {
+      client: build("client", (e) => (e.client ? [e.client] : [])),
+      project: build("project", (e) => (e.project ? [e.project] : [])),
+      team: build("team", (e) => (e.team ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean) : [])),
+      agent: build("agent", (e) => (e.agent ? (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean) : [])),
+    };
+  }, [entries, entryMatches]);
 
   const sortedDetailEntries = useMemo(() => {
     const sorted = [...mergedDetailEntries];
@@ -1443,6 +1502,151 @@ export default function WipReport() {
                 <X className="h-3 w-3" /> Reset filters
               </button>
             )}
+          </div>
+
+          {/* Phone at-a-glance — the desktop report leans on the wide table;
+              on a phone the story comes first: totals, fees by month, stage
+              mix, each tappable to filter the deal list below (Woody,
+              2026-08-31: "stopped being charts and now just lists"). */}
+          <div className="md:hidden space-y-3 no-print" data-testid="wip-phone-summary">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-card border border-border rounded-lg p-3" data-testid="wip-phone-tile-wip">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">WIP</p>
+                <p className="text-lg font-mono font-semibold text-foreground">{formatFullCurrency(totalWip)}</p>
+                <p className="text-[10px] text-muted-foreground">{sortedDetailEntries.length} deal{sortedDetailEntries.length !== 1 ? "s" : ""}</p>
+              </div>
+              <div className="bg-card border border-border rounded-lg p-3" data-testid="wip-phone-tile-invoiced">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Invoiced</p>
+                <p className="text-lg font-mono font-semibold text-green-700">{formatFullCurrency(totalInvoiced)}</p>
+                <p className="text-[10px] text-muted-foreground">of {formatFullCurrency(totalNetFees)} total</p>
+              </div>
+            </div>
+            {phoneMonthly.length > 0 && (
+              <div className="bg-card border border-border rounded-lg overflow-hidden">
+                <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Net fees by month</span>
+                  <span className="text-[10px] text-muted-foreground">tap to filter</span>
+                </div>
+                <div className="p-3 space-y-1">
+                  {(() => {
+                    const shown = phoneMonthly.slice(0, 14);
+                    const maxM = Math.max(...shown.map(m => m.total), 1);
+                    return shown.map(m => {
+                      const tappable = m.month !== "TBC";
+                      const active = selectedMonths.has(m.month);
+                      const bar = (
+                        <>
+                          <span className="text-[11px] text-muted-foreground w-12 text-left shrink-0 font-medium">{m.month}</span>
+                          <div className="flex-1 h-4 bg-muted rounded overflow-hidden flex">
+                            {m.wip > 0 && <div className="h-full" style={{ width: `${(m.wip / maxM) * 100}%`, backgroundColor: active ? "#16a34a" : "#86efac" }} />}
+                            {m.invoiced > 0 && <div className="h-full" style={{ width: `${(m.invoiced / maxM) * 100}%`, backgroundColor: active ? "#15803d" : "#22c55e" }} />}
+                          </div>
+                          <span className="text-[11px] font-mono text-muted-foreground w-14 text-right shrink-0">{formatCurrency(m.total)}</span>
+                        </>
+                      );
+                      if (!tappable) {
+                        return <div key={m.month} className="w-full flex items-center gap-2 px-1 py-1">{bar}</div>;
+                      }
+                      return (
+                        <button
+                          key={m.month}
+                          className={`w-full flex items-center gap-2 rounded px-1 py-1 transition-colors ${active ? "bg-green-50 ring-1 ring-green-300" : "active:bg-muted"}`}
+                          onClick={() => setSelectedMonths(prev => {
+                            const next = new Set(prev);
+                            if (next.has(m.month)) next.delete(m.month); else next.add(m.month);
+                            return next;
+                          })}
+                          data-testid={`wip-phone-month-${m.month}`}
+                        >
+                          {bar}
+                        </button>
+                      );
+                    });
+                  })()}
+                  <div className="flex items-center gap-3 pt-1.5 border-t mt-1 text-[10px] text-muted-foreground">
+                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded" style={{ backgroundColor: "#86efac" }} />WIP</span>
+                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded" style={{ backgroundColor: "#22c55e" }} />Invoiced</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            {phoneStages.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {phoneStages.map(s => {
+                  const code = legacyToCode(s.status);
+                  const label = code && code === s.status ? DEAL_STATUS_LABELS[code] : s.status;
+                  return (
+                    <Pill
+                      key={s.status}
+                      active={selectedStatuses.has(s.status)}
+                      onClick={() => setSelectedStatuses(prev => {
+                        const next = new Set(prev);
+                        if (next.has(s.status)) next.delete(s.status); else next.add(s.status);
+                        return next;
+                      })}
+                      className="shrink-0"
+                      data-testid={`wip-phone-stage-${s.status}`}
+                    >
+                      {label} · {formatCurrency(s.total)} · {s.count}
+                    </Pill>
+                  );
+                })}
+              </div>
+            )}
+            {([
+              { key: "client", title: "Client", rows: phoneBoards.client, selected: selectedClients, setter: setSelectedClients },
+              { key: "project", title: "Property", rows: phoneBoards.project, selected: selectedProjects, setter: setSelectedProjects },
+              { key: "team", title: "Team", rows: phoneBoards.team, selected: selectedTeams, setter: setSelectedTeams },
+              { key: "agent", title: "BGP Contact", rows: phoneBoards.agent, selected: selectedAgents, setter: setSelectedAgents },
+            ] as const).map(board => {
+              if (board.rows.length === 0) return null;
+              const expanded = expandedBoards.has(board.key);
+              const shown = expanded ? board.rows.slice(0, 40) : board.rows.slice(0, 6);
+              const maxB = Math.max(...board.rows.map(r => r.total), 1);
+              const boardTotal = board.rows.reduce((s, r) => s + r.total, 0);
+              return (
+                <div key={board.key} className="bg-card border border-border rounded-lg overflow-hidden" data-testid={`wip-phone-board-${board.key}`}>
+                  <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Net fees by {board.title}</span>
+                    <span className="text-[11px] font-mono text-muted-foreground">{formatCurrency(boardTotal)}</span>
+                  </div>
+                  <div className="p-2">
+                    {shown.map(r => {
+                      const active = board.selected.has(r.name);
+                      return (
+                        <button
+                          key={r.name}
+                          className={`w-full rounded px-1.5 py-1 text-left transition-colors ${active ? "bg-green-50 ring-1 ring-green-300" : "active:bg-muted"}`}
+                          onClick={() => toggleFilter(board.selected, board.setter, r.name)}
+                          data-testid={`wip-phone-${board.key}-row`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={`text-xs truncate min-w-0 ${active ? "font-semibold text-foreground" : "text-foreground"}`}>{r.name}</span>
+                            <span className="text-xs font-mono text-muted-foreground shrink-0">{formatFullCurrency(r.total)}</span>
+                          </div>
+                          <div className="h-1 bg-muted rounded overflow-hidden mt-0.5">
+                            <div className="h-full" style={{ width: `${Math.max(1, (r.total / maxB) * 100)}%`, backgroundColor: active ? "#16a34a" : "#86efac" }} />
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {board.rows.length > 6 && (
+                      <button
+                        className="w-full text-center text-[11px] text-primary py-1.5"
+                        onClick={() => setExpandedBoards(prev => {
+                          const next = new Set(prev);
+                          if (next.has(board.key)) next.delete(board.key); else next.add(board.key);
+                          return next;
+                        })}
+                        data-testid={`wip-phone-board-${board.key}-more`}
+                      >
+                        {expanded ? "Show top 6" : `All ${Math.min(board.rows.length, 40)}${board.rows.length > 40 ? ` of ${board.rows.length}` : ""} →`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <div className="print-break" data-testid="wip-detail-table">

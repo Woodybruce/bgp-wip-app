@@ -1760,7 +1760,7 @@ export default function AvailableUnitsPage() {
                       viewing, register an interested tenant + comment, edit. */}
                   <div className="flex items-center flex-wrap gap-1 pt-2 border-t">
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
-                      <Eye className="w-3.5 h-3.5" /> Brochure
+                      <Eye className="w-3.5 h-3.5" /> Files
                     </Button>
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
                       <CalendarDays className="w-3.5 h-3.5" /> Viewing{vCount ? ` (${vCount})` : ""}
@@ -3028,10 +3028,14 @@ export default function AvailableUnitsPage() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CalendarDays className="h-5 w-5" />
-              Viewings — {viewingsUnit ? `${propertyMap[viewingsUnit.propertyId]?.name || "Property"}, ${viewingsUnit.unitName}` : ""}
+              <CalendarDays className="h-5 w-5 shrink-0" />
+              Viewings
             </DialogTitle>
-            <DialogDescription>Track all viewings for this unit</DialogDescription>
+            {/* Property names carry full addresses — a truncating one-liner
+                beats the four-line title it produced on phones. */}
+            <DialogDescription className="truncate">
+              {viewingsUnit ? `${viewingsUnit.unitName} · ${propertyMap[viewingsUnit.propertyId]?.name || "Property"}` : "Track all viewings for this unit"}
+            </DialogDescription>
           </DialogHeader>
 
           {viewingsForUnit.length === 0 && !addViewingOpen && (
@@ -3080,7 +3084,9 @@ export default function AvailableUnitsPage() {
           {addViewingOpen ? (
             <div className="border rounded-lg p-3 space-y-3">
               <div className="text-sm font-medium">{editingViewingId ? "Edit Viewing" : "Add Viewing"}</div>
-              <div className="grid grid-cols-2 gap-3">
+              {/* Pickers stack full-width on phones — half-width triggers
+                  truncated their own placeholders ("Select com…"). */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Company</Label>
                   <CrmPicker
@@ -3104,21 +3110,23 @@ export default function AvailableUnitsPage() {
                   />
                 </div>
               </div>
+              {/* min-w-0 — iOS date/time inputs refuse to shrink below their
+                  intrinsic width and pushed the Time field off-screen at 390px. */}
               <div className="grid grid-cols-2 gap-3">
-                <div>
+                <div className="min-w-0">
                   <Label className="text-xs">Date</Label>
-                  <Input type="date" value={viewingForm.viewingDate} onChange={e => setViewingForm(f => ({ ...f, viewingDate: e.target.value }))} data-testid="viewing-date" />
+                  <Input type="date" className="min-w-0" value={viewingForm.viewingDate} onChange={e => setViewingForm(f => ({ ...f, viewingDate: e.target.value }))} data-testid="viewing-date" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <Label className="text-xs">Time</Label>
-                  <Input type="time" value={viewingForm.viewingTime} onChange={e => setViewingForm(f => ({ ...f, viewingTime: e.target.value }))} data-testid="viewing-time" />
+                  <Input type="time" className="min-w-0" value={viewingForm.viewingTime} onChange={e => setViewingForm(f => ({ ...f, viewingTime: e.target.value }))} data-testid="viewing-time" />
                 </div>
               </div>
               <div>
                 <Label className="text-xs">Attendees</Label>
                 <Input value={viewingForm.attendees} onChange={e => setViewingForm(f => ({ ...f, attendees: e.target.value }))} placeholder="Who attended" data-testid="viewing-attendees" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Outcome</Label>
                   <Select value={viewingForm.outcome} onValueChange={v => setViewingForm(f => ({ ...f, outcome: v }))}>
@@ -3152,10 +3160,12 @@ export default function AvailableUnitsPage() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <HandCoins className="h-5 w-5" />
-              Offers — {offersUnit ? `${propertyMap[offersUnit.propertyId]?.name || "Property"}, ${offersUnit.unitName}` : ""}
+              <HandCoins className="h-5 w-5 shrink-0" />
+              Offers
             </DialogTitle>
-            <DialogDescription>Track all offers received for this unit</DialogDescription>
+            <DialogDescription className="truncate">
+              {offersUnit ? `${offersUnit.unitName} · ${propertyMap[offersUnit.propertyId]?.name || "Property"}` : "Track all offers received for this unit"}
+            </DialogDescription>
           </DialogHeader>
 
           {offersForUnit.length === 0 && !addOfferOpen && (
@@ -3209,7 +3219,7 @@ export default function AvailableUnitsPage() {
           {addOfferOpen ? (
             <div className="border rounded-lg p-3 space-y-3">
               <div className="text-sm font-medium">{editingOfferId ? "Edit Offer" : "Add Offer"}</div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Company</Label>
                   <CrmPicker
@@ -3234,11 +3244,11 @@ export default function AvailableUnitsPage() {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div>
+                <div className="min-w-0">
                   <Label className="text-xs">Date</Label>
-                  <Input type="date" value={offerForm.offerDate} onChange={e => setOfferForm(f => ({ ...f, offerDate: e.target.value }))} data-testid="offer-date" />
+                  <Input type="date" className="min-w-0" value={offerForm.offerDate} onChange={e => setOfferForm(f => ({ ...f, offerDate: e.target.value }))} data-testid="offer-date" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <Label className="text-xs">Rent p.a. (£)</Label>
                   <CurrencyInput value={offerForm.rentPa} onChange={v => setOfferForm(f => ({ ...f, rentPa: v }))} placeholder="0" prefix="£" testId="offer-rent" />
                 </div>
@@ -3257,7 +3267,7 @@ export default function AvailableUnitsPage() {
                   <Input value={offerForm.breakOption} onChange={e => setOfferForm(f => ({ ...f, breakOption: e.target.value }))} placeholder="e.g. Year 5" data-testid="offer-break" />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Premium (£)</Label>
                   <CurrencyInput value={offerForm.premium} onChange={v => setOfferForm(f => ({ ...f, premium: v }))} placeholder="0" prefix="£" testId="offer-premium" />
@@ -3591,6 +3601,46 @@ function MarketingFilesDialog({
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadCategory, setUploadCategory] = useState<"brochure" | "floorplan" | "photo">("brochure");
+  const [sheetOpts, setSheetOpts] = useState({ floorplans: true, schemePlan: true, brochure: false, photos: true });
+  const [generatingSheet, setGeneratingSheet] = useState(false);
+
+  // Scheme plans live on the property record — count them so the info
+  // sheet tick-box can say what exists.
+  const { data: schemePlansData } = useQuery<{ plans: any[] }>({
+    queryKey: ["/api/properties", unit?.propertyId, "plans"],
+    queryFn: async () => {
+      const r = await fetch(`/api/properties/${unit!.propertyId}/plans`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return { plans: [] };
+      return r.json();
+    },
+    enabled: !!unit?.propertyId,
+    staleTime: 60_000,
+  });
+  const schemePlanCount = schemePlansData?.plans?.length || 0;
+
+  const catOf = (f: UnitMarketingFile) => (((f as any).category === "brochure" && f.mimeType?.startsWith("image/")) ? "photo" : ((f as any).category || "brochure"));
+  const counts = {
+    floorplans: files.filter(f => catOf(f) === "floorplan").length,
+    brochure: files.filter(f => catOf(f) === "brochure" && (f.fileType || "") !== "infosheet").length,
+    photos: files.filter(f => catOf(f) === "photo").length,
+  };
+
+  const generateSheet = useCallback(async () => {
+    if (!unit) return;
+    setGeneratingSheet(true);
+    try {
+      const res = await apiRequest("POST", `/api/available-units/${unit.id}/info-sheet`, sheetOpts);
+      const j = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit.id, "files"] });
+      toast({ title: "Info sheet created", description: `${j.pages} page${j.pages !== 1 ? "s" : ""} — saved to this unit's Files` });
+      if (j.file?.filePath) window.open(`${j.file.filePath}?view=1`, "_blank");
+    } catch (e: any) {
+      toast({ title: "Info sheet failed", description: e.message, variant: "destructive" });
+    } finally {
+      setGeneratingSheet(false);
+    }
+  }, [unit, sheetOpts, toast]);
 
   const uploadFile = useCallback(async (file: globalThis.File) => {
     if (!unit) return;
@@ -3598,10 +3648,12 @@ function MarketingFilesDialog({
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("category", uploadCategory);
       const res = await fetch(`/api/available-units/${unit.id}/files`, {
         method: "POST",
         body: formData,
         credentials: "include",
+        headers: { ...getAuthHeaders() },
       });
       if (!res.ok) throw new Error("Upload failed");
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit.id, "files"] });
@@ -3611,7 +3663,7 @@ function MarketingFilesDialog({
     } finally {
       setUploading(false);
     }
-  }, [unit, toast]);
+  }, [unit, toast, uploadCategory]);
 
   const deleteFile = useCallback(async (fileId: string) => {
     if (!unit) return;
@@ -3644,15 +3696,25 @@ function MarketingFilesDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Marketing Files
+            <FileText className="h-5 w-5 shrink-0" />
+            Files
           </DialogTitle>
-          <DialogDescription>
-            {propertyName} — {unit?.unitName}
+          <DialogDescription className="truncate">
+            {unit?.unitName} · {propertyName}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* One Files home per unit, sectioned rather than separate
+              folders (Woody, 2026-09-01) — pick what you're uploading,
+              the list below groups by section. */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {([["brochure", "Brochure"], ["floorplan", "Floor plan"], ["photo", "Photo"]] as const).map(([key, label]) => (
+              <Pill key={key} active={uploadCategory === key} onClick={() => setUploadCategory(key)} data-testid={`files-cat-${key}`}>
+                {label}
+              </Pill>
+            ))}
+          </div>
           <div className="flex gap-2">
             <input
               ref={fileInputRef}
@@ -3675,7 +3737,7 @@ function MarketingFilesDialog({
               data-testid="button-upload-brochure"
             >
               <Upload className="h-4 w-4" />
-              {uploading ? "Uploading..." : "Upload Brochure"}
+              {uploading ? "Uploading..." : `Upload ${uploadCategory === "floorplan" ? "floor plan" : uploadCategory}`}
             </Button>
             <Button
               variant="outline"
@@ -3691,16 +3753,58 @@ function MarketingFilesDialog({
             </Button>
           </div>
 
+          {/* Info sheet — tick what to include, generate a landlord-branded
+              PDF of the unit particulars for agents/tenants (Woody +
+              Landsec, 2026-09-01). Output saves back into these Files. */}
+          <div className="border rounded-lg p-3 space-y-2" data-testid="info-sheet-panel">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Info sheet</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+              {([
+                ["floorplans", `Unit floor plans (${counts.floorplans})`, counts.floorplans > 0],
+                ["schemePlan", `Scheme plan (${schemePlanCount})`, schemePlanCount > 0],
+                ["brochure", `Brochure (${counts.brochure})`, counts.brochure > 0],
+                ["photos", `Photos (${Math.min(counts.photos, 6)})`, counts.photos > 0],
+              ] as const).map(([key, label, available]) => (
+                <label key={key} className={`flex items-center gap-2 text-xs ${available ? "text-foreground cursor-pointer" : "text-muted-foreground/50"}`}>
+                  <Checkbox
+                    className="h-3.5 w-3.5"
+                    disabled={!available}
+                    checked={available && sheetOpts[key]}
+                    onCheckedChange={(v) => setSheetOpts(o => ({ ...o, [key]: v === true }))}
+                    data-testid={`sheet-inc-${key}`}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+            <Button size="sm" className="w-full gap-2" onClick={generateSheet} disabled={generatingSheet} data-testid="button-generate-info-sheet">
+              <FileText className="h-4 w-4" />
+              {generatingSheet ? "Generating…" : "Generate info sheet PDF"}
+            </Button>
+          </div>
+
           {files.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <File className="h-10 w-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">No marketing files yet</p>
-              <p className="text-xs mt-1">Upload a brochure or create one in Document Studio</p>
+              <p className="text-sm">No files yet</p>
+              <p className="text-xs mt-1">Upload a brochure, floor plan or photo — or create one in Document Studio</p>
             </div>
           ) : (
             <ScrollArea className="max-h-[300px]">
-              <div className="space-y-2">
-                {files.map(f => (
+              <div className="space-y-3">
+                {([["brochure", "Brochures"], ["floorplan", "Floor plans"], ["photo", "Photos"], ["other", "Other"]] as const).map(([key, heading]) => {
+                  // Legacy rows predate the category column and all default
+                  // to brochure — images among them read as photos.
+                  const sectionFiles = files.filter(f => {
+                    const cat = ((f as any).category === "brochure" && f.mimeType?.startsWith("image/")) ? "photo" : ((f as any).category || "brochure");
+                    return cat === key;
+                  });
+                  if (sectionFiles.length === 0) return null;
+                  return (
+                    <div key={key}>
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">{heading} · {sectionFiles.length}</p>
+                      <div className="space-y-2">
+                        {sectionFiles.map(f => (
                   <div
                     key={f.id}
                     className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30 hover:bg-muted/60 transition-colors group cursor-pointer"
@@ -3739,6 +3843,10 @@ function MarketingFilesDialog({
                     </div>
                   </div>
                 ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </ScrollArea>
           )}
@@ -4059,9 +4167,9 @@ function UnitFormDialog({
               );
             })()}
           </div>
-          <div>
+          <div className="min-w-0">
             <Label>Available Date</Label>
-            <Input type="date" value={form.availableDate} onChange={e => upd("availableDate", e.target.value)} />
+            <Input type="date" className="min-w-0" value={form.availableDate} onChange={e => upd("availableDate", e.target.value)} />
           </div>
           <div className="col-span-2">
             <Label>BGP Contact</Label>

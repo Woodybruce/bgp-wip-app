@@ -163,16 +163,21 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
+  // Hashed build assets are immutable — serve from cache FIRST so app opens
+  // don't re-download the bundle over mobile data every time (the old
+  // network-first strategy was a big chunk of "app is consistently slow",
+  // 2026-08-30). A new build has new hashes, so stale-cache risk is nil.
   if (url.pathname.match(/\.(js|css)$/) && url.pathname.includes('/assets/')) {
     event.respondWith(
-      fetch(event.request).then(function(response) {
-        if (response.ok) {
-          var clone = response.clone();
-          caches.open(CACHE_NAME).then(function(cache) { cache.put(event.request, clone); });
-        }
-        return response;
-      }).catch(function() {
-        return caches.match(event.request);
+      caches.match(event.request).then(function(cached) {
+        if (cached) return cached;
+        return fetch(event.request).then(function(response) {
+          if (response.ok) {
+            var clone = response.clone();
+            caches.open(CACHE_NAME).then(function(cache) { cache.put(event.request, clone); });
+          }
+          return response;
+        });
       })
     );
     return;

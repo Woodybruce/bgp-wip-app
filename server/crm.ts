@@ -8768,6 +8768,29 @@ Rules:
     };
   }
 
+  // Generation takes 20-60s (Claude call). Never run it inside the GET —
+  // the phone shows a full-screen skeleton for the whole wait and users
+  // abort before the response lands (Woody, 2026-08-30: "still taking ages
+  // to load" — zero completed market-commentary requests in the prod logs).
+  // Instead: serve whatever row exists immediately and refresh it in the
+  // background; when no row exists yet, reply {generating:true} fast and
+  // let the client poll.
+  const mcInFlight = new Set<string>();
+  function kickMarketCommentary(opts: {
+    scopeKey: string;
+    scopeLabel: string;
+    scopeType: "top" | "sub";
+    parentKey?: string | null;
+    parentLabel?: string | null;
+    matches: string[];
+  }) {
+    if (mcInFlight.has(opts.scopeKey)) return;
+    mcInFlight.add(opts.scopeKey);
+    generateMarketCommentary(opts)
+      .catch((err: any) => console.error("[market-commentary] background generation failed:", err.message))
+      .finally(() => mcInFlight.delete(opts.scopeKey));
+  }
+
   app.get("/api/brands/market-commentary", requireAuth, async (req, res) => {
     try {
       const scopeKey = String(req.query.scope || "").trim();
@@ -8795,48 +8818,30 @@ Rules:
       if (existing) {
         const ageMs = Date.now() - new Date(existing.generated_at).getTime();
         const fresh = ageMs < MARKET_COMMENTARY_TTL_HOURS * 60 * 60 * 1000;
-        if (fresh) {
-          return res.json({
-            scopeKey: existing.scope_key,
-            scopeLabel: existing.scope_label,
-            scopeType: existing.scope_type,
-            parentKey: existing.parent_key,
-            parentLabel: existing.parent_label,
-            content: existing.content,
-            brandCount: existing.brand_count,
-            newsCount: existing.news_count,
-            generatedAt: existing.generated_at,
-            cached: true,
-          });
+        if (!fresh && matches.length > 0) {
+          kickMarketCommentary({ scopeKey, scopeLabel, scopeType, parentKey, parentLabel, matches });
         }
+        return res.json({
+          scopeKey: existing.scope_key,
+          scopeLabel: existing.scope_label,
+          scopeType: existing.scope_type,
+          parentKey: existing.parent_key,
+          parentLabel: existing.parent_label,
+          content: existing.content,
+          brandCount: existing.brand_count,
+          newsCount: existing.news_count,
+          generatedAt: existing.generated_at,
+          cached: true,
+          ...(fresh ? {} : { stale: true }),
+        });
       }
 
       if (matches.length === 0) {
-        // No cache and no matches provided — return existing stale row if any,
-        // otherwise indicate the client must supply matches to generate.
-        if (existing) {
-          return res.json({
-            scopeKey: existing.scope_key,
-            scopeLabel: existing.scope_label,
-            scopeType: existing.scope_type,
-            parentKey: existing.parent_key,
-            parentLabel: existing.parent_label,
-            content: existing.content,
-            brandCount: existing.brand_count,
-            newsCount: existing.news_count,
-            generatedAt: existing.generated_at,
-            cached: true,
-            stale: true,
-          });
-        }
         return res.status(400).json({ error: "matches[] required to generate commentary" });
       }
 
-      const result = await generateMarketCommentary({
-        scopeKey, scopeLabel, scopeType,
-        parentKey, parentLabel, matches,
-      });
-      res.json({ ...result, cached: false });
+      kickMarketCommentary({ scopeKey, scopeLabel, scopeType, parentKey, parentLabel, matches });
+      res.json({ scopeKey, scopeLabel, scopeType, generating: true });
     } catch (err: any) {
       console.error("[market-commentary]", err.message);
       res.status(500).json({ error: err.message });
@@ -9851,6 +9856,15 @@ async function runAutoEnrichmentCycle() {
 
     autoEnrichLastRun = new Date();
     autoEnrichLastResult = result;
+    // Persist across restarts — each deploy boots a fresh process, and the
+    // 60s initial run used to fire a full cycle EVERY boot. On a heavy
+    // deploy day (~20 boots, 2026-08-29) that ran ~20 extra store-research
+    // batches and spent ~£380 of Google Places Text Search in a day.
+    pool.query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ('auto_enrich:last_run', $1, now())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`,
+      [JSON.stringify({ at: autoEnrichLastRun.toISOString() })],
+    ).catch((err: any) => console.warn("[auto-enrich] last-run persist failed:", err.message));
 
     const hasActivity = (result.aiCompanies?.processed > 0 || result.aiContacts?.processed > 0 || result.typeClassify?.processed > 0 || result.stores?.processed > 0);
     if (hasActivity) {
@@ -9953,7 +9967,30 @@ export function startAutoEnrichment() {
   autoEnrichEnabled = true;
   console.log(`[auto-enrich] Started — running every ${AUTO_ENRICH_INTERVAL_HOURS} hours (batch size: ${AUTO_ENRICH_BATCH_SIZE})`);
 
-  setTimeout(() => {
+  // The initial run must respect the persisted last-run time: a boot is NOT
+  // a schedule tick. Without this every deploy re-ran a cycle 60s after
+  // boot, and deploy churn multiplied Google Places spend (£380 Text Search
+  // anomaly, 2026-08-29).
+  setTimeout(async () => {
+    try {
+      const r = await pool.query(`SELECT value FROM system_settings WHERE key = 'auto_enrich:last_run'`);
+      const at = r.rows[0]?.value?.at ? new Date(r.rows[0].value.at) : null;
+      if (at && !isNaN(at.getTime())) {
+        const elapsedMs = Date.now() - at.getTime();
+        const intervalMs = AUTO_ENRICH_INTERVAL_HOURS * 60 * 60 * 1000;
+        if (elapsedMs < intervalMs) {
+          autoEnrichLastRun = at;
+          const waitMs = intervalMs - elapsedMs;
+          console.log(`[auto-enrich] Last cycle ${Math.round(elapsedMs / 60000)}min ago — first run in ${Math.round(waitMs / 60000)}min`);
+          setTimeout(() => {
+            runAutoEnrichmentCycle().catch(err => console.error("[auto-enrich] Deferred initial run error:", err.message));
+          }, waitMs);
+          return;
+        }
+      }
+    } catch (err: any) {
+      console.warn("[auto-enrich] last-run lookup failed, running initial cycle:", err.message);
+    }
     runAutoEnrichmentCycle().catch(err => console.error("[auto-enrich] Initial run error:", err.message));
   }, 60000);
 
@@ -10102,6 +10139,13 @@ Rules:
     result.error = err.message;
   } finally {
     autoTurnoverLastRun = new Date();
+    // Same boot-churn guard as auto-enrich: a redeploy must not re-run the
+    // cycle (each one spends Claude research calls on 4 brands).
+    pool.query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ('auto_turnover:last_run', $1, now())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`,
+      [JSON.stringify({ at: autoTurnoverLastRun.toISOString() })],
+    ).catch((err: any) => console.warn("[auto-turnover] last-run persist failed:", err.message));
     autoTurnoverLastResult = result;
     autoTurnoverRunning = false;
   }
@@ -10112,8 +10156,29 @@ export function startAutoTurnoverResearch() {
   autoTurnoverEnabled = true;
   console.log(`[auto-turnover] Started — running every ${AUTO_TURNOVER_INTERVAL_HOURS} hours (batch size: ${AUTO_TURNOVER_BATCH_SIZE})`);
 
-  // Initial run 90 seconds after server start (after auto-enrich has kicked off)
-  setTimeout(() => {
+  // Initial run 90 seconds after server start (after auto-enrich has kicked
+  // off) — but only if the persisted last run is older than the interval,
+  // so deploy churn can't multiply the spend (same guard as auto-enrich).
+  setTimeout(async () => {
+    try {
+      const r = await pool.query(`SELECT value FROM system_settings WHERE key = 'auto_turnover:last_run'`);
+      const at = r.rows[0]?.value?.at ? new Date(r.rows[0].value.at) : null;
+      if (at && !isNaN(at.getTime())) {
+        const elapsedMs = Date.now() - at.getTime();
+        const intervalMs = AUTO_TURNOVER_INTERVAL_HOURS * 60 * 60 * 1000;
+        if (elapsedMs < intervalMs) {
+          autoTurnoverLastRun = at;
+          const waitMs = intervalMs - elapsedMs;
+          console.log(`[auto-turnover] Last cycle ${Math.round(elapsedMs / 60000)}min ago — first run in ${Math.round(waitMs / 60000)}min`);
+          setTimeout(() => {
+            runAutoTurnoverCycle().catch(err => console.error("[auto-turnover] Deferred initial run error:", err.message));
+          }, waitMs);
+          return;
+        }
+      }
+    } catch (err: any) {
+      console.warn("[auto-turnover] last-run lookup failed, running initial cycle:", err.message);
+    }
     runAutoTurnoverCycle().catch(err => console.error("[auto-turnover] Initial run error:", err.message));
   }, 90000);
 
