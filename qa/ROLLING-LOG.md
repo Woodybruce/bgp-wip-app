@@ -80,6 +80,28 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r441 · 2026-09-01 ~15:50 UTC · LIGHT (r440 had the journey) — GREEN
+- Bring-up: canonical recipe held 6th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0.
+- Two-bot round 441: ALL 53+ scenarios ok (victoria/mark/woody/nick/sam),
+  12 logged issues, every one a known class: rocketreach 400,
+  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
+  (keyless), 8×403 probe-by-design scope rows. Whole-round server log:
+  0 raw 500/502/504; 403s flat at 1-3 per route (write-guard probes, no
+  storm). 0 app bugs.
+- staff-mobile-add-unit-dialog (new in r440) PASSED its first full harness
+  run — Add Unit dialog stays sw<=cw at 390px.
+- r440's whitespace-normal toggle fix and r438's dialog/roll-up fixes all
+  hold under the full harness.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey this round). New flakes: none.
+- Real-device keyboard-up composer check (r405) still open for Woody.
+- Harness note: `node qa/two-bot-round.mjs | tail -60` loses the early
+  (victoria) stdout section when the run outlives the Bash timeout — the
+  round-N.jsonl + exit code are the authoritative record; don't pipe.
+- Next: rotation #1 BGP staff desktop (r441 was LIGHT → r442 FULL).
+
 ### r440 · 2026-09-01 ~15:30 UTC · FULL — rotation #4 BGP staff mobile 390px · 1 bug fixed
 - Bring-up: canonical recipe held 5th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0 ×2 (before, and
