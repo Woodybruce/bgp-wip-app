@@ -54,6 +54,7 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 import { PropertyCombobox } from "@/components/property-combobox";
+import PDFViewer from "@/components/pdf-viewer";
 import { EntityCombobox } from "@/components/entity-combobox";
 import { XeroContactPicker } from "@/components/xero-contact-picker";
 import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-allocation-editor";
@@ -3604,6 +3605,51 @@ function MarketingFilesDialog({
   const [uploadCategory, setUploadCategory] = useState<"brochure" | "floorplan" | "photo">("brochure");
   const [sheetOpts, setSheetOpts] = useState({ floorplans: true, schemePlan: true, brochure: false, photos: true });
   const [generatingSheet, setGeneratingSheet] = useState(false);
+  // In-app preview instead of window.open — in the iOS home-screen app a
+  // window.open'd PDF takes over the whole webview with no back button
+  // (Woody, 2026-09-01, stuck on the Westgate scheme plan).
+  const [preview, setPreview] = useState<{ url: string; name: string; kind: "pdf" | "image" } | null>(null);
+
+  const fetchFileBlobUrl = useCallback(async (filePath: string) => {
+    // Fetched to a blob URL so auth travels with it in every context —
+    // pdfjs/img requests don't carry the bearer token on their own.
+    const res = await fetch(filePath, { credentials: "include", headers: getAuthHeaders() });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return URL.createObjectURL(await res.blob());
+  }, []);
+
+  const closePreview = useCallback(() => {
+    setPreview(p => {
+      if (p) URL.revokeObjectURL(p.url);
+      return null;
+    });
+  }, []);
+
+  const downloadBlob = useCallback(async (filePath: string, fileName: string) => {
+    try {
+      const objUrl = await fetchFileBlobUrl(filePath);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = fileName || "download";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 1500);
+    } catch (e: any) {
+      toast({ title: "Download failed", description: e.message, variant: "destructive" });
+    }
+  }, [fetchFileBlobUrl, toast]);
+
+  const openFile = useCallback(async (f: UnitMarketingFile | { filePath: string; fileName: string; mimeType?: string | null }) => {
+    const kind = f.mimeType?.includes("pdf") ? "pdf" : f.mimeType?.startsWith("image/") ? "image" : null;
+    if (!kind) return downloadBlob(f.filePath, f.fileName);
+    try {
+      const objUrl = await fetchFileBlobUrl(f.filePath);
+      setPreview({ url: objUrl, name: f.fileName, kind });
+    } catch (e: any) {
+      toast({ title: "Could not open file", description: e.message, variant: "destructive" });
+    }
+  }, [downloadBlob, fetchFileBlobUrl, toast]);
 
   // Scheme plans live on the property record — count them so the info
   // sheet tick-box can say what exists.
@@ -3634,13 +3680,13 @@ function MarketingFilesDialog({
       const j = await res.json();
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit.id, "files"] });
       toast({ title: "Info sheet created", description: `${j.pages} page${j.pages !== 1 ? "s" : ""} — saved to this unit's Files` });
-      if (j.file?.filePath) window.open(`${j.file.filePath}?view=1`, "_blank");
+      if (j.file?.filePath) openFile({ filePath: j.file.filePath, fileName: j.file.fileName || "Info sheet", mimeType: "application/pdf" });
     } catch (e: any) {
       toast({ title: "Info sheet failed", description: e.message, variant: "destructive" });
     } finally {
       setGeneratingSheet(false);
     }
-  }, [unit, sheetOpts, toast]);
+  }, [unit, sheetOpts, toast, openFile]);
 
   const uploadFile = useCallback(async (file: globalThis.File) => {
     if (!unit) return;
@@ -3692,6 +3738,7 @@ function MarketingFilesDialog({
   };
 
   return (
+    <>
     <Dialog open={!!unit} onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
@@ -3815,7 +3862,7 @@ function MarketingFilesDialog({
                   <div
                     key={f.id}
                     className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30 hover:bg-muted/60 transition-colors group cursor-pointer"
-                    onClick={() => window.open(`${f.filePath}?view=1`, "_blank")}
+                    onClick={() => openFile(f)}
                     data-testid={`file-item-${f.id}`}
                   >
                     <span className="text-lg shrink-0">{getFileIcon(f.mimeType)}</span>
@@ -3831,7 +3878,7 @@ function MarketingFilesDialog({
                         variant="ghost"
                         size="sm"
                         className="h-7 w-7 p-0"
-                        onClick={(e) => { e.stopPropagation(); window.open(f.filePath, "_blank"); }}
+                        onClick={(e) => { e.stopPropagation(); downloadBlob(f.filePath, f.fileName); }}
                         title="Download"
                         data-testid={`button-download-${f.id}`}
                       >
@@ -3860,6 +3907,28 @@ function MarketingFilesDialog({
         </div>
       </DialogContent>
     </Dialog>
+
+    <PDFViewer
+      url={preview?.kind === "pdf" ? preview.url : ""}
+      fileName={preview?.name || "File"}
+      open={preview?.kind === "pdf"}
+      onClose={closePreview}
+      propertyName={propertyName}
+    />
+
+    <Dialog open={preview?.kind === "image"} onOpenChange={v => { if (!v) closePreview(); }}>
+      <DialogContent className="max-w-full sm:max-w-[90vw] xl:max-w-[1200px] w-full p-0 gap-0">
+        <DialogHeader className="px-4 py-3 border-b" style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}>
+          <DialogTitle className="text-sm font-medium truncate pr-8">{preview?.name}</DialogTitle>
+        </DialogHeader>
+        <div className="max-h-[80dvh] overflow-auto bg-muted/30 flex items-center justify-center p-2">
+          {preview?.kind === "image" && (
+            <img src={preview.url} alt={preview.name} className="max-w-full max-h-[76dvh] object-contain rounded" />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
