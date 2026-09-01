@@ -111,6 +111,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   phone stacks two headers + dangling "· Bluewater" title fragment).
   Real-device keyboard-up composer check (r405) still open for Woody.
 - New flakes: none.
+- END-OF-ROUND MERGE VERIFIED: final push collided with parent-side
+  f1d6887 (JOGQK merge — tracker slack-width filler column,
+  available-units.tsx + wip-report.tsx); merged (4da9811) and re-verified
+  the merged tree: tsc clean, /available desktop 1440px renders 85 rows
+  with Marketing pills + actions cluster and no h-overflow, /wip-report
+  renders, both routes sw==iw at 390px, 0 pageerrors. r447 should run
+  the full two-bot on this tree (this round's two-bot ran pre-merge).
 - Next: r446 had the journey → r447 LIGHT; then rotation #4 staff mobile
   390px.
 
