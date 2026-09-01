@@ -481,7 +481,15 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
       const eCell = Math.ceil(e / cellSize) * cellSize;
       const placesLabels: any[] = [];
 
-      if (GOOGLE_API_KEY) {
+      // Cost guard: each cell fires a paid Places Nearby Search and nothing
+      // bounded the grid, so a city-scale bbox meant tens of thousands of
+      // calls per map load. Only run the grid at street zoom (~<=120 cells).
+      const placesCellCount =
+        Math.max(0, Math.round((nCell - sCell) / cellSize)) *
+        Math.max(0, Math.round((eCell - wCell) / cellSize));
+      const MAX_PLACES_CELLS = 120;
+
+      if (GOOGLE_API_KEY && placesCellCount <= MAX_PLACES_CELLS) {
         const cellPromises: Promise<any[]>[] = [];
         for (let lat = sCell; lat < nCell; lat += cellSize) {
           for (let lng = wCell; lng < eCell; lng += cellSize) {

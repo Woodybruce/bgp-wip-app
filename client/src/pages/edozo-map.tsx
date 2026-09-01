@@ -3535,7 +3535,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
 
       // Fetch buildings (OSM) and label overrides (CRM > Comps > Google) in parallel
       const bboxParam = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
-      const labelsPromise = fetch(`/api/map/labels?bbox=${bboxParam}`, {
+      const labelsPromise = map.getZoom() < 17 ? Promise.resolve(null) : fetch(`/api/map/labels?bbox=${bboxParam}`, {
         credentials: "include",
         headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
       })
