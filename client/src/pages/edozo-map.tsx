@@ -3857,7 +3857,6 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       const thisLoad = loadCounterRef.current;
 
       const bboxParam = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
-
       // Prefer the occupier plan (Goad/Edozo) — names live on the polygons, so
       // no OSM/NGD label-guessing is needed where we have coverage. Only at
       // street zoom, matching the label-render gate.
@@ -3906,7 +3905,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       }
 
       // Fetch buildings (OSM) and label overrides (CRM > Comps > Google) in parallel
-      const labelsPromise = mapIsClientRef.current ? Promise.resolve(null) : fetch(`/api/map/labels?bbox=${bboxParam}`, {
+      const labelsPromise = (mapIsClientRef.current || map.getZoom() < 17) ? Promise.resolve(null) : fetch(`/api/map/labels?bbox=${bboxParam}`, {
         credentials: "include",
         headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
       })
