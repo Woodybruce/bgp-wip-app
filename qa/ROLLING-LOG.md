@@ -80,19 +80,38 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r444 · 2026-09-01 ~18:40 UTC · FULL — rotation #2 Landsec client desktop 1440px · ROUND IN PROGRESS
+### r444 · 2026-09-01 ~19:00 UTC · FULL — rotation #2 Landsec client desktop 1440px — GREEN
 - Bring-up: canonical recipe held 9th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0.
 - Two-bot round 444 (FIRST full two-bot on the merged c7356c1 tracker-rework
-  tree, per r443 note): exit 0, 232 [ok] scenario lines, 12 logged issues =
-  the exact standing noise signature (rocketreach 400, invalid-tracker probe
-  400, brand-gaps/live-intel + commentary-regen 503 keyless, 8×403
-  probe-by-design scope rows). Server log: 0 raw 500/502/504 (one "500"
-  grep hit = news-feed log text, r413 class). phone-overflow-sweep 11/11
-  routes fit at 390px. Triage: 0 app bugs from the harness.
-- Journey (Mark @1440px, quarterly-review prep: dashboard → Bluewater
-  tenancy schedule → brand slice + self-add brand → brand profile → news
-  → tasks): IN PROGRESS.
+  tree, per r443 note — merge confirmed harness-clean): exit 0, 232 [ok]
+  scenario lines, 12 logged issues = the exact standing noise signature
+  (rocketreach 400, invalid-tracker probe 400, brand-gaps/live-intel +
+  commentary-regen 503 keyless, 8×403 probe-by-design scope rows). Server
+  log: 0 raw 500/502/504 (one "500" grep hit = news-feed log text, r413
+  class). phone-overflow-sweep 11/11 routes fit at 390px. 0 app bugs.
+- Journey (Mark @1440px, quarterly-review prep: dashboard → Bluewater page →
+  tenancy schedule (inline section + full /tenancy-schedule/:id, 200 units)
+  → Brand Intelligence slice → self-add brand full roundtrip (dialog search
+  "Jewellers" → Add → toast + Added badge + Total Brands 9→10 + explorer +
+  Quick Access → out-of-slice profile loads w/ Compliance&KYC visible, no
+  staff buttons, error-boundary-free → Remove 200) → news → tasks →
+  overflow checks): 0 pageerrors, 0 non-noise 4xx/5xx, 0 h-overflow at
+  1440px, 0 bugs. r442's turnover-leaders fix holds client-side (badge==stat
+  ==Honi Poke only); r438 widget/tracker agreement holds (77 Avail + 1 Neg
+  everywhere). "No brands match" on directory search is fixture data (no
+  such brand), not a bug — endpoint returns out-of-slice tenants and
+  correctly excludes landlords/agents.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Harness growth: none needed (client-add-brand-from-directory +
+  client-add-brand-remove-ui already lock the journey's API surface).
+- Suggestions: UX-NOTES 125 (tenancy stat strip prints "AVG ERV £PSF 0"
+  where PASSING RENT prints "—" for equally-unset data). Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- New flakes: none.
+- Next: r444 had the journey → r445 LIGHT; then rotation #3 client mobile
+  390px.
 
 ### r443 · 2026-09-01 ~18:15 UTC · LIGHT (r442 had the journey) — GREEN
 - Bring-up: canonical recipe held 8th consecutive time (qa:pg once →

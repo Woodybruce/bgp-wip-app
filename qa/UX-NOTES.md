@@ -16,6 +16,13 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+125. 2026-09-01 · Landsec client / desktop 1440px (QA r444) · reading the
+    Bluewater tenancy schedule stat strip during quarterly-review prep ·
+    "PASSING RENT" shows "—" when no rent is recorded but the neighbouring
+    "AVG ERV £PSF" shows "0" for the same kind of missing data — a client
+    could read that as a genuine £0 ERV · use the same dash-when-unset rule
+    for ERV (and any other stat tiles) as passing rent.
+
 124. 2026-09-01 · BGP staff / desktop 1440px (QA r442) · scanning Image
     Studio's LIBRARY tab · the sidebar category "Uncategorised" said 1 while
     the albums view showed an "Uncategorised" folder with 2 photos beside an
