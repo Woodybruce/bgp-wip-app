@@ -80,6 +80,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r449 · 2026-09-01 ~22:30 UTC · LIGHT — round in progress (provisional)
+- Bring-up: canonical recipe held 14th consecutive time. Regression: smoke
+  GREEN 42/0. Two-bot 3 chunks exit 0: victoria 65 ok (incl. FIRST harness
+  run of r448's staff-mobile-page-actions-reachable — PASSED), mark 150 ok,
+  ext 18 ok; 12 issues = exact standing noise signature. Server logs 0 raw
+  5xx. Sweep 11/11 at 390px.
+- Triage: 0 app bugs. One HARNESS-INFRA trap found + fixed in the runner
+  (not the app): capturing dev-server stdout via a pipe while spawnSync
+  blocks the loop freezes the server at ~64KB of logs and collapses the
+  chromium session — log the server to a FILE. Killed the victoria chunk
+  twice at the same scenario before diagnosis.
+- Remaining: re-verify r448's two fixes visually; deferred-bug check.
+
 ### r448 · 2026-09-01 ~21:50 UTC · FULL — rotation #4 BGP staff mobile 390px · 2 bugs fixed
 - Bring-up: canonical recipe held 13th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0 ×2 (before, and

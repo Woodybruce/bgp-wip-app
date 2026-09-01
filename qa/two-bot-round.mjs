@@ -215,6 +215,7 @@ async function mobGoto(pg, url, nav) {
 
 async function step(page, persona, scenario, fn) {
   currentScenario[persona] = scenario;
+  if (process.env.QA_DEBUG) console.log(`  [dbg ${new Date().toISOString()}] step ${scenario}`);
   try {
     await fn();
     console.log(`  [ok] ${persona} · ${scenario}`);
@@ -6067,6 +6068,13 @@ for (const ctx of [agentCtx, clientCtx]) await ctx.addInitScript((f) => { window
 const mPage = await login(clientCtx, CLIENT_USER);
 attachCollectors(vPage, 'victoria');
 attachCollectors(mPage, 'mark');
+if (process.env.QA_DEBUG) {
+  const t = () => new Date().toISOString();
+  browser.on('disconnected', () => console.log(`  [dbg ${t()}] BROWSER disconnected`));
+  vPage.on('close', () => console.log(`  [dbg ${t()}] vPage CLOSE`));
+  vPage.on('crash', () => console.log(`  [dbg ${t()}] vPage CRASH`));
+  mPage.on('close', () => console.log(`  [dbg ${t()}] mPage CLOSE`));
+}
 
 const cross = { dealStamp: null };
 if (CROSS_FILE && existsSync(CROSS_FILE)) Object.assign(cross, JSON.parse(readFileSync(CROSS_FILE, 'utf8')));
