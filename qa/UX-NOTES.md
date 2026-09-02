@@ -13,6 +13,14 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+136. 2026-09-02 · Landsec client / mobile 390px (QA r470) · reviewing
+    Bluewater's Boards section on the phone · the empty Brochures panel
+    reads "No brochures yet — drop a PDF here or use Add." — drag-and-drop
+    doesn't exist on a touch phone, so half the instruction is impossible
+    and reads desktop-first (same panel/copy also serves staff mobile) ·
+    on touch/mobile render the empty state as "No brochures yet — use Add"
+    (keep the drop-zone copy for pointer devices).
+
 135. 2026-09-02 · BGP staff / mobile 390px (QA r464) · working the Bluewater
     letting tracker on the phone (75 units in Marketing) · every unit card
     unconditionally reserves two label rows for Area and Rent p.a., and on

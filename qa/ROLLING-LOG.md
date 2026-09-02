@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r470 · 2026-09-02 ~21:30 UTC · FULL — rotation #3 Landsec client mobile 390px — ROUND IN PROGRESS (heartbeat)
+### r470 · 2026-09-02 ~21:30 UTC · FULL — rotation #3 Landsec client mobile 390px — GREEN
 - Bring-up: canonical recipe held 35th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
   fresh session no stale cross file). Regression: smoke GREEN 42/0.
@@ -92,12 +92,40 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
   probe-by-design — standing signature exact; full chunk incl. tail
   scenarios, so the r467 browser death did NOT recur on a third
-  consecutive fresh container) / woody,nick,sam exit 0 (0 issues).
-  phone-overflow-sweep 11/11 at 390px. Server log tally: 0 raw
-  500/502/504 (3866×200, expected 4xx/503 families, single 422 =
-  r462 cover-raster by design). Triage: 0 app bugs.
-- Journey (client mobile 390px, mark.warne@) IN PROGRESS — final entry
-  replaces this one.
+  consecutive fresh container — container-specific read now strong) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
+  Server log tally: 0 raw 500/502/504 (3866×200, expected 4xx/503
+  families, single 422 = r462 cover-raster by design). Triage: 0 app bugs.
+- Journey (Mark @390px iPhone UA + hasTouch, "before the quarterly BGP
+  catch-up: portfolio glance → Bluewater — who do I chase, what's on file
+  → comps → requirements → calendar → CRM hub"): home widget 77/1/0/78
+  (r438 holds) → property page phone section switcher, ALL FIVE sections
+  tapped: Boards (brochures empty state + Brand Gap panel render),
+  Deals & units (2 linked deals w/ stage pills, 76 live lettings, tracker
+  link), Files & contacts ANSWERS who-to-chase (Linked Contacts 5:
+  internal team + on-deals contacts w/ deal names; SharePoint degrades
+  politely), KYC (Compliance & KYC visible per standing decision, parked
+  downstream checks, Companies House link = plain external <a>, no dead
+  control), Activity (recent deal move + deal link). Then /comps
+  (leasing/investment pill tabs clean; QA-COMP probe row visible, r448
+  precedent = not a bug), /requirements (client-tailored empty copy),
+  /calendar (day grid + CRM strip + upcoming, QA-CAL event renders),
+  /contacts CRM hub (directory/agents/Landsec tabs). 0 pageerrors,
+  0 non-noise 4xx/5xx, no h-overflow on ANY surface. NOT a bug: home
+  "78 Units" vs property panel "76 live lettings" — API-reconciled, 76
+  Bluewater + 2 Westgate Test Centre = 78 portfolio-wide.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 136 (phone brochures empty
+  state says "drop a PDF here" on a touch device). New flakes: none.
+- Harness note (journey scripts): the iPhone UA alone is NOT enough for
+  the phone shell — use-mobile's isTouchDevice needs ontouchstart/
+  maxTouchPoints, so Playwright contexts must set isMobile+hasTouch
+  (two-bot/sweep already do; a UA-only context renders the DESKTOP
+  sidebar squeezed at 390px and invalidates the journey).
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r470 had the journey → r471 LIGHT; then rotation #4 BGP staff
+  mobile 390px.
 
 ### r469 · 2026-09-02 ~16:10 UTC · LIGHT (r468 had the journey) — GREEN
 - Bring-up: canonical recipe held 34th consecutive time (qa:pg once →
