@@ -124,8 +124,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   (two-bot/sweep already do; a UA-only context renders the DESKTOP
   sidebar squeezed at 390px and invalidates the journey).
   Real-device keyboard-up composer check (r405) still open for Woody.
-- Next: r470 had the journey → r471 LIGHT; then rotation #4 BGP staff
-  mobile 390px.
+- END-OF-ROUND MERGE VERIFIED (r446 precedent): final push collided with
+  a parent-side JOGQK sync (d0b79fe — NEW Evidence Plans feature:
+  server/evidence-plan.ts + client/src/pages/evidence-plans.tsx, TS
+  import/TAF zip; verdict chasing skips current-month + Completed deals);
+  merged (2900a12), tsc clean, smoke GREEN 42/0 on FRESH_BUILD of the
+  merged tree. This round's two-bot ran PRE-merge — r471 runs the full
+  two-bot on this tree, and a future FULL round should cover the new
+  /evidence-plans surface (staff-side journey + client gate probe).
+- Next: r470 had the journey → r471 LIGHT (two-bot on the merged tree);
+  then rotation #4 BGP staff mobile 390px (+ Evidence Plans coverage).
 
 ### r469 · 2026-09-02 ~16:10 UTC · LIGHT (r468 had the journey) — GREEN
 - Bring-up: canonical recipe held 34th consecutive time (qa:pg once →
