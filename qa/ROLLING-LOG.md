@@ -84,14 +84,59 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r462 · 2026-09-02 · FULL (rotation #3 Landsec client mobile 390px) — ROUND IN PROGRESS
-- Heartbeat: bring-up clean (qa:pg once → run-smoke restore → seed-personas
-  before two-bot). Regression: smoke GREEN 42/0. Two-bot round 462 as 3
-  foreground chunks (r447 pattern): victoria exit 0 (2×400 standing) /
-  mark exit 0 (10 issues = 2×503 keyless + 8×403 probe-by-design) /
-  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
-  Server logs: 0 raw 500/502/504. Triage: 0 app bugs from the harness.
-- Journey (Mark @390px) still to run — final entry replaces this one.
+### r462 · 2026-09-02 ~13:30 UTC · FULL — rotation #3 Landsec client mobile 390px · 2 bugs fixed
+- Bring-up: canonical recipe held 27th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
+  Regression: smoke GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the
+  fixes). Two-bot round 462 as 3 foreground chunks (r447 pattern):
+  victoria exit 0 (2×400 standing) ×2 / mark exit 0 (pre-fix 10 issues =
+  2×503 keyless + 8×403 probe-by-design; post-fix 9 — live-intel 503 now
+  in the ignore list) ×3 / woody,nick,sam exit 0 (0 issues).
+  phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw 500/502/504
+  post-fix. Triage from harness: 0 app bugs.
+- Journey (Mark @390px iPhone UA, UI login — "afternoon asset review on
+  the phone: portfolio home → Bluewater property detail (Overview/Boards
+  pills) → full tenancy schedule phone cards → Brands hub → Honi Poke
+  profile (Contacts/Compliance tabs) → news → tasks"): home KPIs
+  77/1/0/78 hold, property detail + section pills clean, tenancy phone
+  card list + KPI tiles clean (200 units), brands hub tiles, brand
+  profile tabs all fit, compliance tab renders for the client (CLAUDE.md
+  decision holds), news/tasks clean. 0 pageerrors, no h-overflow, only
+  noise-list 4xx/5xx. NOTE: client routes are /properties/:id and
+  /companies/:id — /property/:id and /company/:id silently bounce to "/"
+  via ClientRouteGuard (journey initially probed the wrong paths; guard
+  behaving as designed).
+- BUG FIXED 1 (brochures tile dead-ends for clients): property Boards →
+  Brochures panel rendered reingest/edit/archive/delete tile buttons to
+  clients, but only the UPLOAD has a gateway allowance — all manage
+  writes 403 (r452 dead-end class). BrochureTile now takes readOnly
+  (viewer isClient), hiding the four manage buttons; Download/preview
+  stay; Add button + dropzone KEPT for clients (upload parity is an
+  explicit gateway allowance — first fix attempt wrongly removed it,
+  caught by the 400-not-403 API probe and reverted).
+  client/src/components/property-brochures-panel.tsx. Verified via API
+  (upload 200, DELETE/PATCH/reingest 403) + visually both personas
+  (mark: 0 manage buttons, download intact; victoria: all intact).
+- BUG FIXED 2 (brochure cover raw 500): GET /brochures/:id/cover mapped
+  any raster failure to a raw 500 (surfaced by the new scenario — QA
+  container has no pdftoppm, spawn ENOENT; a corrupt PDF does the same
+  in prod). Render failures now return 422 and the tile's onError iframe
+  fallback handles it (server/property-brochures.ts). Genuine unexpected
+  errors still 500.
+- Harness growth: two-bot +1 client-brochure-upload-parity-manage-blocked
+  (client upload 200 → DELETE/reingest 403 → tile hides reingest btn →
+  staff-token cleanup); ignore list +cover-raster (no pdftoppm locally)
+  and brand-gaps live-intel added to the keyless family. NOTE: mark
+  chunk standing signature is now 9 issues (1×503 keyless + 8×403).
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES
+  134 (client mobile property Overview leads with a card of "—" fields).
+  Real-device keyboard-up composer check (r405) still open for Woody.
+  New flakes: none.
+- Next: r462 had the journey → r463 LIGHT (watch
+  client-brochure-upload-parity-manage-blocked's first standard-order
+  run + the new 9-issue mark signature); then rotation #4 BGP staff
+  mobile 390px.
 
 ### r461 · 2026-09-02 ~11:30 UTC · LIGHT (r460 had the journey) — GREEN
 - Bring-up: canonical recipe held 26th consecutive time (qa:pg once →

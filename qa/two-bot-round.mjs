@@ -54,7 +54,8 @@ const IGNORED_RESPONSES = [
   /\/api\/ai-briefing/,                  // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/ai-take\//,      // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/(competitors\/research|rocketreach-company\/refresh)/, // 503 locally, no keys
-  /\/api\/property\/[^/]+\/brand-gaps\/(commentary|international)/, // Brand Gap v2 AI reads — 500 locally with no AI key (the base /brand-gaps is keyless and stays checked); works in prod. The scope gate is covered by client-brand-gaps-scoped.
+  /\/api\/property\/[^/]+\/brand-gaps\/(commentary|international|live-intel)/, // Brand Gap v2 AI reads — 500/503 locally with no AI key (the base /brand-gaps is keyless and stays checked); works in prod. The scope gate is covered by client-brand-gaps-scoped.
+  /\/api\/properties\/[^/]+\/brochures\/[^/]+\/cover/, // cover raster 422s locally — no pdftoppm binary in the QA container (spawn ENOENT); the tile falls back to its iframe embed. Renders fine in prod.
   /\/api\/activity\/(brand|landlord)\/[^/]+$/, // AI relationship activity: own company + slice brands return 200 for clients since r215 (gateway now honours the 2026-08-04 parity decision); anything else 403s. client-interactions-guard is the authoritative lock either way.
   /\/api\/interactions\//,               // correspondence drawer: own company + slice brands are client-readable (Woody, 2026-08-04 — restored r215); rival/summary/leaderboard stay 403. The client-interactions-guard scenario is the authoritative lock.
   /\/api\/covenant\//,                    // covenant engine (credit analysis) is staff-only — the client covenant badge fires /api/covenant/by-crm/:id and gets a safe 403. client-covenant-guard is the authoritative lock.
@@ -5798,6 +5799,43 @@ async function markRound(page, cross) {
         method: 'PUT', ...auth, body: JSON.stringify({ address: { formatted: 'QA-PROBE addr' } }),
       });
       if (r.status !== 403) throw new Error(`client property PUT expected 403, got ${r.status}`);
+    }
+  });
+
+  await step(page, p, 'client-brochure-upload-parity-manage-blocked', async () => {
+    // r462: clients may UPLOAD brochures on their own property (explicit
+    // gateway allowance) but reingest/PATCH/DELETE are gateway-blocked —
+    // the tile used to show all four mutating buttons to clients
+    // (dead-end, r452 class). Upload must stay 200, manage writes 403,
+    // and the tile must hide the manage buttons for clients.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const pdf = '%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Size 4/Root 1 0 R>>\n%%EOF';
+    const form = new FormData();
+    form.append('file', new Blob([pdf], { type: 'application/pdf' }), 'QA-PROBE-brochure.pdf');
+    form.append('type', 'leasing');
+    const up = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/upload`, { method: 'POST', ...auth, body: form });
+    if (up.status !== 200) throw new Error(`client brochure upload on own property expected 200, got ${up.status}`);
+    const upBody = await up.json().catch(() => ({}));
+    const bid = upBody?.id || upBody?.brochure?.id;
+    try {
+      if (bid) {
+        const del = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/${bid}`, { method: 'DELETE', ...auth });
+        if (del.status !== 403) throw new Error(`client brochure DELETE expected 403, got ${del.status}`);
+        const rei = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/${bid}/reingest`, { method: 'POST', ...auth });
+        if (rei.status !== 403) throw new Error(`client brochure reingest expected 403, got ${rei.status}`);
+        await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(5000);
+        if (await page.locator(`[data-testid="brochure-tile-reingest-${bid}"]`).count()) {
+          throw new Error('client brochure tile still renders the reingest button (manage writes are gateway-blocked for clients)');
+        }
+      }
+    } finally {
+      // staff cleanup so the probe PDF doesn't linger for later scenarios
+      if (bid) {
+        const sl = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: AGENT_USER, password: PASSWORD }) });
+        const stok = (await sl.json().catch(() => ({}))).token;
+        if (stok) await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/${bid}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + stok } });
+      }
     }
   });
 }

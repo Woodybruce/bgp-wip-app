@@ -367,11 +367,20 @@ export function registerPropertyBrochureRoutes(app: Express) {
         const pdfPath = path.join(coverDir, `${r.id}.pdf`);
         fs.writeFileSync(pdfPath, file.data);
         const { execFile } = await import("child_process");
-        await new Promise<void>((resolve, reject) => {
-          execFile("pdftoppm", ["-jpeg", "-jpegopt", "quality=82", "-f", "1", "-l", "1", "-r", "80", "-singlefile", pdfPath, coverPath.replace(/\.jpg$/, "")], { timeout: 30000 }, (err) => err ? reject(err) : resolve());
-        });
+        // A PDF pdftoppm can't rasterise (corrupt upload, odd encoding) is a
+        // bad input, not a server fault — 422 lets the tile's onError fall
+        // back to the iframe embed instead of logging a raw 500.
+        try {
+          await new Promise<void>((resolve, reject) => {
+            execFile("pdftoppm", ["-jpeg", "-jpegopt", "quality=82", "-f", "1", "-l", "1", "-r", "80", "-singlefile", pdfPath, coverPath.replace(/\.jpg$/, "")], { timeout: 30000 }, (err) => err ? reject(err) : resolve());
+          });
+        } catch (renderErr: any) {
+          try { fs.unlinkSync(pdfPath); } catch {}
+          console.warn("[property-brochures cover] render failed:", renderErr?.message);
+          return res.status(422).json({ error: "cover render failed — the brochure PDF could not be rasterised" });
+        }
         try { fs.unlinkSync(pdfPath); } catch {}
-        if (!fs.existsSync(coverPath)) return res.status(500).json({ error: "cover render failed" });
+        if (!fs.existsSync(coverPath)) return res.status(422).json({ error: "cover render failed — the brochure PDF could not be rasterised" });
       }
 
       res.setHeader("Content-Type", "image/jpeg");

@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+134. 2026-09-02 · Landsec client / mobile 390px (QA r462) · opening Bluewater's
+    property page to review the asset · the Overview tab's first card stacks
+    Status / Asset Class / BGP Team / Website — all four rendered as "—" on
+    the fixture — so the first phone viewport after the header is mostly
+    em-dashes before any real content (ownership, tasks, boards) appears ·
+    on the client's phone view, collapse fields with no value (or float the
+    populated Ownership rows to the top of the card) so the first screen
+    shows information, not placeholders.
+
 133. 2026-09-02 · Landsec client / desktop 1440px (QA r460) · reading the
     full tenancy schedule board during a portfolio review · the KPI strip
     mixes empty-state treatments: PASSING RENT shows "—" when no rent data
