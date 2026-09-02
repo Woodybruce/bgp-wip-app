@@ -72,6 +72,18 @@ const DEAL_PIPELINE_LABELS: Record<string, string> = { ...DEAL_STATUS_LABELS, AV
 // which drives the boards. The unit-stage select offers just these two;
 // UNIT_STAGE_EDITABLE is the set of effective codes where flipping the
 // unit stage can't regress a live deal via the 4-way status mirror.
+// Unit names imported from client schedules often carry the postcode, which
+// the narrow Property / Unit column can't spare and the property sub-line
+// underneath already identifies. Display only — the stored name is untouched.
+function displayUnitName(name: string): string {
+  return name
+    .replace(/,?\s*\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi, "")
+    .replace(/\s*,\s*(?=,|$)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .replace(/^[,\s-]+|[,\s]+$/g, "");
+}
+
 const UNIT_STATUSES: DealStatusCode[] = ["OPP", "AVA"];
 const UNIT_STAGE_EDITABLE = new Set<DealStatusCode>(["OPP", "AVA", "REP", "SPEC", "LIVE"]);
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
@@ -1820,13 +1832,16 @@ export default function AvailableUnitsPage() {
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                   </TableHead>
                 )}
+                {/* Area & Costs sits with the unit's own facts (Client side of
+                    the table) rather than out past the target-tenant block
+                    (Woody, 2026-09-02). */}
+                {showCol("areaCosts") && <TableHead className="w-[130px] min-w-[130px]">Area &amp; Costs</TableHead>}
                 <TableHead className="w-[180px] min-w-[170px]">Target Tenant</TableHead>
                 {showCol("dealStatus") && <TableHead className="w-[130px] min-w-[130px]">Target Status</TableHead>}
                 {showCol("category") && <TableHead className="w-[144px] min-w-[144px]">Category</TableHead>}
                 {showCol("priority") && <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>}
                 {showCol("agent") && <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>}
-                {showCol("comments") && <TableHead className="w-[160px] min-w-[140px]">Comments</TableHead>}
-                {showCol("areaCosts") && <TableHead className="w-[130px] min-w-[130px]">Area &amp; Costs</TableHead>}
+                {showCol("comments") && <TableHead className="w-[320px] min-w-[280px]">Comments</TableHead>}
                 {/* Width-less filler — on wide screens the table's spare
                     width lands HERE, next to the pinned cluster, instead of
                     inflating a data column and shoving the rest under the
@@ -1924,7 +1939,7 @@ export default function AvailableUnitsPage() {
                             one-property board the property name repeats on
                             every row and carries no signal (UX #97). */}
                         <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-1 text-sm font-medium group/uname">
+                          <div className="flex items-start gap-1 text-xs font-medium group/uname">
                             {renameUnitId === u.id ? (
                               <Input
                                 autoFocus
@@ -1949,18 +1964,21 @@ export default function AvailableUnitsPage() {
                               <>
                                 <button
                                   type="button"
-                                  className="truncate text-left hover:underline hover:text-foreground"
+                                  // Wrap over two lines rather than cutting the
+                                  // name off — the row is already tall (one per
+                                  // target tenant), so the second line is free
+                                  // space (Woody, 2026-09-02: "find a neat way
+                                  // of fitting the text into the column").
+                                  className="min-w-0 text-left leading-snug break-words line-clamp-3 hover:underline hover:text-foreground"
                                   onClick={() => setBriefUnit(u)}
-                                  // Name truncates in the narrow column, so the
-                                  // tooltip carries it in full.
                                   title={u.unitName ? `${u.unitName} — open unit brief` : "Open unit brief"}
                                   data-testid={`unit-name-${u.id}`}
                                 >
-                                  {u.unitName || <span className="italic opacity-60">Unit name</span>}
+                                  {u.unitName ? displayUnitName(u.unitName) : <span className="italic opacity-60">Unit name</span>}
                                 </button>
                                 <button
                                   type="button"
-                                  className="p-0.5 rounded opacity-0 group-hover/uname:opacity-60 hover:!opacity-100 focus-visible:opacity-100 transition-opacity"
+                                  className="p-0.5 mt-0.5 shrink-0 rounded opacity-0 group-hover/uname:opacity-60 hover:!opacity-100 focus-visible:opacity-100 transition-opacity"
                                   onClick={() => setRenameUnitId(u.id)}
                                   title="Rename unit"
                                   aria-label={`Rename ${u.unitName || "unit"}`}
@@ -2093,58 +2111,6 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                       )}
-                      {unitTargets.length === 0 ? (
-                        <TableCell colSpan={targetBlockSpan}>
-                          <div className="flex items-center gap-1.5">
-                            <BrandSearchInput
-                              className="h-7 w-[220px] border-dashed text-[11px]"
-                              placeholder="+ Target operator"
-                              value=""
-                              allowCreate
-                              onPick={p => addUnitTarget(u, p)}
-                              testId={`add-target-${u.id}`}
-                            />
-                            {pitchBrand && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 px-2 text-[11px] text-primary"
-                                onClick={() => addUnitTarget(u, { name: pitchBrand.name, companyId: pitchBrand.id } as any)}
-                                data-testid={`pitch-here-${u.id}`}
-                              >
-                                <Plus className="w-3 h-3 mr-0.5" /> {pitchBrand.name}
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-                              onClick={() => setSuggestUnit(u)}
-                              title="AI-suggest target brands: live requirements that fit this unit + brands in matching categories, ranked by AI"
-                              data-testid={`button-suggest-targets-${u.id}`}
-                            >
-                              <Sparkles className="w-3.5 h-3.5 mr-0.5" /> AI
-                            </Button>
-                          </div>
-                        </TableCell>
-                      ) : (
-                        <TargetRowCells
-                          target={unitTargets[0]}
-                          clientCompanyId={unitClientCompanyId}
-                          onChanged={() => invalidateBriefs(u.id)}
-                          visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: false, comments: showCol("comments") }}
-                          operatorExtra={
-                            <BrandSearchInput
-                              iconOnly
-                              placeholder="Add target operator…"
-                              value=""
-                              allowCreate
-                              onPick={p => addUnitTarget(u, p)}
-                              testId={`add-target-${u.id}`}
-                            />
-                          }
-                        />
-                      )}
                       {showCol("areaCosts") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1">
                         {/* Area + Costs in one column (Woody, 2026-09-01) —
@@ -2269,6 +2235,58 @@ export default function AvailableUnitsPage() {
                           </PopoverContent>
                         </Popover>
                       </TableCell>
+                      )}
+                      {unitTargets.length === 0 ? (
+                        <TableCell colSpan={targetBlockSpan}>
+                          <div className="flex items-center gap-1.5">
+                            <BrandSearchInput
+                              className="h-7 w-[220px] border-dashed text-[11px]"
+                              placeholder="+ Target operator"
+                              value=""
+                              allowCreate
+                              onPick={p => addUnitTarget(u, p)}
+                              testId={`add-target-${u.id}`}
+                            />
+                            {pitchBrand && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 px-2 text-[11px] text-primary"
+                                onClick={() => addUnitTarget(u, { name: pitchBrand.name, companyId: pitchBrand.id } as any)}
+                                data-testid={`pitch-here-${u.id}`}
+                              >
+                                <Plus className="w-3 h-3 mr-0.5" /> {pitchBrand.name}
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                              onClick={() => setSuggestUnit(u)}
+                              title="AI-suggest target brands: live requirements that fit this unit + brands in matching categories, ranked by AI"
+                              data-testid={`button-suggest-targets-${u.id}`}
+                            >
+                              <Sparkles className="w-3.5 h-3.5 mr-0.5" /> AI
+                            </Button>
+                          </div>
+                        </TableCell>
+                      ) : (
+                        <TargetRowCells
+                          target={unitTargets[0]}
+                          clientCompanyId={unitClientCompanyId}
+                          onChanged={() => invalidateBriefs(u.id)}
+                          visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: false, comments: showCol("comments") }}
+                          operatorExtra={
+                            <BrandSearchInput
+                              iconOnly
+                              placeholder="Add target operator…"
+                              value=""
+                              allowCreate
+                              onPick={p => addUnitTarget(u, p)}
+                              testId={`add-target-${u.id}`}
+                            />
+                          }
+                        />
                       )}
                       {/* Deal Type column dropped (Woody, 2026-09-01: "it's a
                           letting tracker, they are all lettings") — the type

@@ -549,7 +549,7 @@ export async function registerRoutes(
   // 500 handler. The old opaque failure is what made oversized brochures
   // look like a mysterious "storage" problem.
   const chatUploadMw = (req: any, res: any, next: any) => {
-    chatMediaUpload.array("files", 10)(req, res, (err: any) => {
+    chatMediaUpload.array("files", 30)(req, res, (err: any) => {
       if (err) {
         const tooBig = err?.code === "LIMIT_FILE_SIZE";
         return res.status(tooBig ? 413 : 400).json({

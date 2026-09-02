@@ -13341,7 +13341,7 @@ export function setupChatBGPRoutes(app: Express) {
     res.json({ connected: hasKey });
   });
 
-  app.post("/api/chatbgp/chat-with-files", requireAuth, chatUpload.array("files", 20), async (req: Request, res: Response) => {
+  app.post("/api/chatbgp/chat-with-files", requireAuth, chatUpload.array("files", 30), async (req: Request, res: Response) => {
     const files = req.files as Express.Multer.File[];
     let messages: Array<{ role: "user" | "assistant"; content: any }> = [];
     // SSE plumbing, hoisted to handler scope so the catch block can finish the

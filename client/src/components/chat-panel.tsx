@@ -190,7 +190,7 @@ function isAudioFile(name: string): boolean {
   return ["webm", "ogg", "mp3", "m4a", "wav", "aac", "mp4"].includes(ext);
 }
 
-const ACCEPTED_EXTENSIONS = [".docx", ".pdf", ".doc", ".txt", ".xlsx", ".xls", ".csv", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic", ".mp3", ".mp4", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".mov", ".avi", ".mkv", ".flac", ".eml", ".msg", ".zip"];
+import { ACCEPTED_EXTENSIONS, MAX_CHAT_FILES, isAcceptedChatFile, prepareChatFiles } from "@/lib/chat-attachments";
 
 function isEmailFile(name: string): boolean {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -2052,22 +2052,26 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     }
   }, [open, view]);
 
-  const isValidFile = (file: File) => {
-    if (file.type?.startsWith("image/")) return true;
-    const ext = "." + file.name.split(".").pop()?.toLowerCase();
-    return ACCEPTED_EXTENSIONS.includes(ext);
-  };
+  const isValidFile = isAcceptedChatFile;
 
-  const addFiles = useCallback((newFiles: File[]) => {
-    const valid = newFiles.filter(isValidFile);
-    if (valid.length !== newFiles.length) {
-      toast({ title: "Some files skipped", description: "Only Word, PDF, Excel, CSV, text, image, audio, video, and ZIP files are supported", variant: "destructive" });
+  const addFiles = useCallback(async (newFiles: File[]) => {
+    if (newFiles.some(f => f.name.toLowerCase().endsWith(".zip"))) {
+      toast({ title: "Unpacking archive…", description: "Reading the files inside" });
     }
+    const { files: incoming, notices } = await prepareChatFiles(newFiles);
+    for (const n of notices) {
+      toast({ title: n.title, description: n.description, ...(n.error ? { variant: "destructive" as const } : {}) });
+    }
+    if (incoming.length === 0) return;
     setAttachedFiles((prev) => {
-      const combined = [...prev, ...valid];
-      if (combined.length > 20) {
-        toast({ title: "Too many files", description: "Maximum 20 files at a time", variant: "destructive" });
-        return combined.slice(0, 20);
+      const combined = [...prev, ...incoming];
+      if (combined.length > MAX_CHAT_FILES) {
+        toast({
+          title: "Too many files",
+          description: `Maximum ${MAX_CHAT_FILES} files at a time — the first ${MAX_CHAT_FILES} are attached, send those and drop the rest after.`,
+          variant: "destructive",
+        });
+        return combined.slice(0, MAX_CHAT_FILES);
       }
       return combined;
     });
@@ -2084,7 +2088,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     });
     setAttachedFiles((prev) => {
       const combined = [...prev, ...normalized];
-      return combined.length > 20 ? combined.slice(0, 20) : combined;
+      return combined.length > MAX_CHAT_FILES ? combined.slice(0, MAX_CHAT_FILES) : combined;
     });
   }, []);
 
