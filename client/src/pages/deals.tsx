@@ -1195,6 +1195,8 @@ function InlineDateInput({
 // editable Target Date. Target Date is what feeds the WIP report's
 // month / fiscal-year buckets when a deal hasn't yet exchanged, so a
 // hint flags that in the popover.
+const datesCellTargetTimers = new Map<string, { val: string; timer: ReturnType<typeof setTimeout> }>();
+
 function DatesCell({
   deal, onSave,
 }: {
@@ -1240,7 +1242,33 @@ function DatesCell({
             key={`dates-target-${deal.id}-${deal.targetDate ?? ""}`}
             defaultValue={deal.targetDate ? toDateInputValue(deal.targetDate).slice(0, 7) : ""}
             className="text-xs border rounded px-2 py-1 cursor-pointer w-[150px]"
-            onChange={(e) => { const v = e.target.value; if (v) onSave("targetDate", `${v}-01`); }}
+            // Debounced, sane-year-only save: a month input fires `change`
+            // per keystroke while a year is typed (0002 / 0020 / 0202 on the
+            // way to 2027), and saving each one flung deals into fiscal year
+            // 0002 (same bug as the WIP report's inline editor). Blur
+            // flushes a pending edit immediately.
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) return;
+              const yr = parseInt(v.slice(0, 4), 10);
+              if (!yr || yr < 2000 || yr > 2100) return;
+              const prev = datesCellTargetTimers.get(deal.id);
+              if (prev) clearTimeout(prev.timer);
+              datesCellTargetTimers.set(deal.id, {
+                val: v,
+                timer: setTimeout(() => {
+                  datesCellTargetTimers.delete(deal.id);
+                  onSave("targetDate", `${v}-01`);
+                }, 1200),
+              });
+            }}
+            onBlur={() => {
+              const pending = datesCellTargetTimers.get(deal.id);
+              if (!pending) return;
+              clearTimeout(pending.timer);
+              datesCellTargetTimers.delete(deal.id);
+              onSave("targetDate", `${pending.val}-01`);
+            }}
             data-testid={`dates-target-input-${deal.id}`}
           />
         </div>

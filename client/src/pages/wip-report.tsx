@@ -1233,6 +1233,36 @@ export default function WipReport() {
     setFn(next);
   };
 
+  // Inline target-month saves, debounced. A month input fires `change` for
+  // EVERY keystroke while a year is being typed — "2027" passes through
+  // 0002 / 0020 / 0202 — and the old save-on-change wrote each one to the
+  // deal, refetched, remounted the input mid-edit and flung the deal into
+  // fiscal year 0002 (the "Jan-00" bars; Woody 2026-09-02: "it doesn't
+  // allow it and jumps... or doesn't allow enough time"). Now: implausible
+  // years never save, edits settle for 1.2s before saving, and blur (or a
+  // finished popup pick) flushes immediately.
+  const pendingTargetSaves = useRef<Map<string, { val: string; timer: ReturnType<typeof setTimeout> }>>(new Map());
+  const flushTargetSave = async (dealId: string) => {
+    const pending = pendingTargetSaves.current.get(dealId);
+    if (!pending) return;
+    pendingTargetSaves.current.delete(dealId);
+    clearTimeout(pending.timer);
+    try {
+      await apiRequest("PUT", `/api/crm/deals/${dealId}`, { targetDate: `${pending.val}-01` });
+      toast({ title: "Target month updated", description: "Applied to everyone on this deal." });
+      invalidateDealCaches();
+    } catch (err: any) {
+      toast({ title: "Couldn't save target month", description: err?.message || "Please try again.", variant: "destructive" });
+    }
+  };
+  const scheduleTargetSave = (dealId: string, val: string) => {
+    const yr = parseInt(val.slice(0, 4), 10);
+    if (!yr || yr < 2000 || yr > 2100) return; // mid-typing year — not a real edit
+    const prev = pendingTargetSaves.current.get(dealId);
+    if (prev) clearTimeout(prev.timer);
+    pendingTargetSaves.current.set(dealId, { val, timer: setTimeout(() => flushTargetSave(dealId), 1200) });
+  };
+
   // Inline deal-status transitions from the Deal Detail table — same PUT the
   // Deals page uses, so the senior-approval (INV/COM) and AML (SOL+) gates
   // still apply server-side; a rejected transition surfaces as a toast.
@@ -2028,28 +2058,20 @@ export default function WipReport() {
                                   // keying on targetDate remounts the other agents' inputs after the
                                   // refetch so they re-sync to the new date.
                                   //
-                                  // Save on CHANGE, not blur: picking a date from the date popup often
-                                  // doesn't blur the field, so the old onBlur save silently never fired
-                                  // (this was the "I keep changing it and it won't save" bug).
+                                  // Change events schedule a debounced save (scheduleTargetSave —
+                                  // implausible mid-typing years never save); blur flushes at once, so
+                                  // both the popup pick and typed edits land exactly once, when done.
                                   key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`}
                                   defaultValue={toDateInputValue(e.targetDate).slice(0, 7)}
                                   className="text-xs border border-border rounded px-1 py-0.5 w-[150px] focus:outline-none focus:border-ring"
-                                  onChange={async (ev) => {
+                                  onChange={(ev) => {
                                     const val = ev.target.value;
-                                    if (!val) return;
-                                    // PUT /api/crm/deals/:id — the endpoint the Deals page uses. (The
-                                    // old PATCH /api/deals/:id route never existed, so nothing saved.)
-                                    // Month picker gives yyyy-MM; the deal stores a full date, so pin
-                                    // the target to the 1st of the chosen month.
-                                    try {
-                                      await apiRequest("PUT", `/api/crm/deals/${e.dealId}`, { targetDate: `${val}-01` });
-                                      toast({ title: "Target month updated", description: "Applied to everyone on this deal." });
-                                      // Refetch so every split row on this deal re-syncs to the new date.
-                                      invalidateDealCaches();
-                                    } catch (err: any) {
-                                      toast({ title: "Couldn't save target month", description: err?.message || "Please try again.", variant: "destructive" });
-                                    }
+                                    if (!val || !e.dealId) return;
+                                    // Month picker gives yyyy-MM; the deal stores a full date, so the
+                                    // save pins the target to the 1st of the chosen month.
+                                    scheduleTargetSave(e.dealId, val);
                                   }}
+                                  onBlur={() => e.dealId && flushTargetSave(e.dealId)}
                                 />
                               ) : dateStr ? (
                                 <span className="text-xs">{dateStr}</span>
