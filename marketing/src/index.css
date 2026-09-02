@@ -23,8 +23,10 @@
   .explore-link {
     @apply label-caps text-bgp-red hover:text-bgp-wine transition-colors;
   }
+  /* \FE0E forces text presentation — iOS otherwise renders the arrow as a
+     blue emoji glyph */
   .explore-link::after {
-    content: " \2197";
+    content: " \2197\FE0E";
   }
   /* CONTACT link with full-width red underline (leasing cards) */
   .rule-link {
