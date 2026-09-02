@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r477 · 2026-09-02 ~22:30 UTC · LIGHT (r476 had the journey) — round in progress
+### r477 · 2026-09-02 ~22:30 UTC · LIGHT (r476 had the journey) — GREEN
 - Bring-up: canonical recipe held 42nd consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
   fresh session no stale cross file). Regression: smoke GREEN 42/0.
@@ -94,8 +94,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
   500/502/504 (3759×200, expected 4xx/503 families, single 422 = r462
   cover-raster by design). Triage: 0 app bugs.
+- r474's staff-brands-then-crm-not-poisoned and r472's
+  staff-evidence-plan-lifecycle both green again in standard order.
 - No journey (LIGHT). No deferred bugs to pick up (r476 deferred none).
-- Final entry to follow.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r477 was LIGHT → r478 FULL, rotation #3 Landsec client mobile
+  390px.
 
 ### r476 · 2026-09-03 · FULL — rotation #2 Landsec client desktop 1440px — GREEN
 - Bring-up: canonical recipe held 41st consecutive time (qa:pg once →
