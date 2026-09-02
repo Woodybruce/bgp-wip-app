@@ -111,6 +111,13 @@ export default function Leasing() {
 
         {loading ? (
           <p className="py-16 text-center label-caps text-bgp-ink/40">Loading availability…</p>
+        ) : listings.length === 0 ? (
+          <div className="py-16 text-center">
+            <p className="display text-xl md:text-2xl">Current availability is being updated.</p>
+            <p className="mt-3 text-sm font-light text-bgp-ink/60">
+              For our latest opportunities, contact the leasing team — details below.
+            </p>
+          </div>
         ) : filtered.length === 0 ? (
           <p className="py-16 text-center text-sm font-light text-bgp-ink/60">
             Nothing matches those filters — please contact us for full availability.
