@@ -112,12 +112,12 @@ export default function Leasing() {
         ) : listings.length === 0 ? (
           <div className="py-16 text-center">
             <p className="display text-xl md:text-2xl">Current availability is being updated.</p>
-            <p className="mt-3 text-sm font-light text-bgp-ink/60">
+            <p className="mt-3 text-[15px] font-light text-bgp-ink/80">
               For our latest opportunities, contact the leasing team — details below.
             </p>
           </div>
         ) : filtered.length === 0 ? (
-          <p className="py-16 text-center text-sm font-light text-bgp-ink/60">
+          <p className="py-16 text-center text-[15px] font-light text-bgp-ink/80">
             Nothing matches those filters — please contact us for full availability.
           </p>
         ) : (
