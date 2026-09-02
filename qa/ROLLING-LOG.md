@@ -84,21 +84,50 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r467 · 2026-09-02 ~14:30 UTC · LIGHT — ROUND IN PROGRESS (heartbeat)
-- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
-  seed-personas before two-bot). Regression: smoke GREEN 42/0. Two-bot:
-  victoria exit 0 (2×400 standing) / mark exit 0 ×2 runs, 11 issues each =
-  standing 9 (1×503 keyless + 8×403 probe-by-design) PLUS 2 flow-failures
-  ("Target page, context or browser has been closed") on the LAST two
-  scenarios (client-properties-no-address-edit,
-  client-brochure-upload-parity-manage-blocked) — deterministic across both
-  runs. Triage so far: NOT app bugs — both scenarios' server-side asserts
-  passed in the log (PUT 403, upload 200/manage 403/staff cleanup 200), and
-  an isolated probe of /available + /properties as mark is clean; chromium
-  dies late in the 150-scenario chunk (this container only — r466 same
-  commit passed; /dev/shm 16G, RAM free, no pipe involved, stdio-to-FILE
-  held). Investigating with QA_DEBUG after the remaining chunks.
-- Pending: woody,nick,sam chunk, phone-overflow-sweep, final entry.
+### r467 · 2026-09-02 ~15:00 UTC · LIGHT (r466 had the journey) — GREEN, 1 new harness flake documented
+- Bring-up: canonical recipe held 32nd consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+  Two-bot round 467 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark: standing 9 signature (1×503 keyless + 8×403
+  probe-by-design) intact, but see flake below / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 across all chunks + sweep (tally: 5661×200, plus only
+  expected 3xx/4xx/503). Triage: 0 app bugs.
+- NEW HARNESS-INFRA FLAKE (this container; not the app, not the r449 pipe
+  class): the chromium BROWSER PROCESS dies near the END of the ~150-
+  scenario mark chunk, seconds after a page.goto — 3 runs: ×2 died during
+  client-properties-no-address-edit (2 flow-failures each), ×1 with
+  QA_DEBUG one scenario later during client-brochure-upload-parity-
+  manage-blocked ("BROWSER disconnected" logged 1.8s after step start).
+  Ruled out: app pages (isolated probes of /available, /properties and the
+  FULL brochure-parity flow all pass — client upload 200, DELETE/reingest
+  403, tile hides reingest, page screenshot clean); server (healthy
+  through and after each death, 0 raw 5xx); pipe-freeze (stdio-to-FILE
+  held); /dev/shm (16G), RAM (16G, ~14G free), disk (28G avail). r466 ran
+  the same commit's full mark chunk clean, so this looks container-
+  specific. Guidance if it recurs: verify the tail scenarios with isolated
+  probes instead of re-running the whole chunk; if a future round sees it
+  on a DIFFERENT container, consider recycling the browser mid-chunk
+  (relaunch after ~100 scenarios) in two-bot — not done now to keep the
+  stable harness untouched on an unknown root cause.
+- All mark-tail asserts still verified this round (harness ×1 + isolated
+  probes): client-properties-no-address-edit passed in the QA_DEBUG run;
+  brochure-parity server + UI asserts passed in the probe. Housekeeping:
+  probe left 1-2 orphan QA-PROBE-brochure.pdf rows on Bluewater in
+  bgpsmoke (its staff-cleanup list-filter missed them); next restore wipes
+  them. Also observed (not user-reachable, logged only): DELETE
+  /api/properties/:id/brochures/undefined → 500 "invalid input syntax for
+  type uuid" — a 400 guard would be tidier; no UI path sends it.
+- No journey (LIGHT). No deferred bugs to pick up (r466 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: the mark-chunk late browser death above. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r467 was LIGHT → r468 FULL, rotation #2 Landsec client desktop
+  1440px (watch whether the mark browser-death recurs on a fresh
+  container).
 
 ### r466 · 2026-09-02 ~18:30 UTC · FULL — rotation #1 BGP staff desktop 1440px — GREEN
 - Bring-up: canonical recipe held 31st consecutive time (qa:pg once →
