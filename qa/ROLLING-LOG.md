@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r473 · 2026-09-03 · LIGHT (r472 had the journeys) — round in progress
+### r473 · 2026-09-03 · LIGHT (r472 had the journeys) — GREEN
 - Bring-up: canonical recipe held 38th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
   fresh session no stale cross file). Regression: smoke GREEN 42/0.
@@ -94,9 +94,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
   500/502/504 (3787×200, expected 4xx/503 families, single 422 = r462
   cover-raster by design). Triage: 0 app bugs.
-- r472 harness scenario staff-evidence-plan-lifecycle PASSED its first
-  standard-order run inside a full victoria chunk. Visual cache-bust
-  re-verification pending; final entry to follow.
+- r472 FIXES RE-VERIFIED both ways: (1) staff-evidence-plan-lifecycle
+  PASSED its first standard-order run inside a full victoria chunk;
+  (2) cache-bust visually — scripted browser run as Victoria: create plan
+  (beige bg) → src carries ?v=background_key → replace with blue plan →
+  reload → src version FLIPS and the rendered <img> samples exactly the
+  new colour (40/90/200), 0 pageerrors; probe plan deleted (200), no
+  orphans. Fix string confirmed present in the shipped bundle
+  (dist/public/assets/evidence-plans-*.js).
+- No journey (LIGHT). No deferred bugs to pick up (r472 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r473 was LIGHT → r474 FULL, rotation #1 BGP staff desktop 1440px.
 
 ### r472 · 2026-09-03 · FULL — rotation #4 BGP staff mobile 390px + owed Evidence Plans journey · 1 bug fixed
 - Bring-up: canonical recipe held 37th consecutive time (qa:pg once →
