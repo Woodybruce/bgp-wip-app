@@ -84,16 +84,32 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r461 · 2026-09-02 · LIGHT — round in progress
-- Regression: smoke GREEN 42/0. Two-bot round 461 as 3 foreground chunks
-  (r447 pattern): victoria exit 0 (2×400 standing) / mark exit 0 (10
-  issues = 2×503 keyless + 8×403 probe-by-design signature) / woody,nick,
-  sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px. Server
-  logs: 0 raw 500/502/504 (news-feed "500 articles" text hits only).
+### r461 · 2026-09-02 ~11:30 UTC · LIGHT (r460 had the journey) — GREEN
+- Bring-up: canonical recipe held 26th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, fresh session so no stale cross file). Regression: smoke GREEN
+  42/0. Two-bot round 461 as 3 foreground chunks (r447 pattern;
+  chunk-runner = ONE foreground node process, dev server stdio-to-FILE,
+  warmed per r455, tsx spawned via node_modules/.bin directly — no npx
+  wrapper, r450 orphan class avoided — killed + pkill-swept after each
+  chunk): victoria exit 0 (2×400 standing: rocketreach + invalid-tracker
+  probe) / mark exit 0 (10 issues = 2×503 keyless + 8×403 probe-by-design
+  signature) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep
+  11/11 routes fit at 390px. Server logs: 0 raw 500/502/504 (news-feed
+  "500 articles" text grep hits only, r413 class). Triage: 0 app bugs.
 - r460 FIX RE-VERIFIED: client-properties-no-address-edit PASSED its
-  first standard-order run inside a full mark chunk.
-- Triage: 0 app bugs. No deferred bugs to pick up (r460 deferred none).
-- Final entry to follow.
+  first standard-order run inside a full mark chunk (per r460's watch
+  note). client-calendar-sees-own-events green in standard order (no
+  expiry false-alarm). r458's staff-tracker-pitch-button-visible still
+  green.
+- No journey (LIGHT). No deferred bugs to pick up (r460 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r461 was LIGHT → r462 FULL, rotation #3 Landsec client mobile
+  390px.
 
 ### r460 · 2026-09-02 ~09:00 UTC · FULL — rotation #2 Landsec client desktop 1440px · 1 bug fixed
 - Bring-up: canonical recipe held 25th consecutive time (qa:pg once →
