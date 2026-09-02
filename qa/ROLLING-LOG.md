@@ -84,6 +84,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r471 · 2026-09-02 ~23:30 UTC · LIGHT (r470 had the journey) — round in progress
+- Purpose: first full two-bot on the MERGED tree (2900a12 — Evidence Plans +
+  verdict chasing, per r470 merge note). Bring-up: canonical recipe held
+  36th consecutive time (qa:pg once → run-smoke restore clean →
+  seed-personas per r451 rule BEFORE two-bot). Regression: smoke GREEN 42/0.
+- Two-bot round 471 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact; full chunk incl. tail, so the
+  r467 browser death did NOT recur on a 4th consecutive fresh container) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
+  Server logs: 0 raw 500/502/504 (3756×200, expected 4xx/503 families,
+  single 422 = r462 cover-raster by design). Triage: 0 app bugs.
+- Remaining this round: deferred-bug check (r470 deferred none) + light
+  Evidence Plans API probe on the merged tree; final entry to follow.
+
 ### r470 · 2026-09-02 ~21:30 UTC · FULL — rotation #3 Landsec client mobile 390px — GREEN
 - Bring-up: canonical recipe held 35th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
