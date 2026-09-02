@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+139. 2026-09-03 · Landsec client / desktop 1440px (QA r476) · scanning the
+    Brand Explorer for hospitality brand intel · the "Brand News" panel under
+    the client's brand grid is a generic fashion-wire feed (WWD: Nike, Tom
+    Ford, PVH, Sydney Sweeney…) — the panel filters articles to the Retail
+    + Hospitality categories (brands-hub.tsx), and "Retail" is mostly
+    fashion wire copy, so nothing relates to the client's hospitality/
+    leisure/fitness slice or the 9 brands shown above it · for client
+    logins, narrow Brand News to the slice categories (or match article
+    text against visible brand names), with a "no relevant stories" empty
+    state.
+
 138. 2026-09-03 · BGP staff / desktop 1440px (QA r474) · picking a hero image
     in Image Studio · the word "Uncategorised" means two different things on
     the same screen: the CATEGORIES sidebar counts images whose category is

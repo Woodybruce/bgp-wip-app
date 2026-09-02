@@ -84,15 +84,36 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r476 · 2026-09-03 · FULL — rotation #2 Landsec client desktop 1440px — ROUND IN PROGRESS
-- Heartbeat: bring-up clean (canonical recipe, 41st consecutive — qa:pg once
-  → run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
+### r476 · 2026-09-03 · FULL — rotation #2 Landsec client desktop 1440px — GREEN
+- Bring-up: canonical recipe held 41st consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
   Regression: smoke GREEN 42/0. Two-bot round 476 as 3 foreground chunks
   (r447 pattern): victoria exit 0 (2×400 standing) / mark exit 0 (9 issues =
   1×503 keyless + 8×403 probe-by-design — standing signature exact) /
   woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
   Server logs: 0 raw 500/502/504. Triage: 0 app bugs from the harness.
-- Journey (Mark @1440px client desktop) in progress — final entry to follow.
+- Journey (Mark @1440px, UI login via Client/guest reveal — "Friday leasing
+  review: how's marketing progressing and which brands are trading":
+  dashboard KPIs → Letting Tracker page + Files dialog on L112 (client
+  variant: Upload + Info-sheet, NO Doc Studio) → Brand Intelligence
+  overview + BRAND EXPLORER + TURNOVER BOARD tabs → Honi Poke profile
+  (/companies/:id) → Property Intelligence MAP + LAND REGISTRY + BUSINESS
+  RATES tabs → Image Studio): all render clean, 0 pageerrors, 0 non-noise
+  4xx/5xx, no h-overflow at 1440px. Slice holds everywhere (9 brands,
+  in-slice turnover rows only); Compliance & KYC visible on the client
+  brand profile per standing decision, no Doc Studio / Investigator words;
+  keyless AI panels degrade politely. Client "+ Add unit" CTA on the
+  tracker is parity by design (client-add-delete-unit asserts own-property
+  create/delete works, out-of-scope 403). PI map tiles blank = no external
+  network (noise). Bugs from the journey: 0.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: UX-NOTES 139 (client Brand News panel is
+  Retail-category fashion wire, irrelevant to the hospitality slice).
+  New flakes: none. Real-device keyboard-up composer check (r405) still
+  open for Woody.
+- Next: r476 had the journey → r477 LIGHT; then rotation #3 Landsec client
+  mobile 390px.
 
 ### r475 · 2026-09-02 ~21:10 UTC · LIGHT (r474 had the journey) — GREEN
 - Bring-up: canonical recipe held 40th consecutive time (qa:pg once →
