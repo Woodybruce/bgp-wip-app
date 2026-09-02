@@ -19,8 +19,8 @@ export default function Home() {
       {/* Hero — full-bleed photo, giant wordmark */}
       <section className="relative">
         <img
-          src="/images/st-christophers-place.jpg"
-          alt="St Christopher's Place, London — a BGP-leased neighbourhood"
+          src="/images/bar.jpg"
+          alt="Bar interior"
           className="h-[70vh] min-h-[480px] w-full object-cover"
         />
         <div className="absolute inset-0 bg-bgp-wine/30" />
