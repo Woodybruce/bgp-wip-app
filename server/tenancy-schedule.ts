@@ -1019,8 +1019,8 @@ router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAut
     wb.creator = "Bruce Gillingham Pollard";
     wb.created = new Date();
 
-    // Brand palette — matches BGP house style used elsewhere in the app.
-    const DARK_BLUE = "FF082861";
+    // Brand palette — v19 rebrand: Bordeaux header (was the old dark blue).
+    const DARK_BLUE = "FF6E0C25";
     const WARM_GREY = "FFE8E6DF";
     const LIGHT_GREY_ALT = "FFF7F6F2";
     const BAND_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: DARK_BLUE } };

@@ -528,7 +528,9 @@ export async function registerRoutes(
         return res.status(404).end();
       }
       res.set("Content-Type", file.contentType);
-      res.set("Cache-Control", "public, max-age=31536000, immutable");
+      // chat-media also stores KYC documents (passports, bank statements) —
+      // auth-gated content must never be publicly cacheable.
+      res.set("Cache-Control", "private, max-age=3600");
       const downloadTypes = [
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "application/vnd.ms-excel",

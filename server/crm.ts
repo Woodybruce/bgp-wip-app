@@ -9213,8 +9213,8 @@ Rules:
       wb.creator = "BGP Dashboard";
       wb.created = new Date();
 
-      const BGP_GREEN = "2E5E3F";
-      const LIGHT_ROW = "F2F7F4";
+      const BGP_GREEN = "6E0C25";
+      const LIGHT_ROW = "F9F4F0";
       const CURRENCY_FMT = "£#,##0";
 
       const headerFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: `FF${BGP_GREEN}` } };
@@ -9458,8 +9458,8 @@ Rules:
       wb.creator = "BGP Dashboard";
       wb.created = new Date();
 
-      const BGP_GREEN = "2E5E3F";
-      const LIGHT_ROW = "F2F7F4";
+      const BGP_GREEN = "6E0C25";
+      const LIGHT_ROW = "F9F4F0";
       const CURRENCY_FMT = "£#,##0";
 
       const headerFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: `FF${BGP_GREEN}` } };

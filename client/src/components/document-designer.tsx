@@ -18,11 +18,10 @@ import {
 } from "lucide-react";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
 
-// Grotta / Neue Machina aren't currently shipped with the app (their .otf
-// files don't live under server/assets/branding/fonts/). The font-family
-// chains used in the designer fall back to Work Sans / Arial cleanly, so we
-// only declare the fonts we can actually serve to avoid noisy 404s.
+// v19 rebrand faces — Lora (FreightText Pro stand-in) for titles, Lato for
+// body, both from Google Fonts. Space Mono kept for monospace layouts.
 const BGP_FONT_FACES = `
+@import url('https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap');
 @font-face {
   font-family: 'Space Mono';
   src: url('https://fonts.gstatic.com/s/spacemono/v13/i7dPIFZifjKcF5UAWdDRYEF8RQ.woff2') format('woff2');
@@ -87,10 +86,8 @@ const PAGE_WIDTH = 595;
 const PAGE_HEIGHT = 842;
 
 const FONT_OPTIONS = [
-  "Work Sans, Arial, sans-serif",
-  "Grotta, Work Sans, Arial, sans-serif",
-  "Neue Machina, Work Sans, Arial, sans-serif",
-  "MinionPro, Times New Roman, serif",
+  "Lato, Helvetica Neue, Arial, sans-serif",
+  "Lora, FreightText Pro, Georgia, serif",
   "Space Mono, Courier New, monospace",
   "Arial, sans-serif",
   "Arial Narrow, Arial, sans-serif",
@@ -104,11 +101,9 @@ const FONT_OPTIONS = [
 ];
 
 const FONT_LABELS: Record<string, string> = {
-  "Work Sans, Arial, sans-serif": "Work Sans (BGP)",
-  "Grotta, Work Sans, Arial, sans-serif": "Grotta (BGP)",
-  "Neue Machina, Work Sans, Arial, sans-serif": "Neue Machina (BGP)",
-  "MinionPro, Times New Roman, serif": "MinionPro (BGP)",
-  "Space Mono, Courier New, monospace": "Space Mono (BGP)",
+  "Lato, Helvetica Neue, Arial, sans-serif": "Lato (BGP body)",
+  "Lora, FreightText Pro, Georgia, serif": "Lora / FreightText (BGP titles)",
+  "Space Mono, Courier New, monospace": "Space Mono",
   "Arial, sans-serif": "Arial",
   "Arial Narrow, Arial, sans-serif": "Arial Narrow",
   "Helvetica Neue, Helvetica, sans-serif": "Helvetica Neue",

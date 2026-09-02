@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { ARTICLES, HERO_STATEMENT, SERVICES } from "../lib/content";
+import { ARTICLES, HERO_STATEMENT, HOME_INTRO, SERVICES } from "../lib/content";
 
 // Per-section stats per the v2c layout. All figures real: transactions/brands
 // from brucegillinghampollard.com, £62m = LondonMetric Waitrose portfolio,
@@ -33,6 +33,17 @@ export default function Home() {
             ↓
           </a>
         </div>
+      </section>
+
+      {/* We are bgp — intro copy from Rebrand_Copy */}
+      <section className="mx-auto max-w-3xl px-4 pt-16 pb-4 text-center">
+        <h2 className="display text-3xl md:text-4xl italic font-normal">{HOME_INTRO.lead}</h2>
+        {HOME_INTRO.body.map((para) => (
+          <p key={para.slice(0, 24)} className="mt-5 text-sm font-light text-bgp-ink/75 leading-relaxed">
+            {para}
+          </p>
+        ))}
+        <p className="mt-10 display text-xl md:text-2xl">{HOME_INTRO.servicesHeading}</p>
       </section>
 
       {/* Service sections with stats */}
