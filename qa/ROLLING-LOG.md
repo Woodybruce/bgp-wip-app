@@ -84,6 +84,30 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r453 · 2026-09-02 ~04:30 UTC · LIGHT (r452 had the journey) — GREEN
+- Bring-up: canonical recipe held 18th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot). Regression: smoke GREEN 42/0. Two-bot round 453 as 3
+  foreground chunks (r447 pattern; dev server spawned as a child of a
+  scratchpad node runner, stdio to a FILE per r449 rule, pkill -f
+  "server/index.ts" sweep after each chunk per r452 rule): victoria
+  exit 0 (2×400 standing: rocketreach + invalid-tracker probe) / mark
+  exit 0 (10 issues = 2×503 keyless + 8×403 probe-by-design signature) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 routes
+  fit at 390px. Server logs: 0 raw 500/502/504 (only news-feed text
+  grep hits, r413 class). Triage: 0 app bugs.
+- r452's TWO FIXES RE-VERIFIED: client-landlord-picker-landlords-only
+  and client-files-no-doc-studio both PASSED their first standard-order
+  full run inside the mark chunk (per r452's watch note).
+- No journey (LIGHT). No deferred bugs to pick up (r452 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still
+  open for Woody.
+- Next: r453 was LIGHT → r454 FULL, rotation #3 Landsec client mobile
+  390px.
+
 ### r452 · 2026-09-02 ~02:00 UTC · FULL — rotation #2 Landsec client desktop 1440px · 2 bugs fixed
 - Bring-up: canonical recipe held 17th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule). Regression:
