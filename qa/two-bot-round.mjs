@@ -1720,6 +1720,29 @@ async function victoriaRound(page, cross) {
     if (r.pageScrolls) throw new Error('tracker page scrolls sideways (pill row must scroll inside its own container)');
   });
 
+  // r458: pitch mode ("Pitch property" on a brand profile) renders a
+  // "+ <brand>" button in the Target Tenant cell, which at 1440px starts
+  // out UNDER the sticky Actions & Activity column — the banner pointed at
+  // a button the user couldn't see. The page now auto-scrolls the table
+  // once so the first pitch button clears the pinned column.
+  await step(page, p, 'staff-tracker-pitch-button-visible', async () => {
+    await page.goto(`${BASE}/available?pitchBrand=${BRAND}&pitchBrandName=PitchProbe`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(4000); // rows + the one-shot auto-scroll effect
+    const r = await page.evaluate(() => {
+      const btn = document.querySelector('[data-testid^="pitch-here-"]');
+      if (!btn) return { skip: true }; // every unit already has a target
+      const container = btn.closest('.table-scroll-container');
+      if (!container) return { skip: true }; // mobile/card variant
+      const sticky = container.querySelector('th.sticky');
+      const sw = sticky ? sticky.getBoundingClientRect().width : 205;
+      const b = btn.getBoundingClientRect();
+      const c = container.getBoundingClientRect();
+      return { clear: b.width > 0 && b.right <= c.right - sw + 1, btnRight: Math.round(b.right), visibleRight: Math.round(c.right - sw) };
+    });
+    if (r.skip) return;
+    if (!r.clear) throw new Error(`pitch-mode "+ brand" button hidden under the sticky Actions column (btnRight ${r.btnRight} > ${r.visibleRight})`);
+  });
+
   // r257: a signed-in user parked at the literal /login URL used to hit
   // "Page not found" (guest-form sign-in happens in place, and the
   // authenticated router had no /login route). Must now land on the dashboard.

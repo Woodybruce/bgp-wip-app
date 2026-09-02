@@ -451,6 +451,27 @@ export default function AvailableUnitsPage() {
     staleTime: 3_000,
   });
 
+  // Pitch mode: the "+ <brand>" button sits in the Target Tenant cell, which
+  // at 1440px-and-below starts out UNDER the sticky Actions & Activity column
+  // — the banner told users to click a button they couldn't see. Scroll the
+  // table sideways once so the first pitch button clears the pinned column.
+  const pitchScrolledRef = useRef(false);
+  useEffect(() => {
+    if (!pitchBrand || isLoading || pitchScrolledRef.current) return;
+    const t = setTimeout(() => {
+      const btn = document.querySelector('[data-testid^="pitch-here-"]');
+      const container = btn?.closest<HTMLElement>(".table-scroll-container");
+      if (!btn || !container) return;
+      pitchScrolledRef.current = true;
+      const stickyCol = container.querySelector<HTMLElement>("th.sticky");
+      const stickyW = stickyCol ? stickyCol.getBoundingClientRect().width : 205;
+      const visibleRight = container.getBoundingClientRect().right - stickyW - 12;
+      const overhang = btn.getBoundingClientRect().right - visibleRight;
+      if (overhang > 0) container.scrollLeft += overhang;
+    }, 400);
+    return () => clearTimeout(t);
+  }, [pitchBrand, isLoading, units.length]);
+
   // Client logins get a one-line explainer of what the tracker is for.
   const { data: auUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientTracker = auUser?.role === "Client";

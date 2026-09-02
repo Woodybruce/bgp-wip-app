@@ -84,21 +84,56 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r458 · 2026-09-02 ~15:30 UTC · FULL — rotation #1 BGP staff desktop 1440px · ROUND IN PROGRESS
-- Provisional heartbeat entry. Bring-up: canonical recipe held 23rd
-  consecutive time (qa:pg once → run-smoke restore clean → seed-personas
-  applied per r451 rule BEFORE two-bot, stale cross file removed).
-  Regression: smoke GREEN 42/0. Two-bot round 458 as 3 foreground chunks
-  (r447 pattern, chunk-runner boots server + runs chunk in one foreground
-  node process, stdio to FILE, warmed per r455): victoria exit 0 (2×400
-  standing: rocketreach + invalid-tracker probe) / mark exit 0 (10 issues
-  = 2×503 keyless + 8×403 probe-by-design signature) / woody,nick,sam
-  exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit at 390px.
-  Server logs: 0 raw 500/502/504 across all chunks. Triage: 0 app bugs
-  from the harness.
-- Journey pending: staff desktop 1440px exploratory (pitch-prep angle —
-  brands hub, brand profile, contacts, news, Image Studio — varying from
-  r450 tracker/WIP and r229 dashboard/calendar coverage).
+### r458 · 2026-09-02 ~16:30 UTC · FULL — rotation #1 BGP staff desktop 1440px · 1 bug fixed
+- Bring-up: canonical recipe held 23rd consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, stale cross file removed). Regression: smoke GREEN 42/0 ×2
+  (before, and FRESH_BUILD=1 after the fix). Two-bot round 458 as 3
+  foreground chunks (r447 pattern; chunk-runner = ONE foreground node
+  process that boots the dev server stdio-to-FILE, warms it per r455,
+  runs the chunk, kills the server — no orphans all round): victoria
+  exit 0 (2×400 standing: rocketreach + invalid-tracker probe) ×2 / mark
+  exit 0 (10 issues = 2×503 keyless + 8×403 probe-by-design signature) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit
+  at 390px. Server logs: 0 raw 500/502/504 across all chunks. Triage: 0
+  app bugs from the harness.
+- Journey (Victoria @1440px, UI login via Client/guest reveal —
+  "pitch-prep afternoon: news scan → Brand Intelligence hub → Amorino
+  profile → Pitch property → contacts → requirements → Image Studio →
+  global search"): dashboard/news/brands hub/CRM cards/requirements/Image
+  Studio all render clean; brand profile hero + ChatBGP chips + UK stores
+  fine; Ctrl+K search returns companies + news; pitch-mode add verified
+  end-to-end ("Target added", status Identified). 0 pageerrors, 0
+  non-noise 4xx/5xx, no h-overflow.
+- BUG FIXED (desktop tracker pitch mode): "Pitch property" on a brand
+  profile lands on the tracker with a banner "use the '+ <brand>' button"
+  — but that button renders in the Target Tenant cell, which at 1440px
+  sits UNDER the 205px sticky Actions & Activity column at default
+  scroll, so the banner pointed at a button the user couldn't see (it was
+  only reachable by discovering the inner h-scroll). available-units.tsx
+  now auto-scrolls the table container once (one-shot ref, 400ms after
+  rows land) so the first pitch button clears the pinned column. tsc
+  clean, FRESH_BUILD smoke re-green, verified visually on BOTH paths
+  (hard load with query params + SPA nav via the profile button):
+  btnRight 1137 <= visibleRight 1148, buttons fully visible next to each
+  "+ Target operator" input. New scenario
+  staff-tracker-pitch-button-visible PASSED inside a full victoria chunk.
+- NOT bugs: "UK entity search complete · 0 UK stores found" toast on
+  brand-profile open — keyless/no-network env, the auto entity scan finds
+  nothing locally (prod has keys); CRM landlords list shows both "Landsec"
+  and "Land Securities Group PLC" — fixture data, and the app has a
+  dedicated duplicates/scan flow for it.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 132
+  (Requirements toolbar mixes "Wipe & resync"-class admin plumbing with
+  everyday actions at equal weight). Real-device keyboard-up composer
+  check (r405) still open for Woody. New flakes: none.
+- Note for future rounds: journey pt2 left Amorino as an Identified
+  target on unit BX10 in bgpsmoke (probe click) — wiped by the next
+  round's restore, r450 precedent.
+- Next: r458 had the journey → r459 LIGHT (watch
+  staff-tracker-pitch-button-visible's first standard-order run); then
+  rotation #2 Landsec client desktop 1440px.
 - Bring-up: canonical recipe held 22nd consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
   two-bot). Regression: smoke GREEN 42/0. Two-bot round 457 as 3

@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+132. 2026-09-02 · BGP staff / desktop 1440px (QA r458) · Requirements page
+    while prepping a pitch · the toolbar mixes everyday actions (search,
+    Add requirement, New Brand) with five maintenance/debug controls
+    ("Refresh PIPnet", "Wipe & resync", "Inspect PIPnet", "Inspect Detail",
+    "Refresh TRL", "Wipe & resync TRL") at equal visual weight — two of
+    them start with "Wipe", one click from the search box, and nothing
+    signals they're admin plumbing · move the inspect/wipe/resync controls
+    behind a single "Sync tools" dropdown (or admin-only visibility) so the
+    everyday row is Add requirement + search + New Brand.
+
 131. 2026-09-02 · BGP staff / mobile 390px (QA r456) · opening a brand
     profile to prep a pitch on the phone · the 260px hero pane sits as a
     bare grey block for the first several seconds while the flagship
