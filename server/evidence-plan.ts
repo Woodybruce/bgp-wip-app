@@ -88,7 +88,7 @@ pool.query(`
     notes TEXT,
     ts_matched_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  )`).then(() => pool.query(`ALTER TABLE evidence_plan_units ADD COLUMN IF NOT EXISTS level_id UUID`)).catch(() => {});
+  )`).then(() => pool.query(`ALTER TABLE evidence_plan_units ADD COLUMN IF NOT EXISTS level_id UUID, ADD COLUMN IF NOT EXISTS source TEXT`)).catch(() => {});
 pool.query(`
   CREATE TABLE IF NOT EXISTS evidence_plan_entries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -139,6 +139,42 @@ async function relinkEntriesToUnit(planId: string, unitId: string, unitRef: stri
   const ids = rows.filter((r: any) => normaliseUnitRef(r.unit_ref) === norm).map((r: any) => r.id);
   if (ids.length) await pool.query(`UPDATE evidence_plan_entries SET unit_id = $1 WHERE id = ANY($2)`, [unitId, ids]);
   return ids.length;
+}
+
+// Tenant-name normalisation for evidence↔unit matching: plans often label
+// a block with the trading name while TAFs carry the unit ref, so names
+// are the join when refs don't meet.
+const normTenantName = (s: any) => String(s || "").toUpperCase().replace(/&/g, "AND").replace(/[^A-Z0-9]/g, "");
+
+// Plan-wide sweep: link every unlinked entry to a unit by ref, or by
+// tenant name when exactly one unit carries that tenant. Idempotent —
+// runs after detection/extraction jobs and on plan load.
+async function relinkAllEntries(planId: string): Promise<number> {
+  const { rows: units } = await pool.query(`SELECT id, unit_ref, tenant_name FROM evidence_plan_units WHERE plan_id = $1`, [planId]);
+  const { rows: entries } = await pool.query(`SELECT id, unit_ref, tenant FROM evidence_plan_entries WHERE plan_id = $1 AND unit_id IS NULL`, [planId]);
+  if (units.length === 0 || entries.length === 0) return 0;
+  const byRef = new Map<string, string>();
+  const byTenant = new Map<string, string | null>(); // null = ambiguous
+  for (const u of units) {
+    const r = normaliseUnitRef(u.unit_ref);
+    if (r && !byRef.has(r)) byRef.set(r, u.id);
+    for (const nm of [u.tenant_name, u.unit_ref]) {
+      const t = normTenantName(nm);
+      if (!t || t.length < 3 || /^\d+$/.test(t)) continue;
+      byTenant.set(t, byTenant.has(t) && byTenant.get(t) !== u.id ? null : u.id);
+    }
+  }
+  let linked = 0;
+  for (const e of entries) {
+    let uid = e.unit_ref ? byRef.get(normaliseUnitRef(e.unit_ref)) : undefined;
+    if (!uid && e.tenant) uid = byTenant.get(normTenantName(e.tenant)) || undefined;
+    if (uid) {
+      await pool.query(`UPDATE evidence_plan_entries SET unit_id = $1 WHERE id = $2`, [uid, e.id]);
+      linked++;
+    }
+  }
+  if (linked) console.log(`[evidence-plan] relink sweep on ${planId}: ${linked} entries linked`);
+  return linked;
 }
 
 // One-off heal: repeated extractions of the same TAF set stacked exact
@@ -321,6 +357,9 @@ router.get("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
     const plan = await planOr404(String(req.params.id), res);
     if (!plan) return;
     const levels = await healLevels(plan);
+    // Heal linking on load: entries that arrived before their unit existed
+    // (or match by tenant name) get attached here.
+    await relinkAllEntries(plan.id).catch(() => {});
     const [unitsQ, entries] = await Promise.all([
       pool.query(`SELECT * FROM evidence_plan_units WHERE plan_id = $1 ORDER BY unit_ref`, [plan.id]),
       pool.query(`SELECT * FROM evidence_plan_entries WHERE plan_id = $1 ORDER BY transaction_date DESC NULLS LAST, created_at DESC`, [plan.id]),
@@ -489,7 +528,7 @@ router.post("/api/evidence-plans/:id/units", requireAuth, async (req: Request, r
     const unitRef = String(req.body?.unitRef || "").trim();
     if (!unitRef) return res.status(400).json({ error: "unitRef is required" });
     const { rows } = await pool.query(
-      `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon, source) VALUES ($1, $2, $3, $4, $5, 'manual') RETURNING *`,
       [plan.id, req.body?.levelId || null, unitRef, req.body?.tenantName || null, JSON.stringify(req.body?.polygon || null)]);
     const adopted = await relinkEntriesToUnit(plan.id, rows[0].id, unitRef);
     await pool.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [plan.id]);
@@ -815,6 +854,7 @@ async function runTafJob(planId: string, jobId: string, pdfs: { name: string; ge
       extracted += tafs.length;
       await bump(`done_docs = $1, pages = $2, extracted = $3, created = $4, linked = $5`, [i + 1, pages, extracted, created, linked]);
     }
+    linked += await relinkAllEntries(planId);
     await pool.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [planId]);
     await bump(`status = 'done'`, []);
     console.log(`[evidence-plan] TAF job ${jobId}: ${pdfs.length} docs, ${pages} pages, ${extracted} TAFs, ${linked} linked`);
@@ -876,12 +916,62 @@ router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, uploadLarge.array
 // that immediately adopts its waiting evidence. Grounded with the unit
 // refs we already know (tenancy schedule + unlinked evidence) so labels
 // are read, not guessed.
-const DETECT_PROMPT = (known: string[]) => `This is one level of a UK shopping centre letting plan. Identify EVERY lettable unit shown as a distinct block on the plan — shops, restaurants, kiosks — including blocks labelled only with a tenant name.
+const DETECT_PROMPT = (known: string[]) => `This image is PART of one level of a UK shopping centre letting plan. Thin magenta grid lines are drawn at EXACTLY 0.1 intervals of this image in both directions — use them to calibrate every coordinate you give.
+
+Identify every lettable unit whose block is FULLY visible in this image — shops, restaurants, kiosks — including blocks labelled only with a tenant name. A unit is a closed shape drawn on the floor-plan geometry (usually colour-filled).
+
+STRICTLY IGNORE: the page border and title, sidebar panels, legends and colour keys, text-only lists of kiosks/units (e.g. a column of lines like "K10 …"), mall/walkway areas, toilets, lifts, stairs, service corridors, car parks, arrows and note annotations, and any block cut off by the image edge.
 
 Return JSON only:
 {"units":[{"unitRef":"E7A","tenant":"Nando's","x0":0.31,"y0":0.42,"x1":0.38,"y1":0.51}]}
 
-Coordinates are fractions of the FULL IMAGE (0..1), x rightward, y downward. The box must sit tightly over the unit's block on the plan. unitRef is the unit's reference where visible ("E1Y", "K21", "D11/12" — strip the word "Unit"); if only a tenant name is visible, set unitRef null and give the tenant. tenant null when not shown. Skip malls, toilets, service areas, car parks, legend panels and the sidebar.${known.length ? `\n\nUnit references known to exist at this scheme (use these spellings when the plan matches them): ${known.join(", ")}` : ""}`;
+x/y are fractions of THIS image (0..1, x rightward, y downward); the box must sit tightly on the unit's block — check it against the magenta grid before answering. unitRef is the unit reference where visible ("E1Y", "K21", "D11/12" — strip the word "Unit"); if only a tenant name is shown, unitRef null and give the tenant. tenant null when not shown.${known.length ? `\n\nUnit references known to exist at this scheme (use these spellings when the plan matches them): ${known.join(", ")}` : ""}`;
+
+// Read one tile of the plan (grid-overlaid) and return boxes in FULL-image
+// fractions. Tiling + the drawn grid is what makes the coordinates land —
+// a single whole-page pass put boxes in the wrong places (2026-09-02).
+async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, ox: number, oy: number, fw: number, fh: number, known: string[]): Promise<any[]> {
+  const left = Math.round(ox * W), top = Math.round(oy * H);
+  const width = Math.min(W - left, Math.round(fw * W)), height = Math.min(H - top, Math.round(fh * H));
+  const targetW = 1400;
+  const scale = Math.min(1, targetW / width);
+  const tw = Math.round(width * scale), th = Math.round(height * scale);
+  const lines: string[] = [];
+  for (let i = 1; i < 10; i++) {
+    lines.push(`<line x1="${(i / 10) * tw}" y1="0" x2="${(i / 10) * tw}" y2="${th}" stroke="magenta" stroke-width="1" opacity="0.6"/>`);
+    lines.push(`<line x1="0" y1="${(i / 10) * th}" x2="${tw}" y2="${(i / 10) * th}" stroke="magenta" stroke-width="1" opacity="0.6"/>`);
+    lines.push(`<text x="${(i / 10) * tw + 2}" y="12" font-size="11" fill="magenta">${(i / 10).toFixed(1)}</text>`);
+    lines.push(`<text x="2" y="${(i / 10) * th - 2}" font-size="11" fill="magenta">${(i / 10).toFixed(1)}</text>`);
+  }
+  const grid = Buffer.from(`<svg width="${tw}" height="${th}" xmlns="http://www.w3.org/2000/svg">${lines.join("")}</svg>`);
+  const tile = await sharp(planImage)
+    .extract({ left, top, width, height })
+    .resize({ width: tw })
+    .composite([{ input: grid, top: 0, left: 0 }])
+    .jpeg({ quality: 85 })
+    .toBuffer();
+  const msg = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 8000,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: tile.toString("base64") } },
+        { type: "text", text: DETECT_PROMPT(known) },
+      ],
+    }],
+  });
+  const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  const found: any[] = jsonMatch ? (JSON.parse(jsonMatch[0]).units || []) : [];
+  const clamp = (v: any) => Math.min(1, Math.max(0, Number(v) || 0));
+  const sx = width / W, sy = height / H;
+  return found.map(u => ({
+    unitRef: u.unitRef, tenant: u.tenant,
+    x0: ox + clamp(u.x0) * sx, y0: oy + clamp(u.y0) * sy,
+    x1: ox + clamp(u.x1) * sx, y1: oy + clamp(u.y1) * sy,
+  }));
+}
 
 async function runDetectJob(planId: string, jobId: string, level: any, propertyId: string | null): Promise<void> {
   const bump = (sets: string, vals: any[]) =>
@@ -890,56 +980,72 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
     const file = await getFile(level.background_key);
     if (!file) throw new Error("Level has no plan image");
     const sharp = (await import("sharp")).default;
-    // ~1500px wide keeps the whole plan inside the vision resolution sweet
-    // spot while labels stay legible.
-    const img = await sharp(file.data).resize({ width: 1500, withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+    const meta = await sharp(file.data).metadata();
+    const W = meta.width || 0, H = meta.height || 0;
+    if (!W || !H) throw new Error("Couldn't read the plan image");
 
     const known = new Set<string>();
+    const tenantToRef = new Map<string, string>();
     if (propertyId) {
-      const ts = await pool.query(`SELECT unit_number FROM tenancy_schedule_units WHERE property_id = $1`, [propertyId]);
-      for (const r of ts.rows) if (r.unit_number) known.add(String(r.unit_number).replace(/^unit\s+/i, "").trim());
+      const ts = await pool.query(`SELECT unit_number, trading_name, tenant_name FROM tenancy_schedule_units WHERE property_id = $1`, [propertyId]);
+      for (const r of ts.rows) {
+        const ref = r.unit_number ? String(r.unit_number).replace(/^unit\s+/i, "").trim() : null;
+        if (!ref) continue;
+        known.add(ref);
+        for (const nm of [r.trading_name, r.tenant_name]) {
+          const key = normTenantName(nm);
+          if (key && key.length >= 3 && !tenantToRef.has(key)) tenantToRef.set(key, ref);
+        }
+      }
     }
     const ev = await pool.query(`SELECT DISTINCT unit_ref FROM evidence_plan_entries WHERE plan_id = $1 AND unit_ref IS NOT NULL`, [planId]);
     for (const r of ev.rows) known.add(String(r.unit_ref));
+    const knownList = [...known].slice(0, 200);
 
-    const msg = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 8000,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: img.toString("base64") } },
-          { type: "text", text: DETECT_PROMPT([...known].slice(0, 200)) },
-        ],
-      }],
-    });
-    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    const found: any[] = jsonMatch ? (JSON.parse(jsonMatch[0]).units || []) : [];
+    // 2×2 tiles with 20% overlap so seam units are fully visible somewhere.
+    const found: any[] = [];
+    for (const [ox, oy] of [[0, 0], [0.4, 0], [0, 0.4], [0.4, 0.4]] as [number, number][]) {
+      found.push(...await detectTile(sharp, file.data, W, H, ox, oy, 0.6, 0.6, knownList));
+    }
 
     const { rows: existing } = await pool.query(`SELECT unit_ref FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2`, [planId, level.id]);
     const have = new Set(existing.map((u: any) => normaliseUnitRef(u.unit_ref)));
+    const accepted: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    const overlaps = (b: any) => accepted.some(a => {
+      const ix = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0));
+      const iy = Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+      const inter = ix * iy;
+      const union = (a.x1 - a.x0) * (a.y1 - a.y0) + (b.x1 - b.x0) * (b.y1 - b.y0) - inter;
+      return union > 0 && inter / union > 0.55;
+    });
 
     let created = 0, adopted = 0;
     for (const u of found) {
-      const ref = String(u.unitRef || u.tenant || "").trim().slice(0, 40);
+      let ref = String(u.unitRef || "").trim().slice(0, 40);
+      const tenant = u.tenant ? String(u.tenant).slice(0, 80) : null;
+      // Canonicalise a name-only label to its tenancy-schedule unit ref.
+      if (!ref && tenant) ref = tenantToRef.get(normTenantName(tenant)) || tenant.slice(0, 40);
+      else if (ref && !/\d/.test(ref)) ref = tenantToRef.get(normTenantName(ref)) || ref;
       if (!ref) continue;
       const norm = normaliseUnitRef(ref);
       if (!norm || have.has(norm)) continue;
-      const clamp = (v: any) => Math.min(1, Math.max(0, Number(v) || 0));
-      const x0 = clamp(u.x0), y0 = clamp(u.y0), x1 = clamp(u.x1), y1 = clamp(u.y1);
-      if (x1 - x0 < 0.004 || y1 - y0 < 0.004 || (x1 - x0) * (y1 - y0) > 0.25) continue; // junk boxes
+      const { x0, y0, x1, y1 } = u;
+      const w = x1 - x0, h = y1 - y0;
+      if (w < 0.004 || h < 0.004 || w * h > 0.12 || w / h > 10 || h / w > 10) continue; // junk boxes
+      if (overlaps(u)) continue; // same block seen from two tiles under different labels
       const polygon = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
       const ins = await pool.query(
-        `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-        [planId, level.id, ref, u.tenant ? String(u.tenant).slice(0, 80) : null, JSON.stringify(polygon)]);
+        `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon, source) VALUES ($1,$2,$3,$4,$5,'ai') RETURNING id`,
+        [planId, level.id, ref, tenant, JSON.stringify(polygon)]);
       have.add(norm);
+      accepted.push({ x0, y0, x1, y1 });
       created++;
       adopted += await relinkEntriesToUnit(planId, ins.rows[0].id, ref);
       await bump(`created = $1, linked = $2`, [created, adopted]);
     }
+    adopted += await relinkAllEntries(planId);
     await pool.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [planId]);
-    await bump(`status = 'done', done_docs = 1, extracted = $1`, [found.length]);
+    await bump(`status = 'done', done_docs = 1, extracted = $1, linked = $2`, [found.length, adopted]);
     console.log(`[evidence-plan] detect job ${jobId}: ${found.length} boxes, ${created} units created, ${adopted} entries adopted`);
   } catch (e: any) {
     console.error(`[evidence-plan] detect job ${jobId} failed:`, e?.message);
@@ -976,6 +1082,9 @@ async function autoDetectEmptyLevels(planId: string): Promise<void> {
   }
 }
 
+// Re-detect one level: AI-created outlines are replaced (their evidence
+// goes back to unlinked and re-adopts on the new outlines); hand-drawn
+// units are never touched.
 router.post("/api/evidence-plans/:id/detect-units", requireAuth, async (req: Request, res: Response) => {
   try {
     const plan = await planOr404(String(req.params.id), res);
@@ -984,10 +1093,18 @@ router.post("/api/evidence-plans/:id/detect-units", requireAuth, async (req: Req
     const levels = await healLevels(plan);
     const level = levels.find((l: any) => l.id === String(req.body?.levelId || "")) || levels[0];
     if (!level?.background_key) return res.status(400).json({ error: "No plan image on this level yet" });
+    const { rows: old } = await pool.query(
+      `SELECT id FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2 AND source IS DISTINCT FROM 'manual'`,
+      [plan.id, level.id]);
+    if (old.length) {
+      const ids = old.map((r: any) => r.id);
+      await pool.query(`UPDATE evidence_plan_entries SET unit_id = NULL WHERE unit_id = ANY($1)`, [ids]);
+      await pool.query(`DELETE FROM evidence_plan_units WHERE id = ANY($1)`, [ids]);
+    }
     const { rows } = await pool.query(
       `INSERT INTO evidence_plan_jobs (plan_id, status, total_docs, kind, level_id, created_by) VALUES ($1, 'running', 1, 'detect', $2, $3) RETURNING id`,
       [plan.id, level.id, (req as any).session?.userId || null]);
-    res.json({ jobId: rows[0].id });
+    res.json({ jobId: rows[0].id, cleared: old.length });
     void runDetectJob(plan.id, rows[0].id, level, plan.property_id || null);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

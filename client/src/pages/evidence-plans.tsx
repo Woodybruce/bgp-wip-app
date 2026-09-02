@@ -402,11 +402,24 @@ function PlanView({ planId }: { planId: string }) {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
-          {detectRunning && (
+          {detectRunning ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground rounded-full border border-border px-2.5 py-1" data-testid="detect-indicator">
               <Sparkles className="w-3 h-3" /> AI reading the plan… units appear as it finishes
             </span>
-          )}
+          ) : hasBg ? (
+            <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={busy !== null}
+              onClick={async () => {
+                if (!window.confirm(`Re-detect the units on ${activeLevel?.name || "this level"}? AI-drawn outlines are replaced (their evidence relinks to the new ones); hand-drawn units are kept.`)) return;
+                try {
+                  const r = await apiRequest("POST", `/api/evidence-plans/${planId}/detect-units`, { levelId: activeLevel?.id || null });
+                  if (!r.ok) throw new Error((await r.json()).error || "failed");
+                  invalidate();
+                } catch (e: any) { toast({ title: "Couldn't start detection", description: e.message, variant: "destructive" }); }
+              }}
+              data-testid="button-redetect">
+              <Sparkles className="w-3.5 h-3.5 mr-1" /> Re-detect
+            </Button>
+          ) : null}
           <Pill active={drawing} onClick={() => { setDrawing(d => !d); setDraft([]); }} data-testid="pill-draw-unit">
             <Pencil className="w-3 h-3 mr-1 inline" />{drawing ? "Drawing… (double-click to close)" : "Draw unit"}
           </Pill>
@@ -534,6 +547,14 @@ function PlanView({ planId }: { planId: string }) {
                     const c = centroid(poly);
                     const isSel = u.id === selectedId;
                     const za = latestZaByUnit.get(u.id);
+                    // Label sized to its unit's box: a small kiosk must not
+                    // carry a plan-wide banner of text.
+                    const boxW = (Math.max(...poly.map(p => p.x)) - Math.min(...poly.map(p => p.x))) * 100;
+                    const boxH = (Math.max(...poly.map(p => p.y)) - Math.min(...poly.map(p => p.y))) * 100 * aspect;
+                    const label = String(u.unit_ref || "");
+                    const fit = Math.min((boxW * 1.6) / Math.max(2, label.length), boxH * 0.5);
+                    const fontSize = Math.max(0.55, Math.min(Math.max(1.1, 2.4 / Math.sqrt(zoom)), fit));
+                    const zaSize = Math.max(0.5, Math.min(Math.max(0.9, 1.8 / Math.sqrt(zoom)), fit * 0.8));
                     return (
                       <g key={u.id} style={{ pointerEvents: "auto", cursor: "pointer" }}
                         onClick={e => { e.stopPropagation(); if (!drawing && !dragging.current?.moved) setSelectedId(u.id); }}>
@@ -542,12 +563,12 @@ function PlanView({ planId }: { planId: string }) {
                           stroke={isSel ? "hsl(17 60% 45%)" : "hsl(220 10% 35% / 0.55)"}
                           strokeWidth={isSel ? 0.35 : 0.18} vectorEffect="non-scaling-stroke" />
                         <text x={c.x * 100} y={c.y * 100 * aspect} textAnchor="middle" dominantBaseline="middle"
-                          style={{ fontSize: Math.max(1.1, 2.4 / Math.sqrt(zoom)), fontWeight: 700, fill: "#1C1917", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: 0.35 }}>
-                          {u.unit_ref}
+                          style={{ fontSize, fontWeight: 700, fill: "#1C1917", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: fontSize * 0.15 }}>
+                          {label}
                         </text>
                         {za != null && (
-                          <text x={c.x * 100} y={c.y * 100 * aspect + Math.max(1.4, 2.8 / Math.sqrt(zoom))} textAnchor="middle" dominantBaseline="middle"
-                            style={{ fontSize: Math.max(0.9, 1.8 / Math.sqrt(zoom)), fontWeight: 600, fill: "hsl(17 60% 38%)", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: 0.3 }}>
+                          <text x={c.x * 100} y={c.y * 100 * aspect + fontSize * 1.1} textAnchor="middle" dominantBaseline="middle"
+                            style={{ fontSize: zaSize, fontWeight: 600, fill: "hsl(17 60% 38%)", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: zaSize * 0.15 }}>
                             £{za.toLocaleString("en-GB", { maximumFractionDigits: 0 })} ZA
                           </text>
                         )}
