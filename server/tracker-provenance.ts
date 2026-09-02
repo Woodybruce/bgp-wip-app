@@ -170,25 +170,28 @@ export function setupTrackerProvenanceRoutes(app: Express): void {
       try { token = await getAppToken(); }
       catch (e: any) { return res.json({ error: `Microsoft 365 app access unavailable: ${e?.message || e}` }); }
       try {
-        // The sweep stores the event's iCalUId when it has one, falling back
-        // to cal_<graph id> — so only the prefixed form can be fetched by id;
-        // an iCalUId has to be looked up with a filter.
+        // The two sweeps disagree about what the cal_ prefix wraps: viewings
+        // store a bare iCalUId (prefixing only the fallback Graph id), while
+        // interest rows prefix the iCalUId itself. So don't trust the prefix
+        // — try it as an iCalUId, then as a Graph id.
         const EV_SELECT = "id,subject,start,end,location,attendees,organizer,webLink,bodyPreview";
-        let ev: any;
-        if (eventId.startsWith("cal_")) {
-          ev = await graphGet(
-            token,
-            `${GRAPH}/users/${encodeURIComponent(mailbox)}/events/${encodeURIComponent(eventId.slice(4))}?$select=${EV_SELECT}`,
-          );
-        } else {
-          const filter = `iCalUId eq '${eventId.replace(/'/g, "''")}'`;
+        const candidate = eventId.startsWith("cal_") ? eventId.slice(4) : eventId;
+        let ev: any = null;
+        try {
+          const filter = `iCalUId eq '${candidate.replace(/'/g, "''")}'`;
           const found = await graphGet(
             token,
             `${GRAPH}/users/${encodeURIComponent(mailbox)}/events?$filter=${encodeURIComponent(filter)}&$select=${EV_SELECT}&$top=1`,
           );
-          ev = (found.value || [])[0];
-          if (!ev) return res.json({ error: `That event is no longer in ${mailbox}'s diary.`, mailbox });
+          ev = (found.value || [])[0] || null;
+        } catch { /* not an iCalUId — try it as an event id */ }
+        if (!ev) {
+          ev = await graphGet(
+            token,
+            `${GRAPH}/users/${encodeURIComponent(mailbox)}/events/${encodeURIComponent(candidate)}?$select=${EV_SELECT}`,
+          );
         }
+        if (!ev) return res.json({ error: `That event is no longer in ${mailbox}'s diary.`, mailbox });
         res.json({
           mailbox,
           event: {
@@ -272,7 +275,7 @@ ${plainText((src as any).messages)}`,
       const brandName: string = row.company_name || row.contact_name || "";
       if (!brandName) return res.status(400).json({ message: "This interest row has no brand to add." });
 
-      const unitQ = await pool.query(`SELECT id, unit_name FROM available_units WHERE id = $1`, [row.unit_id]);
+      const unitQ = await pool.query(`SELECT id, unit_name, property_id FROM available_units WHERE id = $1`, [row.unit_id]);
       const unit = unitQ.rows[0];
       if (!unit) return res.status(404).json({ message: "Unit not found" });
 
@@ -324,8 +327,8 @@ ${plainText((src as any).messages)}`,
       let briefId: string | null = (await pool.query(`SELECT id FROM unit_briefs WHERE unit_id = $1 LIMIT 1`, [row.unit_id])).rows[0]?.id || null;
       if (!briefId) {
         const ins = await pool.query(
-          `INSERT INTO unit_briefs (unit_id, title) VALUES ($1, $2) RETURNING id`,
-          [row.unit_id, `Operator Targeting — ${unit.unit_name || "Unit"}`],
+          `INSERT INTO unit_briefs (unit_id, property_id, title) VALUES ($1, $2, $3) RETURNING id`,
+          [row.unit_id, unit.property_id, `Operator Targeting — ${unit.unit_name || "Unit"}`],
         );
         briefId = ins.rows[0].id;
       }
