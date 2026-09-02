@@ -99,7 +99,7 @@ export const TEAM: Person[] = [
   { name: "Lucy Gardiner", title: "Director, National Leasing", phone: "+44 (0)7741 877 452", email: "lucyg@brucegillinghampollard.com" },
   { name: "Lizzie Knights", title: "Director, London Leasing", phone: "+44 (0)7511 902 073", email: "lizzie@brucegillinghampollard.com" },
   { name: "Harry Elliott", title: "Director, Brand Representation", phone: "+44 (0)7568 367 777", email: "harrye@brucegillinghampollard.com" },
-  { name: "Emily Dumbell", title: "Director, Brand Representation", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
+  { name: "Emily Dumbell", title: "Director, National Leasing", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
   { name: "Nick Goodman", title: "Consultant, Investment", phone: "+44 (0)7818 012 432", email: "nickgoodman@brucegillinghampollard.com" },
   { name: "Tom Cater", title: "Associate Director, Lease Advisory", phone: "+44 (0)7947 484 902", email: "tom@brucegillinghampollard.com" },
   { name: "Lucy Cope", title: "Associate Director, London Leasing", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
@@ -124,6 +124,7 @@ export const LEASING_CONTACTS = byName(
   "Rupert Bentley-Smith",
   "Victoria Broadhead",
   "Lizzie Knights",
+  "Emily Dumbell",
   "Lucy Cope",
 );
 
@@ -135,7 +136,7 @@ export const INVESTMENT_CONTACTS = byName(
 
 export const LEASE_ADVISORY_CONTACTS = byName("Peter Wood", "Tom Cater");
 
-export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Emily Dumbell", "Evie North");
+export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Evie North");
 
 export const CONSULTANCY_CONTACTS = byName("Tracey Pollard", "Alex Todd", "Libby Evans");
 
