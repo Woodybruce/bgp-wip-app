@@ -141,7 +141,7 @@ export default function Leasing() {
       </section>
 
       <div className="mt-16">
-        <CaseStudyStrip caseStudy={caseStudyBySlug("lucent-piccadilly")} />
+        <CaseStudyStrip caseStudy={caseStudyBySlug("20-hanover-square")} />
       </div>
       <KeyContacts people={LEASING_CONTACTS} />
     </div>
