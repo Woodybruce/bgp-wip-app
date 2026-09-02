@@ -13,6 +13,14 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+138. 2026-09-03 · BGP staff / desktop 1440px (QA r474) · picking a hero image
+    in Image Studio · the word "Uncategorised" means two different things on
+    the same screen: the CATEGORIES sidebar counts images whose category is
+    "Uncategorised" (1 here), while the albums grid's "Uncategorised" folder
+    counts images with no ADDRESS (2 here) — the mismatched numbers next to
+    the same label read like a bug · rename the album folder to something
+    address-flavoured ("No property / address") or unify the two counts.
+
 137. 2026-09-03 · BGP staff / desktop 1440px (QA r472) · outlining units on
     a new Evidence Plan · after double-clicking to close an outline, the
     unit reference is asked for via a raw browser prompt() window — the

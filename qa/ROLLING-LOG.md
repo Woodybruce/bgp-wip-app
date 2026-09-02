@@ -84,18 +84,49 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r474 · 2026-09-03 · FULL — rotation #1 BGP staff desktop 1440px — ROUND IN PROGRESS
-- Provisional heartbeat. Bring-up: canonical recipe held 39th consecutive
-  time (qa:pg once → run-smoke restore clean → seed-personas per r451 rule
-  BEFORE two-bot). Regression: smoke GREEN 42/0. Two-bot round 474 as 3
-  foreground chunks (r447 pattern): victoria exit 0 (2×400 standing) /
-  mark exit 0 (9 issues = 1×503 keyless + 8×403 probe-by-design — standing
-  signature exact) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep
-  11/11 at 390px. Server logs: 0 raw 500/502/504 (single 422 = r462
-  cover-raster by design). Triage: 0 app bugs from the harness.
-- Journey pending: Victoria @1440px CRM side — brand directory → brand
-  profile → requirements → contacts → news → Image Studio (surfaces r466
-  didn't cover). Final entry replaces this one.
+### r474 · 2026-09-03 · FULL — rotation #1 BGP staff desktop 1440px · 1 bug fixed
+- Bring-up: canonical recipe held 39th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
+  Regression: smoke GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the
+  fix). Two-bot round 474 as 3 foreground chunks (r447 pattern): victoria
+  exit 0 (2×400 standing) ×2 / mark exit 0 (9 issues = 1×503 keyless +
+  8×403 probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (single 422 = r462 cover-raster by design). Triage: 0 app
+  bugs from the harness.
+- Journey (Victoria @1440px — "prep a pitch to a hospitality brand: Brand
+  Intelligence hub → search → Honi Poke profile → requirements → CRM hub →
+  news scan → Image Studio hero image"): brands hub overview KPIs +
+  turnover leaders render, directory search filters, brand profile clean
+  (BGP take/UK stores degrade politely keyless), /requirements table +
+  probe row, /news feed + category chips, /image-studio library/albums.
+  0 pageerrors, 0 h-overflow, only noise-family 4xx/5xx. NOT bugs: blank
+  dashboard at 2.5s on cold Vite (dev-only first-compile; renders by 12s,
+  r262 class); Image Studio "Uncategorised 1 vs 2 photos" = category count
+  vs no-address album count (UX-NOTES 138).
+- BUG FIXED (journey → CRM hub showed "0 landlords · 0 agents · 0
+  contacts" with 17 companies/14 contacts in the DB): the Brand
+  Intelligence overview's TurnoverResearchPanel cached its TENANT-FILTERED
+  company list under the bare ["/api/crm/companies"] query key (custom
+  queryFn, staleTime 120s), so after any /brands visit every consumer of
+  the shared key — CRM hub counts+tabs, landlord pickers, requirements —
+  saw only tenant brands for up to 2 min (persisted cache carried it
+  across reloads). Traced by diffing network rows (17) vs persisted cache
+  rows (11) per route. Fix: brands-hub.tsx gives the filtered query its
+  own child key ["/api/crm/companies", "tenant-brands"] (prefix
+  invalidations still hit it). Verified: repro sequence (/ → /brands →
+  profile → /requirements → /contacts) now paints "5 landlords · 1 agent ·
+  6 contacts" at 3s; tsc clean; FRESH_BUILD smoke re-green.
+- Harness growth: staff-brands-then-crm-not-poisoned (browser: /brands
+  then /contacts, requires non-zero landlord count in the CRM header) —
+  PASSED in a full victoria chunk re-run, signature stays 2×400.
+- Bugs fixed: 1. Deferred: none new. Carried (data, staff decision):
+  Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+  Suggestions: UX-NOTES 138 (Image Studio "Uncategorised" double meaning).
+  New flakes: none. Real-device keyboard-up composer check (r405) still
+  open for Woody.
+- Next: r474 had the journey → r475 LIGHT; then rotation #2 Landsec client
+  desktop 1440px.
 
 ### r473 · 2026-09-03 · LIGHT (r472 had the journeys) — GREEN
 - Bring-up: canonical recipe held 38th consecutive time (qa:pg once →

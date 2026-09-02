@@ -1756,6 +1756,28 @@ async function victoriaRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('authenticated /login landed on Page not found');
   });
 
+  // r474: the Brand Intelligence overview's Research Turnover panel used to
+  // cache its TENANT-FILTERED company list under the bare
+  // ["/api/crm/companies"] query key, so for its 120s staleTime the CRM hub
+  // read "0 landlords · 0 agents · 0 contacts" (and landlord pickers went
+  // empty) after any /brands visit. Visit /brands, then /contacts, and
+  // require the CRM header to show real landlord counts.
+  await step(page, p, 'staff-brands-then-crm-not-poisoned', async () => {
+    await page.goto(`${BASE}/brands`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(4000); // overview tab mounts TurnoverResearchPanel
+    await page.goto(`${BASE}/contacts`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    let header = '';
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(1000);
+      header = await page.evaluate(() => {
+        const h1 = document.querySelector('[data-testid="text-page-title"]');
+        return h1?.parentElement?.textContent || '';
+      });
+      if (/[1-9]\d* landlords?/.test(header)) return; // real counts painted
+    }
+    throw new Error(`CRM hub landlord count never left zero after a /brands visit (header: "${header.slice(0, 80)}")`);
+  });
+
   // r269: /messages is the mobile chat list; a mobile bookmark opened on
   // desktop used to land on "Page not found" (no desktop route). Must now
   // redirect to /chatbgp.
