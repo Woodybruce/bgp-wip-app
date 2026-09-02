@@ -144,6 +144,11 @@ export const queryClient = new QueryClient({
 queryClient.setQueryDefaults(["/api/auth/me"], {
   refetchInterval: false,
   staleTime: 5 * 60 * 1000,
+  // Always revalidate on mount (i.e. once per page load) so a persisted-cache
+  // restore that disagrees with the real session self-heals: the cached value
+  // still paints instantly, and the background probe corrects it. The poll
+  // exemption above is untouched — this is one request per load, not per 30s.
+  refetchOnMount: "always",
 });
 
 /**

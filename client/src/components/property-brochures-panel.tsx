@@ -78,6 +78,11 @@ function fmtDate(iso: string | null): string {
 export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  // Clients may UPLOAD brochures on their own property (explicit gateway
+  // allowance), but reingest/edit/archive/delete are gateway-blocked for
+  // client accounts — hide those tile actions so they don't dead-end.
+  const { data: pbViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const pbIsClient = !pbViewer || pbViewer.role === "Client" || !!pbViewer.companyScopeId;
   const [tab, setTab] = useState<"leasing" | "investment">("leasing");
   const [showArchive, setShowArchive] = useState(false);
   const [previewing, setPreviewing] = useState<Brochure | null>(null);
@@ -241,6 +246,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
             <BrochureTile
               brochure={active[0]}
               hero
+              readOnly={pbIsClient}
               onPreview={() => setPreviewing(active[0])}
               onEdit={() => setEditing(active[0])}
               onArchive={() => archiveMutation.mutate({ id: active[0].id, archived: true })}
@@ -254,6 +260,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
               <BrochureTile
                 key={b.id}
                 brochure={b}
+                readOnly={pbIsClient}
                 onPreview={() => setPreviewing(b)}
                 onEdit={() => setEditing(b)}
                 onArchive={() => archiveMutation.mutate({ id: b.id, archived: true })}
@@ -281,6 +288,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
                   <BrochureTile
                     key={b.id}
                     brochure={b}
+                    readOnly={pbIsClient}
                     onPreview={() => setPreviewing(b)}
                     onEdit={() => setEditing(b)}
                     onArchive={() => archiveMutation.mutate({ id: b.id, archived: false })}
@@ -405,7 +413,7 @@ function ingestBadge(brochure: Brochure) {
 }
 
 function BrochureTile({
-  brochure, onPreview, onEdit, onArchive, onDelete, onReingest, unarchiveLabel, hero,
+  brochure, onPreview, onEdit, onArchive, onDelete, onReingest, unarchiveLabel, hero, readOnly,
 }: {
   brochure: Brochure;
   onPreview: () => void;
@@ -415,6 +423,7 @@ function BrochureTile({
   onReingest: () => void;
   unarchiveLabel?: boolean;
   hero?: boolean;
+  readOnly?: boolean;
 }) {
   const ingestRunning = brochure.ingestStatus === "pending" || brochure.ingestStatus === "running";
   return (
@@ -469,22 +478,26 @@ function BrochureTile({
             {brochure.pageCount ? ` · ${brochure.pageCount}p` : ""}
           </span>
           <div className="flex gap-0.5">
-            <button
-              onClick={onReingest}
-              disabled={ingestRunning}
-              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-40"
-              title={ingestRunning ? "Extraction in progress" : "Re-extract images + fields from this brochure"}
-              data-testid={`brochure-tile-reingest-${brochure.id}`}
-            >
-              <Sparkles className="w-2.5 h-2.5" />
-            </button>
-            <button
-              onClick={onEdit}
-              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-              title="Edit (delete pages, cover logos)"
-            >
-              <Pencil className="w-2.5 h-2.5" />
-            </button>
+            {!readOnly && (
+              <>
+                <button
+                  onClick={onReingest}
+                  disabled={ingestRunning}
+                  className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-40"
+                  title={ingestRunning ? "Extraction in progress" : "Re-extract images + fields from this brochure"}
+                  data-testid={`brochure-tile-reingest-${brochure.id}`}
+                >
+                  <Sparkles className="w-2.5 h-2.5" />
+                </button>
+                <button
+                  onClick={onEdit}
+                  className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                  title="Edit (delete pages, cover logos)"
+                >
+                  <Pencil className="w-2.5 h-2.5" />
+                </button>
+              </>
+            )}
             <a
               href={brochure.downloadUrl}
               download={brochure.name}
@@ -493,20 +506,24 @@ function BrochureTile({
             >
               <Download className="w-2.5 h-2.5" />
             </a>
-            <button
-              onClick={onArchive}
-              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-              title={unarchiveLabel ? "Restore from archive" : "Archive"}
-            >
-              <Archive className="w-2.5 h-2.5" />
-            </button>
-            <button
-              onClick={onDelete}
-              className="p-1 rounded hover:bg-rose-50 text-rose-400 hover:text-rose-600"
-              title="Delete permanently"
-            >
-              <Trash2 className="w-2.5 h-2.5" />
-            </button>
+            {!readOnly && (
+              <>
+                <button
+                  onClick={onArchive}
+                  className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                  title={unarchiveLabel ? "Restore from archive" : "Archive"}
+                >
+                  <Archive className="w-2.5 h-2.5" />
+                </button>
+                <button
+                  onClick={onDelete}
+                  className="p-1 rounded hover:bg-rose-50 text-rose-400 hover:text-rose-600"
+                  title="Delete permanently"
+                >
+                  <Trash2 className="w-2.5 h-2.5" />
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

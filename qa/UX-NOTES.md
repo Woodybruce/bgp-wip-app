@@ -13,8 +13,105 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+135. 2026-09-02 · BGP staff / mobile 390px (QA r464) · working the Bluewater
+    letting tracker on the phone (75 units in Marketing) · every unit card
+    unconditionally reserves two label rows for Area and Rent p.a., and on
+    this fixture most render as "Area —" / "Rent p.a. —", so scanning the
+    list is mostly em-dash rows between unit names (the Tenant row already
+    hides itself when empty) · hide the Area/Rent rows on the phone card
+    when there's no value, matching the Tenant row's behaviour, so each
+    card shrinks to what's actually known and more units fit per screen.
+
+134. 2026-09-02 · Landsec client / mobile 390px (QA r462) · opening Bluewater's
+    property page to review the asset · the Overview tab's first card stacks
+    Status / Asset Class / BGP Team / Website — all four rendered as "—" on
+    the fixture — so the first phone viewport after the header is mostly
+    em-dashes before any real content (ownership, tasks, boards) appears ·
+    on the client's phone view, collapse fields with no value (or float the
+    populated Ownership rows to the top of the card) so the first screen
+    shows information, not placeholders.
+
+133. 2026-09-02 · Landsec client / desktop 1440px (QA r460) · reading the
+    full tenancy schedule board during a portfolio review · the KPI strip
+    mixes empty-state treatments: PASSING RENT shows "—" when no rent data
+    exists, but the tile next to it reads "AVG ERV £PSF 0" — a literal
+    zero that reads as "the ERV is £0" rather than "no ERV data" · show
+    "—" (like passing rent) when no units carry an ERV.
+
+132. 2026-09-02 · BGP staff / desktop 1440px (QA r458) · Requirements page
+    while prepping a pitch · the toolbar mixes everyday actions (search,
+    Add requirement, New Brand) with five maintenance/debug controls
+    ("Refresh PIPnet", "Wipe & resync", "Inspect PIPnet", "Inspect Detail",
+    "Refresh TRL", "Wipe & resync TRL") at equal visual weight — two of
+    them start with "Wipe", one click from the search box, and nothing
+    signals they're admin plumbing · move the inspect/wipe/resync controls
+    behind a single "Sync tools" dropdown (or admin-only visibility) so the
+    everyday row is Add requirement + search + New Brand.
+
+131. 2026-09-02 · BGP staff / mobile 390px (QA r456) · opening a brand
+    profile to prep a pitch on the phone · the 260px hero pane sits as a
+    bare grey block for the first several seconds while the flagship
+    street-view image loads (no spinner, no skeleton — on first visit it
+    reads as a broken/empty panel filling half the viewport; it only
+    collapses if the fetch errors) · give the hero pane a loading shimmer
+    or fade the image in, so slow mobile networks see "loading" rather
+    than "blank".
+
+130. 2026-09-02 · Landsec client / mobile 390px (QA r454) · scanning the
+    Letting Tracker cards on the phone · card titles read "L112 Bluewater,
+    Bluewater" / "U124/U125/U126, Bluewater, B…" with "Bluewater Shopping
+    Centre" repeated again on the subtitle line — the property name appears
+    up to three times per card because unit_name embeds it and the title
+    truncates at 390px before the distinguishing part · when the unit name
+    ends with (or contains) the property name the card title could strip
+    that suffix and let the subtitle carry the property, so the ~28 visible
+    title chars go to the unit reference the user is actually scanning for.
+
+129. 2026-09-02 · Landsec client / desktop 1440px (QA r452) · reviewing
+    their own deals on the Deals board · both Landsec deals show an empty
+    "Client" column with a staff-worded "+ Link landlord" affordance — as
+    the client, "who the client is" is themselves, and the empty cell +
+    staff jargon reads like something is broken or unassigned · for client
+    users, default the deal's client cell to their own company name (or at
+    least relabel the empty state "Link client" and pre-select their
+    company in the picker, which now only offers Landsec anyway).
+
+128. 2026-09-01 · BGP staff / desktop 1440px (QA r450) · using the WIP
+    report's TEAM cross-filter board to see how the teams are tracking ·
+    the board opened showing "National £0" and "National Leasing £0" while
+    the headline right above says "Total net fees: £250,000" — the only
+    fee-bearing deal has no team set, so both team rows read £0 and the
+    board looks broken even though the filter itself works · either bucket
+    fee-bearing deals with no team into a visible "No team" row on the
+    board (like the Client board's "—" handling), or show the deal count
+    next to each row so £0 with 2 deals reads as "fees not filled in",
+    not "nothing happening".
+
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
+
+127. 2026-09-01 · BGP staff / mobile 390px (QA r448) · searching landlords in
+    CRM (Contacts → landlord search) · a query with no hits ("sa") empties
+    the list to a bare blank area — only the small "0 results" counter next
+    to the search box says anything, and on the phone it's easy to miss ·
+    show a proper empty state in the list area ("No landlords match — clear
+    search"), like the contacts card list already has.
+
+126. 2026-09-01 · Landsec client / mobile 390px (QA r446) · opening the full
+    Bluewater tenancy schedule on the phone · the page shows two stacked
+    headers (the shell's "Tenancy Schedule" bar, then the page's own
+    "Back to property / Tenancy Schedule" block) and the two-line page
+    title leaves "· Bluewater Shopping Centre" hanging awkwardly in the
+    right gutter · on the phone shell, collapse to the shell header alone
+    (or one compact "Tenancy Schedule · Bluewater" line) so the schedule
+    starts a screen-height sooner.
+
+125. 2026-09-01 · Landsec client / desktop 1440px (QA r444) · reading the
+    Bluewater tenancy schedule stat strip during quarterly-review prep ·
+    "PASSING RENT" shows "—" when no rent is recorded but the neighbouring
+    "AVG ERV £PSF" shows "0" for the same kind of missing data — a client
+    could read that as a genuine £0 ERV · use the same dash-when-unset rule
+    for ERV (and any other stat tiles) as passing rent.
 
 124. 2026-09-01 · BGP staff / desktop 1440px (QA r442) · scanning Image
     Studio's LIBRARY tab · the sidebar category "Uncategorised" said 1 while

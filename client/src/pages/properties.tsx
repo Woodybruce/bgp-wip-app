@@ -6048,11 +6048,20 @@ function PropertiesList({
                               })()}
                             </div>
                             <div onClick={(e) => e.stopPropagation()}>
+                              {isClientViewer ? (
+                                addressToResult(item.address)?.formatted ? (
+                                  <span className="text-xs flex items-center gap-1">
+                                    <MapPin className="w-3 h-3 text-muted-foreground shrink-0" />
+                                    <span className="truncate max-w-[180px]">{addressToResult(item.address)?.formatted}</span>
+                                  </span>
+                                ) : null
+                              ) : (
                               <InlineAddress
                                 value={addressToResult(item.address)}
                                 onSave={(result) => inlineUpdateMutation.mutate({ id: item.id, field: "address", value: resultToAddress(result) })}
                                 placeholder="Set address"
                               />
+                              )}
                             </div>
                           </div>
                         </div>

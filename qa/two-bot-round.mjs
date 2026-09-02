@@ -13,7 +13,14 @@
 //         names fall back to the legacy dev-fixture IDs.
 
 import { chromium } from '../node_modules/playwright/index.mjs';
-import { mkdirSync, appendFileSync, existsSync } from 'fs';
+import { mkdirSync, appendFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
+
+// Chunked runs (600s foreground-exec cap, r447): QA_PERSONAS picks which
+// persona rounds run; QA_CROSS_FILE persists the shared `cross` state between
+// chunks so staff-creates → client-sees/rival-403 checks still line up.
+const PERSONAS = (process.env.QA_PERSONAS || 'victoria,mark,woody,nick,sam')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+const CROSS_FILE = process.env.QA_CROSS_FILE || '';
 
 const BASE = 'http://localhost:5000';
 const ROUND = parseInt(process.argv[2] || '1', 10);
@@ -47,8 +54,10 @@ const IGNORED_RESPONSES = [
   /\/api\/ai-briefing/,                  // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/ai-take\//,      // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/(competitors\/research|rocketreach-company\/refresh)/, // 503 locally, no keys
-  /\/api\/property\/[^/]+\/brand-gaps\/(commentary|international)/, // Brand Gap v2 AI reads — 500 locally with no AI key (the base /brand-gaps is keyless and stays checked); works in prod. The scope gate is covered by client-brand-gaps-scoped.
+  /\/api\/property\/[^/]+\/brand-gaps\/(commentary|international|live-intel)/, // Brand Gap v2 AI reads — 500/503 locally with no AI key (the base /brand-gaps is keyless and stays checked); works in prod. The scope gate is covered by client-brand-gaps-scoped.
+  /\/api\/properties\/[^/]+\/brochures\/[^/]+\/cover/, // cover raster 422s locally — no pdftoppm binary in the QA container (spawn ENOENT); the tile falls back to its iframe embed. Renders fine in prod.
   /\/api\/activity\/(brand|landlord)\/[^/]+$/, // AI relationship activity: own company + slice brands return 200 for clients since r215 (gateway now honours the 2026-08-04 parity decision); anything else 403s. client-interactions-guard is the authoritative lock either way.
+  /\/api\/hr\/staff$/,                   // guard-mount race (r464): the client-nav scenario deliberately opens /hr as a client; ClientRouteGuard bounces in a useEffect AFTER HRPage mounts, so the page's staff-directory query can fire once and 403 (correctly) before the bounce — lands only when the lazy chunk compiles fast enough, flipping the mark signature 9↔10. Staff coverage lives in staff-hr-directory-full-shape (asserts 200 + full shape), so ignoring the URL here masks nothing.
   /\/api\/interactions\//,               // correspondence drawer: own company + slice brands are client-readable (Woody, 2026-08-04 — restored r215); rival/summary/leaderboard stay 403. The client-interactions-guard scenario is the authoritative lock.
   /\/api\/covenant\//,                    // covenant engine (credit analysis) is staff-only — the client covenant badge fires /api/covenant/by-crm/:id and gets a safe 403. client-covenant-guard is the authoritative lock.
   /fonts|\.woff|\.map$/,
@@ -208,6 +217,7 @@ async function mobGoto(pg, url, nav) {
 
 async function step(page, persona, scenario, fn) {
   currentScenario[persona] = scenario;
+  if (process.env.QA_DEBUG) console.log(`  [dbg ${new Date().toISOString()}] step ${scenario}`);
   try {
     await fn();
     console.log(`  [ok] ${persona} · ${scenario}`);
@@ -519,6 +529,38 @@ async function victoriaRound(page, cross) {
       if (!(await dlg.count())) throw new Error('Add unit dialog did not open at 390px');
       const m = await dlg.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
       if (m.sw > m.cw + 4) throw new Error(`Add unit dialog overflows at 390px: scrollWidth ${m.sw} > ${m.cw}`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r448: the fullHeight PageLayout header actions row had no flex-wrap, so
+  // Image Studio's Upload button sat entirely off-screen at 390px (clipped,
+  // not scrollable — untappable on a phone). The row wraps now; assert the
+  // Upload button lands inside the viewport.
+  await step(page, p, 'staff-mobile-page-actions-reachable', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/image-studio`, nav);
+      await mob.waitForTimeout(3500);
+      const m = await mob.evaluate(() => {
+        const btn = document.querySelector('[data-testid="button-upload"]');
+        if (!btn) return { missing: true };
+        const r = btn.getBoundingClientRect();
+        return { left: r.left, right: r.right, iw: window.innerWidth };
+      });
+      if (m.missing) throw new Error('Image Studio Upload button not rendered at 390px');
+      if (m.right > m.iw + 4 || m.left < -4) throw new Error(`Image Studio Upload button off-screen at 390px: left ${Math.round(m.left)} right ${Math.round(m.right)} viewport ${m.iw}`);
     } finally {
       await mob.close();
       await mobCtx.close();
@@ -1235,6 +1277,27 @@ async function victoriaRound(page, cross) {
     if (!r.hasEntries) throw new Error('staff WIP report returned no entries array (shape broken)');
   });
 
+  // r450: WIP "Client" fell back to the property's landlord in the name
+  // chain, but the handler's properties select dropped landlord_id — so
+  // deals with no direct counterparty (the fixture's Bluewater deals)
+  // showed "—" instead of Landsec. Lock the fallback: any WIP entry whose
+  // property is Bluewater must carry a client name + linkable clientId.
+  await step(page, p, 'staff-wip-client-landlord-fallback', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/wip', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      const rows = (body?.entries || []).filter((e) => /bluewater/i.test(e.project || ''));
+      if (!rows.length) return { ok: true, skip: true };
+      const missing = rows.filter((e) => !e.client || !e.clientId);
+      return { ok: true, total: rows.length, missing: missing.map((e) => e.ref) };
+    });
+    if (!r.ok) throw new Error(`WIP fetch failed (${r.status})`);
+    if (r.skip) return;
+    if (r.missing.length) throw new Error(`WIP Bluewater rows missing landlord-fallback client: ${r.missing.join(', ')}`);
+  });
+
   // Deal-report v2 (BGP-branded 2-week deal PDF): a staff user pulls the
   // recent-deals feed and renders a real PDF. This exercises the pdfkit/
   // workbook builder end-to-end — the same class of code that 500'd on the
@@ -1635,6 +1698,53 @@ async function victoriaRound(page, cross) {
     if (!r.persisted) throw new Error('tracker inline PATCH did not persist the detail field');
   });
 
+  // r450: the tracker's desktop status-pill row sat in a vertical-only
+  // ScrollArea, so pills past the viewport edge (Invoiced at 1440px) were
+  // clipped with no way to scroll to them. Now a plain overflow-x-auto
+  // container — the last pill must be reachable by scrolling its own row,
+  // and the page itself must not scroll sideways.
+  await step(page, p, 'staff-tracker-status-pills-reachable', async () => {
+    await page.goto(`${BASE}/available`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    const r = await page.evaluate(() => {
+      const chip = document.querySelector('[data-testid="stat-card-inv"]');
+      if (!chip) return { skip: true }; // compact/mobile variant renders stat-chip-*
+      const wrap = chip.parentElement.parentElement;
+      wrap.scrollLeft = wrap.scrollWidth;
+      const rect = chip.getBoundingClientRect();
+      return {
+        reachable: rect.right <= window.innerWidth + 1 && rect.width > 0,
+        pageScrolls: document.documentElement.scrollWidth > window.innerWidth + 1,
+      };
+    });
+    if (r.skip) return;
+    if (!r.reachable) throw new Error('tracker Invoiced status pill is clipped/unreachable on desktop');
+    if (r.pageScrolls) throw new Error('tracker page scrolls sideways (pill row must scroll inside its own container)');
+  });
+
+  // r458: pitch mode ("Pitch property" on a brand profile) renders a
+  // "+ <brand>" button in the Target Tenant cell, which at 1440px starts
+  // out UNDER the sticky Actions & Activity column — the banner pointed at
+  // a button the user couldn't see. The page now auto-scrolls the table
+  // once so the first pitch button clears the pinned column.
+  await step(page, p, 'staff-tracker-pitch-button-visible', async () => {
+    await page.goto(`${BASE}/available?pitchBrand=${BRAND}&pitchBrandName=PitchProbe`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(4000); // rows + the one-shot auto-scroll effect
+    const r = await page.evaluate(() => {
+      const btn = document.querySelector('[data-testid^="pitch-here-"]');
+      if (!btn) return { skip: true }; // every unit already has a target
+      const container = btn.closest('.table-scroll-container');
+      if (!container) return { skip: true }; // mobile/card variant
+      const sticky = container.querySelector('th.sticky');
+      const sw = sticky ? sticky.getBoundingClientRect().width : 205;
+      const b = btn.getBoundingClientRect();
+      const c = container.getBoundingClientRect();
+      return { clear: b.width > 0 && b.right <= c.right - sw + 1, btnRight: Math.round(b.right), visibleRight: Math.round(c.right - sw) };
+    });
+    if (r.skip) return;
+    if (!r.clear) throw new Error(`pitch-mode "+ brand" button hidden under the sticky Actions column (btnRight ${r.btnRight} > ${r.visibleRight})`);
+  });
+
   // r257: a signed-in user parked at the literal /login URL used to hit
   // "Page not found" (guest-form sign-in happens in place, and the
   // authenticated router had no /login route). Must now land on the dashboard.
@@ -1975,6 +2085,18 @@ async function victoriaRound(page, cross) {
     await page.waitForTimeout(1500);
     const hubBody = await page.evaluate(() => document.body.innerText);
     if (hubBody.includes('£1000k') || hubBody.includes('£1000m')) throw new Error('brands hub renders £1000k/£1000m (formatTurnover rounding edge regressed)');
+  });
+
+  await step(page, p, 'staff-brochure-bad-id-400', async () => {
+    // r468: a malformed :bid (the literal "undefined") used to reach the
+    // uuid-typed query and 500; the guard must 400 it, and a well-formed
+    // but missing uuid must still 404. Node-side fetch so the deliberate
+    // 4xx rows don't land in the page issue log.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const bad = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/undefined`, { method: 'DELETE', ...auth });
+    if (bad.status !== 400) throw new Error(`brochure DELETE with bad id expected 400, got ${bad.status}`);
+    const miss = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/00000000-0000-4000-8000-000000000000`, { method: 'DELETE', ...auth });
+    if (miss.status !== 404) throw new Error(`brochure DELETE with missing uuid expected 404, got ${miss.status}`);
   });
 }
 
@@ -5325,6 +5447,46 @@ async function markRound(page, cross) {
     }
   });
 
+  // r454: the persisted react-query cache used to restore a pre-login
+  // auth/me=null as FRESH after a UI login + quick reload — the app painted
+  // the sign-in screen with a valid session cookie and never re-probed the
+  // server. UI-login in a fresh context, reload straight onto a deep route
+  // inside the persister's 2s throttle window, and require the app (not the
+  // login form) to render.
+  await step(page, p, 'client-ui-login-reload-no-bounce', async () => {
+    const ctx2 = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    const pg = await ctx2.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await pg.goto(`${BASE}/login`, nav);
+      // let the login screen cache auth/me=null and flush it to localStorage
+      await pg.waitForTimeout(2500);
+      const email = pg.locator('input[type="email"], input[name="email"], input[placeholder*="mail" i]').first();
+      if (!(await email.isVisible().catch(() => false))) {
+        await pg.getByText(/client|guest/i).first().click().catch(() => {});
+        await pg.waitForTimeout(600);
+      }
+      await email.fill(CLIENT_USER);
+      await pg.locator('input[type="password"]').first().fill(PASSWORD);
+      await pg.getByRole('button', { name: 'Sign in', exact: true }).click();
+      await pg.waitForURL((u) => !String(u).includes('/login'), { timeout: 20000 });
+      // reload IMMEDIATELY — inside the persister's throttle window
+      await mobGoto(pg, `${BASE}/deals/letting`, nav);
+      await pg.waitForTimeout(6000);
+      const txt = await pg.evaluate(() => document.body.innerText);
+      if (/client \/ guest sign in/i.test(txt)) {
+        throw new Error('UI login + immediate reload bounced back to the sign-in screen (persisted auth/me=null class)');
+      }
+    } finally {
+      await pg.close();
+      await ctx2.close();
+    }
+  });
+
   // r401: the brands-hub search box (mobile quick search) is backed by
   // /api/brands/search — assert the brand + contact facets actually return
   // rows for an in-slice brand (Mark's "find my tenant's contact" journey
@@ -5582,6 +5744,112 @@ async function markRound(page, cross) {
     const uuidish = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const raw = r.contacts.filter((c) => uuidish.test(String(c)));
     if (raw.length) throw new Error(`bgpContacts contains raw user ids: ${raw.join(', ')}`);
+  });
+
+  await step(page, p, 'client-landlord-picker-landlords-only', async () => {
+    // r452: the inline deals-table landlord/client picker kept the legacy
+    // filter that mixed every Tenant brand into the landlord options
+    // ("Tenants joining a Landlord picker was the top user complaint" per
+    // the deal form's own comment). Open the picker and assert no
+    // tenant-typed company is offered while Landsec is.
+    const tenants = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/companies', { headers: auth });
+      if (!res.ok) return null;
+      const body = await res.json();
+      return body.filter((c) => (c.companyType || '').startsWith('Tenant')).map((c) => c.name);
+    });
+    if (!tenants) throw new Error('companies read failed');
+    await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    const trigger = page.getByText('Link landlord', { exact: false }).first();
+    if (!(await trigger.count())) return; // all deals have landlords linked — nothing to assert
+    await trigger.click();
+    await page.waitForTimeout(800);
+    const opts = await page.locator('[data-testid^="inline-link-option-"]').allTextContents();
+    if (!opts.length) throw new Error('landlord picker opened with no options at all');
+    const leaked = opts.filter((o) => tenants.includes(o.trim()));
+    if (leaked.length) throw new Error(`landlord picker offers tenant brands: ${leaked.join(', ')}`);
+    if (!opts.some((o) => /landsec/i.test(o))) throw new Error('landlord picker missing Landsec');
+    await page.keyboard.press('Escape');
+  });
+
+  await step(page, p, 'client-files-no-doc-studio', async () => {
+    // r452: "Create in Doc Studio" opened /templates, which isn't in
+    // CLIENT_ALLOWED_ROUTES — the new tab bounced clients straight to
+    // their dashboard. The button is staff-only now; Upload stays.
+    await page.goto(`${BASE}/available`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3500);
+    const files = page.locator('[data-testid^="button-files-"]').first();
+    if (!(await files.count())) throw new Error('tracker files button not found');
+    await files.click();
+    await page.waitForTimeout(1200);
+    if (await page.locator('[data-testid="button-create-doc-studio"]').count()) {
+      throw new Error('client Files dialog still shows the staff-only Doc Studio button (its /templates tab bounces clients to the dashboard)');
+    }
+    if (!(await page.locator('[data-testid="button-upload-brochure"]').count())) {
+      throw new Error('client Files dialog lost its Upload button');
+    }
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+  });
+
+  await step(page, p, 'client-properties-no-address-edit', async () => {
+    // r460: the properties table showed clients a live "Set address" inline
+    // editor whose PUT /api/crm/properties/:id is gateway-blocked (403) —
+    // a dead-end staff affordance (r452 Doc Studio class). Client cells are
+    // read-only now; the write stays blocked server-side.
+    await page.goto(`${BASE}/properties`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3500);
+    if (await page.locator('[data-testid="button-edit-address"]').count()) {
+      throw new Error('client properties table still renders the Set address inline editor (its PUT is gateway-blocked for clients)');
+    }
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' } };
+    const props = await (await fetch(`${BASE}/api/crm/properties`, auth)).json().catch(() => []);
+    const own = Array.isArray(props) && props[0];
+    if (own) {
+      const r = await fetch(`${BASE}/api/crm/properties/${own.id}`, {
+        method: 'PUT', ...auth, body: JSON.stringify({ address: { formatted: 'QA-PROBE addr' } }),
+      });
+      if (r.status !== 403) throw new Error(`client property PUT expected 403, got ${r.status}`);
+    }
+  });
+
+  await step(page, p, 'client-brochure-upload-parity-manage-blocked', async () => {
+    // r462: clients may UPLOAD brochures on their own property (explicit
+    // gateway allowance) but reingest/PATCH/DELETE are gateway-blocked —
+    // the tile used to show all four mutating buttons to clients
+    // (dead-end, r452 class). Upload must stay 200, manage writes 403,
+    // and the tile must hide the manage buttons for clients.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const pdf = '%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Size 4/Root 1 0 R>>\n%%EOF';
+    const form = new FormData();
+    form.append('file', new Blob([pdf], { type: 'application/pdf' }), 'QA-PROBE-brochure.pdf');
+    form.append('type', 'leasing');
+    const up = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/upload`, { method: 'POST', ...auth, body: form });
+    if (up.status !== 200) throw new Error(`client brochure upload on own property expected 200, got ${up.status}`);
+    const upBody = await up.json().catch(() => ({}));
+    const bid = upBody?.id || upBody?.brochure?.id;
+    try {
+      if (bid) {
+        const del = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/${bid}`, { method: 'DELETE', ...auth });
+        if (del.status !== 403) throw new Error(`client brochure DELETE expected 403, got ${del.status}`);
+        const rei = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/${bid}/reingest`, { method: 'POST', ...auth });
+        if (rei.status !== 403) throw new Error(`client brochure reingest expected 403, got ${rei.status}`);
+        await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(5000);
+        if (await page.locator(`[data-testid="brochure-tile-reingest-${bid}"]`).count()) {
+          throw new Error('client brochure tile still renders the reingest button (manage writes are gateway-blocked for clients)');
+        }
+      }
+    } finally {
+      // staff cleanup so the probe PDF doesn't linger for later scenarios
+      if (bid) {
+        const sl = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: AGENT_USER, password: PASSWORD }) });
+        const stok = (await sl.json().catch(() => ({}))).token;
+        if (stok) await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/${bid}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + stok } });
+      }
+    }
   });
 }
 
@@ -6028,10 +6296,18 @@ for (const ctx of [agentCtx, clientCtx]) await ctx.addInitScript((f) => { window
 const mPage = await login(clientCtx, CLIENT_USER);
 attachCollectors(vPage, 'victoria');
 attachCollectors(mPage, 'mark');
+if (process.env.QA_DEBUG) {
+  const t = () => new Date().toISOString();
+  browser.on('disconnected', () => console.log(`  [dbg ${t()}] BROWSER disconnected`));
+  vPage.on('close', () => console.log(`  [dbg ${t()}] vPage CLOSE`));
+  vPage.on('crash', () => console.log(`  [dbg ${t()}] vPage CRASH`));
+  mPage.on('close', () => console.log(`  [dbg ${t()}] mPage CLOSE`));
+}
 
 const cross = { dealStamp: null };
-await victoriaRound(vPage, cross).catch((e) => logIssue('victoria', 'round', 'harness-crash', e.message));
-await markRound(mPage, cross).catch((e) => logIssue('mark', 'round', 'harness-crash', e.message));
+if (CROSS_FILE && existsSync(CROSS_FILE)) Object.assign(cross, JSON.parse(readFileSync(CROSS_FILE, 'utf8')));
+if (PERSONAS.includes('victoria')) await victoriaRound(vPage, cross).catch((e) => logIssue('victoria', 'round', 'harness-crash', e.message));
+if (PERSONAS.includes('mark')) await markRound(mPage, cross).catch((e) => logIssue('mark', 'round', 'harness-crash', e.message));
 
 // Extended personas — each with its own context so sessions never bleed.
 for (const [name, user, fn] of [
@@ -6039,6 +6315,7 @@ for (const [name, user, fn] of [
   ['nick', INVESTMENT_USER, nickRound],
   ['sam', RIVAL_CLIENT_USER, samRound],
 ]) {
+  if (!PERSONAS.includes(name)) continue;
   currentScenario[name] = 'startup';
   try {
     const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
@@ -6053,6 +6330,7 @@ for (const [name, user, fn] of [
 }
 
 await browser.close();
+if (CROSS_FILE) writeFileSync(CROSS_FILE, JSON.stringify(cross));
 
 const byKind = {};
 for (const i of issues) byKind[i.kind] = (byKind[i.kind] || 0) + 1;
