@@ -3047,6 +3047,7 @@ import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExper
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
 import dealVerdictsRouter from "./deal-verdicts";
+import evidencePlanRouter from "./evidence-plan";
 import dealDocsRouter from "./deal-docs";
 import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
 import dealReportRouter from "./deal-report";
@@ -4073,6 +4074,7 @@ app.use("/api/branding/assets", express.static(
   app.use(propertyGapAnalysisRouter);
   app.use(brandPackRouter);
   app.use(dealVerdictsRouter);
+  app.use(evidencePlanRouter);
   // Interactive-plan demo for Pete (Brent Cross evidence map, 2026-08-21).
   // Unguessable path in lieu of auth so it opens with one click from an
   // email — same exposure class as attaching the deck itself.

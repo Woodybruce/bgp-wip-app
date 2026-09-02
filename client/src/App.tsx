@@ -112,6 +112,7 @@ const PathwayReview = lazy(() => import("@/pages/pathway-review"));
 const PathwayPortfolio = lazy(() => import("@/pages/pathway-portfolio"));
 const TenantRep = lazy(() => import("@/pages/tenant-rep"));
 const PlaMatters = lazy(() => import("@/pages/pla-matters"));
+const EvidencePlans = lazy(() => import("@/pages/evidence-plans"));
 const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurants"));
 const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
 const DocumentStudioV2 = lazy(() => import("@/pages/document-studio"));
@@ -305,6 +306,8 @@ function Router() {
       <Route path="/deals/:rest*" component={DealsHub} />
       <Route path="/requirements" component={Requirements} />
       <Route path="/tenant-rep" component={TenantRep} />
+      <Route path="/evidence-plans" component={EvidencePlans} />
+      <Route path="/evidence-plans/:id" component={EvidencePlans} />
       <Route path="/pla/matters" component={PlaMatters} />
       <Route path="/pla/matters/:id" component={PlaMatters} />
       <Route path="/westminster-restaurants" component={WestminsterRestaurants} />
