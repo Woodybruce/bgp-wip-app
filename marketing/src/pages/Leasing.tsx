@@ -5,8 +5,6 @@ import CaseStudyStrip from "../components/CaseStudyStrip";
 import { CASE_STUDIES, LEASING_CONTACTS } from "../lib/content";
 import { Listing, fetchListings } from "../lib/api";
 
-const INITIAL_VISIBLE = 9;
-
 const SIZE_BANDS = [
   { label: "Up to 1,000 sq ft", min: 0, max: 1000 },
   { label: "1,000–2,500 sq ft", min: 1000, max: 2500 },
@@ -53,7 +51,6 @@ export default function Leasing() {
   const [location, setLocation] = useState("");
   const [type, setType] = useState("");
   const [size, setSize] = useState("");
-  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     fetchListings().then(({ listings, live }) => {
@@ -84,7 +81,6 @@ export default function Leasing() {
     });
   }, [listings, location, type, size]);
 
-  const visible = expanded ? filtered : filtered.slice(0, INITIAL_VISIBLE);
 
   return (
     <div>
@@ -125,19 +121,22 @@ export default function Leasing() {
             Nothing matches those filters — please contact us for full availability.
           </p>
         ) : (
-          <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-12">
-            {visible.map((l, i) => (
-              <ListingCard key={l.id} listing={l} wide={i % 5 === 3} />
-            ))}
-          </div>
-        )}
-
-        {!expanded && filtered.length > INITIAL_VISIBLE && (
-          <p className="mt-10 text-right">
-            <button onClick={() => setExpanded(true)} className="label-caps text-bgp-wine hover:text-bgp-red">
-              + More listings
-            </button>
-          </p>
+          <>
+            {/* Horizontal swipe strip — keeps the case study and contacts in
+                view below instead of pushing them down a long grid */}
+            <div className="mt-10 flex gap-6 overflow-x-auto snap-x snap-mandatory pb-4 -mx-4 px-4 [scrollbar-width:thin]">
+              {filtered.map((l) => (
+                <div key={l.id} className="snap-start shrink-0 w-[78vw] sm:w-[320px] lg:w-[350px]">
+                  <ListingCard listing={l} />
+                </div>
+              ))}
+            </div>
+            {filtered.length > 1 && (
+              <p className="mt-2 label-caps text-bgp-ink/40 text-right">
+                {filtered.length} available — swipe for more <span aria-hidden>{"→"}</span>
+              </p>
+            )}
+          </>
         )}
       </section>
 
