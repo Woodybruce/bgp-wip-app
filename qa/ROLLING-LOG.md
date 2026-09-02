@@ -84,6 +84,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r452 · 2026-09-02 · FULL (rotation #2 Landsec client desktop 1440px) — ROUND IN PROGRESS
+- Provisional heartbeat entry. Bring-up: canonical recipe held 17th
+  consecutive time (qa:pg once → run-smoke restore clean → seed-personas
+  applied to bgpsmoke before two-bot per r451 rule). Regression: smoke
+  GREEN 42/0. Two-bot round 452 as 3 foreground chunks (server stdio to
+  a FILE, tsx child sweep after each): victoria exit 0 (2×400 standing) /
+  mark exit 0 (2×503 keyless + 8×403 probe-by-design) / woody,nick,sam
+  exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit at 390px.
+  Server logs: 0 raw 500/502/504 (one grep hit = news-feed text, r413
+  class). Triage: 0 app bugs.
+- Journey (client desktop 1440px, mark.warne) still to run. Final entry
+  replaces this one.
+
 ### r451 · 2026-09-02 ~00:40 UTC · LIGHT (r450 had the journey) — GREEN
 - Bring-up: canonical recipe held 16th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
