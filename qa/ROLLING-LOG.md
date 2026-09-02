@@ -84,17 +84,54 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r454 · 2026-09-02 ~06:30 UTC · FULL (rotation #3 Landsec client mobile 390px) — IN PROGRESS
-- Provisional heartbeat. Bring-up: canonical recipe held 19th consecutive
-  time (qa:pg once → run-smoke restore clean → seed-personas applied before
-  two-bot). Regression: smoke GREEN 42/0. Two-bot round 454 as 3 foreground
-  chunks (r447 pattern, dev-server stdio to a FILE, pkill -f
-  "server/index.ts" sweep after each chunk): victoria exit 0 (2×400
-  standing) / mark exit 0, 152 ok (2×503 keyless + 8×403 probe-by-design) /
-  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
-  Server logs: 0 raw 500/502/504 (news-feed text grep hits only, r413
-  class). Triage: 0 app bugs from the harness.
-- Journey (client mobile 390px, Mark) still to come this round.
+### r454 · 2026-09-02 ~06:30 UTC · FULL — rotation #3 Landsec client mobile 390px · 1 bug fixed
+- Bring-up: canonical recipe held 19th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied before two-bot).
+  Regression: smoke GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the
+  fix). Two-bot round 454 as 3 foreground chunks: victoria exit 0 (2×400
+  standing) ×2 / mark exit 0 (152-153 ok, 2×503 keyless + 8×403
+  probe-by-design) ×2 / woody,nick,sam exit 0 (0 issues).
+  phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw 500/502/504
+  (news-feed text grep hits only, r413 class). Harness triage: 0 app bugs.
+- Journey (Mark @390px iPhone UA — "Monday morning on the phone: portfolio
+  home → Deals tab → Letting Tracker → search U124 → viewing dialog →
+  Messages/ChatBGP → News → Tasks"): home widget 77/1/0/78 (r438 holds),
+  tracker mobile cards + wrapped status chips clean, search filters 3/78,
+  Add Viewing date defaults today (UX2 holds), Deals sub-tab loads 2 deals
+  + "+2 letting deals" subtitle (r209 UX7 holds), client Files dialog =
+  Upload + tabs, NO Doc Studio (r452 holds), ChatBGP/News/Tasks clean.
+  No h-overflow on any surface; only noise-list 4xx/5xx.
+- BUG FIXED (found via the journey's reload flakiness, real phone-user
+  impact): UI login + full page reload within the query-persister's 2s
+  throttle window bounced the user BACK to the sign-in screen with a valid
+  session cookie — the persisted react-query cache restored the login
+  screen's auth/me=null as FRESH (staleTime 5min), so AppContent rendered
+  LoginPage and never re-probed the server (traced: zero /api requests
+  after reload). Two-part fix: query-persist.ts shouldDehydrateQuery never
+  persists a null auth/me (a real signed-in user still persists for the
+  instant paint), and queryClient.ts auth/me defaults add
+  refetchOnMount:"always" so any bad restore self-heals in the background
+  (poll exemption for the 429 class untouched). tsc clean, FRESH_BUILD
+  smoke re-green, fix verified visually (login → immediate goto
+  /deals/letting now renders the tracker; previously stuck on Sign in for
+  40s+). New scenario client-ui-login-reload-no-bounce PASSED in a full
+  mark chunk.
+- HARNESS NOTE: a mark-only chunk run WITHOUT a fresh victoria chunk first
+  logs 3 flow-failures (client-comps-readonly Net Effective, deal-detail
+  legacy-ID 404, client-brief-target-scope no briefId) — cross-file
+  dependencies on staff-created rows, not app bugs; run victoria before
+  mark after any restore. Also re-proven: killing the serve wrapper (npx)
+  leaves the tsx node child on :5000 — sweep pgrep -f "server/index.ts"
+  after EVERY browser run, not just two-bot chunks (an orphan EADDRINUSE'd
+  two probe runs this round).
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 130
+  (mobile tracker card titles repeat the property name up to 3×, truncating
+  the unit ref at 390px). Real-device keyboard-up composer check (r405)
+  still open for Woody. New flakes: none beyond the harness note above.
+- Next: r454 had the journey → r455 LIGHT (watch
+  client-ui-login-reload-no-bounce's first standard-order run); then
+  rotation #4 BGP staff mobile 390px.
 
 ### r453 · 2026-09-02 ~04:30 UTC · LIGHT (r452 had the journey) — GREEN
 - Bring-up: canonical recipe held 18th consecutive time (qa:pg once →

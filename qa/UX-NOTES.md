@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+130. 2026-09-02 · Landsec client / mobile 390px (QA r454) · scanning the
+    Letting Tracker cards on the phone · card titles read "L112 Bluewater,
+    Bluewater" / "U124/U125/U126, Bluewater, B…" with "Bluewater Shopping
+    Centre" repeated again on the subtitle line — the property name appears
+    up to three times per card because unit_name embeds it and the title
+    truncates at 390px before the distinguishing part · when the unit name
+    ends with (or contains) the property name the card title could strip
+    that suffix and let the subtitle carry the property, so the ~28 visible
+    title chars go to the unit reference the user is actually scanning for.
+
 129. 2026-09-02 · Landsec client / desktop 1440px (QA r452) · reviewing
     their own deals on the Deals board · both Landsec deals show an empty
     "Client" column with a staff-worded "+ Link landlord" affordance — as

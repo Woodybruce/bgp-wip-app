@@ -5410,6 +5410,46 @@ async function markRound(page, cross) {
     }
   });
 
+  // r454: the persisted react-query cache used to restore a pre-login
+  // auth/me=null as FRESH after a UI login + quick reload — the app painted
+  // the sign-in screen with a valid session cookie and never re-probed the
+  // server. UI-login in a fresh context, reload straight onto a deep route
+  // inside the persister's 2s throttle window, and require the app (not the
+  // login form) to render.
+  await step(page, p, 'client-ui-login-reload-no-bounce', async () => {
+    const ctx2 = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    const pg = await ctx2.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await pg.goto(`${BASE}/login`, nav);
+      // let the login screen cache auth/me=null and flush it to localStorage
+      await pg.waitForTimeout(2500);
+      const email = pg.locator('input[type="email"], input[name="email"], input[placeholder*="mail" i]').first();
+      if (!(await email.isVisible().catch(() => false))) {
+        await pg.getByText(/client|guest/i).first().click().catch(() => {});
+        await pg.waitForTimeout(600);
+      }
+      await email.fill(CLIENT_USER);
+      await pg.locator('input[type="password"]').first().fill(PASSWORD);
+      await pg.getByRole('button', { name: 'Sign in', exact: true }).click();
+      await pg.waitForURL((u) => !String(u).includes('/login'), { timeout: 20000 });
+      // reload IMMEDIATELY — inside the persister's throttle window
+      await mobGoto(pg, `${BASE}/deals/letting`, nav);
+      await pg.waitForTimeout(6000);
+      const txt = await pg.evaluate(() => document.body.innerText);
+      if (/client \/ guest sign in/i.test(txt)) {
+        throw new Error('UI login + immediate reload bounced back to the sign-in screen (persisted auth/me=null class)');
+      }
+    } finally {
+      await pg.close();
+      await ctx2.close();
+    }
+  });
+
   // r401: the brands-hub search box (mobile quick search) is backed by
   // /api/brands/search — assert the brand + contact facets actually return
   // rows for an in-slice brand (Mark's "find my tenant's contact" journey
