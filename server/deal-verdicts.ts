@@ -3,8 +3,9 @@
 // exchange/complete this month — "we need something dramatic and annoying
 // that will get them out of bed").
 //
-// A deal is DUE A VERDICT when its target date falls inside (or before) the
-// current month, it hasn't been invoiced, and it isn't Withdrawn/Invoiced.
+// A deal is DUE A VERDICT when its target date fell in a PAST month (deals
+// due in the current month are left alone until it ends — Woody, 2026-09-02),
+// it hasn't been invoiced, and it isn't Withdrawn/Invoiced.
 // The assigned agent must answer, once per calendar month, per deal:
 //   on_track    — completes as dated
 //   slipping    — must supply a new target date (re-dates the deal)
