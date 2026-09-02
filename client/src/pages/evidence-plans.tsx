@@ -548,13 +548,18 @@ function PlanView({ planId }: { planId: string }) {
                     const isSel = u.id === selectedId;
                     const za = latestZaByUnit.get(u.id);
                     // Label sized to its unit's box: a small kiosk must not
-                    // carry a plan-wide banner of text.
+                    // carry a plan-wide banner of text. And the plan already
+                    // prints tenant names/logos on the blocks (Woody,
+                    // 2026-09-02) — so a name-only ref gets no text overlay,
+                    // just the outline and its Zone A figure; proper unit
+                    // refs (B12, K21) still show.
                     const boxW = (Math.max(...poly.map(p => p.x)) - Math.min(...poly.map(p => p.x))) * 100;
                     const boxH = (Math.max(...poly.map(p => p.y)) - Math.min(...poly.map(p => p.y))) * 100 * aspect;
                     const label = String(u.unit_ref || "");
+                    const isRealRef = /\d/.test(label) && label.length <= 10;
                     const fit = Math.min((boxW * 1.6) / Math.max(2, label.length), boxH * 0.5);
                     const fontSize = Math.max(0.55, Math.min(Math.max(1.1, 2.4 / Math.sqrt(zoom)), fit));
-                    const zaSize = Math.max(0.5, Math.min(Math.max(0.9, 1.8 / Math.sqrt(zoom)), fit * 0.8));
+                    const zaSize = Math.max(0.5, Math.min(Math.max(0.9, 1.8 / Math.sqrt(zoom)), Math.min((boxW * 1.3) / 8, boxH * 0.45)));
                     return (
                       <g key={u.id} style={{ pointerEvents: "auto", cursor: "pointer" }}
                         onClick={e => { e.stopPropagation(); if (!drawing && !dragging.current?.moved) setSelectedId(u.id); }}>
@@ -562,13 +567,15 @@ function PlanView({ planId }: { planId: string }) {
                           fill={isSel ? "hsl(17 60% 45% / 0.30)" : za != null ? "hsl(17 60% 45% / 0.14)" : "hsl(220 10% 40% / 0.10)"}
                           stroke={isSel ? "hsl(17 60% 45%)" : "hsl(220 10% 35% / 0.55)"}
                           strokeWidth={isSel ? 0.35 : 0.18} vectorEffect="non-scaling-stroke" />
-                        <text x={c.x * 100} y={c.y * 100 * aspect} textAnchor="middle" dominantBaseline="middle"
-                          style={{ fontSize, fontWeight: 700, fill: "#1C1917", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: fontSize * 0.15 }}>
-                          {label}
-                        </text>
+                        {isRealRef && (
+                          <text x={c.x * 100} y={c.y * 100 * aspect - (za != null ? zaSize * 0.7 : 0)} textAnchor="middle" dominantBaseline="middle"
+                            style={{ fontSize, fontWeight: 700, fill: "#1C1917", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: fontSize * 0.15 }}>
+                            {label}
+                          </text>
+                        )}
                         {za != null && (
-                          <text x={c.x * 100} y={c.y * 100 * aspect + fontSize * 1.1} textAnchor="middle" dominantBaseline="middle"
-                            style={{ fontSize: zaSize, fontWeight: 600, fill: "hsl(17 60% 38%)", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: zaSize * 0.15 }}>
+                          <text x={c.x * 100} y={c.y * 100 * aspect + (isRealRef ? fontSize * 0.75 : 0)} textAnchor="middle" dominantBaseline="middle"
+                            style={{ fontSize: zaSize, fontWeight: 700, fill: "hsl(17 60% 38%)", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: zaSize * 0.15 }}>
                             £{za.toLocaleString("en-GB", { maximumFractionDigits: 0 })} ZA
                           </text>
                         )}
@@ -606,7 +613,7 @@ function PlanView({ planId }: { planId: string }) {
               <p className="text-xs leading-relaxed">Tap a unit on the plan to see its facts and evidence. Draw unit adds a new outline; Import tenancy schedule fills expiry / break / review / ERV / passing for units on the plan.</p>
               {unlinkedCount > 0 && (
                 <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300">
-                  {unlinkedCount} evidence entr{unlinkedCount === 1 ? "y" : "ies"} couldn't be matched to a drawn unit — draw those units and re-run the TAF, or set the unit on each entry.
+                  {unlinkedCount} evidence entr{unlinkedCount === 1 ? "y" : "ies"} aren't matched to a unit yet — they link themselves as matching units appear (Re-detect, or draw the unit). No need to re-run the TAFs.
                 </div>
               )}
             </div>

@@ -973,6 +973,40 @@ async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, o
   }));
 }
 
+// Snap an AI-proposed box to the coloured block underneath it: within the
+// box (plus margin) find the saturated fill pixels and take their bounding
+// box. AI coordinates are "close but offset"; the pixels are exact. Blocks
+// with no colour fill (white anchor stores) keep the AI box.
+function snapBoxToBlock(raw: Buffer, W: number, H: number, box: { x0: number; y0: number; x1: number; y1: number }) {
+  const m = 0.15; // window margin as a fraction of the box size
+  const bw = box.x1 - box.x0, bh = box.y1 - box.y0;
+  const wx0 = Math.max(0, Math.floor((box.x0 - bw * m) * W)), wx1 = Math.min(W - 1, Math.ceil((box.x1 + bw * m) * W));
+  const wy0 = Math.max(0, Math.floor((box.y0 - bh * m) * H)), wy1 = Math.min(H - 1, Math.ceil((box.y1 + bh * m) * H));
+  let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1, hits = 0, total = 0;
+  for (let y = wy0; y <= wy1; y += 2) {
+    for (let x = wx0; x <= wx1; x += 2) {
+      total++;
+      const i = (y * W + x) * 3;
+      const r = raw[i], g = raw[i + 1], b = raw[i + 2];
+      const sat = Math.max(r, g, b) - Math.min(r, g, b);
+      const bright = Math.max(r, g, b);
+      if (sat > 30 && bright > 90) { // coloured block fill (teal/orange/etc), not white mall or dark linework
+        hits++;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (!total || hits / total < 0.05 || maxX < 0) return box; // no meaningful fill — keep AI box
+  const snapped = { x0: minX / W, y0: minY / H, x1: (maxX + 2) / W, y1: (maxY + 2) / H };
+  // A snap adjusts edges, it doesn't leap: each edge may move at most half
+  // a box-dimension from where the AI put it.
+  return {
+    x0: Math.max(snapped.x0, box.x0 - bw * 0.5), y0: Math.max(snapped.y0, box.y0 - bh * 0.5),
+    x1: Math.min(snapped.x1, box.x1 + bw * 0.5), y1: Math.min(snapped.y1, box.y1 + bh * 0.5),
+  };
+}
+
 async function runDetectJob(planId: string, jobId: string, level: any, propertyId: string | null): Promise<void> {
   const bump = (sets: string, vals: any[]) =>
     pool.query(`UPDATE evidence_plan_jobs SET ${sets}, updated_at = now() WHERE id = $${vals.length + 1}`, [...vals, jobId]).catch(() => {});
@@ -983,6 +1017,7 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
     const meta = await sharp(file.data).metadata();
     const W = meta.width || 0, H = meta.height || 0;
     if (!W || !H) throw new Error("Couldn't read the plan image");
+    const raw = await sharp(file.data).removeAlpha().raw().toBuffer();
 
     const known = new Set<string>();
     const tenantToRef = new Map<string, string>();
@@ -1029,10 +1064,10 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       if (!ref) continue;
       const norm = normaliseUnitRef(ref);
       if (!norm || have.has(norm)) continue;
-      const { x0, y0, x1, y1 } = u;
-      const w = x1 - x0, h = y1 - y0;
+      const w = u.x1 - u.x0, h = u.y1 - u.y0;
       if (w < 0.004 || h < 0.004 || w * h > 0.12 || w / h > 10 || h / w > 10) continue; // junk boxes
       if (overlaps(u)) continue; // same block seen from two tiles under different labels
+      const { x0, y0, x1, y1 } = snapBoxToBlock(raw, W, H, u);
       const polygon = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
       const ins = await pool.query(
         `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon, source) VALUES ($1,$2,$3,$4,$5,'ai') RETURNING id`,
