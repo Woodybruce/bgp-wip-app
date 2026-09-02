@@ -89,7 +89,7 @@ export default function News() {
         <p className="py-16 text-center text-sm font-light text-bgp-ink/60">Nothing in that category yet.</p>
       )}
 
-      <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-8">
+      <div className="mt-10 card-strip sm:grid-cols-3 sm:gap-8">
         {visibleRest.map((a) => (
           <Link key={a.slug} href={`/news/${a.slug}`} className="group block border-t border-bgp-wine/40 pt-3">
             <div className="flex justify-between label-caps text-bgp-wine mb-3">

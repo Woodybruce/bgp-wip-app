@@ -28,7 +28,7 @@ export default function Investment() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-12">
+        <div className="card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-12">
           {INVESTMENT_DEALS.map((deal) => (
             <div key={deal.name} className="group">
               <div className="relative img-frame">
