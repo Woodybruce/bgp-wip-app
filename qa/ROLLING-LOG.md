@@ -84,6 +84,37 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r469 · 2026-09-02 ~16:10 UTC · LIGHT (r468 had the journey) — GREEN
+- Bring-up: canonical recipe held 34th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+  Two-bot round 469 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact; full chunk incl. all tail
+  scenarios completed, so the r467 late-chunk browser death did NOT recur
+  on a second consecutive fresh container — container-specific read
+  further supported) / woody,nick,sam exit 0 (0 issues).
+  phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw 500/502/504
+  (tally: 3935×200, expected 4xx/503 families only; the single 422 is the
+  r462 cover-raster path by design). Triage: 0 app bugs.
+- r468 FIX RE-VERIFIED: staff-brochure-bad-id-400 PASSED its first
+  standard-order run inside a full victoria chunk (malformed :bid → 400,
+  not raw 500). r462/r460/r458 scenarios all still green.
+- No journey (LIGHT). No deferred bugs to pick up (r468 deferred none).
+- Harness note (new form of the r468 pkill trap): a Bash call that
+  heredoc-writes a runner script containing the literal server
+  entry-point string puts that literal on the calling shell's command
+  line — the runner's own bracketed pkill then matches and kills the
+  shell (exit 144). Write runner files with the Write tool, or run them
+  in a separate Bash call; the sweep itself was unaffected (re-ran clean).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r469 was LIGHT → r470 FULL, rotation #3 Landsec client mobile
+  390px.
+
 ### r468 · 2026-09-02 ~19:45 UTC · FULL — rotation #2 Landsec client desktop 1440px · 1 fix
 - Bring-up: canonical recipe held 33rd consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
