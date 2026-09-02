@@ -27,9 +27,41 @@ export interface Listing {
   files: ListingFile[];
   image?: string;
   isSample?: boolean;
+  brochureUrl?: string;
 }
 
 const API_BASE = (import.meta.env.VITE_BGP_API_URL as string | undefined)?.replace(/\/$/, "") ?? "";
+
+// Real availability at Brent Cross Shopping Centre (Hammerson) — BGP is joint
+// F&B leasing agent. Figures from the Completely Group site plan, 08/2026.
+// Always shown alongside the live tracker feed; refresh when a new plan lands.
+const BRENT_CROSS = {
+  ratesPa: null,
+  serviceChargePa: null,
+  askingRent: null,
+  useClass: "Retail / F&B",
+  condition: null,
+  epcRating: null,
+  availableDate: null,
+  location: "Brent Cross",
+  propertyName: "Brent Cross Shopping Centre",
+  propertyAddress: null,
+  postcode: "NW4 3FP",
+  latitude: "51.5766",
+  longitude: "-0.2240",
+  assetClass: "Retail",
+  files: [],
+  image: "/images/brent-cross-plan.jpg",
+  brochureUrl: "/files/brent-cross-site-plan.pdf",
+} as const;
+
+export const STATIC_LISTINGS: Listing[] = [
+  { ...BRENT_CROSS, id: "brent-cross-e1y", unitName: "Unit E1Y, Brent Cross", floor: "Lower Level", sqft: 525, marketingStatus: "Available" },
+  { ...BRENT_CROSS, id: "brent-cross-kiosk-21", unitName: "Kiosk 21, Brent Cross", floor: "Lower Level", sqft: 900, marketingStatus: "Available" },
+  { ...BRENT_CROSS, id: "brent-cross-b12", unitName: "Unit B12, Brent Cross", floor: "Upper Level", sqft: 1028, marketingStatus: "Available" },
+  { ...BRENT_CROSS, id: "brent-cross-d11-12", unitName: "Unit D11/12, Brent Cross", floor: "Lower Level", sqft: 4129, marketingStatus: "Under Offer" },
+  { ...BRENT_CROSS, id: "brent-cross-n13", unitName: "Unit N13, Brent Cross", floor: "Upper Level", sqft: 15100, marketingStatus: "Under Offer" },
+];
 
 export const SAMPLE_LISTINGS: Listing[] = [
   {
@@ -107,20 +139,20 @@ export const SAMPLE_LISTINGS: Listing[] = [
 ];
 
 export async function fetchListings(): Promise<{ listings: Listing[]; live: boolean }> {
-  if (!API_BASE) return { listings: SAMPLE_LISTINGS, live: false };
+  if (!API_BASE) return { listings: [...STATIC_LISTINGS, ...SAMPLE_LISTINGS], live: false };
   try {
     const res = await fetch(`${API_BASE}/api/public/leasing-listings`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const listings: Listing[] = await res.json();
-    return { listings, live: true };
+    return { listings: [...STATIC_LISTINGS, ...listings], live: true };
   } catch {
-    return { listings: SAMPLE_LISTINGS, live: false };
+    return { listings: [...STATIC_LISTINGS, ...SAMPLE_LISTINGS], live: false };
   }
 }
 
 export async function fetchListing(id: string): Promise<Listing | null> {
-  const sample = SAMPLE_LISTINGS.find((l) => l.id === id);
-  if (sample) return sample;
+  const local = [...STATIC_LISTINGS, ...SAMPLE_LISTINGS].find((l) => l.id === id);
+  if (local) return local;
   if (!API_BASE) return null;
   try {
     const res = await fetch(`${API_BASE}/api/public/leasing-listings/${id}`);
