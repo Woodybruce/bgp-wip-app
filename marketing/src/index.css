@@ -9,6 +9,9 @@
   body {
     @apply font-sans font-light text-bgp-ink bg-bgp-cream antialiased;
   }
+  ::selection {
+    @apply bg-bgp-wine text-bgp-cream;
+  }
 }
 
 @layer components {
@@ -37,5 +40,29 @@
   }
   .tabular {
     font-variant-numeric: tabular-nums;
+  }
+  /* Editorial image treatment — wrap the img in .img-frame and it eases in
+     scale on hover, giving cards and galleries a considered, premium feel. */
+  .img-frame {
+    @apply overflow-hidden;
+  }
+  .img-frame img {
+    @apply transition-transform duration-700 ease-out;
+  }
+  .group:hover .img-frame img,
+  .img-frame:hover img {
+    transform: scale(1.04);
+  }
+  /* Nav links: animated underline sweep */
+  .nav-link {
+    @apply relative;
+  }
+  .nav-link::after {
+    content: "";
+    @apply absolute left-0 -bottom-0.5 h-px w-0 bg-bgp-red transition-all duration-300;
+  }
+  .nav-link:hover::after,
+  .nav-link[data-active="true"]::after {
+    @apply w-full;
   }
 }

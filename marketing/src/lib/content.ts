@@ -99,16 +99,14 @@ export const TEAM: Person[] = [
   { name: "Lucy Gardiner", title: "Director, National Leasing", phone: "+44 (0)7741 877 452", email: "lucyg@brucegillinghampollard.com" },
   { name: "Lizzie Knights", title: "Director, London Leasing", phone: "+44 (0)7511 902 073", email: "lizzie@brucegillinghampollard.com" },
   { name: "Harry Elliott", title: "Director, Brand Representation", phone: "+44 (0)7568 367 777", email: "harrye@brucegillinghampollard.com" },
-  { name: "Emily Dumbell", title: "Director, Brand Representation", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
+  { name: "Emily Dumbell", title: "Director, National Leasing", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
   { name: "Nick Goodman", title: "Consultant, Investment", phone: "+44 (0)7818 012 432", email: "nickgoodman@brucegillinghampollard.com" },
-  { photo: "/images/team/ollie-wilkinson.jpg", name: "Ollie Wilkinson", title: "Associate Director, Investment", phone: "+44 (0)7736 869 317", email: "ollie@brucegillinghampollard.com" },
   { name: "Tom Cater", title: "Associate Director, Lease Advisory", phone: "+44 (0)7947 484 902", email: "tom@brucegillinghampollard.com" },
   { name: "Lucy Cope", title: "Associate Director, London Leasing", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
   { name: "Evie North", title: "Associate Director, Brand Representation", phone: "+44 (0)7595 349 057", email: "evie@brucegillinghampollard.com" },
   { name: "Alex Todd", title: "Senior Surveyor, Development", phone: "+44 (0)7526 504 806", email: "alext@brucegillinghampollard.com" },
   { name: "Rob Barnes", title: "Surveyor, National Leasing", phone: "+44 (0)7494 751 653", email: "rob@brucegillinghampollard.com" },
   { name: "Millie Edwards", title: "Leasing", phone: OFFICE_PHONE, email: "TBC" },
-  { photo: "/images/team/danny-cardosi.jpg", name: "Danny Cardosi", title: "Title TBC", phone: OFFICE_PHONE, email: "TBC" },
   { name: "Emily Cann", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
   { name: "Will Penfold", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
   { name: "Luke Donohoe", title: "Graduate Surveyor, National Leasing", phone: "+44 (0)7983 855 926", email: "luke@brucegillinghampollard.com" },
@@ -126,20 +124,19 @@ export const LEASING_CONTACTS = byName(
   "Rupert Bentley-Smith",
   "Victoria Broadhead",
   "Lizzie Knights",
+  "Emily Dumbell",
   "Lucy Cope",
 );
 
 export const INVESTMENT_CONTACTS = byName(
   "Jack Barratt",
   "Nick Halley",
-  "Ollie Wilkinson",
-  "Danny Cardosi",
   "Jonny Palmer",
 );
 
 export const LEASE_ADVISORY_CONTACTS = byName("Peter Wood", "Tom Cater");
 
-export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Emily Dumbell", "Evie North");
+export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Evie North");
 
 export const CONSULTANCY_CONTACTS = byName("Tracey Pollard", "Alex Todd", "Libby Evans");
 

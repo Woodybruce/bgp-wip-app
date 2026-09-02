@@ -10,16 +10,18 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
   return (
     <div className={wide ? "sm:col-span-2" : ""}>
       <Link href={`/leasing/${listing.id}`} className="block group relative">
-        {img ? (
-          <img
-            src={fileUrl(img.id)}
-            alt={listing.unitName}
-            className="aspect-[4/3] w-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <Placeholder className="aspect-[4/3] w-full" src={listing.image} alt={listing.unitName} />
-        )}
+        <div className="img-frame">
+          {img ? (
+            <img
+              src={fileUrl(img.id)}
+              alt={listing.unitName}
+              className="aspect-[4/3] w-full object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <Placeholder className="aspect-[4/3] w-full" src={listing.image} alt={listing.unitName} />
+          )}
+        </div>
         {listing.marketingStatus === "Under Offer" && (
           <span className="absolute top-0 right-0 bg-bgp-red text-white label-caps px-3 py-1.5">
             Under offer
