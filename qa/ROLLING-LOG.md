@@ -84,18 +84,43 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r466 · 2026-09-02 ~17:30 UTC · FULL — rotation #1 BGP staff desktop 1440px · ROUND IN PROGRESS
-- Provisional heartbeat entry. Bring-up: canonical recipe held 31st
-  consecutive time (qa:pg once → run-smoke restore clean → seed-personas
-  per r451 rule BEFORE two-bot, fresh session no stale cross file).
-  Regression: smoke GREEN 42/0. Two-bot round 466 as 3 foreground chunks
-  (r447 pattern): victoria exit 0 (2×400 standing) / mark exit 0 (9 issues
-  = 1×503 keyless + 8×403 probe-by-design — r464 post-ignore signature
-  exact) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at
-  390px. Server logs: 0 raw 500/502/504 (status tally clean). Triage: 0
-  app bugs from the harness.
-- Journey (staff desktop 1440px, Victoria) still to run — final entry will
-  replace this one.
+### r466 · 2026-09-02 ~18:30 UTC · FULL — rotation #1 BGP staff desktop 1440px — GREEN
+- Bring-up: canonical recipe held 31st consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+  Two-bot round 466 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — r464 post-ignore signature exact, second consecutive
+  clean watch) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep
+  11/11 at 390px. Server logs: 0 raw 500/502/504 (status tally: only
+  2xx/3xx/expected 4xx/503/422). Triage: 0 app bugs from the harness.
+- Journey (Victoria @1440px, UI login via reveal — "prep for tomorrow's
+  Landsec call: dashboard → calendar → tasks quick-add → deals/WIP
+  cross-filters → deal detail → letting tracker + Files dialog → Bluewater
+  property → full tenancy board → comps → ChatBGP → Ctrl+K search"): all
+  render clean. Tasks quick-add works (toast + row). WIP desktop
+  cross-filter boards verified BOTH ways on CLIENT (click British Land
+  Rival: 6→1 rows, chip badge CLIENT 1, boards recalc, re-click clears)
+  and month strip (Jul-26: 2 rows, NET FEES BY MONTH 1, untap restores) —
+  desktop parity with r464's phone check. Deal ref #1001 → deal detail
+  clean (parties/fees/KYC/files rails). Tracker desktop: pill counts,
+  Actions & Activity cluster, Area & Costs, Files dialog (tabs + upload +
+  Doc Studio + info-sheet row) all clean. Tenancy board 200 rows + KPI
+  strip, no h-overflow. ChatBGP polite keyless "Not Connected". Search
+  returns property + WIP deal-name rows (r229 fix holds), lands on
+  Bluewater. 0 pageerrors, 0 non-noise 4xx/5xx across all 4 journey parts.
+- NOT a bug (investigated): property-page plan viewer shows a giant solid
+  RED canvas — the only property_plans row is floor='QA-PLAN-GATE', the
+  two-bot probe's uploaded red test PNG (purge sweeps it; image endpoint
+  healthy). Ditto QA-COMP R466 comps row + QA-CAL events (r442 precedent).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (tenancy KPI "—" vs "0" already
+  UX-NOTES 133; unit-name repetition already 130). New flakes: none.
+  Journey probe rows (QA-PROBE task r466) swept by next restore.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r466 had the journey → r467 LIGHT; then rotation #2 Landsec
+  client desktop 1440px.
 
 ### r465 · 2026-09-02 ~15:30 UTC · LIGHT (r464 had the journey) — GREEN
 - Bring-up: canonical recipe held 30th consecutive time (qa:pg once →
