@@ -33,7 +33,7 @@ function FilterSelect({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="bg-transparent label-caps text-bgp-wine outline-none cursor-pointer hover:text-bgp-red text-right sm:text-left shrink-0 max-w-[60%] sm:max-w-none"
+        className="bg-transparent label-caps text-bgp-wine outline-none cursor-pointer hover:text-bgp-red text-right sm:text-left shrink-0 max-w-[60%] sm:max-w-none [text-align-last:right] sm:[text-align-last:auto]"
       >
         <option value="">All</option>
         {options.map((o) => (
