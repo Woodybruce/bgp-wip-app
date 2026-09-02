@@ -10,6 +10,7 @@ export default function Nav() {
   const [open, setOpen] = useState(false);
 
   return (
+    <>
     <header className="sticky top-0 z-50 bg-bgp-cream/95 backdrop-blur border-b border-bgp-wine/10">
       <div className="relative mx-auto max-w-6xl px-4">
         {/* Phone bar */}
@@ -76,14 +77,18 @@ export default function Nav() {
         </div>
       </div>
 
-      {/* TALK TO US — fixed edge tab. Desktop only: on phones it overlapped
-          the menu button and stole its taps (contact lives in the footer). */}
-      <a
-        href="#contact"
-        className="hidden md:block fixed right-0 top-1/2 z-40 -translate-y-1/2 bg-bgp-red text-white label-caps px-2.5 py-4 [writing-mode:vertical-rl] hover:bg-bgp-wine transition-colors"
-      >
-        Talk to us
-      </a>
     </header>
+
+    {/* TALK TO US — fixed edge tab. Desktop only (on phones it overlapped
+        the menu button). Lives OUTSIDE the header: backdrop-blur on the
+        sticky bar turns it into the containing block for fixed children,
+        which pinned this tab inside the header and mangled it. */}
+    <a
+      href="#contact"
+      className="hidden md:block fixed right-0 top-1/2 z-40 -translate-y-1/2 bg-bgp-red text-white label-caps px-2.5 py-4 [writing-mode:vertical-rl] hover:bg-bgp-wine transition-colors"
+    >
+      Talk to us
+    </a>
+    </>
   );
 }
