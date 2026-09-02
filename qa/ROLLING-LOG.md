@@ -70,6 +70,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   `grant all on schema public to bgp; alter schema public owner to bgp;`
   — else the bgp role can't CREATE and auto-migrate silently skips new
   tables/indexes (kyc_audit_log, deal_audit_log, …).
+- (r451) qa/seed-personas.sql MUST be applied to bgpsmoke after every
+  run-smoke restore and BEFORE two-bot — the smoke fixture does NOT
+  contain Honi Poke (two-bot's literal in-slice checks: turnover board,
+  client search). Skipping it = 2 false flow-failures on the mark chunk.
 - Do NOT run the prod build over plain http for browser tests: session cookie
   is secure-only in production, so cookie-auth UI flows all 401
   (/api/client/brand-theme storms, empty client nav). smoke.mjs is fine (Bearer).
@@ -79,6 +83,1026 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   the full sweep; run-smoke.sh stays the quick authoritative regression.
 
 ## Rounds
+
+### r469 · 2026-09-02 ~16:10 UTC · LIGHT (r468 had the journey) — GREEN
+- Bring-up: canonical recipe held 34th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+  Two-bot round 469 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact; full chunk incl. all tail
+  scenarios completed, so the r467 late-chunk browser death did NOT recur
+  on a second consecutive fresh container — container-specific read
+  further supported) / woody,nick,sam exit 0 (0 issues).
+  phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw 500/502/504
+  (tally: 3935×200, expected 4xx/503 families only; the single 422 is the
+  r462 cover-raster path by design). Triage: 0 app bugs.
+- r468 FIX RE-VERIFIED: staff-brochure-bad-id-400 PASSED its first
+  standard-order run inside a full victoria chunk (malformed :bid → 400,
+  not raw 500). r462/r460/r458 scenarios all still green.
+- No journey (LIGHT). No deferred bugs to pick up (r468 deferred none).
+- Harness note (new form of the r468 pkill trap): a Bash call that
+  heredoc-writes a runner script containing the literal server
+  entry-point string puts that literal on the calling shell's command
+  line — the runner's own bracketed pkill then matches and kills the
+  shell (exit 144). Write runner files with the Write tool, or run them
+  in a separate Bash call; the sweep itself was unaffected (re-ran clean).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r469 was LIGHT → r470 FULL, rotation #3 Landsec client mobile
+  390px.
+
+### r468 · 2026-09-02 ~19:45 UTC · FULL — rotation #2 Landsec client desktop 1440px · 1 fix
+- Bring-up: canonical recipe held 33rd consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
+  Regression: smoke GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the
+  fix). Two-bot round 468 as 3 foreground chunks: victoria exit 0 (2×400
+  standing) ×2 / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact; the r467 late-chunk browser
+  death did NOT recur on this fresh container, full chunk incl. tail
+  scenarios passed — supports r467's container-specific read) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
+  Server logs: 0 raw 500/502/504 (tally: 3728×200, expected 3xx/4xx/503
+  only). Triage: 0 app bugs from the harness.
+- Journey (Mark @1440px, "monthly reporting day: dashboard → requirements
+  → calendar → CRM contacts → tasks page create+complete → news → comps →
+  Ctrl+K search → Bluewater"): all render clean, 0 pageerrors, 0
+  non-noise 4xx/5xx, no h-overflow. Task quick-add works (toast + row);
+  completing it works end-to-end (strike-through into Completed group,
+  "Nice!" toast, API status done, open counter 2→1). Search palette finds
+  Bluewater and lands on the property page (Compliance & KYC visible per
+  standing decision, staff buttons absent, SharePoint degrades politely).
+  Requirements "0 active" is CORRECT scoping (fixture's 1 req is
+  manually-entered BGP, non-PIPnet → hidden from clients); the desktop
+  empty state renders after settle (journey shot caught the skeleton) but
+  still shows the generic copy — that's already UX-NOTES 79, no new entry.
+  News list renders (rows link out externally, no in-app detail route —
+  as designed). Bugs found by the journey: 0.
+- FIX (r467's logged observation, server hardening): the six
+  /api/properties/:id/brochures/:bid routes (delete/patch/edit/reingest/
+  file/cover) passed :bid raw into a uuid-typed query — a malformed id
+  (the literal "undefined") made postgres throw → raw 500. Added a
+  badBid guard in property-brochures.ts: malformed → 400 "Invalid
+  brochure id", well-formed-but-missing still 404, list/upload untouched.
+  Verified: staff DELETE undefined 400 / missing-uuid 404 / list 200;
+  client gateway 403s unchanged (parity scenario unaffected — gateway
+  fires before the handler). tsc clean, FRESH_BUILD smoke re-green,
+  victoria chunk re-run green incl. NEW scenario staff-brochure-bad-id-400
+  (node-side fetch, no page-log noise; signature stays 2×400).
+- Bugs fixed: 1 (brochure :bid 500→400 guard). Deferred: none new.
+  Carried (data, staff decision): Bluewater tenancy SPINE duplicates
+  (U062 ×4, L090 ×2, L130 ×2). Suggestions: none new (requirements
+  desktop empty-state copy = existing UX-NOTES 79). New flakes: none —
+  and one harness note: pkill -f patterns must be regex-bracketed
+  ("index[.]ts") or pkill kills the calling shell (exit 144).
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r468 had the journey → r469 LIGHT; then rotation #3 Landsec
+  client mobile 390px.
+
+### r467 · 2026-09-02 ~15:00 UTC · LIGHT (r466 had the journey) — GREEN, 1 new harness flake documented
+- Bring-up: canonical recipe held 32nd consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+  Two-bot round 467 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark: standing 9 signature (1×503 keyless + 8×403
+  probe-by-design) intact, but see flake below / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 across all chunks + sweep (tally: 5661×200, plus only
+  expected 3xx/4xx/503). Triage: 0 app bugs.
+- NEW HARNESS-INFRA FLAKE (this container; not the app, not the r449 pipe
+  class): the chromium BROWSER PROCESS dies near the END of the ~150-
+  scenario mark chunk, seconds after a page.goto — 3 runs: ×2 died during
+  client-properties-no-address-edit (2 flow-failures each), ×1 with
+  QA_DEBUG one scenario later during client-brochure-upload-parity-
+  manage-blocked ("BROWSER disconnected" logged 1.8s after step start).
+  Ruled out: app pages (isolated probes of /available, /properties and the
+  FULL brochure-parity flow all pass — client upload 200, DELETE/reingest
+  403, tile hides reingest, page screenshot clean); server (healthy
+  through and after each death, 0 raw 5xx); pipe-freeze (stdio-to-FILE
+  held); /dev/shm (16G), RAM (16G, ~14G free), disk (28G avail). r466 ran
+  the same commit's full mark chunk clean, so this looks container-
+  specific. Guidance if it recurs: verify the tail scenarios with isolated
+  probes instead of re-running the whole chunk; if a future round sees it
+  on a DIFFERENT container, consider recycling the browser mid-chunk
+  (relaunch after ~100 scenarios) in two-bot — not done now to keep the
+  stable harness untouched on an unknown root cause.
+- All mark-tail asserts still verified this round (harness ×1 + isolated
+  probes): client-properties-no-address-edit passed in the QA_DEBUG run;
+  brochure-parity server + UI asserts passed in the probe. Housekeeping:
+  probe left 1-2 orphan QA-PROBE-brochure.pdf rows on Bluewater in
+  bgpsmoke (its staff-cleanup list-filter missed them); next restore wipes
+  them. Also observed (not user-reachable, logged only): DELETE
+  /api/properties/:id/brochures/undefined → 500 "invalid input syntax for
+  type uuid" — a 400 guard would be tidier; no UI path sends it.
+- No journey (LIGHT). No deferred bugs to pick up (r466 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: the mark-chunk late browser death above. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r467 was LIGHT → r468 FULL, rotation #2 Landsec client desktop
+  1440px (watch whether the mark browser-death recurs on a fresh
+  container).
+
+### r466 · 2026-09-02 ~18:30 UTC · FULL — rotation #1 BGP staff desktop 1440px — GREEN
+- Bring-up: canonical recipe held 31st consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+  Two-bot round 466 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — r464 post-ignore signature exact, second consecutive
+  clean watch) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep
+  11/11 at 390px. Server logs: 0 raw 500/502/504 (status tally: only
+  2xx/3xx/expected 4xx/503/422). Triage: 0 app bugs from the harness.
+- Journey (Victoria @1440px, UI login via reveal — "prep for tomorrow's
+  Landsec call: dashboard → calendar → tasks quick-add → deals/WIP
+  cross-filters → deal detail → letting tracker + Files dialog → Bluewater
+  property → full tenancy board → comps → ChatBGP → Ctrl+K search"): all
+  render clean. Tasks quick-add works (toast + row). WIP desktop
+  cross-filter boards verified BOTH ways on CLIENT (click British Land
+  Rival: 6→1 rows, chip badge CLIENT 1, boards recalc, re-click clears)
+  and month strip (Jul-26: 2 rows, NET FEES BY MONTH 1, untap restores) —
+  desktop parity with r464's phone check. Deal ref #1001 → deal detail
+  clean (parties/fees/KYC/files rails). Tracker desktop: pill counts,
+  Actions & Activity cluster, Area & Costs, Files dialog (tabs + upload +
+  Doc Studio + info-sheet row) all clean. Tenancy board 200 rows + KPI
+  strip, no h-overflow. ChatBGP polite keyless "Not Connected". Search
+  returns property + WIP deal-name rows (r229 fix holds), lands on
+  Bluewater. 0 pageerrors, 0 non-noise 4xx/5xx across all 4 journey parts.
+- NOT a bug (investigated): property-page plan viewer shows a giant solid
+  RED canvas — the only property_plans row is floor='QA-PLAN-GATE', the
+  two-bot probe's uploaded red test PNG (purge sweeps it; image endpoint
+  healthy). Ditto QA-COMP R466 comps row + QA-CAL events (r442 precedent).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (tenancy KPI "—" vs "0" already
+  UX-NOTES 133; unit-name repetition already 130). New flakes: none.
+  Journey probe rows (QA-PROBE task r466) swept by next restore.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r466 had the journey → r467 LIGHT; then rotation #2 Landsec
+  client desktop 1440px.
+
+### r465 · 2026-09-02 ~15:30 UTC · LIGHT (r464 had the journey) — GREEN
+- Bring-up: canonical recipe held 30th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session so no stale cross file). Regression: smoke GREEN 42/0.
+  Two-bot round 465 as 3 foreground chunks (r447 pattern; chunk runner =
+  ONE foreground node process, dev server stdio-to-FILE, warmed per r455,
+  tsx via node_modules/.bin, pkill-swept before and after each chunk):
+  victoria exit 0 (2×400 standing: rocketreach + invalid-tracker probe) /
+  mark exit 0 (9 issues = 1×503 keyless + 8×403 probe-by-design — the
+  r464 post-ignore signature confirmed EXACT on its first watch run, no
+  hr/staff flicker row) / woody,nick,sam exit 0 (0 issues).
+  phone-overflow-sweep 11/11 routes fit at 390px. Server logs: 0 raw
+  500/502/504 (news-feed text grep hits only, r413 class). Triage: 0 app
+  bugs.
+- r464's hr/staff guard-race ignore VERIFIED: mark signature stable at 9
+  across the full chunk. r462 brochure fixes, r460
+  client-properties-no-address-edit, r458
+  staff-tracker-pitch-button-visible all green in standard order.
+- No journey (LIGHT). No deferred bugs to pick up (r464 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r465 was LIGHT → r466 FULL, rotation #1 BGP staff desktop 1440px.
+
+### r464 · 2026-09-02 ~13:30 UTC · FULL — rotation #4 BGP staff mobile 390px — GREEN
+- Bring-up: canonical recipe held 29th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+  Two-bot round 464 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark exit 0 (10 issues = 1×503 keyless + 9×403: the
+  standing 8 plus a NEW flicker row, GET /api/hr/staff 403 — triaged
+  below) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at
+  390px. Server logs: 0 raw 500/502/504. Triage: 0 app bugs.
+- NOT a bug (documented + harness-ignored): the extra hr/staff 403 is a
+  guard-mount race the harness itself provokes — client-nav deliberately
+  opens /hr as the client, ClientRouteGuard bounces in a useEffect AFTER
+  HRPage mounts, so the page's staff-directory query can fire once and
+  403 (server gates correctly) before the bounce; lazy-chunk compile
+  speed decides whether the row lands, flipping the mark signature 9↔10.
+  Added /api/hr/staff$ to two-bot's IGNORED_RESPONSES (staff coverage
+  stays locked by staff-hr-directory-full-shape, which asserts 200 +
+  full shape) — mark standing signature is back to 9 (1×503 + 8×403).
+- Journey (Victoria @390px iPhone UA, "on the train before a Bluewater
+  morning: work the letting tracker, then glance at the WIP pipeline" —
+  both surfaces reworked 09-01, judged as-designed): /deals/letting
+  ?propertyId=bluewater → pill-row tabs, status chips w/ counts, phone
+  unit cards → search MSU9 → Files dialog (reworked: All/Brochures/
+  Floor plans/Photos tabs, upload, Doc Studio, info-sheet row — clean,
+  no dialog overflow) → logged a REAL viewing end-to-end (company
+  combobox → Amorino, outcome Interested, save → "Viewing added" toast,
+  dialog flips to list view, card counter Viewing → Viewing (1)) →
+  NEGOTIATING chip filter (1/81) → /wip-report phone view: KPI tiles,
+  month strip tap-to-filter WORKS both ways (Jul-26 tap: 6→2 detail
+  cards + summary recalcs; untap restores), Columns picker (12/14
+  default-hidden holds) fits, deal-card links route (ref → /deals/:id,
+  property → /properties/:id). 0 pageerrors, 0 non-noise 4xx/5xx, no
+  h-overflow anywhere, no dialog overflow. Bugs found: 0.
+- Harness notes (not bugs): WIP Columns picker's fixed inset-0 z-40
+  backdrop intercepts Playwright clicks while open (user tap-outside
+  closes it via onClick — close it before tapping month tiles); tracker
+  phone unit-card body is intentionally inert (actions are the explicit
+  Files/Viewing/Offer/Interest/Edit buttons).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 135 (tracker phone cards
+  render unconditional "Area — / Rent p.a. —" rows; hide-when-empty like
+  the Tenant row). New flakes: the hr/staff 9↔10 flicker above, now
+  ignored. Real-device keyboard-up composer check (r405) still open for
+  Woody.
+- Next: r464 had the journey → r465 LIGHT (watch the mark signature is
+  back at 9 = 1×503 + 8×403 under the new ignore); then rotation #1 BGP
+  staff desktop 1440px.
+- Bring-up: canonical recipe held 28th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, fresh session so no stale cross file). Regression: smoke GREEN
+  42/0. Two-bot round 463 as 3 foreground chunks (r447 pattern; chunk
+  runner = ONE foreground node process, dev server stdio-to-FILE, warmed
+  per r455, tsx via node_modules/.bin, pkill-swept before and after each
+  chunk): victoria exit 0 (2×400 standing: rocketreach + invalid-tracker
+  probe) / mark exit 0 (9 issues = the NEW r462 standing signature, 1×503
+  keyless + 8×403 probe-by-design — matches exactly) / woody,nick,sam
+  exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit at 390px.
+  Server logs: 0 raw 500/502/504 across all chunks + sweep. Triage: 0 app
+  bugs.
+- r462 FIXES RE-VERIFIED: client-brochure-upload-parity-manage-blocked
+  PASSED its first standard-order run inside a full mark chunk (client
+  upload 200 → manage writes 403 → tile hides manage buttons); the
+  brochure-cover 422 path stayed quiet under the new cover-raster ignore
+  (no raw 500s). r460's client-properties-no-address-edit and r458's
+  staff-tracker-pitch-button-visible still green.
+- No journey (LIGHT). No deferred bugs to pick up (r462 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r463 was LIGHT → r464 FULL, rotation #4 BGP staff mobile 390px.
+
+### r462 · 2026-09-02 ~13:30 UTC · FULL — rotation #3 Landsec client mobile 390px · 2 bugs fixed
+- Bring-up: canonical recipe held 27th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
+  Regression: smoke GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the
+  fixes). Two-bot round 462 as 3 foreground chunks (r447 pattern):
+  victoria exit 0 (2×400 standing) ×2 / mark exit 0 (pre-fix 10 issues =
+  2×503 keyless + 8×403 probe-by-design; post-fix 9 — live-intel 503 now
+  in the ignore list) ×3 / woody,nick,sam exit 0 (0 issues).
+  phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw 500/502/504
+  post-fix. Triage from harness: 0 app bugs.
+- Journey (Mark @390px iPhone UA, UI login — "afternoon asset review on
+  the phone: portfolio home → Bluewater property detail (Overview/Boards
+  pills) → full tenancy schedule phone cards → Brands hub → Honi Poke
+  profile (Contacts/Compliance tabs) → news → tasks"): home KPIs
+  77/1/0/78 hold, property detail + section pills clean, tenancy phone
+  card list + KPI tiles clean (200 units), brands hub tiles, brand
+  profile tabs all fit, compliance tab renders for the client (CLAUDE.md
+  decision holds), news/tasks clean. 0 pageerrors, no h-overflow, only
+  noise-list 4xx/5xx. NOTE: client routes are /properties/:id and
+  /companies/:id — /property/:id and /company/:id silently bounce to "/"
+  via ClientRouteGuard (journey initially probed the wrong paths; guard
+  behaving as designed).
+- BUG FIXED 1 (brochures tile dead-ends for clients): property Boards →
+  Brochures panel rendered reingest/edit/archive/delete tile buttons to
+  clients, but only the UPLOAD has a gateway allowance — all manage
+  writes 403 (r452 dead-end class). BrochureTile now takes readOnly
+  (viewer isClient), hiding the four manage buttons; Download/preview
+  stay; Add button + dropzone KEPT for clients (upload parity is an
+  explicit gateway allowance — first fix attempt wrongly removed it,
+  caught by the 400-not-403 API probe and reverted).
+  client/src/components/property-brochures-panel.tsx. Verified via API
+  (upload 200, DELETE/PATCH/reingest 403) + visually both personas
+  (mark: 0 manage buttons, download intact; victoria: all intact).
+- BUG FIXED 2 (brochure cover raw 500): GET /brochures/:id/cover mapped
+  any raster failure to a raw 500 (surfaced by the new scenario — QA
+  container has no pdftoppm, spawn ENOENT; a corrupt PDF does the same
+  in prod). Render failures now return 422 and the tile's onError iframe
+  fallback handles it (server/property-brochures.ts). Genuine unexpected
+  errors still 500.
+- Harness growth: two-bot +1 client-brochure-upload-parity-manage-blocked
+  (client upload 200 → DELETE/reingest 403 → tile hides reingest btn →
+  staff-token cleanup); ignore list +cover-raster (no pdftoppm locally)
+  and brand-gaps live-intel added to the keyless family. NOTE: mark
+  chunk standing signature is now 9 issues (1×503 keyless + 8×403).
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES
+  134 (client mobile property Overview leads with a card of "—" fields).
+  Real-device keyboard-up composer check (r405) still open for Woody.
+  New flakes: none.
+- Next: r462 had the journey → r463 LIGHT (watch
+  client-brochure-upload-parity-manage-blocked's first standard-order
+  run + the new 9-issue mark signature); then rotation #4 BGP staff
+  mobile 390px.
+
+### r461 · 2026-09-02 ~11:30 UTC · LIGHT (r460 had the journey) — GREEN
+- Bring-up: canonical recipe held 26th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, fresh session so no stale cross file). Regression: smoke GREEN
+  42/0. Two-bot round 461 as 3 foreground chunks (r447 pattern;
+  chunk-runner = ONE foreground node process, dev server stdio-to-FILE,
+  warmed per r455, tsx spawned via node_modules/.bin directly — no npx
+  wrapper, r450 orphan class avoided — killed + pkill-swept after each
+  chunk): victoria exit 0 (2×400 standing: rocketreach + invalid-tracker
+  probe) / mark exit 0 (10 issues = 2×503 keyless + 8×403 probe-by-design
+  signature) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep
+  11/11 routes fit at 390px. Server logs: 0 raw 500/502/504 (news-feed
+  "500 articles" text grep hits only, r413 class). Triage: 0 app bugs.
+- r460 FIX RE-VERIFIED: client-properties-no-address-edit PASSED its
+  first standard-order run inside a full mark chunk (per r460's watch
+  note). client-calendar-sees-own-events green in standard order (no
+  expiry false-alarm). r458's staff-tracker-pitch-button-visible still
+  green.
+- No journey (LIGHT). No deferred bugs to pick up (r460 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r461 was LIGHT → r462 FULL, rotation #3 Landsec client mobile
+  390px.
+
+### r460 · 2026-09-02 ~09:00 UTC · FULL — rotation #2 Landsec client desktop 1440px · 1 bug fixed
+- Bring-up: canonical recipe held 25th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, stale cross file removed). Regression: smoke GREEN 42/0 ×2
+  (before, and FRESH_BUILD=1 after the fix). Two-bot round 460 as 3
+  foreground chunks (r447 pattern): victoria exit 0 (2×400 standing:
+  rocketreach + invalid-tracker probe) / mark exit 0 (10 issues = 2×503
+  keyless + 8×403 probe-by-design signature) ×3 / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 routes fit at 390px. Server
+  logs: 0 raw 500/502/504. Triage: 0 app bugs from the harness.
+- Journey (Mark @1440px, UI login via Client/guest reveal — "quarterly
+  asset review: dashboard KPIs → Bluewater via tracker widget → properties
+  list → property detail scroll-through → full tenancy schedule board →
+  comps → brand compliance (Honi Poke) → add-brand dialog → task quick-add
+  → news skim → ChatBGP"): all render clean, 0 pageerrors, 0 non-noise
+  4xx/5xx, no h-overflow anywhere. Compliance & KYC visible on the client
+  brand profile with no staff words; add-brand dialog search + In CRM /
+  Added / Add states correct (Testco Fashion "added" is fixture-baked
+  crm_extra_brand_ids state, verified via API — nothing left behind by the
+  journey); tenancy board 200 units + KPI strip clean; ChatBGP polite
+  keyless "Not Connected".
+- BUG FIXED (client properties table): the Property column rendered a live
+  "Set address" inline editor (InlineAddress) for CLIENTS — every
+  neighbouring cell in the table is isClientViewer-gated, but the address
+  cell wasn't, and its PUT /api/crm/properties/:id is gateway-blocked for
+  clients (not in CLIENT_ALLOWED_WRITES) → dead-end editing affordance,
+  r452 Doc Studio class. properties.tsx now shows clients the plain
+  address text (or nothing); staff editor unchanged. tsc clean,
+  FRESH_BUILD smoke re-green, verified visually both personas (mark: 0
+  editors; victoria: editors intact). New scenario
+  client-properties-no-address-edit (no editor testid + PUT 403 probe)
+  PASSED twice in full mark chunks.
+- NOT a bug (documented): mark-chunk re-runs ~1h after the victoria chunk
+  log client-calendar-sees-own-events flow-failure — victoria's cross
+  event is created at now+30min and GET /api/team-events only returns
+  future events, so late re-runs hit the documented expiry false-alarm
+  (harness note in the scenario itself). Standard order (victoria
+  immediately before mark) unaffected.
+- Property-detail phone section pills (Overview/Boards/…) resolving as
+  hidden at 1440px is the phone-only bar — desktop is one long page, not
+  a bug.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 133
+  (tenancy KPI strip "AVG ERV £PSF 0" vs "—" empty-state inconsistency).
+  Real-device keyboard-up composer check (r405) still open for Woody. New
+  flakes: none. Journey probe rows (QA-PROBE task r460) swept by next
+  round's restore/purge.
+- Next: r460 had the journey → r461 LIGHT (watch
+  client-properties-no-address-edit's first standard-order run); then
+  rotation #3 Landsec client mobile 390px.
+
+### r459 · 2026-09-02 ~19:30 UTC · LIGHT (r458 had the journey) — GREEN
+- Bring-up: canonical recipe held 24th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, stale cross file removed). Regression: smoke GREEN 42/0.
+  Two-bot round 459 as 3 foreground chunks (r447 pattern; chunk-runner =
+  ONE foreground node process, dev server stdio-to-FILE, warmed per r455,
+  server killed after each chunk): victoria exit 0 (2×400 standing:
+  rocketreach + invalid-tracker probe) / mark exit 0 (10 issues = 2×503
+  keyless + 8×403 probe-by-design signature) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 routes fit at 390px. Server
+  logs: 0 raw 500/502/504 (news-feed "500 articles" text grep hits only,
+  r413 class). Triage: 0 app bugs.
+- r458 FIX RE-VERIFIED: staff-tracker-pitch-button-visible PASSED its
+  first standard-order run inside a full victoria chunk (per r458's
+  watch note). All other recent locks green in standard order.
+- No journey (LIGHT). No deferred bugs to pick up (r458 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still
+  open for Woody.
+- Next: r459 was LIGHT → r460 FULL, rotation #2 Landsec client desktop
+  1440px.
+
+### r458 · 2026-09-02 ~16:30 UTC · FULL — rotation #1 BGP staff desktop 1440px · 1 bug fixed
+- Bring-up: canonical recipe held 23rd consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, stale cross file removed). Regression: smoke GREEN 42/0 ×2
+  (before, and FRESH_BUILD=1 after the fix). Two-bot round 458 as 3
+  foreground chunks (r447 pattern; chunk-runner = ONE foreground node
+  process that boots the dev server stdio-to-FILE, warms it per r455,
+  runs the chunk, kills the server — no orphans all round): victoria
+  exit 0 (2×400 standing: rocketreach + invalid-tracker probe) ×2 / mark
+  exit 0 (10 issues = 2×503 keyless + 8×403 probe-by-design signature) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit
+  at 390px. Server logs: 0 raw 500/502/504 across all chunks. Triage: 0
+  app bugs from the harness.
+- Journey (Victoria @1440px, UI login via Client/guest reveal —
+  "pitch-prep afternoon: news scan → Brand Intelligence hub → Amorino
+  profile → Pitch property → contacts → requirements → Image Studio →
+  global search"): dashboard/news/brands hub/CRM cards/requirements/Image
+  Studio all render clean; brand profile hero + ChatBGP chips + UK stores
+  fine; Ctrl+K search returns companies + news; pitch-mode add verified
+  end-to-end ("Target added", status Identified). 0 pageerrors, 0
+  non-noise 4xx/5xx, no h-overflow.
+- BUG FIXED (desktop tracker pitch mode): "Pitch property" on a brand
+  profile lands on the tracker with a banner "use the '+ <brand>' button"
+  — but that button renders in the Target Tenant cell, which at 1440px
+  sits UNDER the 205px sticky Actions & Activity column at default
+  scroll, so the banner pointed at a button the user couldn't see (it was
+  only reachable by discovering the inner h-scroll). available-units.tsx
+  now auto-scrolls the table container once (one-shot ref, 400ms after
+  rows land) so the first pitch button clears the pinned column. tsc
+  clean, FRESH_BUILD smoke re-green, verified visually on BOTH paths
+  (hard load with query params + SPA nav via the profile button):
+  btnRight 1137 <= visibleRight 1148, buttons fully visible next to each
+  "+ Target operator" input. New scenario
+  staff-tracker-pitch-button-visible PASSED inside a full victoria chunk.
+- NOT bugs: "UK entity search complete · 0 UK stores found" toast on
+  brand-profile open — keyless/no-network env, the auto entity scan finds
+  nothing locally (prod has keys); CRM landlords list shows both "Landsec"
+  and "Land Securities Group PLC" — fixture data, and the app has a
+  dedicated duplicates/scan flow for it.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 132
+  (Requirements toolbar mixes "Wipe & resync"-class admin plumbing with
+  everyday actions at equal weight). Real-device keyboard-up composer
+  check (r405) still open for Woody. New flakes: none.
+- Note for future rounds: journey pt2 left Amorino as an Identified
+  target on unit BX10 in bgpsmoke (probe click) — wiped by the next
+  round's restore, r450 precedent.
+- Next: r458 had the journey → r459 LIGHT (watch
+  staff-tracker-pitch-button-visible's first standard-order run); then
+  rotation #2 Landsec client desktop 1440px.
+- Bring-up: canonical recipe held 22nd consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot). Regression: smoke GREEN 42/0. Two-bot round 457 as 3
+  foreground chunks (r447 pattern, stdio to FILE, warmed server per r455
+  note — no cold-start ECONNRESET): victoria exit 0, 67 ok (2×400
+  standing: rocketreach + invalid-tracker probe) / mark exit 0, 153 ok
+  (10 issues = 2×503 keyless + 8×403 probe-by-design signature) /
+  woody,nick,sam exit 0, 18 ok (0 issues). phone-overflow-sweep 11/11
+  routes fit at 390px. Server logs: 0 raw 500/502/504 (news-feed text
+  grep hits only, r413 class). Triage: 0 app bugs.
+- Recent locks all re-verified green in standard-order chunks:
+  client-ui-login-reload-no-bounce (r454),
+  client-landlord-picker-landlords-only + client-files-no-doc-studio
+  (r452), staff-mobile-page-actions-reachable (r448),
+  client-info-sheet-roundtrip, staff-deal-verdict-flow,
+  client-no-deal-verdict-poll.
+- No journey (LIGHT). No deferred bugs to pick up (r456 deferred none).
+- SETUP NOTE for orphan sweeps: pgrep -f "server/index.ts" run from the
+  QA session's own Bash tool matches the session's wrapper shell (the
+  pattern sits in the command line) — pids that increment each call and
+  never die are that artefact, not a respawning server. Confirm with
+  pgrep -a and a curl to :5000 before killing anything.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r457 was LIGHT → r458 FULL, rotation #1 BGP staff desktop 1440px.
+
+### r456 · 2026-09-02 ~11:30 UTC · FULL — rotation #4 BGP staff mobile 390px — GREEN
+- Bring-up: canonical recipe held 21st consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, stale cross file removed). Regression: smoke GREEN 42/0.
+  Two-bot round 456 as 3 foreground chunks (r447 pattern, stdio to FILE,
+  warmed server per r455 note — no cold-start ECONNRESET): victoria
+  exit 0 (2×400 standing: rocketreach + invalid-tracker probe) / mark
+  exit 0 (10 issues = 2×503 keyless + 8×403 probe-by-design signature) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit
+  at 390px. Server logs: 0 raw 500/502/504 (news-feed text grep hits
+  only, r413 class). Triage: 0 app bugs from the harness.
+- Journey (Victoria @390px iPhone UA+touch, UI login via Client/guest
+  reveal — "between meetings on the phone: check mail, catch up on
+  Messages/ChatBGP, look up Starbucks for a pitch, glance at the Bluewater
+  tenancy schedule"): login form clean → cold-open lands on Messages →
+  /mail (clean Outlook connect prompt, keyless degrade) → ChatBGP thread
+  (greeting, suggestion chips, composer) → Brands hub (category tiles,
+  facet chips, search) → Starbucks profile (hero street-view image, tabs
+  Chat/Contacts/Intel/Stores all fit; Key Contacts + BGP Engagement clean)
+  → Dashboard home tab (billing KPIs, tiles, boards, AI briefing) →
+  Bluewater property Overview + Boards → Tenancy Schedule card (phone
+  card-list variant, 200 units, status chips, NIA KPIs). No h-overflow on
+  any surface, 0 pageerrors, 0 non-noise 4xx/5xx. Bugs found: 0.
+- NOT bugs (documented so future rounds don't re-triage): (a) staff
+  cold-open lands on /chatbgp (Messages list) and bottom nav is 4 tabs —
+  Mail tab REMOVED, ChatBGP tab folded into Messages (Woody 2026-08-22,
+  mobile-bottom-nav.tsx comment; supersedes the r209/r227 5-tab layout;
+  /mail still routable and clean); (b) Bluewater Plans panel renders a
+  full-bleed SOLID RED plan — that's the smoke fixture's QA-PLAN-GATE
+  probe plan image (only property_plans row in the fixture), fixture
+  data, not a rendering bug; (c) brand-profile hero shows a bare grey
+  260px block for the first seconds while the flagship street-view image
+  loads → UX-NOTES 131, loads fine.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 131 (brand hero needs a
+  loading skeleton). New flakes: none. Real-device keyboard-up composer
+  check (r405) still open for Woody.
+- Next: r456 had the journey → r457 LIGHT; then rotation #1 BGP staff
+  desktop 1440px.
+
+### r455 · 2026-09-02 ~08:00 UTC · LIGHT (r454 had the journey) — GREEN
+- Bring-up: canonical recipe held 20th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, stale cross file removed after restore). Regression: smoke GREEN
+  42/0. Two-bot round 455 as 3 foreground chunks (r447 pattern, dev server
+  child of a scratchpad node runner, stdio to a FILE, "server/index.ts"
+  sweep before AND after each chunk): victoria exit 0 (2×400 standing:
+  rocketreach + invalid-tracker probe) / mark exit 0 (10 issues = 2×503
+  keyless + 8×403 probe-by-design signature) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 routes fit at 390px. Server logs:
+  0 raw 500/502/504 across all chunks. Triage: 0 app bugs.
+- r454 FIX RE-VERIFIED: client-ui-login-reload-no-bounce PASSED its first
+  standard-order run inside a full mark chunk (per r454's watch note).
+  r452's client-landlord-picker-landlords-only + client-files-no-doc-studio
+  green again.
+- No journey (LIGHT). No deferred bugs to pick up (r454 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey this round). New flakes: one
+  mark-chunk cold start — the FIRST login POST after dev-server boot got
+  ECONNRESET while Vite compiled the first page (r262 class, harness not
+  app); clean on re-run — if it repeats, warm the server with one page hit
+  before starting a chunk. Real-device keyboard-up composer check (r405)
+  still open for Woody.
+- Next: r455 was LIGHT → r456 FULL, rotation #4 BGP staff mobile 390px.
+
+### r454 · 2026-09-02 ~06:30 UTC · FULL — rotation #3 Landsec client mobile 390px · 1 bug fixed
+- Bring-up: canonical recipe held 19th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied before two-bot).
+  Regression: smoke GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the
+  fix). Two-bot round 454 as 3 foreground chunks: victoria exit 0 (2×400
+  standing) ×2 / mark exit 0 (152-153 ok, 2×503 keyless + 8×403
+  probe-by-design) ×2 / woody,nick,sam exit 0 (0 issues).
+  phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw 500/502/504
+  (news-feed text grep hits only, r413 class). Harness triage: 0 app bugs.
+- Journey (Mark @390px iPhone UA — "Monday morning on the phone: portfolio
+  home → Deals tab → Letting Tracker → search U124 → viewing dialog →
+  Messages/ChatBGP → News → Tasks"): home widget 77/1/0/78 (r438 holds),
+  tracker mobile cards + wrapped status chips clean, search filters 3/78,
+  Add Viewing date defaults today (UX2 holds), Deals sub-tab loads 2 deals
+  + "+2 letting deals" subtitle (r209 UX7 holds), client Files dialog =
+  Upload + tabs, NO Doc Studio (r452 holds), ChatBGP/News/Tasks clean.
+  No h-overflow on any surface; only noise-list 4xx/5xx.
+- BUG FIXED (found via the journey's reload flakiness, real phone-user
+  impact): UI login + full page reload within the query-persister's 2s
+  throttle window bounced the user BACK to the sign-in screen with a valid
+  session cookie — the persisted react-query cache restored the login
+  screen's auth/me=null as FRESH (staleTime 5min), so AppContent rendered
+  LoginPage and never re-probed the server (traced: zero /api requests
+  after reload). Two-part fix: query-persist.ts shouldDehydrateQuery never
+  persists a null auth/me (a real signed-in user still persists for the
+  instant paint), and queryClient.ts auth/me defaults add
+  refetchOnMount:"always" so any bad restore self-heals in the background
+  (poll exemption for the 429 class untouched). tsc clean, FRESH_BUILD
+  smoke re-green, fix verified visually (login → immediate goto
+  /deals/letting now renders the tracker; previously stuck on Sign in for
+  40s+). New scenario client-ui-login-reload-no-bounce PASSED in a full
+  mark chunk.
+- HARNESS NOTE: a mark-only chunk run WITHOUT a fresh victoria chunk first
+  logs 3 flow-failures (client-comps-readonly Net Effective, deal-detail
+  legacy-ID 404, client-brief-target-scope no briefId) — cross-file
+  dependencies on staff-created rows, not app bugs; run victoria before
+  mark after any restore. Also re-proven: killing the serve wrapper (npx)
+  leaves the tsx node child on :5000 — sweep pgrep -f "server/index.ts"
+  after EVERY browser run, not just two-bot chunks (an orphan EADDRINUSE'd
+  two probe runs this round).
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 130
+  (mobile tracker card titles repeat the property name up to 3×, truncating
+  the unit ref at 390px). Real-device keyboard-up composer check (r405)
+  still open for Woody. New flakes: none beyond the harness note above.
+- Next: r454 had the journey → r455 LIGHT (watch
+  client-ui-login-reload-no-bounce's first standard-order run); then
+  rotation #4 BGP staff mobile 390px.
+
+### r453 · 2026-09-02 ~04:30 UTC · LIGHT (r452 had the journey) — GREEN
+- Bring-up: canonical recipe held 18th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot). Regression: smoke GREEN 42/0. Two-bot round 453 as 3
+  foreground chunks (r447 pattern; dev server spawned as a child of a
+  scratchpad node runner, stdio to a FILE per r449 rule, pkill -f
+  "server/index.ts" sweep after each chunk per r452 rule): victoria
+  exit 0 (2×400 standing: rocketreach + invalid-tracker probe) / mark
+  exit 0 (10 issues = 2×503 keyless + 8×403 probe-by-design signature) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 routes
+  fit at 390px. Server logs: 0 raw 500/502/504 (only news-feed text
+  grep hits, r413 class). Triage: 0 app bugs.
+- r452's TWO FIXES RE-VERIFIED: client-landlord-picker-landlords-only
+  and client-files-no-doc-studio both PASSED their first standard-order
+  full run inside the mark chunk (per r452's watch note).
+- No journey (LIGHT). No deferred bugs to pick up (r452 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still
+  open for Woody.
+- Next: r453 was LIGHT → r454 FULL, rotation #3 Landsec client mobile
+  390px.
+
+### r452 · 2026-09-02 ~02:00 UTC · FULL — rotation #2 Landsec client desktop 1440px · 2 bugs fixed
+- Bring-up: canonical recipe held 17th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule). Regression:
+  smoke GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the fixes).
+  Two-bot round 452 as 3 foreground chunks, run GREEN twice (pre-fix and
+  post-fix on a verified-fresh server): victoria exit 0 (2×400 standing) /
+  mark exit 0 (2×503 keyless + 8×403 probe-by-design) / woody,nick,sam
+  exit 0. phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (one grep hit = news-feed text, r413 class).
+- Journey (Mark @1440px, UI login via Client/guest reveal — "Monday
+  lettings review: dashboard → Letting Tracker (reworked cluster/labels/
+  Files) → viewings dialog → deals board → news"): dashboard KPIs clean,
+  tracker renders 78 units w/ inner h-scroll (2600px table in its own
+  container + synced bottom bar, page never h-scrolls), Add Viewing date
+  defaults today (UX2 holds), Files dialog + info-sheet row clean, no
+  company leak in client pickers (API probe: slice + Landsec only, no
+  Hammerson). 0 pageerrors, only noise-list 4xx/5xx, no overflow.
+- BUG FIXED 1: landlord/client pickers offered every TENANT brand as a
+  landlord (Starbucks/Amorino/… in Mark's "Link landlord" dropdown) — the
+  deal FORM was cleaned up long ago ("Tenants joining a Landlord picker
+  was the top user complaint", its own comment) but three spots kept the
+  legacy filter: deals.tsx inline landlord column cell, ClientXeroCell
+  popover, deal-detail.tsx landlord picker. Dropped the startsWith
+  ("Tenant") clause in all three. Verified visually: Mark's picker now
+  offers Landsec only; staff unaffected. New scenario
+  client-landlord-picker-landlords-only.
+- BUG FIXED 2: tracker Files dialog showed "Create in Doc Studio" to
+  clients — it window.opens /templates, which is NOT in
+  CLIENT_ALLOWED_ROUTES, so the new tab bounced clients straight to
+  their dashboard (dead-end button). Now staff-only (isClient prop, same
+  pattern as HotsDialog); client empty-state copy drops the Doc Studio
+  mention; Upload stays. Verified visually both personas. New scenario
+  client-files-no-doc-studio. Both new scenarios PASSED twice in full
+  mark chunks.
+- HARNESS FLAKE ROOT-CAUSED (r450's orphan, now with the real pattern):
+  pgrep/pkill -f "tsx server" NEVER matches the actual server — tsx's
+  child runs as `node --require …/tsx/preflight.cjs --import
+  …/loader.mjs server/index.ts` (no "tsx" before "server"). An orphan
+  from this round's first chunk silently kept :5000 for ~1h; symptoms
+  seen before diagnosis (do NOT re-triage as app bugs): (a)
+  staff-map-goad-concurrent 500 "relation goad_units does not exist" —
+  stale process had ensured=true from before the restore dropped the
+  table, its own log showed NO goad requests; (b) 12 mark flow-failures
+  = stale cross-452.json pointing at staff rows the restore wiped.
+  Sweep with pgrep -f "server/index.ts" and rm the QA_CROSS_FILE after
+  any restore. After killing the orphan, all 3 chunks green first try.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES
+  129 (client deals board "Client" cell empty + staff-worded "+ Link
+  landlord" for their own deals). Real-device keyboard-up composer check
+  (r405) still open for Woody.
+- tsc clean, FRESH_BUILD smoke re-green post-fix. New flakes: none
+  beyond the sweep-pattern rule above.
+- Next: r452 had the journey → r453 LIGHT (watch the two new scenarios'
+  first standard-order full run); then rotation #3 client mobile 390px.
+
+### r451 · 2026-09-02 ~00:40 UTC · LIGHT (r450 had the journey) — GREEN
+- Bring-up: canonical recipe held 16th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
+  451 as 3 foreground chunks (r447 pattern, dev-server stdio to a FILE,
+  tsx child-PID sweep after each chunk per r450 flake): victoria exit 0
+  (2×400 standing: rocketreach + invalid-tracker probe) / mark exit 0
+  (10 issues = standing 503 keyless + 8×403 probe-by-design signature) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit
+  at 390px. Server logs: 0 raw 500/502/504 (only news-feed text / UUID
+  substring grep hits, r413 class). Triage: 0 app bugs.
+- r450's TWO FIXES RE-VERIFIED: staff-tracker-status-pills-reachable and
+  staff-wip-client-landlord-fallback both PASSED their first
+  standard-order run inside the victoria chunk.
+- HARNESS SETUP TRAP found + documented (not an app bug): first mark run
+  logged 2 flow-failures (Honi Poke missing from client turnover board +
+  client search). Root cause: this round's chunk runner went straight
+  from run-smoke restore to two-bot, skipping the r436 recipe's
+  "seed-personas applied first" step — the smoke fixture does NOT contain
+  Honi Poke; qa/seed-personas.sql creates it (verified: zero staff-side
+  hits too, no fixture row, no deletion). Applied the seed to bgpsmoke →
+  full mark chunk re-run clean. Rule added to Fresh-container setup.
+- No journey (LIGHT). No deferred bugs to pick up (r450 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none (the seed trap is a setup rule, above). Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r451 was LIGHT → r452 FULL, rotation #2 Landsec client desktop
+  1440px.
+
+### r450 · 2026-09-01 ~23:55 UTC · FULL — rotation #1 BGP staff desktop 1440px · 2 bugs fixed
+- Bring-up: canonical recipe held 15th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0 ×2 (before, and
+  FRESH_BUILD=1 after the fixes). Two-bot round 450 as 3 foreground chunks
+  (r447 pattern, dev-server stdio to a FILE per r449 rule): victoria /
+  mark / woody,nick,sam all exit 0; 12 logged issues = the exact standing
+  noise signature (rocketreach 400, invalid-tracker probe 400, brand-gaps/
+  live-intel + commentary-regen 503 keyless, 8×403 probe-by-design scope
+  rows). Server logs: 0 raw 500/502/504 (one grep hit = news-feed log
+  text, r413 class). phone-overflow-sweep 11/11 routes fit at 390px.
+  Triage: 0 app bugs from the harness.
+- Journey (Victoria @1440px, "Tuesday-morning letting review: dashboard →
+  Letting Tracker (new Actions & Activity cluster, Marketing labels, Files
+  dialog) → WIP report (cross-filter boards, Columns menu) → global search
+  → leasing schedule"): tracker renders 81 units with the consolidated
+  cluster fully labelled (tooltips on every icon), Files dialog clean
+  (tabs + upload + info-sheet row), WIP TEAM cross-filter works (6→2 rows,
+  chip badge "TEAM 1"), Columns 12/14 = Billing Entity + Fee Split
+  default-hidden as intended, search deal-name rows fine, leasing board's
+  ARCHIVED banner correct. 0 pageerrors, 0 non-noise 4xx/5xx.
+- BUG FIXED 1 (desktop tracker): the status-pill row sat in a ScrollArea
+  whose default ScrollBar is vertical-only — the row (1218px) clips at the
+  viewport with NO way to scroll, so the Invoiced pill was unreachable at
+  1440px (Withdrawn/Completed too at 1280px). Swapped to the house
+  overflow-x-auto container (available-units.tsx; DESIGN.md "wide things
+  scroll inside their own containers"). Verified live at 1440 + 1280:
+  pill reachable + clickable (filters to the INV group), page never
+  h-scrolls. New scenario staff-tracker-status-pills-reachable.
+- BUG FIXED 2 (WIP report): "Client" column showed "—" for every deal
+  without a direct counterparty even when the property's landlord is
+  known — the /api/wip handler's comment promises the property-landlord
+  fallback, but its properties select only fetched {id, name}, so
+  propLandlordId was always undefined (server/crm.ts 7038). Added
+  landlordId to the select. Verified via API + visually: the fixture's 3
+  Bluewater deals now show Landsec, linked. New scenario
+  staff-wip-client-landlord-fallback. Both new scenarios PASSED inside a
+  full victoria chunk re-run post-fix.
+- NOT bugs: WIP TEAM board "£0" rows (fees sit on team-less deals →
+  UX-NOTES 128); QA-R450 probe deal visible in WIP/comps (purged next
+  round, r442 precedent).
+- New flake (runner infra): killing the chunk-runner's `npx tsx` wrapper
+  PID can ORPHAN the tsx child, which keeps :5000 and a bgpsmoke
+  connection — later spawns silently lose the port race and probes then
+  talk to STALE SERVER CODE (burned ~10 min re-verifying fix 2), and the
+  next smoke restore fails "database in use". Before trusting a
+  server-side re-verify or a restore, ps for "tsx server" and kill the
+  child PIDs.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 128.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- tsc clean ×2, FRESH_BUILD smoke re-green post-fix.
+- Next: r450 had the journey → r451 LIGHT (watch the two new scenarios'
+  first standard-order run); then rotation #2 Landsec client desktop.
+
+### r449 · 2026-09-01 ~22:50 UTC · LIGHT (r448 had the journey) — GREEN
+- Bring-up: canonical recipe held 14th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round 449
+  as 3 foreground chunks: victoria 65 ok / mark 150 ok / woody,nick,sam 18
+  ok, exit 0 all chunks; 12 logged issues = the exact standing noise
+  signature (rocketreach 400, invalid-tracker probe 400, brand-gaps/
+  live-intel + commentary-regen 503 keyless, 8×403 probe-by-design scope
+  rows). Server logs: 0 raw 500/502/504. phone-overflow-sweep 11/11 routes
+  fit at 390px. Triage: 0 app bugs.
+- r448's TWO FIXES RE-VERIFIED: (1) staff-mobile-page-actions-reachable
+  PASSED its first full harness run, and visually at 390px the Image Studio
+  action row wraps to two rows with Upload fully on-screen (rect 155-251 in
+  390); (2) WIP title wraps "— National Leasing" as a unit, no orphaned em
+  dash, sw==iw at 390px. Screenshots taken.
+- HARNESS-INFRA flake found + solved (runner pattern, not the app or
+  two-bot): capturing the dev server's stdout via a PIPE while the runner
+  blocks in spawnSync freezes the server once ~64KB of log output fills the
+  pipe, and the chromium session then collapses — every remaining scenario
+  logs "Target page, context or browser has been closed", deterministically
+  at the same scenario (killed the victoria chunk twice before diagnosis).
+  Rule: the chunk runner must send dev-server stdio to a FILE (openSync fd),
+  never a pipe. two-bot itself grew opt-in QA_DEBUG hooks (step timestamps +
+  page close/crash/browser-disconnect events) — inert without QA_DEBUG=1,
+  used to pin this down; keep them.
+- No journey (LIGHT). No deferred bugs to pick up (r448 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey this round). New flakes: the
+  pipe-freeze rule above. Real-device keyboard-up composer check (r405)
+  still open for Woody.
+- Next: r449 was LIGHT → r450 FULL, rotation #1 BGP staff desktop 1440px.
+
+### r448 · 2026-09-01 ~21:50 UTC · FULL — rotation #4 BGP staff mobile 390px · 2 bugs fixed
+- Bring-up: canonical recipe held 13th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0 ×2 (before, and
+  FRESH_BUILD=1 after the fixes). Two-bot round 448 as 3 foreground chunks
+  (QA_PERSONAS victoria / mark / woody,nick,sam + QA_CROSS_FILE, r447
+  pattern; dev server spawned as a CHILD of a scratchpad node runner —
+  setsid/& never on the Bash command line, works clean): exit 0 all
+  chunks, 12 logged issues = the exact standing noise signature
+  (rocketreach 400, invalid-tracker probe 400, brand-gaps/live-intel +
+  commentary-regen 503 keyless, 8×403 probe-by-design scope rows). Server
+  log: 0 raw 500/502/504. phone-overflow-sweep 11/11 routes fit at 390px.
+  Triage: 0 app bugs from the harness.
+- Journey (Victoria @390px iPhone UA, "evening catch-up on the phone: news
+  scan, find a contact, comps ahead of a pitch, WIP report, Bluewater
+  property page, Image Studio"): home → /news (cards clean) → /contacts
+  (CRM slice, search, Hammerson card → /companies/:id) → /comps →
+  /wip-report → /properties/:bluewater (phone section switcher, ownership
+  panel — renders fine; takes ~3.5s on dev-server first hit, lazy-chunk
+  compile, don't mistake the skeleton for a hang) → /image-studio. 0
+  pageerrors, 0 non-noise 4xx/5xx, no h-overflow anywhere.
+- BUG FIXED 1 (real user impact): fullHeight PageLayout's header-actions
+  row had NO flex-wrap (the non-fullHeight variant has it), so at 390px
+  Image Studio's four action buttons ran past the right edge — Upload sat
+  fully off-screen (rect 466-563px in a 390px viewport), unreachable and
+  not scrollable. Same clipped row on /deals, /properties, /kyc-clouseau
+  (all fullHeight + actions). One-line fix in page-layout.tsx (flex-wrap +
+  sm:flex-shrink-0, matching the other variant). Verified live: Upload on
+  screen at 390px, tap opens the dialog; deals/wip still sw==iw. NOTE:
+  phone-overflow-sweep can never catch this class — clipped content
+  doesn't extend scrollWidth. New two-bot scenario
+  staff-mobile-page-actions-reachable locks it (Upload bounding rect
+  inside viewport); assertion logic verified live pre-commit, watch its
+  first full harness run r449.
+- BUG FIXED 2 (micro): WIP Report title wrapped "WIP Report — | National
+  Leasing" at 390px, orphaning the em dash at the end of line 1 —
+  whitespace-nowrap on the team-label span (wip-report.tsx) so "— National
+  Leasing" wraps as a unit. Verified live.
+- NOT bugs: "BGP CLIENTS 0" chip on CRM (fixture landlords are all plain
+  company_type='Landlord', is_portfolio_account=false — prod Landsec
+  carries the flag); /property/:id 404 (real route is /properties/:id);
+  comps list showing this round's QA-COMP probe (purged next round, r442
+  precedent).
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 127
+  (CRM landlord search 0-hit state is a blank area on the phone).
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- New flakes: none. tsc clean, FRESH_BUILD smoke re-green post-fix.
+- Next: r448 had the journey → r449 LIGHT; then rotation #1 staff desktop.
+
+### r447 · 2026-09-01 ~22:20 UTC · LIGHT (r446 had the journey) — GREEN
+- Bring-up: canonical recipe held 12th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
+  447 ran on the MERGED tracker-filler-column tree (4da9811/446ed73, per
+  r446 note) — FIRST full two-bot on it: exit 0 across all chunks, 232
+  [ok] scenario lines (victoria/mark/woody/nick/sam), 12 logged issues =
+  the exact standing noise signature (rocketreach 400, invalid-tracker
+  probe 400, brand-gaps/live-intel + commentary-regen 503 keyless, 8×403
+  probe-by-design scope rows). Server logs: 0 raw 500/502/504 (only
+  news-feed text / port line / UUID substring grep hits).
+  phone-overflow-sweep 11/11 routes fit at 390px. Triage: 0 app bugs.
+- r437 OPEN FLAG RESOLVED: the unit info-sheet generator is now in staging
+  (server/unit-info-sheet.ts, arrived via the JOGQK merges) and
+  client-info-sheet-roundtrip PASSED at runtime this round (own unit 200 +
+  sane page count, rival unit gated). No re-probe owed.
+- Harness change (infra, this round): setsid/background launches are now
+  classifier-blocked, so the r445 "wrapper that outlives the Bash window"
+  pattern is dead. two-bot-round.mjs grew QA_PERSONAS (persona-list env
+  filter) + QA_CROSS_FILE (persists the shared `cross` state as JSON) so
+  the round runs as 3 foreground chunks — victoria / mark / woody,nick,sam
+  — each under the 600s exec cap with its own dev-server boot (same DB, so
+  cross-checks still line up). Default behaviour unchanged (no env vars =
+  all personas, no cross file). Chunk [ok] split this round: 64/150/18.
+- No journey (LIGHT). No deferred bugs to pick up (r446 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey this round). New flakes: none.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r447 was LIGHT → r448 FULL, rotation #4 BGP staff mobile 390px.
+
+### r446 · 2026-09-01 ~20:50 UTC · FULL — rotation #3 Landsec client mobile 390px — GREEN
+- Bring-up: canonical recipe held 11th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
+  446: exit 0, 232 [ok] scenario lines (victoria/mark/woody/nick/sam),
+  12 logged issues = the exact standing noise signature (rocketreach 400,
+  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
+  keyless, 8×403 probe-by-design scope rows). Server log: 0 raw
+  500/502/504 (one "500" grep hit = news-feed log text, r413 class).
+  phone-overflow-sweep 11/11 routes fit at 390px. Triage: 0 app bugs.
+- Journey (Mark @390px iPhone UA, brand-intel prep: home → Brands slice
+  (9 brands, category chips) → Honi Poke profile (pill tabs, Compliance
+  & KYC panel visible, staff words absent) → CONTACTS "add role…" probe
+  (client PUT /api/crm/contacts/:id 200 — INTENDED, allowlisted
+  server/index.ts:3625, scope-jailed in crm.ts; rival gates green in
+  two-bot) → COMPLIANCE + INTEL tabs → Add-brand dialog (374px wide, no
+  overflow) → Testco Jewellers add roundtrip (POST add-brand 200, 9→10 +
+  Luxury chip appears → DELETE 200, back to 9) → Bluewater property page
+  → full tenancy schedule (200 units, stat strip, no h-overflow at any
+  scroll depth) → News tab → Tasks tab + open task): 0 pageerrors,
+  0 non-noise 4xx/5xx, 0 overflow on every surface, 0 bugs. Home widget
+  still 77/1/0/78 (r438 fix holds).
+- Harness note (Playwright, not app): brand-card taps need force:true —
+  the news-feed images below keep shifting layout so the stability check
+  spins; synthetic el.click() does not navigate (cards are div+handler,
+  no <a href>).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 126 (tenancy schedule on the
+  phone stacks two headers + dangling "· Bluewater" title fragment).
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- New flakes: none.
+- END-OF-ROUND MERGE VERIFIED: final push collided with parent-side
+  f1d6887 (JOGQK merge — tracker slack-width filler column,
+  available-units.tsx + wip-report.tsx); merged (4da9811) and re-verified
+  the merged tree: tsc clean, /available desktop 1440px renders 85 rows
+  with Marketing pills + actions cluster and no h-overflow, /wip-report
+  renders, both routes sw==iw at 390px, 0 pageerrors. r447 should run
+  the full two-bot on this tree (this round's two-bot ran pre-merge).
+- Next: r446 had the journey → r447 LIGHT; then rotation #4 staff mobile
+  390px.
+
+### r445 · 2026-09-01 ~19:15 UTC · LIGHT (r444 had the journey) — GREEN
+- Bring-up: canonical recipe held 10th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
+  445: exit 0, 232 [ok] scenario lines (victoria/mark/woody/nick/sam),
+  12 logged issues = the exact standing noise signature (rocketreach 400,
+  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
+  keyless, 8×403 probe-by-design scope rows). Server log: 0 raw
+  500/502/504 (one "500" grep hit = news-feed log text, r413 class).
+  phone-overflow-sweep 11/11 routes fit at 390px. 0 app bugs.
+- No journey (LIGHT). No deferred bugs to pick up (r444 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Harness note: two-bot (~13 min) outlives a 600s foreground Bash window;
+  run it via a wrapper that logs to a file and let it finish (this round's
+  wrapper pattern: seed-personas → tsx dev server on :5000 w/ trap-kill →
+  two-bot → sweep).
+- Next: r445 was LIGHT → r446 FULL, rotation #3 Landsec client mobile
+  390px.
+
+### r444 · 2026-09-01 ~19:00 UTC · FULL — rotation #2 Landsec client desktop 1440px — GREEN
+- Bring-up: canonical recipe held 9th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0.
+- Two-bot round 444 (FIRST full two-bot on the merged c7356c1 tracker-rework
+  tree, per r443 note — merge confirmed harness-clean): exit 0, 232 [ok]
+  scenario lines, 12 logged issues = the exact standing noise signature
+  (rocketreach 400, invalid-tracker probe 400, brand-gaps/live-intel +
+  commentary-regen 503 keyless, 8×403 probe-by-design scope rows). Server
+  log: 0 raw 500/502/504 (one "500" grep hit = news-feed log text, r413
+  class). phone-overflow-sweep 11/11 routes fit at 390px. 0 app bugs.
+- Journey (Mark @1440px, quarterly-review prep: dashboard → Bluewater page →
+  tenancy schedule (inline section + full /tenancy-schedule/:id, 200 units)
+  → Brand Intelligence slice → self-add brand full roundtrip (dialog search
+  "Jewellers" → Add → toast + Added badge + Total Brands 9→10 + explorer +
+  Quick Access → out-of-slice profile loads w/ Compliance&KYC visible, no
+  staff buttons, error-boundary-free → Remove 200) → news → tasks →
+  overflow checks): 0 pageerrors, 0 non-noise 4xx/5xx, 0 h-overflow at
+  1440px, 0 bugs. r442's turnover-leaders fix holds client-side (badge==stat
+  ==Honi Poke only); r438 widget/tracker agreement holds (77 Avail + 1 Neg
+  everywhere). "No brands match" on directory search is fixture data (no
+  such brand), not a bug — endpoint returns out-of-slice tenants and
+  correctly excludes landlords/agents.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Harness growth: none needed (client-add-brand-from-directory +
+  client-add-brand-remove-ui already lock the journey's API surface).
+- Suggestions: UX-NOTES 125 (tenancy stat strip prints "AVG ERV £PSF 0"
+  where PASSING RENT prints "—" for equally-unset data). Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- New flakes: none.
+- Next: r444 had the journey → r445 LIGHT; then rotation #3 client mobile
+  390px.
+
+### r443 · 2026-09-01 ~18:15 UTC · LIGHT (r442 had the journey) — GREEN
+- Bring-up: canonical recipe held 8th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
+  443: exit 0, 232 [ok] scenario lines (victoria/mark/woody/nick/sam),
+  12 logged issues = the exact standing noise signature (rocketreach 400,
+  invalid-tracker probe 400, brand-gaps/live-intel + commentary-regen 503
+  keyless, 8×403 probe-by-design scope rows). Server log: 0 raw
+  500/502/504 (one "500" grep hit = news-feed log text, r413 class).
+  0 app bugs.
+- staff-brands-hub-turnover-brands-only (new in r442) PASSED its first
+  full harness run. r440's add-unit-dialog + r438's dialog/roll-up fixes
+  hold.
+- MID-ROUND MERGE VERIFIED: heartbeat push collided with a parent-side
+  commit 3fb2741 (shorter target-status labels — Meeting/Inspection/HOTs
+  display map — + tighter tracker column widths, "Existing Tenant" →
+  "Tenant"); merged it in (b237b96) and re-verified the merged tree:
+  tsc clean, phone-overflow-sweep 11/11 routes fit at 390px, targeted
+  tracker check green (desktop 1440px renders 85 rows with single-line
+  "Tenant" header + no pageerrors; /available 390px sw==iw), smoke GREEN
+  42/0 again on FRESH_BUILD.
+- qa/phone-overflow-sweep.mjs ran as part of regression for the first
+  time (per r442 note) — keep it in the round.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- SECOND MID-ROUND MERGE VERIFIED: c7356c1 (JOGQK merge — tracker rework:
+  Marketing pill labels, per-row withdraw ban icon, Area & Costs merged
+  column, 2-line actions cluster, scrolling comments; app-map updated with
+  it). Re-verified: tsc clean, targeted tracker check green (desktop
+  1440px 84 rows, Marketing group/pills + new actions cluster render, no
+  pageerrors; /available 390px sw==iw), smoke GREEN 42/0 on FRESH_BUILD.
+  r444 should run the full two-bot on this tree (this round's two-bot ran
+  pre-merge).
+- Next: rotation #2 Landsec client desktop (r443 was LIGHT → r444 FULL).
 
 ### r442 · 2026-09-01 ~17:15 UTC · FULL — rotation #1 BGP staff desktop 1440px · 1 bug fixed
 - Bring-up: canonical recipe held 7th consecutive time (qa:pg once →

@@ -880,7 +880,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               <p className="text-[10px] text-muted-foreground leading-tight">Landlord</p>
               <InlineLinkSelect
                 value={deal.landlordId}
-                options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
+                options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
                 href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
                 onSave={(v) => handlePartySave("landlordId", v || null)}
                 onCreate={(name) => createCounterparty("landlordId", "Landlord", name)}

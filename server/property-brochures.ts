@@ -150,6 +150,15 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // pick them up without a manual migration step.
   ensureIngestColumns().catch(err => console.warn("[property-brochures] init:", err?.message));
 
+  // :bid feeds a uuid-typed column — a malformed value (e.g. the literal
+  // "undefined") makes postgres throw, surfacing as a raw 500.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const badBid = (req: Request, res: Response): boolean => {
+    if (UUID_RE.test(String(req.params.bid))) return false;
+    res.status(400).json({ error: "Invalid brochure id" });
+    return true;
+  };
+
   // List brochures attached to a property, grouped by type with the
   // archived rows separated so the UI's accordion shows them only
   // when asked.
@@ -279,6 +288,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // before re-inserting, so hand-edited rows are preserved.
   app.post("/api/properties/:id/brochures/:bid/reingest", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       await ensureIngestColumns();
       const { rows } = await pool.query<BrochureRow>(
         `SELECT * FROM property_brochures WHERE id = $1 AND property_id = $2`,
@@ -302,6 +312,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // and the download button (download=1 adds Content-Disposition).
   app.get("/api/properties/:id/brochures/:bid/file", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       const { clientBlockedForProperty } = await import("./company-scope");
       if (await clientBlockedForProperty(req, String(req.params.id))) {
         return res.status(403).json({ error: "Read-only access for client accounts" });
@@ -341,6 +352,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // pdftoppm (same tool the vision ingest uses) and cached on disk.
   app.get("/api/properties/:id/brochures/:bid/cover", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       const { clientBlockedForProperty } = await import("./company-scope");
       if (await clientBlockedForProperty(req, String(req.params.id))) {
         return res.status(403).json({ error: "Read-only access for client accounts" });
@@ -367,11 +379,20 @@ export function registerPropertyBrochureRoutes(app: Express) {
         const pdfPath = path.join(coverDir, `${r.id}.pdf`);
         fs.writeFileSync(pdfPath, file.data);
         const { execFile } = await import("child_process");
-        await new Promise<void>((resolve, reject) => {
-          execFile("pdftoppm", ["-jpeg", "-jpegopt", "quality=82", "-f", "1", "-l", "1", "-r", "80", "-singlefile", pdfPath, coverPath.replace(/\.jpg$/, "")], { timeout: 30000 }, (err) => err ? reject(err) : resolve());
-        });
+        // A PDF pdftoppm can't rasterise (corrupt upload, odd encoding) is a
+        // bad input, not a server fault — 422 lets the tile's onError fall
+        // back to the iframe embed instead of logging a raw 500.
+        try {
+          await new Promise<void>((resolve, reject) => {
+            execFile("pdftoppm", ["-jpeg", "-jpegopt", "quality=82", "-f", "1", "-l", "1", "-r", "80", "-singlefile", pdfPath, coverPath.replace(/\.jpg$/, "")], { timeout: 30000 }, (err) => err ? reject(err) : resolve());
+          });
+        } catch (renderErr: any) {
+          try { fs.unlinkSync(pdfPath); } catch {}
+          console.warn("[property-brochures cover] render failed:", renderErr?.message);
+          return res.status(422).json({ error: "cover render failed — the brochure PDF could not be rasterised" });
+        }
         try { fs.unlinkSync(pdfPath); } catch {}
-        if (!fs.existsSync(coverPath)) return res.status(500).json({ error: "cover render failed" });
+        if (!fs.existsSync(coverPath)) return res.status(422).json({ error: "cover render failed — the brochure PDF could not be rasterised" });
       }
 
       res.setHeader("Content-Type", "image/jpeg");
@@ -386,6 +407,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // PATCH — rename, retype (leasing/investment), archive toggle.
   app.patch("/api/properties/:id/brochures/:bid", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       const { name, type, archived, notes } = req.body || {};
       const sets: string[] = [];
       const params: any[] = [];
@@ -414,6 +436,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // garbage-collect orphans later.
   app.delete("/api/properties/:id/brochures/:bid", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       const r = await pool.query(
         `DELETE FROM property_brochures WHERE id = $1 AND property_id = $2`,
         [req.params.bid, req.params.id],
@@ -432,6 +455,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // preserved.
   app.post("/api/properties/:id/brochures/:bid/edit", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       const { rows } = await pool.query<BrochureRow>(
         `SELECT * FROM property_brochures WHERE id = $1 AND property_id = $2`,
         [req.params.bid, req.params.id],

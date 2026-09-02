@@ -7035,7 +7035,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
 
       const deals = await db.select().from(crmDeals);
-      const properties = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties);
+      const properties = await db.select({ id: crmProperties.id, name: crmProperties.name, landlordId: crmProperties.landlordId }).from(crmProperties);
       const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name }).from(crmCompanies);
       const invoices = await db.select().from(xeroInvoices);
       const allAllocations = await db.select().from(dealFeeAllocations);

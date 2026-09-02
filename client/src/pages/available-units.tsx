@@ -469,6 +469,27 @@ export default function AvailableUnitsPage() {
     staleTime: 3_000,
   });
 
+  // Pitch mode: the "+ <brand>" button sits in the Target Tenant cell, which
+  // at 1440px-and-below starts out UNDER the sticky Actions & Activity column
+  // — the banner told users to click a button they couldn't see. Scroll the
+  // table sideways once so the first pitch button clears the pinned column.
+  const pitchScrolledRef = useRef(false);
+  useEffect(() => {
+    if (!pitchBrand || isLoading || pitchScrolledRef.current) return;
+    const t = setTimeout(() => {
+      const btn = document.querySelector('[data-testid^="pitch-here-"]');
+      const container = btn?.closest<HTMLElement>(".table-scroll-container");
+      if (!btn || !container) return;
+      pitchScrolledRef.current = true;
+      const stickyCol = container.querySelector<HTMLElement>("th.sticky");
+      const stickyW = stickyCol ? stickyCol.getBoundingClientRect().width : 205;
+      const visibleRight = container.getBoundingClientRect().right - stickyW - 12;
+      const overhang = btn.getBoundingClientRect().right - visibleRight;
+      if (overhang > 0) container.scrollLeft += overhang;
+    }, 400);
+    return () => clearTimeout(t);
+  }, [pitchBrand, isLoading, units.length]);
+
   // Client logins get a one-line explainer of what the tracker is for.
   const { data: auUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientTracker = auUser?.role === "Client";
@@ -1670,7 +1691,7 @@ export default function AvailableUnitsPage() {
           })}
         </div>
       ) : (
-      <ScrollArea className="w-full">
+      <div className="w-full overflow-x-auto">
         <div className="flex items-center gap-1.5 pb-1">
           <Pill
             active={viewAll}
@@ -1694,7 +1715,7 @@ export default function AvailableUnitsPage() {
             );
           })}
         </div>
-      </ScrollArea>
+      </div>
       )}
 
       {selectedIds.size > 0 && (
@@ -3450,6 +3471,7 @@ export default function AvailableUnitsPage() {
         unit={filesUnit}
         files={filesForUnit}
         propertyName={filesUnit ? (propertyMap[filesUnit.propertyId]?.name || "") : ""}
+        isClient={isClientTracker}
         onClose={() => setFilesUnit(null)}
       />
 
@@ -3786,11 +3808,12 @@ function UnitClientContactLine({ targets, clientCompanyId, onChanged }: {
 }
 
 function MarketingFilesDialog({
-  unit, files, propertyName, onClose,
+  unit, files, propertyName, isClient, onClose,
 }: {
   unit: AvailableUnit | null;
   files: UnitMarketingFile[];
   propertyName: string;
+  isClient: boolean;
   onClose: () => void;
 }) {
   const { toast } = useToast();
@@ -4000,6 +4023,10 @@ function MarketingFilesDialog({
               <Upload className="h-4 w-4" />
               {uploading ? "Uploading..." : `Upload ${section === "all" ? "file" : section === "floorplan" ? "floor plan" : section}`}
             </Button>
+            {/* Doc Studio is a staff surface — /templates isn't in
+                CLIENT_ALLOWED_ROUTES, so for clients the button opened a
+                tab that bounced straight to their dashboard (r452). */}
+            {!isClient && (
             <Button
               variant="outline"
               size="sm"
@@ -4012,13 +4039,14 @@ function MarketingFilesDialog({
               <Sparkles className="h-4 w-4" />
               Create in Doc Studio
             </Button>
+            )}
           </div>
 
           {files.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <File className="h-10 w-10 mx-auto mb-2 opacity-30" />
               <p className="text-sm">No files yet</p>
-              <p className="text-xs mt-1">Upload a brochure, floor plan or photo — or create one in Document Studio</p>
+              <p className="text-xs mt-1">{isClient ? "Upload a brochure, floor plan or photo" : "Upload a brochure, floor plan or photo — or create one in Document Studio"}</p>
             </div>
           ) : (
             // plain overflow div, not ScrollArea — Radix's display:table

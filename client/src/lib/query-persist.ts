@@ -1,4 +1,5 @@
 import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persister";
+import { defaultShouldDehydrateQuery } from "@tanstack/react-query";
 import type { PersistQueryClientOptions } from "@tanstack/react-query-persist-client";
 
 // Persist the react-query cache to localStorage so the app paints instantly
@@ -31,6 +32,17 @@ export const persistOptions: Omit<PersistQueryClientOptions, "queryClient"> | nu
       }),
       maxAge: 24 * 60 * 60 * 1000,
       buster: BUSTER,
+      // Never persist a logged-out auth/me probe. The login screen caches
+      // auth/me=null; if the user signs in and the page reloads before the
+      // next throttled flush, that null restores as FRESH (staleTime 5min),
+      // so the app paints the sign-in screen with a valid session cookie and
+      // never re-asks the server. A real signed-in user stays persisted for
+      // the instant paint.
+      dehydrateOptions: {
+        shouldDehydrateQuery: (query) =>
+          defaultShouldDehydrateQuery(query) &&
+          !(query.queryKey[0] === "/api/auth/me" && !query.state.data),
+      },
     }
   : null;
 
