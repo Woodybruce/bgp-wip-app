@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r471 · 2026-09-02 ~23:30 UTC · LIGHT (r470 had the journey) — round in progress
+### r471 · 2026-09-02 ~23:30 UTC · LIGHT (r470 had the journey) — GREEN, merged tree verified
 - Purpose: first full two-bot on the MERGED tree (2900a12 — Evidence Plans +
   verdict chasing, per r470 merge note). Bring-up: canonical recipe held
   36th consecutive time (qa:pg once → run-smoke restore clean →
@@ -92,12 +92,32 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - Two-bot round 471 as 3 foreground chunks (r447 pattern): victoria exit 0
   (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
   probe-by-design — standing signature exact; full chunk incl. tail, so the
-  r467 browser death did NOT recur on a 4th consecutive fresh container) /
-  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
-  Server logs: 0 raw 500/502/504 (3756×200, expected 4xx/503 families,
-  single 422 = r462 cover-raster by design). Triage: 0 app bugs.
-- Remaining this round: deferred-bug check (r470 deferred none) + light
-  Evidence Plans API probe on the merged tree; final entry to follow.
+  r467 browser death did NOT recur on a 4th consecutive fresh container —
+  container-specific read effectively confirmed) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (3756×200, expected 4xx/503 families, single 422 = r462
+  cover-raster by design). Triage: 0 app bugs — the merged tree is clean
+  under the full harness.
+- EVIDENCE PLANS gate probe (r470 flag, API side done): staff GET
+  /api/evidence-plans 200 (array), client GET/POST + /source all 403
+  (module absent from CLIENT_ALLOWED_API → gateway default-deny holds),
+  anon 401. Frontend: route in App.tsx but not CLIENT_ALLOWED_ROUTES
+  (guard bounces clients to "/"), nav entry admin-only (unfinishedNav).
+  Harness growth: staff-evidence-plans-list + client-evidence-plans-gate
+  (both node-side fetch, no page-log noise; signatures unchanged) —
+  PASSED in standard order inside full victoria + mark chunk re-runs.
+  STILL OWED (FULL round): staff browser journey through /evidence-plans
+  (create plan, background upload, units/entries, tenancy import, TAF
+  ingest) — API list is empty-state only on the fixture.
+- No journey (LIGHT). No deferred bugs to pick up (r470 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r471 was LIGHT → r472 FULL, rotation #4 BGP staff mobile 390px,
+  and fold in the owed staff /evidence-plans browser journey (desktop or
+  a follow-up FULL if mobile doesn't expose the module).
 
 ### r470 · 2026-09-02 ~21:30 UTC · FULL — rotation #3 Landsec client mobile 390px — GREEN
 - Bring-up: canonical recipe held 35th consecutive time (qa:pg once →

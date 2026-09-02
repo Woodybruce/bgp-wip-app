@@ -2098,6 +2098,16 @@ async function victoriaRound(page, cross) {
     const miss = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/00000000-0000-4000-8000-000000000000`, { method: 'DELETE', ...auth });
     if (miss.status !== 404) throw new Error(`brochure DELETE with missing uuid expected 404, got ${miss.status}`);
   });
+
+  await step(page, p, 'staff-evidence-plans-list', async () => {
+    // r471: Evidence Plans (arrived via the d0b79fe JOGQK merge) — staff
+    // list must stay reachable. Node-side fetch, no page-log noise.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const r = await fetch(`${BASE}/api/evidence-plans`, auth);
+    if (r.status !== 200) throw new Error(`staff GET /api/evidence-plans expected 200, got ${r.status}`);
+    const body = await r.json();
+    if (!Array.isArray(body)) throw new Error('staff GET /api/evidence-plans did not return an array');
+  });
 }
 
 async function markRound(page, cross) {
@@ -5850,6 +5860,20 @@ async function markRound(page, cross) {
         if (stok) await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/${bid}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + stok } });
       }
     }
+  });
+
+  await step(page, p, 'client-evidence-plans-gate', async () => {
+    // r471: Evidence Plans is a staff-only module (admin "Unfinished" nav,
+    // not in CLIENT_ALLOWED_API) — the client gateway must 403 reads,
+    // writes and the /source lookup. Node-side fetch so the deliberate
+    // 403 rows don't land in the page issue log (signature stays stable).
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const list = await fetch(`${BASE}/api/evidence-plans`, auth);
+    if (list.status !== 403) throw new Error(`client GET /api/evidence-plans expected 403, got ${list.status}`);
+    const src = await fetch(`${BASE}/api/evidence-plans/source?propertyId=${BLUEWATER}`, auth);
+    if (src.status !== 403) throw new Error(`client GET /api/evidence-plans/source expected 403, got ${src.status}`);
+    const write = await fetch(`${BASE}/api/evidence-plans`, { method: 'POST', body: new FormData(), ...auth });
+    if (write.status !== 403) throw new Error(`client POST /api/evidence-plans expected 403, got ${write.status}`);
   });
 }
 
