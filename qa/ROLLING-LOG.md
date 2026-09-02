@@ -84,6 +84,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r475 · 2026-09-02 ~21:00 UTC · LIGHT (r474 had the journey) — round in progress
+- Provisional heartbeat. Bring-up: canonical recipe held (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+- Two-bot round 475 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues; first attempt killed by a mid-chunk WORKER RESTART exit 137 —
+  infra, not app; postgres needed `service postgresql start` after, then
+  clean re-run). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (news-feed text grep hits only; single 422 = r462
+  cover-raster by design). Triage so far: 0 app bugs.
+- r474 FIX HOLDS: staff-brands-then-crm-not-poisoned PASSED its first
+  standard-order run inside the full victoria chunk.
+- Remaining this round: none planned beyond final log (LIGHT, no deferred
+  bugs carried in).
+
 ### r474 · 2026-09-03 · FULL — rotation #1 BGP staff desktop 1440px · 1 bug fixed
 - Bring-up: canonical recipe held 39th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
