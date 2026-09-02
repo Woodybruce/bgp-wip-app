@@ -6661,9 +6661,12 @@ Landlord: {LANDLORD}
 Tenant: {TENANT}
 
 Rent: {RENT} per annum exclusive
-Lease length: [term] years
-Rent free: [months] months
-Break option: [details]
+Lease length: {TERM}
+Rent free: {RENT_FREE}
+Break option: {BREAK}
+Premium: {PREMIUM}
+Fit-out contribution: {FIT_OUT}
+Incentives: {INCENTIVES}
 Rent reviews: [pattern]
 Service charge: {SERVICE_CHARGE}
 Rates payable: {RATES}
@@ -6677,13 +6680,32 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const landlordQ = (prop as any)?.landlordId
         ? await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [(prop as any).landlordId])
         : { rows: [] as any[] };
+      // The AGREED offer beats the asking rent — this route used to fill
+      // {RENT} from the unit's asking price and leave term / rent free /
+      // break as placeholders, so terms already logged on the offer had to
+      // be retyped (Woody, 2026-09-02: "how does the offer and terms get in
+      // there?"). Same row and same tokens as the .docx route.
+      const offerQ = await pool.query(
+        `SELECT * FROM unit_offers WHERE unit_id = $1
+          ORDER BY (status ILIKE 'accept%') DESC, offer_date DESC NULLS LAST LIMIT 1`,
+        [req.params.id],
+      );
+      const offer = offerQ.rows[0] || null;
       const fmtGBP = (v: any) => (v != null && v !== "" && !isNaN(Number(v))) ? `£${Number(v).toLocaleString("en-GB")}` : "[amount]";
       const filled = template
         .replace(/\{PROPERTY\}/g, prop?.name || "[property]")
         .replace(/\{UNIT\}/g, (unit as any).unitName || "[unit]")
         .replace(/\{LANDLORD\}/g, landlordQ.rows[0]?.name || (deal as any)?.landlord || "[landlord]")
-        .replace(/\{TENANT\}/g, (deal as any)?.name?.split("—")[0]?.trim() || "[tenant]")
-        .replace(/\{RENT\}/g, fmtGBP((unit as any).askingRent))
+        .replace(/\{TENANT\}/g, offer?.company_name || (deal as any)?.name?.split("—")[0]?.trim() || "[tenant]")
+        .replace(/\{TENANT_CONTACT\}/g, offer?.contact_name || "[contact]")
+        .replace(/\{RENT\}/g, offer?.rent_pa != null ? fmtGBP(offer.rent_pa) : fmtGBP((unit as any).askingRent))
+        .replace(/\{TERM\}/g, offer?.term_years != null ? `${offer.term_years} years` : "[term]")
+        .replace(/\{RENT_FREE\}/g, offer?.rent_free_months != null ? `${offer.rent_free_months} months` : "[rent free]")
+        .replace(/\{BREAK\}/g, offer?.break_option || "[break option]")
+        .replace(/\{PREMIUM\}/g, offer?.premium != null ? fmtGBP(offer.premium) : "[premium]")
+        .replace(/\{INCENTIVES\}/g, offer?.incentives || "[incentives]")
+        .replace(/\{FIT_OUT\}/g, offer?.fitting_out_contribution != null ? fmtGBP(offer.fitting_out_contribution) : "[fit-out contribution]")
+        .replace(/\{OFFER_DATE\}/g, offer?.offer_date || "[offer date]")
         .replace(/\{SERVICE_CHARGE\}/g, fmtGBP((unit as any).serviceChargePa))
         .replace(/\{RATES\}/g, fmtGBP((unit as any).ratesPa))
         .replace(/\{AREA\}/g, (unit as any).totalAreaSqft ? `${Number((unit as any).totalAreaSqft).toLocaleString("en-GB")} sq ft` : "[area]");

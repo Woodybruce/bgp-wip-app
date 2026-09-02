@@ -1,6 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
+import { SourceEmailDialog, SourceEventDialog } from "@/components/tracker-source";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
@@ -407,6 +408,11 @@ export default function AvailableUnitsPage() {
   const [viewingsUnit, setViewingsUnit] = useState<AvailableUnit | null>(null);
   const [interestUnit, setInterestUnit] = useState<AvailableUnit | null>(null);
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
+  // Provenance pop-outs: the email an offer/interest row was detected from,
+  // and the diary event behind a viewing.
+  const [sourceEmail, setSourceEmail] = useState<{ kind: "offer" | "interest"; id: string; title: string } | null>(null);
+  const [sourceEventId, setSourceEventId] = useState<string | null>(null);
+  const [addingTargetFrom, setAddingTargetFrom] = useState<string | null>(null);
   const [addViewingOpen, setAddViewingOpen] = useState(false);
   const [addOfferOpen, setAddOfferOpen] = useState(false);
   // Most viewings are logged the day they happen, so the date defaults to
@@ -1160,6 +1166,27 @@ export default function AvailableUnitsPage() {
       toast({ title: "Target added", description: pick.name });
     } catch (e: any) {
       toast({ title: "Couldn't add target", description: e?.message, variant: "destructive" });
+    }
+  };
+
+  // Interest → target operator. The server ensures the unit's brief, skips
+  // duplicates, and carries every interest note for that brand across as the
+  // target's rationale (AI-summarised when there's more than one).
+  const addTargetFromInterest = async (i: any) => {
+    setAddingTargetFrom(i.id);
+    try {
+      const r = await apiRequest("POST", `/api/tracker/interest/${i.id}/add-target`);
+      const out = await r.json();
+      if (out.alreadyTarget) {
+        toast({ title: `${out.operatorName} is already a target on this unit` });
+      } else {
+        toast({ title: "Added to target operators", description: `${out.operatorName} — interest notes carried over` });
+      }
+      if (interestUnit) invalidateBriefs(interestUnit.id);
+    } catch (e: any) {
+      toast({ title: "Couldn't add the target", description: e?.message, variant: "destructive" });
+    } finally {
+      setAddingTargetFrom(null);
     }
   };
 
@@ -2976,6 +3003,37 @@ export default function AvailableUnitsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Provenance pop-outs — the email behind an offer/interest row, and
+          the diary event behind a viewing. Applying AI-read figures fills
+          the offer edit form; it never saves on its own. */}
+      <SourceEmailDialog
+        kind={sourceEmail?.kind || "offer"}
+        rowId={sourceEmail?.id || null}
+        title={sourceEmail?.title}
+        onClose={() => setSourceEmail(null)}
+        onApplyFigures={(f) => {
+          const o = offersForUnit.find((row: any) => row.id === sourceEmail?.id);
+          if (!o) return;
+          setOfferForm({
+            companyName: o.companyName || "", companyId: o.companyId || "",
+            contactName: o.contactName || "", contactId: o.contactId || "",
+            offerDate: o.offerDate || "",
+            rentPa: f.rentPa != null ? String(f.rentPa) : (o.rentPa != null ? String(o.rentPa) : ""),
+            rentFreeMonths: f.rentFreeMonths != null ? String(f.rentFreeMonths) : (o.rentFreeMonths != null ? String(o.rentFreeMonths) : ""),
+            termYears: f.termYears != null ? String(f.termYears) : (o.termYears != null ? String(o.termYears) : ""),
+            breakOption: f.breakOption || o.breakOption || "",
+            incentives: f.incentives || o.incentives || "",
+            premium: f.premium != null ? String(f.premium) : (o.premium != null ? String(o.premium) : ""),
+            fittingOutContribution: f.fittingOutContribution != null ? String(f.fittingOutContribution) : (o.fittingOutContribution != null ? String(o.fittingOutContribution) : ""),
+            comments: [o.comments, f.notes].filter(Boolean).join(" — "),
+          });
+          setEditingOfferId(o.id);
+          setAddOfferOpen(true);
+          setSourceEmail(null);
+        }}
+      />
+      <SourceEventDialog viewingId={sourceEventId} onClose={() => setSourceEventId(null)} />
+
       <Dialog open={!!interestUnit} onOpenChange={v => { if (!v) setInterestUnit(null); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -3002,6 +3060,30 @@ export default function AvailableUnitsPage() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   {i.source === "email" && <Badge variant="outline" className="text-[9px]">from inbox</Badge>}
+                  {/* The brand that's keen goes straight onto the unit's
+                      target operators, carrying its interest notes. */}
+                  {(i.companyName || i.contactName) && (
+                    <Button
+                      variant="outline" size="sm" className="h-7 px-2 text-[11px]"
+                      disabled={addingTargetFrom === i.id}
+                      onClick={() => addTargetFromInterest(i)}
+                      title={`Add ${i.companyName || i.contactName} to this unit's target operators, with these notes`}
+                      data-testid={`interest-add-target-${i.id}`}
+                    >
+                      {addingTargetFrom === i.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}
+                      Target
+                    </Button>
+                  )}
+                  {i.emailConversationId && (
+                    <Button
+                      variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                      onClick={() => setSourceEmail({ kind: "interest", id: i.id, title: `Interest — ${i.companyName || i.contactName || "email"}` })}
+                      title="Open the email this came from"
+                      data-testid={`interest-email-${i.id}`}
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
                   <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => deleteInterestMutation.mutate(i.id)} data-testid={`interest-delete-${i.id}`}>
                     <X className="w-3.5 h-3.5" />
                   </Button>
@@ -3073,6 +3155,18 @@ export default function AvailableUnitsPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">{v.viewingDate}{v.viewingTime ? ` at ${v.viewingTime}` : ""}</span>
+                      {/* Viewings live in the team calendar — link to the
+                          actual event rather than making people hunt for it. */}
+                      {v.calendarEventId && (
+                        <Button
+                          variant="outline" size="sm" className="h-7 px-2 text-[11px]"
+                          onClick={() => setSourceEventId(v.id)}
+                          title="Open the diary event / team calendar"
+                          data-testid={`viewing-event-${v.id}`}
+                        >
+                          <CalendarDays className="w-3 h-3 mr-1" /> Calendar
+                        </Button>
+                      )}
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit viewing" title="Edit viewing" onClick={() => {
                         setViewingForm({ companyName: v.companyName || "", companyId: v.companyId || "", contactName: v.contactName || "", contactId: v.contactId || "", viewingDate: v.viewingDate || "", viewingTime: v.viewingTime || "", attendees: v.attendees || "", notes: v.notes || "", outcome: v.outcome || "" });
                         setEditingViewingId(v.id);
@@ -3202,6 +3296,18 @@ export default function AvailableUnitsPage() {
                         <Badge variant="outline" className="text-[10px] gap-1 border-amber-400 text-amber-700 dark:text-amber-400">
                           <Mail className="w-2.5 h-2.5" /> From email — confirm figures
                         </Badge>
+                      )}
+                      {/* The email is the evidence for the numbers — open it
+                          alongside, read the figures, then log them. */}
+                      {o.emailConversationId && (
+                        <Button
+                          variant="outline" size="sm" className="h-7 px-2 text-[11px]"
+                          onClick={() => setSourceEmail({ kind: "offer", id: o.id, title: `Offer — ${o.companyName || o.contactName || "email"}` })}
+                          title="Open the offer email"
+                          data-testid={`offer-email-${o.id}`}
+                        >
+                          <Mail className="w-3 h-3 mr-1" /> Email
+                        </Button>
                       )}
                       <Badge variant="outline" className={o.status === "Accepted" ? "bg-emerald-100 text-emerald-800" : o.status === "Rejected" ? "bg-red-100 text-red-800" : ""}>{o.status || "Pending"}</Badge>
                       <span className="text-xs text-muted-foreground">{o.offerDate}</span>
