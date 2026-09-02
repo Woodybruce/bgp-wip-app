@@ -215,12 +215,21 @@ export async function runMorningVerdictPushes(): Promise<void> {
 // a day until they are fixed, make all the text bright red and say deal
 // emergency at the top with lots of emojis"). Answered deals drop out of
 // pendingVerdictDeals, so the emails stop the moment a verdict lands.
+// Never blast distribution/shared mailboxes — a house login carrying
+// team@ sprayed DEAL EMERGENCY at the whole firm (Woody, 2026-09-02:
+// "don't send deal emergency to team@brucegillinghampollard.com").
+const BLAST_EXCLUDED_EMAILS = new Set(["team@brucegillinghampollard.com"]);
+
 export async function runVerdictEmailBlast(): Promise<void> {
   const perUser = await collectPendingByUser();
   const { sendSharedMailboxEmail } = await import("./shared-mailbox");
   let sent = 0;
   for (const u of perUser) {
     if (!u.email) continue;
+    if (BLAST_EXCLUDED_EMAILS.has(u.email.trim().toLowerCase())) {
+      console.log(`[deal-verdicts] blast skipped for excluded mailbox ${u.email} (${u.deals.length} deal(s))`);
+      continue;
+    }
     for (const d of u.deals) {
       const overdueLine = d.daysOverdue > 0
         ? `⏰❗ <b>${d.daysOverdue} DAY${d.daysOverdue === 1 ? "" : "S"} PAST ITS TARGET DATE</b> ❗⏰`

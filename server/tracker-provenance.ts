@@ -18,13 +18,17 @@ import { getAppToken } from "./shared-mailbox";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const MODEL = "claude-haiku-4-5-20251001";
 
-// The sweep prefixes the key: conv_<conversationId> for a thread, msg_<id>
-// when the message had no conversation id.
-function parseSourceKey(raw: string | null | undefined): { kind: "conv" | "msg"; id: string } | null {
+// The sweep prefixes the key by what it found: conv_<conversationId> for a
+// mail thread, msg_<id> for a lone message, cal_<iCalUId> for a diary event.
+// Interest rows come from BOTH sweeps and share one column, so the prefix is
+// the only thing that says whether a row's source is an email or a calendar
+// entry.
+export function parseSourceKey(raw: string | null | undefined): { kind: "conv" | "msg" | "cal"; id: string } | null {
   const key = String(raw || "").trim();
   if (!key) return null;
   if (key.startsWith("conv_")) return { kind: "conv", id: key.slice(5) };
   if (key.startsWith("msg_")) return { kind: "msg", id: key.slice(4) };
+  if (key.startsWith("cal_")) return { kind: "cal", id: key.slice(4) };
   // Older rows may hold a bare conversation id.
   return { kind: "conv", id: key };
 }
@@ -71,6 +75,7 @@ function shapeMessage(m: any) {
 async function loadSourceEmail(sourceKey: string | null, noteTexts: Array<string | null | undefined>) {
   const parsed = parseSourceKey(sourceKey);
   if (!parsed) return { error: "This row wasn't created from an email — nothing to open." };
+  if (parsed.kind === "cal") return { error: "This row came from a diary entry, not an email — open the calendar instead." };
   const mailbox = mailboxFromText(...noteTexts);
   if (!mailbox) return { error: "Couldn't tell which mailbox this came from. Open it in Outlook by searching the subject." };
 
@@ -142,38 +147,51 @@ export function setupTrackerProvenanceRoutes(app: Express): void {
   // Viewings are meant to live in the team calendar; this hands back the
   // real event so the row can link straight to it (Outlook web link, plus
   // the in-app calendar day).
-  app.get("/api/tracker/viewing/:viewingId/event", requireAuth, async (req: Request, res: Response) => {
+  // Serves viewings (calendar_event_id) and interest rows synced from a
+  // diary rather than an inbox — those carry cal_<iCalUId> in the same
+  // column the email keys use.
+  app.get("/api/tracker/:kind/:rowId/event", requireAuth, async (req: Request, res: Response) => {
     try {
-      const r = await pool.query(`SELECT calendar_event_id, notes, viewing_date FROM unit_viewings WHERE id = $1`, [req.params.viewingId]);
+      const kind = String(req.params.kind);
+      if (kind !== "viewing" && kind !== "interest") return res.status(400).json({ message: "Unknown row type" });
+      const r = kind === "viewing"
+        ? await pool.query(`SELECT calendar_event_id AS key, notes, viewing_date AS on_date FROM unit_viewings WHERE id = $1`, [req.params.rowId])
+        : await pool.query(`SELECT email_conversation_id AS key, notes, interest_date AS on_date FROM unit_interest WHERE id = $1`, [req.params.rowId]);
       const row = r.rows[0];
-      if (!row) return res.status(404).json({ message: "Viewing not found" });
-      const eventId = String(row.calendar_event_id || "").trim();
-      if (!eventId) return res.json({ error: "This viewing was logged by hand — it isn't in anyone's diary." });
+      if (!row) return res.status(404).json({ message: "Row not found" });
+      const eventId = String(row.key || "").trim();
+      if (!eventId) return res.json({ error: "This was logged by hand — it isn't in anyone's diary." });
+      if (eventId.startsWith("conv_") || eventId.startsWith("msg_")) {
+        return res.json({ error: "This came from an email, not a diary entry — open the email instead." });
+      }
       const mailbox = mailboxFromText(row.notes);
       if (!mailbox) return res.json({ error: "Couldn't tell whose diary this came from." });
       let token: string;
       try { token = await getAppToken(); }
       catch (e: any) { return res.json({ error: `Microsoft 365 app access unavailable: ${e?.message || e}` }); }
       try {
-        // The sweep stores the event's iCalUId when it has one, falling back
-        // to cal_<graph id> — so only the prefixed form can be fetched by id;
-        // an iCalUId has to be looked up with a filter.
+        // The two sweeps disagree about what the cal_ prefix wraps: viewings
+        // store a bare iCalUId (prefixing only the fallback Graph id), while
+        // interest rows prefix the iCalUId itself. So don't trust the prefix
+        // — try it as an iCalUId, then as a Graph id.
         const EV_SELECT = "id,subject,start,end,location,attendees,organizer,webLink,bodyPreview";
-        let ev: any;
-        if (eventId.startsWith("cal_")) {
-          ev = await graphGet(
-            token,
-            `${GRAPH}/users/${encodeURIComponent(mailbox)}/events/${encodeURIComponent(eventId.slice(4))}?$select=${EV_SELECT}`,
-          );
-        } else {
-          const filter = `iCalUId eq '${eventId.replace(/'/g, "''")}'`;
+        const candidate = eventId.startsWith("cal_") ? eventId.slice(4) : eventId;
+        let ev: any = null;
+        try {
+          const filter = `iCalUId eq '${candidate.replace(/'/g, "''")}'`;
           const found = await graphGet(
             token,
             `${GRAPH}/users/${encodeURIComponent(mailbox)}/events?$filter=${encodeURIComponent(filter)}&$select=${EV_SELECT}&$top=1`,
           );
-          ev = (found.value || [])[0];
-          if (!ev) return res.json({ error: `That event is no longer in ${mailbox}'s diary.`, mailbox });
+          ev = (found.value || [])[0] || null;
+        } catch { /* not an iCalUId — try it as an event id */ }
+        if (!ev) {
+          ev = await graphGet(
+            token,
+            `${GRAPH}/users/${encodeURIComponent(mailbox)}/events/${encodeURIComponent(candidate)}?$select=${EV_SELECT}`,
+          );
         }
+        if (!ev) return res.json({ error: `That event is no longer in ${mailbox}'s diary.`, mailbox });
         res.json({
           mailbox,
           event: {
@@ -188,8 +206,8 @@ export function setupTrackerProvenanceRoutes(app: Express): void {
             webLink: ev.webLink || null,
             preview: ev.bodyPreview || null,
           },
-          // The in-app team calendar, on the day of the viewing.
-          appCalendarUrl: row.viewing_date ? `/calendar?date=${String(row.viewing_date).slice(0, 10)}` : "/calendar",
+          // The in-app team calendar, on the day it happened.
+          appCalendarUrl: row.on_date ? `/calendar?date=${String(row.on_date).slice(0, 10)}` : "/calendar",
         });
       } catch (e: any) {
         res.json({ error: e?.message || "Couldn't read the diary event.", mailbox });
@@ -257,7 +275,7 @@ ${plainText((src as any).messages)}`,
       const brandName: string = row.company_name || row.contact_name || "";
       if (!brandName) return res.status(400).json({ message: "This interest row has no brand to add." });
 
-      const unitQ = await pool.query(`SELECT id, unit_name FROM available_units WHERE id = $1`, [row.unit_id]);
+      const unitQ = await pool.query(`SELECT id, unit_name, property_id FROM available_units WHERE id = $1`, [row.unit_id]);
       const unit = unitQ.rows[0];
       if (!unit) return res.status(404).json({ message: "Unit not found" });
 
@@ -309,8 +327,8 @@ ${plainText((src as any).messages)}`,
       let briefId: string | null = (await pool.query(`SELECT id FROM unit_briefs WHERE unit_id = $1 LIMIT 1`, [row.unit_id])).rows[0]?.id || null;
       if (!briefId) {
         const ins = await pool.query(
-          `INSERT INTO unit_briefs (unit_id, title) VALUES ($1, $2) RETURNING id`,
-          [row.unit_id, `Operator Targeting — ${unit.unit_name || "Unit"}`],
+          `INSERT INTO unit_briefs (unit_id, property_id, title) VALUES ($1, $2, $3) RETURNING id`,
+          [row.unit_id, unit.property_id, `Operator Targeting — ${unit.unit_name || "Unit"}`],
         );
         briefId = ins.rows[0].id;
       }
