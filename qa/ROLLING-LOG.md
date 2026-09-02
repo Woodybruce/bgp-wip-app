@@ -84,18 +84,35 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r457 · 2026-09-02 ~13:30 UTC · LIGHT (r456 had the journey) — round in progress
-- Provisional heartbeat. Bring-up: canonical recipe held 22nd consecutive
-  time (qa:pg once → run-smoke restore clean → seed-personas applied per
-  r451 rule BEFORE two-bot). Regression: smoke GREEN 42/0. Two-bot round
-  457 as 3 foreground chunks (r447 pattern, stdio to FILE, warmed server):
-  victoria exit 0, 67 ok (2×400 standing: rocketreach + invalid-tracker
-  probe) / mark exit 0, 153 ok (10 issues = 2×503 keyless + 8×403
-  probe-by-design signature) / woody,nick,sam exit 0, 18 ok (0 issues).
-  phone-overflow-sweep 11/11 routes fit at 390px. Server logs: 0 raw
-  500/502/504 (news-feed text grep hits only, r413 class).
-- Triage: 0 app bugs from the harness. No deferred bugs to pick up (r456
-  deferred none). Final entry to follow.
+### r457 · 2026-09-02 ~13:30 UTC · LIGHT (r456 had the journey) — GREEN
+- Bring-up: canonical recipe held 22nd consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot). Regression: smoke GREEN 42/0. Two-bot round 457 as 3
+  foreground chunks (r447 pattern, stdio to FILE, warmed server per r455
+  note — no cold-start ECONNRESET): victoria exit 0, 67 ok (2×400
+  standing: rocketreach + invalid-tracker probe) / mark exit 0, 153 ok
+  (10 issues = 2×503 keyless + 8×403 probe-by-design signature) /
+  woody,nick,sam exit 0, 18 ok (0 issues). phone-overflow-sweep 11/11
+  routes fit at 390px. Server logs: 0 raw 500/502/504 (news-feed text
+  grep hits only, r413 class). Triage: 0 app bugs.
+- Recent locks all re-verified green in standard-order chunks:
+  client-ui-login-reload-no-bounce (r454),
+  client-landlord-picker-landlords-only + client-files-no-doc-studio
+  (r452), staff-mobile-page-actions-reachable (r448),
+  client-info-sheet-roundtrip, staff-deal-verdict-flow,
+  client-no-deal-verdict-poll.
+- No journey (LIGHT). No deferred bugs to pick up (r456 deferred none).
+- SETUP NOTE for orphan sweeps: pgrep -f "server/index.ts" run from the
+  QA session's own Bash tool matches the session's wrapper shell (the
+  pattern sits in the command line) — pids that increment each call and
+  never die are that artefact, not a respawning server. Confirm with
+  pgrep -a and a curl to :5000 before killing anything.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r457 was LIGHT → r458 FULL, rotation #1 BGP staff desktop 1440px.
 
 ### r456 · 2026-09-02 ~11:30 UTC · FULL — rotation #4 BGP staff mobile 390px — GREEN
 - Bring-up: canonical recipe held 21st consecutive time (qa:pg once →
