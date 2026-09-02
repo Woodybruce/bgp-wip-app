@@ -1,6 +1,7 @@
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { ARTICLES, HERO_STATEMENT, HOME_INTRO, SERVICES } from "../lib/content";
+import ClientRow from "../components/ClientRow";
+import { ARTICLES, HERO_STATEMENT, HOME_INTRO, LEASE_ADVISORY_CLIENTS, SERVICES, TESTIMONIAL } from "../lib/content";
 
 // Per-section stats per the v2c layout. All figures real: transactions/brands
 // from brucegillinghampollard.com, £62m = LondonMetric Waitrose portfolio,
@@ -17,7 +18,7 @@ export default function Home() {
   return (
     <div>
       {/* Hero — full-bleed photo, giant wordmark */}
-      <section className="relative -mt-2">
+      <section className="relative">
         <img
           src="/images/bar.jpg"
           alt="Bar interior"
@@ -25,8 +26,17 @@ export default function Home() {
         />
         <div className="absolute inset-0 bg-bgp-wine/30" />
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
-          <h1><img src="/brand/bgp-logo-white.svg" alt="bgp" className="h-28 md:h-44 w-auto mx-auto" /></h1>
-          <p className="mt-6 max-w-2xl font-display italic text-white text-xl md:text-2xl leading-snug">
+          <h1>
+            <img
+              src="/brand/bgp-logo-white.svg"
+              alt="bgp"
+              className="h-28 md:h-44 w-auto mx-auto drop-shadow-[0_4px_24px_rgba(0,0,0,0.55)]"
+            />
+          </h1>
+          <p
+            className="mt-6 max-w-2xl font-display italic text-white text-2xl md:text-3xl leading-snug"
+            style={{ textShadow: "0 2px 18px rgba(0,0,0,0.6)" }}
+          >
             {HERO_STATEMENT}
           </p>
           <a href="#services" aria-label="Scroll to services" className="mt-10 text-white text-2xl animate-bounce">
@@ -43,7 +53,19 @@ export default function Home() {
             {para}
           </p>
         ))}
-        <p className="mt-10 display text-xl md:text-2xl">{HOME_INTRO.servicesHeading}</p>
+      </section>
+
+      {/* Trusted-by band — quiet blush ground, the estates we act for */}
+      <section className="mt-14 bg-bgp-pink/40 border-y border-bgp-pink">
+        <div className="mx-auto max-w-6xl px-4 py-12">
+          <p className="label-caps text-bgp-wine/70 text-center mb-8">Trusted by London's leading estates</p>
+          <ClientRow clients={LEASE_ADVISORY_CLIENTS.slice(0, 6)} />
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-3xl px-4 pt-16 pb-2 text-center">
+        <span className="section-label">What we do</span>
+        <p className="display text-2xl md:text-3xl">{HOME_INTRO.servicesHeading}</p>
       </section>
 
       {/* Service sections with stats */}
@@ -54,13 +76,16 @@ export default function Home() {
           return (
             <section key={service.slug} className="mx-auto max-w-6xl px-4 py-14">
               <div className={`grid grid-cols-1 md:grid-cols-2 gap-10 items-start ${imageFirst ? "" : "md:[direction:rtl]"}`}>
-                <Placeholder
-                  className="aspect-[4/3] w-full [direction:ltr]"
-                  src={service.image}
-                  alt={service.name}
-                />
+                <div className="img-frame [direction:ltr]">
+                  <Placeholder
+                    className="aspect-[4/3] w-full"
+                    src={service.image}
+                    alt={service.name}
+                  />
+                </div>
                 <div className="[direction:ltr] md:border-l md:border-bgp-wine/25 md:pl-8">
-                  <h2 className="display text-3xl md:text-4xl">{service.name}</h2>
+                  <span className="label-caps text-bgp-red/70 tabular">{String(i + 1).padStart(2, "0")}</span>
+                  <h2 className="display text-3xl md:text-4xl mt-1.5">{service.name}</h2>
                   <p className="mt-4 text-sm font-light text-bgp-ink/75 leading-relaxed max-w-sm">
                     {service.intro}
                   </p>
@@ -83,8 +108,20 @@ export default function Home() {
         })}
       </div>
 
+      {/* Testimonial — full-bleed wine band, big italic serif */}
+      <section className="bg-bgp-wine text-bgp-cream">
+        <div className="mx-auto max-w-4xl px-4 py-16 md:py-20 text-center">
+          <span className="font-display text-6xl leading-none text-bgp-nectar" aria-hidden>“</span>
+          <blockquote className="font-display italic text-2xl md:text-3xl leading-snug -mt-4">
+            {TESTIMONIAL.quote}
+          </blockquote>
+          <p className="mt-6 label-caps text-bgp-cream/70">{TESTIMONIAL.name} — {TESTIMONIAL.title}</p>
+        </div>
+      </section>
+
       {/* News & insights */}
-      <section className="mx-auto max-w-6xl px-4 py-16">
+      <section className="mx-auto max-w-6xl px-4 py-16 md:py-20">
+        <span className="section-label">Journal</span>
         <h2 className="display text-3xl md:text-4xl">News and insights</h2>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
           <p><Link href="/news" className="explore-link">Explore</Link></p>
@@ -97,7 +134,7 @@ export default function Home() {
           {["behind-the-brand-yolk", "ardent-royal-exchange", "enduring-appeal-portman-estate"].map((slug) => ARTICLES.find((x) => x.slug === slug)!).map((a) => (
             <Link key={a.slug} href={`/news/${a.slug}`} className="group block border-t border-bgp-wine/40 pt-3">
               <p className="label-caps text-bgp-wine mb-3">{a.category}</p>
-              <Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} />
+              <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
               <p className="mt-3 text-sm font-semibold leading-snug group-hover:text-bgp-red transition-colors">
                 {a.title}
               </p>

@@ -30,8 +30,9 @@ export default function News() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-14">
-      <h1 className="display text-3xl md:text-4xl">News and insights</h1>
+    <div className="mx-auto max-w-6xl px-4 py-14 md:py-16">
+      <span className="section-label">Journal</span>
+      <h1 className="display text-3xl md:text-5xl">News and insights</h1>
 
       <div className="mt-6 flex flex-wrap items-center gap-x-8 gap-y-3 border-y border-bgp-wine/30 py-3">
         <span className="label-caps text-bgp-ink/60">Filter by</span>
@@ -72,7 +73,7 @@ export default function News() {
             <span>{featured.category}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-            <Placeholder className="aspect-[4/3] w-full" src={featured.image} alt={featured.title} />
+            <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={featured.image} alt={featured.title} /></div>
             <div>
               <h2 className="display text-2xl md:text-3xl leading-tight group-hover:text-bgp-red transition-colors">
                 {featured.title}
@@ -95,7 +96,7 @@ export default function News() {
               <span>{a.category}</span>
               <span className="text-bgp-ink/50">{a.date}</span>
             </div>
-            <Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} />
+            <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
             <h3 className="mt-3 text-base font-semibold leading-snug group-hover:text-bgp-red transition-colors">{a.title}</h3>
             <p className="mt-2 label-caps text-bgp-ink/50">Read more</p>
           </Link>
