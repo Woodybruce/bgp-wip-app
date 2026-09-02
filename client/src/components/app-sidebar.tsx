@@ -130,6 +130,7 @@ const unfinishedNav = [
   // Leasing Schedule retired (archived) — Tenancy Schedule + Letting
   // Tracker are the two boards now. Route stays live for old links.
   { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
+  { title: "Evidence Plans", url: "/evidence-plans", icon: MapPin },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, badge: "BD" },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   // Document Studio v2 — the unified documents hub (library + previews +

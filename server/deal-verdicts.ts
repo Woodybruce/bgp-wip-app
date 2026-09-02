@@ -3,8 +3,9 @@
 // exchange/complete this month — "we need something dramatic and annoying
 // that will get them out of bed").
 //
-// A deal is DUE A VERDICT when its target date falls inside (or before) the
-// current month, it hasn't been invoiced, and it isn't Withdrawn/Invoiced.
+// A deal is DUE A VERDICT when its target date fell in a PAST month (deals
+// due in the current month are left alone until it ends — Woody, 2026-09-02),
+// it hasn't been invoiced, and it isn't Withdrawn/Invoiced/Completed.
 // The assigned agent must answer, once per calendar month, per deal:
 //   on_track    — completes as dated
 //   slipping    — must supply a new target date (re-dates the deal)
@@ -60,7 +61,10 @@ export async function pendingVerdictDeals(userId: string, userName: string): Pro
        LEFT JOIN crm_properties p ON p.id = d.property_id
       WHERE d.invoiced_at IS NULL
         AND d.target_date IS NOT NULL
-        AND d.target_date < date_trunc('month', now()) + interval '1 month'
+        -- Only PAST months chase. A deal due in the current month is not
+        -- overdue yet — no agent emails, no equity summary line, no banner
+        -- until the month it was due in has ended (Woody, 2026-09-02).
+        AND d.target_date < date_trunc('month', now())
         AND d.target_date >= now() - interval '${LOOKBACK_MONTHS} months'
         AND (d.internal_agent_ids @> ARRAY[$1]::varchar[] OR $2 = ANY(d.internal_agent))
         AND NOT EXISTS (
@@ -73,7 +77,9 @@ export async function pendingVerdictDeals(userId: string, userName: string): Pro
   const out: PendingVerdictDeal[] = [];
   for (const r of rows) {
     const code = legacyToCode(r.status);
-    if (code === "WIT" || code === "INV") continue;
+    // COM: a Completed deal is done — invoicing it is finance's motion, not
+    // the agent's verdict (Woody, 2026-09-02, re Tom's Riverside Nando's).
+    if (code === "WIT" || code === "INV" || code === "COM") continue;
     const target = new Date(r.target_date);
     const daysOverdue = Math.max(0, Math.floor((Date.now() - target.getTime()) / 86400000));
     out.push({
