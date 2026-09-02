@@ -84,6 +84,32 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r465 · 2026-09-02 ~15:30 UTC · LIGHT (r464 had the journey) — GREEN
+- Bring-up: canonical recipe held 30th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session so no stale cross file). Regression: smoke GREEN 42/0.
+  Two-bot round 465 as 3 foreground chunks (r447 pattern; chunk runner =
+  ONE foreground node process, dev server stdio-to-FILE, warmed per r455,
+  tsx via node_modules/.bin, pkill-swept before and after each chunk):
+  victoria exit 0 (2×400 standing: rocketreach + invalid-tracker probe) /
+  mark exit 0 (9 issues = 1×503 keyless + 8×403 probe-by-design — the
+  r464 post-ignore signature confirmed EXACT on its first watch run, no
+  hr/staff flicker row) / woody,nick,sam exit 0 (0 issues).
+  phone-overflow-sweep 11/11 routes fit at 390px. Server logs: 0 raw
+  500/502/504 (news-feed text grep hits only, r413 class). Triage: 0 app
+  bugs.
+- r464's hr/staff guard-race ignore VERIFIED: mark signature stable at 9
+  across the full chunk. r462 brochure fixes, r460
+  client-properties-no-address-edit, r458
+  staff-tracker-pitch-button-visible all green in standard order.
+- No journey (LIGHT). No deferred bugs to pick up (r464 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r465 was LIGHT → r466 FULL, rotation #1 BGP staff desktop 1440px.
+
 ### r464 · 2026-09-02 ~13:30 UTC · FULL — rotation #4 BGP staff mobile 390px — GREEN
 - Bring-up: canonical recipe held 29th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
