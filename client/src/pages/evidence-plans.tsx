@@ -25,7 +25,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Map as MapIcon, Plus, Upload, ZoomIn, ZoomOut, Pencil, Trash2, FileSpreadsheet, FileText, X, Loader2, Maximize2, Minimize2 } from "lucide-react";
+import { Map as MapIcon, Plus, Upload, ZoomIn, ZoomOut, Pencil, Trash2, FileSpreadsheet, FileText, X, Loader2, Maximize2, Minimize2, Sparkles } from "lucide-react";
 
 type Pt = { x: number; y: number };
 type PlanLevel = {
@@ -293,9 +293,44 @@ function PlanView({ planId }: { planId: string }) {
       const r = await apiRequest("POST", `/api/evidence-plans/${planId}/units`, { unitRef, polygon, levelId: activeLevel?.id || null });
       return r.json();
     },
-    onSuccess: (u: any) => { invalidate(); setSelectedId(u.id); },
+    onSuccess: (u: any) => {
+      invalidate();
+      setSelectedId(u.id);
+      if (u.adopted > 0) toast({ title: `Unit ${u.unit_ref} added`, description: `${u.adopted} waiting evidence entr${u.adopted === 1 ? "y" : "ies"} linked to it.` });
+    },
     onError: (e: any) => { if (e.message !== "cancelled") toast({ title: "Couldn't add unit", description: e.message, variant: "destructive" }); },
   });
+
+  // AI auto-detect: vision reads the level's plan image, creates a labelled
+  // outline per unit block, and each new unit adopts its waiting evidence.
+  const detectUnits = async () => {
+    setBusy("detect-units");
+    try {
+      const r = await apiRequest("POST", `/api/evidence-plans/${planId}/detect-units`, { levelId: activeLevel?.id || null });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Detection failed");
+      toast({ title: "Reading the plan…", description: "AI is finding the units on this level — outlines appear as it finishes." });
+      const poll = async () => {
+        try {
+          const jr = await fetch(`/api/evidence-plans/jobs/${j.jobId}`, { credentials: "include", headers: getAuthHeaders() });
+          if (!jr.ok) throw new Error();
+          const job = await jr.json();
+          if (job.status === "done") {
+            invalidate();
+            toast({ title: "Units detected", description: `${job.created} unit${job.created === 1 ? "" : "s"} outlined on this level — ${job.linked} evidence entr${job.linked === 1 ? "y" : "ies"} linked. Nudge or redraw any that sit off their block.` });
+            setBusy(null);
+          } else if (job.status === "error") {
+            toast({ title: "Detection failed", description: job.error || "Unknown error", variant: "destructive" });
+            setBusy(null);
+          } else { setTimeout(poll, 3000); }
+        } catch { setTimeout(poll, 5000); }
+      };
+      setTimeout(poll, 3000);
+    } catch (e: any) {
+      toast({ title: "Detection failed", description: e.message, variant: "destructive" });
+      setBusy(null);
+    }
+  };
 
   const saveUnit = useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: any }) => {
@@ -393,6 +428,10 @@ function PlanView({ planId }: { planId: string }) {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
+          <Button size="sm" onClick={detectUnits} disabled={busy !== null || !hasBg} data-testid="button-detect-units">
+            {busy === "detect-units" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+            {busy === "detect-units" ? "Reading plan…" : "Auto-detect units"}
+          </Button>
           <Pill active={drawing} onClick={() => { setDrawing(d => !d); setDraft([]); }} data-testid="pill-draw-unit">
             <Pencil className="w-3 h-3 mr-1 inline" />{drawing ? "Drawing… (double-click to close)" : "Draw unit"}
           </Pill>

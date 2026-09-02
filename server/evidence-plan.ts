@@ -127,6 +127,37 @@ export function normaliseUnitRef(raw: string): string {
     .trim();
 }
 
+// Adopt unlinked evidence whose ref matches a unit — so TAFs uploaded
+// BEFORE the outlines are drawn snap onto each unit as it's drawn (Woody
+// hit this on the first Brent Cross run: 55 extracted, 0 linked, no units
+// yet). Also used on unit rename.
+async function relinkEntriesToUnit(planId: string, unitId: string, unitRef: string): Promise<number> {
+  const norm = normaliseUnitRef(unitRef);
+  if (!norm) return 0;
+  const { rows } = await pool.query(
+    `SELECT id, unit_ref FROM evidence_plan_entries WHERE plan_id = $1 AND unit_id IS NULL AND unit_ref IS NOT NULL`, [planId]);
+  const ids = rows.filter((r: any) => normaliseUnitRef(r.unit_ref) === norm).map((r: any) => r.id);
+  if (ids.length) await pool.query(`UPDATE evidence_plan_entries SET unit_id = $1 WHERE id = ANY($2)`, [unitId, ids]);
+  return ids.length;
+}
+
+// One-off heal: repeated extractions of the same TAF set stacked exact
+// duplicates (three 504-era retries left Brent Cross with 167 entries for
+// ~55 sheets). Keep the earliest of each identical unlinked entry.
+pool.query(`
+  DELETE FROM evidence_plan_entries e USING evidence_plan_entries k
+   WHERE e.id <> k.id AND e.plan_id = k.plan_id
+     AND e.unit_id IS NULL AND k.unit_id IS NULL
+     AND e.unit_ref IS NOT DISTINCT FROM k.unit_ref
+     AND e.tenant IS NOT DISTINCT FROM k.tenant
+     AND e.transaction_date IS NOT DISTINCT FROM k.transaction_date
+     AND e.zone_a IS NOT DISTINCT FROM k.zone_a
+     AND e.headline_rent IS NOT DISTINCT FROM k.headline_rent
+     AND e.net_effective IS NOT DISTINCT FROM k.net_effective
+     AND (e.created_at > k.created_at OR (e.created_at = k.created_at AND e.id > k.id))`)
+  .then(r => { if (r.rowCount) console.log(`[evidence-plan] deduped ${r.rowCount} duplicate evidence entries`); })
+  .catch(() => {});
+
 async function planOr404(planId: string, res: Response): Promise<any | null> {
   const { rows } = await pool.query(`SELECT * FROM evidence_plans WHERE id = $1`, [planId]);
   if (!rows[0]) { res.status(404).json({ error: "Plan not found" }); return null; }
@@ -452,8 +483,9 @@ router.post("/api/evidence-plans/:id/units", requireAuth, async (req: Request, r
     const { rows } = await pool.query(
       `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
       [plan.id, req.body?.levelId || null, unitRef, req.body?.tenantName || null, JSON.stringify(req.body?.polygon || null)]);
+    const adopted = await relinkEntriesToUnit(plan.id, rows[0].id, unitRef);
     await pool.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [plan.id]);
-    res.json(rows[0]);
+    res.json({ ...rows[0], adopted });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -477,6 +509,9 @@ router.put("/api/evidence-plans/units/:unitId", requireAuth, async (req: Request
     const { rows } = await pool.query(
       `UPDATE evidence_plan_units SET ${sets.join(", ")}, updated_at = now() WHERE id = $${vals.length} RETURNING *`, vals);
     if (!rows[0]) return res.status(404).json({ error: "Unit not found" });
+    if (typeof req.body?.unitRef === "string" && req.body.unitRef.trim()) {
+      await relinkEntriesToUnit(rows[0].plan_id, rows[0].id, req.body.unitRef.trim());
+    }
     res.json(rows[0]);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -695,7 +730,7 @@ Rules: numbers stripped of £/commas; null for anything not stated; one object p
 // progress and evidence entries appear per document as they finish.
 const uploadLarge = multer({ storage: multer.memoryStorage(), limits: { fileSize: 250 * 1024 * 1024 } });
 
-async function runTafJob(planId: string, jobId: string, pdfs: { name: string; buffer: Buffer }[], userId: string | null): Promise<void> {
+async function runTafJob(planId: string, jobId: string, pdfs: { name: string; get: () => Buffer }[], userId: string | null): Promise<void> {
   const bump = (sets: string, vals: any[]) =>
     pool.query(`UPDATE evidence_plan_jobs SET ${sets}, updated_at = now() WHERE id = $${vals.length + 1}`, [...vals, jobId]).catch(() => {});
   try {
@@ -710,11 +745,12 @@ async function runTafJob(planId: string, jobId: string, pdfs: { name: string; bu
     // progressively — each doc's entries are visible before the next starts.
     for (let i = 0; i < pdfs.length; i++) {
       const pdf = pdfs[i];
+      const pdfBuffer = pdf.get();
       const sourceKey = `evidence-plans/${planId}/taf-${Date.now()}-${i}-${pdf.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60)}`;
-      await saveFile(sourceKey, pdf.buffer, "application/pdf", pdf.name);
+      await saveFile(sourceKey, pdfBuffer, "application/pdf", pdf.name);
       const docPages: Buffer[] = [];
       for (let p = 1; p <= 40; p++) {
-        const buf = await rasterisePdfPage({ pdfBuffer: pdf.buffer, page: p, dpi: 150 });
+        const buf = await rasterisePdfPage({ pdfBuffer, page: p, dpi: 150 });
         if (!buf) break;
         docPages.push(buf);
       }
@@ -745,6 +781,16 @@ async function runTafJob(planId: string, jobId: string, pdfs: { name: string; bu
 
       for (const t of tafs) {
         if (!t || (!t.unitRef && !t.tenant)) continue;
+        // Re-running the same tranche must not stack duplicates (the 504-era
+        // retries tripled Brent Cross's entries).
+        const dup = await pool.query(
+          `SELECT 1 FROM evidence_plan_entries
+            WHERE plan_id = $1 AND unit_ref IS NOT DISTINCT FROM $2 AND tenant IS NOT DISTINCT FROM $3
+              AND transaction_date IS NOT DISTINCT FROM $4 AND zone_a IS NOT DISTINCT FROM $5
+              AND headline_rent IS NOT DISTINCT FROM $6 LIMIT 1`,
+          [planId, t.unitRef ? String(t.unitRef).slice(0, 40) : null, t.tenant || null,
+           date(t.transactionDate), num(t.zoneA), num(t.headlineRent)]);
+        if (dup.rows[0]) continue;
         const unit = t.unitRef ? byNorm.get(normaliseUnitRef(String(t.unitRef))) : null;
         await pool.query(
           `INSERT INTO evidence_plan_entries
@@ -780,21 +826,24 @@ router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, uploadLarge.array
 
     // Multiple files per upload (a whole folder of TAFs), and any of them
     // can be a zip (how the tranches arrive from Hammerson) — every PDF
-    // found is processed as if uploaded individually.
-    const pdfs: { name: string; buffer: Buffer }[] = [];
+    // found is processed as if uploaded individually. Buffers are pulled
+    // lazily (one document in memory at a time inside the job), so the cap
+    // is about job length, not memory. Woody's first real zip held 60+
+    // TAFs and hit the old cap of 60.
+    const pdfs: { name: string; get: () => Buffer }[] = [];
     for (const file of files) {
-      if (pdfs.length >= 60) break;
+      if (pdfs.length >= 150) break;
       const isZip = /zip/i.test(file.mimetype || "") || /\.zip$/i.test(file.originalname || "");
       if (isZip) {
         const AdmZip = (await import("adm-zip")).default;
         const zip = new AdmZip(file.buffer);
         for (const entry of zip.getEntries()) {
           if (entry.isDirectory || !/\.pdf$/i.test(entry.entryName) || /__MACOSX|^\./.test(entry.entryName)) continue;
-          pdfs.push({ name: entry.entryName.split("/").pop() || entry.entryName, buffer: entry.getData() });
-          if (pdfs.length >= 60) break;
+          pdfs.push({ name: entry.entryName.split("/").pop() || entry.entryName, get: () => entry.getData() });
+          if (pdfs.length >= 150) break;
         }
       } else if (/\.pdf$/i.test(file.originalname || "") || /pdf/i.test(file.mimetype || "")) {
-        pdfs.push({ name: file.originalname || "taf.pdf", buffer: file.buffer });
+        pdfs.push({ name: file.originalname || "taf.pdf", get: () => file.buffer });
       }
     }
     if (pdfs.length === 0) return res.status(400).json({ error: "No PDFs found in that upload" });
@@ -806,6 +855,100 @@ router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, uploadLarge.array
     res.json({ jobId, docs: pdfs.length });
     // Detached — the extraction outlives this request on purpose.
     void runTafJob(plan.id, jobId, pdfs, (req as any).session?.userId || null);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Auto-detect units (AI vision) ────────────────────────────────────────
+// Drawing ~100 outlines by hand doesn't scale ("i cant draw units for
+// every plan" — Woody, 2026-09-02). Vision reads the level's plan image
+// and returns a labelled box per unit block; each becomes a unit outline
+// that immediately adopts its waiting evidence. Grounded with the unit
+// refs we already know (tenancy schedule + unlinked evidence) so labels
+// are read, not guessed.
+const DETECT_PROMPT = (known: string[]) => `This is one level of a UK shopping centre letting plan. Identify EVERY lettable unit shown as a distinct block on the plan — shops, restaurants, kiosks — including blocks labelled only with a tenant name.
+
+Return JSON only:
+{"units":[{"unitRef":"E7A","tenant":"Nando's","x0":0.31,"y0":0.42,"x1":0.38,"y1":0.51}]}
+
+Coordinates are fractions of the FULL IMAGE (0..1), x rightward, y downward. The box must sit tightly over the unit's block on the plan. unitRef is the unit's reference where visible ("E1Y", "K21", "D11/12" — strip the word "Unit"); if only a tenant name is visible, set unitRef null and give the tenant. tenant null when not shown. Skip malls, toilets, service areas, car parks, legend panels and the sidebar.${known.length ? `\n\nUnit references known to exist at this scheme (use these spellings when the plan matches them): ${known.join(", ")}` : ""}`;
+
+async function runDetectJob(planId: string, jobId: string, level: any, propertyId: string | null): Promise<void> {
+  const bump = (sets: string, vals: any[]) =>
+    pool.query(`UPDATE evidence_plan_jobs SET ${sets}, updated_at = now() WHERE id = $${vals.length + 1}`, [...vals, jobId]).catch(() => {});
+  try {
+    const file = await getFile(level.background_key);
+    if (!file) throw new Error("Level has no plan image");
+    const sharp = (await import("sharp")).default;
+    // ~1500px wide keeps the whole plan inside the vision resolution sweet
+    // spot while labels stay legible.
+    const img = await sharp(file.data).resize({ width: 1500, withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+
+    const known = new Set<string>();
+    if (propertyId) {
+      const ts = await pool.query(`SELECT unit_number FROM tenancy_schedule_units WHERE property_id = $1`, [propertyId]);
+      for (const r of ts.rows) if (r.unit_number) known.add(String(r.unit_number).replace(/^unit\s+/i, "").trim());
+    }
+    const ev = await pool.query(`SELECT DISTINCT unit_ref FROM evidence_plan_entries WHERE plan_id = $1 AND unit_ref IS NOT NULL`, [planId]);
+    for (const r of ev.rows) known.add(String(r.unit_ref));
+
+    const msg = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 8000,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: img.toString("base64") } },
+          { type: "text", text: DETECT_PROMPT([...known].slice(0, 200)) },
+        ],
+      }],
+    });
+    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const found: any[] = jsonMatch ? (JSON.parse(jsonMatch[0]).units || []) : [];
+
+    const { rows: existing } = await pool.query(`SELECT unit_ref FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2`, [planId, level.id]);
+    const have = new Set(existing.map((u: any) => normaliseUnitRef(u.unit_ref)));
+
+    let created = 0, adopted = 0;
+    for (const u of found) {
+      const ref = String(u.unitRef || u.tenant || "").trim().slice(0, 40);
+      if (!ref) continue;
+      const norm = normaliseUnitRef(ref);
+      if (!norm || have.has(norm)) continue;
+      const clamp = (v: any) => Math.min(1, Math.max(0, Number(v) || 0));
+      const x0 = clamp(u.x0), y0 = clamp(u.y0), x1 = clamp(u.x1), y1 = clamp(u.y1);
+      if (x1 - x0 < 0.004 || y1 - y0 < 0.004 || (x1 - x0) * (y1 - y0) > 0.25) continue; // junk boxes
+      const polygon = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+      const ins = await pool.query(
+        `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+        [planId, level.id, ref, u.tenant ? String(u.tenant).slice(0, 80) : null, JSON.stringify(polygon)]);
+      have.add(norm);
+      created++;
+      adopted += await relinkEntriesToUnit(planId, ins.rows[0].id, ref);
+      await bump(`created = $1, linked = $2`, [created, adopted]);
+    }
+    await pool.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [planId]);
+    await bump(`status = 'done', done_docs = 1, extracted = $1`, [found.length]);
+    console.log(`[evidence-plan] detect job ${jobId}: ${found.length} boxes, ${created} units created, ${adopted} entries adopted`);
+  } catch (e: any) {
+    console.error(`[evidence-plan] detect job ${jobId} failed:`, e?.message);
+    await bump(`status = 'error', error = $1`, [String(e?.message || e).slice(0, 500)]);
+  }
+}
+
+router.post("/api/evidence-plans/:id/detect-units", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const plan = await planOr404(String(req.params.id), res);
+    if (!plan) return;
+    if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ error: "AI detection is not configured" });
+    const levels = await healLevels(plan);
+    const level = levels.find((l: any) => l.id === String(req.body?.levelId || "")) || levels[0];
+    if (!level?.background_key) return res.status(400).json({ error: "No plan image on this level yet" });
+    const { rows } = await pool.query(
+      `INSERT INTO evidence_plan_jobs (plan_id, status, total_docs, created_by) VALUES ($1, 'running', 1, $2) RETURNING id`,
+      [plan.id, (req as any).session?.userId || null]);
+    res.json({ jobId: rows[0].id });
+    void runDetectJob(plan.id, rows[0].id, level, plan.property_id || null);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
