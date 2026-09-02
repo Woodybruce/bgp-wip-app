@@ -84,6 +84,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r455 · 2026-09-02 ~08:00 UTC · LIGHT (r454 had the journey) — round in progress
+- Provisional heartbeat. Bring-up: canonical recipe held 20th consecutive
+  time (qa:pg once → run-smoke restore clean → seed-personas applied before
+  two-bot). Regression: smoke GREEN 42/0. Two-bot round 455 as 3 foreground
+  chunks: victoria exit 0 (2×400 standing) / mark exit 0 (10 issues = 2×503
+  keyless + 8×403 probe-by-design) / woody,nick,sam exit 0 (0 issues).
+  phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw 500/502/504.
+- r454 FIX RE-VERIFIED: client-ui-login-reload-no-bounce PASSED its first
+  standard-order run inside the mark chunk. r452's two scenarios also green.
+- Triage: 0 app bugs. One mark-chunk cold-start flake (first login POST
+  ECONNRESET while Vite compiled the first page, r262 class) — clean on
+  re-run. Final entry to follow.
+
 ### r454 · 2026-09-02 ~06:30 UTC · FULL — rotation #3 Landsec client mobile 390px · 1 bug fixed
 - Bring-up: canonical recipe held 19th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied before two-bot).
