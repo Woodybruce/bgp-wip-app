@@ -84,17 +84,44 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r478 · 2026-09-03 · FULL — rotation #3 Landsec client mobile 390px — ROUND IN PROGRESS
-- Provisional heartbeat. Bring-up: canonical recipe held (qa:pg once →
+### r478 · 2026-09-03 · FULL — rotation #3 Landsec client mobile 390px — GREEN
+- Bring-up: canonical recipe held 43rd consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
-  stale cross files removed). Regression: smoke GREEN 42/0.
-- Two-bot round 478 as 3 foreground chunks (r447 pattern, r458
-  chunk-runner): victoria exit 0 (2×400 standing) / mark exit 0 (9 issues
-  = 1×503 keyless + 8×403 probe-by-design — standing signature exact) /
-  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
-  Server logs: 0 raw 500/502/504 (news-feed "500 articles" text only,
-  r413 class). Triage: 0 app bugs.
-- Journey (Mark @390px) still to run — final entry replaces this one.
+  stale cross files removed). Regression: smoke GREEN 42/0. Two-bot round
+  478 as 3 foreground chunks (r447 pattern, r458 chunk-runner): victoria
+  exit 0 (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (news-feed "500 articles" text only, r413 class). Triage:
+  0 app bugs.
+- Journey (Mark @390px iPhone UA+touch, UI login via Client/guest reveal —
+  "Tuesday morning on the train: how are lettings going, look at a unit's
+  files, which brands are trading, anything from BGP?"): login → Portfolio
+  dashboard (KPI 77/1/0/78, r438 fix holds; team card, tiles, boards) →
+  Letting Tracker /available (phone card list, status chips ALL 78 /
+  MARKETING 77 / NEGOTIATING 1, per-card Files/Viewing/Offer/Interest/Edit
+  actions) → L112 Files dialog (client variant: Upload + Info-sheet, NO
+  Doc Studio — r452 fix holds) → Deals tab (2 deals, "+2 letting deals"
+  subtitle) → Brands hub (slice 9 brands, category tiles, Add brand) →
+  bare /tenancy-schedule redirects to property picker (matches
+  client-tenancy-bare-redirect) → Messages (ChatBGP pinned, clean empty
+  state) → Tasks (briefing degrades keyless, 1 open task fine) → News
+  (brand-slice signals). 0 pageerrors, 0 non-noise 4xx/5xx, 0 h-overflow
+  on all 13 screenshots.
+- NOT bugs: (a) mobile Brands hub shows only Brand Explorer — deliberate
+  (brands-hub.tsx hides Overview/Turnover/Hunter on mobile, "still being
+  built"; ?tab= keeps them reachable) → UX-NOTES 140 for the dead-end;
+  (b) tracker "Add unit" visible to clients — INTENDED Letting Tracker
+  parity (server/index.ts CLIENT_ALLOWED_API comment: unit add/edit/
+  delete, scope-checked per handler); (c) tracker cards "Area — / Rent
+  p.a. —" = fixture data gaps.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 140 (mobile turnover-board
+  dead-end, above). New flakes: none. Real-device keyboard-up composer
+  check (r405) still open for Woody.
+- Next: r478 had the journey → r479 LIGHT; then rotation #4 BGP staff
+  mobile 390px.
 
 ### r477 · 2026-09-02 ~22:30 UTC · LIGHT (r476 had the journey) — GREEN
 - Bring-up: canonical recipe held 42nd consecutive time (qa:pg once →

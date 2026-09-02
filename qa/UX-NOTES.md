@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+140. 2026-09-03 · Landsec client / mobile 390px (QA r478) · checking which
+    brands are trading on the phone · the Brand Intelligence hub on mobile
+    shows only Brand Explorer — the Turnover Board tab the client uses on
+    desktop is deliberately hidden (brands-hub.tsx: other boards "still
+    being built" on mobile) with no hint it exists or that it's
+    desktop-only, so a client looking for turnover data on the phone finds
+    nothing · Suggest: when the mobile turnover board ships, expose the tab;
+    until then a small "Turnover Board is available on desktop" line (or a
+    read-only card-list variant) would stop the dead-end.
+
 139. 2026-09-03 · Landsec client / desktop 1440px (QA r476) · scanning the
     Brand Explorer for hospitality brand intel · the "Brand News" panel under
     the client's brand grid is a generic fashion-wire feed (WWD: Nike, Tom
