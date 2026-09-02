@@ -84,6 +84,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r456 · 2026-09-02 ~10:30 UTC · FULL — rotation #4 BGP staff mobile 390px — ROUND IN PROGRESS
+- Bring-up: canonical recipe held 21st consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, stale cross file removed). Regression: smoke GREEN 42/0.
+  Two-bot round 456 as 3 foreground chunks (r447 pattern, stdio to FILE,
+  warmed server per r455 note — no cold-start ECONNRESET): victoria
+  exit 0 (2×400 standing: rocketreach + invalid-tracker probe) / mark
+  exit 0 (10 issues = 2×503 keyless + 8×403 probe-by-design signature) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit
+  at 390px. Server logs: 0 raw 500/502/504 (news-feed text grep hits
+  only, r413 class). Triage: 0 app bugs from the harness.
+- Journey (staff mobile 390px — Messages/ChatBGP, global search, brand
+  profile, Bluewater tenancy schedule): IN PROGRESS.
+- Provisional entry — final entry replaces this one.
+
 ### r455 · 2026-09-02 ~08:00 UTC · LIGHT (r454 had the journey) — GREEN
 - Bring-up: canonical recipe held 20th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
