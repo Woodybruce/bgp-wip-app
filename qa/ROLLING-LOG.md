@@ -84,7 +84,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r463 · 2026-09-02 ~15:30 UTC · LIGHT (r462 had the journey) — GREEN
+### r464 · 2026-09-02 ~11:45 UTC · FULL — rotation #4 BGP staff mobile 390px · ROUND IN PROGRESS
+- Provisional heartbeat. Bring-up: canonical recipe held 29th consecutive
+  time (qa:pg once → run-smoke restore clean → seed-personas per r451 rule
+  BEFORE two-bot, fresh session no stale cross file). Regression: smoke
+  GREEN 42/0. Two-bot round 464 as 3 foreground chunks (r447 pattern):
+  victoria exit 0 (2×400 standing) / mark exit 0 (10 issues = 1×503
+  keyless + 9×403 — the standing 8 plus ONE extra: GET /api/hr/staff 403
+  during client-messages-desktop-redirect; triaged as guard-mount race,
+  see below) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep
+  11/11 at 390px. Server logs: 0 raw 500/502/504.
+- Triage of the extra 403: the client-nav scenario deliberately opens /hr
+  as the client; ClientRouteGuard bounces in a useEffect AFTER HRPage
+  mounts, so the page's useQuery(["/api/hr/staff"]) can fire once before
+  the bounce — server 403s it correctly. Timing decides whether the row
+  lands (lazy-chunk speed), so the mark signature may flip 9↔10. Not an
+  app bug; no code changed since r463 (same HEAD).
+- Journey (staff mobile 390px) to follow this heartbeat.
 - Bring-up: canonical recipe held 28th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
   two-bot, fresh session so no stale cross file). Regression: smoke GREEN
