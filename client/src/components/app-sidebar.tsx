@@ -100,7 +100,13 @@ const coreNavBase = [
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
-  { title: "Comps", url: "/comps", icon: Scale },
+  // Lease Advisory is Pete's toolset (Woody, 2026-09-02): jobs, evidence
+  // plans and leasing comps linked by pill row across the three pages.
+  // Comps has no standalone entry for staff — it's reached through here
+  // (clients still get a direct Comps entry below). Investment comps split
+  // out of the comps page for the investment team.
+  { title: "Lease Advisory", url: "/pla/matters", icon: Scale },
+  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
 ];
 
 const aiNav = [
@@ -129,8 +135,8 @@ const unfinishedNav = [
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase },
   // Leasing Schedule retired (archived) — Tenancy Schedule + Letting
   // Tracker are the two boards now. Route stays live for old links.
-  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
-  { title: "Evidence Plans", url: "/evidence-plans", icon: MapPin },
+  // Lease Advisory (with Evidence Plans + Comps folded in) graduated to
+  // Core (Woody, 2026-09-02).
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, badge: "BD" },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   // Document Studio v2 — the unified documents hub (library + previews +
@@ -349,10 +355,13 @@ export function AppSidebar() {
   const isRealClientLogin = user?.role === "Client";
   const isViewingAsClient = !isRealClientLogin && !!(user as any)?.companyScopeId;
   const viewingAsName = (user as any)?.companyScopeName || activeTeam;
-  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report"];
+  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment-comps", "/evidence-plans"];
   const coreNavStaff = isClientUser
     ? [
         ...coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url)),
+        // Clients keep their scoped read-only Comps view — staff reach comps
+        // through the Lease Advisory toolset instead.
+        { title: "Comps", url: "/comps", icon: Scale },
         // Clients get the read-only brand-signals feed (UX #35) — News
         // otherwise lives in the staff/admin nav only.
         { title: "News", url: "/news", icon: Newspaper },
@@ -643,7 +652,8 @@ export const mobileOverlayItems = [
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
   // Leasing Schedule retired (archived) — route stays live for old links.
   { title: "Comps", url: "/comps", icon: Scale },
-  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark, adminOnly: true },
+  { title: "Lease Advisory", url: "/pla/matters", icon: Scale },
+  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
   // Studio tools admin-only on mobile too (parity with desktop Admin section) — WIP.
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet, adminOnly: true },

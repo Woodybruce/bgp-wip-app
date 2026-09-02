@@ -27,7 +27,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
+import { Pill, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
@@ -43,7 +43,6 @@ import jsPDF from "jspdf";
 import { Link, useLocation } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
-import InvestmentCompsPage from "@/pages/investment-comps";
 import { useIsMobile } from "@/hooks/use-mobile";
 import LeaseEventsPage from "@/pages/lease-events";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -1893,7 +1892,9 @@ export default function Comps() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   // Default to Leasing. The Leads tab is parked (admin-only, reached via
   // /admin/comps-leads → /comps?tab=leads) and not shown in the normal bar.
-  const VALID_TABS = ["table", "investment", "leads", "lease-events", "pdf-template"];
+  // Investment comps moved to their own page (/investment-comps) — old
+  // ?tab=investment links redirect there below.
+  const VALID_TABS = ["table", "leads", "lease-events", "pdf-template"];
   const [activeTab, setActiveTabState] = useState(() => {
     try {
       const t = new URLSearchParams(window.location.search).get("tab");
@@ -1901,6 +1902,11 @@ export default function Comps() {
     } catch {}
     return "table";
   });
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get("tab") === "investment") navigate("/investment-comps", { replace: true });
+    } catch {}
+  }, [navigate]);
   // Persist the active tab in ?tab= so refresh/back doesn't reset to 'table'.
   const setActiveTab = useCallback((tab: string) => {
     setActiveTabState(tab);
@@ -2367,15 +2373,13 @@ export default function Comps() {
           <div className="flex items-center gap-3 min-w-0">
             <div className="min-w-0">
               <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-comps-title">
-                {activeTab === "investment" ? "Investment Comps"
-                  : activeTab === "leads" ? "Comps Leads"
+                {activeTab === "leads" ? "Comps Leads"
                   : activeTab === "lease-events" ? "Lease Events"
                   : activeTab === "pdf-template" ? "PDF Template"
                   : "Leasing Comps"}
               </h1>
               <p className="text-sm text-muted-foreground">
-                {activeTab === "investment" ? "Capital markets comparable transactions"
-                  : activeTab === "leads" ? "Unconfirmed comps extracted from news, emails & files"
+                {activeTab === "leads" ? "Unconfirmed comps extracted from news, emails & files"
                   : activeTab === "lease-events" ? "Rent reviews, breaks & expiries — BD pipeline for lease advisory"
                   : activeTab === "pdf-template" ? "Customise the PDF export template"
                   : "Rent review evidence & comparable transactions"}
@@ -2476,12 +2480,18 @@ export default function Comps() {
 
         {/* Mode tabs live on their own row — inlined next to the title they
             overlapped the heading/subtitle at mid widths. */}
+        {/* Lease advisory toolset — comps sit alongside jobs and evidence
+            plans (Woody, 2026-09-02). Staff only; clients just get comps. */}
+        {!isClientComps && (
+          <div className="flex items-center gap-1.5 mb-2">
+            <Pill onClick={() => navigate("/pla/matters")} data-testid="pill-la-jobs">Jobs</Pill>
+            <Pill onClick={() => navigate("/evidence-plans")} data-testid="pill-la-evidence-plans">Evidence plans</Pill>
+            <Pill active data-testid="pill-la-comps">Comps</Pill>
+          </div>
+        )}
         <TabsList className={`${pillTabsList} mb-3`}>
           <TabsTrigger value="table" className={pillTabsTrigger} data-testid="tab-comps-table">
             Leasing
-          </TabsTrigger>
-          <TabsTrigger value="investment" className={pillTabsTrigger} data-testid="tab-comps-investment">
-            Investment
           </TabsTrigger>
           {activeTab === "leads" && (
           <TabsTrigger value="leads" className={pillTabsTrigger} data-testid="tab-comps-leads">
@@ -3299,12 +3309,6 @@ export default function Comps() {
           </table>
         )}
       </div>
-      </TabsContent>
-
-      <TabsContent value="investment" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden">
-        <ErrorBoundary name="Investment Comps">
-          <InvestmentCompsPage embedded />
-        </ErrorBoundary>
       </TabsContent>
 
       <TabsContent value="lease-events" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden">

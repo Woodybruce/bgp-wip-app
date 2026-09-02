@@ -16,6 +16,10 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
 import crypto from "crypto";
+import { execFile } from "child_process";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import multer from "multer";
 import ExcelJS from "exceljs";
 import Anthropic from "@anthropic-ai/sdk";
@@ -41,9 +45,21 @@ pool.query(`
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`).catch(() => {});
 pool.query(`
+  CREATE TABLE IF NOT EXISTS evidence_plan_levels (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    plan_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    background_key TEXT,
+    background_width INT,
+    background_height INT,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`).catch(() => {});
+pool.query(`
   CREATE TABLE IF NOT EXISTS evidence_plan_units (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     plan_id UUID NOT NULL,
+    level_id UUID,
     unit_ref TEXT NOT NULL,
     tenant_name TEXT,
     polygon JSONB,
@@ -56,7 +72,7 @@ pool.query(`
     notes TEXT,
     ts_matched_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  )`).catch(() => {});
+  )`).then(() => pool.query(`ALTER TABLE evidence_plan_units ADD COLUMN IF NOT EXISTS level_id UUID`)).catch(() => {});
 pool.query(`
   CREATE TABLE IF NOT EXISTS evidence_plan_entries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -101,36 +117,134 @@ async function planOr404(planId: string, res: Response): Promise<any | null> {
   return rows[0];
 }
 
-// Background upload: accepts a PDF (first page rendered at 200dpi) or an
-// image, stores as PNG/JPEG in file_storage with recorded dimensions.
-async function storeBackground(planId: string, file: Express.Multer.File): Promise<{ key: string; width: number; height: number }> {
-  let buf = file.buffer;
-  let mime = file.mimetype || "application/octet-stream";
-  if (/pdf/i.test(mime) || /\.pdf$/i.test(file.originalname || "")) {
-    const page = await rasterisePdfPage({ pdfBuffer: file.buffer, page: 1, dpi: 200 });
-    if (!page) throw new Error("Couldn't render the PDF — is it a valid plan?");
-    buf = page;
-    mime = "image/jpeg";
-  } else if (!/^image\//.test(mime)) {
+// ── Backgrounds & levels ─────────────────────────────────────────────────
+// A scheme plan PDF is often one page per trading level (Brent Cross:
+// Lower / Upper / Restaurant). Every page becomes a level of the plan,
+// named from the page's own text where a level name can be found.
+
+async function pdfPageText(pdfBuffer: Buffer, page: number): Promise<string> {
+  const tmp = path.join(os.tmpdir(), `epl-${crypto.randomBytes(6).toString("hex")}.pdf`);
+  try {
+    fs.writeFileSync(tmp, pdfBuffer);
+    return await new Promise<string>((resolve) => {
+      execFile("pdftotext", ["-f", String(page), "-l", String(page), tmp, "-"], { timeout: 20000 },
+        (err, stdout) => resolve(err ? "" : String(stdout)));
+    });
+  } catch { return ""; } finally { try { fs.unlinkSync(tmp); } catch {} }
+}
+
+// Named levels ("Restaurant Level") win over bare "Level N" — plans note
+// car-park levels ("Car Parking Level 3") that would otherwise match first.
+const NAMED_LEVEL_RE = /\b((?:Lower|Upper|Ground|First|Second|Third|Basement|Mezzanine|Restaurant|Leisure|Terrace)\s+(?:Level|Floor|Mall))\b/i;
+const NUMBERED_LEVEL_RE = /(?<!Car\s?Parking\s)\b(Level\s+\d+)\b/i;
+function detectLevelName(text: string): string | null {
+  const m = text.match(NAMED_LEVEL_RE) || text.match(NUMBERED_LEVEL_RE);
+  return m ? m[1].replace(/\s+/g, " ").trim() : null;
+}
+
+type RenderedPage = { key: string; width: number; height: number; name: string | null };
+
+// Renders every page of a PDF (or a single image) into file_storage.
+async function renderPlanPages(planId: string, file: Express.Multer.File): Promise<RenderedPage[]> {
+  const sharp = (await import("sharp")).default;
+  const out: RenderedPage[] = [];
+  const isPdf = /pdf/i.test(file.mimetype || "") || /\.pdf$/i.test(file.originalname || "");
+  if (isPdf) {
+    for (let p = 1; p <= 10; p++) {
+      const page = await rasterisePdfPage({ pdfBuffer: file.buffer, page: p, dpi: 200 });
+      if (!page) break;
+      const meta = await sharp(page).metadata();
+      if (!meta.width || !meta.height) continue;
+      const key = `evidence-plans/${planId}/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.jpg`;
+      await saveFile(key, page, "image/jpeg", file.originalname);
+      const text = await pdfPageText(file.buffer, p);
+      out.push({ key, width: meta.width, height: meta.height, name: detectLevelName(text) });
+    }
+    if (out.length === 0) throw new Error("Couldn't render the PDF — is it a valid plan?");
+  } else if (/^image\//.test(file.mimetype || "")) {
+    const meta = await sharp(file.buffer).metadata();
+    if (!meta.width || !meta.height) throw new Error("Couldn't read the plan image dimensions");
+    const key = `evidence-plans/${planId}/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${/png/i.test(file.mimetype || "") ? "png" : "jpg"}`;
+    await saveFile(key, file.buffer, file.mimetype, file.originalname);
+    out.push({ key, width: meta.width, height: meta.height, name: null });
+  } else {
     throw new Error("Background must be a PDF or an image");
   }
-  const sharp = (await import("sharp")).default;
-  const meta = await sharp(buf).metadata();
-  const width = meta.width || 0, height = meta.height || 0;
-  if (!width || !height) throw new Error("Couldn't read the plan image dimensions");
-  const key = `evidence-plans/${planId}/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${mime === "image/jpeg" ? "jpg" : "png"}`;
-  await saveFile(key, buf, mime, file.originalname);
-  return { key, width, height };
+  return out;
+}
+
+async function planLevels(planId: string): Promise<any[]> {
+  const { rows } = await pool.query(
+    `SELECT * FROM evidence_plan_levels WHERE plan_id = $1 ORDER BY sort_order, created_at`, [planId]);
+  return rows;
+}
+
+// Maps rendered pages onto the plan's levels in order — updating images in
+// place, creating levels for extra pages — or, for a single page with an
+// explicit target, replaces just that level's image. Custom level names are
+// kept; auto "Level N" names adopt a name detected on the new page.
+async function applyBackgroundPages(planId: string, pages: RenderedPage[], targetLevelId: string | null): Promise<void> {
+  const levels = await planLevels(planId);
+  if (pages.length === 1 && targetLevelId && levels.some(l => l.id === targetLevelId)) {
+    const pg = pages[0];
+    await pool.query(
+      `UPDATE evidence_plan_levels SET background_key=$1, background_width=$2, background_height=$3 WHERE id=$4`,
+      [pg.key, pg.width, pg.height, targetLevelId]);
+  } else {
+    for (let i = 0; i < pages.length; i++) {
+      const pg = pages[i];
+      const existing = levels[i];
+      if (existing) {
+        const keepName = existing.name && !/^Level \d+$/i.test(existing.name);
+        const name = keepName ? existing.name : (pg.name || existing.name || `Level ${i + 1}`);
+        await pool.query(
+          `UPDATE evidence_plan_levels SET background_key=$1, background_width=$2, background_height=$3, name=$4 WHERE id=$5`,
+          [pg.key, pg.width, pg.height, name, existing.id]);
+      } else {
+        await pool.query(
+          `INSERT INTO evidence_plan_levels (plan_id, name, background_key, background_width, background_height, sort_order)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [planId, pg.name || `Level ${i + 1}`, pg.key, pg.width, pg.height, i]);
+      }
+    }
+  }
+  // Mirror the first level onto the plan row — the list page and older
+  // clients read background_* from there.
+  const after = await planLevels(planId);
+  const first = after[0];
+  if (first?.background_key) {
+    await pool.query(
+      `UPDATE evidence_plans SET background_key=$1, background_width=$2, background_height=$3, updated_at=now() WHERE id=$4`,
+      [first.background_key, first.background_width, first.background_height, planId]);
+  }
+}
+
+// Plans made before levels existed carry their background on the plan row;
+// give them a level, and adopt any units that predate levels.
+async function healLevels(plan: any): Promise<any[]> {
+  let levels = await planLevels(plan.id);
+  if (levels.length === 0 && plan.background_key) {
+    await pool.query(
+      `INSERT INTO evidence_plan_levels (plan_id, name, background_key, background_width, background_height, sort_order)
+       VALUES ($1,'Level 1',$2,$3,$4,0)`,
+      [plan.id, plan.background_key, plan.background_width, plan.background_height]);
+    levels = await planLevels(plan.id);
+  }
+  if (levels.length > 0) {
+    await pool.query(`UPDATE evidence_plan_units SET level_id = $1 WHERE plan_id = $2 AND level_id IS NULL`, [levels[0].id, plan.id]);
+  }
+  return levels;
 }
 
 // ── Plans ────────────────────────────────────────────────────────────────
 router.get("/api/evidence-plans", requireAuth, async (_req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(`
-      SELECT p.*,
+      SELECT p.*, cp.name AS property_name,
              (SELECT count(*)::int FROM evidence_plan_units u WHERE u.plan_id = p.id) AS unit_count,
              (SELECT count(*)::int FROM evidence_plan_entries e WHERE e.plan_id = p.id) AS evidence_count
-        FROM evidence_plans p ORDER BY p.updated_at DESC`);
+        FROM evidence_plans p LEFT JOIN crm_properties cp ON cp.id = p.property_id
+       ORDER BY p.updated_at DESC`);
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -145,10 +259,9 @@ router.post("/api/evidence-plans", requireAuth, upload.single("background"), asy
       [name, req.body?.propertyId || null, userId]);
     let plan = rows[0];
     if (req.file) {
-      const bg = await storeBackground(plan.id, req.file);
-      const upd = await pool.query(
-        `UPDATE evidence_plans SET background_key=$1, background_width=$2, background_height=$3, updated_at=now() WHERE id=$4 RETURNING *`,
-        [bg.key, bg.width, bg.height, plan.id]);
+      const pages = await renderPlanPages(plan.id, req.file);
+      await applyBackgroundPages(plan.id, pages, null);
+      const upd = await pool.query(`SELECT * FROM evidence_plans WHERE id = $1`, [plan.id]);
       plan = upd.rows[0];
     }
     res.json(plan);
@@ -159,26 +272,133 @@ router.get("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
   try {
     const plan = await planOr404(String(req.params.id), res);
     if (!plan) return;
-    const [units, entries] = await Promise.all([
+    const levels = await healLevels(plan);
+    const [unitsQ, entries] = await Promise.all([
       pool.query(`SELECT * FROM evidence_plan_units WHERE plan_id = $1 ORDER BY unit_ref`, [plan.id]),
       pool.query(`SELECT * FROM evidence_plan_entries WHERE plan_id = $1 ORDER BY transaction_date DESC NULLS LAST, created_at DESC`, [plan.id]),
     ]);
-    res.json({ plan, units: units.rows, entries: entries.rows });
+
+    // Linked to a CRM property → the property's tenancy schedule is the
+    // single source of truth: unit facts overlay live from
+    // tenancy_schedule_units (matched on normalised unit ref), and lease
+    // advisory jobs (pla_matters) ride along for the unit panel.
+    let propertyName: string | null = null;
+    let matters: any[] = [];
+    const tsByNorm = new Map<string, any>();
+    if (plan.property_id) {
+      const [prop, ts, m] = await Promise.all([
+        pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [plan.property_id]),
+        pool.query(
+          `SELECT unit_number, trading_name, tenant_name, lease_expiry, break_date, next_review_date,
+                  erv_pa, passing_rent_pa, nia_sqft, gia_sqft
+             FROM tenancy_schedule_units WHERE property_id = $1`, [plan.property_id]),
+        pool.query(
+          `SELECT m.id, m.matter_type, m.status, m.acting_for, pu.unit_name
+             FROM pla_matters m LEFT JOIN property_units pu ON pu.id = m.unit_id
+            WHERE m.property_id = $1 ORDER BY m.opened_at DESC`, [plan.property_id]).catch(() => ({ rows: [] as any[] })),
+      ]);
+      propertyName = prop.rows[0]?.name || null;
+      for (const r of ts.rows) {
+        const n = normaliseUnitRef(r.unit_number || "");
+        if (n && !tsByNorm.has(n)) tsByNorm.set(n, r);
+      }
+      matters = m.rows.map((r: any) => ({ ...r, unit_norm: r.unit_name ? normaliseUnitRef(r.unit_name) : null }));
+    }
+    const units = unitsQ.rows.map((u: any) => {
+      const norm = normaliseUnitRef(u.unit_ref);
+      const t = tsByNorm.get(norm);
+      if (!t) return { ...u, unit_norm: norm, ts_linked: false };
+      return {
+        ...u,
+        unit_norm: norm,
+        ts_linked: true,
+        tenant_name: t.trading_name || t.tenant_name || u.tenant_name,
+        lease_expiry: t.lease_expiry ?? u.lease_expiry,
+        break_date: t.break_date ?? u.break_date,
+        review_date: t.next_review_date ?? u.review_date,
+        erv: t.erv_pa ?? u.erv,
+        passing_rent: t.passing_rent_pa ?? u.passing_rent,
+        sqft: t.nia_sqft ?? t.gia_sqft ?? u.sqft,
+      };
+    });
+    res.json({ plan: { ...plan, property_name: propertyName }, levels, units, entries: entries.rows, matters });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Rename the plan or link/unlink its CRM property. Linking makes that
+// property's tenancy schedule the plan's source of truth for unit facts.
+router.put("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const plan = await planOr404(String(req.params.id), res);
+    if (!plan) return;
+    const sets: string[] = [];
+    const vals: any[] = [];
+    if (typeof req.body?.name === "string" && req.body.name.trim()) {
+      vals.push(req.body.name.trim());
+      sets.push(`name = $${vals.length}`);
+    }
+    if ("propertyId" in (req.body || {})) {
+      vals.push(req.body.propertyId || null);
+      sets.push(`property_id = $${vals.length}`);
+    }
+    if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
+    vals.push(plan.id);
+    const { rows } = await pool.query(
+      `UPDATE evidence_plans SET ${sets.join(", ")}, updated_at = now() WHERE id = $${vals.length} RETURNING *`, vals);
+    res.json(rows[0]);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // Swap the background — outlines and data stay (Pete's "new scheme plan
-// when tenants change"). Old image is kept in file_storage for history.
+// when tenants change"). Old images are kept in file_storage for history.
+// A single image (or 1-page PDF) with levelId replaces just that level's
+// plan; a multi-page PDF refreshes every level in page order.
 router.post("/api/evidence-plans/:id/background", requireAuth, upload.single("background"), async (req: Request, res: Response) => {
   try {
     const plan = await planOr404(String(req.params.id), res);
     if (!plan) return;
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    const bg = await storeBackground(plan.id, req.file);
-    const upd = await pool.query(
-      `UPDATE evidence_plans SET background_key=$1, background_width=$2, background_height=$3, updated_at=now() WHERE id=$4 RETURNING *`,
-      [bg.key, bg.width, bg.height, plan.id]);
-    res.json(upd.rows[0]);
+    await healLevels(plan);
+    const pages = await renderPlanPages(plan.id, req.file);
+    await applyBackgroundPages(plan.id, pages, req.body?.levelId ? String(req.body.levelId) : null);
+    const levels = await planLevels(plan.id);
+    const upd = await pool.query(`SELECT * FROM evidence_plans WHERE id = $1`, [plan.id]);
+    res.json({ ...upd.rows[0], levels });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Level background image, rename, and delete (only an empty level).
+router.get("/api/evidence-plans/levels/:levelId/background", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM evidence_plan_levels WHERE id = $1`, [String(req.params.levelId)]);
+    const level = rows[0];
+    if (!level?.background_key) return res.status(404).json({ error: "No plan image for this level" });
+    const file = await getFile(level.background_key);
+    if (!file) return res.status(404).json({ error: "Plan image missing" });
+    res.setHeader("Content-Type", file.contentType);
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.send(file.data);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.put("/api/evidence-plans/levels/:levelId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const name = String(req.body?.name || "").trim();
+    if (!name) return res.status(400).json({ error: "Name is required" });
+    const { rows } = await pool.query(
+      `UPDATE evidence_plan_levels SET name = $1 WHERE id = $2 RETURNING *`, [name.slice(0, 60), String(req.params.levelId)]);
+    if (!rows[0]) return res.status(404).json({ error: "Level not found" });
+    res.json(rows[0]);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete("/api/evidence-plans/levels/:levelId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const levelId = String(req.params.levelId);
+    const { rows } = await pool.query(`SELECT count(*)::int AS n FROM evidence_plan_units WHERE level_id = $1`, [levelId]);
+    if (rows[0]?.n > 0) return res.status(400).json({ error: `That level has ${rows[0].n} unit${rows[0].n === 1 ? "" : "s"} drawn on it — delete or move them first` });
+    await pool.query(`DELETE FROM evidence_plan_levels WHERE id = $1`, [levelId]);
+    res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -200,6 +420,7 @@ router.delete("/api/evidence-plans/:id", requireAuth, async (req: Request, res: 
     if (!plan) return;
     await pool.query(`DELETE FROM evidence_plan_entries WHERE plan_id = $1`, [plan.id]);
     await pool.query(`DELETE FROM evidence_plan_units WHERE plan_id = $1`, [plan.id]);
+    await pool.query(`DELETE FROM evidence_plan_levels WHERE plan_id = $1`, [plan.id]);
     await pool.query(`DELETE FROM evidence_plans WHERE id = $1`, [plan.id]);
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -213,8 +434,8 @@ router.post("/api/evidence-plans/:id/units", requireAuth, async (req: Request, r
     const unitRef = String(req.body?.unitRef || "").trim();
     if (!unitRef) return res.status(400).json({ error: "unitRef is required" });
     const { rows } = await pool.query(
-      `INSERT INTO evidence_plan_units (plan_id, unit_ref, tenant_name, polygon) VALUES ($1, $2, $3, $4) RETURNING *`,
-      [plan.id, unitRef, req.body?.tenantName || null, JSON.stringify(req.body?.polygon || null)]);
+      `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [plan.id, req.body?.levelId || null, unitRef, req.body?.tenantName || null, JSON.stringify(req.body?.polygon || null)]);
     await pool.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [plan.id]);
     res.json(rows[0]);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -314,6 +535,11 @@ router.post("/api/evidence-plans/:id/import-tenancy", requireAuth, upload.single
   try {
     const plan = await planOr404(String(req.params.id), res);
     if (!plan) return;
+    if (plan.property_id) {
+      return res.status(400).json({
+        error: "This plan is linked to a property — its tenancy schedule is the source of truth. Import there and the plan updates itself.",
+      });
+    }
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
     const wb = new ExcelJS.Workbook();
@@ -446,46 +672,52 @@ Extract EVERY analysis sheet visible across these pages as JSON:
 
 Rules: numbers stripped of £/commas; null for anything not stated; one object per sheet even when a page holds several; skip cover pages. Respond with ONLY the JSON object.`;
 
-router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, upload.single("file"), async (req: Request, res: Response) => {
+router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, upload.array("file", 200), async (req: Request, res: Response) => {
   try {
     const plan = await planOr404(String(req.params.id), res);
     if (!plan) return;
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    const files = (req.files as Express.Multer.File[]) || [];
+    if (files.length === 0) return res.status(400).json({ error: "No file uploaded" });
     if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ error: "AI extraction is not configured" });
 
-    // A zip of TAFs (how the tranches arrive from Hammerson) works too —
-    // every PDF inside is processed as if uploaded individually.
+    // Multiple files per upload (a whole folder of TAFs), and any of them
+    // can be a zip (how the tranches arrive from Hammerson) — every PDF
+    // found is processed as if uploaded individually.
     const pdfs: { name: string; buffer: Buffer }[] = [];
-    const isZip = /zip/i.test(req.file.mimetype || "") || /\.zip$/i.test(req.file.originalname || "");
-    if (isZip) {
-      const AdmZip = (await import("adm-zip")).default;
-      const zip = new AdmZip(req.file.buffer);
-      for (const entry of zip.getEntries()) {
-        if (entry.isDirectory || !/\.pdf$/i.test(entry.entryName) || /__MACOSX|^\./.test(entry.entryName)) continue;
-        pdfs.push({ name: entry.entryName.split("/").pop() || entry.entryName, buffer: entry.getData() });
-        if (pdfs.length >= 60) break;
+    for (const file of files) {
+      if (pdfs.length >= 60) break;
+      const isZip = /zip/i.test(file.mimetype || "") || /\.zip$/i.test(file.originalname || "");
+      if (isZip) {
+        const AdmZip = (await import("adm-zip")).default;
+        const zip = new AdmZip(file.buffer);
+        for (const entry of zip.getEntries()) {
+          if (entry.isDirectory || !/\.pdf$/i.test(entry.entryName) || /__MACOSX|^\./.test(entry.entryName)) continue;
+          pdfs.push({ name: entry.entryName.split("/").pop() || entry.entryName, buffer: entry.getData() });
+          if (pdfs.length >= 60) break;
+        }
+      } else if (/\.pdf$/i.test(file.originalname || "") || /pdf/i.test(file.mimetype || "")) {
+        pdfs.push({ name: file.originalname || "taf.pdf", buffer: file.buffer });
       }
-      if (pdfs.length === 0) return res.status(400).json({ error: "No PDFs found inside that zip" });
-    } else {
-      pdfs.push({ name: req.file.originalname || "taf.pdf", buffer: req.file.buffer });
     }
+    if (pdfs.length === 0) return res.status(400).json({ error: "No PDFs found in that upload" });
 
     // Rasterise up to 40 pages per PDF, tagged with their source file so
     // each extracted entry links back to the right document.
     const pages: { buf: Buffer; sourceKey: string }[] = [];
-    const sourceKeys = new Map<string, string>();
-    for (const pdf of pdfs) {
-      const sourceKey = `evidence-plans/${plan.id}/taf-${Date.now()}-${pdf.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60)}`;
-      sourceKeys.set(pdf.name, sourceKey);
-      await saveFile(sourceKey, pdf.buffer, "application/pdf", pdf.name);
+    let firstSourceKey: string | null = null;
+    for (let i = 0; i < pdfs.length; i++) {
+      const pdf = pdfs[i];
+      const key = `evidence-plans/${plan.id}/taf-${Date.now()}-${i}-${pdf.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60)}`;
+      if (!firstSourceKey) firstSourceKey = key;
+      await saveFile(key, pdf.buffer, "application/pdf", pdf.name);
       for (let p = 1; p <= 40; p++) {
         const buf = await rasterisePdfPage({ pdfBuffer: pdf.buffer, page: p, dpi: 150 });
         if (!buf) break;
-        pages.push({ buf, sourceKey });
+        pages.push({ buf, sourceKey: key });
       }
     }
-    const sourceKey = pdfs.length === 1 ? sourceKeys.get(pdfs[0].name)! : null;
-    if (pages.length === 0) return res.status(400).json({ error: "Couldn't read any pages from that PDF" });
+    const sourceKey = pdfs.length === 1 ? firstSourceKey : null;
+    if (pages.length === 0) return res.status(400).json({ error: "Couldn't read any pages from that upload" });
 
     // Batch within one source document at a time so every extracted entry
     // links back to the right PDF.
