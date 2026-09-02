@@ -84,6 +84,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r461 · 2026-09-02 · LIGHT — round in progress
+- Regression: smoke GREEN 42/0. Two-bot round 461 as 3 foreground chunks
+  (r447 pattern): victoria exit 0 (2×400 standing) / mark exit 0 (10
+  issues = 2×503 keyless + 8×403 probe-by-design signature) / woody,nick,
+  sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px. Server
+  logs: 0 raw 500/502/504 (news-feed "500 articles" text hits only).
+- r460 FIX RE-VERIFIED: client-properties-no-address-edit PASSED its
+  first standard-order run inside a full mark chunk.
+- Triage: 0 app bugs. No deferred bugs to pick up (r460 deferred none).
+- Final entry to follow.
+
 ### r460 · 2026-09-02 ~09:00 UTC · FULL — rotation #2 Landsec client desktop 1440px · 1 bug fixed
 - Bring-up: canonical recipe held 25th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
