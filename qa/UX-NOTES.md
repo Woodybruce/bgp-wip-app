@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+137. 2026-09-03 · BGP staff / desktop 1440px (QA r472) · outlining units on
+    a new Evidence Plan · after double-clicking to close an outline, the
+    unit reference is asked for via a raw browser prompt() window — the
+    only browser-chrome prompt in the app, it can't be styled, shows no
+    context, and a stray Esc silently throws the just-drawn outline away ·
+    replace with the app's own small dialog (unit ref field + Save/Cancel),
+    keeping the drawn polygon on Cancel so it can be re-named rather than
+    redrawn.
+
 136. 2026-09-02 · Landsec client / mobile 390px (QA r470) · reviewing
     Bluewater's Boards section on the phone · the empty Brochures panel
     reads "No brochures yet — drop a PDF here or use Add." — drag-and-drop

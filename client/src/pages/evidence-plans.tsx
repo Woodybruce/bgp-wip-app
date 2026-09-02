@@ -226,7 +226,7 @@ function PlanView({ planId }: { planId: string }) {
       if (!r.ok) throw new Error(j.error || "Upload failed");
       invalidate();
       if (kind === "import-tenancy") {
-        toast({ title: "Tenancy schedule imported", description: `${j.matched} unit${j.matched === 1 ? "" : "s"} matched${j.unmatched?.length ? ` · ${j.unmatched.length} TS rows had no unit on the plan` : ""}` });
+        toast({ title: "Tenancy schedule imported", description: `${j.matched} unit${j.matched === 1 ? "" : "s"} matched${j.unmatched?.length ? ` · ${j.unmatched.length} TS row${j.unmatched.length === 1 ? "" : "s"} had no unit on the plan` : ""}` });
       } else if (kind === "ingest-taf") {
         toast({ title: "TAFs extracted", description: `${j.extracted} analysis sheet${j.extracted === 1 ? "" : "s"} found across ${j.pages} pages — ${j.linked} linked to plan units` });
       } else {
@@ -250,7 +250,7 @@ function PlanView({ planId }: { planId: string }) {
         <button onClick={() => navigate("/evidence-plans")} className="text-sm text-muted-foreground hover:text-foreground">←</button>
         <div className="min-w-0">
           <h1 className="text-base font-bold tracking-tight truncate">{plan.name}</h1>
-          <p className="text-[11px] text-muted-foreground">{units.length} units · {entries.length} evidence entries{unlinkedCount ? ` · ${unlinkedCount} unlinked` : ""}</p>
+          <p className="text-[11px] text-muted-foreground">{units.length} unit{units.length === 1 ? "" : "s"} · {entries.length} evidence entr{entries.length === 1 ? "y" : "ies"}{unlinkedCount ? ` · ${unlinkedCount} unlinked` : ""}</p>
         </div>
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
           <Pill active={drawing} onClick={() => { setDrawing(d => !d); setDraft([]); }} data-testid="pill-draw-unit">
@@ -324,7 +324,7 @@ function PlanView({ planId }: { planId: string }) {
                   addUnit.mutate(poly);
                 }}
               >
-                <img src={`/api/evidence-plans/${planId}/background`} alt="" className="absolute inset-0 w-full h-full" draggable={false} />
+                <img src={`/api/evidence-plans/${planId}/background?v=${encodeURIComponent(plan.background_key)}`} alt="" className="absolute inset-0 w-full h-full" draggable={false} />
                 <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 ${aspect >= 1 ? 100 : 100} ${100 * aspect}`} preserveAspectRatio="none" style={{ pointerEvents: "none" }}>
                   {units.filter(u => Array.isArray(u.polygon) && u.polygon.length >= 3).map(u => {
                     const poly = u.polygon as Pt[];

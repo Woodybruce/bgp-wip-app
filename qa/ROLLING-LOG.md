@@ -84,17 +84,62 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r472 · 2026-09-03 · FULL — ROUND IN PROGRESS (provisional)
-- Rotation #4 BGP staff mobile 390px + owed staff /evidence-plans browser
-  journey. Bring-up: canonical recipe held 37th consecutive time (qa:pg
-  once → run-smoke restore clean → seed-personas per r451 rule BEFORE
-  two-bot). Regression: smoke GREEN 42/0.
-- Two-bot round 472 as 3 foreground chunks (r447 pattern): victoria exit 0
-  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
-  probe-by-design — standing signature exact) / woody,nick,sam exit 0
-  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
-  500/502/504 (3782×200, expected 4xx/503 families, single 422 = r462
-  cover-raster by design). Triage: 0 app bugs. Journeys pending.
+### r472 · 2026-09-03 · FULL — rotation #4 BGP staff mobile 390px + owed Evidence Plans journey · 1 bug fixed
+- Bring-up: canonical recipe held 37th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
+  Regression: smoke GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the
+  fix). Two-bot round 472 as 3 foreground chunks (r447 pattern): victoria
+  exit 0 (2×400 standing) ×2 / mark exit 0 (9 issues = 1×503 keyless +
+  8×403 probe-by-design — standing signature exact) / woody,nick,sam
+  exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs:
+  0 raw 500/502/504 (3782×200, expected 4xx/503 families, single 422 =
+  r462 cover-raster by design). Triage: 0 app bugs from the harness.
+- Journey A (Victoria @390px iPhone UA+touch — "train to a Bluewater site
+  visit: tasks, calendar, letting tracker, unit files, WIP report,
+  Evidence Plans peek"): home (4-tab nav, greeting correct) → /tasks
+  (quick-add works, toast + row) → /calendar (day grid + QA events) →
+  /available letting tracker phone card list (redesign judged AS INTENDED
+  — status chip pills, card actions Files/Viewing/Offer/Interest/Edit all
+  reachable) → Files dialog at 390px (rect 8-382, filter pills + Upload/
+  Doc-Studio/Info-sheet render clean) → /wip-report (redesign clean at
+  390px: pill tabs, filter row, KPI tiles) → /evidence-plans (list +
+  empty state render fine on the phone; module not in phone nav —
+  intended, admin-only). 0 pageerrors, 0 non-noise 4xx/5xx, no
+  h-overflow anywhere. Bugs from journey A: 0.
+- Journey B (owed from r471 — Victoria @1440px, full /evidence-plans
+  browser flow): create plan + background upload in the New-plan dialog →
+  background renders → Draw unit (4 corners, dblclick, prompt ref A1) →
+  edit unit facts → manual evidence entry (£250 ZA label lands on the
+  plan) → Import tenancy schedule xlsx (Unit A01→A1 normalisation
+  matched, ATM row skipped, facts+tenant filled, toast counts right) →
+  TAF ingest keyless → clean 503 "AI extraction is not configured" toast
+  (noise family, by design) → Replace plan → outlines + data kept →
+  list row counts correct → DELETE cascades (0 orphan unit/entry rows).
+- BUG FIXED (journey B): replacing the background plan showed the OLD
+  image until a much later reload — the <img> src is the fixed
+  /background URL and the server caches it private,max-age=3600, so the
+  swap appeared to do nothing (toast claimed success). evidence-plans.tsx
+  now cache-busts the src with background_key (changes every upload).
+  Verified visually: canvas pixel flips 235/232/226 → 40/90/200
+  immediately after Replace plan. Same commit, two plural micro-fixes:
+  plan-view header "1 units · 1 evidence entries" → "1 unit · 1 evidence
+  entry"; TS-import toast "1 TS rows" → "1 TS row". tsc clean,
+  FRESH_BUILD smoke re-green.
+- Harness growth: staff-evidence-plan-lifecycle (node-side API CRUD:
+  create plan → unit → entry → detail counts → delete → gone from list;
+  self-cleaning) — PASSED in standard order inside a full victoria chunk
+  re-run, signature stays 2×400.
+- Setup note: a chunk-runner's SIGKILL on the tsx wrapper can orphan the
+  real node server child → run-smoke's DB drop then fails "6 other
+  sessions using the database". Fix: kill the surviving PID directly
+  (ps for tsx/preflight), never pkill by pattern.
+- Bugs fixed: 1 (+2 plural micro-fixes, same file). Deferred: none new.
+  Carried (data, staff decision): Bluewater tenancy SPINE duplicates
+  (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 137 (Draw-unit
+  prompt() → app dialog, keep polygon on cancel). New flakes: none.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r472 had the journeys → r473 LIGHT; then rotation #1 BGP staff
+  desktop 1440px.
 
 ### r471 · 2026-09-02 ~23:30 UTC · LIGHT (r470 had the journey) — GREEN, merged tree verified
 - Purpose: first full two-bot on the MERGED tree (2900a12 — Evidence Plans +

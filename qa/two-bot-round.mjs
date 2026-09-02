@@ -2108,6 +2108,30 @@ async function victoriaRound(page, cross) {
     const body = await r.json();
     if (!Array.isArray(body)) throw new Error('staff GET /api/evidence-plans did not return an array');
   });
+
+  await step(page, p, 'staff-evidence-plan-lifecycle', async () => {
+    // r472: full CRUD sweep of the Evidence Plans API — create plan, draw
+    // unit, add entry, delete plan (cascade must leave no orphan rows in
+    // the list payload). Node-side fetch, cleans up after itself.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const mk = await fetch(`${BASE}/api/evidence-plans`, { method: 'POST', headers: { Authorization: auth.Authorization }, body: (() => { const fd = new FormData(); fd.append('name', `QA-EVP R${ROUND}`); return fd; })() });
+    if (mk.status !== 200) throw new Error(`plan create expected 200, got ${mk.status}`);
+    const plan = await mk.json();
+    try {
+      const u = await fetch(`${BASE}/api/evidence-plans/${plan.id}/units`, { method: 'POST', headers: auth, body: JSON.stringify({ unitRef: 'QA1', polygon: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.1 }, { x: 0.2, y: 0.2 }] }) });
+      if (u.status !== 200) throw new Error(`unit create expected 200, got ${u.status}`);
+      const unit = await u.json();
+      const e = await fetch(`${BASE}/api/evidence-plans/${plan.id}/entries`, { method: 'POST', headers: auth, body: JSON.stringify({ unitId: unit.id, unitRef: 'QA1', tenant: 'QA Tenant', zoneA: 111 }) });
+      if (e.status !== 200) throw new Error(`entry create expected 200, got ${e.status}`);
+      const full = await (await fetch(`${BASE}/api/evidence-plans/${plan.id}`, { headers: { Authorization: auth.Authorization } })).json();
+      if (full.units?.length !== 1 || full.entries?.length !== 1) throw new Error(`plan detail expected 1 unit + 1 entry, got ${full.units?.length}/${full.entries?.length}`);
+    } finally {
+      const del = await fetch(`${BASE}/api/evidence-plans/${plan.id}`, { method: 'DELETE', headers: { Authorization: auth.Authorization } });
+      if (del.status !== 200) throw new Error(`plan delete expected 200, got ${del.status}`);
+    }
+    const after = await (await fetch(`${BASE}/api/evidence-plans`, { headers: { Authorization: auth.Authorization } })).json();
+    if (after.some((pl) => pl.id === plan.id)) throw new Error('deleted plan still in the list');
+  });
 }
 
 async function markRound(page, cross) {
