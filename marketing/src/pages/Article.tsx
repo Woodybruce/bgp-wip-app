@@ -61,7 +61,7 @@ export default function ArticlePage() {
         <div className="flex items-center gap-4">
           <span className="label-caps">Share</span>
           <a
-            href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(`https://www.bgp.uk.com/news/${slug}`)}`}
+            href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(`https://www.bgp.uk.com/news/${article.slug}`)}`}
             target="_blank"
             rel="noreferrer"
             aria-label="Share on LinkedIn"
