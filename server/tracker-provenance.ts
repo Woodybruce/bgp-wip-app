@@ -86,12 +86,16 @@ async function loadSourceEmail(sourceKey: string | null, noteTexts: Array<string
       const m = await graphGet(token, `${GRAPH}/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(parsed.id)}?$select=${MSG_SELECT}`);
       return { mailbox, messages: [shapeMessage(m)] };
     }
+    // No $orderby alongside the conversationId filter — Graph rejects the
+    // pair as an "InefficientFilter"; sort the handful of results here.
     const filter = `conversationId eq '${parsed.id.replace(/'/g, "''")}'`;
     const data = await graphGet(
       token,
-      `${GRAPH}/users/${encodeURIComponent(mailbox)}/messages?$filter=${encodeURIComponent(filter)}&$select=${MSG_SELECT}&$top=10&$orderby=receivedDateTime desc`,
+      `${GRAPH}/users/${encodeURIComponent(mailbox)}/messages?$filter=${encodeURIComponent(filter)}&$select=${MSG_SELECT}&$top=10`,
     );
-    const messages = (data.value || []).map(shapeMessage);
+    const messages = (data.value || [])
+      .map(shapeMessage)
+      .sort((a: any, b: any) => String(b.receivedDateTime || "").localeCompare(String(a.receivedDateTime || "")));
     if (messages.length === 0) return { error: `The thread is no longer in ${mailbox} (moved or deleted).`, mailbox };
     return { mailbox, messages };
   } catch (e: any) {
@@ -151,10 +155,25 @@ export function setupTrackerProvenanceRoutes(app: Express): void {
       try { token = await getAppToken(); }
       catch (e: any) { return res.json({ error: `Microsoft 365 app access unavailable: ${e?.message || e}` }); }
       try {
-        const ev = await graphGet(
-          token,
-          `${GRAPH}/users/${encodeURIComponent(mailbox)}/events/${encodeURIComponent(eventId)}?$select=id,subject,start,end,location,attendees,organizer,webLink,bodyPreview`,
-        );
+        // The sweep stores the event's iCalUId when it has one, falling back
+        // to cal_<graph id> — so only the prefixed form can be fetched by id;
+        // an iCalUId has to be looked up with a filter.
+        const EV_SELECT = "id,subject,start,end,location,attendees,organizer,webLink,bodyPreview";
+        let ev: any;
+        if (eventId.startsWith("cal_")) {
+          ev = await graphGet(
+            token,
+            `${GRAPH}/users/${encodeURIComponent(mailbox)}/events/${encodeURIComponent(eventId.slice(4))}?$select=${EV_SELECT}`,
+          );
+        } else {
+          const filter = `iCalUId eq '${eventId.replace(/'/g, "''")}'`;
+          const found = await graphGet(
+            token,
+            `${GRAPH}/users/${encodeURIComponent(mailbox)}/events?$filter=${encodeURIComponent(filter)}&$select=${EV_SELECT}&$top=1`,
+          );
+          ev = (found.value || [])[0];
+          if (!ev) return res.json({ error: `That event is no longer in ${mailbox}'s diary.`, mailbox });
+        }
         res.json({
           mailbox,
           event: {
