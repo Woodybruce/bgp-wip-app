@@ -84,6 +84,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r462 · 2026-09-02 · FULL (rotation #3 Landsec client mobile 390px) — ROUND IN PROGRESS
+- Heartbeat: bring-up clean (qa:pg once → run-smoke restore → seed-personas
+  before two-bot). Regression: smoke GREEN 42/0. Two-bot round 462 as 3
+  foreground chunks (r447 pattern): victoria exit 0 (2×400 standing) /
+  mark exit 0 (10 issues = 2×503 keyless + 8×403 probe-by-design) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
+  Server logs: 0 raw 500/502/504. Triage: 0 app bugs from the harness.
+- Journey (Mark @390px) still to run — final entry replaces this one.
+
 ### r461 · 2026-09-02 ~11:30 UTC · LIGHT (r460 had the journey) — GREEN
 - Bring-up: canonical recipe held 26th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
