@@ -84,6 +84,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r467 · 2026-09-02 ~14:30 UTC · LIGHT — ROUND IN PROGRESS (heartbeat)
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  seed-personas before two-bot). Regression: smoke GREEN 42/0. Two-bot:
+  victoria exit 0 (2×400 standing) / mark exit 0 ×2 runs, 11 issues each =
+  standing 9 (1×503 keyless + 8×403 probe-by-design) PLUS 2 flow-failures
+  ("Target page, context or browser has been closed") on the LAST two
+  scenarios (client-properties-no-address-edit,
+  client-brochure-upload-parity-manage-blocked) — deterministic across both
+  runs. Triage so far: NOT app bugs — both scenarios' server-side asserts
+  passed in the log (PUT 403, upload 200/manage 403/staff cleanup 200), and
+  an isolated probe of /available + /properties as mark is clean; chromium
+  dies late in the 150-scenario chunk (this container only — r466 same
+  commit passed; /dev/shm 16G, RAM free, no pipe involved, stdio-to-FILE
+  held). Investigating with QA_DEBUG after the remaining chunks.
+- Pending: woody,nick,sam chunk, phone-overflow-sweep, final entry.
+
 ### r466 · 2026-09-02 ~18:30 UTC · FULL — rotation #1 BGP staff desktop 1440px — GREEN
 - Bring-up: canonical recipe held 31st consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
