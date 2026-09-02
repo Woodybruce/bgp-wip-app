@@ -105,7 +105,6 @@ export const TEAM: Person[] = [
   { name: "Lucy Cope", title: "Associate Director, London Leasing", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
   { name: "Evie North", title: "Associate Director, Brand Representation", phone: "+44 (0)7595 349 057", email: "evie@brucegillinghampollard.com" },
   { name: "Alex Todd", title: "Senior Surveyor, Development", phone: "+44 (0)7526 504 806", email: "alext@brucegillinghampollard.com" },
-  { name: "Rob Barnes", title: "Surveyor, National Leasing", phone: "+44 (0)7494 751 653", email: "rob@brucegillinghampollard.com" },
   { name: "Millie Edwards", title: "Leasing", phone: OFFICE_PHONE, email: "TBC" },
   { name: "Emily Cann", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
   { name: "Will Penfold", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
