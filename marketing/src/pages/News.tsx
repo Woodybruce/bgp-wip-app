@@ -78,7 +78,7 @@ export default function News() {
               <h2 className="display text-2xl md:text-3xl leading-tight group-hover:text-bgp-red transition-colors">
                 {featured.title}
               </h2>
-              <p className="mt-4 text-sm font-light text-bgp-ink/70 leading-relaxed max-w-sm">{featured.standfirst}</p>
+              <p className="mt-4 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed max-w-sm">{featured.standfirst}</p>
               <p className="mt-4"><span className="explore-link inline-block">Read more</span></p>
             </div>
           </div>

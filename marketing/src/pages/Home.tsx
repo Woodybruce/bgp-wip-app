@@ -48,7 +48,7 @@ export default function Home() {
       <section className="mx-auto max-w-3xl px-4 pt-16 pb-4 text-center">
         <h2 className="display text-3xl md:text-4xl italic font-normal">{HOME_INTRO.lead}</h2>
         {HOME_INTRO.body.map((para) => (
-          <p key={para.slice(0, 24)} className="mt-5 text-sm font-light text-bgp-ink/75 leading-relaxed">
+          <p key={para.slice(0, 24)} className="mt-5 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
             {para}
           </p>
         ))}
@@ -77,7 +77,7 @@ export default function Home() {
                 <div className="[direction:ltr] md:border-l md:border-bgp-wine/25 md:pl-8">
                   <span className="label-caps text-bgp-red/70 tabular">{String(i + 1).padStart(2, "0")}</span>
                   <h2 className="display text-3xl md:text-4xl mt-1.5">{service.name}</h2>
-                  <p className="mt-4 text-sm font-light text-bgp-ink/75 leading-relaxed max-w-sm">
+                  <p className="mt-4 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed max-w-sm">
                     {service.intro}
                   </p>
                   <p className="mt-5">
@@ -116,7 +116,7 @@ export default function Home() {
         <h2 className="display text-3xl md:text-4xl">News and insights</h2>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
           <p><Link href="/news" className="explore-link">Explore</Link></p>
-          <p className="text-sm font-light text-bgp-ink/75 leading-relaxed">
+          <p className="text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
             The latest news, lettings, transactions and opinion from the BGP team across
             leasing, investment, brand representation and placemaking.
           </p>
