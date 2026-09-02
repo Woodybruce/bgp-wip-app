@@ -1037,11 +1037,11 @@ function TemplateBuilderWizard() {
                         position: "relative",
                       }}
                     >
-                      <div style={{ borderBottom: "2px solid #232323", paddingBottom: 10, marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#232323", textTransform: "uppercase" }}>Bruce Gillingham Pollard</span>
+                      <div style={{ borderBottom: "2px solid #6e0c25", paddingBottom: 10, marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#6e0c25", textTransform: "uppercase" }}>Bruce Gillingham Pollard</span>
                         <span style={{ fontSize: 7, color: "#999" }}>TEMPLATE</span>
                       </div>
-                      <h1 style={{ fontSize: 18, fontWeight: 700, color: "#232323", marginBottom: 4, lineHeight: 1.2 }}>{editedName || "Untitled Template"}</h1>
+                      <h1 style={{ fontSize: 18, fontWeight: 700, color: "#6e0c25", marginBottom: 4, lineHeight: 1.2 }}>{editedName || "Untitled Template"}</h1>
                       {editedDescription && (
                         <p style={{ fontSize: 9, color: "#666", marginBottom: 16, fontStyle: "italic" }}>{editedDescription}</p>
                       )}
@@ -1053,16 +1053,16 @@ function TemplateBuilderWizard() {
                           if (!trimmed) return <div key={i} style={{ height: 8 }} />;
                           return (
                             <div key={i} style={{
-                              ...(isHeading ? { fontSize: 11, fontWeight: 700, color: "#232323", marginTop: 14, marginBottom: 4, letterSpacing: 0.5, borderBottom: "1px solid #E8E6DF", paddingBottom: 3 } : {}),
+                              ...(isHeading ? { fontSize: 11, fontWeight: 700, color: "#6e0c25", marginTop: 14, marginBottom: 4, letterSpacing: 0.5, borderBottom: "1px solid #e4d8d3", paddingBottom: 3 } : {}),
                               ...(isBullet ? { paddingLeft: 12 } : {}),
                             }}>
                               {line.split(/(\{\{[^}]+\}\})/g).map((part, j) => {
                                 if (part.startsWith("{{") && part.endsWith("}}")) {
                                   return (
                                     <span key={j} style={{
-                                      backgroundColor: "#23232315",
-                                      color: "#232323",
-                                      border: "1px solid #23232330",
+                                      backgroundColor: "#6e0c2515",
+                                      color: "#6e0c25",
+                                      border: "1px solid #6e0c2530",
                                       borderRadius: 3,
                                       padding: "1px 4px",
                                       fontSize: "0.9em",
@@ -1078,7 +1078,7 @@ function TemplateBuilderWizard() {
                           );
                         })}
                       </div>
-                      <div style={{ position: "absolute", bottom: 16, left: 32, right: 32, borderTop: "1px solid #E8E6DF", paddingTop: 8, display: "flex", justifyContent: "space-between" }}>
+                      <div style={{ position: "absolute", bottom: 16, left: 32, right: 32, borderTop: "1px solid #e4d8d3", paddingTop: 8, display: "flex", justifyContent: "space-between" }}>
                         <span style={{ fontSize: 7, color: "#999" }}>55 Wells Street, London W1T 3PT</span>
                         <span style={{ fontSize: 7, color: "#999" }}>020 7436 1212</span>
                       </div>
@@ -1539,305 +1539,305 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
 
   const bgpHeader = (els: any[]) => [
     { id: "logo", type: "image", src: bgpLogo, x: 40, y: 10, width: 200, height: 50, objectFit: "contain", zIndex: 1 },
-    { id: "hline", type: "shape", x: 40, y: 65, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 1 },
+    { id: "hline", type: "shape", x: 40, y: 65, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 1 },
     ...els,
-    { id: "fline", type: "shape", x: 40, y: 800, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 10 },
+    { id: "fline", type: "shape", x: 40, y: 800, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 10 },
     { id: "flogo", type: "image", src: bgpLogo, x: 430, y: 808, width: 125, height: 28, objectFit: "contain", zIndex: 11 },
   ];
   const wrap = (els: any[]) => JSON.stringify({ pageWidth: 595, pageHeight: 842, pages: [{ backgroundColor: "#FFFFFF", elements: bgpHeader(els) }] });
 
   const previewMarketingParticulars = wrap([
     { id: "img", type: "shape", x: 0, y: 72, width: 595, height: 280, backgroundColor: "#E7E5DF", zIndex: 2 },
-    { id: "imgLabel", type: "text", x: 220, y: 195, width: 160, height: 16, content: "Property Image", fontSize: 10, fontFamily: "Work Sans, Arial", color: "#999", textAlign: "center", zIndex: 3 },
-    { id: "t1", type: "text", x: 40, y: 372, width: 400, height: 28, content: "Marketing\nParticulars", fontSize: 22, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "t2", type: "text", x: 40, y: 422, width: 300, height: 14, content: "PROPERTY ADDRESS, LONDON", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", letterSpacing: "0.1em", zIndex: 2 },
-    { id: "s1", type: "text", x: 40, y: 458, width: 130, height: 12, content: "Accommodation", fontSize: 9, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "tbl1", type: "shape", x: 40, y: 474, width: 250, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
-    { id: "r1", type: "text", x: 40, y: 480, width: 120, height: 11, content: "Ground Floor", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "r1v", type: "text", x: 200, y: 480, width: 80, height: 11, content: "2,450 sq ft", fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#232323", textAlign: "right", zIndex: 2 },
+    { id: "imgLabel", type: "text", x: 220, y: 195, width: 160, height: 16, content: "Property Image", fontSize: 10, fontFamily: "Lato, Arial", color: "#999", textAlign: "center", zIndex: 3 },
+    { id: "t1", type: "text", x: 40, y: 372, width: 400, height: 28, content: "Marketing\nParticulars", fontSize: 22, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "t2", type: "text", x: 40, y: 422, width: 300, height: 14, content: "PROPERTY ADDRESS, LONDON", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", letterSpacing: "0.1em", zIndex: 2 },
+    { id: "s1", type: "text", x: 40, y: 458, width: 130, height: 12, content: "Accommodation", fontSize: 9, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "tbl1", type: "shape", x: 40, y: 474, width: 250, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "r1", type: "text", x: 40, y: 480, width: 120, height: 11, content: "Ground Floor", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "r1v", type: "text", x: 200, y: 480, width: 80, height: 11, content: "2,450 sq ft", fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "600", color: "#6e0c25", textAlign: "right", zIndex: 2 },
     { id: "tbl2", type: "shape", x: 40, y: 496, width: 250, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 },
-    { id: "r2", type: "text", x: 40, y: 502, width: 120, height: 11, content: "First Floor", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "r2v", type: "text", x: 200, y: 502, width: 80, height: 11, content: "1,800 sq ft", fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#232323", textAlign: "right", zIndex: 2 },
+    { id: "r2", type: "text", x: 40, y: 502, width: 120, height: 11, content: "First Floor", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "r2v", type: "text", x: 200, y: 502, width: 80, height: 11, content: "1,800 sq ft", fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "600", color: "#6e0c25", textAlign: "right", zIndex: 2 },
     { id: "tbl3", type: "shape", x: 40, y: 518, width: 250, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 },
-    { id: "r3", type: "text", x: 40, y: 524, width: 120, height: 11, content: "Basement", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "r3v", type: "text", x: 200, y: 524, width: 80, height: 11, content: "950 sq ft", fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#232323", textAlign: "right", zIndex: 2 },
+    { id: "r3", type: "text", x: 40, y: 524, width: 120, height: 11, content: "Basement", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "r3v", type: "text", x: 200, y: 524, width: 80, height: 11, content: "950 sq ft", fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "600", color: "#6e0c25", textAlign: "right", zIndex: 2 },
     { id: "tbl4", type: "shape", x: 40, y: 540, width: 250, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 },
-    { id: "rtot", type: "text", x: 40, y: 548, width: 120, height: 11, content: "Total NIA", fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "rtotv", type: "text", x: 200, y: 548, width: 80, height: 11, content: "5,200 sq ft", fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", textAlign: "right", zIndex: 2 },
-    { id: "s2", type: "text", x: 40, y: 578, width: 200, height: 12, content: "Rates & Service Charge", fontSize: 9, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "rtot", type: "text", x: 40, y: 548, width: 120, height: 11, content: "Total NIA", fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "rtotv", type: "text", x: 200, y: 548, width: 80, height: 11, content: "5,200 sq ft", fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", textAlign: "right", zIndex: 2 },
+    { id: "s2", type: "text", x: 40, y: 578, width: 200, height: 12, content: "Rates & Service Charge", fontSize: 9, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 2 }, (_, i) => ({ id: `b1${i}`, type: "shape", x: 40, y: 595 + i * 12, width: 350 - i * 60, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
-    { id: "s3", type: "text", x: 330, y: 458, width: 200, height: 12, content: "Location", fontSize: 9, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "s3", type: "text", x: 330, y: 458, width: 200, height: 12, content: "Location", fontSize: 9, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 4 }, (_, i) => ({ id: `loc${i}`, type: "shape", x: 330, y: 476 + i * 12, width: 200 - i * 20, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
-    { id: "s4", type: "text", x: 330, y: 545, width: 200, height: 12, content: "Viewing Arrangements", fontSize: 9, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "s4", type: "text", x: 330, y: 545, width: 200, height: 12, content: "Viewing Arrangements", fontSize: 9, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 3 }, (_, i) => ({ id: `va${i}`, type: "shape", x: 330, y: 562 + i * 12, width: 180 - i * 20, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
   ]);
 
   const previewHOTs = wrap([
-    { id: "t1", type: "text", x: 40, y: 80, width: 400, height: 28, content: "Heads of Terms", fontSize: 22, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "t2", type: "text", x: 40, y: 112, width: 400, height: 12, content: "SUBJECT TO CONTRACT & WITHOUT PREJUDICE", fontSize: 7, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.1em", zIndex: 2 },
-    { id: "divline", type: "shape", x: 40, y: 132, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
+    { id: "t1", type: "text", x: 40, y: 80, width: 400, height: 28, content: "Heads of Terms", fontSize: 22, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "t2", type: "text", x: 40, y: 112, width: 400, height: 12, content: "SUBJECT TO CONTRACT & WITHOUT PREJUDICE", fontSize: 7, fontFamily: "Lato, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.1em", zIndex: 2 },
+    { id: "divline", type: "shape", x: 40, y: 132, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
     ...[["1. Property", "Unit X, Property Address, London W1"], ["2. Landlord", "ABC Property Holdings Ltd"], ["3. Tenant", "XYZ Retail Ltd"], ["4. Guarantor", "To be confirmed"], ["5. Rent", "£150,000 per annum exclusive"], ["6. Rent-Free", "6 months from the Commencement Date"], ["7. Term", "10 years from completion"], ["8. Break", "Tenant only at the 5th anniversary"], ["9. Rent Review", "Open market at the 5th anniversary"], ["10. Use", "Class E — Retail"], ["11. Repairs", "Full repairing and insuring"]].flatMap(([label, val], i) => [
-      { id: `cl${i}`, type: "text", x: 40, y: 145 + i * 48, width: 200, height: 12, content: label, fontSize: 9, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-      { id: `cv${i}`, type: "text", x: 40, y: 159 + i * 48, width: 400, height: 11, content: val, fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
+      { id: `cl${i}`, type: "text", x: 40, y: 145 + i * 48, width: 200, height: 12, content: label, fontSize: 9, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+      { id: `cv${i}`, type: "text", x: 40, y: 159 + i * 48, width: 400, height: 11, content: val, fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
       { id: `cln${i}`, type: "shape", x: 40, y: 177 + i * 48, width: 515, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 },
     ]),
   ]);
 
-  const previewPitch = JSON.stringify({ pageWidth: 595, pageHeight: 842, pages: [{ backgroundColor: "#232323", elements: [
+  const previewPitch = JSON.stringify({ pageWidth: 595, pageHeight: 842, pages: [{ backgroundColor: "#6e0c25", elements: [
     { id: "coverLogo", type: "image", src: bgpLogoWhite, x: 60, y: 80, width: 280, height: 70, objectFit: "contain", zIndex: 3 },
     { id: "divw", type: "shape", x: 60, y: 200, width: 60, height: 0.5, backgroundColor: "#FFFFFF", zIndex: 3 },
-    { id: "t3", type: "text", x: 60, y: 225, width: 400, height: 20, content: "Pitch Presentation", fontSize: 16, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#FFFFFF", zIndex: 3 },
-    { id: "t4", type: "text", x: 60, y: 255, width: 400, height: 14, content: "Project Name", fontSize: 11, fontFamily: "Work Sans, Arial", color: "#CCCCCC", zIndex: 3 },
-    { id: "t5", type: "text", x: 60, y: 280, width: 300, height: 12, content: "PREPARED FOR CLIENT, MONTH YYYY", fontSize: 7, fontFamily: "Work Sans, Arial", color: "#888", letterSpacing: "0.08em", zIndex: 3 },
+    { id: "t3", type: "text", x: 60, y: 225, width: 400, height: 20, content: "Pitch Presentation", fontSize: 16, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#FFFFFF", zIndex: 3 },
+    { id: "t4", type: "text", x: 60, y: 255, width: 400, height: 14, content: "Project Name", fontSize: 11, fontFamily: "Lato, Arial", color: "#CCCCCC", zIndex: 3 },
+    { id: "t5", type: "text", x: 60, y: 280, width: 300, height: 12, content: "PREPARED FOR CLIENT, MONTH YYYY", fontSize: 7, fontFamily: "Lato, Arial", color: "#888", letterSpacing: "0.08em", zIndex: 3 },
     { id: "tocBg", type: "shape", x: 0, y: 420, width: 595, height: 422, backgroundColor: "#FFFFFF", zIndex: 2 },
-    { id: "s1", type: "text", x: 60, y: 445, width: 200, height: 14, content: "Contents", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 3 },
-    { id: "tocLine", type: "shape", x: 60, y: 465, width: 475, height: 0.5, backgroundColor: "#232323", zIndex: 3 },
+    { id: "s1", type: "text", x: 60, y: 445, width: 200, height: 14, content: "Contents", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 3 },
+    { id: "tocLine", type: "shape", x: 60, y: 465, width: 475, height: 0.5, backgroundColor: "#6e0c25", zIndex: 3 },
     ...[["01", "Introduction"], ["02", "Our Services"], ["03", "Track Record"], ["04", "Case Studies"], ["05", "The Team"], ["06", "Our Approach"]].map(([n, t], i) => ({
-      id: `ci${i}`, type: "text", x: 60, y: 478 + i * 24, width: 400, height: 14, content: `${n}   ${t}`, fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3
+      id: `ci${i}`, type: "text", x: 60, y: 478 + i * 24, width: 400, height: 14, content: `${n}   ${t}`, fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3
     })),
     ...[0,1,2,3,4,5].map(i => ({ id: `tocD${i}`, type: "shape", x: 60, y: 496 + i * 24, width: 475, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 3 })),
     { id: "ftLogo", type: "image", src: bgpLogo, x: 430, y: 808, width: 125, height: 28, objectFit: "contain", zIndex: 4 },
   ]}]});
 
   const previewClientReport = wrap([
-    { id: "stag", type: "text", x: 40, y: 78, width: 200, height: 10, content: "CLIENT ADVISORY", fontSize: 7, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.12em", zIndex: 2 },
-    { id: "t1", type: "text", x: 40, y: 95, width: 400, height: 28, content: "Client Report", fontSize: 22, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "t2", type: "text", x: 40, y: 125, width: 300, height: 12, content: "Property Address, London", fontSize: 10, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "divline", type: "shape", x: 40, y: 145, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
-    { id: "s1", type: "text", x: 40, y: 163, width: 200, height: 14, content: "Executive Summary", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "stag", type: "text", x: 40, y: 78, width: 200, height: 10, content: "CLIENT ADVISORY", fontSize: 7, fontFamily: "Lato, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.12em", zIndex: 2 },
+    { id: "t1", type: "text", x: 40, y: 95, width: 400, height: 28, content: "Client Report", fontSize: 22, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "t2", type: "text", x: 40, y: 125, width: 300, height: 12, content: "Property Address, London", fontSize: 10, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "divline", type: "shape", x: 40, y: 145, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "s1", type: "text", x: 40, y: 163, width: 200, height: 14, content: "Executive Summary", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 5 }, (_, i) => ({ id: `p1${i}`, type: "shape", x: 40, y: 183 + i * 12, width: 400 - i * 30, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
-    { id: "s2", type: "text", x: 40, y: 263, width: 200, height: 14, content: "Market Overview", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "chart", type: "shape", x: 40, y: 283, width: 250, height: 110, backgroundColor: "#F5F4F0", zIndex: 2 },
-    { id: "bar1", type: "shape", x: 65, y: 353, width: 28, height: 30, backgroundColor: "#232323", zIndex: 3 },
+    { id: "s2", type: "text", x: 40, y: 263, width: 200, height: 14, content: "Market Overview", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "chart", type: "shape", x: 40, y: 283, width: 250, height: 110, backgroundColor: "#fcf8f4", zIndex: 2 },
+    { id: "bar1", type: "shape", x: 65, y: 353, width: 28, height: 30, backgroundColor: "#6e0c25", zIndex: 3 },
     { id: "bar2", type: "shape", x: 105, y: 341, width: 28, height: 42, backgroundColor: "#596264", zIndex: 3 },
-    { id: "bar3", type: "shape", x: 145, y: 331, width: 28, height: 52, backgroundColor: "#232323", zIndex: 3 },
+    { id: "bar3", type: "shape", x: 145, y: 331, width: 28, height: 52, backgroundColor: "#6e0c25", zIndex: 3 },
     { id: "bar4", type: "shape", x: 185, y: 338, width: 28, height: 45, backgroundColor: "#DDDFE0", zIndex: 3 },
-    { id: "bar5", type: "shape", x: 225, y: 323, width: 28, height: 60, backgroundColor: "#232323", zIndex: 3 },
+    { id: "bar5", type: "shape", x: 225, y: 323, width: 28, height: 60, backgroundColor: "#6e0c25", zIndex: 3 },
     { id: "sideBox", type: "shape", x: 320, y: 283, width: 235, height: 110, backgroundColor: "#E7E5DF", zIndex: 2 },
-    { id: "sbLabel", type: "text", x: 335, y: 295, width: 200, height: 10, content: "KEY METRICS", fontSize: 7, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.08em", zIndex: 3 },
+    { id: "sbLabel", type: "text", x: 335, y: 295, width: 200, height: 10, content: "KEY METRICS", fontSize: 7, fontFamily: "Lato, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.08em", zIndex: 3 },
     ...[["ERV", "£95 psf"], ["Void Rate", "4.2%"], ["Yield", "5.25%"]].flatMap(([l, v], i) => [
-      { id: `km${i}l`, type: "text", x: 335, y: 315 + i * 24, width: 100, height: 10, content: l, fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
-      { id: `km${i}v`, type: "text", x: 335, y: 327 + i * 24, width: 100, height: 14, content: v, fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 3 },
+      { id: `km${i}l`, type: "text", x: 335, y: 315 + i * 24, width: 100, height: 10, content: l, fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
+      { id: `km${i}v`, type: "text", x: 335, y: 327 + i * 24, width: 100, height: 14, content: v, fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 3 },
     ]),
-    { id: "s3", type: "text", x: 40, y: 418, width: 200, height: 14, content: "Comparable Evidence", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "tblh", type: "shape", x: 40, y: 438, width: 515, height: 18, backgroundColor: "#232323", zIndex: 2 },
-    { id: "tblht", type: "text", x: 50, y: 441, width: 400, height: 12, content: "Address                    Rent £psf                    Date", fontSize: 7, fontFamily: "Work Sans, Arial", color: "#FFFFFF", zIndex: 3 },
+    { id: "s3", type: "text", x: 40, y: 418, width: 200, height: 14, content: "Comparable Evidence", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "tblh", type: "shape", x: 40, y: 438, width: 515, height: 18, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "tblht", type: "text", x: 50, y: 441, width: 400, height: 12, content: "Address                    Rent £psf                    Date", fontSize: 7, fontFamily: "Lato, Arial", color: "#FFFFFF", zIndex: 3 },
     ...Array.from({ length: 4 }, (_, i) => ({ id: `tr${i}`, type: "shape", x: 40, y: 461 + i * 18, width: 515, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 })),
-    { id: "s4", type: "text", x: 40, y: 553, width: 200, height: 14, content: "Recommendations", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "s4", type: "text", x: 40, y: 553, width: 200, height: 14, content: "Recommendations", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 3 }, (_, i) => ({ id: `rec${i}`, type: "shape", x: 40, y: 573 + i * 12, width: 420 - i * 30, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
   ]);
 
   const previewTeamCV = wrap([
-    { id: "stag", type: "text", x: 40, y: 78, width: 200, height: 10, content: "TEAM PROFILE", fontSize: 7, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.12em", zIndex: 2 },
-    { id: "t1", type: "text", x: 40, y: 95, width: 340, height: 28, content: "Team Member Name", fontSize: 22, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "role", type: "text", x: 40, y: 125, width: 200, height: 12, content: "Director", fontSize: 10, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "divline", type: "shape", x: 40, y: 145, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
+    { id: "stag", type: "text", x: 40, y: 78, width: 200, height: 10, content: "TEAM PROFILE", fontSize: 7, fontFamily: "Lato, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.12em", zIndex: 2 },
+    { id: "t1", type: "text", x: 40, y: 95, width: 340, height: 28, content: "Team Member Name", fontSize: 22, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "role", type: "text", x: 40, y: 125, width: 200, height: 12, content: "Director", fontSize: 10, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "divline", type: "shape", x: 40, y: 145, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
     { id: "avatar", type: "shape", x: 430, y: 78, width: 125, height: 125, backgroundColor: "#E7E5DF", zIndex: 2 },
-    { id: "avLabel", type: "text", x: 460, y: 133, width: 65, height: 12, content: "Photo", fontSize: 9, fontFamily: "Work Sans, Arial", color: "#999", textAlign: "center", zIndex: 3 },
-    { id: "s1", type: "text", x: 40, y: 163, width: 300, height: 14, content: "Professional Profile", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "avLabel", type: "text", x: 460, y: 133, width: 65, height: 12, content: "Photo", fontSize: 9, fontFamily: "Lato, Arial", color: "#999", textAlign: "center", zIndex: 3 },
+    { id: "s1", type: "text", x: 40, y: 163, width: 300, height: 14, content: "Professional Profile", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 6 }, (_, i) => ({ id: `bio${i}`, type: "shape", x: 40, y: 183 + i * 12, width: 370 - i * 20, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
-    { id: "s2", type: "text", x: 40, y: 273, width: 300, height: 14, content: "Key Instructions", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "s2", type: "text", x: 40, y: 273, width: 300, height: 14, content: "Key Instructions", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 4 }, (_, i) => ({ id: `ki${i}`, type: "shape", x: 40, y: 293 + i * 12, width: 360 - i * 25, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
-    { id: "s3", type: "text", x: 40, y: 363, width: 300, height: 14, content: "Notable Transactions", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "s3", type: "text", x: 40, y: 363, width: 300, height: 14, content: "Notable Transactions", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 5 }, (_, i) => ({ id: `nt${i}`, type: "shape", x: 40, y: 383 + i * 12, width: 380 - i * 15, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
     { id: "contactBox", type: "shape", x: 40, y: 463, width: 250, height: 40, backgroundColor: "#E7E5DF", zIndex: 2 },
-    { id: "cl1", type: "text", x: 50, y: 470, width: 200, height: 10, content: "020 7123 4567", fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#232323", zIndex: 3 },
-    { id: "cl2", type: "text", x: 50, y: 485, width: 200, height: 10, content: "name@brucegillinghampollard.com", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
+    { id: "cl1", type: "text", x: 50, y: 470, width: 200, height: 10, content: "020 7123 4567", fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "600", color: "#6e0c25", zIndex: 3 },
+    { id: "cl2", type: "text", x: 50, y: 485, width: 200, height: 10, content: "name@brucegillinghampollard.com", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
   ]);
 
   const previewPressRelease = wrap([
-    { id: "t1", type: "text", x: 40, y: 78, width: 200, height: 12, content: "PRESS RELEASE", fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", letterSpacing: "0.2em", zIndex: 2 },
-    { id: "date", type: "text", x: 400, y: 78, width: 155, height: 12, content: "20 March 2026", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", textAlign: "right", zIndex: 2 },
-    { id: "divline", type: "shape", x: 40, y: 95, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
-    { id: "h1", type: "text", x: 40, y: 113, width: 515, height: 28, content: "BGP Completes Landmark Transaction", fontSize: 22, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "h2", type: "text", x: 40, y: 145, width: 515, height: 16, content: "Major letting in the heart of Belgravia", fontSize: 11, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
+    { id: "t1", type: "text", x: 40, y: 78, width: 200, height: 12, content: "PRESS RELEASE", fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", letterSpacing: "0.2em", zIndex: 2 },
+    { id: "date", type: "text", x: 400, y: 78, width: 155, height: 12, content: "20 March 2026", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", textAlign: "right", zIndex: 2 },
+    { id: "divline", type: "shape", x: 40, y: 95, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "h1", type: "text", x: 40, y: 113, width: 515, height: 28, content: "BGP Completes Landmark Transaction", fontSize: 22, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "h2", type: "text", x: 40, y: 145, width: 515, height: 16, content: "Major letting in the heart of Belgravia", fontSize: 11, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
     ...Array.from({ length: 8 }, (_, i) => ({ id: `b${i}`, type: "shape", x: 40, y: 183 + i * 14, width: 500 - (i % 3) * 40, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
-    { id: "q1", type: "shape", x: 40, y: 313, width: 2, height: 60, backgroundColor: "#232323", zIndex: 2 },
-    { id: "qt", type: "text", x: 55, y: 318, width: 480, height: 50, content: "'We are delighted to have completed this significant transaction.'", fontSize: 10, fontFamily: "Grotta, Work Sans, Arial", fontStyle: "italic", color: "#444", zIndex: 2 },
-    { id: "qa", type: "text", x: 55, y: 373, width: 300, height: 12, content: "DIRECTOR NAME, BGP", fontSize: 7, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", letterSpacing: "0.08em", zIndex: 2 },
+    { id: "q1", type: "shape", x: 40, y: 313, width: 2, height: 60, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "qt", type: "text", x: 55, y: 318, width: 480, height: 50, content: "'We are delighted to have completed this significant transaction.'", fontSize: 10, fontFamily: "Lora, FreightText Pro, Georgia", fontStyle: "italic", color: "#444", zIndex: 2 },
+    { id: "qa", type: "text", x: 55, y: 373, width: 300, height: 12, content: "DIRECTOR NAME, BGP", fontSize: 7, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", letterSpacing: "0.08em", zIndex: 2 },
     ...Array.from({ length: 6 }, (_, i) => ({ id: `b2${i}`, type: "shape", x: 40, y: 408 + i * 14, width: 480 - (i % 3) * 50, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
-    { id: "bp", type: "text", x: 40, y: 513, width: 300, height: 12, content: "About Bruce Gillingham Pollard", fontSize: 9, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "bp", type: "text", x: 40, y: 513, width: 300, height: 12, content: "About Bruce Gillingham Pollard", fontSize: 9, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 4 }, (_, i) => ({ id: `bp${i}`, type: "shape", x: 40, y: 531 + i * 12, width: 440 - i * 30, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
   ]);
 
   const previewTenantHandbook = wrap([
-    { id: "stag", type: "text", x: 40, y: 78, width: 200, height: 10, content: "BUILDING GUIDE", fontSize: 7, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.12em", zIndex: 2 },
-    { id: "t1", type: "text", x: 40, y: 95, width: 400, height: 28, content: "Tenant Handbook", fontSize: 22, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "t2", type: "text", x: 40, y: 125, width: 300, height: 12, content: "Building Name, London", fontSize: 10, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "divline", type: "shape", x: 40, y: 145, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
-    { id: "toc", type: "text", x: 40, y: 163, width: 200, height: 14, content: "Contents", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "stag", type: "text", x: 40, y: 78, width: 200, height: 10, content: "BUILDING GUIDE", fontSize: 7, fontFamily: "Lato, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.12em", zIndex: 2 },
+    { id: "t1", type: "text", x: 40, y: 95, width: 400, height: 28, content: "Tenant Handbook", fontSize: 22, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "t2", type: "text", x: 40, y: 125, width: 300, height: 12, content: "Building Name, London", fontSize: 10, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "divline", type: "shape", x: 40, y: 145, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "toc", type: "text", x: 40, y: 163, width: 200, height: 14, content: "Contents", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...["1. Welcome & Introduction", "2. Building Management", "3. Fit-Out Requirements", "4. Health & Safety", "5. Access & Security", "6. Waste Management", "7. Signage Guidelines", "8. General Rules"].map((t, i) => ({
-      id: `toc${i}`, type: "text", x: 50, y: 185 + i * 20, width: 350, height: 14, content: t, fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2
+      id: `toc${i}`, type: "text", x: 50, y: 185 + i * 20, width: 350, height: 14, content: t, fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2
     })),
     ...Array.from({ length: 8 }, (_, i) => ({ id: `tocL${i}`, type: "shape", x: 50, y: 203 + i * 20, width: 350, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 })),
-    { id: "tocline", type: "shape", x: 40, y: 353, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
-    { id: "s1", type: "text", x: 40, y: 371, width: 400, height: 16, content: "1. Welcome & Introduction", fontSize: 13, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "tocline", type: "shape", x: 40, y: 353, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "s1", type: "text", x: 40, y: 371, width: 400, height: 16, content: "1. Welcome & Introduction", fontSize: 13, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 5 }, (_, i) => ({ id: `wb${i}`, type: "shape", x: 40, y: 395 + i * 12, width: 450 - i * 30, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
     { id: "box1", type: "shape", x: 40, y: 468, width: 515, height: 70, backgroundColor: "#E7E5DF", zIndex: 2 },
-    { id: "boxT", type: "text", x: 55, y: 481, width: 200, height: 14, content: "Key Contact", fontSize: 10, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 3 },
-    { id: "boxV", type: "text", x: 55, y: 501, width: 300, height: 11, content: "Building Manager: 020 7123 4567", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
-    { id: "boxV2", type: "text", x: 55, y: 516, width: 300, height: 11, content: "Emergency: 020 7123 4568", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
+    { id: "boxT", type: "text", x: 55, y: 481, width: 200, height: 14, content: "Key Contact", fontSize: 10, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 3 },
+    { id: "boxV", type: "text", x: 55, y: 501, width: 300, height: 11, content: "Building Manager: 020 7123 4567", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
+    { id: "boxV2", type: "text", x: 55, y: 516, width: 300, height: 11, content: "Emergency: 020 7123 4568", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
   ]);
 
   const previewRentReview = wrap([
-    { id: "tag", type: "text", x: 40, y: 78, width: 200, height: 12, content: "INTERNAL MEMORANDUM", fontSize: 7, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", letterSpacing: "0.15em", zIndex: 2 },
-    { id: "conf", type: "text", x: 380, y: 78, width: 175, height: 12, content: "Private & Confidential", fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#CC0000", textAlign: "right", zIndex: 2 },
-    { id: "t1", type: "text", x: 40, y: 101, width: 400, height: 28, content: "Rent Review\nMemorandum", fontSize: 20, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "divline", type: "shape", x: 40, y: 141, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
+    { id: "tag", type: "text", x: 40, y: 78, width: 200, height: 12, content: "INTERNAL MEMORANDUM", fontSize: 7, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", letterSpacing: "0.15em", zIndex: 2 },
+    { id: "conf", type: "text", x: 380, y: 78, width: 175, height: 12, content: "Private & Confidential", fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "600", color: "#CC0000", textAlign: "right", zIndex: 2 },
+    { id: "t1", type: "text", x: 40, y: 101, width: 400, height: 28, content: "Rent Review\nMemorandum", fontSize: 20, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "divline", type: "shape", x: 40, y: 141, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
     ...[["To:", "File"], ["From:", "Lease Advisory Team"], ["Date:", "20 March 2026"], ["Re:", "Rent Review — Property Address"]].flatMap(([l, v], i) => [
-      { id: `ml${i}`, type: "text", x: 40, y: 155 + i * 22, width: 60, height: 12, content: l, fontSize: 9, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-      { id: `mv${i}`, type: "text", x: 110, y: 155 + i * 22, width: 350, height: 12, content: v, fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
+      { id: `ml${i}`, type: "text", x: 40, y: 155 + i * 22, width: 60, height: 12, content: l, fontSize: 9, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+      { id: `mv${i}`, type: "text", x: 110, y: 155 + i * 22, width: 350, height: 12, content: v, fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
     ]),
     { id: "mline", type: "shape", x: 40, y: 251, width: 515, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 },
-    { id: "s1", type: "text", x: 40, y: 268, width: 200, height: 14, content: "Current Position", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "s1", type: "text", x: 40, y: 268, width: 200, height: 14, content: "Current Position", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     { id: "box1", type: "shape", x: 40, y: 288, width: 250, height: 55, backgroundColor: "#E7E5DF", zIndex: 2 },
-    { id: "bx1l", type: "text", x: 50, y: 295, width: 100, height: 10, content: "Current Rent", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
-    { id: "bx1v", type: "text", x: 50, y: 311, width: 180, height: 16, content: "£125,000 pa", fontSize: 14, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 3 },
+    { id: "bx1l", type: "text", x: 50, y: 295, width: 100, height: 10, content: "Current Rent", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
+    { id: "bx1v", type: "text", x: 50, y: 311, width: 180, height: 16, content: "£125,000 pa", fontSize: 14, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 3 },
     { id: "box2", type: "shape", x: 305, y: 288, width: 250, height: 55, backgroundColor: "#E7E5DF", zIndex: 2 },
-    { id: "bx2l", type: "text", x: 315, y: 295, width: 120, height: 10, content: "Recommended ERV", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
-    { id: "bx2v", type: "text", x: 315, y: 311, width: 180, height: 16, content: "£155,000 pa", fontSize: 14, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 3 },
-    { id: "s2", type: "text", x: 40, y: 368, width: 200, height: 14, content: "Comparable Evidence", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "th", type: "shape", x: 40, y: 388, width: 515, height: 18, backgroundColor: "#232323", zIndex: 2 },
-    { id: "tht", type: "text", x: 50, y: 391, width: 400, height: 10, content: "Address                    Rent £psf              Review Date", fontSize: 7, fontFamily: "Work Sans, Arial", color: "#FFFFFF", zIndex: 3 },
+    { id: "bx2l", type: "text", x: 315, y: 295, width: 120, height: 10, content: "Recommended ERV", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
+    { id: "bx2v", type: "text", x: 315, y: 311, width: 180, height: 16, content: "£155,000 pa", fontSize: 14, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 3 },
+    { id: "s2", type: "text", x: 40, y: 368, width: 200, height: 14, content: "Comparable Evidence", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "th", type: "shape", x: 40, y: 388, width: 515, height: 18, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "tht", type: "text", x: 50, y: 391, width: 400, height: 10, content: "Address                    Rent £psf              Review Date", fontSize: 7, fontFamily: "Lato, Arial", color: "#FFFFFF", zIndex: 3 },
     ...Array.from({ length: 5 }, (_, i) => ({ id: `rr${i}`, type: "shape", x: 40, y: 408 + i * 16, width: 515, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 })),
   ]);
 
   const previewInstructionLetter = wrap([
-    { id: "date", type: "text", x: 40, y: 83, width: 200, height: 12, content: "20 March 2026", fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "to1", type: "text", x: 40, y: 108, width: 300, height: 12, content: "Client Name", fontSize: 9, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "to2", type: "text", x: 40, y: 123, width: 300, height: 12, content: "Company Name", fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "to3", type: "text", x: 40, y: 138, width: 300, height: 12, content: "Address Line 1", fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "to4", type: "text", x: 40, y: 153, width: 300, height: 12, content: "London SW1", fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "dear", type: "text", x: 40, y: 183, width: 300, height: 14, content: "Dear Client Name,", fontSize: 10, fontFamily: "Work Sans, Arial", color: "#232323", zIndex: 2 },
-    { id: "re", type: "text", x: 40, y: 208, width: 515, height: 16, content: "Re: Instruction to Act — Property Address", fontSize: 12, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "divline", type: "shape", x: 40, y: 230, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
+    { id: "date", type: "text", x: 40, y: 83, width: 200, height: 12, content: "20 March 2026", fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "to1", type: "text", x: 40, y: 108, width: 300, height: 12, content: "Client Name", fontSize: 9, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "to2", type: "text", x: 40, y: 123, width: 300, height: 12, content: "Company Name", fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "to3", type: "text", x: 40, y: 138, width: 300, height: 12, content: "Address Line 1", fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "to4", type: "text", x: 40, y: 153, width: 300, height: 12, content: "London SW1", fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "dear", type: "text", x: 40, y: 183, width: 300, height: 14, content: "Dear Client Name,", fontSize: 10, fontFamily: "Lato, Arial", color: "#6e0c25", zIndex: 2 },
+    { id: "re", type: "text", x: 40, y: 208, width: 515, height: 16, content: "Re: Instruction to Act — Property Address", fontSize: 12, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "divline", type: "shape", x: 40, y: 230, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 4 }, (_, i) => ({ id: `p1${i}`, type: "shape", x: 40, y: 248 + i * 12, width: 480 - i * 30, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
-    { id: "s1", type: "text", x: 40, y: 318, width: 200, height: 14, content: "Scope of Work", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "s1", type: "text", x: 40, y: 318, width: 200, height: 14, content: "Scope of Work", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 4 }, (_, i) => ({ id: `sw${i}`, type: "shape", x: 40, y: 338 + i * 12, width: 460 - i * 25, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
-    { id: "s2", type: "text", x: 40, y: 403, width: 200, height: 14, content: "Fee Basis", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "s2", type: "text", x: 40, y: 403, width: 200, height: 14, content: "Fee Basis", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 3 }, (_, i) => ({ id: `fb${i}`, type: "shape", x: 40, y: 423 + i * 12, width: 420 - i * 30, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
-    { id: "sign", type: "text", x: 40, y: 523, width: 200, height: 12, content: "Yours sincerely,", fontSize: 9, fontFamily: "Work Sans, Arial", color: "#232323", zIndex: 2 },
-    { id: "sigline", type: "shape", x: 40, y: 563, width: 150, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
-    { id: "signame", type: "text", x: 40, y: 571, width: 200, height: 12, content: "Director Name", fontSize: 9, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "sigrole", type: "text", x: 40, y: 585, width: 200, height: 10, content: "Bruce Gillingham Pollard", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
+    { id: "sign", type: "text", x: 40, y: 523, width: 200, height: 12, content: "Yours sincerely,", fontSize: 9, fontFamily: "Lato, Arial", color: "#6e0c25", zIndex: 2 },
+    { id: "sigline", type: "shape", x: 40, y: 563, width: 150, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "signame", type: "text", x: 40, y: 571, width: 200, height: 12, content: "Director Name", fontSize: 9, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "sigrole", type: "text", x: 40, y: 585, width: 200, height: 10, content: "Bruce Gillingham Pollard", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
   ]);
 
   const previewInvestmentMemo = wrap([
-    { id: "stag", type: "text", x: 40, y: 78, width: 200, height: 10, content: "INVESTMENT", fontSize: 7, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.12em", zIndex: 2 },
-    { id: "t1", type: "text", x: 40, y: 95, width: 400, height: 28, content: "Investment\nMemorandum", fontSize: 22, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "t2", type: "text", x: 40, y: 143, width: 300, height: 12, content: "Property Address, London", fontSize: 10, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "divline", type: "shape", x: 40, y: 163, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
+    { id: "stag", type: "text", x: 40, y: 78, width: 200, height: 10, content: "INVESTMENT", fontSize: 7, fontFamily: "Lato, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.12em", zIndex: 2 },
+    { id: "t1", type: "text", x: 40, y: 95, width: 400, height: 28, content: "Investment\nMemorandum", fontSize: 22, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "t2", type: "text", x: 40, y: 143, width: 300, height: 12, content: "Property Address, London", fontSize: 10, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "divline", type: "shape", x: 40, y: 163, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
     ...[["Passing Rent", "£450,000 pa"], ["WAULT", "7.2 years"], ["Net Initial Yield", "4.75%"], ["Rev. Yield", "5.25%"]].map(([l, v], i) => ({
       id: `kv${i}`, type: "shape", x: 40 + i * 130, y: 178, width: 120, height: 55, backgroundColor: "#E7E5DF", zIndex: 2,
     })),
     ...[["Passing Rent", "£450,000 pa"], ["WAULT", "7.2 years"], ["Net Initial Yield", "4.75%"], ["Rev. Yield", "5.25%"]].flatMap(([l, v], i) => [
-      { id: `kvl${i}`, type: "text", x: 48 + i * 130, y: 185, width: 105, height: 10, content: l, fontSize: 7, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
-      { id: `kvv${i}`, type: "text", x: 48 + i * 130, y: 201, width: 105, height: 16, content: v, fontSize: 12, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 3 },
+      { id: `kvl${i}`, type: "text", x: 48 + i * 130, y: 185, width: 105, height: 10, content: l, fontSize: 7, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
+      { id: `kvv${i}`, type: "text", x: 48 + i * 130, y: 201, width: 105, height: 16, content: v, fontSize: 12, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 3 },
     ]),
-    { id: "s1", type: "text", x: 40, y: 253, width: 200, height: 14, content: "Tenancy Schedule", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "th", type: "shape", x: 40, y: 273, width: 515, height: 18, backgroundColor: "#232323", zIndex: 2 },
-    { id: "tht", type: "text", x: 50, y: 276, width: 480, height: 10, content: "Tenant          Demise          Rent          Expiry", fontSize: 7, fontFamily: "Work Sans, Arial", color: "#FFFFFF", zIndex: 3 },
+    { id: "s1", type: "text", x: 40, y: 253, width: 200, height: 14, content: "Tenancy Schedule", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "th", type: "shape", x: 40, y: 273, width: 515, height: 18, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "tht", type: "text", x: 50, y: 276, width: 480, height: 10, content: "Tenant          Demise          Rent          Expiry", fontSize: 7, fontFamily: "Lato, Arial", color: "#FFFFFF", zIndex: 3 },
     ...Array.from({ length: 5 }, (_, i) => ({ id: `tr${i}`, type: "shape", x: 40, y: 295 + i * 16, width: 515, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 })),
-    { id: "s2", type: "text", x: 40, y: 388, width: 200, height: 14, content: "Comparable Transactions", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "th2", type: "shape", x: 40, y: 408, width: 515, height: 18, backgroundColor: "#232323", zIndex: 2 },
+    { id: "s2", type: "text", x: 40, y: 388, width: 200, height: 14, content: "Comparable Transactions", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "th2", type: "shape", x: 40, y: 408, width: 515, height: 18, backgroundColor: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 4 }, (_, i) => ({ id: `tr2${i}`, type: "shape", x: 40, y: 430 + i * 16, width: 515, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 })),
   ]);
 
   const previewLeasingStrategy = wrap([
-    { id: "stag", type: "text", x: 40, y: 78, width: 200, height: 10, content: "LEASING", fontSize: 7, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.12em", zIndex: 2 },
-    { id: "t1", type: "text", x: 40, y: 95, width: 400, height: 28, content: "Leasing Strategy", fontSize: 22, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "t2", type: "text", x: 40, y: 125, width: 300, height: 12, content: "Scheme Name, London", fontSize: 10, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-    { id: "divline", type: "shape", x: 40, y: 145, width: 515, height: 0.5, backgroundColor: "#232323", zIndex: 2 },
-    { id: "s1", type: "text", x: 40, y: 163, width: 200, height: 14, content: "Vision & Overview", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "stag", type: "text", x: 40, y: 78, width: 200, height: 10, content: "LEASING", fontSize: 7, fontFamily: "Lato, Arial", fontWeight: "600", color: "#596264", letterSpacing: "0.12em", zIndex: 2 },
+    { id: "t1", type: "text", x: 40, y: 95, width: 400, height: 28, content: "Leasing Strategy", fontSize: 22, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "t2", type: "text", x: 40, y: 125, width: 300, height: 12, content: "Scheme Name, London", fontSize: 10, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+    { id: "divline", type: "shape", x: 40, y: 145, width: 515, height: 0.5, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "s1", type: "text", x: 40, y: 163, width: 200, height: 14, content: "Vision & Overview", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...Array.from({ length: 4 }, (_, i) => ({ id: `v${i}`, type: "shape", x: 40, y: 183 + i * 12, width: 440 - i * 30, height: 5, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
-    { id: "s2", type: "text", x: 40, y: 243, width: 200, height: 14, content: "Target Tenant Mix", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "s2", type: "text", x: 40, y: 243, width: 200, height: 14, content: "Target Tenant Mix", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...["Retail", "F&B", "Leisure", "Wellness"].map((cat, i) => ({
-      id: `cat${i}`, type: "shape", x: 40 + i * 130, y: 265, width: 120, height: 35, backgroundColor: i === 0 ? "#232323" : i === 1 ? "#596264" : i === 2 ? "#E7E5DF" : "#DDDFE0", zIndex: 2,
+      id: `cat${i}`, type: "shape", x: 40 + i * 130, y: 265, width: 120, height: 35, backgroundColor: i === 0 ? "#6e0c25" : i === 1 ? "#596264" : i === 2 ? "#E7E5DF" : "#DDDFE0", zIndex: 2,
     })),
     ...["Retail", "F&B", "Leisure", "Wellness"].map((cat, i) => ({
-      id: `catl${i}`, type: "text", x: 40 + i * 130, y: 275, width: 120, height: 14, content: cat, fontSize: 9, fontFamily: "Work Sans, Arial", fontWeight: "700", color: i < 2 ? "#FFFFFF" : "#232323", textAlign: "center", zIndex: 3,
+      id: `catl${i}`, type: "text", x: 40 + i * 130, y: 275, width: 120, height: 14, content: cat, fontSize: 9, fontFamily: "Lato, Arial", fontWeight: "700", color: i < 2 ? "#FFFFFF" : "#6e0c25", textAlign: "center", zIndex: 3,
     })),
-    { id: "s3", type: "text", x: 40, y: 323, width: 200, height: 14, content: "Phasing Plan", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "s3", type: "text", x: 40, y: 323, width: 200, height: 14, content: "Phasing Plan", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...["Phase 1: Q2 2026", "Phase 2: Q4 2026", "Phase 3: Q2 2027"].map((ph, i) => ({
-      id: `ph${i}`, type: "shape", x: 40, y: 345 + i * 28, width: 200 + i * 80, height: 18, backgroundColor: "#232323", zIndex: 2,
+      id: `ph${i}`, type: "shape", x: 40, y: 345 + i * 28, width: 200 + i * 80, height: 18, backgroundColor: "#6e0c25", zIndex: 2,
     })),
     ...["Phase 1: Q2 2026", "Phase 2: Q4 2026", "Phase 3: Q2 2027"].map((ph, i) => ({
-      id: `phl${i}`, type: "text", x: 50, y: 348 + i * 28, width: 200, height: 12, content: ph, fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#FFFFFF", zIndex: 3,
+      id: `phl${i}`, type: "text", x: 50, y: 348 + i * 28, width: 200, height: 12, content: ph, fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "600", color: "#FFFFFF", zIndex: 3,
     })),
-    { id: "s4", type: "text", x: 40, y: 443, width: 200, height: 14, content: "Rental Expectations", fontSize: 11, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-    { id: "th", type: "shape", x: 40, y: 463, width: 515, height: 18, backgroundColor: "#232323", zIndex: 2 },
-    { id: "tht", type: "text", x: 50, y: 466, width: 400, height: 10, content: "Unit           Size (sq ft)           ERV £psf           Total Rent", fontSize: 7, fontFamily: "Work Sans, Arial", color: "#FFFFFF", zIndex: 3 },
+    { id: "s4", type: "text", x: 40, y: 443, width: 200, height: 14, content: "Rental Expectations", fontSize: 11, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+    { id: "th", type: "shape", x: 40, y: 463, width: 515, height: 18, backgroundColor: "#6e0c25", zIndex: 2 },
+    { id: "tht", type: "text", x: 50, y: 466, width: 400, height: 10, content: "Unit           Size (sq ft)           ERV £psf           Total Rent", fontSize: 7, fontFamily: "Lato, Arial", color: "#FFFFFF", zIndex: 3 },
     ...Array.from({ length: 4 }, (_, i) => ({ id: `rr${i}`, type: "shape", x: 40, y: 485 + i * 16, width: 515, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 })),
   ]);
 
   const previewRequirementFlyer = wrap([
-    { id: "heroBox", type: "shape", x: 0, y: 72, width: 595, height: 270, backgroundColor: "#232323", zIndex: 2 },
+    { id: "heroBox", type: "shape", x: 0, y: 72, width: 595, height: 270, backgroundColor: "#6e0c25", zIndex: 2 },
     { id: "brandCircle", type: "shape", x: 230, y: 110, width: 135, height: 135, backgroundColor: "#444", zIndex: 3 },
-    { id: "brandLabel", type: "text", x: 245, y: 165, width: 105, height: 16, content: "Brand Logo", fontSize: 10, fontFamily: "Work Sans, Arial", color: "#999", textAlign: "center", zIndex: 4 },
-    { id: "brandName", type: "text", x: 120, y: 258, width: 355, height: 28, content: "Brand Name", fontSize: 24, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#FFFFFF", textAlign: "center", zIndex: 3 },
-    { id: "concept", type: "text", x: 120, y: 290, width: 355, height: 14, content: "Concept Description", fontSize: 10, fontFamily: "Work Sans, Arial", color: "#CCC", textAlign: "center", zIndex: 3 },
+    { id: "brandLabel", type: "text", x: 245, y: 165, width: 105, height: 16, content: "Brand Logo", fontSize: 10, fontFamily: "Lato, Arial", color: "#999", textAlign: "center", zIndex: 4 },
+    { id: "brandName", type: "text", x: 120, y: 258, width: 355, height: 28, content: "Brand Name", fontSize: 24, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#FFFFFF", textAlign: "center", zIndex: 3 },
+    { id: "concept", type: "text", x: 120, y: 290, width: 355, height: 14, content: "Concept Description", fontSize: 10, fontFamily: "Lato, Arial", color: "#CCC", textAlign: "center", zIndex: 3 },
     { id: "divw", type: "shape", x: 265, y: 314, width: 65, height: 0.5, backgroundColor: "#FFFFFF", zIndex: 3 },
-    { id: "s1", type: "text", x: 40, y: 365, width: 200, height: 14, content: "Requirements", fontSize: 13, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+    { id: "s1", type: "text", x: 40, y: 365, width: 200, height: 14, content: "Requirements", fontSize: 13, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
     ...[["Location", "Prime London — Belgravia, Mayfair, Chelsea"], ["Unit Size", "1,500 – 3,000 sq ft"], ["Lease Term", "10 years minimum"], ["Frontage", "20ft+ ground floor frontage"]].flatMap(([l, v], i) => [
-      { id: `rl${i}`, type: "text", x: 40, y: 390 + i * 36, width: 100, height: 12, content: l, fontSize: 9, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-      { id: `rv${i}`, type: "text", x: 40, y: 404 + i * 36, width: 400, height: 11, content: v, fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
+      { id: `rl${i}`, type: "text", x: 40, y: 390 + i * 36, width: 100, height: 12, content: l, fontSize: 9, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+      { id: `rv${i}`, type: "text", x: 40, y: 404 + i * 36, width: 400, height: 11, content: v, fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
       { id: `rln${i}`, type: "shape", x: 40, y: 420 + i * 36, width: 515, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 },
     ]),
     { id: "contact", type: "shape", x: 40, y: 545, width: 515, height: 60, backgroundColor: "#E7E5DF", zIndex: 2 },
-    { id: "cTitle", type: "text", x: 55, y: 555, width: 200, height: 12, content: "For submissions contact:", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
-    { id: "cName", type: "text", x: 55, y: 571, width: 200, height: 14, content: "Agent Name — BGP", fontSize: 10, fontFamily: "Grotta, Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 3 },
-    { id: "cEmail", type: "text", x: 55, y: 587, width: 200, height: 10, content: "agent@brucegillinghampollard.com", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
+    { id: "cTitle", type: "text", x: 55, y: 555, width: 200, height: 12, content: "For submissions contact:", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
+    { id: "cName", type: "text", x: 55, y: 571, width: 200, height: 14, content: "Agent Name — BGP", fontSize: 10, fontFamily: "Lora, FreightText Pro, Georgia", fontWeight: "700", color: "#6e0c25", zIndex: 3 },
+    { id: "cEmail", type: "text", x: 55, y: 587, width: 200, height: 10, content: "agent@brucegillinghampollard.com", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
   ]);
 
   const deckW = 960;
   const deckH = 540;
   const deckWrap = (pages: any[]) => JSON.stringify({ pageWidth: deckW, pageHeight: deckH, pages });
-  const deckCover = (title: string, subtitle: string) => ({ backgroundColor: "#232323", elements: [
+  const deckCover = (title: string, subtitle: string) => ({ backgroundColor: "#6e0c25", elements: [
     { id: "bar1", type: "shape", x: 750, y: 58, width: 140, height: 30, backgroundColor: "#FFFFFF", zIndex: 2 },
     { id: "bar2", type: "shape", x: 750, y: 25, width: 105, height: 30, backgroundColor: "#FFFFFF", zIndex: 2 },
     { id: "bar3", type: "shape", x: 660, y: 42, width: 190, height: 30, backgroundColor: "#FFFFFF", zIndex: 2 },
     { id: "wlogo", type: "image", src: bgpLogoWhite, x: 665, y: 30, width: 220, height: 55, objectFit: "contain", zIndex: 3 },
-    { id: "ct", type: "text", x: 40, y: 340, width: 550, height: 80, content: title, fontSize: 40, fontFamily: "Work Sans, Arial", fontWeight: "400", color: "#FFFFFF", zIndex: 2 },
-    { id: "cs", type: "text", x: 40, y: 430, width: 500, height: 30, content: subtitle, fontSize: 16, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#FFFFFF", letterSpacing: "0.06em", zIndex: 2 },
+    { id: "ct", type: "text", x: 40, y: 340, width: 550, height: 80, content: title, fontSize: 40, fontFamily: "Lato, Arial", fontWeight: "400", color: "#FFFFFF", zIndex: 2 },
+    { id: "cs", type: "text", x: 40, y: 430, width: 500, height: 30, content: subtitle, fontSize: 16, fontFamily: "Lato, Arial", fontWeight: "500", color: "#FFFFFF", letterSpacing: "0.06em", zIndex: 2 },
   ]});
-  const deckSection = (num: string, title: string) => ({ backgroundColor: "#232323", elements: [
+  const deckSection = (num: string, title: string) => ({ backgroundColor: "#6e0c25", elements: [
     { id: "bar1", type: "shape", x: 750, y: 430, width: 140, height: 30, backgroundColor: "#FFFFFF", zIndex: 2 },
     { id: "bar2", type: "shape", x: 750, y: 397, width: 105, height: 30, backgroundColor: "#FFFFFF", zIndex: 2 },
     { id: "bar3", type: "shape", x: 660, y: 414, width: 190, height: 30, backgroundColor: "#FFFFFF", zIndex: 2 },
-    { id: "sn", type: "text", x: 40, y: 60, width: 300, height: 80, content: num, fontSize: 80, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#FFFFFF", zIndex: 2 },
-    { id: "st", type: "text", x: 40, y: 150, width: 500, height: 60, content: title, fontSize: 28, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#FFFFFF", zIndex: 2 },
+    { id: "sn", type: "text", x: 40, y: 60, width: 300, height: 80, content: num, fontSize: 80, fontFamily: "Lato, Arial", fontWeight: "500", color: "#FFFFFF", zIndex: 2 },
+    { id: "st", type: "text", x: 40, y: 150, width: 500, height: 60, content: title, fontSize: 28, fontFamily: "Lato, Arial", fontWeight: "500", color: "#FFFFFF", zIndex: 2 },
   ]});
 
   const previewDeckPitch = deckWrap([
     deckCover("Pitch\nPresentation", "PREPARED FOR CLIENT, MONTH YYYY"),
     deckSection("01", "Introduction"),
-    { backgroundColor: "#232323", elements: [
-      { id: "stl", type: "text", x: 40, y: 40, width: 400, height: 24, content: "INTRODUCTION", fontSize: 14, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#FFFFFF", letterSpacing: "0.08em", zIndex: 2 },
-      { id: "body", type: "text", x: 40, y: 90, width: 480, height: 350, content: "We believe the property market has a responsibility to think ahead and prepare its buildings for the future.\n\nBGP is a specialist commercial property consultancy advising on leasing, investment, development, acquisitions, and lease consultancy across prime London.", fontSize: 14, fontFamily: "Work Sans, Arial", color: "#FFFFFF", zIndex: 2 },
+    { backgroundColor: "#6e0c25", elements: [
+      { id: "stl", type: "text", x: 40, y: 40, width: 400, height: 24, content: "INTRODUCTION", fontSize: 14, fontFamily: "Lato, Arial", fontWeight: "500", color: "#FFFFFF", letterSpacing: "0.08em", zIndex: 2 },
+      { id: "body", type: "text", x: 40, y: 90, width: 480, height: 350, content: "We believe the property market has a responsibility to think ahead and prepare its buildings for the future.\n\nBGP is a specialist commercial property consultancy advising on leasing, investment, development, acquisitions, and lease consultancy across prime London.", fontSize: 14, fontFamily: "Lato, Arial", color: "#FFFFFF", zIndex: 2 },
       { id: "img1", type: "shape", x: 560, y: 40, width: 360, height: 460, backgroundColor: "#00FFFF", zIndex: 2 },
-      { id: "imgL1", type: "text", x: 680, y: 250, width: 120, height: 16, content: "Image", fontSize: 11, fontFamily: "Work Sans, Arial", color: "#666", textAlign: "center", zIndex: 3 },
+      { id: "imgL1", type: "text", x: 680, y: 250, width: 120, height: 16, content: "Image", fontSize: 11, fontFamily: "Lato, Arial", color: "#666", textAlign: "center", zIndex: 3 },
     ]},
     deckSection("02", "Our Services"),
     { backgroundColor: "#FFFFFF", elements: [
-      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "SECTION TITLE", fontSize: 14, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#232323", letterSpacing: "0.08em", zIndex: 2 },
-      { id: "ttl", type: "text", x: 30, y: 38, width: 500, height: 30, content: "Title of page\ntwo lines", fontSize: 22, fontFamily: "Work Sans, Arial", color: "#232323", zIndex: 2 },
+      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "SECTION TITLE", fontSize: 14, fontFamily: "Lato, Arial", fontWeight: "500", color: "#6e0c25", letterSpacing: "0.08em", zIndex: 2 },
+      { id: "ttl", type: "text", x: 30, y: 38, width: 500, height: 30, content: "Title of page\ntwo lines", fontSize: 22, fontFamily: "Lato, Arial", color: "#6e0c25", zIndex: 2 },
       ...[0,1,2,3].map(i => ({ id: `img${i}`, type: "shape", x: 30 + i * 230, y: 100, width: 215, height: 180, backgroundColor: "#00FFFF", zIndex: 2 })),
-      ...[0,1,2,3].map(i => ({ id: `cap${i}`, type: "text", x: 30 + i * 230, y: 285, width: 215, height: 14, content: "CAPTION", fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#596264", letterSpacing: "0.06em", zIndex: 2 })),
-      { id: "sum", type: "text", x: 30, y: 310, width: 900, height: 60, content: "Summary text. We are market leaders, we lead with a strong vision, and have a strategic approach.", fontSize: 11, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
+      ...[0,1,2,3].map(i => ({ id: `cap${i}`, type: "text", x: 30 + i * 230, y: 285, width: 215, height: 14, content: "CAPTION", fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "500", color: "#596264", letterSpacing: "0.06em", zIndex: 2 })),
+      { id: "sum", type: "text", x: 30, y: 310, width: 900, height: 60, content: "Summary text. We are market leaders, we lead with a strong vision, and have a strategic approach.", fontSize: 11, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
     ]},
     { backgroundColor: "#FFFFFF", elements: [
       ...[0,1,2,3].map(i => ({ id: `ph${i}`, type: "shape", x: 30 + i * 230, y: 130, width: 215, height: 220, backgroundColor: "#00FFFF", zIndex: 2 })),
-      ...[0,1,2,3].map(i => ({ id: `nm${i}`, type: "text", x: 30 + i * 230, y: 360, width: 215, height: 14, content: "NAME OF PERSON", fontSize: 9, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 })),
-      ...[0,1,2,3].map(i => ({ id: `rl${i}`, type: "text", x: 30 + i * 230, y: 377, width: 215, height: 100, content: "Role or Company\n— Bullet point biography\n— Point 2\n— Point 3", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 })),
-      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "THE TEAM", fontSize: 14, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#232323", letterSpacing: "0.08em", zIndex: 2 },
-      { id: "ttl", type: "text", x: 30, y: 38, width: 400, height: 60, content: "Title of page\ntwo lines", fontSize: 22, fontFamily: "Work Sans, Arial", color: "#232323", zIndex: 2 },
+      ...[0,1,2,3].map(i => ({ id: `nm${i}`, type: "text", x: 30 + i * 230, y: 360, width: 215, height: 14, content: "NAME OF PERSON", fontSize: 9, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 2 })),
+      ...[0,1,2,3].map(i => ({ id: `rl${i}`, type: "text", x: 30 + i * 230, y: 377, width: 215, height: 100, content: "Role or Company\n— Bullet point biography\n— Point 2\n— Point 3", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 })),
+      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "THE TEAM", fontSize: 14, fontFamily: "Lato, Arial", fontWeight: "500", color: "#6e0c25", letterSpacing: "0.08em", zIndex: 2 },
+      { id: "ttl", type: "text", x: 30, y: 38, width: 400, height: 60, content: "Title of page\ntwo lines", fontSize: 22, fontFamily: "Lato, Arial", color: "#6e0c25", zIndex: 2 },
     ]},
-    { backgroundColor: "#232323", elements: [
+    { backgroundColor: "#6e0c25", elements: [
       { id: "bar1", type: "shape", x: 750, y: 430, width: 140, height: 30, backgroundColor: "#FFFFFF", zIndex: 2 },
       { id: "bar2", type: "shape", x: 750, y: 397, width: 105, height: 30, backgroundColor: "#FFFFFF", zIndex: 2 },
       { id: "bar3", type: "shape", x: 660, y: 414, width: 190, height: 30, backgroundColor: "#FFFFFF", zIndex: 2 },
-      { id: "ty", type: "text", x: 40, y: 260, width: 500, height: 60, content: "Thank you", fontSize: 52, fontFamily: "Work Sans, Arial", color: "#FFFFFF", zIndex: 2 },
-      { id: "contact", type: "text", x: 40, y: 340, width: 600, height: 50, content: "If you wish to discuss this proposal further\nplease contact Name Surname on 020 7409 8698", fontSize: 14, fontFamily: "Work Sans, Arial", color: "#FFFFFF", zIndex: 2 },
+      { id: "ty", type: "text", x: 40, y: 260, width: 500, height: 60, content: "Thank you", fontSize: 52, fontFamily: "Lato, Arial", color: "#FFFFFF", zIndex: 2 },
+      { id: "contact", type: "text", x: 40, y: 340, width: 600, height: 50, content: "If you wish to discuss this proposal further\nplease contact Name Surname on 020 7409 8698", fontSize: 14, fontFamily: "Lato, Arial", color: "#FFFFFF", zIndex: 2 },
     ]},
   ]);
 
@@ -1845,28 +1845,28 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
     deckCover("Property\nPresentation", "PROPERTY ADDRESS, LONDON"),
     { backgroundColor: "#FFFFFF", elements: [
       { id: "heroImg", type: "shape", x: 0, y: 0, width: 960, height: 370, backgroundColor: "#00FFFF", zIndex: 1 },
-      { id: "heroL", type: "text", x: 410, y: 170, width: 140, height: 16, content: "Hero Image", fontSize: 11, fontFamily: "Work Sans, Arial", color: "#666", textAlign: "center", zIndex: 2 },
-      { id: "addr", type: "text", x: 40, y: 390, width: 500, height: 24, content: "Property Address, London", fontSize: 20, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-      { id: "desc", type: "text", x: 40, y: 420, width: 600, height: 40, content: "A prime commercial property available in the heart of central London.", fontSize: 12, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
+      { id: "heroL", type: "text", x: 410, y: 170, width: 140, height: 16, content: "Hero Image", fontSize: 11, fontFamily: "Lato, Arial", color: "#666", textAlign: "center", zIndex: 2 },
+      { id: "addr", type: "text", x: 40, y: 390, width: 500, height: 24, content: "Property Address, London", fontSize: 20, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+      { id: "desc", type: "text", x: 40, y: 420, width: 600, height: 40, content: "A prime commercial property available in the heart of central London.", fontSize: 12, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
       ...[["NIA", "5,200 sq ft"], ["Floors", "Ground + 2"], ["Use Class", "Class E"]].map(([l, v], i) => ({ id: `kv${i}`, type: "shape", x: 700 + i * 0, y: 385 + i * 35, width: 200, height: 28, backgroundColor: "#E7E5DF", zIndex: 2 })),
       ...[["NIA", "5,200 sq ft"], ["Floors", "Ground + 2"], ["Use Class", "Class E"]].flatMap(([l, v], i) => [
-        { id: `kvl${i}`, type: "text", x: 710, y: 389 + i * 35, width: 60, height: 12, content: l, fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
-        { id: `kvv${i}`, type: "text", x: 780, y: 389 + i * 35, width: 110, height: 12, content: v, fontSize: 9, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", textAlign: "right", zIndex: 3 },
+        { id: `kvl${i}`, type: "text", x: 710, y: 389 + i * 35, width: 60, height: 12, content: l, fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
+        { id: `kvv${i}`, type: "text", x: 780, y: 389 + i * 35, width: 110, height: 12, content: v, fontSize: 9, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", textAlign: "right", zIndex: 3 },
       ]),
     ]},
     { backgroundColor: "#FFFFFF", elements: [
       ...[0,1,2,3].map(i => ({ id: `img${i}`, type: "shape", x: 30 + (i % 2) * 460, y: 30 + Math.floor(i / 2) * 250, width: 440, height: 235, backgroundColor: "#00FFFF", zIndex: 2 })),
-      ...[0,1,2,3].map(i => ({ id: `cap${i}`, type: "text", x: 35 + (i % 2) * 460, y: 215 + Math.floor(i / 2) * 250, width: 200, height: 12, content: "CAPTION", fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#596264", letterSpacing: "0.06em", zIndex: 3 })),
+      ...[0,1,2,3].map(i => ({ id: `cap${i}`, type: "text", x: 35 + (i % 2) * 460, y: 215 + Math.floor(i / 2) * 250, width: 200, height: 12, content: "CAPTION", fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "500", color: "#596264", letterSpacing: "0.06em", zIndex: 3 })),
     ]},
     { backgroundColor: "#FFFFFF", elements: [
-      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "FLOOR PLANS", fontSize: 14, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#232323", letterSpacing: "0.08em", zIndex: 2 },
+      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "FLOOR PLANS", fontSize: 14, fontFamily: "Lato, Arial", fontWeight: "500", color: "#6e0c25", letterSpacing: "0.08em", zIndex: 2 },
       { id: "plan", type: "shape", x: 30, y: 50, width: 600, height: 440, backgroundColor: "#00FFFF", zIndex: 2 },
-      { id: "planL", type: "text", x: 280, y: 260, width: 100, height: 16, content: "Floor Plan", fontSize: 11, fontFamily: "Work Sans, Arial", color: "#666", textAlign: "center", zIndex: 3 },
-      { id: "sched", type: "text", x: 660, y: 50, width: 270, height: 18, content: "Accommodation", fontSize: 12, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+      { id: "planL", type: "text", x: 280, y: 260, width: 100, height: 16, content: "Floor Plan", fontSize: 11, fontFamily: "Lato, Arial", color: "#666", textAlign: "center", zIndex: 3 },
+      { id: "sched", type: "text", x: 660, y: 50, width: 270, height: 18, content: "Accommodation", fontSize: 12, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
       ...["Ground Floor", "First Floor", "Second Floor", "Total NIA"].flatMap((fl, i) => [
-        { id: `fl${i}`, type: "text", x: 660, y: 80 + i * 28, width: 140, height: 14, content: fl, fontSize: 10, fontFamily: "Work Sans, Arial", color: i === 3 ? "#232323" : "#596264", fontWeight: i === 3 ? "700" : "400", zIndex: 2 },
-        { id: `fv${i}`, type: "text", x: 820, y: 80 + i * 28, width: 100, height: 14, content: i === 3 ? "5,200 sq ft" : `${1800 + i * 200} sq ft`, fontSize: 10, fontFamily: "Work Sans, Arial", fontWeight: i === 3 ? "700" : "400", color: "#232323", textAlign: "right", zIndex: 2 },
-        { id: `fln${i}`, type: "shape", x: 660, y: 98 + i * 28, width: 260, height: 0.5, backgroundColor: i === 3 ? "#232323" : "#DDDFE0", zIndex: 2 },
+        { id: `fl${i}`, type: "text", x: 660, y: 80 + i * 28, width: 140, height: 14, content: fl, fontSize: 10, fontFamily: "Lato, Arial", color: i === 3 ? "#6e0c25" : "#596264", fontWeight: i === 3 ? "700" : "400", zIndex: 2 },
+        { id: `fv${i}`, type: "text", x: 820, y: 80 + i * 28, width: 100, height: 14, content: i === 3 ? "5,200 sq ft" : `${1800 + i * 200} sq ft`, fontSize: 10, fontFamily: "Lato, Arial", fontWeight: i === 3 ? "700" : "400", color: "#6e0c25", textAlign: "right", zIndex: 2 },
+        { id: `fln${i}`, type: "shape", x: 660, y: 98 + i * 28, width: 260, height: 0.5, backgroundColor: i === 3 ? "#6e0c25" : "#DDDFE0", zIndex: 2 },
       ]),
     ]},
   ]);
@@ -1875,26 +1875,26 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
     deckCover("Market\nReport", "CENTRAL LONDON, Q1 2026"),
     deckSection("01", "Market\nOverview"),
     { backgroundColor: "#FFFFFF", elements: [
-      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "MARKET OVERVIEW", fontSize: 14, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#232323", letterSpacing: "0.08em", zIndex: 2 },
-      { id: "ttl", type: "text", x: 30, y: 38, width: 500, height: 30, content: "Key Market Indicators", fontSize: 22, fontFamily: "Work Sans, Arial", color: "#232323", zIndex: 2 },
+      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "MARKET OVERVIEW", fontSize: 14, fontFamily: "Lato, Arial", fontWeight: "500", color: "#6e0c25", letterSpacing: "0.08em", zIndex: 2 },
+      { id: "ttl", type: "text", x: 30, y: 38, width: 500, height: 30, content: "Key Market Indicators", fontSize: 22, fontFamily: "Lato, Arial", color: "#6e0c25", zIndex: 2 },
       ...[["Take-up", "2.4m sq ft", "+12% YoY"], ["Availability", "8.2%", "−0.4pp"], ["Prime Rent", "£95 psf", "+5% YoY"], ["Under Offer", "1.1m sq ft", "+18%"]].map(([l, v, d], i) => ({
         id: `kv${i}`, type: "shape", x: 30 + i * 230, y: 85, width: 215, height: 90, backgroundColor: "#E7E5DF", zIndex: 2,
       })),
       ...[["Take-up", "2.4m sq ft", "+12% YoY"], ["Availability", "8.2%", "−0.4pp"], ["Prime Rent", "£95 psf", "+5% YoY"], ["Under Offer", "1.1m sq ft", "+18%"]].flatMap(([l, v, d], i) => [
-        { id: `kvl${i}`, type: "text", x: 42 + i * 230, y: 95, width: 190, height: 12, content: l, fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
-        { id: `kvv${i}`, type: "text", x: 42 + i * 230, y: 115, width: 190, height: 24, content: v, fontSize: 22, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 3 },
-        { id: `kvd${i}`, type: "text", x: 42 + i * 230, y: 145, width: 190, height: 12, content: d, fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
+        { id: `kvl${i}`, type: "text", x: 42 + i * 230, y: 95, width: 190, height: 12, content: l, fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
+        { id: `kvv${i}`, type: "text", x: 42 + i * 230, y: 115, width: 190, height: 24, content: v, fontSize: 22, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 3 },
+        { id: `kvd${i}`, type: "text", x: 42 + i * 230, y: 145, width: 190, height: 12, content: d, fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
       ]),
-      { id: "chart", type: "shape", x: 30, y: 200, width: 580, height: 300, backgroundColor: "#F5F4F0", zIndex: 2 },
-      { id: "chartL", type: "text", x: 260, y: 340, width: 100, height: 16, content: "Chart", fontSize: 11, fontFamily: "Work Sans, Arial", color: "#999", textAlign: "center", zIndex: 3 },
-      { id: "sidebar", type: "shape", x: 640, y: 200, width: 290, height: 300, backgroundColor: "#232323", zIndex: 2 },
-      { id: "sbT", type: "text", x: 660, y: 220, width: 250, height: 14, content: "COMMENTARY", fontSize: 10, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#FFFFFF", letterSpacing: "0.06em", zIndex: 3 },
+      { id: "chart", type: "shape", x: 30, y: 200, width: 580, height: 300, backgroundColor: "#fcf8f4", zIndex: 2 },
+      { id: "chartL", type: "text", x: 260, y: 340, width: 100, height: 16, content: "Chart", fontSize: 11, fontFamily: "Lato, Arial", color: "#999", textAlign: "center", zIndex: 3 },
+      { id: "sidebar", type: "shape", x: 640, y: 200, width: 290, height: 300, backgroundColor: "#6e0c25", zIndex: 2 },
+      { id: "sbT", type: "text", x: 660, y: 220, width: 250, height: 14, content: "COMMENTARY", fontSize: 10, fontFamily: "Lato, Arial", fontWeight: "500", color: "#FFFFFF", letterSpacing: "0.06em", zIndex: 3 },
       ...Array.from({ length: 5 }, (_, i) => ({ id: `sb${i}`, type: "shape", x: 660, y: 250 + i * 18, width: 240 - i * 20, height: 6, backgroundColor: "#444", borderRadius: 2, zIndex: 3 })),
     ]},
     { backgroundColor: "#FFFFFF", elements: [
-      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "COMPARABLE EVIDENCE", fontSize: 14, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#232323", letterSpacing: "0.08em", zIndex: 2 },
-      { id: "th", type: "shape", x: 30, y: 55, width: 900, height: 24, backgroundColor: "#232323", zIndex: 2 },
-      { id: "tht", type: "text", x: 40, y: 59, width: 880, height: 14, content: "Address                                    Size (sq ft)                     Rent (£psf)                     Date", fontSize: 9, fontFamily: "Work Sans, Arial", color: "#FFFFFF", zIndex: 3 },
+      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "COMPARABLE EVIDENCE", fontSize: 14, fontFamily: "Lato, Arial", fontWeight: "500", color: "#6e0c25", letterSpacing: "0.08em", zIndex: 2 },
+      { id: "th", type: "shape", x: 30, y: 55, width: 900, height: 24, backgroundColor: "#6e0c25", zIndex: 2 },
+      { id: "tht", type: "text", x: 40, y: 59, width: 880, height: 14, content: "Address                                    Size (sq ft)                     Rent (£psf)                     Date", fontSize: 9, fontFamily: "Lato, Arial", color: "#FFFFFF", zIndex: 3 },
       ...Array.from({ length: 8 }, (_, i) => ({ id: `tr${i}`, type: "shape", x: 30, y: 83 + i * 28, width: 900, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 })),
       ...Array.from({ length: 7 }, (_, i) => ({ id: `td${i}`, type: "shape", x: 40, y: 88 + i * 28, width: 300 - (i % 3) * 30, height: 6, backgroundColor: "#E7E5DF", borderRadius: 2, zIndex: 2 })),
     ]},
@@ -1904,23 +1904,23 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
     deckCover("Investment\nProposal", "PROPERTY ADDRESS, LONDON"),
     { backgroundColor: "#FFFFFF", elements: [
       { id: "img", type: "shape", x: 0, y: 0, width: 960, height: 340, backgroundColor: "#00FFFF", zIndex: 1 },
-      { id: "imgL", type: "text", x: 410, y: 155, width: 140, height: 16, content: "Property Image", fontSize: 11, fontFamily: "Work Sans, Arial", color: "#666", textAlign: "center", zIndex: 2 },
+      { id: "imgL", type: "text", x: 410, y: 155, width: 140, height: 16, content: "Property Image", fontSize: 11, fontFamily: "Lato, Arial", color: "#666", textAlign: "center", zIndex: 2 },
       ...[["Passing Rent", "£450,000 pa"], ["NIY", "4.75%"], ["Rev. Yield", "5.25%"], ["WAULT", "7.2 yrs"]].map(([l, v], i) => ({
         id: `kv${i}`, type: "shape", x: 30 + i * 230, y: 360, width: 215, height: 65, backgroundColor: "#E7E5DF", zIndex: 2,
       })),
       ...[["Passing Rent", "£450,000 pa"], ["NIY", "4.75%"], ["Rev. Yield", "5.25%"], ["WAULT", "7.2 yrs"]].flatMap(([l, v], i) => [
-        { id: `kvl${i}`, type: "text", x: 42 + i * 230, y: 368, width: 190, height: 12, content: l, fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 3 },
-        { id: `kvv${i}`, type: "text", x: 42 + i * 230, y: 388, width: 190, height: 20, content: v, fontSize: 18, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 3 },
+        { id: `kvl${i}`, type: "text", x: 42 + i * 230, y: 368, width: 190, height: 12, content: l, fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 3 },
+        { id: `kvv${i}`, type: "text", x: 42 + i * 230, y: 388, width: 190, height: 20, content: v, fontSize: 18, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 3 },
       ]),
       ...[["Capital Value", "£9.5m"], ["Lot Size", "Freehold"]].flatMap(([l, v], i) => [
-        { id: `kv2l${i}`, type: "text", x: 30 + i * 230, y: 445, width: 190, height: 12, content: l, fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-        { id: `kv2v${i}`, type: "text", x: 30 + i * 230, y: 463, width: 190, height: 18, content: v, fontSize: 16, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+        { id: `kv2l${i}`, type: "text", x: 30 + i * 230, y: 445, width: 190, height: 12, content: l, fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+        { id: `kv2v${i}`, type: "text", x: 30 + i * 230, y: 463, width: 190, height: 18, content: v, fontSize: 16, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
       ]),
     ]},
     { backgroundColor: "#FFFFFF", elements: [
-      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "TENANCY SCHEDULE", fontSize: 14, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#232323", letterSpacing: "0.08em", zIndex: 2 },
-      { id: "th", type: "shape", x: 30, y: 55, width: 900, height: 24, backgroundColor: "#232323", zIndex: 2 },
-      { id: "tht", type: "text", x: 40, y: 59, width: 880, height: 14, content: "Tenant                     Demise                     Rent (£pa)                     Expiry", fontSize: 9, fontFamily: "Work Sans, Arial", color: "#FFFFFF", zIndex: 3 },
+      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "TENANCY SCHEDULE", fontSize: 14, fontFamily: "Lato, Arial", fontWeight: "500", color: "#6e0c25", letterSpacing: "0.08em", zIndex: 2 },
+      { id: "th", type: "shape", x: 30, y: 55, width: 900, height: 24, backgroundColor: "#6e0c25", zIndex: 2 },
+      { id: "tht", type: "text", x: 40, y: 59, width: 880, height: 14, content: "Tenant                     Demise                     Rent (£pa)                     Expiry", fontSize: 9, fontFamily: "Lato, Arial", color: "#FFFFFF", zIndex: 3 },
       ...Array.from({ length: 6 }, (_, i) => ({ id: `tr${i}`, type: "shape", x: 30, y: 83 + i * 30, width: 900, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 })),
     ]},
   ]);
@@ -1929,20 +1929,20 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
     deckCover("Leasing\nStrategy", "SCHEME NAME, LONDON"),
     deckSection("01", "Vision &\nOverview"),
     { backgroundColor: "#FFFFFF", elements: [
-      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "TARGET TENANT MIX", fontSize: 14, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#232323", letterSpacing: "0.08em", zIndex: 2 },
-      { id: "ttl", type: "text", x: 30, y: 38, width: 400, height: 30, content: "Curated mix for the scheme", fontSize: 22, fontFamily: "Work Sans, Arial", color: "#232323", zIndex: 2 },
+      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "TARGET TENANT MIX", fontSize: 14, fontFamily: "Lato, Arial", fontWeight: "500", color: "#6e0c25", letterSpacing: "0.08em", zIndex: 2 },
+      { id: "ttl", type: "text", x: 30, y: 38, width: 400, height: 30, content: "Curated mix for the scheme", fontSize: 22, fontFamily: "Lato, Arial", color: "#6e0c25", zIndex: 2 },
       ...["Retail", "F&B", "Leisure", "Wellness"].map((cat, i) => ({
-        id: `cat${i}`, type: "shape", x: 30 + i * 230, y: 90, width: 215, height: 200, backgroundColor: i === 0 ? "#232323" : i === 1 ? "#596264" : i === 2 ? "#E7E5DF" : "#DDDFE0", zIndex: 2,
+        id: `cat${i}`, type: "shape", x: 30 + i * 230, y: 90, width: 215, height: 200, backgroundColor: i === 0 ? "#6e0c25" : i === 1 ? "#596264" : i === 2 ? "#E7E5DF" : "#DDDFE0", zIndex: 2,
       })),
       ...["Retail", "F&B", "Leisure", "Wellness"].map((cat, i) => ({
-        id: `catl${i}`, type: "text", x: 30 + i * 230, y: 170, width: 215, height: 30, content: cat, fontSize: 18, fontFamily: "Work Sans, Arial", fontWeight: "700", color: i < 2 ? "#FFFFFF" : "#232323", textAlign: "center", zIndex: 3,
+        id: `catl${i}`, type: "text", x: 30 + i * 230, y: 170, width: 215, height: 30, content: cat, fontSize: 18, fontFamily: "Lato, Arial", fontWeight: "700", color: i < 2 ? "#FFFFFF" : "#6e0c25", textAlign: "center", zIndex: 3,
       })),
-      { id: "desc", type: "text", x: 30, y: 310, width: 900, height: 60, content: "Strategy text. We curate a balanced tenant mix to create a vibrant destination that drives footfall and builds long-term rental growth.", fontSize: 12, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
+      { id: "desc", type: "text", x: 30, y: 310, width: 900, height: 60, content: "Strategy text. We curate a balanced tenant mix to create a vibrant destination that drives footfall and builds long-term rental growth.", fontSize: 12, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
       ...["Phase 1: Q2 2026", "Phase 2: Q4 2026", "Phase 3: Q2 2027"].map((ph, i) => ({
-        id: `ph${i}`, type: "shape", x: 30, y: 400 + i * 38, width: 300 + i * 120, height: 26, backgroundColor: "#232323", zIndex: 2,
+        id: `ph${i}`, type: "shape", x: 30, y: 400 + i * 38, width: 300 + i * 120, height: 26, backgroundColor: "#6e0c25", zIndex: 2,
       })),
       ...["Phase 1: Q2 2026", "Phase 2: Q4 2026", "Phase 3: Q2 2027"].map((ph, i) => ({
-        id: `phl${i}`, type: "text", x: 45, y: 404 + i * 38, width: 300, height: 18, content: ph, fontSize: 11, fontFamily: "Work Sans, Arial", fontWeight: "600", color: "#FFFFFF", zIndex: 3,
+        id: `phl${i}`, type: "text", x: 45, y: 404 + i * 38, width: 300, height: 18, content: ph, fontSize: 11, fontFamily: "Lato, Arial", fontWeight: "600", color: "#FFFFFF", zIndex: 3,
       })),
     ]},
   ]);
@@ -1951,17 +1951,17 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
     deckCover("Team\nProfiles", "BRUCE GILLINGHAM POLLARD"),
     { backgroundColor: "#FFFFFF", elements: [
       ...[0,1,2,3].map(i => ({ id: `ph${i}`, type: "shape", x: 30 + i * 230, y: 130, width: 215, height: 220, backgroundColor: "#00FFFF", zIndex: 2 })),
-      ...[0,1,2,3].map(i => ({ id: `nm${i}`, type: "text", x: 30 + i * 230, y: 360, width: 215, height: 14, content: "NAME OF PERSON", fontSize: 10, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 })),
-      ...[0,1,2,3].map(i => ({ id: `rl${i}`, type: "text", x: 30 + i * 230, y: 378, width: 215, height: 120, content: "ROLE OR COMPANY\n— Bullet point biography\n— Point 2\n— Point 3\n— Point 4", fontSize: 8, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 })),
-      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "THE TEAM", fontSize: 14, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#232323", letterSpacing: "0.08em", zIndex: 2 },
-      { id: "ttl", type: "text", x: 30, y: 38, width: 400, height: 60, content: "Key people\non this instruction", fontSize: 22, fontFamily: "Work Sans, Arial", color: "#232323", zIndex: 2 },
+      ...[0,1,2,3].map(i => ({ id: `nm${i}`, type: "text", x: 30 + i * 230, y: 360, width: 215, height: 14, content: "NAME OF PERSON", fontSize: 10, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 2 })),
+      ...[0,1,2,3].map(i => ({ id: `rl${i}`, type: "text", x: 30 + i * 230, y: 378, width: 215, height: 120, content: "ROLE OR COMPANY\n— Bullet point biography\n— Point 2\n— Point 3\n— Point 4", fontSize: 8, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 })),
+      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "THE TEAM", fontSize: 14, fontFamily: "Lato, Arial", fontWeight: "500", color: "#6e0c25", letterSpacing: "0.08em", zIndex: 2 },
+      { id: "ttl", type: "text", x: 30, y: 38, width: 400, height: 60, content: "Key people\non this instruction", fontSize: 22, fontFamily: "Lato, Arial", color: "#6e0c25", zIndex: 2 },
     ]},
     { backgroundColor: "#FFFFFF", elements: [
       { id: "ph0", type: "shape", x: 30, y: 130, width: 380, height: 320, backgroundColor: "#00FFFF", zIndex: 2 },
-      { id: "nm0", type: "text", x: 440, y: 130, width: 480, height: 20, content: "NAME OF PERSON, ROLE OR COMPANY", fontSize: 12, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-      { id: "bio0", type: "text", x: 440, y: 160, width: 480, height: 260, content: "Description. Professional biography text covering background, specialisms, key transactions, and approach to advising clients.\n\nFurther details about notable instructions and market expertise.", fontSize: 11, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "THE TEAM", fontSize: 14, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#232323", letterSpacing: "0.08em", zIndex: 2 },
-      { id: "ttl", type: "text", x: 30, y: 38, width: 400, height: 60, content: "Detailed\nbiography", fontSize: 22, fontFamily: "Work Sans, Arial", color: "#232323", zIndex: 2 },
+      { id: "nm0", type: "text", x: 440, y: 130, width: 480, height: 20, content: "NAME OF PERSON, ROLE OR COMPANY", fontSize: 12, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+      { id: "bio0", type: "text", x: 440, y: 160, width: 480, height: 260, content: "Description. Professional biography text covering background, specialisms, key transactions, and approach to advising clients.\n\nFurther details about notable instructions and market expertise.", fontSize: 11, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+      { id: "stl", type: "text", x: 30, y: 15, width: 300, height: 18, content: "THE TEAM", fontSize: 14, fontFamily: "Lato, Arial", fontWeight: "500", color: "#6e0c25", letterSpacing: "0.08em", zIndex: 2 },
+      { id: "ttl", type: "text", x: 30, y: 38, width: 400, height: 60, content: "Detailed\nbiography", fontSize: 22, fontFamily: "Lato, Arial", color: "#6e0c25", zIndex: 2 },
     ]},
   ]);
 
@@ -1969,19 +1969,19 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
     deckCover("Case\nStudies", "TRACK RECORD"),
     { backgroundColor: "#FFFFFF", elements: [
       { id: "img", type: "shape", x: 0, y: 0, width: 550, height: 540, backgroundColor: "#00FFFF", zIndex: 1 },
-      { id: "imgL", type: "text", x: 225, y: 260, width: 100, height: 16, content: "Image", fontSize: 11, fontFamily: "Work Sans, Arial", color: "#666", textAlign: "center", zIndex: 2 },
-      { id: "stl", type: "text", x: 580, y: 40, width: 340, height: 18, content: "CASE STUDY", fontSize: 14, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#232323", letterSpacing: "0.08em", zIndex: 2 },
-      { id: "ttl", type: "text", x: 580, y: 65, width: 340, height: 40, content: "Property\nAddress", fontSize: 22, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
-      { id: "desc", type: "text", x: 580, y: 120, width: 340, height: 180, content: "Description of the project, transaction, or advisory work completed. Include key details, challenges overcome, and results achieved.\n\nOutcome metrics and client feedback.", fontSize: 11, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
+      { id: "imgL", type: "text", x: 225, y: 260, width: 100, height: 16, content: "Image", fontSize: 11, fontFamily: "Lato, Arial", color: "#666", textAlign: "center", zIndex: 2 },
+      { id: "stl", type: "text", x: 580, y: 40, width: 340, height: 18, content: "CASE STUDY", fontSize: 14, fontFamily: "Lato, Arial", fontWeight: "500", color: "#6e0c25", letterSpacing: "0.08em", zIndex: 2 },
+      { id: "ttl", type: "text", x: 580, y: 65, width: 340, height: 40, content: "Property\nAddress", fontSize: 22, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
+      { id: "desc", type: "text", x: 580, y: 120, width: 340, height: 180, content: "Description of the project, transaction, or advisory work completed. Include key details, challenges overcome, and results achieved.\n\nOutcome metrics and client feedback.", fontSize: 11, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
       ...[["Size", "15,000 sq ft"], ["Sector", "Retail"], ["Value", "£8.5m"]].flatMap(([l, v], i) => [
-        { id: `kl${i}`, type: "text", x: 580, y: 340 + i * 30, width: 100, height: 14, content: l, fontSize: 9, fontFamily: "Work Sans, Arial", color: "#596264", zIndex: 2 },
-        { id: `kv${i}`, type: "text", x: 700, y: 340 + i * 30, width: 200, height: 14, content: v, fontSize: 10, fontFamily: "Work Sans, Arial", fontWeight: "700", color: "#232323", zIndex: 2 },
+        { id: `kl${i}`, type: "text", x: 580, y: 340 + i * 30, width: 100, height: 14, content: l, fontSize: 9, fontFamily: "Lato, Arial", color: "#596264", zIndex: 2 },
+        { id: `kv${i}`, type: "text", x: 700, y: 340 + i * 30, width: 200, height: 14, content: v, fontSize: 10, fontFamily: "Lato, Arial", fontWeight: "700", color: "#6e0c25", zIndex: 2 },
         { id: `kln${i}`, type: "shape", x: 580, y: 358 + i * 30, width: 340, height: 0.5, backgroundColor: "#DDDFE0", zIndex: 2 },
       ]),
     ]},
     { backgroundColor: "#FFFFFF", elements: [
       ...[0,1,2,3,4,5].map(i => ({ id: `img${i}`, type: "shape", x: 30 + (i % 3) * 305, y: 30 + Math.floor(i / 3) * 255, width: 290, height: 240, backgroundColor: "#00FFFF", zIndex: 2 })),
-      ...[0,1,2,3,4,5].map(i => ({ id: `cap${i}`, type: "text", x: 35 + (i % 3) * 305, y: 225 + Math.floor(i / 3) * 255, width: 280, height: 12, content: "CAPTION", fontSize: 8, fontFamily: "Work Sans, Arial", fontWeight: "500", color: "#596264", letterSpacing: "0.06em", zIndex: 3 })),
+      ...[0,1,2,3,4,5].map(i => ({ id: `cap${i}`, type: "text", x: 35 + (i % 3) * 305, y: 225 + Math.floor(i / 3) * 255, width: 280, height: 12, content: "CAPTION", fontSize: 8, fontFamily: "Lato, Arial", fontWeight: "500", color: "#596264", letterSpacing: "0.06em", zIndex: 3 })),
     ]},
   ]);
 
@@ -2033,7 +2033,7 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#232323] to-[#444] flex items-center justify-center shadow-sm">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#6e0c25] to-[#444] flex items-center justify-center shadow-sm">
             <Sparkles className="w-5 h-5 text-white" />
           </div>
           <div>
@@ -2371,7 +2371,7 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
                 <div
                   key={p.label}
                   className={`group relative rounded-xl border-2 cursor-pointer transition-all overflow-hidden hover:shadow-lg hover:scale-[1.02] ${
-                    selectedPreset === p.label ? "border-[#232323] ring-2 ring-[#232323]/20 shadow-lg" : "border-transparent bg-white shadow-sm hover:border-[#232323]/30"
+                    selectedPreset === p.label ? "border-[#6e0c25] ring-2 ring-[#6e0c25]/20 shadow-lg" : "border-transparent bg-white shadow-sm hover:border-[#6e0c25]/30"
                   } ${isBusy ? "opacity-50 pointer-events-none" : ""}`}
                   onClick={() => handlePresetClick(p)}
                   data-testid={`preset-doc-${i}`}
@@ -2386,7 +2386,7 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
                           </div>
                           <div className="absolute inset-0 bg-gradient-to-t from-white/80 via-transparent to-transparent" />
                           {selectedPreset === p.label && (
-                            <div className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full bg-[#232323] flex items-center justify-center shadow-md">
+                            <div className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full bg-[#6e0c25] flex items-center justify-center shadow-md">
                               <Check className="w-3.5 h-3.5 text-white" />
                             </div>
                           )}
@@ -2408,7 +2408,7 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
                       </div>
                       <div className="absolute inset-0 bg-gradient-to-t from-white/80 via-transparent to-transparent" />
                       {selectedPreset === p.label && (
-                        <div className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full bg-[#232323] flex items-center justify-center shadow-md">
+                        <div className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full bg-[#6e0c25] flex items-center justify-center shadow-md">
                           <Check className="w-3.5 h-3.5 text-white" />
                         </div>
                       )}
@@ -2436,7 +2436,7 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
                     );
                   })()}
                   <div className="p-3">
-                    <div className="font-semibold text-sm text-[#232323]">{p.label}</div>
+                    <div className="font-semibold text-sm text-[#6e0c25]">{p.label}</div>
                     <div className="text-[11px] text-muted-foreground mt-1 line-clamp-2 leading-relaxed">{p.desc.split(":")[0]}</div>
                   </div>
                 </div>
@@ -2468,10 +2468,10 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
                     </div>
                     <div className="px-6 py-3 border-t bg-gray-50/50 flex justify-between items-center">
                       <div className="flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-[#232323]" />
+                        <Sparkles className="w-4 h-4 text-[#6e0c25]" />
                         <span className="text-xs text-muted-foreground">AI will generate content and imagery for this template</span>
                       </div>
-                      <Button size="sm" className="bg-[#232323] hover:bg-[#444] text-white rounded-lg px-4" onClick={() => { setPreviewingPreset(null); setSelectedPreset(preset.label); }}>
+                      <Button size="sm" className="bg-[#6e0c25] hover:bg-[#444] text-white rounded-lg px-4" onClick={() => { setPreviewingPreset(null); setSelectedPreset(preset.label); }}>
                         <Check className="w-3.5 h-3.5 mr-1.5" /> Use Template
                       </Button>
                     </div>
@@ -2509,7 +2509,7 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
                   <div className="w-7 h-7 rounded-md bg-[#2E5E3F]/10 flex items-center justify-center">
                     <FileText className="w-3.5 h-3.5 text-[#2E5E3F]" />
                   </div>
-                  <span className="font-medium text-sm text-[#232323]">Investment Memo</span>
+                  <span className="font-medium text-sm text-[#6e0c25]">Investment Memo</span>
                 </div>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">Pre-structured: executive summary, tenancy schedule, WAULT, comparables, pricing, recommendation</p>
               </button>
@@ -2527,7 +2527,7 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
                   <div className="w-7 h-7 rounded-md bg-[#2E5E3F]/10 flex items-center justify-center">
                     <Image className="w-3.5 h-3.5 text-[#2E5E3F]" />
                   </div>
-                  <span className="font-medium text-sm text-[#232323]">Property Particulars</span>
+                  <span className="font-medium text-sm text-[#6e0c25]">Property Particulars</span>
                 </div>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">Pre-structured: address, accommodation, terms, photos, transport links, EPC, viewing arrangements</p>
               </button>
@@ -2545,7 +2545,7 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
                   <div className="w-7 h-7 rounded-md bg-[#2E5E3F]/10 flex items-center justify-center">
                     <ClipboardCheck className="w-3.5 h-3.5 text-[#2E5E3F]" />
                   </div>
-                  <span className="font-medium text-sm text-[#232323]">Lease Summary</span>
+                  <span className="font-medium text-sm text-[#6e0c25]">Lease Summary</span>
                 </div>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">Pre-structured: key lease terms, break dates, rent reviews, comparable evidence, ERV analysis</p>
               </button>
@@ -2554,12 +2554,12 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
         </Card>
       )}
 
-      <Card className={selectedPreset ? "border-[#232323]/20 shadow-md" : "shadow-sm"}>
+      <Card className={selectedPreset ? "border-[#6e0c25]/20 shadow-md" : "shadow-sm"}>
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-sm flex items-center gap-2">
-                <PenTool className="w-4 h-4 text-[#232323]" />
+                <PenTool className="w-4 h-4 text-[#6e0c25]" />
                 {selectedPreset ? `Create ${selectedPreset}` : "Add Details & Generate"}
               </CardTitle>
               <CardDescription className="text-xs">
@@ -2569,7 +2569,7 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
               </CardDescription>
             </div>
             {selectedPreset && (
-              <Badge className="text-xs bg-[#232323]/10 text-[#232323] border-[#232323]/20 hover:bg-[#232323]/15">
+              <Badge className="text-xs bg-[#6e0c25]/10 text-[#6e0c25] border-[#6e0c25]/20 hover:bg-[#6e0c25]/15">
                 <Sparkles className="w-3 h-3 mr-1" />
                 {selectedPreset}
               </Badge>
@@ -2666,7 +2666,7 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
           <Button
             onClick={() => generateMutation.mutate({ presetLabel: selectedPreset || undefined, presetDesc: selectedPresetData?.desc })}
             disabled={(!description.trim() && !selectedPreset && files.length === 0) || isBusy}
-            className="w-full bg-[#232323] hover:bg-[#333] text-white rounded-xl h-12 text-sm font-medium"
+            className="w-full bg-[#6e0c25] hover:bg-[#333] text-white rounded-xl h-12 text-sm font-medium"
             size="lg"
             data-testid="button-generate-document"
           >
@@ -2726,22 +2726,10 @@ function DocumentEditor({ run, onClose, autoDesign }: { run: DocumentRun; onClos
   );
 }
 
+// v19 rebrand — Lora (FreightText Pro stand-in) titles + Lato body from
+// Google Fonts; Space Mono kept for monospace layouts.
 const BGP_PREVIEW_FONTS = `
-@font-face {
-  font-family: 'Grotta';
-  src: url('/api/branding/fonts/Grotta-Regular-q93rrw.otf') format('opentype');
-  font-weight: normal; font-style: normal; font-display: swap;
-}
-@font-face {
-  font-family: 'Neue Machina';
-  src: url('/api/branding/fonts/Neue%20Machina%20Regular-e896.otf') format('opentype');
-  font-weight: normal; font-style: normal; font-display: swap;
-}
-@font-face {
-  font-family: 'MinionPro';
-  src: url('/api/branding/fonts/MinionPro-Regular.otf') format('opentype');
-  font-weight: normal; font-style: normal; font-display: swap;
-}
+@import url('https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap');
 @font-face {
   font-family: 'Space Mono';
   src: url('https://fonts.gstatic.com/s/spacemono/v13/i7dPIFZifjKcF5UAWdDRYEF8RQ.woff2') format('woff2');

@@ -18,12 +18,12 @@ import {
   crmCompanies,
 } from "@shared/schema";
 
-const BGP_SLATE = "#232323";
+const BGP_SLATE = "#6e0c25";
 const BGP_WARM_GREY = "#E8E6DF";
 const BGP_COOL_GREY = "#596264";
 const BGP_MUTED = "#9E9E9E";
 
-const LOGO_PATH = path.join(process.cwd(), "attached_assets", "BGP_BlackHolder_1771853582461.png");
+const LOGO_PATH = path.join(process.cwd(), "server", "assets", "BGP_BlackHolder.png");
 const OUT_DIR = path.join(process.cwd(), "uploads", "why-buy");
 
 function ensureDirs() {

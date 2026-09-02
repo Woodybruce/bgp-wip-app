@@ -12,8 +12,8 @@ import * as fs from "fs";
 
 const router = Router();
 
-const BGP_GREEN = "#2E5E3F";
-const BGP_DARK_GREEN = "#1A3A28";
+const BGP_GREEN = "#6E0C25";
+const BGP_DARK_GREEN = "#4A0819";
 
 async function loadBrandPackData(companyId: string) {
   const companyQ = pool.query(
@@ -77,7 +77,7 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
     const leftM = 50;
     const rightEdge = leftM + pageW;
 
-    const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark.png");
+    const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark_trimmed.png");
     const logoExists = fs.existsSync(logoPath);
 
     // Header
@@ -121,7 +121,7 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
 
     if (facts.length) {
       const col = pageW / facts.length;
-      doc.rect(leftM, y, pageW, 44).fill("#F4F7F5");
+      doc.rect(leftM, y, pageW, 44).fill("#F9F4F0");
       for (let i = 0; i < facts.length; i++) {
         const x = leftM + i * col;
         doc.fillColor("#888").font("Helvetica-Bold").fontSize(7).text(facts[i].label, x + 6, y + 8, { width: col - 12 });

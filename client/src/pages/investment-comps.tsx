@@ -85,8 +85,8 @@ function generateInvestmentCompsPdf(comps: InvestmentComp[], tpl?: InvestmentPdf
   const pageW = 210;
   const margin = 15;
   const contentW = pageW - margin * 2;
-  const brandColor = (t.brandColor || [25, 25, 25]) as [number, number, number];
-  const accentColor = (t.accentColor || [0, 82, 136]) as [number, number, number];
+  const brandColor = (t.brandColor || [110, 12, 37]) as [number, number, number];
+  const accentColor = (t.accentColor || [252, 159, 141]) as [number, number, number];
   const lightGray: [number, number, number] = [245, 245, 245];
   const medGray: [number, number, number] = [140, 140, 140];
   let y = 0;

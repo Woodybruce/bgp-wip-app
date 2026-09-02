@@ -130,14 +130,14 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
       try {
         doc.image(logoPath, leftM, 22, { height: 18 });
       } catch {
-        doc.font("Body-Bold").fontSize(8).fillColor("#232323")
+        doc.font("Body-Bold").fontSize(8).fillColor("#6E0C25")
           .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
       }
     } else {
-      doc.font("Body-Bold").fontSize(8).fillColor("#232323")
+      doc.font("Body-Bold").fontSize(8).fillColor("#6E0C25")
         .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
     }
-    doc.moveTo(leftM, 46).lineTo(leftM + usableW, 46).strokeColor("#232323").lineWidth(0.5).stroke();
+    doc.moveTo(leftM, 46).lineTo(leftM + usableW, 46).strokeColor("#6E0C25").lineWidth(0.5).stroke();
   }
 
   function drawFooter(pageNum: number, totalPages: number) {
@@ -5502,15 +5502,15 @@ async function executeCrmToolRaw(
       const children: any[] = [];
 
       children.push(new docx.Paragraph({
-        children: [new docx.TextRun({ text: "BRUCE GILLINGHAM POLLARD", bold: true, size: 20, font: "Calibri", color: "232323" })],
+        children: [new docx.TextRun({ text: "BRUCE GILLINGHAM POLLARD", bold: true, size: 20, font: "Lato", color: "6E0C25" })],
         spacing: { after: 100 },
       }));
       children.push(new docx.Paragraph({
-        border: { bottom: { style: docx.BorderStyle.SINGLE, size: 6, color: "232323" } },
+        border: { bottom: { style: docx.BorderStyle.SINGLE, size: 6, color: "6E0C25" } },
         spacing: { after: 300 },
       }));
       children.push(new docx.Paragraph({
-        children: [new docx.TextRun({ text: fnArgs.title as string, bold: true, size: 32, font: "Calibri", color: "232323" })],
+        children: [new docx.TextRun({ text: fnArgs.title as string, bold: true, size: 32, font: "Lato", color: "6E0C25" })],
         heading: docx.HeadingLevel.TITLE,
         spacing: { after: 200 },
       }));
@@ -5519,7 +5519,7 @@ async function executeCrmToolRaw(
         if (section.heading) {
           const level = section.level === 2 ? docx.HeadingLevel.HEADING_2 : docx.HeadingLevel.HEADING_1;
           children.push(new docx.Paragraph({
-            children: [new docx.TextRun({ text: section.heading, bold: true, size: level === docx.HeadingLevel.HEADING_1 ? 28 : 24, font: "Calibri" })],
+            children: [new docx.TextRun({ text: section.heading, bold: true, size: level === docx.HeadingLevel.HEADING_1 ? 28 : 24, font: "Lato" })],
             heading: level,
             spacing: { before: 240, after: 120 },
           }));
@@ -5527,7 +5527,7 @@ async function executeCrmToolRaw(
         if (section.paragraphs) {
           for (const para of section.paragraphs) {
             children.push(new docx.Paragraph({
-              children: [new docx.TextRun({ text: para, size: 22, font: "Calibri" })],
+              children: [new docx.TextRun({ text: para, size: 22, font: "Lato" })],
               spacing: { after: 120 },
             }));
           }
@@ -5535,7 +5535,7 @@ async function executeCrmToolRaw(
         if (section.bullets) {
           for (const bullet of section.bullets) {
             children.push(new docx.Paragraph({
-              children: [new docx.TextRun({ text: bullet, size: 22, font: "Calibri" })],
+              children: [new docx.TextRun({ text: bullet, size: 22, font: "Lato" })],
               bullet: { level: 0 },
               spacing: { after: 60 },
             }));
@@ -5544,15 +5544,15 @@ async function executeCrmToolRaw(
         if (section.table && section.table.headers && section.table.rows) {
           const headerRow = new docx.TableRow({
             children: section.table.headers.map((h: string) => new docx.TableCell({
-              children: [new docx.Paragraph({ children: [new docx.TextRun({ text: h, bold: true, size: 20, font: "Calibri" })] })],
-              shading: { fill: "232323", type: docx.ShadingType.SOLID, color: "FFFFFF" },
+              children: [new docx.Paragraph({ children: [new docx.TextRun({ text: h, bold: true, size: 20, font: "Lato" })] })],
+              shading: { fill: "6E0C25", type: docx.ShadingType.SOLID, color: "FFFFFF" },
               verticalAlign: docx.VerticalAlign.CENTER,
             })),
             tableHeader: true,
           });
           const dataRows = section.table.rows.map((row: string[], ri: number) => new docx.TableRow({
             children: row.map((cell: string) => new docx.TableCell({
-              children: [new docx.Paragraph({ children: [new docx.TextRun({ text: cell, size: 20, font: "Calibri" })] })],
+              children: [new docx.Paragraph({ children: [new docx.TextRun({ text: cell, size: 20, font: "Lato" })] })],
               shading: ri % 2 === 0 ? { fill: "F5F5F5", type: docx.ShadingType.SOLID } : undefined,
               verticalAlign: docx.VerticalAlign.CENTER,
             })),
@@ -5567,7 +5567,7 @@ async function executeCrmToolRaw(
 
       const doc = new docx.Document({
         sections: [{ properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } }, children }],
-        styles: { default: { document: { run: { font: "Calibri", size: 22 } } } },
+        styles: { default: { document: { run: { font: "Lato", size: 22 } } } },
       });
 
       const buffer = await docx.Packer.toBuffer(doc);
@@ -5604,32 +5604,32 @@ async function executeCrmToolRaw(
       pptx.title = fnArgs.title as string;
 
       const titleSlide = pptx.addSlide();
-      titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: "100%", fill: { color: "232323" } });
-      titleSlide.addText("BRUCE GILLINGHAM POLLARD", { x: 0.8, y: 0.5, w: 8, h: 0.5, fontSize: 14, color: "AAAAAA", fontFace: "Calibri", bold: true });
-      titleSlide.addText(fnArgs.title as string, { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Calibri", bold: true });
+      titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: "100%", fill: { color: "6E0C25" } });
+      titleSlide.addText("BRUCE GILLINGHAM POLLARD", { x: 0.8, y: 0.5, w: 8, h: 0.5, fontSize: 14, color: "AAAAAA", fontFace: "Lato", bold: true });
+      titleSlide.addText(fnArgs.title as string, { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Lato", bold: true });
       if (fnArgs.subtitle) {
-        titleSlide.addText(fnArgs.subtitle as string, { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Calibri" });
+        titleSlide.addText(fnArgs.subtitle as string, { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Lato" });
       }
 
       const slides = (fnArgs.slides as any[]) || [];
       for (const slideData of slides) {
         const slide = pptx.addSlide();
-        slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: 0.8, fill: { color: "232323" } });
-        slide.addText("BGP", { x: 0.3, y: 0.15, w: 1, h: 0.5, fontSize: 12, color: "FFFFFF", fontFace: "Calibri", bold: true });
-        slide.addText(slideData.title || "", { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "232323", fontFace: "Calibri", bold: true });
+        slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: 0.8, fill: { color: "6E0C25" } });
+        slide.addText("BGP", { x: 0.3, y: 0.15, w: 1, h: 0.5, fontSize: 12, color: "FFFFFF", fontFace: "Lato", bold: true });
+        slide.addText(slideData.title || "", { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "6E0C25", fontFace: "Lato", bold: true });
 
         let yPos = 1.9;
         if (slideData.bullets && slideData.bullets.length > 0) {
-          const bulletText = slideData.bullets.map((b: string) => ({ text: b, options: { fontSize: 14, color: "444444", fontFace: "Calibri", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
+          const bulletText = slideData.bullets.map((b: string) => ({ text: b, options: { fontSize: 14, color: "444444", fontFace: "Lato", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
           slide.addText(bulletText, { x: 0.8, y: yPos, w: 10.5, h: 4.0, valign: "top" });
           yPos += Math.min(slideData.bullets.length * 0.45, 4.0) + 0.3;
         }
 
         if (slideData.table && slideData.table.headers && slideData.table.rows) {
           const tableRows: any[][] = [];
-          tableRows.push(slideData.table.headers.map((h: string) => ({ text: h, options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "232323" }, fontFace: "Calibri" } })));
+          tableRows.push(slideData.table.headers.map((h: string) => ({ text: h, options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "6E0C25" }, fontFace: "Lato" } })));
           slideData.table.rows.forEach((row: string[], ri: number) => {
-            tableRows.push(row.map((cell: string) => ({ text: cell, options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
+            tableRows.push(row.map((cell: string) => ({ text: cell, options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Lato" } })));
           });
           slide.addTable(tableRows, { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
         }
@@ -8548,15 +8548,15 @@ export async function handleCrmToolCall(
       const children: any[] = [];
 
       children.push(new docx.Paragraph({
-        children: [new docx.TextRun({ text: "BRUCE GILLINGHAM POLLARD", bold: true, size: 20, font: "Calibri", color: "232323" })],
+        children: [new docx.TextRun({ text: "BRUCE GILLINGHAM POLLARD", bold: true, size: 20, font: "Lato", color: "6E0C25" })],
         spacing: { after: 100 },
       }));
       children.push(new docx.Paragraph({
-        border: { bottom: { style: docx.BorderStyle.SINGLE, size: 6, color: "232323" } },
+        border: { bottom: { style: docx.BorderStyle.SINGLE, size: 6, color: "6E0C25" } },
         spacing: { after: 300 },
       }));
       children.push(new docx.Paragraph({
-        children: [new docx.TextRun({ text: fnArgs.title as string, bold: true, size: 32, font: "Calibri", color: "232323" })],
+        children: [new docx.TextRun({ text: fnArgs.title as string, bold: true, size: 32, font: "Lato", color: "6E0C25" })],
         heading: docx.HeadingLevel.TITLE,
         spacing: { after: 200 },
       }));
@@ -8565,7 +8565,7 @@ export async function handleCrmToolCall(
         if (section.heading) {
           const level = section.level === 2 ? docx.HeadingLevel.HEADING_2 : docx.HeadingLevel.HEADING_1;
           children.push(new docx.Paragraph({
-            children: [new docx.TextRun({ text: section.heading, bold: true, size: level === docx.HeadingLevel.HEADING_1 ? 28 : 24, font: "Calibri" })],
+            children: [new docx.TextRun({ text: section.heading, bold: true, size: level === docx.HeadingLevel.HEADING_1 ? 28 : 24, font: "Lato" })],
             heading: level,
             spacing: { before: 240, after: 120 },
           }));
@@ -8573,7 +8573,7 @@ export async function handleCrmToolCall(
         if (section.paragraphs) {
           for (const para of section.paragraphs) {
             children.push(new docx.Paragraph({
-              children: [new docx.TextRun({ text: para, size: 22, font: "Calibri" })],
+              children: [new docx.TextRun({ text: para, size: 22, font: "Lato" })],
               spacing: { after: 120 },
             }));
           }
@@ -8581,7 +8581,7 @@ export async function handleCrmToolCall(
         if (section.bullets) {
           for (const bullet of section.bullets) {
             children.push(new docx.Paragraph({
-              children: [new docx.TextRun({ text: bullet, size: 22, font: "Calibri" })],
+              children: [new docx.TextRun({ text: bullet, size: 22, font: "Lato" })],
               bullet: { level: 0 },
               spacing: { after: 60 },
             }));
@@ -8590,15 +8590,15 @@ export async function handleCrmToolCall(
         if (section.table && section.table.headers && section.table.rows) {
           const headerRow = new docx.TableRow({
             children: section.table.headers.map((h: string) => new docx.TableCell({
-              children: [new docx.Paragraph({ children: [new docx.TextRun({ text: h, bold: true, size: 20, font: "Calibri" })] })],
-              shading: { fill: "232323", type: docx.ShadingType.SOLID, color: "FFFFFF" },
+              children: [new docx.Paragraph({ children: [new docx.TextRun({ text: h, bold: true, size: 20, font: "Lato" })] })],
+              shading: { fill: "6E0C25", type: docx.ShadingType.SOLID, color: "FFFFFF" },
               verticalAlign: docx.VerticalAlign.CENTER,
             })),
             tableHeader: true,
           });
           const dataRows = section.table.rows.map((row: string[], ri: number) => new docx.TableRow({
             children: row.map((cell: string) => new docx.TableCell({
-              children: [new docx.Paragraph({ children: [new docx.TextRun({ text: cell, size: 20, font: "Calibri" })] })],
+              children: [new docx.Paragraph({ children: [new docx.TextRun({ text: cell, size: 20, font: "Lato" })] })],
               shading: ri % 2 === 0 ? { fill: "F5F5F5", type: docx.ShadingType.SOLID } : undefined,
               verticalAlign: docx.VerticalAlign.CENTER,
             })),
@@ -8613,7 +8613,7 @@ export async function handleCrmToolCall(
 
       const doc = new docx.Document({
         sections: [{ properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } }, children }],
-        styles: { default: { document: { run: { font: "Calibri", size: 22 } } } },
+        styles: { default: { document: { run: { font: "Lato", size: 22 } } } },
       });
 
       const buffer = await docx.Packer.toBuffer(doc);
@@ -8647,32 +8647,32 @@ export async function handleCrmToolCall(
       pptx.title = fnArgs.title as string;
 
       const titleSlide = pptx.addSlide();
-      titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: "100%", fill: { color: "232323" } });
-      titleSlide.addText("BRUCE GILLINGHAM POLLARD", { x: 0.8, y: 0.5, w: 8, h: 0.5, fontSize: 14, color: "AAAAAA", fontFace: "Calibri", bold: true });
-      titleSlide.addText(fnArgs.title as string, { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Calibri", bold: true });
+      titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: "100%", fill: { color: "6E0C25" } });
+      titleSlide.addText("BRUCE GILLINGHAM POLLARD", { x: 0.8, y: 0.5, w: 8, h: 0.5, fontSize: 14, color: "AAAAAA", fontFace: "Lato", bold: true });
+      titleSlide.addText(fnArgs.title as string, { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Lato", bold: true });
       if (fnArgs.subtitle) {
-        titleSlide.addText(fnArgs.subtitle as string, { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Calibri" });
+        titleSlide.addText(fnArgs.subtitle as string, { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Lato" });
       }
 
       const slides = (fnArgs.slides as any[]) || [];
       for (const slideData of slides) {
         const slide = pptx.addSlide();
-        slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: 0.8, fill: { color: "232323" } });
-        slide.addText("BGP", { x: 0.3, y: 0.15, w: 1, h: 0.5, fontSize: 12, color: "FFFFFF", fontFace: "Calibri", bold: true });
-        slide.addText(slideData.title || "", { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "232323", fontFace: "Calibri", bold: true });
+        slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: 0.8, fill: { color: "6E0C25" } });
+        slide.addText("BGP", { x: 0.3, y: 0.15, w: 1, h: 0.5, fontSize: 12, color: "FFFFFF", fontFace: "Lato", bold: true });
+        slide.addText(slideData.title || "", { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "6E0C25", fontFace: "Lato", bold: true });
 
         let yPos = 1.9;
         if (slideData.bullets && slideData.bullets.length > 0) {
-          const bulletText = slideData.bullets.map((b: string) => ({ text: b, options: { fontSize: 14, color: "444444", fontFace: "Calibri", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
+          const bulletText = slideData.bullets.map((b: string) => ({ text: b, options: { fontSize: 14, color: "444444", fontFace: "Lato", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
           slide.addText(bulletText, { x: 0.8, y: yPos, w: 10.5, h: 4.0, valign: "top" });
           yPos += Math.min(slideData.bullets.length * 0.45, 4.0) + 0.3;
         }
 
         if (slideData.table && slideData.table.headers && slideData.table.rows) {
           const tableRows: any[][] = [];
-          tableRows.push(slideData.table.headers.map((h: string) => ({ text: h, options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "232323" }, fontFace: "Calibri" } })));
+          tableRows.push(slideData.table.headers.map((h: string) => ({ text: h, options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "6E0C25" }, fontFace: "Lato" } })));
           slideData.table.rows.forEach((row: string[], ri: number) => {
-            tableRows.push(row.map((cell: string) => ({ text: cell, options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
+            tableRows.push(row.map((cell: string) => ({ text: cell, options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Lato" } })));
           });
           slide.addTable(tableRows, { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
         }

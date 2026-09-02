@@ -19,8 +19,8 @@ import * as path from "path";
 import * as fs from "fs";
 
 const router = Router();
-const BGP_GREEN = "#2E5E3F";
-const BGP_DARK_GREEN = "#1A3A28";
+const BGP_GREEN = "#6E0C25";
+const BGP_DARK_GREEN = "#4A0819";
 
 async function loadDealSnapshot(dealId: string) {
   const dealQ = pool.query(
@@ -104,7 +104,7 @@ router.post("/api/deal/:dealId/hots", requireAuth, async (req: Request & { user?
 // ─── PDF helpers ────────────────────────────────────────────────────────
 
 function drawBgpHeader(doc: any, pageW: number, leftM: number, subtitle: string) {
-  const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark.png");
+  const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark_trimmed.png");
   const logoExists = fs.existsSync(logoPath);
   doc.rect(0, 0, 595, 8).fill(BGP_GREEN);
   if (logoExists) { try { doc.image(logoPath, leftM, 18, { width: 70 }); } catch {} }

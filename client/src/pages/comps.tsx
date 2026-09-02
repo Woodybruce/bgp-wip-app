@@ -73,7 +73,7 @@ const DEFAULT_PDF_TEMPLATE: PdfTemplateConfig = {
   headerTitle: "BRUCE GILLINGHAM POLLARD",
   headerSubtitle: "Comparable Evidence Schedule",
   footerText: "Bruce Gillingham Pollard | Confidential | brucegillinghampollard.com",
-  brandColor: [25, 25, 25],
+  brandColor: [110, 12, 37],
   accentColor: [0, 82, 136],
   showDate: true,
   showCount: true,
@@ -106,7 +106,7 @@ function generateCompsPdf(comps: CrmComp[], includeFilesList: boolean = false, f
   const pageW = 210;
   const margin = 15;
   const contentW = pageW - margin * 2;
-  const brandColor = (t.brandColor || [25, 25, 25]) as [number, number, number];
+  const brandColor = (t.brandColor || [110, 12, 37]) as [number, number, number];
   const accentColor = (t.accentColor || [0, 82, 136]) as [number, number, number];
   const lightGray: [number, number, number] = [245, 245, 245];
   const medGray: [number, number, number] = [140, 140, 140];

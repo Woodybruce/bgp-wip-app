@@ -263,7 +263,7 @@ router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAut
     wb.creator = "Bruce Gillingham Pollard";
     wb.created = new Date();
 
-    const DARK_BLUE = "FF082861";
+    const DARK_BLUE = "FF6E0C25";
     const WARM_GREY = "FFE8E6DF";
     const LIGHT_BLUE_BG = "FFDCEAF7";
     const WHITE_FONT: any = { name: "Calibri", size: 10, bold: true, color: { argb: "FFFFFFFF" } };

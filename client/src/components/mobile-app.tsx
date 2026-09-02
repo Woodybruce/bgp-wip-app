@@ -2513,12 +2513,12 @@ function MobileDocumentStudio() {
       backgroundColor: "#FFFCF5",
       elements: [
         { id: "bar", type: "shape", x: 0, y: 0, width: 595, height: 6, backgroundColor: accent, zIndex: 0 },
-        { id: "logo", type: "text", x: 40, y: 24, width: 200, height: 16, content: "BRUCE GILLINGHAM POLLARD", fontSize: 8, fontFamily: "Arial, sans-serif", fontWeight: "700", color: "#232323", zIndex: 1 },
-        { id: "line1", type: "shape", x: 40, y: 46, width: 515, height: 1, backgroundColor: "#E8E6DF", zIndex: 1 },
-        ...titleLines.map((t, i) => ({ id: `t${i}`, type: "text", x: 40, y: 70 + i * 32, width: 515, height: 30, content: t, fontSize: 22, fontFamily: "Arial, sans-serif", fontWeight: "700", color: "#232323", zIndex: 2 })),
+        { id: "logo", type: "text", x: 40, y: 24, width: 200, height: 16, content: "BRUCE GILLINGHAM POLLARD", fontSize: 8, fontFamily: "Arial, sans-serif", fontWeight: "700", color: "#6e0c25", zIndex: 1 },
+        { id: "line1", type: "shape", x: 40, y: 46, width: 515, height: 1, backgroundColor: "#e4d8d3", zIndex: 1 },
+        ...titleLines.map((t, i) => ({ id: `t${i}`, type: "text", x: 40, y: 70 + i * 32, width: 515, height: 30, content: t, fontSize: 22, fontFamily: "Arial, sans-serif", fontWeight: "700", color: "#6e0c25", zIndex: 2 })),
         { id: "accentbar", type: "shape", x: 40, y: 70 + titleLines.length * 32 + 8, width: 60, height: 3, backgroundColor: accent, zIndex: 2 },
         ...sections.map((s, i) => ({ id: `s${i}`, type: "text", x: 40, y: 70 + titleLines.length * 32 + 28 + i * 18, width: 515, height: 16, content: s, fontSize: 9, fontFamily: "Arial, sans-serif", color: "#666666", zIndex: 2 })),
-        { id: "footer", type: "shape", x: 0, y: 820, width: 595, height: 22, backgroundColor: "#232323", zIndex: 3 },
+        { id: "footer", type: "shape", x: 0, y: 820, width: 595, height: 22, backgroundColor: "#6e0c25", zIndex: 3 },
         { id: "ftext", type: "text", x: 40, y: 824, width: 300, height: 12, content: "Bruce Gillingham Pollard  |  London", fontSize: 7, fontFamily: "Arial, sans-serif", color: "#FFFFFF", zIndex: 4 },
       ]
     }]
