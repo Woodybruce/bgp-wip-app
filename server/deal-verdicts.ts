@@ -60,7 +60,10 @@ export async function pendingVerdictDeals(userId: string, userName: string): Pro
        LEFT JOIN crm_properties p ON p.id = d.property_id
       WHERE d.invoiced_at IS NULL
         AND d.target_date IS NOT NULL
-        AND d.target_date < date_trunc('month', now()) + interval '1 month'
+        -- Only PAST months chase. A deal due in the current month is not
+        -- overdue yet — no agent emails, no equity summary line, no banner
+        -- until the month it was due in has ended (Woody, 2026-09-02).
+        AND d.target_date < date_trunc('month', now())
         AND d.target_date >= now() - interval '${LOOKBACK_MONTHS} months'
         AND (d.internal_agent_ids @> ARRAY[$1]::varchar[] OR $2 = ANY(d.internal_agent))
         AND NOT EXISTS (
