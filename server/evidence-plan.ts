@@ -45,6 +45,22 @@ pool.query(`
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`).catch(() => {});
 pool.query(`
+  CREATE TABLE IF NOT EXISTS evidence_plan_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    plan_id UUID NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    total_docs INT NOT NULL DEFAULT 0,
+    done_docs INT NOT NULL DEFAULT 0,
+    pages INT NOT NULL DEFAULT 0,
+    extracted INT NOT NULL DEFAULT 0,
+    created INT NOT NULL DEFAULT 0,
+    linked INT NOT NULL DEFAULT 0,
+    error TEXT,
+    created_by VARCHAR,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`).catch(() => {});
+pool.query(`
   CREATE TABLE IF NOT EXISTS evidence_plan_levels (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     plan_id UUID NOT NULL,
@@ -672,7 +688,89 @@ Extract EVERY analysis sheet visible across these pages as JSON:
 
 Rules: numbers stripped of £/commas; null for anything not stated; one object per sheet even when a page holds several; skip cover pages. Respond with ONLY the JSON object.`;
 
-router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, upload.array("file", 200), async (req: Request, res: Response) => {
+// Extraction runs as a BACKGROUND JOB: a tranche set takes minutes of
+// vision reading and Railway's edge kills any request at ~45s (Woody hit
+// 504s on the first real upload, 2026-09-02). The POST returns a job id
+// as soon as the files are received; the client polls the job for
+// progress and evidence entries appear per document as they finish.
+const uploadLarge = multer({ storage: multer.memoryStorage(), limits: { fileSize: 250 * 1024 * 1024 } });
+
+async function runTafJob(planId: string, jobId: string, pdfs: { name: string; buffer: Buffer }[], userId: string | null): Promise<void> {
+  const bump = (sets: string, vals: any[]) =>
+    pool.query(`UPDATE evidence_plan_jobs SET ${sets}, updated_at = now() WHERE id = $${vals.length + 1}`, [...vals, jobId]).catch(() => {});
+  try {
+    const { rows: units } = await pool.query(`SELECT id, unit_ref FROM evidence_plan_units WHERE plan_id = $1`, [planId]);
+    const byNorm = new Map<string, any>();
+    for (const u of units) byNorm.set(normaliseUnitRef(u.unit_ref), u);
+    const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+    const date = (v: any) => { const d = new Date(String(v || "")); return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10); };
+
+    let pages = 0, extracted = 0, created = 0, linked = 0;
+    // One document at a time keeps memory bounded and lets evidence land
+    // progressively — each doc's entries are visible before the next starts.
+    for (let i = 0; i < pdfs.length; i++) {
+      const pdf = pdfs[i];
+      const sourceKey = `evidence-plans/${planId}/taf-${Date.now()}-${i}-${pdf.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60)}`;
+      await saveFile(sourceKey, pdf.buffer, "application/pdf", pdf.name);
+      const docPages: Buffer[] = [];
+      for (let p = 1; p <= 40; p++) {
+        const buf = await rasterisePdfPage({ pdfBuffer: pdf.buffer, page: p, dpi: 150 });
+        if (!buf) break;
+        docPages.push(buf);
+      }
+      pages += docPages.length;
+
+      const tafs: any[] = [];
+      for (let b = 0; b < docPages.length; b += 8) {
+        const batch = docPages.slice(b, b + 8);
+        const content: any[] = batch.map(buf => ({
+          type: "image",
+          source: { type: "base64", media_type: "image/jpeg", data: buf.toString("base64") },
+        }));
+        content.push({ type: "text", text: TAF_PROMPT });
+        const msg = await anthropic.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 8000,
+          messages: [{ role: "user", content }],
+        });
+        const text = msg.content.filter((blk: any) => blk.type === "text").map((blk: any) => blk.text).join("");
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(parsed.tafs)) tafs.push(...parsed.tafs);
+          } catch { /* batch unparseable — carry on with the rest */ }
+        }
+      }
+
+      for (const t of tafs) {
+        if (!t || (!t.unitRef && !t.tenant)) continue;
+        const unit = t.unitRef ? byNorm.get(normaliseUnitRef(String(t.unitRef))) : null;
+        await pool.query(
+          `INSERT INTO evidence_plan_entries
+             (plan_id, unit_id, unit_ref, tenant, transaction_type, transaction_date, size_sqft, zone_a, itza,
+              headline_rent, net_effective, term, concession, notes, source_key, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+          [planId, unit?.id || null, t.unitRef ? String(t.unitRef).slice(0, 40) : null,
+           t.tenant || null, t.transactionType || null, date(t.transactionDate),
+           num(t.sizeSqft), num(t.zoneA), num(t.itza), num(t.headlineRent), num(t.netEffective),
+           t.term || null, t.concession || null, t.notes || null, sourceKey, userId]);
+        created++;
+        if (unit) linked++;
+      }
+      extracted += tafs.length;
+      await bump(`done_docs = $1, pages = $2, extracted = $3, created = $4, linked = $5`, [i + 1, pages, extracted, created, linked]);
+    }
+    await pool.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [planId]);
+    await bump(`status = 'done'`, []);
+    console.log(`[evidence-plan] TAF job ${jobId}: ${pdfs.length} docs, ${pages} pages, ${extracted} TAFs, ${linked} linked`);
+  } catch (e: any) {
+    console.error(`[evidence-plan] TAF job ${jobId} failed:`, e?.message);
+    await bump(`status = 'error', error = $1`, [String(e?.message || e).slice(0, 500)]);
+  }
+}
+
+router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, uploadLarge.array("file", 200), async (req: Request, res: Response) => {
   try {
     const plan = await planOr404(String(req.params.id), res);
     if (!plan) return;
@@ -701,80 +799,21 @@ router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, upload.array("fil
     }
     if (pdfs.length === 0) return res.status(400).json({ error: "No PDFs found in that upload" });
 
-    // Rasterise up to 40 pages per PDF, tagged with their source file so
-    // each extracted entry links back to the right document.
-    const pages: { buf: Buffer; sourceKey: string }[] = [];
-    let firstSourceKey: string | null = null;
-    for (let i = 0; i < pdfs.length; i++) {
-      const pdf = pdfs[i];
-      const key = `evidence-plans/${plan.id}/taf-${Date.now()}-${i}-${pdf.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60)}`;
-      if (!firstSourceKey) firstSourceKey = key;
-      await saveFile(key, pdf.buffer, "application/pdf", pdf.name);
-      for (let p = 1; p <= 40; p++) {
-        const buf = await rasterisePdfPage({ pdfBuffer: pdf.buffer, page: p, dpi: 150 });
-        if (!buf) break;
-        pages.push({ buf, sourceKey: key });
-      }
-    }
-    const sourceKey = pdfs.length === 1 ? firstSourceKey : null;
-    if (pages.length === 0) return res.status(400).json({ error: "Couldn't read any pages from that upload" });
+    const { rows } = await pool.query(
+      `INSERT INTO evidence_plan_jobs (plan_id, status, total_docs, created_by) VALUES ($1, 'running', $2, $3) RETURNING id`,
+      [plan.id, pdfs.length, (req as any).session?.userId || null]);
+    const jobId = rows[0].id;
+    res.json({ jobId, docs: pdfs.length });
+    // Detached — the extraction outlives this request on purpose.
+    void runTafJob(plan.id, jobId, pdfs, (req as any).session?.userId || null);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
 
-    // Batch within one source document at a time so every extracted entry
-    // links back to the right PDF.
-    const tafs: any[] = [];
-    const byDoc = new Map<string, Buffer[]>();
-    for (const p of pages) {
-      if (!byDoc.has(p.sourceKey)) byDoc.set(p.sourceKey, []);
-      byDoc.get(p.sourceKey)!.push(p.buf);
-    }
-    for (const [docKey, docPages] of byDoc) {
-      for (let i = 0; i < docPages.length; i += 8) {
-        const batch = docPages.slice(i, i + 8);
-        const content: any[] = batch.map(b => ({
-          type: "image",
-          source: { type: "base64", media_type: "image/jpeg", data: b.toString("base64") },
-        }));
-        content.push({ type: "text", text: TAF_PROMPT });
-        const msg = await anthropic.messages.create({
-          model: "claude-sonnet-4-6",
-          max_tokens: 8000,
-          messages: [{ role: "user", content }],
-        });
-        const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          try {
-            const parsed = JSON.parse(jsonMatch[0]);
-            if (Array.isArray(parsed.tafs)) tafs.push(...parsed.tafs.map((t: any) => ({ ...t, __sourceKey: docKey })));
-          } catch { /* batch unparseable — carry on with the rest */ }
-        }
-      }
-    }
-
-    const { rows: units } = await pool.query(`SELECT id, unit_ref FROM evidence_plan_units WHERE plan_id = $1`, [plan.id]);
-    const byNorm = new Map<string, any>();
-    for (const u of units) byNorm.set(normaliseUnitRef(u.unit_ref), u);
-
-    let created = 0;
-    const userId = (req as any).session?.userId || null;
-    for (const t of tafs) {
-      if (!t || (!t.unitRef && !t.tenant)) continue;
-      const unit = t.unitRef ? byNorm.get(normaliseUnitRef(String(t.unitRef))) : null;
-      const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
-      const date = (v: any) => { const d = new Date(String(v || "")); return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10); };
-      await pool.query(
-        `INSERT INTO evidence_plan_entries
-           (plan_id, unit_id, unit_ref, tenant, transaction_type, transaction_date, size_sqft, zone_a, itza,
-            headline_rent, net_effective, term, concession, notes, source_key, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-        [plan.id, unit?.id || null, t.unitRef ? String(t.unitRef).slice(0, 40) : null,
-         t.tenant || null, t.transactionType || null, date(t.transactionDate),
-         num(t.sizeSqft), num(t.zoneA), num(t.itza), num(t.headlineRent), num(t.netEffective),
-         t.term || null, t.concession || null, t.notes || null, t.__sourceKey || sourceKey, userId]);
-      created++;
-    }
-    await pool.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [plan.id]);
-    res.json({ pages: pages.length, extracted: tafs.length, created, linked: tafs.filter(t => t.unitRef && byNorm.get(normaliseUnitRef(String(t.unitRef)))).length });
+router.get("/api/evidence-plans/jobs/:jobId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM evidence_plan_jobs WHERE id = $1`, [String(req.params.jobId)]);
+    if (!rows[0]) return res.status(404).json({ error: "Job not found" });
+    res.json(rows[0]);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

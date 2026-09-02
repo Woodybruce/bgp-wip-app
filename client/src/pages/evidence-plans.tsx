@@ -25,7 +25,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Map as MapIcon, Plus, Upload, ZoomIn, ZoomOut, Pencil, Trash2, FileSpreadsheet, FileText, X, Loader2 } from "lucide-react";
+import { Map as MapIcon, Plus, Upload, ZoomIn, ZoomOut, Pencil, Trash2, FileSpreadsheet, FileText, X, Loader2, Maximize2, Minimize2 } from "lucide-react";
 
 type Pt = { x: number; y: number };
 type PlanLevel = {
@@ -226,6 +226,22 @@ function PlanView({ planId }: { planId: string }) {
   const matters = data?.matters || [];
   const [activeLevelId, setActiveLevelId] = useState<string | null>(null);
   const [linkingProperty, setLinkingProperty] = useState(false);
+  const [tafJob, setTafJob] = useState<any>(null);
+
+  // Full screen for meetings (Pete) — the whole viewer incl. the unit
+  // panel; Esc or the button exits.
+  const fsRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) { document.exitFullscreen?.(); return; }
+    const el: any = fsRef.current;
+    (el?.requestFullscreen || el?.webkitRequestFullscreen)?.call(el);
+  };
   const activeLevel = levels.find(l => l.id === activeLevelId) || levels[0] || null;
   // A unit belongs to its level; pre-levels units (level_id null) sit on the first.
   const levelUnits = useMemo(
@@ -290,16 +306,11 @@ function PlanView({ planId }: { planId: string }) {
     onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
 
-  const uploadFile = async (kind: "background" | "import-tenancy" | "ingest-taf", file: File | File[]) => {
-    const files = Array.isArray(file) ? file : [file];
-    if (kind === "ingest-taf" && files.every(f => !/\.(pdf|zip)$/i.test(f.name))) {
-      toast({ title: "No TAFs found", description: "Pick PDFs, a zip, or a folder containing PDFs.", variant: "destructive" });
-      return;
-    }
+  const uploadFile = async (kind: "background" | "import-tenancy", file: File) => {
     setBusy(kind);
     try {
       const fd = new FormData();
-      for (const f of files) fd.append(kind === "background" ? "background" : "file", f);
+      fd.append(kind === "background" ? "background" : "file", file);
       // A single-image replace targets the level being viewed; a multi-page
       // PDF refreshes every level server-side.
       if (kind === "background" && activeLevel) fd.append("levelId", activeLevel.id);
@@ -309,14 +320,56 @@ function PlanView({ planId }: { planId: string }) {
       invalidate();
       if (kind === "import-tenancy") {
         toast({ title: "Tenancy schedule imported", description: `${j.matched} unit${j.matched === 1 ? "" : "s"} matched${j.unmatched?.length ? ` · ${j.unmatched.length} TS rows had no unit on the plan` : ""}` });
-      } else if (kind === "ingest-taf") {
-        toast({ title: "TAFs extracted", description: `${j.extracted} analysis sheet${j.extracted === 1 ? "" : "s"} found across ${j.pages} pages — ${j.linked} linked to plan units` });
       } else {
         toast({ title: "Plan image updated", description: (j.levels?.length || 0) > 1 ? `${j.levels.length} levels — outlines and data kept.` : "Outlines and data kept." });
       }
     } catch (e: any) {
       toast({ title: "Upload failed", description: e.message, variant: "destructive" });
     } finally { setBusy(null); }
+  };
+
+  // TAF extraction is a server-side background job (a tranche set takes
+  // minutes of vision reading — far past the 45s edge timeout). Upload,
+  // get a job id back, poll: evidence appears per document as it lands.
+  const uploadTafs = async (files: File[]) => {
+    const usable = files.filter(f => /\.(pdf|zip)$/i.test(f.name));
+    if (usable.length === 0) {
+      toast({ title: "No TAFs found", description: "Pick PDFs, a zip, or a folder containing PDFs.", variant: "destructive" });
+      return;
+    }
+    setBusy("ingest-taf");
+    try {
+      const fd = new FormData();
+      for (const f of usable) fd.append("file", f);
+      const r = await fetch(`/api/evidence-plans/${planId}/ingest-taf`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Upload failed");
+      setTafJob({ status: "running", done_docs: 0, total_docs: j.docs });
+      toast({ title: "TAF extraction started", description: `${j.docs} document${j.docs === 1 ? "" : "s"} uploaded — evidence appears as each one is read.` });
+      const poll = async () => {
+        try {
+          const jr = await fetch(`/api/evidence-plans/jobs/${j.jobId}`, { credentials: "include", headers: getAuthHeaders() });
+          if (!jr.ok) throw new Error();
+          const job = await jr.json();
+          setTafJob(job);
+          if (job.status === "done") {
+            invalidate();
+            toast({ title: "TAFs extracted", description: `${job.extracted} analysis sheet${job.extracted === 1 ? "" : "s"} across ${job.pages} pages — ${job.linked} linked to plan units` });
+            setBusy(null); setTafJob(null);
+          } else if (job.status === "error") {
+            toast({ title: "TAF extraction failed", description: job.error || "Unknown error", variant: "destructive" });
+            setBusy(null); setTafJob(null);
+          } else {
+            invalidate();
+            setTimeout(poll, 4000);
+          }
+        } catch { setTimeout(poll, 6000); }
+      };
+      setTimeout(poll, 4000);
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+      setBusy(null);
+    }
   };
 
   if (isLoading) return <div className="p-6"><Skeleton className="h-[70vh] rounded-2xl" /></div>;
@@ -326,7 +379,7 @@ function PlanView({ planId }: { planId: string }) {
   const aspect = hasBg && activeLevel?.background_width ? (activeLevel.background_height || 0) / activeLevel.background_width : 0.7;
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-var(--mobile-top,0px))] md:h-screen">
+    <div ref={fsRef} className="flex flex-col h-[calc(100dvh-var(--mobile-top,0px))] md:h-screen bg-background">
       {/* Header */}
       <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap bg-background">
         <button onClick={() => navigate("/evidence-plans")} className="text-sm text-muted-foreground hover:text-foreground">←</button>
@@ -355,7 +408,8 @@ function PlanView({ planId }: { planId: string }) {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" disabled={busy !== null} data-testid="button-ingest-taf">
-                {busy === "ingest-taf" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <FileText className="w-3.5 h-3.5 mr-1" />} Add TAFs
+                {busy === "ingest-taf" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <FileText className="w-3.5 h-3.5 mr-1" />}
+                {busy === "ingest-taf" && tafJob ? `Extracting ${tafJob.done_docs ?? 0}/${tafJob.total_docs ?? "…"}` : busy === "ingest-taf" ? "Uploading…" : "Add TAFs"}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -363,14 +417,17 @@ function PlanView({ planId }: { planId: string }) {
               <DropdownMenuItem onClick={() => tafFolderRef.current?.click()}>A whole folder…</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={toggleFullscreen} title={isFullscreen ? "Exit full screen" : "Full screen"} data-testid="button-fullscreen">
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </Button>
           <Button variant="outline" size="sm" onClick={() => bgInputRef.current?.click()} disabled={busy !== null} data-testid="button-replace-bg">
             {busy === "background" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1" />} {hasBg ? "Replace plan" : "Upload plan"}
           </Button>
         </div>
         <input ref={bgInputRef} type="file" accept=".pdf,image/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile("background", f); e.target.value = ""; }} />
         <input ref={tsInputRef} type="file" accept=".xlsx,.xls" hidden onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile("import-tenancy", f); e.target.value = ""; }} />
-        <input ref={tafInputRef} type="file" accept=".pdf,.zip" multiple hidden onChange={e => { const fs = Array.from(e.target.files || []); if (fs.length) uploadFile("ingest-taf", fs); e.target.value = ""; }} />
-        <input ref={tafFolderRef} type="file" hidden multiple {...({ webkitdirectory: "" } as any)} onChange={e => { const fs = Array.from(e.target.files || []).filter(f => /\.(pdf|zip)$/i.test(f.name)); if (fs.length) uploadFile("ingest-taf", fs); else toast({ title: "No TAFs found", description: "That folder has no PDFs or zips in it.", variant: "destructive" }); e.target.value = ""; }} />
+        <input ref={tafInputRef} type="file" accept=".pdf,.zip" multiple hidden onChange={e => { const fs = Array.from(e.target.files || []); if (fs.length) uploadTafs(fs); e.target.value = ""; }} />
+        <input ref={tafFolderRef} type="file" hidden multiple {...({ webkitdirectory: "" } as any)} onChange={e => { const fs = Array.from(e.target.files || []).filter(f => /\.(pdf|zip)$/i.test(f.name)); if (fs.length) uploadTafs(fs); else toast({ title: "No TAFs found", description: "That folder has no PDFs or zips in it.", variant: "destructive" }); e.target.value = ""; }} />
       </div>
 
       <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />
