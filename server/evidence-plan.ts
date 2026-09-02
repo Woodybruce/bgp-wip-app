@@ -59,7 +59,7 @@ pool.query(`
     created_by VARCHAR,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  )`).catch(() => {});
+  )`).then(() => pool.query(`ALTER TABLE evidence_plan_jobs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'taf', ADD COLUMN IF NOT EXISTS level_id UUID`)).catch(() => {});
 pool.query(`
   CREATE TABLE IF NOT EXISTS evidence_plan_levels (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -310,6 +310,7 @@ router.post("/api/evidence-plans", requireAuth, upload.single("background"), asy
       await applyBackgroundPages(plan.id, pages, null);
       const upd = await pool.query(`SELECT * FROM evidence_plans WHERE id = $1`, [plan.id]);
       plan = upd.rows[0];
+      void autoDetectEmptyLevels(plan.id);
     }
     res.json(plan);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -368,7 +369,10 @@ router.get("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
         sqft: t.nia_sqft ?? t.gia_sqft ?? u.sqft,
       };
     });
-    res.json({ plan: { ...plan, property_name: propertyName }, levels, units, entries: entries.rows, matters });
+    const running = await pool.query(
+      `SELECT id, kind, level_id, total_docs, done_docs FROM evidence_plan_jobs WHERE plan_id = $1 AND status = 'running' AND created_at > now() - interval '2 hours'`,
+      [plan.id]).catch(() => ({ rows: [] as any[] }));
+    res.json({ plan: { ...plan, property_name: propertyName }, levels, units, entries: entries.rows, matters, jobs: running.rows });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -393,6 +397,9 @@ router.put("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
     const { rows } = await pool.query(
       `UPDATE evidence_plans SET ${sets.join(", ")}, updated_at = now() WHERE id = $${vals.length} RETURNING *`, vals);
     res.json(rows[0]);
+    // Linking a property brings the tenancy schedule's unit refs — the best
+    // grounding for detection — so empty levels get read now.
+    if (req.body?.propertyId) void autoDetectEmptyLevels(plan.id);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -411,6 +418,7 @@ router.post("/api/evidence-plans/:id/background", requireAuth, upload.single("ba
     const levels = await planLevels(plan.id);
     const upd = await pool.query(`SELECT * FROM evidence_plans WHERE id = $1`, [plan.id]);
     res.json({ ...upd.rows[0], levels });
+    void autoDetectEmptyLevels(plan.id);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -810,6 +818,9 @@ async function runTafJob(planId: string, jobId: string, pdfs: { name: string; ge
     await pool.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [planId]);
     await bump(`status = 'done'`, []);
     console.log(`[evidence-plan] TAF job ${jobId}: ${pdfs.length} docs, ${pages} pages, ${extracted} TAFs, ${linked} linked`);
+    // Fresh evidence refs are grounding for detection — outline any levels
+    // that still have no units so the new entries link straight away.
+    void autoDetectEmptyLevels(planId);
   } catch (e: any) {
     console.error(`[evidence-plan] TAF job ${jobId} failed:`, e?.message);
     await bump(`status = 'error', error = $1`, [String(e?.message || e).slice(0, 500)]);
@@ -936,6 +947,35 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
   }
 }
 
+// Detection runs AUTOMATICALLY — on plan upload, on property link, and
+// after TAF extraction — for every level that has an image but no units
+// yet ("thats the whole point? dont need a button" — Woody, 2026-09-02).
+// Hand-drawing stays for correcting outlines; it's never overwritten.
+async function autoDetectEmptyLevels(planId: string): Promise<void> {
+  try {
+    if (!process.env.ANTHROPIC_API_KEY) return;
+    const { rows: [plan] } = await pool.query(`SELECT * FROM evidence_plans WHERE id = $1`, [planId]);
+    if (!plan) return;
+    const levels = await planLevels(planId);
+    for (const level of levels) {
+      if (!level.background_key) continue;
+      const { rows: [{ n }] } = await pool.query(
+        `SELECT count(*)::int AS n FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2`, [planId, level.id]);
+      if (n > 0) continue;
+      const { rows: dupJob } = await pool.query(
+        `SELECT 1 FROM evidence_plan_jobs WHERE plan_id = $1 AND level_id = $2 AND kind = 'detect' AND status = 'running' LIMIT 1`,
+        [planId, level.id]);
+      if (dupJob[0]) continue;
+      const { rows } = await pool.query(
+        `INSERT INTO evidence_plan_jobs (plan_id, status, total_docs, kind, level_id) VALUES ($1, 'running', 1, 'detect', $2) RETURNING id`,
+        [planId, level.id]);
+      await runDetectJob(planId, rows[0].id, level, plan.property_id || null);
+    }
+  } catch (e: any) {
+    console.error(`[evidence-plan] auto-detect for plan ${planId} failed:`, e?.message);
+  }
+}
+
 router.post("/api/evidence-plans/:id/detect-units", requireAuth, async (req: Request, res: Response) => {
   try {
     const plan = await planOr404(String(req.params.id), res);
@@ -945,8 +985,8 @@ router.post("/api/evidence-plans/:id/detect-units", requireAuth, async (req: Req
     const level = levels.find((l: any) => l.id === String(req.body?.levelId || "")) || levels[0];
     if (!level?.background_key) return res.status(400).json({ error: "No plan image on this level yet" });
     const { rows } = await pool.query(
-      `INSERT INTO evidence_plan_jobs (plan_id, status, total_docs, created_by) VALUES ($1, 'running', 1, $2) RETURNING id`,
-      [plan.id, (req as any).session?.userId || null]);
+      `INSERT INTO evidence_plan_jobs (plan_id, status, total_docs, kind, level_id, created_by) VALUES ($1, 'running', 1, 'detect', $2, $3) RETURNING id`,
+      [plan.id, level.id, (req as any).session?.userId || null]);
     res.json({ jobId: rows[0].id });
     void runDetectJob(plan.id, rows[0].id, level, plan.property_id || null);
   } catch (e: any) { res.status(500).json({ error: e.message }); }

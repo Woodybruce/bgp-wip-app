@@ -774,7 +774,7 @@ router.put("/api/kyc/company/:id/checklist", requireAuth, async (req: Request, r
       pepStatus !== undefined && `pep=${pepStatus}`,
       eddRequired !== undefined && `edd=${!!eddRequired}`,
     ].filter(Boolean).join(", ");
-    if (changed) await kycCompanyAudit(req.params.id, "cdd_checklist_updated", actor.name || actor.id, changed);
+    if (changed) await kycCompanyAudit(String(req.params.id), "cdd_checklist_updated", actor.name || actor.id, changed);
     res.json(result.rows[0]);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -804,7 +804,7 @@ router.post("/api/kyc/company/:id/approve", requireAdmin, async (req: Request, r
       [approverName, expiresAt, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Company not found" });
-    await kycCompanyAudit(req.params.id, "kyc_approved", approverName, `Re-check due ${expiresAt.toISOString().slice(0, 10)} (${intervalDays}-day cycle)`);
+    await kycCompanyAudit(String(req.params.id), "kyc_approved", approverName, `Re-check due ${expiresAt.toISOString().slice(0, 10)} (${intervalDays}-day cycle)`);
     // Auto-schedule the re-check reminder on the configured cadence
     try {
       await pool.query(
@@ -843,7 +843,7 @@ router.post("/api/kyc/company/:id/reject", requireAdmin, async (req: Request, re
     if (!result.rows[0]) return res.status(404).json({ error: "Company not found" });
     // Counterparty rejected — re-derive kyc_approved on its deals (re-locks them).
     try { await recomputeDealKycApproved(String(req.params.id), null); } catch (e: any) { console.warn("[kyc-reject] deal kyc recompute failed:", e?.message); }
-    await kycCompanyAudit(req.params.id, "kyc_rejected", rejectorName, reason);
+    await kycCompanyAudit(String(req.params.id), "kyc_rejected", rejectorName, reason);
     res.json(result.rows[0]);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
