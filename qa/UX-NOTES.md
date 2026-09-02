@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+135. 2026-09-02 · BGP staff / mobile 390px (QA r464) · working the Bluewater
+    letting tracker on the phone (75 units in Marketing) · every unit card
+    unconditionally reserves two label rows for Area and Rent p.a., and on
+    this fixture most render as "Area —" / "Rent p.a. —", so scanning the
+    list is mostly em-dash rows between unit names (the Tenant row already
+    hides itself when empty) · hide the Area/Rent rows on the phone card
+    when there's no value, matching the Tenant row's behaviour, so each
+    card shrinks to what's actually known and more units fit per screen.
+
 134. 2026-09-02 · Landsec client / mobile 390px (QA r462) · opening Bluewater's
     property page to review the asset · the Overview tab's first card stacks
     Status / Asset Class / BGP Team / Website — all four rendered as "—" on

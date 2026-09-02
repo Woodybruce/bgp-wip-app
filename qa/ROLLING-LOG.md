@@ -84,23 +84,54 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r464 · 2026-09-02 ~11:45 UTC · FULL — rotation #4 BGP staff mobile 390px · ROUND IN PROGRESS
-- Provisional heartbeat. Bring-up: canonical recipe held 29th consecutive
-  time (qa:pg once → run-smoke restore clean → seed-personas per r451 rule
-  BEFORE two-bot, fresh session no stale cross file). Regression: smoke
-  GREEN 42/0. Two-bot round 464 as 3 foreground chunks (r447 pattern):
-  victoria exit 0 (2×400 standing) / mark exit 0 (10 issues = 1×503
-  keyless + 9×403 — the standing 8 plus ONE extra: GET /api/hr/staff 403
-  during client-messages-desktop-redirect; triaged as guard-mount race,
-  see below) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep
-  11/11 at 390px. Server logs: 0 raw 500/502/504.
-- Triage of the extra 403: the client-nav scenario deliberately opens /hr
-  as the client; ClientRouteGuard bounces in a useEffect AFTER HRPage
-  mounts, so the page's useQuery(["/api/hr/staff"]) can fire once before
-  the bounce — server 403s it correctly. Timing decides whether the row
-  lands (lazy-chunk speed), so the mark signature may flip 9↔10. Not an
-  app bug; no code changed since r463 (same HEAD).
-- Journey (staff mobile 390px) to follow this heartbeat.
+### r464 · 2026-09-02 ~13:30 UTC · FULL — rotation #4 BGP staff mobile 390px — GREEN
+- Bring-up: canonical recipe held 29th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+  Two-bot round 464 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark exit 0 (10 issues = 1×503 keyless + 9×403: the
+  standing 8 plus a NEW flicker row, GET /api/hr/staff 403 — triaged
+  below) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at
+  390px. Server logs: 0 raw 500/502/504. Triage: 0 app bugs.
+- NOT a bug (documented + harness-ignored): the extra hr/staff 403 is a
+  guard-mount race the harness itself provokes — client-nav deliberately
+  opens /hr as the client, ClientRouteGuard bounces in a useEffect AFTER
+  HRPage mounts, so the page's staff-directory query can fire once and
+  403 (server gates correctly) before the bounce; lazy-chunk compile
+  speed decides whether the row lands, flipping the mark signature 9↔10.
+  Added /api/hr/staff$ to two-bot's IGNORED_RESPONSES (staff coverage
+  stays locked by staff-hr-directory-full-shape, which asserts 200 +
+  full shape) — mark standing signature is back to 9 (1×503 + 8×403).
+- Journey (Victoria @390px iPhone UA, "on the train before a Bluewater
+  morning: work the letting tracker, then glance at the WIP pipeline" —
+  both surfaces reworked 09-01, judged as-designed): /deals/letting
+  ?propertyId=bluewater → pill-row tabs, status chips w/ counts, phone
+  unit cards → search MSU9 → Files dialog (reworked: All/Brochures/
+  Floor plans/Photos tabs, upload, Doc Studio, info-sheet row — clean,
+  no dialog overflow) → logged a REAL viewing end-to-end (company
+  combobox → Amorino, outcome Interested, save → "Viewing added" toast,
+  dialog flips to list view, card counter Viewing → Viewing (1)) →
+  NEGOTIATING chip filter (1/81) → /wip-report phone view: KPI tiles,
+  month strip tap-to-filter WORKS both ways (Jul-26 tap: 6→2 detail
+  cards + summary recalcs; untap restores), Columns picker (12/14
+  default-hidden holds) fits, deal-card links route (ref → /deals/:id,
+  property → /properties/:id). 0 pageerrors, 0 non-noise 4xx/5xx, no
+  h-overflow anywhere, no dialog overflow. Bugs found: 0.
+- Harness notes (not bugs): WIP Columns picker's fixed inset-0 z-40
+  backdrop intercepts Playwright clicks while open (user tap-outside
+  closes it via onClick — close it before tapping month tiles); tracker
+  phone unit-card body is intentionally inert (actions are the explicit
+  Files/Viewing/Offer/Interest/Edit buttons).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 135 (tracker phone cards
+  render unconditional "Area — / Rent p.a. —" rows; hide-when-empty like
+  the Tenant row). New flakes: the hr/staff 9↔10 flicker above, now
+  ignored. Real-device keyboard-up composer check (r405) still open for
+  Woody.
+- Next: r464 had the journey → r465 LIGHT (watch the mark signature is
+  back at 9 = 1×503 + 8×403 under the new ignore); then rotation #1 BGP
+  staff desktop 1440px.
 - Bring-up: canonical recipe held 28th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
   two-bot, fresh session so no stale cross file). Regression: smoke GREEN
