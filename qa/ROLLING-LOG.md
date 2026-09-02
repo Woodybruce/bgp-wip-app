@@ -84,6 +84,30 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r459 · 2026-09-02 ~19:30 UTC · LIGHT (r458 had the journey) — GREEN
+- Bring-up: canonical recipe held 24th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, stale cross file removed). Regression: smoke GREEN 42/0.
+  Two-bot round 459 as 3 foreground chunks (r447 pattern; chunk-runner =
+  ONE foreground node process, dev server stdio-to-FILE, warmed per r455,
+  server killed after each chunk): victoria exit 0 (2×400 standing:
+  rocketreach + invalid-tracker probe) / mark exit 0 (10 issues = 2×503
+  keyless + 8×403 probe-by-design signature) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 routes fit at 390px. Server
+  logs: 0 raw 500/502/504 (news-feed "500 articles" text grep hits only,
+  r413 class). Triage: 0 app bugs.
+- r458 FIX RE-VERIFIED: staff-tracker-pitch-button-visible PASSED its
+  first standard-order run inside a full victoria chunk (per r458's
+  watch note). All other recent locks green in standard order.
+- No journey (LIGHT). No deferred bugs to pick up (r458 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still
+  open for Woody.
+- Next: r459 was LIGHT → r460 FULL, rotation #2 Landsec client desktop
+  1440px.
+
 ### r458 · 2026-09-02 ~16:30 UTC · FULL — rotation #1 BGP staff desktop 1440px · 1 bug fixed
 - Bring-up: canonical recipe held 23rd consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
