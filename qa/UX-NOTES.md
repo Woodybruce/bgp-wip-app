@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+129. 2026-09-02 · Landsec client / desktop 1440px (QA r452) · reviewing
+    their own deals on the Deals board · both Landsec deals show an empty
+    "Client" column with a staff-worded "+ Link landlord" affordance — as
+    the client, "who the client is" is themselves, and the empty cell +
+    staff jargon reads like something is broken or unassigned · for client
+    users, default the deal's client cell to their own company name (or at
+    least relabel the empty state "Link client" and pre-select their
+    company in the picker, which now only offers Landsec anyway).
+
 128. 2026-09-01 · BGP staff / desktop 1440px (QA r450) · using the WIP
     report's TEAM cross-filter board to see how the teams are tracking ·
     the board opened showing "National £0" and "National Leasing £0" while

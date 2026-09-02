@@ -3310,6 +3310,7 @@ export default function AvailableUnitsPage() {
         unit={filesUnit}
         files={filesForUnit}
         propertyName={filesUnit ? (propertyMap[filesUnit.propertyId]?.name || "") : ""}
+        isClient={isClientTracker}
         onClose={() => setFilesUnit(null)}
       />
 
@@ -3646,11 +3647,12 @@ function UnitClientContactLine({ targets, clientCompanyId, onChanged }: {
 }
 
 function MarketingFilesDialog({
-  unit, files, propertyName, onClose,
+  unit, files, propertyName, isClient, onClose,
 }: {
   unit: AvailableUnit | null;
   files: UnitMarketingFile[];
   propertyName: string;
+  isClient: boolean;
   onClose: () => void;
 }) {
   const { toast } = useToast();
@@ -3860,6 +3862,10 @@ function MarketingFilesDialog({
               <Upload className="h-4 w-4" />
               {uploading ? "Uploading..." : `Upload ${section === "all" ? "file" : section === "floorplan" ? "floor plan" : section}`}
             </Button>
+            {/* Doc Studio is a staff surface — /templates isn't in
+                CLIENT_ALLOWED_ROUTES, so for clients the button opened a
+                tab that bounced straight to their dashboard (r452). */}
+            {!isClient && (
             <Button
               variant="outline"
               size="sm"
@@ -3872,13 +3878,14 @@ function MarketingFilesDialog({
               <Sparkles className="h-4 w-4" />
               Create in Doc Studio
             </Button>
+            )}
           </div>
 
           {files.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <File className="h-10 w-10 mx-auto mb-2 opacity-30" />
               <p className="text-sm">No files yet</p>
-              <p className="text-xs mt-1">Upload a brochure, floor plan or photo — or create one in Document Studio</p>
+              <p className="text-xs mt-1">{isClient ? "Upload a brochure, floor plan or photo" : "Upload a brochure, floor plan or photo — or create one in Document Studio"}</p>
             </div>
           ) : (
             // plain overflow div, not ScrollArea — Radix's display:table

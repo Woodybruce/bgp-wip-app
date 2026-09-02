@@ -84,18 +84,61 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r452 · 2026-09-02 · FULL (rotation #2 Landsec client desktop 1440px) — ROUND IN PROGRESS
-- Provisional heartbeat entry. Bring-up: canonical recipe held 17th
-  consecutive time (qa:pg once → run-smoke restore clean → seed-personas
-  applied to bgpsmoke before two-bot per r451 rule). Regression: smoke
-  GREEN 42/0. Two-bot round 452 as 3 foreground chunks (server stdio to
-  a FILE, tsx child sweep after each): victoria exit 0 (2×400 standing) /
+### r452 · 2026-09-02 ~02:00 UTC · FULL — rotation #2 Landsec client desktop 1440px · 2 bugs fixed
+- Bring-up: canonical recipe held 17th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule). Regression:
+  smoke GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the fixes).
+  Two-bot round 452 as 3 foreground chunks, run GREEN twice (pre-fix and
+  post-fix on a verified-fresh server): victoria exit 0 (2×400 standing) /
   mark exit 0 (2×503 keyless + 8×403 probe-by-design) / woody,nick,sam
-  exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit at 390px.
-  Server logs: 0 raw 500/502/504 (one grep hit = news-feed text, r413
-  class). Triage: 0 app bugs.
-- Journey (client desktop 1440px, mark.warne) still to run. Final entry
-  replaces this one.
+  exit 0. phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (one grep hit = news-feed text, r413 class).
+- Journey (Mark @1440px, UI login via Client/guest reveal — "Monday
+  lettings review: dashboard → Letting Tracker (reworked cluster/labels/
+  Files) → viewings dialog → deals board → news"): dashboard KPIs clean,
+  tracker renders 78 units w/ inner h-scroll (2600px table in its own
+  container + synced bottom bar, page never h-scrolls), Add Viewing date
+  defaults today (UX2 holds), Files dialog + info-sheet row clean, no
+  company leak in client pickers (API probe: slice + Landsec only, no
+  Hammerson). 0 pageerrors, only noise-list 4xx/5xx, no overflow.
+- BUG FIXED 1: landlord/client pickers offered every TENANT brand as a
+  landlord (Starbucks/Amorino/… in Mark's "Link landlord" dropdown) — the
+  deal FORM was cleaned up long ago ("Tenants joining a Landlord picker
+  was the top user complaint", its own comment) but three spots kept the
+  legacy filter: deals.tsx inline landlord column cell, ClientXeroCell
+  popover, deal-detail.tsx landlord picker. Dropped the startsWith
+  ("Tenant") clause in all three. Verified visually: Mark's picker now
+  offers Landsec only; staff unaffected. New scenario
+  client-landlord-picker-landlords-only.
+- BUG FIXED 2: tracker Files dialog showed "Create in Doc Studio" to
+  clients — it window.opens /templates, which is NOT in
+  CLIENT_ALLOWED_ROUTES, so the new tab bounced clients straight to
+  their dashboard (dead-end button). Now staff-only (isClient prop, same
+  pattern as HotsDialog); client empty-state copy drops the Doc Studio
+  mention; Upload stays. Verified visually both personas. New scenario
+  client-files-no-doc-studio. Both new scenarios PASSED twice in full
+  mark chunks.
+- HARNESS FLAKE ROOT-CAUSED (r450's orphan, now with the real pattern):
+  pgrep/pkill -f "tsx server" NEVER matches the actual server — tsx's
+  child runs as `node --require …/tsx/preflight.cjs --import
+  …/loader.mjs server/index.ts` (no "tsx" before "server"). An orphan
+  from this round's first chunk silently kept :5000 for ~1h; symptoms
+  seen before diagnosis (do NOT re-triage as app bugs): (a)
+  staff-map-goad-concurrent 500 "relation goad_units does not exist" —
+  stale process had ensured=true from before the restore dropped the
+  table, its own log showed NO goad requests; (b) 12 mark flow-failures
+  = stale cross-452.json pointing at staff rows the restore wiped.
+  Sweep with pgrep -f "server/index.ts" and rm the QA_CROSS_FILE after
+  any restore. After killing the orphan, all 3 chunks green first try.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES
+  129 (client deals board "Client" cell empty + staff-worded "+ Link
+  landlord" for their own deals). Real-device keyboard-up composer check
+  (r405) still open for Woody.
+- tsc clean, FRESH_BUILD smoke re-green post-fix. New flakes: none
+  beyond the sweep-pattern rule above.
+- Next: r452 had the journey → r453 LIGHT (watch the two new scenarios'
+  first standard-order full run); then rotation #3 client mobile 390px.
 
 ### r451 · 2026-09-02 ~00:40 UTC · LIGHT (r450 had the journey) — GREEN
 - Bring-up: canonical recipe held 16th consecutive time (qa:pg once →

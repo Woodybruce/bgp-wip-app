@@ -1335,7 +1335,7 @@ function ClientXeroCell({
           <Label className="text-xs text-muted-foreground">Client</Label>
           <InlineLinkSelect
             value={deal.landlordId}
-            options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
+            options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
             href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
             onSave={onLandlordSave}
             onCreate={(name) => onLandlordCreate(name)}
@@ -6634,7 +6634,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         <TableCell className="px-1.5 py-1 max-w-[120px]">
                           <InlineLinkSelect
                             value={deal.landlordId}
-                            options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
+                            options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
                             href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
                             onSave={(v) => handleInlineSave(deal.id, "landlordId", v || null)}
                             onCreate={(name) => createCompanyForDeal(deal.id, "landlordId", "Landlord / Client", name)}

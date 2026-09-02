@@ -5668,6 +5668,54 @@ async function markRound(page, cross) {
     const raw = r.contacts.filter((c) => uuidish.test(String(c)));
     if (raw.length) throw new Error(`bgpContacts contains raw user ids: ${raw.join(', ')}`);
   });
+
+  await step(page, p, 'client-landlord-picker-landlords-only', async () => {
+    // r452: the inline deals-table landlord/client picker kept the legacy
+    // filter that mixed every Tenant brand into the landlord options
+    // ("Tenants joining a Landlord picker was the top user complaint" per
+    // the deal form's own comment). Open the picker and assert no
+    // tenant-typed company is offered while Landsec is.
+    const tenants = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/companies', { headers: auth });
+      if (!res.ok) return null;
+      const body = await res.json();
+      return body.filter((c) => (c.companyType || '').startsWith('Tenant')).map((c) => c.name);
+    });
+    if (!tenants) throw new Error('companies read failed');
+    await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    const trigger = page.getByText('Link landlord', { exact: false }).first();
+    if (!(await trigger.count())) return; // all deals have landlords linked — nothing to assert
+    await trigger.click();
+    await page.waitForTimeout(800);
+    const opts = await page.locator('[data-testid^="inline-link-option-"]').allTextContents();
+    if (!opts.length) throw new Error('landlord picker opened with no options at all');
+    const leaked = opts.filter((o) => tenants.includes(o.trim()));
+    if (leaked.length) throw new Error(`landlord picker offers tenant brands: ${leaked.join(', ')}`);
+    if (!opts.some((o) => /landsec/i.test(o))) throw new Error('landlord picker missing Landsec');
+    await page.keyboard.press('Escape');
+  });
+
+  await step(page, p, 'client-files-no-doc-studio', async () => {
+    // r452: "Create in Doc Studio" opened /templates, which isn't in
+    // CLIENT_ALLOWED_ROUTES — the new tab bounced clients straight to
+    // their dashboard. The button is staff-only now; Upload stays.
+    await page.goto(`${BASE}/available`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3500);
+    const files = page.locator('[data-testid^="button-files-"]').first();
+    if (!(await files.count())) throw new Error('tracker files button not found');
+    await files.click();
+    await page.waitForTimeout(1200);
+    if (await page.locator('[data-testid="button-create-doc-studio"]').count()) {
+      throw new Error('client Files dialog still shows the staff-only Doc Studio button (its /templates tab bounces clients to the dashboard)');
+    }
+    if (!(await page.locator('[data-testid="button-upload-brochure"]').count())) {
+      throw new Error('client Files dialog lost its Upload button');
+    }
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+  });
 }
 
 // ─── Additional personas ──────────────────────────────────────────────────
