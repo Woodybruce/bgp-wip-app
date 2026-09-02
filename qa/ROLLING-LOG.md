@@ -80,6 +80,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r451 · 2026-09-02 ~00:30 UTC · ROUND IN PROGRESS (heartbeat)
+- LIGHT round (r450 had the journey). Bring-up: canonical recipe held
+  (qa:pg once → run-smoke restore clean). Regression: smoke GREEN 42/0.
+- Two-bot round 451 as 3 foreground chunks: victoria exit 0 (2×400
+  standing noise), mark exit 0, woody/nick/sam exit 0 (0 issues).
+- r450's TWO FIXES RE-VERIFIED: staff-tracker-status-pills-reachable and
+  staff-wip-client-landlord-fallback both PASSED their first
+  standard-order run in the victoria chunk.
+- Triage: first mark run logged 2 flow-failures (Honi Poke missing from
+  client turnover + search) — HARNESS SETUP miss, not the app: this
+  round's chunk runner skipped the seed-personas step of the r436 recipe
+  (the smoke fixture does NOT contain Honi Poke; qa/seed-personas.sql
+  creates it). Seed applied → full mark chunk re-run clean (10 issues =
+  standing 503/403 signature). phone-overflow-sweep 11/11. 0 raw
+  500/502/504 in server logs. 0 app bugs.
+- Finalising log entry next.
+
 ### r450 · 2026-09-01 ~23:55 UTC · FULL — rotation #1 BGP staff desktop 1440px · 2 bugs fixed
 - Bring-up: canonical recipe held 15th consecutive time (qa:pg once →
   run-smoke restore clean). Regression: smoke GREEN 42/0 ×2 (before, and
