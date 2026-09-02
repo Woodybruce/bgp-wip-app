@@ -22,12 +22,23 @@ export default function Home() {
         <img
           src="/images/bar.jpg"
           alt="Bar interior"
-          className="h-[70vh] min-h-[480px] w-full object-cover"
+          className="h-[70vh] min-h-[480px] w-full object-cover brightness-[.72]"
         />
-        <div className="absolute inset-0 bg-bgp-wine/30" />
+        {/* Wine-toned scrim, heaviest behind the wordmark, so the white
+            always reads over the photograph */}
+        <div className="absolute inset-0 bg-gradient-to-b from-bgp-ink/40 via-bgp-wine/50 to-bgp-ink/55" />
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
-          <h1><img src="/brand/bgp-logo-white.svg" alt="bgp" className="h-28 md:h-44 w-auto mx-auto" /></h1>
-          <p className="mt-6 max-w-2xl font-display italic text-white text-xl md:text-2xl leading-snug">
+          <h1>
+            <img
+              src="/brand/bgp-logo-white.svg"
+              alt="bgp"
+              className="h-28 md:h-44 w-auto mx-auto drop-shadow-[0_4px_24px_rgba(0,0,0,0.55)]"
+            />
+          </h1>
+          <p
+            className="mt-6 max-w-2xl font-display italic text-white text-2xl md:text-3xl leading-snug"
+            style={{ textShadow: "0 2px 18px rgba(0,0,0,0.6)" }}
+          >
             {HERO_STATEMENT}
           </p>
           <a href="#services" aria-label="Scroll to services" className="mt-10 text-white text-2xl animate-bounce">
