@@ -84,17 +84,52 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r468 · 2026-09-02 ~19:10 UTC · FULL — rotation #2 Landsec client desktop 1440px — ROUND IN PROGRESS
+### r468 · 2026-09-02 ~19:45 UTC · FULL — rotation #2 Landsec client desktop 1440px · 1 fix
 - Bring-up: canonical recipe held 33rd consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
-  Regression: smoke GREEN 42/0. Two-bot round 468 as 3 foreground chunks:
-  victoria exit 0 (2×400 standing) / mark exit 0 (9 issues = 1×503
-  keyless + 8×403 probe-by-design — standing signature exact; the r467
-  late-chunk browser death did NOT recur on this fresh container, full
-  chunk incl. tail scenarios passed) / woody,nick,sam exit 0 (0 issues).
-  phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw 500/502/504
-  (tally: 3728×200, expected 3xx/4xx/503 only). Triage: 0 app bugs.
-- Journey (Mark @1440px desktop) in progress — final entry to follow.
+  Regression: smoke GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the
+  fix). Two-bot round 468 as 3 foreground chunks: victoria exit 0 (2×400
+  standing) ×2 / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact; the r467 late-chunk browser
+  death did NOT recur on this fresh container, full chunk incl. tail
+  scenarios passed — supports r467's container-specific read) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
+  Server logs: 0 raw 500/502/504 (tally: 3728×200, expected 3xx/4xx/503
+  only). Triage: 0 app bugs from the harness.
+- Journey (Mark @1440px, "monthly reporting day: dashboard → requirements
+  → calendar → CRM contacts → tasks page create+complete → news → comps →
+  Ctrl+K search → Bluewater"): all render clean, 0 pageerrors, 0
+  non-noise 4xx/5xx, no h-overflow. Task quick-add works (toast + row);
+  completing it works end-to-end (strike-through into Completed group,
+  "Nice!" toast, API status done, open counter 2→1). Search palette finds
+  Bluewater and lands on the property page (Compliance & KYC visible per
+  standing decision, staff buttons absent, SharePoint degrades politely).
+  Requirements "0 active" is CORRECT scoping (fixture's 1 req is
+  manually-entered BGP, non-PIPnet → hidden from clients); the desktop
+  empty state renders after settle (journey shot caught the skeleton) but
+  still shows the generic copy — that's already UX-NOTES 79, no new entry.
+  News list renders (rows link out externally, no in-app detail route —
+  as designed). Bugs found by the journey: 0.
+- FIX (r467's logged observation, server hardening): the six
+  /api/properties/:id/brochures/:bid routes (delete/patch/edit/reingest/
+  file/cover) passed :bid raw into a uuid-typed query — a malformed id
+  (the literal "undefined") made postgres throw → raw 500. Added a
+  badBid guard in property-brochures.ts: malformed → 400 "Invalid
+  brochure id", well-formed-but-missing still 404, list/upload untouched.
+  Verified: staff DELETE undefined 400 / missing-uuid 404 / list 200;
+  client gateway 403s unchanged (parity scenario unaffected — gateway
+  fires before the handler). tsc clean, FRESH_BUILD smoke re-green,
+  victoria chunk re-run green incl. NEW scenario staff-brochure-bad-id-400
+  (node-side fetch, no page-log noise; signature stays 2×400).
+- Bugs fixed: 1 (brochure :bid 500→400 guard). Deferred: none new.
+  Carried (data, staff decision): Bluewater tenancy SPINE duplicates
+  (U062 ×4, L090 ×2, L130 ×2). Suggestions: none new (requirements
+  desktop empty-state copy = existing UX-NOTES 79). New flakes: none —
+  and one harness note: pkill -f patterns must be regex-bracketed
+  ("index[.]ts") or pkill kills the calling shell (exit 144).
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r468 had the journey → r469 LIGHT; then rotation #3 Landsec
+  client mobile 390px.
 
 ### r467 · 2026-09-02 ~15:00 UTC · LIGHT (r466 had the journey) — GREEN, 1 new harness flake documented
 - Bring-up: canonical recipe held 32nd consecutive time (qa:pg once →

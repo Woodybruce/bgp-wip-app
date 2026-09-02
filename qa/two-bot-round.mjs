@@ -2086,6 +2086,18 @@ async function victoriaRound(page, cross) {
     const hubBody = await page.evaluate(() => document.body.innerText);
     if (hubBody.includes('£1000k') || hubBody.includes('£1000m')) throw new Error('brands hub renders £1000k/£1000m (formatTurnover rounding edge regressed)');
   });
+
+  await step(page, p, 'staff-brochure-bad-id-400', async () => {
+    // r468: a malformed :bid (the literal "undefined") used to reach the
+    // uuid-typed query and 500; the guard must 400 it, and a well-formed
+    // but missing uuid must still 404. Node-side fetch so the deliberate
+    // 4xx rows don't land in the page issue log.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const bad = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/undefined`, { method: 'DELETE', ...auth });
+    if (bad.status !== 400) throw new Error(`brochure DELETE with bad id expected 400, got ${bad.status}`);
+    const miss = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/00000000-0000-4000-8000-000000000000`, { method: 'DELETE', ...auth });
+    if (miss.status !== 404) throw new Error(`brochure DELETE with missing uuid expected 404, got ${miss.status}`);
+  });
 }
 
 async function markRound(page, cross) {

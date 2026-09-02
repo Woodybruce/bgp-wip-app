@@ -150,6 +150,15 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // pick them up without a manual migration step.
   ensureIngestColumns().catch(err => console.warn("[property-brochures] init:", err?.message));
 
+  // :bid feeds a uuid-typed column — a malformed value (e.g. the literal
+  // "undefined") makes postgres throw, surfacing as a raw 500.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const badBid = (req: Request, res: Response): boolean => {
+    if (UUID_RE.test(String(req.params.bid))) return false;
+    res.status(400).json({ error: "Invalid brochure id" });
+    return true;
+  };
+
   // List brochures attached to a property, grouped by type with the
   // archived rows separated so the UI's accordion shows them only
   // when asked.
@@ -279,6 +288,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // before re-inserting, so hand-edited rows are preserved.
   app.post("/api/properties/:id/brochures/:bid/reingest", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       await ensureIngestColumns();
       const { rows } = await pool.query<BrochureRow>(
         `SELECT * FROM property_brochures WHERE id = $1 AND property_id = $2`,
@@ -302,6 +312,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // and the download button (download=1 adds Content-Disposition).
   app.get("/api/properties/:id/brochures/:bid/file", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       const { clientBlockedForProperty } = await import("./company-scope");
       if (await clientBlockedForProperty(req, String(req.params.id))) {
         return res.status(403).json({ error: "Read-only access for client accounts" });
@@ -341,6 +352,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // pdftoppm (same tool the vision ingest uses) and cached on disk.
   app.get("/api/properties/:id/brochures/:bid/cover", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       const { clientBlockedForProperty } = await import("./company-scope");
       if (await clientBlockedForProperty(req, String(req.params.id))) {
         return res.status(403).json({ error: "Read-only access for client accounts" });
@@ -395,6 +407,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // PATCH — rename, retype (leasing/investment), archive toggle.
   app.patch("/api/properties/:id/brochures/:bid", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       const { name, type, archived, notes } = req.body || {};
       const sets: string[] = [];
       const params: any[] = [];
@@ -423,6 +436,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // garbage-collect orphans later.
   app.delete("/api/properties/:id/brochures/:bid", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       const r = await pool.query(
         `DELETE FROM property_brochures WHERE id = $1 AND property_id = $2`,
         [req.params.bid, req.params.id],
@@ -441,6 +455,7 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // preserved.
   app.post("/api/properties/:id/brochures/:bid/edit", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (badBid(req, res)) return;
       const { rows } = await pool.query<BrochureRow>(
         `SELECT * FROM property_brochures WHERE id = $1 AND property_id = $2`,
         [req.params.bid, req.params.id],
