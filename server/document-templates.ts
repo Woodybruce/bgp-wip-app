@@ -158,16 +158,16 @@ async function createCanvaDesignFromContent(
 }
 
 const BGP_BRANDING_GUIDELINES = `
-BRUCE GILLINGHAM POLLARD (BGP) — Official Style Guide & Template Instructions (December 2019, updated)
-Source: BGP Style Guide PDF — the authoritative brand reference for all BGP documents and presentations.
+BRUCE GILLINGHAM POLLARD (bgp) — Official Style Guide & Template Instructions (Rebrand v19, 2026)
+Source: BGP Rebrand v19 — the authoritative brand reference for all BGP documents and presentations.
 
 Company: Bruce Gillingham Pollard — a boutique property consultancy specialising in prime central London (Belgravia, Mayfair, Chelsea, Knightsbridge) and major mixed-use developments nationally.
 
 BRAND IDENTITY:
 - Premium, understated luxury. Traditional English estate agency meets modern professionalism.
 - Tone: authoritative, measured, discreet. Never flashy or informal.
-- Main principle: "No brand colour — colour comes from content."
-- The BGP look is bold typography with large amounts of negative space — dramatic, confident, editorial.
+- Main principle: Bordeaux is the single brand colour; everything else stays warm and neutral.
+- The bgp look is elegant serif typography with large amounts of negative space — warm, confident, editorial. Titles in sentence case, never all-caps shouting.
 
 LOGO:
 - Exclusion zone: maintain clear space around the logo equal to the height of the "B" in "Bruce".
@@ -177,39 +177,28 @@ LOGO:
 - Logo position: Top-left for letters, top-right for presentation decks (in holder with decorative bars).
 - Omit logo for internal notes, quick memos, or casual documents.
 
-COLOUR & MATERIALITY (from official style guide):
-Main colours (monochrome base):
-- BGP Slate: #232323 (R23 G23 B23) — primary dark, headings, key text, accent elements, cover backgrounds
-- BGP Warm Grey: #E8E6DF (R232 G230 B223) — secondary background, panels, section backgrounds
-- BGP Cool Grey: #596264 (R89 G98 B100) — mid-grey for body text, captions, secondary text
-- White: #FFFFFF — clean white backgrounds, text on dark backgrounds
-- Body text: Black (#000000) or near-black (#232323)
-- Divider grey: #DDDFE0 or #E8E6DF — for thin rule lines between sections
+COLOUR & MATERIALITY (Rebrand v19 palette):
+Main colours:
+- BGP Bordeaux: #6e0c25 (R110 G12 B37) — THE brand colour: titles, key rules, accent elements, cover backgrounds
+- BGP Cream: #fcf8f4 (R252 G248 B244) — warm paper background for pages and panels
+- BGP Blush: #e4d8d3 (R228 G216 B211) — soft secondary background, panels, section backgrounds
+- BGP Stone: #c2baa3 (R194 G186 B163) — muted neutral accent, quiet detailing
+- BGP Nectar: #fc9f8d (R252 G159 B141) — warm highlight accent; use sparingly (one highlight per spread)
+- BGP Ink: #1d1d1b (R29 G29 B27) — body text
+- BGP Cool Grey: #596264 (R89 G98 B100) — captions, secondary text
+- White: #FFFFFF — clean white backgrounds, text on dark bordeaux backgrounds
+- Divider: #e4d8d3 blush or fine #6e0c25 bordeaux hairlines — for thin rule lines between sections
 
-Secondary colour palettes (for digital decks only, used sparingly):
-- BGP Lime: R221 G237 B227
-- BGP Ice: R221 G229 B237
-- BGP Teal: R143 G198 B204
-- BGP Pink: R209 G175 B168
-- BGP Green: R35 G70 B47
-- BGP Navy: R0 G33 B56
-- BGP Highlight Orange: reserved (use very sparingly if at all)
-- BGP Highlight Mustard: R255 G185 B55
-- BGP Highlight Cyan: R58 G119 B255
+IMPORTANT: Default documents use cream/white grounds, ink body text, bordeaux titles and rules. Nectar and stone are supporting accents only — never let them dominate. No greens, no golds, no oranges.
 
-Print detailing: Copper (foil/emboss for physical print only, not digital).
-IMPORTANT: Default documents should be strictly monochrome (slate, warm grey, cool grey, white). Secondary palettes may only be used in digital presentation decks when specifically requested.
-
-TYPOGRAPHY (from official style guide — Work Sans is the BGP brand font):
-- Primary font: WORK SANS — available via Adobe Fonts or Google Fonts.
-- Work Sans Medium — used for section labels, captions, uppercase headings.
-- Work Sans Regular — used for body text, descriptions, longer content.
-- Headings in documents: "Grotta, Work Sans, Arial, sans-serif" — BGP's primary heading font. Used BOLD, often UPPERCASE or split across 2-3 lines for dramatic effect.
-- Subheadings/section labels: "Neue Machina, Work Sans, Arial, sans-serif" — modern, geometric. Used for "SECTION TITLE" labels, always UPPERCASE, small size (9-11pt), letter-spaced.
-- Body text: "Work Sans, Arial, sans-serif" for most documents. "MinionPro, Times New Roman, serif" for formal/legal documents.
-- Fallback: Work Sans, Arial, Arial Narrow (always available web-safe).
-- Font sizes: Main titles 24-36pt bold, section labels 9-11pt medium uppercase, body 10-12pt regular. Never smaller than 9pt.
-- Title hierarchy from BGP decks: Small "SECTION TITLE" label (9pt, uppercase, medium weight, letter-spaced) → Large "Title of page\\ntwo lines" heading (22-36pt) → Body text.
+TYPOGRAPHY (Rebrand v19 — the fixed "Serif" route):
+- Titles/display: "Lora, FreightText Pro, Georgia, serif" — FreightText Pro (Light Italic & Medium) is the brand titling face; Lora is the licensed web stand-in. Titles set in SENTENCE CASE (never all-caps), regular or light weight, italic welcome for editorial emphasis. Title colour bordeaux #6e0c25.
+- Body text: "Lato, Helvetica Neue, Arial, sans-serif" — Lato Light for body copy, Lato Medium for emphasis (Google Fonts).
+- Section labels/captions: Lato bold, small (9-11pt), UPPERCASE, letter-spaced, cool grey or bordeaux.
+- Formal/legal documents: serif body acceptable ("Lora, Georgia, serif").
+- Fallback: Lato, Arial (always available web-safe); Georgia for serif contexts.
+- Font sizes: Main titles 24-36pt, section labels 9-11pt bold uppercase, body 10-12pt light/regular. Never smaller than 9pt.
+- Title hierarchy: Small "Section title" label (9pt, uppercase Lato, letter-spaced) → Large serif heading in sentence case (22-36pt Lora) → Body text in Lato.
 
 PRESENTATION DECK PRINCIPLES (from official style guide):
 - Digital only format.
@@ -276,15 +265,15 @@ Thank you/end page:
 
 PAGE LAYOUT PATTERNS (for A4 documents):
 
-1. COVER PAGE: Full-bleed hero image or dark (#232323) background. Project name in large bold (28-36pt) positioned bottom-left or centre. "PREPARED FOR [NAME], [MONTH YEAR]" subtitle (10pt). Logo small in corner.
+1. COVER PAGE: Full-bleed hero image or bordeaux (#6e0c25) background. Project name in large bold (28-36pt) positioned bottom-left or centre. "PREPARED FOR [NAME], [MONTH YEAR]" subtitle (10pt). Logo small in corner.
 
-2. SECTION DIVIDER: Dark (#232323) or image background. 3-line dramatic title in very large bold (36-48pt), stacked left-aligned with generous line height. Small "SECTION TITLE" label above. Maximum visual impact with minimal text.
+2. SECTION DIVIDER: Bordeaux (#6e0c25) or image background. 3-line dramatic title in very large bold (36-48pt), stacked left-aligned with generous line height. Small "SECTION TITLE" label above. Maximum visual impact with minimal text.
 
 3. CONTENT PAGE: Small "SECTION TITLE" label top-left (9pt, uppercase). Main heading "Title of page two lines" below (24-28pt, bold). Body text in left column (55-60% width). Supporting content in right column.
 
 4. QUOTE PAGE: Large pull quote centred or left-aligned with generous margins. Attribution below: "PERSON WHO SAID IT" in small caps.
 
-5. TABLE/DATA PAGE: "SECTION TITLE" label + heading. Clean table with thin borders (#E8E6DF), header row in darker background. Footnotes at bottom.
+5. TABLE/DATA PAGE: "SECTION TITLE" label + heading. Clean table with thin borders (#e4d8d3), header row in bordeaux (#6e0c25) with white text. Footnotes at bottom.
 
 6. IMAGE GRID PAGE: 2-6 images in grid layout with captions (8-9pt, uppercase). Images should fill their frames.
 
@@ -306,7 +295,7 @@ LAYOUT GENERAL RULES:
 - Always use GENEROUS whitespace — BGP style favours dramatic negative space over dense content
 
 BORDERS & DIVIDERS:
-- Thin rectangle dividers (#E8E6DF grey or #232323 black) between major sections
+- Thin rectangle dividers (#e4d8d3 blush or #6e0c25 bordeaux) between major sections
 - Formal reports: thin bottom border on letterhead
 - Legal documents: none
 - Letters: none or thin top border
@@ -324,7 +313,7 @@ INSTAGRAM & SOCIAL MEDIA (from style guide):
 - Moving templates (After Effects): Block video, 3 strand video, Lens video.
 - Story templates: Text/quote templates with swipe-up links.
 - Social templates folder on SharePoint: https://brucegillinghampollardlimited-my.sharepoint.com/:f:/g/personal/woody_brucegillinghampollard_com/IgCTJYuaGm0DTbC8XiUYTI4hAXnXbYVhODJE7IwkPLi5sRs?e=a22Cxk
-- Social media visual style: Monochrome base with BGP branded overlays, clean typography (Work Sans), consistent image framing. Use the "refraction" technique (same image offset in tonal shapes) for graphic impact.
+- Social media visual style: Monochrome base with BGP branded overlays, clean typography (Lato), consistent image framing. Use the "refraction" technique (same image offset in tonal shapes) for graphic impact.
 - Instagram grid: Brand posts alternate between image posts and graphic/quote posts for visual rhythm.
 - Story format: 1080×1920px vertical. Use text overlay templates or quote templates. Always include "brucegillinghampollard" handle.
 - Post format: 1080×1080px square. Place imagery within BGP-branded frame shapes. Export PNG at 96dpi.
@@ -414,13 +403,13 @@ async function autoDesignWithClaude(templateContent: string, templateName: strin
   }
 
   const BGP_DEFAULT_DESIGN = {
-    fontFamily: "Work Sans, Arial, sans-serif",
+    fontFamily: "Lato, Helvetica Neue, Arial, sans-serif",
     fontSize: "11pt",
-    headingFont: "Grotta, Work Sans, Arial, sans-serif",
+    headingFont: "Lora, FreightText Pro, Georgia, serif",
     headingSize: "18pt",
-    headingColor: "#232323",
+    headingColor: "#6e0c25",
     bodyColor: "#000000",
-    accentColor: "#232323",
+    accentColor: "#6e0c25",
     showLogo: true,
     logoPosition: "top-left",
     headerText: "Bruce Gillingham Pollard",
@@ -429,7 +418,7 @@ async function autoDesignWithClaude(templateContent: string, templateName: strin
     lineSpacing: "1.15",
     letterhead: true,
     borderStyle: "thin",
-    borderColor: "#E8E6DF",
+    borderColor: "#e4d8d3",
   };
 
   if (!text) {
@@ -1001,7 +990,7 @@ Do NOT include HTML tags, CSS, or placeholder text like "[BGP LOGO]".`;
 
 export async function exportDocumentToPdf(content: string, title: string): Promise<Buffer> {
   const docTitle = (title || "BGP Document").slice(0, 200);
-  const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark.png");
+  const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark_trimmed.png");
   const logoExists = fs.existsSync(logoPath);
 
   function cleanContent(raw: string): string {
@@ -1065,8 +1054,8 @@ export async function exportDocumentToPdf(content: string, title: string): Promi
   const pageW = 475;
   const leftM = 60;
   const rightEdge = leftM + pageW;
-  const bgpGreen = "#2E5E3F";
-  const bgpDarkGreen = "#1A3A28";
+  const bgpGreen = "#6E0C25";
+  const bgpDarkGreen = "#4A0819";
   const generatedDate = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
   function drawHeader() {
@@ -1484,26 +1473,26 @@ IMPORTANT: Keep each text element's content field SHORT (under 80 chars). Use se
 
 BGP BRAND RULES (from official BGP Visual & Deck Templates — follow precisely):
 
-TYPOGRAPHY HIERARCHY (this defines the BGP look — Work Sans is the PowerPoint equivalent):
-1. Section label: fontFamily:"Neue Machina, Work Sans, Arial, sans-serif", fontSize:9, fontWeight:"bold", UPPERCASE, color:#232323 — placed ABOVE the main heading as a small category label
-2. Main heading: fontFamily:"Grotta, Work Sans, Arial, sans-serif", fontSize:28-36, fontWeight:"bold", color:#232323 — can split across 2-3 lines for dramatic effect with generous line height
-3. Body text: fontFamily:"Work Sans, Arial, sans-serif" for most documents, fontFamily:"MinionPro, Times New Roman, serif" for formal letters, fontSize:10-11, color:#000000
-4. Footer: fontFamily:"Work Sans, Arial, sans-serif", fontSize:9, color:#333333
+TYPOGRAPHY HIERARCHY (this defines the bgp v19 look — serif titles, Lato body):
+1. Section label: fontFamily:"Lato, Helvetica Neue, Arial, sans-serif", fontSize:9, fontWeight:"bold", UPPERCASE, letter-spaced, color:#6e0c25 — placed ABOVE the main heading as a small category label
+2. Main heading: fontFamily:"Lora, FreightText Pro, Georgia, serif", fontSize:28-36, fontWeight:"normal", SENTENCE CASE, color:#6e0c25 — can split across 2-3 lines for dramatic effect with generous line height
+3. Body text: fontFamily:"Lato, Helvetica Neue, Arial, sans-serif" for most documents, fontFamily:"Lora, Georgia, serif" for formal letters, fontSize:10-11, color:#1d1d1b
+4. Footer: fontFamily:"Lato, Helvetica Neue, Arial, sans-serif", fontSize:9, color:#596264
 
 COLOUR PALETTE (strictly monochrome — NO orange):
-- Headings: #232323 (near-black)
+- Headings: #6e0c25 (bordeaux)
 - Body: #000000
-- Accent: #232323 (black) — for divider lines, callout borders, key data highlights
+- Accent: #6e0c25 (bordeaux) — for divider lines, callout borders, key data highlights; #fc9f8d (nectar) for one warm highlight per page at most
 - Page background: #FFFFFF (white)
-- Panel/card backgrounds: #F5F4F0 (light warm grey)
-- Dark backgrounds: #232323 — for cover pages or dramatic section headers with white (#FFFFFF) text
+- Panel/card backgrounds: #fcf8f4 (cream) or #e4d8d3 (blush)
+- Dark backgrounds: #6e0c25 bordeaux — for cover pages or dramatic section headers with white (#FFFFFF) text
 - FORBIDDEN: No orange (#FF6900), no bright colours — strictly monochrome
 
 PAGE STRUCTURE (match BGP deck template patterns):
-- Start with small "SECTION TITLE" label (Neue Machina, 9pt, uppercase) near top-left
-- Below it, a large dramatic heading (Grotta, 28-36pt, bold) — can wrap to 2-3 lines
+- Start with small "Section title" label (Lato bold, 9pt, uppercase, letter-spaced) near top-left
+- Below it, a large serif heading in sentence case (Lora, 28-36pt) — can wrap to 2-3 lines
 - Body content in columns: main text left (55-60%), supporting content/data right
-- Thin rectangle shape dividers between major sections (#E8E6DF grey or #232323 black) — never orange
+- Thin rectangle shape dividers between major sections (#e4d8d3 blush or #6e0c25 bordeaux) — never orange
 - "Bruce Gillingham Pollard" or address footer at bottom
 - Use GENEROUS whitespace — BGP style favours dramatic negative space over dense content
 - Use the FULL page height, don't cluster everything at the top
@@ -1663,14 +1652,14 @@ Image elements also have: either src (existing data URL) or generatePrompt (text
 
 BGP BRAND GUIDELINES (from official BGP Visual & Deck Templates):
 TYPOGRAPHY HIERARCHY (this defines the BGP look):
-1. Section label: "Neue Machina, Work Sans, Arial, sans-serif" — 9pt, bold, UPPERCASE, #232323 — placed ABOVE main headings as a small category label
-2. Main heading: "Grotta, Work Sans, Arial, sans-serif" — 28-36pt, bold, #232323 — can split across 2-3 lines for dramatic effect
-3. Body text: "Work Sans, Arial, sans-serif" for most documents, "MinionPro, Times New Roman, serif" for formal letters — 10-11pt, #000000
-4. Footer: "Work Sans, Arial, sans-serif" — 9pt, #333333
+1. Section label: "Lato, Helvetica Neue, Arial, sans-serif" — 9pt, bold, UPPERCASE, letter-spaced, #6e0c25 — placed ABOVE main headings as a small category label
+2. Main heading: "Lora, FreightText Pro, Georgia, serif" — 28-36pt, sentence case, #6e0c25 — can split across 2-3 lines for dramatic effect
+3. Body text: "Lato, Helvetica Neue, Arial, sans-serif" for most documents, "Lora, Georgia, serif" for formal letters — 10-11pt, #1d1d1b
+4. Footer: "Lato, Helvetica Neue, Arial, sans-serif" — 9pt, #596264
 
-COLOURS (strictly monochrome — NO orange): Headings #232323, body #000000, accent #232323 (black), background #FFFFFF (white), panels #F5F4F0 (warm grey), dark backgrounds #232323 with white text for covers/dividers. FORBIDDEN: No orange (#FF6900) anywhere.
+COLOURS (v19 palette — NO orange, NO green): Titles #6e0c25 (bordeaux), body #1d1d1b (ink), accent #6e0c25 with #fc9f8d (nectar) as an occasional warm highlight, background #fcf8f4 (cream) or #FFFFFF, panels #e4d8d3 (blush), dark backgrounds #6e0c25 with white text for covers/dividers. FORBIDDEN: No orange (#FF6900), no greens, no golds.
 
-LAYOUT: Small "SECTION TITLE" Neue Machina label → large Grotta heading → body content in columns. Generous whitespace, thin dividers (#E8E6DF or #232323). BGP favours dramatic negative space, bold typography, editorial confidence.
+LAYOUT: Small "Section title" Lato label → large Lora serif heading in sentence case → body content in columns. Generous whitespace, thin dividers (#e4d8d3 or #6e0c25). bgp favours dramatic negative space, elegant serif typography, editorial confidence.
 
 IMPORTANT RULES:
 - Always preserve existing element IDs when modifying them
@@ -2498,7 +2487,7 @@ Be concise, professional, and use British English. All document advice should al
       }
 
       const docTitle = (title || "BGP Document").slice(0, 200);
-      const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark.png");
+      const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark_trimmed.png");
       const logoExists = fs.existsSync(logoPath);
       const logoBuffer = logoExists ? fs.readFileSync(logoPath) : null;
       const logoBase64 = logoBuffer ? logoBuffer.toString("base64") : null;
@@ -2569,9 +2558,9 @@ Be concise, professional, and use British English. All document advice should al
         const docxModule = await import("docx");
         const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Header, Footer, BorderStyle, PageNumber, ImageRun, SectionType, PageBreak, Tab, TabStopType, TabStopPosition, ShadingType, Table, TableRow, TableCell, WidthType } = docxModule;
 
-        const bgpGreenHex = "2E5E3F";
-        const bgpDarkGreenHex = "1A3A28";
-        const bgpGoldHex = "C4A35A";
+        const bgpGreenHex = "6E0C25";
+        const bgpDarkGreenHex = "4A0819";
+        const bgpGoldHex = "FC9F8D";
         const generatedDate = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
         // --- Cover page section ---
@@ -2585,22 +2574,22 @@ Be concise, professional, and use British English. All document advice should al
         }));
         // Document title
         coverChildren.push(new Paragraph({
-          children: [new TextRun({ text: docTitle, bold: true, font: "Calibri", size: 52, color: bgpDarkGreenHex })],
+          children: [new TextRun({ text: docTitle, bold: true, font: "Lato", size: 52, color: bgpDarkGreenHex })],
           spacing: { after: 200 },
           alignment: AlignmentType.LEFT,
         }));
         // Subtitle line
         coverChildren.push(new Paragraph({
-          children: [new TextRun({ text: "BRUCE GILLINGHAM POLLARD", font: "Calibri", size: 20, color: bgpGreenHex, bold: true })],
+          children: [new TextRun({ text: "BRUCE GILLINGHAM POLLARD", font: "Lato", size: 20, color: bgpGreenHex, bold: true })],
           spacing: { after: 100 },
         }));
         coverChildren.push(new Paragraph({
-          children: [new TextRun({ text: generatedDate, font: "Calibri", size: 18, color: "666666" })],
+          children: [new TextRun({ text: generatedDate, font: "Lato", size: 18, color: "666666" })],
           spacing: { after: 100 },
         }));
         if (documentType) {
           coverChildren.push(new Paragraph({
-            children: [new TextRun({ text: documentType, font: "Calibri", size: 18, color: "888888", italics: true })],
+            children: [new TextRun({ text: documentType, font: "Lato", size: 18, color: "888888", italics: true })],
             spacing: { after: 200 },
           }));
         }
@@ -2611,19 +2600,19 @@ Be concise, professional, and use British English. All document advice should al
         }));
         // Confidential notice
         coverChildren.push(new Paragraph({
-          children: [new TextRun({ text: "CONFIDENTIAL", font: "Calibri", size: 16, color: "999999", bold: true })],
+          children: [new TextRun({ text: "CONFIDENTIAL", font: "Lato", size: 16, color: "999999", bold: true })],
           spacing: { before: 200 },
         }));
 
         // --- Table of Contents placeholder ---
         const tocChildren: any[] = [];
         tocChildren.push(new Paragraph({
-          children: [new TextRun({ text: "TABLE OF CONTENTS", bold: true, font: "Calibri", size: 24, color: bgpGreenHex })],
+          children: [new TextRun({ text: "TABLE OF CONTENTS", bold: true, font: "Lato", size: 24, color: bgpGreenHex })],
           heading: HeadingLevel.HEADING_1,
           spacing: { before: 400, after: 300 },
         }));
         tocChildren.push(new Paragraph({
-          children: [new TextRun({ text: "[Table of contents will auto-generate when document is opened in Microsoft Word — right-click here and select 'Update Field']", font: "Calibri", size: 20, color: "888888", italics: true })],
+          children: [new TextRun({ text: "[Table of contents will auto-generate when document is opened in Microsoft Word — right-click here and select 'Update Field']", font: "Lato", size: 20, color: "888888", italics: true })],
           spacing: { after: 400 },
         }));
 
@@ -2654,7 +2643,7 @@ Be concise, professional, and use British English. All document advice should al
           if (lineType === "heading" && !foundTitle) {
             foundTitle = true;
             children.push(new Paragraph({
-              children: [new TextRun({ text: plain, bold: true, font: "Calibri", size: 36, color: bgpDarkGreenHex })],
+              children: [new TextRun({ text: plain, bold: true, font: "Lato", size: 36, color: bgpDarkGreenHex })],
               heading: HeadingLevel.TITLE,
               spacing: { after: 240 },
               alignment: AlignmentType.CENTER,
@@ -2681,7 +2670,7 @@ Be concise, professional, and use British English. All document advice should al
             const isSubSection = /^\d+\.\d+/.test(plain);
             const isH3 = /^\d+\.\d+\.\d+/.test(plain);
             children.push(new Paragraph({
-              children: [new TextRun({ text: plain, bold: true, font: "Calibri", size: isH3 ? 20 : isSubSection ? 22 : 26, color: isH3 ? "666666" : isSubSection ? "444444" : bgpGreenHex })],
+              children: [new TextRun({ text: plain, bold: true, font: "Lato", size: isH3 ? 20 : isSubSection ? 22 : 26, color: isH3 ? "666666" : isSubSection ? "444444" : bgpGreenHex })],
               heading: isH3 ? HeadingLevel.HEADING_3 : isSubSection ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1,
               spacing: { before: 320, after: 160 },
             }));
@@ -2710,7 +2699,7 @@ Be concise, professional, and use British English. All document advice should al
             const bulletText = plain.replace(/^[-•*]\s*/, "");
             const segs = parseInlineFormatting(bulletText);
             children.push(new Paragraph({
-              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Calibri", size: 22, color: "333333" })),
+              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Lato", size: 22, color: "333333" })),
               bullet: { level: 0 },
               spacing: { after: 60 },
             }));
@@ -2720,14 +2709,14 @@ Be concise, professional, and use British English. All document advice should al
             const text = numMatch?.[2] || plain;
             const segs = parseInlineFormatting(text);
             children.push(new Paragraph({
-              children: [new TextRun({ text: num + " ", bold: true, font: "Calibri", size: 24, color: bgpGreenHex }), ...segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Calibri", size: 22, color: "333333" }))],
+              children: [new TextRun({ text: num + " ", bold: true, font: "Lato", size: 24, color: bgpGreenHex }), ...segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Lato", size: 22, color: "333333" }))],
               spacing: { before: 200, after: 100 },
             }));
           } else if (lineType === "blockquote") {
             const quoteText = trimmed.replace(/^>\s*/, "");
             const segs = parseInlineFormatting(quoteText);
             children.push(new Paragraph({
-              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: true, font: "Calibri", size: 21, color: "555555" })),
+              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: true, font: "Lato", size: 21, color: "555555" })),
               spacing: { after: 80 },
               indent: { left: 480 },
               border: { left: { style: BorderStyle.SINGLE, size: 3, color: bgpGreenHex, space: 12 } },
@@ -2735,7 +2724,7 @@ Be concise, professional, and use British English. All document advice should al
           } else {
             const segs = parseInlineFormatting(trimmed);
             children.push(new Paragraph({
-              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Calibri", size: 22, color: "333333" })),
+              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Lato", size: 22, color: "333333" })),
               spacing: { after: 100 },
               alignment: AlignmentType.JUSTIFIED,
             }));
@@ -2748,19 +2737,19 @@ Be concise, professional, and use British English. All document advice should al
           styles: {
             default: {
               heading1: {
-                run: { font: "Calibri", size: 26, bold: true, color: bgpGreenHex },
+                run: { font: "Lato", size: 26, bold: true, color: bgpGreenHex },
                 paragraph: { spacing: { before: 320, after: 160 } },
               },
               heading2: {
-                run: { font: "Calibri", size: 22, bold: true, color: "444444" },
+                run: { font: "Lato", size: 22, bold: true, color: "444444" },
                 paragraph: { spacing: { before: 240, after: 120 } },
               },
               heading3: {
-                run: { font: "Calibri", size: 20, bold: true, color: "666666" },
+                run: { font: "Lato", size: 20, bold: true, color: "666666" },
                 paragraph: { spacing: { before: 200, after: 100 } },
               },
               document: {
-                run: { font: "Calibri", size: 22, color: "333333" },
+                run: { font: "Lato", size: 22, color: "333333" },
               },
             },
           },
@@ -2775,7 +2764,7 @@ Be concise, professional, and use British English. All document advice should al
                 default: new Header({
                   children: [new Paragraph({
                     children: [
-                      ...(logoBuffer ? [new ImageRun({ data: logoBuffer, transformation: { width: 120, height: 30 }, type: "png" }), new TextRun({ text: "   ", font: "Calibri", size: 16 })] : []),
+                      ...(logoBuffer ? [new ImageRun({ data: logoBuffer, transformation: { width: 120, height: 30 }, type: "png" }), new TextRun({ text: "   ", font: "Lato", size: 16 })] : []),
                     ],
                     alignment: AlignmentType.LEFT,
                   })],
@@ -2793,8 +2782,8 @@ Be concise, professional, and use British English. All document advice should al
                 default: new Header({
                   children: [new Paragraph({
                     children: [
-                      ...(logoBuffer ? [new ImageRun({ data: logoBuffer, transformation: { width: 120, height: 30 }, type: "png" }), new TextRun({ text: "   ", font: "Calibri", size: 16 })] : []),
-                      new TextRun({ text: "BRUCE GILLINGHAM POLLARD", font: "Calibri", size: 16, color: bgpGreenHex, bold: true }),
+                      ...(logoBuffer ? [new ImageRun({ data: logoBuffer, transformation: { width: 120, height: 30 }, type: "png" }), new TextRun({ text: "   ", font: "Lato", size: 16 })] : []),
+                      new TextRun({ text: "BRUCE GILLINGHAM POLLARD", font: "Lato", size: 16, color: bgpGreenHex, bold: true }),
                     ],
                     alignment: AlignmentType.RIGHT,
                     spacing: { after: 200 },
@@ -2806,12 +2795,12 @@ Be concise, professional, and use British English. All document advice should al
                 default: new Footer({
                   children: [new Paragraph({
                     children: [
-                      new TextRun({ text: generatedDate, font: "Calibri", size: 14, color: "888888" }),
-                      new TextRun({ text: "          Bruce Gillingham Pollard — Confidential          ", font: "Calibri", size: 14, color: "888888" }),
-                      new TextRun({ text: "Page ", font: "Calibri", size: 14, color: "888888" }),
-                      new TextRun({ children: [PageNumber.CURRENT], font: "Calibri", size: 14, color: "888888" }),
-                      new TextRun({ text: " of ", font: "Calibri", size: 14, color: "888888" }),
-                      new TextRun({ children: [PageNumber.TOTAL_PAGES], font: "Calibri", size: 14, color: "888888" }),
+                      new TextRun({ text: generatedDate, font: "Lato", size: 14, color: "888888" }),
+                      new TextRun({ text: "          Bruce Gillingham Pollard — Confidential          ", font: "Lato", size: 14, color: "888888" }),
+                      new TextRun({ text: "Page ", font: "Lato", size: 14, color: "888888" }),
+                      new TextRun({ children: [PageNumber.CURRENT], font: "Lato", size: 14, color: "888888" }),
+                      new TextRun({ text: " of ", font: "Lato", size: 14, color: "888888" }),
+                      new TextRun({ children: [PageNumber.TOTAL_PAGES], font: "Lato", size: 14, color: "888888" }),
                     ],
                     alignment: AlignmentType.CENTER,
                     border: { top: { style: BorderStyle.SINGLE, size: 1, color: bgpGreenHex, space: 8 } },
@@ -2844,8 +2833,8 @@ Be concise, professional, and use British English. All document advice should al
         const pageW = 475;
         const leftM = 60;
         const rightEdge = leftM + pageW;
-        const bgpGreen = "#2E5E3F";
-        const bgpDarkGreen = "#1A3A28";
+        const bgpGreen = "#6E0C25";
+        const bgpDarkGreen = "#4A0819";
         const generatedDate = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
         function drawHeader() {
@@ -3013,14 +3002,14 @@ Be concise, professional, and use British English. All document advice should al
         pptx.title = docTitle;
         pptx.layout = "LAYOUT_WIDE";
 
-        const brandDark = "232323";
-        const brandGreen = "2E5E3F";
-        const brandDarkGreen = "1A3A28";
-        const brandGold = "C4A35A";
-        const brandPanel = "E7E5DF";
+        const brandDark = "6E0C25";
+        const brandGreen = "6E0C25";
+        const brandDarkGreen = "4A0819";
+        const brandGold = "FC9F8D";
+        const brandPanel = "E4D8D3";
         const brandMid = "596264";
-        const brandLight = "DDDFE0";
-        const brandFont = "Calibri";
+        const brandLight = "E4D8D3";
+        const brandFont = "Lato";
         const brandFontAlt = "Arial";
 
         const whiteLogoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_WhiteWordmark_trimmed.png");
@@ -3191,7 +3180,7 @@ Be concise, professional, and use British English. All document advice should al
               const startX = stats.length <= 2 ? 1.0 : 0.5;
               stats.forEach((stat: any, idx: number) => {
                 const x = startX + idx * (boxW + 0.3);
-                slide.addShape(pptx.ShapeType.rect, { x, y: 2.2, w: boxW, h: 3.2, fill: { color: "F5F4F0" } });
+                slide.addShape(pptx.ShapeType.rect, { x, y: 2.2, w: boxW, h: 3.2, fill: { color: "FCF8F4" } });
                 slide.addText(String(stat.value || ""), {
                   x, y: 2.5, w: boxW, h: 1.6,
                   fontSize: 48, color: brandGreen, fontFace: brandFont, bold: true, align: "center",

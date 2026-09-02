@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { usePropertyContext } from "@/lib/property-context";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { CovenantBadge } from "@/components/covenant-badge";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -778,7 +778,7 @@ function CrmMatchStrip({
   const { data: match, refetch } = useQuery<{ id: string; name: string; kyc_status: string | null } | null>({
     queryKey: ["/api/kyc/match-company", companyNumber],
     queryFn: async () => {
-      const res = await fetch(`/api/kyc/match-company?companyNumber=${encodeURIComponent(companyNumber)}`, { credentials: "include" });
+      const res = await fetch(`/api/kyc/match-company?companyNumber=${encodeURIComponent(companyNumber)}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) return null;
       const data = await res.json();
       return data || null;
@@ -791,7 +791,7 @@ function CrmMatchStrip({
       const res = await fetch("/api/kyc/create-company-from-investigation", {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ companyNumber, companyName, companyType, address }),
       });
       if (!res.ok) throw new Error("Failed to create");

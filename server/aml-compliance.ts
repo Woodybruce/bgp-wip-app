@@ -4,7 +4,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { contentDispositionFor } from "./utils/http-headers";
-import { requireAuth, getUserIdFromToken } from "./auth";
+import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { pool } from "./db";
 import { saveFile } from "./file-storage";
 import { recomputeDealKycApproved } from "./deal-gates";
@@ -21,6 +21,32 @@ const ALLOWED_DOC_TYPES = new Set([
   "bank_statement", "onfido_report", "other",
 ]);
 
+// Resolve the session user once — approve/reject/settings must record WHO
+// acted (by name, one consistent representation), not a raw UUID or a
+// client-supplied string.
+async function sessionUser(req: Request): Promise<{ id: string | null; name: string | null; isAdmin: boolean }> {
+  const id = (req.session as any)?.userId || (req as any).tokenUserId || null;
+  if (!id) return { id: null, name: null, isAdmin: false };
+  try {
+    const r = await pool.query("SELECT name, is_admin FROM users WHERE id = $1", [id]);
+    return { id, name: r.rows[0]?.name || null, isAdmin: r.rows[0]?.is_admin === true };
+  } catch {
+    return { id, name: null, isAdmin: false };
+  }
+}
+
+// Regulator-facing trail: one row per MLRO-relevant action on a counterparty.
+async function kycCompanyAudit(companyId: string, action: string, performedBy: string | null, notes: string | null) {
+  try {
+    await pool.query(
+      `INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`,
+      [companyId, action, performedBy, notes]
+    );
+  } catch (e: any) {
+    console.warn("[kyc-audit] insert failed:", e?.message);
+  }
+}
+
 // --- AML Settings (Nominated Officer, Firm Risk Assessment, Policy) ---
 
 router.get("/api/aml/settings", requireAuth, async (_req: Request, res: Response) => {
@@ -32,13 +58,19 @@ router.get("/api/aml/settings", requireAuth, async (_req: Request, res: Response
   }
 });
 
-router.put("/api/aml/settings", requireAuth, async (req: Request, res: Response) => {
+router.put("/api/aml/settings", requireAdmin, async (req: Request, res: Response) => {
   try {
     const {
       nominatedOfficerId, nominatedOfficerName, nominatedOfficerEmail,
-      nominatedOfficerAppointedAt, firmRiskAssessment, firmRiskAssessmentUpdatedBy,
+      nominatedOfficerAppointedAt, firmRiskAssessment,
       amlPolicyNotes, recheckIntervalDays,
     } = req.body;
+    // Attribution comes from the session, never from the request body — the
+    // client used to send the literal string "current_user".
+    const actor = await sessionUser(req);
+    const firmRiskAssessmentUpdatedBy = firmRiskAssessment !== undefined
+      ? (actor.name || actor.id || "unknown")
+      : undefined;
 
     const existing = await pool.query("SELECT id FROM aml_settings LIMIT 1");
 
@@ -434,10 +466,18 @@ router.post("/api/aml/training-modules/:id/attempt", requireAuth, async (req: Re
 
 router.get("/api/aml/training-attempts", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { userId, moduleId } = req.query;
+    const { userId, moduleId, all } = req.query;
+    const actor = await sessionUser(req);
+    // Reg 24 evidence is per-employee: a non-admin only ever sees their own
+    // attempts (this previously returned every user's attempts, answers
+    // included, so everyone's Training tab showed firm-wide passes as their
+    // own). Admins may pass ?userId= or ?all=1 for the firm-wide view.
+    const effectiveUserId = actor.isAdmin
+      ? (userId ? String(userId) : (all === "1" ? null : actor.id))
+      : actor.id;
     const conds: string[] = [];
     const params: any[] = [];
-    if (userId) { params.push(userId); conds.push(`user_id = $${params.length}`); }
+    if (effectiveUserId) { params.push(effectiveUserId); conds.push(`user_id = $${params.length}`); }
     if (moduleId) { params.push(moduleId); conds.push(`module_id = $${params.length}`); }
     const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
     const result = await pool.query(
@@ -727,25 +767,35 @@ router.put("/api/kyc/company/:id/checklist", requireAuth, async (req: Request, r
       params
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Company not found" });
+    const actor = await sessionUser(req);
+    const changed = [
+      checklist !== undefined && "checklist",
+      riskLevel !== undefined && `risk=${riskLevel}`,
+      pepStatus !== undefined && `pep=${pepStatus}`,
+      eddRequired !== undefined && `edd=${!!eddRequired}`,
+    ].filter(Boolean).join(", ");
+    if (changed) await kycCompanyAudit(req.params.id, "cdd_checklist_updated", actor.name || actor.id, changed);
     res.json(result.rows[0]);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.post("/api/kyc/company/:id/approve", requireAuth, async (req: Request, res: Response) => {
+router.post("/api/kyc/company/:id/approve", requireAdmin, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user?.id || (req.session as any)?.userId || null;
-    let approverName: string | null = req.body?.approverName || null;
-    if (!approverName && userId) {
-      const u = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
-      approverName = u.rows[0]?.name || null;
-    }
-    // MLR 2017 Reg 28: ongoing monitoring must be "proportionate" — for a
-    // commercial property agency with recurring counterparties, BGP policy
-    // is a 6-month re-check cadence on every approved counterparty.
+    const actor = await sessionUser(req);
+    const approverName: string | null = req.body?.approverName || actor.name || null;
+    // MLR 2017 Reg 28: ongoing monitoring must be "proportionate". The
+    // cadence is the MLRO's configurable recheck_interval_days from AML
+    // settings (default 182 days ≈ the historic 6-month policy).
+    let intervalDays = 182;
+    try {
+      const s = await pool.query("SELECT recheck_interval_days FROM aml_settings ORDER BY id LIMIT 1");
+      const configured = parseInt(s.rows[0]?.recheck_interval_days, 10);
+      if (Number.isFinite(configured) && configured > 0) intervalDays = configured;
+    } catch {}
     const expiresAt = new Date();
-    expiresAt.setMonth(expiresAt.getMonth() + 6);
+    expiresAt.setDate(expiresAt.getDate() + intervalDays);
     const result = await pool.query(
       `UPDATE crm_companies
        SET kyc_status = 'approved', kyc_checked_at = NOW(), kyc_approved_by = $1, kyc_expires_at = $2, updated_at = NOW()
@@ -754,12 +804,13 @@ router.post("/api/kyc/company/:id/approve", requireAuth, async (req: Request, re
       [approverName, expiresAt, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Company not found" });
-    // Auto-schedule the 12-month re-check reminder
+    await kycCompanyAudit(req.params.id, "kyc_approved", approverName, `Re-check due ${expiresAt.toISOString().slice(0, 10)} (${intervalDays}-day cycle)`);
+    // Auto-schedule the re-check reminder on the configured cadence
     try {
       await pool.query(
         `INSERT INTO aml_recheck_reminders (company_id, entity_name, recheck_type, due_date, notes)
-         VALUES ($1, $2, 'periodic_cdd', $3, 'Auto-generated on KYC approval — 6-month re-check')`,
-        [req.params.id, result.rows[0].name, expiresAt]
+         VALUES ($1, $2, 'periodic_cdd', $3, $4)`,
+        [req.params.id, result.rows[0].name, expiresAt, `Auto-generated on KYC approval — ${intervalDays}-day re-check`]
       );
     } catch (rmErr: any) {
       console.warn("[kyc-approve] reminder insert failed:", rmErr?.message);
@@ -773,9 +824,12 @@ router.post("/api/kyc/company/:id/approve", requireAuth, async (req: Request, re
   }
 });
 
-router.post("/api/kyc/company/:id/reject", requireAuth, async (req: Request, res: Response) => {
+router.post("/api/kyc/company/:id/reject", requireAdmin, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user?.id || (req.session as any)?.userId || null;
+    // Same representation as approve: the acting user's NAME, not their
+    // UUID — kyc_approved_by is rendered verbatim on the board.
+    const actor = await sessionUser(req);
+    const rejectorName = actor.name || actor.id || null;
     const reason = req.body?.reason || null;
     const result = await pool.query(
       `UPDATE crm_companies
@@ -784,11 +838,12 @@ router.post("/api/kyc/company/:id/reject", requireAuth, async (req: Request, res
            updated_at = NOW()
        WHERE id = $3
        RETURNING id, kyc_status`,
-      [userId, reason, req.params.id]
+      [rejectorName, reason, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Company not found" });
     // Counterparty rejected — re-derive kyc_approved on its deals (re-locks them).
     try { await recomputeDealKycApproved(String(req.params.id), null); } catch (e: any) { console.warn("[kyc-reject] deal kyc recompute failed:", e?.message); }
+    await kycCompanyAudit(req.params.id, "kyc_rejected", rejectorName, reason);
     res.json(result.rows[0]);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -813,7 +868,7 @@ const DEFAULT_RISK_ASSESSMENT_TEMPLATE = {
     "Investment sales/acquisitions — higher risk; large cash sums, offshore purchasers, SPV re-structurings.",
     "Development advisory / tenant reps — usually lower risk.",
     "No handling of client money (no client account) — reduces inherent risk.",
-    "We do not advise on lettings to residential tenants (out of MLR 2017 scope for lettings below 8500/mo).",
+    "We do not advise on lettings to residential tenants (out of MLR 2017 scope for lettings below £8,500/mo).",
   ].join("\n"),
   geographicRisk: [
     "Central London — super-prime exposure across West End, Mayfair, City, Southbank.",
@@ -824,7 +879,7 @@ const DEFAULT_RISK_ASSESSMENT_TEMPLATE = {
   ].join("\n"),
   transactionRisk: [
     "Unusually rapid transactions, pressure to exchange quickly — red flag.",
-    "Cash-only purchases over 1m — mandatory EDD.",
+    "Cash-only purchases over £1m — mandatory EDD.",
     "Third-party payors (funds not from the stated purchaser) — mandatory EDD or decline.",
     "Frequent SPV substitutions during a deal — UBO re-verification required.",
     "Rent-free periods or fit-out contributions structured unusually — record rationale.",
@@ -880,14 +935,10 @@ router.post("/api/aml/risk-assessment/populate-default", requireAuth, async (req
   }
 });
 
-router.post("/api/aml/risk-assessment/approve", requireAuth, async (req: Request, res: Response) => {
+router.post("/api/aml/risk-assessment/approve", requireAdmin, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user?.id || (req.session as any)?.userId || null;
-    let approverName: string | null = req.body?.approverName || null;
-    if (!approverName && userId) {
-      const u = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
-      approverName = u.rows[0]?.name || null;
-    }
+    const actor = await sessionUser(req);
+    const approverName: string | null = req.body?.approverName || actor.name || null;
     // Next review in 12 months (MLR 2017 Reg 18 — annual review is industry standard)
     const nextReview = new Date();
     nextReview.setFullYear(nextReview.getFullYear() + 1);

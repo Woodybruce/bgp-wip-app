@@ -49,8 +49,17 @@ export const NAV_ITEMS = [
   { label: "Team", href: "/team" },
 ] as const;
 
-export const HERO_STATEMENT =
-  "We combine deep market insight with relentless delivery to create impact and relationships that stand the test of time.";
+export const HERO_STATEMENT = "Great places are built through connected thinking.";
+
+// From Rebrand_Copy — Website: Homepage
+export const HOME_INTRO = {
+  lead: "We are bgp.",
+  body: [
+    "As the UK's largest independent retail and leisure property consultancy, we bring together specialists across our Leasing, Brand Representation, Lease Advisory and Investment teams to create strategies that unlock value.",
+    "Specialist expertise is at the heart of BGP; but it's our collaborative approach that sets us apart. By bringing together insight from across our teams, we provide considered, commercially focused advice that shapes successful places, stronger portfolios and lasting relationships.",
+  ],
+  servicesHeading: "Expertise across every stage of the property lifecycle.",
+};
 
 export const TESTIMONIAL = {
   quote:
