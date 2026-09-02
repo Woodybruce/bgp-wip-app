@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r456 · 2026-09-02 ~10:30 UTC · FULL — rotation #4 BGP staff mobile 390px — ROUND IN PROGRESS
+### r456 · 2026-09-02 ~11:30 UTC · FULL — rotation #4 BGP staff mobile 390px — GREEN
 - Bring-up: canonical recipe held 21st consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
   two-bot, stale cross file removed). Regression: smoke GREEN 42/0.
@@ -95,9 +95,35 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit
   at 390px. Server logs: 0 raw 500/502/504 (news-feed text grep hits
   only, r413 class). Triage: 0 app bugs from the harness.
-- Journey (staff mobile 390px — Messages/ChatBGP, global search, brand
-  profile, Bluewater tenancy schedule): IN PROGRESS.
-- Provisional entry — final entry replaces this one.
+- Journey (Victoria @390px iPhone UA+touch, UI login via Client/guest
+  reveal — "between meetings on the phone: check mail, catch up on
+  Messages/ChatBGP, look up Starbucks for a pitch, glance at the Bluewater
+  tenancy schedule"): login form clean → cold-open lands on Messages →
+  /mail (clean Outlook connect prompt, keyless degrade) → ChatBGP thread
+  (greeting, suggestion chips, composer) → Brands hub (category tiles,
+  facet chips, search) → Starbucks profile (hero street-view image, tabs
+  Chat/Contacts/Intel/Stores all fit; Key Contacts + BGP Engagement clean)
+  → Dashboard home tab (billing KPIs, tiles, boards, AI briefing) →
+  Bluewater property Overview + Boards → Tenancy Schedule card (phone
+  card-list variant, 200 units, status chips, NIA KPIs). No h-overflow on
+  any surface, 0 pageerrors, 0 non-noise 4xx/5xx. Bugs found: 0.
+- NOT bugs (documented so future rounds don't re-triage): (a) staff
+  cold-open lands on /chatbgp (Messages list) and bottom nav is 4 tabs —
+  Mail tab REMOVED, ChatBGP tab folded into Messages (Woody 2026-08-22,
+  mobile-bottom-nav.tsx comment; supersedes the r209/r227 5-tab layout;
+  /mail still routable and clean); (b) Bluewater Plans panel renders a
+  full-bleed SOLID RED plan — that's the smoke fixture's QA-PLAN-GATE
+  probe plan image (only property_plans row in the fixture), fixture
+  data, not a rendering bug; (c) brand-profile hero shows a bare grey
+  260px block for the first seconds while the flagship street-view image
+  loads → UX-NOTES 131, loads fine.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 131 (brand hero needs a
+  loading skeleton). New flakes: none. Real-device keyboard-up composer
+  check (r405) still open for Woody.
+- Next: r456 had the journey → r457 LIGHT; then rotation #1 BGP staff
+  desktop 1440px.
 
 ### r455 · 2026-09-02 ~08:00 UTC · LIGHT (r454 had the journey) — GREEN
 - Bring-up: canonical recipe held 20th consecutive time (qa:pg once →

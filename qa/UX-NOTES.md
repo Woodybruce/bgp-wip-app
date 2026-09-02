@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+131. 2026-09-02 · BGP staff / mobile 390px (QA r456) · opening a brand
+    profile to prep a pitch on the phone · the 260px hero pane sits as a
+    bare grey block for the first several seconds while the flagship
+    street-view image loads (no spinner, no skeleton — on first visit it
+    reads as a broken/empty panel filling half the viewport; it only
+    collapses if the fetch errors) · give the hero pane a loading shimmer
+    or fade the image in, so slow mobile networks see "loading" rather
+    than "blank".
+
 130. 2026-09-02 · Landsec client / mobile 390px (QA r454) · scanning the
     Letting Tracker cards on the phone · card titles read "L112 Bluewater,
     Bluewater" / "U124/U125/U126, Bluewater, B…" with "Bluewater Shopping
