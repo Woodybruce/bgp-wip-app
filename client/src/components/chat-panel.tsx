@@ -190,7 +190,7 @@ function isAudioFile(name: string): boolean {
   return ["webm", "ogg", "mp3", "m4a", "wav", "aac", "mp4"].includes(ext);
 }
 
-const ACCEPTED_EXTENSIONS = [".docx", ".pdf", ".doc", ".txt", ".xlsx", ".xls", ".csv", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic", ".mp3", ".mp4", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".mov", ".avi", ".mkv", ".flac", ".eml", ".msg"];
+const ACCEPTED_EXTENSIONS = [".docx", ".pdf", ".doc", ".txt", ".xlsx", ".xls", ".csv", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic", ".mp3", ".mp4", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".mov", ".avi", ".mkv", ".flac", ".eml", ".msg", ".zip"];
 
 function isEmailFile(name: string): boolean {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -2061,7 +2061,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   const addFiles = useCallback((newFiles: File[]) => {
     const valid = newFiles.filter(isValidFile);
     if (valid.length !== newFiles.length) {
-      toast({ title: "Some files skipped", description: "Only Word, PDF, Excel, CSV, text, image, audio, and video files are supported", variant: "destructive" });
+      toast({ title: "Some files skipped", description: "Only Word, PDF, Excel, CSV, text, image, audio, video, and ZIP files are supported", variant: "destructive" });
     }
     setAttachedFiles((prev) => {
       const combined = [...prev, ...valid];
@@ -3138,7 +3138,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                     id="chat-panel-file-upload"
                     type="file"
                     className="sr-only"
-                    accept=".docx,.pdf,.doc,.txt,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.aac,.mov,.avi,.mkv,.flac,image/*,audio/*,video/*"
+                    accept=".docx,.pdf,.doc,.txt,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.aac,.mov,.avi,.mkv,.flac,.zip,image/*,audio/*,video/*"
                     multiple
                     tabIndex={-1}
                     onChange={handleFileSelect}

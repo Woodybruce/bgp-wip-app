@@ -1801,12 +1801,12 @@ export default function AvailableUnitsPage() {
                     data-testid="checkbox-select-all-units"
                   />
                 </TableHead>
-                {showCol("ref") && <TableHead className="w-[48px] px-1.5">Ref</TableHead>}
+                {showCol("ref") && <TableHead className="w-[34px] min-w-[34px] px-1">Ref</TableHead>}
                 {/* Left block runs tight (Woody, 2026-09-01: "all need to be
                     reduced in width") — Target Tenant and Comments carry no
                     fixed width, so THEY absorb spare page width instead of
                     every column inflating evenly. */}
-                <TableHead className="w-[160px] min-w-[150px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
+                <TableHead className="w-[120px] min-w-[112px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
                   Property / Unit{sortBy === "property" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                 </TableHead>
                 {/* "Existing Tenant" wrapped to two lines and sat out of
@@ -1888,7 +1888,7 @@ export default function AvailableUnitsPage() {
                         />
                       </TableCell>
                       {showCol("ref") && (
-                      <TableCell rowSpan={unitRowSpan} className="text-xs font-mono text-muted-foreground">
+                      <TableCell rowSpan={unitRowSpan} className="px-1 py-1 text-xs font-mono text-muted-foreground whitespace-nowrap">
                         {deal?.dealRef ? (
                           <div className="flex items-center gap-1.5">
                             <a
@@ -1919,7 +1919,7 @@ export default function AvailableUnitsPage() {
                         ) : "—"}
                       </TableCell>
                       )}
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[220px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[120px]">
                         {/* Unit leads, property is the sub-line — on a
                             one-property board the property name repeats on
                             every row and carries no signal (UX #97). */}
@@ -1929,7 +1929,7 @@ export default function AvailableUnitsPage() {
                               <Input
                                 autoFocus
                                 defaultValue={u.unitName}
-                                className="h-6 text-xs px-1.5 py-0 max-w-[160px]"
+                                className="h-6 text-xs px-1.5 py-0 max-w-[104px]"
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") {
                                     const v = (e.target as HTMLInputElement).value.trim();
@@ -1951,7 +1951,9 @@ export default function AvailableUnitsPage() {
                                   type="button"
                                   className="truncate text-left hover:underline hover:text-foreground"
                                   onClick={() => setBriefUnit(u)}
-                                  title="Open unit brief"
+                                  // Name truncates in the narrow column, so the
+                                  // tooltip carries it in full.
+                                  title={u.unitName ? `${u.unitName} — open unit brief` : "Open unit brief"}
                                   data-testid={`unit-name-${u.id}`}
                                 >
                                   {u.unitName || <span className="italic opacity-60">Unit name</span>}

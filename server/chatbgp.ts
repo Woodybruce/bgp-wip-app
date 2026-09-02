@@ -4127,7 +4127,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "read_document",
-      description: "Universal document reader. Reads any document (PDF / Word / PowerPoint / Excel / CSV / text / image) from chat-media storage, a property's brochure storage, or any file_storage key. PowerPoint (.pptx) returns each slide's text + tables. Returns extracted text plus, for PDFs and images, base64-encoded page images so you can use vision on visual material. Use this AUTOMATICALLY whenever the user shares a document in chat — read it without being asked, then file the relevant info into the CRM via sql_write / standard tools. Brochures, HoTs, leases, tenancy schedules, KYC docs, news articles, comp evidence, presentations — all flow through here.",
+      description: "Universal document reader. Reads any document (PDF / Word / PowerPoint / Excel / CSV / text / image / ZIP) from chat-media storage, a property's brochure storage, or any file_storage key. PowerPoint (.pptx) returns each slide's text + tables. A ZIP is unpacked and read as its contents — the file list plus extracted text from the spreadsheets, PDFs, Word and text files inside — so a zipped pack dropped into chat needs no unzipping by the user. Returns extracted text plus, for PDFs and images, base64-encoded page images so you can use vision on visual material. Use this AUTOMATICALLY whenever the user shares a document in chat — read it without being asked, then file the relevant info into the CRM via sql_write / standard tools. Brochures, HoTs, leases, tenancy schedules, KYC docs, news articles, comp evidence, presentations — all flow through here.",
       parameters: {
         type: "object",
         properties: {

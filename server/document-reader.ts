@@ -105,6 +105,10 @@ export async function readDocumentForAI(args: ReadDocumentArgs): Promise<ReadDoc
       const text = file.data.toString("utf-8");
       result.text = text.slice(0, maxText);
       result.textTruncated = text.length > maxText;
+    } else if (mimeType.includes("zip") || ext === "zip") {
+      const text = await extractZipText(file.data, maxText);
+      result.text = text.slice(0, maxText);
+      result.textTruncated = text.length > maxText;
     } else {
       result.text = `[Binary file — ${mimeType}. Use a different tool to handle this format.]`;
     }
@@ -207,6 +211,60 @@ async function extractWordText(buffer: Buffer): Promise<string> {
   return result.value || "";
 }
 
+// A ZIP is read as its contents: list every entry, then extract the ones we
+// have a reader for (spreadsheets, PDFs, Word, text) through the same
+// extractors used for a bare upload. Mirrors what ingest_url already does
+// for zipped downloads, so a dropped .zip and a zipped link behave alike.
+const ZIP_MAX_ENTRIES = 12;
+
+export async function extractZipText(buffer: Buffer, maxText: number): Promise<string> {
+  const AdmZip = (await import("adm-zip")).default;
+  const zip = new AdmZip(buffer);
+  const entries = zip.getEntries().filter((e: any) =>
+    !e.isDirectory && !e.entryName.startsWith("__MACOSX") && !e.entryName.split("/").pop()?.startsWith("."));
+  if (entries.length === 0) return "[ZIP archive is empty.]";
+
+  const parts: string[] = [
+    `ZIP archive — ${entries.length} file(s):`,
+    ...entries.map((e: any) => `  ${e.entryName} (${e.header.size} bytes)`),
+    "",
+  ];
+  // Share the text budget across the entries we read so one huge workbook
+  // can't crowd the rest out of the reply.
+  const readable = entries.slice(0, ZIP_MAX_ENTRIES);
+  const perEntry = Math.max(2_000, Math.floor(maxText / Math.max(1, readable.length)));
+
+  for (const e of readable) {
+    const name = e.entryName.toLowerCase();
+    const base = e.entryName.replace(/^.*\//, "");
+    try {
+      const data = e.getData();
+      let text: string | null = null;
+      if (/\.(xlsx|xls|csv)$/.test(name)) {
+        text = await extractSpreadsheetText(data, name.split(".").pop() || "xlsx");
+      } else if (name.endsWith(".pdf")) {
+        text = await extractPdfText(data);
+      } else if (/\.(docx|doc)$/.test(name)) {
+        text = await extractWordText(data);
+      } else if (/\.(txt|json|xml|html|md|log)$/.test(name)) {
+        text = data.toString("utf-8");
+      }
+      if (text === null) {
+        parts.push(`--- ${base} (${data.length} bytes — format not extracted) ---`);
+      } else {
+        const clipped = text.slice(0, perEntry);
+        parts.push(`--- ${base} ---\n${clipped}${text.length > perEntry ? `\n… (${text.length - perEntry} more characters not shown)` : ""}`);
+      }
+    } catch (entryErr: any) {
+      parts.push(`--- ${base} — could not extract: ${entryErr?.message || String(entryErr)} ---`);
+    }
+  }
+  if (entries.length > ZIP_MAX_ENTRIES) {
+    parts.push(`… ${entries.length - ZIP_MAX_ENTRIES} further file(s) in the archive were not extracted.`);
+  }
+  return parts.join("\n");
+}
+
 function guessMimeFromExt(name: string): string {
   const ext = name.toLowerCase().split(".").pop() || "";
   const map: Record<string, string> = {
@@ -221,6 +279,7 @@ function guessMimeFromExt(name: string): string {
     xml: "application/xml",
     html: "text/html",
     md: "text/markdown",
+    zip: "application/zip",
     jpg: "image/jpeg",
     jpeg: "image/jpeg",
     png: "image/png",
