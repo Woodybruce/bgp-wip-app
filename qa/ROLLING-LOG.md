@@ -84,6 +84,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r457 · 2026-09-02 ~13:30 UTC · LIGHT (r456 had the journey) — round in progress
+- Provisional heartbeat. Bring-up: canonical recipe held 22nd consecutive
+  time (qa:pg once → run-smoke restore clean → seed-personas applied per
+  r451 rule BEFORE two-bot). Regression: smoke GREEN 42/0. Two-bot round
+  457 as 3 foreground chunks (r447 pattern, stdio to FILE, warmed server):
+  victoria exit 0, 67 ok (2×400 standing: rocketreach + invalid-tracker
+  probe) / mark exit 0, 153 ok (10 issues = 2×503 keyless + 8×403
+  probe-by-design signature) / woody,nick,sam exit 0, 18 ok (0 issues).
+  phone-overflow-sweep 11/11 routes fit at 390px. Server logs: 0 raw
+  500/502/504 (news-feed text grep hits only, r413 class).
+- Triage: 0 app bugs from the harness. No deferred bugs to pick up (r456
+  deferred none). Final entry to follow.
+
 ### r456 · 2026-09-02 ~11:30 UTC · FULL — rotation #4 BGP staff mobile 390px — GREEN
 - Bring-up: canonical recipe held 21st consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
