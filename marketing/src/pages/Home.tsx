@@ -1,7 +1,6 @@
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import ClientRow from "../components/ClientRow";
-import { ARTICLES, HERO_STATEMENT, HOME_INTRO, LEASE_ADVISORY_CLIENTS, SERVICES, TESTIMONIAL } from "../lib/content";
+import { ARTICLES, HERO_STATEMENT, HOME_INTRO, SERVICES, TESTIMONIAL } from "../lib/content";
 
 // Per-section stats per the v2c layout. All figures real: transactions/brands
 // from brucegillinghampollard.com, £62m = LondonMetric Waitrose portfolio,
@@ -53,14 +52,6 @@ export default function Home() {
             {para}
           </p>
         ))}
-      </section>
-
-      {/* Trusted-by band — quiet blush ground, the estates we act for */}
-      <section className="mt-14 bg-bgp-pink/40 border-y border-bgp-pink">
-        <div className="mx-auto max-w-6xl px-4 py-12">
-          <p className="label-caps text-bgp-wine/70 text-center mb-8">Trusted by London's leading estates</p>
-          <ClientRow clients={LEASE_ADVISORY_CLIENTS.slice(0, 6)} />
-        </div>
       </section>
 
       <section className="mx-auto max-w-3xl px-4 pt-16 pb-2 text-center">
