@@ -32,7 +32,11 @@
   }
   /* Display serif headings */
   .display {
-    @apply font-display text-bgp-wine;
+    @apply font-display text-bgp-wine tracking-[-0.01em];
+  }
+  /* Small red eyebrow label above serif section headings (v2c pattern) */
+  .section-label {
+    @apply label-caps text-bgp-red block mb-3;
   }
   /* Typeset BGP wordmark */
   .wordmark {
