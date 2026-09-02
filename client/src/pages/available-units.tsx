@@ -411,7 +411,7 @@ export default function AvailableUnitsPage() {
   // Provenance pop-outs: the email an offer/interest row was detected from,
   // and the diary event behind a viewing.
   const [sourceEmail, setSourceEmail] = useState<{ kind: "offer" | "interest"; id: string; title: string } | null>(null);
-  const [sourceEventId, setSourceEventId] = useState<string | null>(null);
+  const [sourceEvent, setSourceEvent] = useState<{ kind: "viewing" | "interest"; id: string } | null>(null);
   const [addingTargetFrom, setAddingTargetFrom] = useState<string | null>(null);
   const [addViewingOpen, setAddViewingOpen] = useState(false);
   const [addOfferOpen, setAddOfferOpen] = useState(false);
@@ -3032,7 +3032,7 @@ export default function AvailableUnitsPage() {
           setSourceEmail(null);
         }}
       />
-      <SourceEventDialog viewingId={sourceEventId} onClose={() => setSourceEventId(null)} />
+      <SourceEventDialog kind={sourceEvent?.kind || "viewing"} rowId={sourceEvent?.id || null} onClose={() => setSourceEvent(null)} />
 
       <Dialog open={!!interestUnit} onOpenChange={v => { if (!v) setInterestUnit(null); }}>
         <DialogContent className="max-w-lg">
@@ -3074,15 +3074,29 @@ export default function AvailableUnitsPage() {
                       Target
                     </Button>
                   )}
+                  {/* Interest arrives from BOTH the inbox sweep and the
+                      diary sweep, sharing one column — the key's prefix says
+                      which, so the button opens the matching source. */}
                   {i.emailConversationId && (
-                    <Button
-                      variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
-                      onClick={() => setSourceEmail({ kind: "interest", id: i.id, title: `Interest — ${i.companyName || i.contactName || "email"}` })}
-                      title="Open the email this came from"
-                      data-testid={`interest-email-${i.id}`}
-                    >
-                      <Mail className="w-3.5 h-3.5" />
-                    </Button>
+                    String(i.emailConversationId).startsWith("cal_") ? (
+                      <Button
+                        variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                        onClick={() => setSourceEvent({ kind: "interest", id: i.id })}
+                        title="Open the diary entry this came from"
+                        data-testid={`interest-event-${i.id}`}
+                      >
+                        <CalendarDays className="w-3.5 h-3.5" />
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                        onClick={() => setSourceEmail({ kind: "interest", id: i.id, title: `Interest — ${i.companyName || i.contactName || "email"}` })}
+                        title="Open the email this came from"
+                        data-testid={`interest-email-${i.id}`}
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                      </Button>
+                    )
                   )}
                   <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => deleteInterestMutation.mutate(i.id)} data-testid={`interest-delete-${i.id}`}>
                     <X className="w-3.5 h-3.5" />
@@ -3160,7 +3174,7 @@ export default function AvailableUnitsPage() {
                       {v.calendarEventId && (
                         <Button
                           variant="outline" size="sm" className="h-7 px-2 text-[11px]"
-                          onClick={() => setSourceEventId(v.id)}
+                          onClick={() => setSourceEvent({ kind: "viewing", id: v.id })}
                           title="Open the diary event / team calendar"
                           data-testid={`viewing-event-${v.id}`}
                         >

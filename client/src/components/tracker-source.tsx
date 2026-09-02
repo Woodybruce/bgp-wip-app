@@ -191,23 +191,23 @@ export function SourceEmailDialog({
   );
 }
 
-export function SourceEventDialog({ viewingId, onClose }: { viewingId: string | null; onClose: () => void }) {
+export function SourceEventDialog({ kind = "viewing", rowId, onClose }: { kind?: "viewing" | "interest"; rowId: string | null; onClose: () => void }) {
   const { data, isLoading } = useQuery<{
     mailbox?: string;
     event?: { subject: string; start: string | null; end: string | null; location: string | null; organizer: string | null; attendees: Array<{ name?: string; address?: string }>; webLink: string | null; preview: string | null };
     appCalendarUrl?: string;
     error?: string;
   }>({
-    queryKey: ["/api/tracker/viewing", viewingId, "event"],
-    queryFn: () => fetch(`/api/tracker/viewing/${viewingId}/event`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
-    enabled: !!viewingId,
+    queryKey: ["/api/tracker", kind, rowId, "event"],
+    queryFn: () => fetch(`/api/tracker/${kind}/${rowId}/event`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
+    enabled: !!rowId,
     staleTime: 60_000,
   });
 
   const ev = data?.event;
 
   return (
-    <Dialog open={!!viewingId} onOpenChange={v => { if (!v) onClose(); }}>
+    <Dialog open={!!rowId} onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent className="max-w-lg" data-testid="tracker-source-event">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
