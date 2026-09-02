@@ -453,38 +453,69 @@ router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, upload.single("fi
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ error: "AI extraction is not configured" });
 
-    const sourceKey = `evidence-plans/${plan.id}/taf-${Date.now()}-${(req.file.originalname || "taf.pdf").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60)}`;
-    await saveFile(sourceKey, req.file.buffer, req.file.mimetype || "application/pdf", req.file.originalname);
-
-    // Rasterise up to 40 pages, extract in batches of 8 pages per call.
-    const pages: Buffer[] = [];
-    for (let p = 1; p <= 40; p++) {
-      const buf = await rasterisePdfPage({ pdfBuffer: req.file.buffer, page: p, dpi: 150 });
-      if (!buf) break;
-      pages.push(buf);
+    // A zip of TAFs (how the tranches arrive from Hammerson) works too —
+    // every PDF inside is processed as if uploaded individually.
+    const pdfs: { name: string; buffer: Buffer }[] = [];
+    const isZip = /zip/i.test(req.file.mimetype || "") || /\.zip$/i.test(req.file.originalname || "");
+    if (isZip) {
+      const AdmZip = (await import("adm-zip")).default;
+      const zip = new AdmZip(req.file.buffer);
+      for (const entry of zip.getEntries()) {
+        if (entry.isDirectory || !/\.pdf$/i.test(entry.entryName) || /__MACOSX|^\./.test(entry.entryName)) continue;
+        pdfs.push({ name: entry.entryName.split("/").pop() || entry.entryName, buffer: entry.getData() });
+        if (pdfs.length >= 60) break;
+      }
+      if (pdfs.length === 0) return res.status(400).json({ error: "No PDFs found inside that zip" });
+    } else {
+      pdfs.push({ name: req.file.originalname || "taf.pdf", buffer: req.file.buffer });
     }
+
+    // Rasterise up to 40 pages per PDF, tagged with their source file so
+    // each extracted entry links back to the right document.
+    const pages: { buf: Buffer; sourceKey: string }[] = [];
+    const sourceKeys = new Map<string, string>();
+    for (const pdf of pdfs) {
+      const sourceKey = `evidence-plans/${plan.id}/taf-${Date.now()}-${pdf.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60)}`;
+      sourceKeys.set(pdf.name, sourceKey);
+      await saveFile(sourceKey, pdf.buffer, "application/pdf", pdf.name);
+      for (let p = 1; p <= 40; p++) {
+        const buf = await rasterisePdfPage({ pdfBuffer: pdf.buffer, page: p, dpi: 150 });
+        if (!buf) break;
+        pages.push({ buf, sourceKey });
+      }
+    }
+    const sourceKey = pdfs.length === 1 ? sourceKeys.get(pdfs[0].name)! : null;
     if (pages.length === 0) return res.status(400).json({ error: "Couldn't read any pages from that PDF" });
 
+    // Batch within one source document at a time so every extracted entry
+    // links back to the right PDF.
     const tafs: any[] = [];
-    for (let i = 0; i < pages.length; i += 8) {
-      const batch = pages.slice(i, i + 8);
-      const content: any[] = batch.map(b => ({
-        type: "image",
-        source: { type: "base64", media_type: "image/jpeg", data: b.toString("base64") },
-      }));
-      content.push({ type: "text", text: TAF_PROMPT });
-      const msg = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 8000,
-        messages: [{ role: "user", content }],
-      });
-      const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (Array.isArray(parsed.tafs)) tafs.push(...parsed.tafs);
-        } catch { /* batch unparseable — carry on with the rest */ }
+    const byDoc = new Map<string, Buffer[]>();
+    for (const p of pages) {
+      if (!byDoc.has(p.sourceKey)) byDoc.set(p.sourceKey, []);
+      byDoc.get(p.sourceKey)!.push(p.buf);
+    }
+    for (const [docKey, docPages] of byDoc) {
+      for (let i = 0; i < docPages.length; i += 8) {
+        const batch = docPages.slice(i, i + 8);
+        const content: any[] = batch.map(b => ({
+          type: "image",
+          source: { type: "base64", media_type: "image/jpeg", data: b.toString("base64") },
+        }));
+        content.push({ type: "text", text: TAF_PROMPT });
+        const msg = await anthropic.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 8000,
+          messages: [{ role: "user", content }],
+        });
+        const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(parsed.tafs)) tafs.push(...parsed.tafs.map((t: any) => ({ ...t, __sourceKey: docKey })));
+          } catch { /* batch unparseable — carry on with the rest */ }
+        }
       }
     }
 
@@ -507,7 +538,7 @@ router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, upload.single("fi
         [plan.id, unit?.id || null, t.unitRef ? String(t.unitRef).slice(0, 40) : null,
          t.tenant || null, t.transactionType || null, date(t.transactionDate),
          num(t.sizeSqft), num(t.zoneA), num(t.itza), num(t.headlineRent), num(t.netEffective),
-         t.term || null, t.concession || null, t.notes || null, sourceKey, userId]);
+         t.term || null, t.concession || null, t.notes || null, t.__sourceKey || sourceKey, userId]);
       created++;
     }
     await pool.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [plan.id]);

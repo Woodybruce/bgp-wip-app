@@ -260,7 +260,7 @@ function PlanView({ planId }: { planId: string }) {
             {busy === "import-tenancy" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5 mr-1" />} Import tenancy schedule
           </Button>
           <Button variant="outline" size="sm" onClick={() => tafInputRef.current?.click()} disabled={busy !== null} data-testid="button-ingest-taf">
-            {busy === "ingest-taf" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <FileText className="w-3.5 h-3.5 mr-1" />} Add TAF PDF
+            {busy === "ingest-taf" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <FileText className="w-3.5 h-3.5 mr-1" />} Add TAFs (PDF or zip)
           </Button>
           <Button variant="outline" size="sm" onClick={() => bgInputRef.current?.click()} disabled={busy !== null} data-testid="button-replace-bg">
             {busy === "background" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1" />} {hasBg ? "Replace plan" : "Upload plan"}
@@ -268,7 +268,7 @@ function PlanView({ planId }: { planId: string }) {
         </div>
         <input ref={bgInputRef} type="file" accept=".pdf,image/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile("background", f); e.target.value = ""; }} />
         <input ref={tsInputRef} type="file" accept=".xlsx,.xls" hidden onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile("import-tenancy", f); e.target.value = ""; }} />
-        <input ref={tafInputRef} type="file" accept=".pdf" hidden onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile("ingest-taf", f); e.target.value = ""; }} />
+        <input ref={tafInputRef} type="file" accept=".pdf,.zip" hidden onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile("ingest-taf", f); e.target.value = ""; }} />
       </div>
 
       <div className="flex flex-1 min-h-0 flex-col md:flex-row">
