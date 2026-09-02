@@ -3768,7 +3768,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Public leasing feed (bgp marketing website) ---
   // Read-only, unauthenticated. Exposes only marketing-safe fields for units
   // being publicly marketed, and skips properties with leasing privacy enabled.
-  const PUBLIC_MARKETING_STATUSES = ["Available", "Under Offer"];
+  // Public lifecycle (Woody, Sep 2026): Available shows as available;
+  // Negotiating and Under Offer both show as "Under Offer"; Let (invoiced/
+  // exchanged/completed), Withdrawn and Reporting are never public.
+  const PUBLIC_MARKETING_STATUSES = ["Available", "Negotiating", "Under Offer"];
+  const publicStatus = (s: string | null) => (s === "Negotiating" ? "Under Offer" : s);
 
   app.use("/api/public", (req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
@@ -3827,7 +3831,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         : [];
       const byUnit: Record<string, typeof files> = {};
       for (const f of files) (byUnit[f.unitId] ||= []).push(f);
-      res.json(rows.map(r => ({ ...r, files: byUnit[r.id] || [] })));
+      res.json(rows.map(r => ({ ...r, marketingStatus: publicStatus(r.marketingStatus), files: byUnit[r.id] || [] })));
     } catch (err: any) {
       console.error("[routes] Public leasing listings error:", err?.message);
       res.status(500).json({ message: "Failed to fetch listings" });
@@ -3856,7 +3860,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         })
         .from(unitMarketingFiles)
         .where(eq(unitMarketingFiles.unitId, row.id));
-      res.json({ ...row, files });
+      res.json({ ...row, marketingStatus: publicStatus(row.marketingStatus), files });
     } catch (err: any) {
       console.error("[routes] Public leasing listing error:", err?.message);
       res.status(500).json({ message: "Failed to fetch listing" });
