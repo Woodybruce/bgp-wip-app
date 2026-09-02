@@ -39,6 +39,7 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
+import { legacyToCode } from "@shared/deal-status";
 import { registerIngestRoutes } from "./ingest-routes";
 import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { setupStripeIssuingRoutes } from "./stripe-issuing";
@@ -3768,13 +3769,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Public leasing feed (bgp marketing website) ---
   // Read-only, unauthenticated. Exposes only marketing-safe fields for units
   // being publicly marketed, and skips properties with leasing privacy enabled.
-  // Public lifecycle (Woody, Sep 2026): Available shows as available;
-  // Negotiating and Under Offer both show as "Under Offer"; Let (invoiced/
-  // exchanged/completed), Withdrawn and Reporting are never public.
-  const publicStatus = (s: string | null) => {
-    const norm = (s || "").trim().toLowerCase();
-    if (norm === "negotiating" || norm === "under offer") return "Under Offer";
-    return "Available";
+  // Public lifecycle (Woody, Sep 2026): AVA (Marketing/Available) shows as
+  // available; NEG/HOT/SOL show as "Under Offer"; everything else (OPP, REP,
+  // EXC, COM/Let, INV, WIT) is never public. Status values in the tracker are
+  // canonical deal-status codes or legacy labels — legacyToCode handles both.
+  const PUBLIC_CODE_MAP: Record<string, string> = {
+    AVA: "Available",
+    NEG: "Under Offer",
+    HOT: "Under Offer",
+    SOL: "Under Offer",
+  };
+  const publicStatus = (raw: string | null): string | null => {
+    const code = legacyToCode(raw);
+    return code ? PUBLIC_CODE_MAP[code] || null : null;
   };
 
   app.use("/api/public", (req, res, next) => {
@@ -3816,7 +3823,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .from(availableUnits)
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
         .where(and(
-          sql`lower(trim(${availableUnits.marketingStatus})) IN ('available', 'negotiating', 'under offer')`,
+          sql`${availableUnits.marketingStatus} IS NOT NULL`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
         ))
         .orderBy(desc(availableUnits.createdAt));
@@ -3834,7 +3841,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         : [];
       const byUnit: Record<string, typeof files> = {};
       for (const f of files) (byUnit[f.unitId] ||= []).push(f);
-      res.json(rows.map(r => ({ ...r, marketingStatus: publicStatus(r.marketingStatus), files: byUnit[r.id] || [] })));
+      res.json(
+        rows
+          .map(r => ({ ...r, marketingStatus: publicStatus(r.marketingStatus) }))
+          .filter(r => r.marketingStatus !== null)
+          .map(r => ({ ...r, files: byUnit[r.id] || [] })),
+      );
     } catch (err: any) {
       console.error("[routes] Public leasing listings error:", err?.message);
       res.status(500).json({ message: "Failed to fetch listings" });
@@ -3851,7 +3863,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
         .where(and(
           eq(availableUnits.id, req.params.id),
-          sql`lower(trim(${availableUnits.marketingStatus})) IN ('available', 'negotiating', 'under offer')`,
+          sql`${availableUnits.marketingStatus} IS NOT NULL`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
         ));
       if (!row) return res.status(404).json({ message: "Listing not found" });
@@ -3863,7 +3875,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         })
         .from(unitMarketingFiles)
         .where(eq(unitMarketingFiles.unitId, row.id));
-      res.json({ ...row, marketingStatus: publicStatus(row.marketingStatus), files });
+      const pubStatus = publicStatus(row.marketingStatus);
+      if (!pubStatus) return res.status(404).json({ message: "Listing not found" });
+      res.json({ ...row, marketingStatus: pubStatus, files });
     } catch (err: any) {
       console.error("[routes] Public leasing listing error:", err?.message);
       res.status(500).json({ message: "Failed to fetch listing" });
@@ -3876,15 +3890,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
       if (!file) return res.status(404).end();
       const [unit] = await db
-        .select({ id: availableUnits.id })
+        .select({ id: availableUnits.id, marketingStatus: availableUnits.marketingStatus })
         .from(availableUnits)
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
         .where(and(
           eq(availableUnits.id, file.unitId),
-          sql`lower(trim(${availableUnits.marketingStatus})) IN ('available', 'negotiating', 'under offer')`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
         ));
-      if (!unit) return res.status(404).end();
+      if (!unit || !publicStatus(unit.marketingStatus)) return res.status(404).end();
       const fileName = file.filePath.split("/").pop();
       if (fileName) {
         const stored = await getFile(`marketing-files/${fileName}`);
