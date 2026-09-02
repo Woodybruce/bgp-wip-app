@@ -22,11 +22,9 @@ export default function Home() {
         <img
           src="/images/bar.jpg"
           alt="Bar interior"
-          className="h-[70vh] min-h-[480px] w-full object-cover brightness-[.72]"
+          className="h-[70vh] min-h-[480px] w-full object-cover"
         />
-        {/* Wine-toned scrim, heaviest behind the wordmark, so the white
-            always reads over the photograph */}
-        <div className="absolute inset-0 bg-gradient-to-b from-bgp-ink/40 via-bgp-wine/50 to-bgp-ink/55" />
+        <div className="absolute inset-0 bg-bgp-wine/30" />
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
           <h1>
             <img
