@@ -18,7 +18,7 @@ export default function Home() {
   return (
     <div>
       {/* Hero — full-bleed photo, giant wordmark */}
-      <section className="relative -mt-2">
+      <section className="relative">
         <img
           src="/images/bar.jpg"
           alt="Bar interior"
