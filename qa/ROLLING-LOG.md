@@ -84,6 +84,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r473 · 2026-09-03 · LIGHT (r472 had the journeys) — round in progress
+- Bring-up: canonical recipe held 38th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+- Two-bot round 473 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (3787×200, expected 4xx/503 families, single 422 = r462
+  cover-raster by design). Triage: 0 app bugs.
+- r472 harness scenario staff-evidence-plan-lifecycle PASSED its first
+  standard-order run inside a full victoria chunk. Visual cache-bust
+  re-verification pending; final entry to follow.
+
 ### r472 · 2026-09-03 · FULL — rotation #4 BGP staff mobile 390px + owed Evidence Plans journey · 1 bug fixed
 - Bring-up: canonical recipe held 37th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
