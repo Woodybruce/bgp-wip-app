@@ -13,6 +13,13 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+133. 2026-09-02 · Landsec client / desktop 1440px (QA r460) · reading the
+    full tenancy schedule board during a portfolio review · the KPI strip
+    mixes empty-state treatments: PASSING RENT shows "—" when no rent data
+    exists, but the tile next to it reads "AVG ERV £PSF 0" — a literal
+    zero that reads as "the ERV is £0" rather than "no ERV data" · show
+    "—" (like passing rent) when no units carry an ERV.
+
 132. 2026-09-02 · BGP staff / desktop 1440px (QA r458) · Requirements page
     while prepping a pitch · the toolbar mixes everyday actions (search,
     Add requirement, New Brand) with five maintenance/debug controls

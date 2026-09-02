@@ -5779,6 +5779,27 @@ async function markRound(page, cross) {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(500);
   });
+
+  await step(page, p, 'client-properties-no-address-edit', async () => {
+    // r460: the properties table showed clients a live "Set address" inline
+    // editor whose PUT /api/crm/properties/:id is gateway-blocked (403) —
+    // a dead-end staff affordance (r452 Doc Studio class). Client cells are
+    // read-only now; the write stays blocked server-side.
+    await page.goto(`${BASE}/properties`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3500);
+    if (await page.locator('[data-testid="button-edit-address"]').count()) {
+      throw new Error('client properties table still renders the Set address inline editor (its PUT is gateway-blocked for clients)');
+    }
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' } };
+    const props = await (await fetch(`${BASE}/api/crm/properties`, auth)).json().catch(() => []);
+    const own = Array.isArray(props) && props[0];
+    if (own) {
+      const r = await fetch(`${BASE}/api/crm/properties/${own.id}`, {
+        method: 'PUT', ...auth, body: JSON.stringify({ address: { formatted: 'QA-PROBE addr' } }),
+      });
+      if (r.status !== 403) throw new Error(`client property PUT expected 403, got ${r.status}`);
+    }
+  });
 }
 
 // ─── Additional personas ──────────────────────────────────────────────────

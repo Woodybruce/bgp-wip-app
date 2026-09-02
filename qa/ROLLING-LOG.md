@@ -84,19 +84,56 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r460 · 2026-09-02 ~07:45 UTC · FULL — rotation #2 Landsec client desktop 1440px · ROUND IN PROGRESS
-- Provisional heartbeat entry. Bring-up: canonical recipe held 25th
-  consecutive time (qa:pg once → run-smoke restore clean → seed-personas
-  applied per r451 rule BEFORE two-bot, stale cross file removed).
-- Regression: smoke GREEN 42/0. Two-bot round 460 as 3 foreground chunks
-  (r447 pattern, chunk-runner boots dev server stdio-to-FILE, warms per
-  r455, kills after): victoria exit 0 (2×400 standing: rocketreach +
-  invalid-tracker probe) / mark exit 0 (10 issues = 2×503 keyless + 8×403
-  probe-by-design signature) / woody,nick,sam exit 0 (0 issues).
-  phone-overflow-sweep 11/11 routes fit at 390px. Server logs: 0 raw
-  500/502/504 (grep hits = port line/UUID/news-feed text only). Triage:
-  0 app bugs from the harness.
-- Journey (Mark @1440px) still to run — final entry replaces this one.
+### r460 · 2026-09-02 ~09:00 UTC · FULL — rotation #2 Landsec client desktop 1440px · 1 bug fixed
+- Bring-up: canonical recipe held 25th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot, stale cross file removed). Regression: smoke GREEN 42/0 ×2
+  (before, and FRESH_BUILD=1 after the fix). Two-bot round 460 as 3
+  foreground chunks (r447 pattern): victoria exit 0 (2×400 standing:
+  rocketreach + invalid-tracker probe) / mark exit 0 (10 issues = 2×503
+  keyless + 8×403 probe-by-design signature) ×3 / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 routes fit at 390px. Server
+  logs: 0 raw 500/502/504. Triage: 0 app bugs from the harness.
+- Journey (Mark @1440px, UI login via Client/guest reveal — "quarterly
+  asset review: dashboard KPIs → Bluewater via tracker widget → properties
+  list → property detail scroll-through → full tenancy schedule board →
+  comps → brand compliance (Honi Poke) → add-brand dialog → task quick-add
+  → news skim → ChatBGP"): all render clean, 0 pageerrors, 0 non-noise
+  4xx/5xx, no h-overflow anywhere. Compliance & KYC visible on the client
+  brand profile with no staff words; add-brand dialog search + In CRM /
+  Added / Add states correct (Testco Fashion "added" is fixture-baked
+  crm_extra_brand_ids state, verified via API — nothing left behind by the
+  journey); tenancy board 200 units + KPI strip clean; ChatBGP polite
+  keyless "Not Connected".
+- BUG FIXED (client properties table): the Property column rendered a live
+  "Set address" inline editor (InlineAddress) for CLIENTS — every
+  neighbouring cell in the table is isClientViewer-gated, but the address
+  cell wasn't, and its PUT /api/crm/properties/:id is gateway-blocked for
+  clients (not in CLIENT_ALLOWED_WRITES) → dead-end editing affordance,
+  r452 Doc Studio class. properties.tsx now shows clients the plain
+  address text (or nothing); staff editor unchanged. tsc clean,
+  FRESH_BUILD smoke re-green, verified visually both personas (mark: 0
+  editors; victoria: editors intact). New scenario
+  client-properties-no-address-edit (no editor testid + PUT 403 probe)
+  PASSED twice in full mark chunks.
+- NOT a bug (documented): mark-chunk re-runs ~1h after the victoria chunk
+  log client-calendar-sees-own-events flow-failure — victoria's cross
+  event is created at now+30min and GET /api/team-events only returns
+  future events, so late re-runs hit the documented expiry false-alarm
+  (harness note in the scenario itself). Standard order (victoria
+  immediately before mark) unaffected.
+- Property-detail phone section pills (Overview/Boards/…) resolving as
+  hidden at 1440px is the phone-only bar — desktop is one long page, not
+  a bug.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 133
+  (tenancy KPI strip "AVG ERV £PSF 0" vs "—" empty-state inconsistency).
+  Real-device keyboard-up composer check (r405) still open for Woody. New
+  flakes: none. Journey probe rows (QA-PROBE task r460) swept by next
+  round's restore/purge.
+- Next: r460 had the journey → r461 LIGHT (watch
+  client-properties-no-address-edit's first standard-order run); then
+  rotation #3 Landsec client mobile 390px.
 
 ### r459 · 2026-09-02 ~19:30 UTC · LIGHT (r458 had the journey) — GREEN
 - Bring-up: canonical recipe held 24th consecutive time (qa:pg once →
