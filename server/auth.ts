@@ -730,6 +730,32 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
+// Admin-only gate for sensitive AML/MLRO actions (appointing the MLRO,
+// approving/rejecting CDD, signing off the firm risk assessment). Any staff
+// member could previously do these — meaningless for MLR sign-off.
+export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const userId = req.session.userId || req.tokenUserId;
+  if (!userId) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+  try {
+    const result = await pool.query("SELECT is_admin, is_active, email FROM users WHERE id = $1", [userId]);
+    const u = result.rows[0];
+    if (!u) return res.status(401).json({ message: "Not authenticated" });
+    if (u.is_active === false) {
+      return res.status(403).json({ message: "Your account has been deactivated. Please contact an administrator." });
+    }
+    const isAdmin = u.is_admin === true || ADMIN_EMAILS.has((u.email || "").toLowerCase().trim());
+    if (!isAdmin) return res.status(403).json({ message: "Admin access required" });
+  } catch (_e) {
+    return res.status(500).json({ message: "Authorisation check failed" });
+  }
+  if (!req.session.userId && req.tokenUserId) {
+    req.session.userId = req.tokenUserId;
+  }
+  next();
+}
+
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 10);
 }
