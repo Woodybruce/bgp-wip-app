@@ -154,6 +154,26 @@ export interface CaseStudy {
 // fuller copy from the relevant team.
 export const CASE_STUDIES: CaseStudy[] = [
   {
+    slug: "lucent-piccadilly",
+    title: "Lucent, Piccadilly Lights",
+    service: "Leasing",
+    image: "/images/lucent-piccadilly.jpg",
+    blurb:
+      "Restaurant leasing for Landsec at Lucent W1 — the landmark development behind the world-famous Piccadilly Lights.",
+    facts: [
+      ["Service", "Leasing"],
+      ["Client", "Landsec"],
+      ["Scheme", "Lucent W1 — 144,000 sq ft"],
+      ["Sector", "Restaurant & leisure"],
+      ["Location", "Piccadilly Circus, W1"],
+    ],
+    body: [
+      "Lucent is Landsec's 144,000 sq ft development behind the Piccadilly Lights — office, retail and restaurant space on one of the most famous corners in the world, completed in 2023.",
+      "BGP advised Landsec on the food & beverage leasing of the scheme, shaping the restaurant strategy and securing occupiers for space that sits directly behind the Lights, with some of the highest footfall in the West End.",
+      "Photograph: Thomas Dahlstrøm Nielsen, CC BY-SA 4.0.",
+    ],
+  },
+  {
     slug: "20-hanover-square",
     title: "20 Hanover Square",
     service: "Leasing",
