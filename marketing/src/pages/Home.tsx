@@ -1,6 +1,7 @@
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { ARTICLES, HERO_STATEMENT, HOME_INTRO, SERVICES } from "../lib/content";
+import ClientRow from "../components/ClientRow";
+import { ARTICLES, HERO_STATEMENT, HOME_INTRO, LEASE_ADVISORY_CLIENTS, SERVICES, TESTIMONIAL } from "../lib/content";
 
 // Per-section stats per the v2c layout. All figures real: transactions/brands
 // from brucegillinghampollard.com, £62m = LondonMetric Waitrose portfolio,
@@ -43,7 +44,18 @@ export default function Home() {
             {para}
           </p>
         ))}
-        <p className="mt-10 display text-xl md:text-2xl">{HOME_INTRO.servicesHeading}</p>
+      </section>
+
+      {/* Trusted-by band — quiet blush ground, the estates we act for */}
+      <section className="mt-14 bg-bgp-pink/40 border-y border-bgp-pink">
+        <div className="mx-auto max-w-6xl px-4 py-12">
+          <p className="label-caps text-bgp-wine/70 text-center mb-8">Trusted by London's leading estates</p>
+          <ClientRow clients={LEASE_ADVISORY_CLIENTS.slice(0, 6)} />
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-3xl px-4 pt-14 pb-2 text-center">
+        <p className="display text-xl md:text-2xl">{HOME_INTRO.servicesHeading}</p>
       </section>
 
       {/* Service sections with stats */}
@@ -54,11 +66,13 @@ export default function Home() {
           return (
             <section key={service.slug} className="mx-auto max-w-6xl px-4 py-14">
               <div className={`grid grid-cols-1 md:grid-cols-2 gap-10 items-start ${imageFirst ? "" : "md:[direction:rtl]"}`}>
-                <Placeholder
-                  className="aspect-[4/3] w-full [direction:ltr]"
-                  src={service.image}
-                  alt={service.name}
-                />
+                <div className="img-frame [direction:ltr]">
+                  <Placeholder
+                    className="aspect-[4/3] w-full"
+                    src={service.image}
+                    alt={service.name}
+                  />
+                </div>
                 <div className="[direction:ltr] md:border-l md:border-bgp-wine/25 md:pl-8">
                   <h2 className="display text-3xl md:text-4xl">{service.name}</h2>
                   <p className="mt-4 text-sm font-light text-bgp-ink/75 leading-relaxed max-w-sm">
@@ -83,6 +97,17 @@ export default function Home() {
         })}
       </div>
 
+      {/* Testimonial — full-bleed wine band, big italic serif */}
+      <section className="bg-bgp-wine text-bgp-cream">
+        <div className="mx-auto max-w-4xl px-4 py-16 md:py-20 text-center">
+          <span className="font-display text-6xl leading-none text-bgp-nectar" aria-hidden>“</span>
+          <blockquote className="font-display italic text-2xl md:text-3xl leading-snug -mt-4">
+            {TESTIMONIAL.quote}
+          </blockquote>
+          <p className="mt-6 label-caps text-bgp-cream/70">{TESTIMONIAL.name} — {TESTIMONIAL.title}</p>
+        </div>
+      </section>
+
       {/* News & insights */}
       <section className="mx-auto max-w-6xl px-4 py-16">
         <h2 className="display text-3xl md:text-4xl">News and insights</h2>
@@ -97,7 +122,7 @@ export default function Home() {
           {["behind-the-brand-yolk", "ardent-royal-exchange", "enduring-appeal-portman-estate"].map((slug) => ARTICLES.find((x) => x.slug === slug)!).map((a) => (
             <Link key={a.slug} href={`/news/${a.slug}`} className="group block border-t border-bgp-wine/40 pt-3">
               <p className="label-caps text-bgp-wine mb-3">{a.category}</p>
-              <Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} />
+              <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
               <p className="mt-3 text-sm font-semibold leading-snug group-hover:text-bgp-red transition-colors">
                 {a.title}
               </p>

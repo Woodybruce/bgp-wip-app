@@ -34,7 +34,8 @@ export default function Nav() {
                 <Link
                   href={item.href}
                   onClick={() => setOpen(false)}
-                  className={`label-caps whitespace-nowrap transition-colors ${
+                  data-active={active}
+                  className={`label-caps nav-link whitespace-nowrap transition-colors ${
                     active ? "text-bgp-red" : "text-bgp-wine hover:text-bgp-red"
                   }`}
                 >
