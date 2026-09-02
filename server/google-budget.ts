@@ -22,6 +22,7 @@ function todayKey(): string {
 
 function estimateCostGbp(url: string): number {
   const u = url.toLowerCase();
+  if (u.includes("customsearch")) return 0.004;
   if (u.includes("textsearch") || u.includes(":searchtext")) return 0.03;
   if (u.includes("nearbysearch")) return 0.03;
   if (u.includes("place/details") || u.includes("findplacefromtext")) return 0.015;
@@ -66,7 +67,9 @@ function scheduleFlush(): void {
   }, 15_000).unref?.();
 }
 
-const GOOGLE_HOST_RE = /\b(maps|places)\.googleapis\.com/i;
+// Custom Search (image lookups in brand-images / brand-profile /
+// deal-report / routes) bills per query too — same cap, same kill switch.
+const GOOGLE_HOST_RE = /\b(maps|places)\.googleapis\.com|\bwww\.googleapis\.com\/customsearch\//i;
 let warnedToday = "";
 
 export function installGoogleBudgetGuard(): void {
@@ -84,7 +87,7 @@ export function installGoogleBudgetGuard(): void {
           console.warn(`[google-budget] £${CAP_GBP}/day cap reached (est £${spentGbp.toFixed(2)}) — blocking Google Maps/Places calls until midnight UTC`);
         }
         return new Response(
-          JSON.stringify({ error: "google-daily-cap-reached", status: "OVER_QUERY_LIMIT", results: [], candidates: [] }),
+          JSON.stringify({ error: "google-daily-cap-reached", status: "OVER_QUERY_LIMIT", results: [], candidates: [], items: [] }),
           { status: 429, headers: { "Content-Type": "application/json" } },
         );
       }

@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { MAX_CHAT_FILES, prepareChatFiles } from "@/lib/chat-attachments";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -1995,6 +1996,32 @@ export default function ChatBGP() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
 
+  // Same attach rules as the ChatBGP side panel: a dropped ZIP is unpacked in
+  // the browser and its contents attached individually, so a plans archive
+  // that would blow the per-file upload limit arrives as its plans.
+  const attachChatFiles = useCallback(async (picked: File[]) => {
+    if (picked.some(f => f.name.toLowerCase().endsWith(".zip"))) {
+      toast({ title: "Unpacking archive…", description: "Reading the files inside" });
+    }
+    const { files, notices } = await prepareChatFiles(picked, { validateTypes: false });
+    for (const n of notices) {
+      toast({ title: n.title, description: n.description, ...(n.error ? { variant: "destructive" as const } : {}) });
+    }
+    if (files.length === 0) return;
+    setAttachedFiles(prev => {
+      const combined = [...prev, ...files];
+      if (combined.length > MAX_CHAT_FILES) {
+        toast({
+          title: "Too many files",
+          description: `Maximum ${MAX_CHAT_FILES} files at a time — the first ${MAX_CHAT_FILES} are attached, send those and drop the rest after.`,
+          variant: "destructive",
+        });
+        return combined.slice(0, MAX_CHAT_FILES);
+      }
+      return combined;
+    });
+  }, [toast]);
+
   const { data: currentUser } = useQuery<{ id: string; name: string }>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -3586,7 +3613,7 @@ export default function ChatBGP() {
               e.preventDefault();
               setIsDragOver(false);
               const files = Array.from(e.dataTransfer.files);
-              if (files.length) setAttachedFiles(prev => [...prev, ...files].slice(0, 20));
+              if (files.length) void attachChatFiles(files);
             }}
           >
             {isDragOver && (
@@ -3994,10 +4021,9 @@ export default function ChatBGP() {
               className="sr-only"
               tabIndex={-1}
               onChange={(e) => {
-                if (e.target.files) {
-                  setAttachedFiles(prev => [...prev, ...Array.from(e.target.files!)]);
-                }
+                const picked = e.target.files ? Array.from(e.target.files) : [];
                 e.target.value = "";
+                if (picked.length) void attachChatFiles(picked);
               }}
               data-testid="input-file-upload"
             />

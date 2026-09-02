@@ -1,6 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
+import { SourceEmailDialog, SourceEventDialog } from "@/components/tracker-source";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
@@ -72,6 +73,18 @@ const DEAL_PIPELINE_LABELS: Record<string, string> = { ...DEAL_STATUS_LABELS, AV
 // which drives the boards. The unit-stage select offers just these two;
 // UNIT_STAGE_EDITABLE is the set of effective codes where flipping the
 // unit stage can't regress a live deal via the 4-way status mirror.
+// Unit names imported from client schedules often carry the postcode, which
+// the narrow Property / Unit column can't spare and the property sub-line
+// underneath already identifies. Display only — the stored name is untouched.
+function displayUnitName(name: string): string {
+  return name
+    .replace(/,?\s*\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi, "")
+    .replace(/\s*,\s*(?=,|$)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .replace(/^[,\s-]+|[,\s]+$/g, "");
+}
+
 const UNIT_STATUSES: DealStatusCode[] = ["OPP", "AVA"];
 const UNIT_STAGE_EDITABLE = new Set<DealStatusCode>(["OPP", "AVA", "REP", "SPEC", "LIVE"]);
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
@@ -395,6 +408,11 @@ export default function AvailableUnitsPage() {
   const [viewingsUnit, setViewingsUnit] = useState<AvailableUnit | null>(null);
   const [interestUnit, setInterestUnit] = useState<AvailableUnit | null>(null);
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
+  // Provenance pop-outs: the email an offer/interest row was detected from,
+  // and the diary event behind a viewing.
+  const [sourceEmail, setSourceEmail] = useState<{ kind: "offer" | "interest"; id: string; title: string } | null>(null);
+  const [sourceEvent, setSourceEvent] = useState<{ kind: "viewing" | "interest"; id: string } | null>(null);
+  const [addingTargetFrom, setAddingTargetFrom] = useState<string | null>(null);
   const [addViewingOpen, setAddViewingOpen] = useState(false);
   const [addOfferOpen, setAddOfferOpen] = useState(false);
   // Most viewings are logged the day they happen, so the date defaults to
@@ -1172,6 +1190,27 @@ export default function AvailableUnitsPage() {
     }
   };
 
+  // Interest → target operator. The server ensures the unit's brief, skips
+  // duplicates, and carries every interest note for that brand across as the
+  // target's rationale (AI-summarised when there's more than one).
+  const addTargetFromInterest = async (i: any) => {
+    setAddingTargetFrom(i.id);
+    try {
+      const r = await apiRequest("POST", `/api/tracker/interest/${i.id}/add-target`);
+      const out = await r.json();
+      if (out.alreadyTarget) {
+        toast({ title: `${out.operatorName} is already a target on this unit` });
+      } else {
+        toast({ title: "Added to target operators", description: `${out.operatorName} — interest notes carried over` });
+      }
+      if (interestUnit) invalidateBriefs(interestUnit.id);
+    } catch (e: any) {
+      toast({ title: "Couldn't add the target", description: e?.message, variant: "destructive" });
+    } finally {
+      setAddingTargetFrom(null);
+    }
+  };
+
   const uniqueProperties = useMemo(() => {
     const ids = new Set(teamUnits.map(u => u.propertyId));
     return properties.filter(p => ids.has(p.id));
@@ -1822,12 +1861,12 @@ export default function AvailableUnitsPage() {
                     data-testid="checkbox-select-all-units"
                   />
                 </TableHead>
-                {showCol("ref") && <TableHead className="w-[48px] px-1.5">Ref</TableHead>}
+                {showCol("ref") && <TableHead className="w-[34px] min-w-[34px] px-1">Ref</TableHead>}
                 {/* Left block runs tight (Woody, 2026-09-01: "all need to be
                     reduced in width") — Target Tenant and Comments carry no
                     fixed width, so THEY absorb spare page width instead of
                     every column inflating evenly. */}
-                <TableHead className="w-[160px] min-w-[150px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
+                <TableHead className="w-[120px] min-w-[112px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
                   Property / Unit{sortBy === "property" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                 </TableHead>
                 {/* "Existing Tenant" wrapped to two lines and sat out of
@@ -1841,13 +1880,16 @@ export default function AvailableUnitsPage() {
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                   </TableHead>
                 )}
+                {/* Area & Costs sits with the unit's own facts (Client side of
+                    the table) rather than out past the target-tenant block
+                    (Woody, 2026-09-02). */}
+                {showCol("areaCosts") && <TableHead className="w-[130px] min-w-[130px]">Area &amp; Costs</TableHead>}
                 <TableHead className="w-[180px] min-w-[170px]">Target Tenant</TableHead>
                 {showCol("dealStatus") && <TableHead className="w-[130px] min-w-[130px]">Target Status</TableHead>}
                 {showCol("category") && <TableHead className="w-[144px] min-w-[144px]">Category</TableHead>}
                 {showCol("priority") && <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>}
                 {showCol("agent") && <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>}
-                {showCol("comments") && <TableHead className="w-[160px] min-w-[140px]">Comments</TableHead>}
-                {showCol("areaCosts") && <TableHead className="w-[130px] min-w-[130px]">Area &amp; Costs</TableHead>}
+                {showCol("comments") && <TableHead className="w-[320px] min-w-[280px]">Comments</TableHead>}
                 {/* Width-less filler — on wide screens the table's spare
                     width lands HERE, next to the pinned cluster, instead of
                     inflating a data column and shoving the rest under the
@@ -1909,7 +1951,7 @@ export default function AvailableUnitsPage() {
                         />
                       </TableCell>
                       {showCol("ref") && (
-                      <TableCell rowSpan={unitRowSpan} className="text-xs font-mono text-muted-foreground">
+                      <TableCell rowSpan={unitRowSpan} className="px-1 py-1 text-xs font-mono text-muted-foreground whitespace-nowrap">
                         {deal?.dealRef ? (
                           <div className="flex items-center gap-1.5">
                             <a
@@ -1940,17 +1982,17 @@ export default function AvailableUnitsPage() {
                         ) : "—"}
                       </TableCell>
                       )}
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[220px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[120px]">
                         {/* Unit leads, property is the sub-line — on a
                             one-property board the property name repeats on
                             every row and carries no signal (UX #97). */}
                         <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-1 text-sm font-medium group/uname">
+                          <div className="flex items-start gap-1 text-xs font-medium group/uname">
                             {renameUnitId === u.id ? (
                               <Input
                                 autoFocus
                                 defaultValue={u.unitName}
-                                className="h-6 text-xs px-1.5 py-0 max-w-[160px]"
+                                className="h-6 text-xs px-1.5 py-0 max-w-[104px]"
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") {
                                     const v = (e.target as HTMLInputElement).value.trim();
@@ -1970,16 +2012,21 @@ export default function AvailableUnitsPage() {
                               <>
                                 <button
                                   type="button"
-                                  className="truncate text-left hover:underline hover:text-foreground"
+                                  // Wrap over two lines rather than cutting the
+                                  // name off — the row is already tall (one per
+                                  // target tenant), so the second line is free
+                                  // space (Woody, 2026-09-02: "find a neat way
+                                  // of fitting the text into the column").
+                                  className="min-w-0 text-left leading-snug break-words line-clamp-3 hover:underline hover:text-foreground"
                                   onClick={() => setBriefUnit(u)}
-                                  title="Open unit brief"
+                                  title={u.unitName ? `${u.unitName} — open unit brief` : "Open unit brief"}
                                   data-testid={`unit-name-${u.id}`}
                                 >
-                                  {u.unitName || <span className="italic opacity-60">Unit name</span>}
+                                  {u.unitName ? displayUnitName(u.unitName) : <span className="italic opacity-60">Unit name</span>}
                                 </button>
                                 <button
                                   type="button"
-                                  className="p-0.5 rounded opacity-0 group-hover/uname:opacity-60 hover:!opacity-100 focus-visible:opacity-100 transition-opacity"
+                                  className="p-0.5 mt-0.5 shrink-0 rounded opacity-0 group-hover/uname:opacity-60 hover:!opacity-100 focus-visible:opacity-100 transition-opacity"
                                   onClick={() => setRenameUnitId(u.id)}
                                   title="Rename unit"
                                   aria-label={`Rename ${u.unitName || "unit"}`}
@@ -2112,58 +2159,6 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                       )}
-                      {unitTargets.length === 0 ? (
-                        <TableCell colSpan={targetBlockSpan}>
-                          <div className="flex items-center gap-1.5">
-                            <BrandSearchInput
-                              className="h-7 w-[220px] border-dashed text-[11px]"
-                              placeholder="+ Target operator"
-                              value=""
-                              allowCreate
-                              onPick={p => addUnitTarget(u, p)}
-                              testId={`add-target-${u.id}`}
-                            />
-                            {pitchBrand && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 px-2 text-[11px] text-primary"
-                                onClick={() => addUnitTarget(u, { name: pitchBrand.name, companyId: pitchBrand.id } as any)}
-                                data-testid={`pitch-here-${u.id}`}
-                              >
-                                <Plus className="w-3 h-3 mr-0.5" /> {pitchBrand.name}
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-                              onClick={() => setSuggestUnit(u)}
-                              title="AI-suggest target brands: live requirements that fit this unit + brands in matching categories, ranked by AI"
-                              data-testid={`button-suggest-targets-${u.id}`}
-                            >
-                              <Sparkles className="w-3.5 h-3.5 mr-0.5" /> AI
-                            </Button>
-                          </div>
-                        </TableCell>
-                      ) : (
-                        <TargetRowCells
-                          target={unitTargets[0]}
-                          clientCompanyId={unitClientCompanyId}
-                          onChanged={() => invalidateBriefs(u.id)}
-                          visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: false, comments: showCol("comments") }}
-                          operatorExtra={
-                            <BrandSearchInput
-                              iconOnly
-                              placeholder="Add target operator…"
-                              value=""
-                              allowCreate
-                              onPick={p => addUnitTarget(u, p)}
-                              testId={`add-target-${u.id}`}
-                            />
-                          }
-                        />
-                      )}
                       {showCol("areaCosts") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1">
                         {/* Area + Costs in one column (Woody, 2026-09-01) —
@@ -2288,6 +2283,58 @@ export default function AvailableUnitsPage() {
                           </PopoverContent>
                         </Popover>
                       </TableCell>
+                      )}
+                      {unitTargets.length === 0 ? (
+                        <TableCell colSpan={targetBlockSpan}>
+                          <div className="flex items-center gap-1.5">
+                            <BrandSearchInput
+                              className="h-7 w-[220px] border-dashed text-[11px]"
+                              placeholder="+ Target operator"
+                              value=""
+                              allowCreate
+                              onPick={p => addUnitTarget(u, p)}
+                              testId={`add-target-${u.id}`}
+                            />
+                            {pitchBrand && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 px-2 text-[11px] text-primary"
+                                onClick={() => addUnitTarget(u, { name: pitchBrand.name, companyId: pitchBrand.id } as any)}
+                                data-testid={`pitch-here-${u.id}`}
+                              >
+                                <Plus className="w-3 h-3 mr-0.5" /> {pitchBrand.name}
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                              onClick={() => setSuggestUnit(u)}
+                              title="AI-suggest target brands: live requirements that fit this unit + brands in matching categories, ranked by AI"
+                              data-testid={`button-suggest-targets-${u.id}`}
+                            >
+                              <Sparkles className="w-3.5 h-3.5 mr-0.5" /> AI
+                            </Button>
+                          </div>
+                        </TableCell>
+                      ) : (
+                        <TargetRowCells
+                          target={unitTargets[0]}
+                          clientCompanyId={unitClientCompanyId}
+                          onChanged={() => invalidateBriefs(u.id)}
+                          visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: false, comments: showCol("comments") }}
+                          operatorExtra={
+                            <BrandSearchInput
+                              iconOnly
+                              placeholder="Add target operator…"
+                              value=""
+                              allowCreate
+                              onPick={p => addUnitTarget(u, p)}
+                              testId={`add-target-${u.id}`}
+                            />
+                          }
+                        />
                       )}
                       {/* Deal Type column dropped (Woody, 2026-09-01: "it's a
                           letting tracker, they are all lettings") — the type
@@ -2977,6 +3024,37 @@ export default function AvailableUnitsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Provenance pop-outs — the email behind an offer/interest row, and
+          the diary event behind a viewing. Applying AI-read figures fills
+          the offer edit form; it never saves on its own. */}
+      <SourceEmailDialog
+        kind={sourceEmail?.kind || "offer"}
+        rowId={sourceEmail?.id || null}
+        title={sourceEmail?.title}
+        onClose={() => setSourceEmail(null)}
+        onApplyFigures={(f) => {
+          const o = offersForUnit.find((row: any) => row.id === sourceEmail?.id);
+          if (!o) return;
+          setOfferForm({
+            companyName: o.companyName || "", companyId: o.companyId || "",
+            contactName: o.contactName || "", contactId: o.contactId || "",
+            offerDate: o.offerDate || "",
+            rentPa: f.rentPa != null ? String(f.rentPa) : (o.rentPa != null ? String(o.rentPa) : ""),
+            rentFreeMonths: f.rentFreeMonths != null ? String(f.rentFreeMonths) : (o.rentFreeMonths != null ? String(o.rentFreeMonths) : ""),
+            termYears: f.termYears != null ? String(f.termYears) : (o.termYears != null ? String(o.termYears) : ""),
+            breakOption: f.breakOption || o.breakOption || "",
+            incentives: f.incentives || o.incentives || "",
+            premium: f.premium != null ? String(f.premium) : (o.premium != null ? String(o.premium) : ""),
+            fittingOutContribution: f.fittingOutContribution != null ? String(f.fittingOutContribution) : (o.fittingOutContribution != null ? String(o.fittingOutContribution) : ""),
+            comments: [o.comments, f.notes].filter(Boolean).join(" — "),
+          });
+          setEditingOfferId(o.id);
+          setAddOfferOpen(true);
+          setSourceEmail(null);
+        }}
+      />
+      <SourceEventDialog kind={sourceEvent?.kind || "viewing"} rowId={sourceEvent?.id || null} onClose={() => setSourceEvent(null)} />
+
       <Dialog open={!!interestUnit} onOpenChange={v => { if (!v) setInterestUnit(null); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -3003,6 +3081,44 @@ export default function AvailableUnitsPage() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   {i.source === "email" && <Badge variant="outline" className="text-[9px]">from inbox</Badge>}
+                  {/* The brand that's keen goes straight onto the unit's
+                      target operators, carrying its interest notes. */}
+                  {(i.companyName || i.contactName) && (
+                    <Button
+                      variant="outline" size="sm" className="h-7 px-2 text-[11px]"
+                      disabled={addingTargetFrom === i.id}
+                      onClick={() => addTargetFromInterest(i)}
+                      title={`Add ${i.companyName || i.contactName} to this unit's target operators, with these notes`}
+                      data-testid={`interest-add-target-${i.id}`}
+                    >
+                      {addingTargetFrom === i.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}
+                      Target
+                    </Button>
+                  )}
+                  {/* Interest arrives from BOTH the inbox sweep and the
+                      diary sweep, sharing one column — the key's prefix says
+                      which, so the button opens the matching source. */}
+                  {i.emailConversationId && (
+                    String(i.emailConversationId).startsWith("cal_") ? (
+                      <Button
+                        variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                        onClick={() => setSourceEvent({ kind: "interest", id: i.id })}
+                        title="Open the diary entry this came from"
+                        data-testid={`interest-event-${i.id}`}
+                      >
+                        <CalendarDays className="w-3.5 h-3.5" />
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                        onClick={() => setSourceEmail({ kind: "interest", id: i.id, title: `Interest — ${i.companyName || i.contactName || "email"}` })}
+                        title="Open the email this came from"
+                        data-testid={`interest-email-${i.id}`}
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                      </Button>
+                    )
+                  )}
                   <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => deleteInterestMutation.mutate(i.id)} data-testid={`interest-delete-${i.id}`}>
                     <X className="w-3.5 h-3.5" />
                   </Button>
@@ -3074,6 +3190,18 @@ export default function AvailableUnitsPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">{v.viewingDate}{v.viewingTime ? ` at ${v.viewingTime}` : ""}</span>
+                      {/* Viewings live in the team calendar — link to the
+                          actual event rather than making people hunt for it. */}
+                      {v.calendarEventId && (
+                        <Button
+                          variant="outline" size="sm" className="h-7 px-2 text-[11px]"
+                          onClick={() => setSourceEvent({ kind: "viewing", id: v.id })}
+                          title="Open the diary event / team calendar"
+                          data-testid={`viewing-event-${v.id}`}
+                        >
+                          <CalendarDays className="w-3 h-3 mr-1" /> Calendar
+                        </Button>
+                      )}
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit viewing" title="Edit viewing" onClick={() => {
                         setViewingForm({ companyName: v.companyName || "", companyId: v.companyId || "", contactName: v.contactName || "", contactId: v.contactId || "", viewingDate: v.viewingDate || "", viewingTime: v.viewingTime || "", attendees: v.attendees || "", notes: v.notes || "", outcome: v.outcome || "" });
                         setEditingViewingId(v.id);
@@ -3203,6 +3331,18 @@ export default function AvailableUnitsPage() {
                         <Badge variant="outline" className="text-[10px] gap-1 border-amber-400 text-amber-700 dark:text-amber-400">
                           <Mail className="w-2.5 h-2.5" /> From email — confirm figures
                         </Badge>
+                      )}
+                      {/* The email is the evidence for the numbers — open it
+                          alongside, read the figures, then log them. */}
+                      {o.emailConversationId && (
+                        <Button
+                          variant="outline" size="sm" className="h-7 px-2 text-[11px]"
+                          onClick={() => setSourceEmail({ kind: "offer", id: o.id, title: `Offer — ${o.companyName || o.contactName || "email"}` })}
+                          title="Open the offer email"
+                          data-testid={`offer-email-${o.id}`}
+                        >
+                          <Mail className="w-3 h-3 mr-1" /> Email
+                        </Button>
                       )}
                       <Badge variant="outline" className={o.status === "Accepted" ? "bg-emerald-100 text-emerald-800" : o.status === "Rejected" ? "bg-red-100 text-red-800" : ""}>{o.status || "Pending"}</Badge>
                       <span className="text-xs text-muted-foreground">{o.offerDate}</span>
