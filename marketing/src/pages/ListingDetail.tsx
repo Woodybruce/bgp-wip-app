@@ -46,8 +46,7 @@ export default function ListingDetail() {
   }
 
   const images = listing.files.filter(isImage);
-  const brochurePdf = listing.files.find((f) => f.mimeType === "application/pdf");
-  const brochureHref = listing.brochureUrl ?? (brochurePdf ? fileUrl(brochurePdf.id) : null);
+  const brochure = listing.files.find((f) => f.mimeType === "application/pdf");
   const mailSubject = encodeURIComponent(`Viewing request — ${listing.unitName}`);
   const hasCoords = listing.latitude && listing.longitude;
   const lat = Number(listing.latitude);
@@ -110,9 +109,9 @@ export default function ListingDetail() {
               >
                 Book viewing
               </a>
-              {brochureHref && (
+              {brochure && (
                 <a
-                  href={brochureHref}
+                  href={fileUrl(brochure.id)}
                   target="_blank"
                   rel="noreferrer"
                   className="block border border-bgp-ink text-center label-caps py-3 hover:border-bgp-burgundy hover:text-bgp-burgundy transition-colors"
