@@ -70,6 +70,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   `grant all on schema public to bgp; alter schema public owner to bgp;`
   — else the bgp role can't CREATE and auto-migrate silently skips new
   tables/indexes (kyc_audit_log, deal_audit_log, …).
+- (r451) qa/seed-personas.sql MUST be applied to bgpsmoke after every
+  run-smoke restore and BEFORE two-bot — the smoke fixture does NOT
+  contain Honi Poke (two-bot's literal in-slice checks: turnover board,
+  client search). Skipping it = 2 false flow-failures on the mark chunk.
 - Do NOT run the prod build over plain http for browser tests: session cookie
   is secure-only in production, so cookie-auth UI flows all 401
   (/api/client/brand-theme storms, empty client nav). smoke.mjs is fine (Bearer).
@@ -80,22 +84,35 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r451 · 2026-09-02 ~00:30 UTC · ROUND IN PROGRESS (heartbeat)
-- LIGHT round (r450 had the journey). Bring-up: canonical recipe held
-  (qa:pg once → run-smoke restore clean). Regression: smoke GREEN 42/0.
-- Two-bot round 451 as 3 foreground chunks: victoria exit 0 (2×400
-  standing noise), mark exit 0, woody/nick/sam exit 0 (0 issues).
+### r451 · 2026-09-02 ~00:40 UTC · LIGHT (r450 had the journey) — GREEN
+- Bring-up: canonical recipe held 16th consecutive time (qa:pg once →
+  run-smoke restore clean). Regression: smoke GREEN 42/0. Two-bot round
+  451 as 3 foreground chunks (r447 pattern, dev-server stdio to a FILE,
+  tsx child-PID sweep after each chunk per r450 flake): victoria exit 0
+  (2×400 standing: rocketreach + invalid-tracker probe) / mark exit 0
+  (10 issues = standing 503 keyless + 8×403 probe-by-design signature) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit
+  at 390px. Server logs: 0 raw 500/502/504 (only news-feed text / UUID
+  substring grep hits, r413 class). Triage: 0 app bugs.
 - r450's TWO FIXES RE-VERIFIED: staff-tracker-status-pills-reachable and
   staff-wip-client-landlord-fallback both PASSED their first
-  standard-order run in the victoria chunk.
-- Triage: first mark run logged 2 flow-failures (Honi Poke missing from
-  client turnover + search) — HARNESS SETUP miss, not the app: this
-  round's chunk runner skipped the seed-personas step of the r436 recipe
-  (the smoke fixture does NOT contain Honi Poke; qa/seed-personas.sql
-  creates it). Seed applied → full mark chunk re-run clean (10 issues =
-  standing 503/403 signature). phone-overflow-sweep 11/11. 0 raw
-  500/502/504 in server logs. 0 app bugs.
-- Finalising log entry next.
+  standard-order run inside the victoria chunk.
+- HARNESS SETUP TRAP found + documented (not an app bug): first mark run
+  logged 2 flow-failures (Honi Poke missing from client turnover board +
+  client search). Root cause: this round's chunk runner went straight
+  from run-smoke restore to two-bot, skipping the r436 recipe's
+  "seed-personas applied first" step — the smoke fixture does NOT contain
+  Honi Poke; qa/seed-personas.sql creates it (verified: zero staff-side
+  hits too, no fixture row, no deletion). Applied the seed to bgpsmoke →
+  full mark chunk re-run clean. Rule added to Fresh-container setup.
+- No journey (LIGHT). No deferred bugs to pick up (r450 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none (the seed trap is a setup rule, above). Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r451 was LIGHT → r452 FULL, rotation #2 Landsec client desktop
+  1440px.
 
 ### r450 · 2026-09-01 ~23:55 UTC · FULL — rotation #1 BGP staff desktop 1440px · 2 bugs fixed
 - Bring-up: canonical recipe held 15th consecutive time (qa:pg once →
