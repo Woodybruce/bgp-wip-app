@@ -3771,8 +3771,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // Public lifecycle (Woody, Sep 2026): Available shows as available;
   // Negotiating and Under Offer both show as "Under Offer"; Let (invoiced/
   // exchanged/completed), Withdrawn and Reporting are never public.
-  const PUBLIC_MARKETING_STATUSES = ["Available", "Negotiating", "Under Offer"];
-  const publicStatus = (s: string | null) => (s === "Negotiating" ? "Under Offer" : s);
+  const publicStatus = (s: string | null) => {
+    const norm = (s || "").trim().toLowerCase();
+    if (norm === "negotiating" || norm === "under offer") return "Under Offer";
+    return "Available";
+  };
 
   app.use("/api/public", (req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
@@ -3813,7 +3816,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .from(availableUnits)
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
         .where(and(
-          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
+          sql`lower(trim(${availableUnits.marketingStatus})) IN ('available', 'negotiating', 'under offer')`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
         ))
         .orderBy(desc(availableUnits.createdAt));
@@ -3848,7 +3851,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
         .where(and(
           eq(availableUnits.id, req.params.id),
-          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
+          sql`lower(trim(${availableUnits.marketingStatus})) IN ('available', 'negotiating', 'under offer')`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
         ));
       if (!row) return res.status(404).json({ message: "Listing not found" });
@@ -3878,7 +3881,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
         .where(and(
           eq(availableUnits.id, file.unitId),
-          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
+          sql`lower(trim(${availableUnits.marketingStatus})) IN ('available', 'negotiating', 'under offer')`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
         ));
       if (!unit) return res.status(404).end();
