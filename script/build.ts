@@ -224,6 +224,10 @@ async function buildAll() {
     ...Object.keys(pkg.devDependencies || {}),
   ];
   const externals = allDeps.filter((dep) => !allowlist.includes(dep));
+  // unzipper is a transitive dep dynamically imported by server/voa.ts;
+  // bundling it drags in its optional @aws-sdk/client-s3 require and breaks
+  // the build. Resolve both at runtime instead.
+  externals.push("unzipper", "@aws-sdk/client-s3");
 
   await esbuild({
     entryPoints: ["server/index.ts"],
