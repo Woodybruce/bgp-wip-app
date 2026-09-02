@@ -30,8 +30,9 @@ export default function News() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-14">
-      <h1 className="display text-3xl md:text-4xl">News and insights</h1>
+    <div className="mx-auto max-w-6xl px-4 py-14 md:py-16">
+      <span className="section-label">Journal</span>
+      <h1 className="display text-3xl md:text-5xl">News and insights</h1>
 
       <div className="mt-6 flex flex-wrap items-center gap-x-8 gap-y-3 border-y border-bgp-wine/30 py-3">
         <span className="label-caps text-bgp-ink/60">Filter by</span>

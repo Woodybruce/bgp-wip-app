@@ -89,6 +89,7 @@ export default function Leasing() {
     <div>
       {/* Centred serif intro per v2c */}
       <section className="mx-auto max-w-3xl px-4 pt-12 pb-8 text-center">
+        <span className="section-label">Availability & leasing</span>
         <h1 className="display text-3xl md:text-4xl leading-snug">
           Our Leasing team creates neighbourhoods that people love — across London's
           leading estates and the UK's landmark destinations.

@@ -63,8 +63,9 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-3xl px-4 pt-14 pb-2 text-center">
-        <p className="display text-xl md:text-2xl">{HOME_INTRO.servicesHeading}</p>
+      <section className="mx-auto max-w-3xl px-4 pt-16 pb-2 text-center">
+        <span className="section-label">What we do</span>
+        <p className="display text-2xl md:text-3xl">{HOME_INTRO.servicesHeading}</p>
       </section>
 
       {/* Service sections with stats */}
@@ -83,7 +84,8 @@ export default function Home() {
                   />
                 </div>
                 <div className="[direction:ltr] md:border-l md:border-bgp-wine/25 md:pl-8">
-                  <h2 className="display text-3xl md:text-4xl">{service.name}</h2>
+                  <span className="label-caps text-bgp-red/70 tabular">{String(i + 1).padStart(2, "0")}</span>
+                  <h2 className="display text-3xl md:text-4xl mt-1.5">{service.name}</h2>
                   <p className="mt-4 text-sm font-light text-bgp-ink/75 leading-relaxed max-w-sm">
                     {service.intro}
                   </p>
@@ -118,7 +120,8 @@ export default function Home() {
       </section>
 
       {/* News & insights */}
-      <section className="mx-auto max-w-6xl px-4 py-16">
+      <section className="mx-auto max-w-6xl px-4 py-16 md:py-20">
+        <span className="section-label">Journal</span>
         <h2 className="display text-3xl md:text-4xl">News and insights</h2>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
           <p><Link href="/news" className="explore-link">Explore</Link></p>
