@@ -3,7 +3,7 @@ import CaseStudyStrip from "../components/CaseStudyStrip";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
 import {
-  CASE_STUDIES,
+  caseStudyBySlug,
   CONSULTANCY_BODY,
   CONSULTANCY_CLIENTS,
   CONSULTANCY_CONTACTS,
@@ -67,7 +67,7 @@ export default function Consultancy() {
       </section>
 
       <KeyContacts people={CONSULTANCY_CONTACTS} />
-      <CaseStudyStrip caseStudy={CASE_STUDIES[3]} />
+      <CaseStudyStrip caseStudy={caseStudyBySlug("heddon-street")} />
     </div>
   );
 }
