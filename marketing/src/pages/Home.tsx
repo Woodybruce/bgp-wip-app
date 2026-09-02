@@ -130,7 +130,7 @@ export default function Home() {
             leasing, investment, brand representation and placemaking.
           </p>
         </div>
-        <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-8">
+        <div className="mt-10 card-strip sm:grid-cols-3 sm:gap-8">
           {["behind-the-brand-yolk", "ardent-royal-exchange", "enduring-appeal-portman-estate"].map((slug) => ARTICLES.find((x) => x.slug === slug)!).map((a) => (
             <Link key={a.slug} href={`/news/${a.slug}`} className="group block border-t border-bgp-wine/40 pt-3">
               <p className="label-caps text-bgp-wine mb-3">{a.category}</p>

@@ -201,7 +201,7 @@ export default function ListingDetail() {
       {similar.length > 0 && (
         <section className="mx-auto max-w-6xl px-4 py-10">
           <h2 className="display text-2xl md:text-3xl mb-8">Similar properties</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+          <div className="card-strip sm:grid-cols-3 sm:gap-6">
             {similar.map((l) => (
               <ListingCard key={l.id} listing={l} />
             ))}
