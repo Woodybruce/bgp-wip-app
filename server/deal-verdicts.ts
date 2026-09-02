@@ -5,7 +5,7 @@
 //
 // A deal is DUE A VERDICT when its target date fell in a PAST month (deals
 // due in the current month are left alone until it ends — Woody, 2026-09-02),
-// it hasn't been invoiced, and it isn't Withdrawn/Invoiced.
+// it hasn't been invoiced, and it isn't Withdrawn/Invoiced/Completed.
 // The assigned agent must answer, once per calendar month, per deal:
 //   on_track    — completes as dated
 //   slipping    — must supply a new target date (re-dates the deal)
@@ -77,7 +77,9 @@ export async function pendingVerdictDeals(userId: string, userName: string): Pro
   const out: PendingVerdictDeal[] = [];
   for (const r of rows) {
     const code = legacyToCode(r.status);
-    if (code === "WIT" || code === "INV") continue;
+    // COM: a Completed deal is done — invoicing it is finance's motion, not
+    // the agent's verdict (Woody, 2026-09-02, re Tom's Riverside Nando's).
+    if (code === "WIT" || code === "INV" || code === "COM") continue;
     const target = new Date(r.target_date);
     const daysOverdue = Math.max(0, Math.floor((Date.now() - target.getTime()) / 86400000));
     out.push({
