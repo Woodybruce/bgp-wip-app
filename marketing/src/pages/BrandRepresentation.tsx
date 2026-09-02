@@ -21,10 +21,10 @@ export default function BrandRepresentation() {
         <h2 className="display text-2xl md:text-3xl mb-8">Case studies</h2>
         <div className="space-y-10">
           {BRAND_REP_CASE_STUDIES.map((cs, i) => (
-            <div key={cs.name} className={`p-6 md:p-8 ${i % 2 === 0 ? "bg-bgp-mist" : ""}`}>
-              <p className="label-caps mb-4">{cs.name}</p>
+            <div key={cs.title} className={`p-6 md:p-8 ${i % 2 === 0 ? "bg-bgp-mist" : ""}`}>
+              <p className="label-caps mb-4">{cs.title}</p>
               <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 items-center ${i % 2 === 1 ? "md:[direction:rtl]" : ""}`}>
-                <Placeholder className="aspect-[4/3] w-full [direction:ltr]" src={cs.image} alt={cs.name} />
+                <Placeholder className="aspect-[4/3] w-full [direction:ltr]" src={cs.image} alt={cs.title} />
                 <div className="[direction:ltr]">
                   <p className="text-sm text-bgp-ink/70 leading-relaxed max-w-sm">{cs.blurb}</p>
                   <p className="mt-4">

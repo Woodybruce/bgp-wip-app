@@ -4,7 +4,7 @@ import CaseStudyStrip from "../components/CaseStudyStrip";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
 import {
-  CASE_STUDIES,
+  caseStudyBySlug,
   LEASE_ADVISORY_CLIENTS,
   LEASE_ADVISORY_CONTACTS,
   LEASE_ADVISORY_SERVICES,
@@ -63,7 +63,7 @@ export default function LeaseAdvisory() {
       </section>
 
       <KeyContacts people={LEASE_ADVISORY_CONTACTS} />
-      <CaseStudyStrip caseStudy={CASE_STUDIES[0]} />
+      <CaseStudyStrip caseStudy={caseStudyBySlug("20-hanover-square")} />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import Placeholder from "../components/Placeholder";
-import { CASE_STUDIES, INVESTMENT_CONTACTS, INVESTMENT_DEALS, SERVICES } from "../lib/content";
+import { caseStudyBySlug, INVESTMENT_CONTACTS, INVESTMENT_DEALS, SERVICES } from "../lib/content";
 
 export default function Investment() {
   const service = SERVICES.find((s) => s.slug === "investment")!;
@@ -53,7 +53,7 @@ export default function Investment() {
       </section>
 
       <KeyContacts people={INVESTMENT_CONTACTS} />
-      <CaseStudyStrip caseStudy={CASE_STUDIES[1]} />
+      <CaseStudyStrip caseStudy={caseStudyBySlug("19-golden-square")} />
     </div>
   );
 }

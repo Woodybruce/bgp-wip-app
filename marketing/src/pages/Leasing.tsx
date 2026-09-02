@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
-import { CASE_STUDIES, LEASING_CONTACTS } from "../lib/content";
+import { caseStudyBySlug, LEASING_CONTACTS } from "../lib/content";
 import { Listing, fetchListings } from "../lib/api";
 
 const SIZE_BANDS = [
@@ -141,7 +141,7 @@ export default function Leasing() {
       </section>
 
       <div className="mt-16">
-        <CaseStudyStrip caseStudy={CASE_STUDIES[0]} />
+        <CaseStudyStrip caseStudy={caseStudyBySlug("lucent-piccadilly")} />
       </div>
       <KeyContacts people={LEASING_CONTACTS} />
     </div>
