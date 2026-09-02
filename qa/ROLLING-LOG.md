@@ -84,6 +84,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r477 · 2026-09-02 ~22:30 UTC · LIGHT (r476 had the journey) — round in progress
+- Bring-up: canonical recipe held 42nd consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+- Two-bot round 477 as 3 foreground chunks (r447 pattern): victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (3759×200, expected 4xx/503 families, single 422 = r462
+  cover-raster by design). Triage: 0 app bugs.
+- No journey (LIGHT). No deferred bugs to pick up (r476 deferred none).
+- Final entry to follow.
+
 ### r476 · 2026-09-03 · FULL — rotation #2 Landsec client desktop 1440px — GREEN
 - Bring-up: canonical recipe held 41st consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot).
