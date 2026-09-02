@@ -84,7 +84,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r457 · 2026-09-02 ~13:30 UTC · LIGHT (r456 had the journey) — GREEN
+### r458 · 2026-09-02 ~15:30 UTC · FULL — rotation #1 BGP staff desktop 1440px · ROUND IN PROGRESS
+- Provisional heartbeat entry. Bring-up: canonical recipe held 23rd
+  consecutive time (qa:pg once → run-smoke restore clean → seed-personas
+  applied per r451 rule BEFORE two-bot, stale cross file removed).
+  Regression: smoke GREEN 42/0. Two-bot round 458 as 3 foreground chunks
+  (r447 pattern, chunk-runner boots server + runs chunk in one foreground
+  node process, stdio to FILE, warmed per r455): victoria exit 0 (2×400
+  standing: rocketreach + invalid-tracker probe) / mark exit 0 (10 issues
+  = 2×503 keyless + 8×403 probe-by-design signature) / woody,nick,sam
+  exit 0 (0 issues). phone-overflow-sweep 11/11 routes fit at 390px.
+  Server logs: 0 raw 500/502/504 across all chunks. Triage: 0 app bugs
+  from the harness.
+- Journey pending: staff desktop 1440px exploratory (pitch-prep angle —
+  brands hub, brand profile, contacts, news, Image Studio — varying from
+  r450 tracker/WIP and r229 dashboard/calendar coverage).
 - Bring-up: canonical recipe held 22nd consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
   two-bot). Regression: smoke GREEN 42/0. Two-bot round 457 as 3
