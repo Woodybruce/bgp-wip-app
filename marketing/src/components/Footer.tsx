@@ -62,14 +62,14 @@ export default function Footer() {
             <p>© Bruce Gillingham Pollard 2013–{String(new Date().getFullYear()).slice(2)}. All registered trademarks.</p>
           </div>
           <div className="flex gap-6">
-            <a href="#" className="hover:text-white transition-colors">Privacy policy</a>
-            <a href="#" className="hover:text-white transition-colors">Terms and conditions</a>
+            <a href="https://www.brucegillinghampollard.com/privacy/" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Privacy policy</a>
+            <a href="https://www.brucegillinghampollard.com/terms-and-conditions/" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Terms and conditions</a>
           </div>
           <div className="flex gap-4 text-bgp-cream/80">
-            <a href="#" aria-label="LinkedIn" className="hover:text-white transition-colors">
+            <a href="https://www.linkedin.com/company/bruce-gillingham-pollard" target="_blank" rel="noreferrer" aria-label="LinkedIn" className="hover:text-white transition-colors">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.03-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.94v5.67H9.35V9h3.41v1.56h.05c.47-.9 1.63-1.85 3.36-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zM7.12 20.45H3.56V9h3.56v11.45z"/></svg>
             </a>
-            <a href="#" aria-label="Instagram" className="hover:text-white transition-colors">
+            <a href="https://www.instagram.com/brucegillinghampollard/" target="_blank" rel="noreferrer" aria-label="Instagram" className="hover:text-white transition-colors">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r="0.8" fill="currentColor" stroke="none"/></svg>
             </a>
           </div>
