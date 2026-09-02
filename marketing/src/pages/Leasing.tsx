@@ -26,13 +26,14 @@ function FilterSelect({
   onChange: (v: string) => void;
 }) {
   return (
-    <label className="label-caps flex items-center gap-1.5 text-bgp-wine">
-      <span>{label}</span>
-      <span className="text-bgp-red" aria-hidden>↘</span>
+    <label className="label-caps flex items-center justify-between sm:justify-start gap-1.5 text-bgp-wine w-full sm:w-auto py-2.5 sm:py-0 border-b border-bgp-wine/10 sm:border-0">
+      <span className="whitespace-nowrap">
+        {label} <span className="text-bgp-red" aria-hidden>{"↘︎"}</span>
+      </span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="bg-transparent label-caps text-bgp-wine outline-none cursor-pointer hover:text-bgp-red"
+        className="bg-transparent label-caps text-bgp-wine outline-none cursor-pointer hover:text-bgp-red text-right sm:text-left shrink-0 max-w-[60%] sm:max-w-none"
       >
         <option value="">All</option>
         {options.map((o) => (
@@ -103,8 +104,8 @@ export default function Leasing() {
 
       {/* Filter row */}
       <section className="mx-auto max-w-6xl px-4">
-        <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-3 border-y border-bgp-wine/30 py-3">
-          <span className="label-caps text-bgp-ink/60">Filter by</span>
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-center gap-x-10 sm:gap-y-3 border-y border-bgp-wine/30 py-2 sm:py-3">
+          <span className="label-caps text-bgp-ink/60 py-2.5 sm:py-0 border-b border-bgp-wine/10 sm:border-0">Filter by</span>
           <FilterSelect label="Location" value={location} options={locations} onChange={setLocation} />
           <FilterSelect label="Type" value={type} options={types} onChange={setType} />
           <FilterSelect label="Size" value={size} options={SIZE_BANDS.map((b) => b.label)} onChange={setSize} />
