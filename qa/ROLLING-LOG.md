@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r511 · 2026-09-03 ~22:20 UTC · LIGHT (r510 had the journey) — round in progress
+### r511 · 2026-09-03 ~22:40 UTC · LIGHT (r510 had the journey) — GREEN
 - Bring-up: canonical recipe held 76th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
@@ -97,7 +97,24 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   on [express] request lines; single 422 = r462 cover-raster). Triage:
   0 app bugs from the harness.
 - No journey (LIGHT). No deferred bugs to pick up (r490–r510 deferred
-  none). Remainder of round: targeted spot-checks in progress.
+  none). Spot-check instead: Evidence Plans CANVAS rendered WITH data for
+  the first time (r506 only saw the empty state) — QA-R511 plan + 2 units
+  + 1 entry created via API, /evidence-plans → plan detail at 1440px:
+  header count line "2 units · 1 evidence entry" correct, DRAW UNIT /
+  Import tenancy / Add TAFs / Upload plan all present, "No plan image
+  yet" canvas empty-state correct (no background), facts panel guidance
+  renders, 0 h-overflow, only URL-less 401 echo noise. NOT a bug:
+  API-created units with null polygon don't appear on the canvas — units
+  are drawn polygons by design, the null-polygon state is unreachable
+  from the UI. Plan deleted in-round (delete 200, 0 QA-R511 rows left).
+- Spot-check harness notes: POST /api/evidence-plans/:id/units needs
+  {unitRef} (unitNumber → 400); entries take ENTRY_FIELDS camelCase
+  (tenant/headlineRent/…); browser token key is bgp_auth_token.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r511 was LIGHT → r512 FULL, rotation #4 BGP staff mobile 390px.
 
 ### r510 · 2026-09-03 ~21:10 UTC · FULL (rotation #3 Landsec client mobile 390px) — GREEN
 - Bring-up: canonical recipe held 75th consecutive time (qa:pg once →
