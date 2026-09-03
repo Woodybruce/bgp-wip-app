@@ -3784,6 +3784,44 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     return code ? PUBLIC_CODE_MAP[code] || null : null;
   };
 
+  // The tracker's Location field is rarely filled in, but nearly every
+  // property carries a geocoded address. Flatten it into a display address
+  // line, a postcode, an area for the website filter ("London W12") and map
+  // coordinates — the tracker's own Location / postcode win when present.
+  const UK_POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
+  const publicAddress = (r: {
+    propertyName: string | null;
+    propertyAddress: unknown;
+    postcode: string | null;
+    location: string | null;
+    latitude: string | null;
+    longitude: string | null;
+  }) => {
+    const addr: any = r.propertyAddress;
+    const formatted: string = typeof addr === "string" ? addr : (addr?.formatted || "");
+    let segments = formatted
+      .split(",")
+      .map((s: string) => s.trim())
+      .filter((s: string) => s && !/^(UK|United Kingdom|England|Scotland|Wales)$/i.test(s));
+    const pn = (r.propertyName || "").trim().toLowerCase();
+    if (segments.length > 2 && pn && segments[0].toLowerCase().includes(pn)) segments = segments.slice(1);
+    const joined = segments.join(", ");
+    const pc = joined.match(UK_POSTCODE_RE);
+    const outward = pc ? pc[1].toUpperCase() : null;
+    let location = r.location;
+    if (!location && segments.length) {
+      const town = segments[segments.length - 1].replace(UK_POSTCODE_RE, "").replace(/,\s*$/, "").trim();
+      location = town ? (/^london$/i.test(town) && outward ? `London ${outward}` : town) : outward;
+    }
+    return {
+      addressLine: joined || null,
+      postcode: r.postcode || (pc ? `${pc[1].toUpperCase()} ${pc[2].toUpperCase()}` : null),
+      location,
+      latitude: r.latitude ?? (addr?.lat != null ? String(addr.lat) : null),
+      longitude: r.longitude ?? (addr?.lng != null ? String(addr.lng) : null),
+    };
+  };
+
   app.use("/api/public", (req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -3843,7 +3881,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       for (const f of files) (byUnit[f.unitId] ||= []).push(f);
       res.json(
         rows
-          .map(r => ({ ...r, marketingStatus: publicStatus(r.marketingStatus) }))
+          .map(r => ({ ...r, ...publicAddress(r), marketingStatus: publicStatus(r.marketingStatus) }))
           .filter(r => r.marketingStatus !== null)
           .map(r => ({ ...r, files: byUnit[r.id] || [] })),
       );
@@ -3877,7 +3915,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .where(eq(unitMarketingFiles.unitId, row.id));
       const pubStatus = publicStatus(row.marketingStatus);
       if (!pubStatus) return res.status(404).json({ message: "Listing not found" });
-      res.json({ ...row, marketingStatus: pubStatus, files });
+      res.json({ ...row, ...publicAddress(row), marketingStatus: pubStatus, files });
     } catch (err: any) {
       console.error("[routes] Public leasing listing error:", err?.message);
       res.status(500).json({ message: "Failed to fetch listing" });
