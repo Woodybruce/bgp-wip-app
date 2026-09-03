@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+142. 2026-09-03 · BGP staff / desktop 1440px (QA r482) · a non-admin staff
+    member following a link to /expenses (e.g. from my-expenses' "ask Woody
+    or Layla… on the Expenses admin page" hint) · since r482 the admin-only
+    /expenses and /expenses/revolut pages bounce non-admins back to the
+    Dashboard (previously they rendered the full admin chrome over silently
+    403'd data — "No spend yet this month" with dead admin buttons); the
+    bounce is the house AdminRoute pattern but happens with no explanation ·
+    Suggest: a one-line toast on the AdminRoute bounce ("That page needs
+    admin access") so the redirect doesn't read as a broken link.
+
 141. 2026-09-03 · BGP staff / mobile 390px (QA r480) · skimming the WIP
     report on the phone before a team call · the "Net fees by team" chart
     shows £0 for both teams (National, National Leasing) while the header

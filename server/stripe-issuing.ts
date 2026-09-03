@@ -583,7 +583,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       // this skip Express serves a 403 here ("you don't own expense
       // 'pending-approval'") — which silently broke the Approvals badge
       // for every non-admin approver. Pass to the next matching handler.
-      if (id === "me" || id === "pending-approval" || id === "ai-memory") return next("route" as any);
+      if (id === "me" || id === "pending-approval" || id === "ai-memory" || id === "stage1-cover") return next("route" as any);
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
       const [row] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
       if (!row) return res.status(404).json({ error: "Not found" });

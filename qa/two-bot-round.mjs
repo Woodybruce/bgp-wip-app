@@ -2121,6 +2121,25 @@ async function victoriaRound(page, cross) {
     if (miss.status !== 404) throw new Error(`brochure DELETE with missing uuid expected 404, got ${miss.status}`);
   });
 
+  await step(page, p, 'staff-expenses-cover-and-admin-gate', async () => {
+    // r482: GET /api/expenses/stage1-cover was shadowed by /api/expenses/:id
+    // (403 "not your expense" for every non-admin, so the approvals page's
+    // "Layla is covering" state never loaded). Must be 200 for any staff;
+    // the POST stays gated to Wendy/Layla/admins, and the admin expense
+    // list stays 403 for non-admin staff (the /expenses page itself is
+    // AdminRoute-gated client-side as of r482). Node-side fetch so the
+    // deliberate 403 rows don't land in the page issue log.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const cov = await fetch(`${BASE}/api/expenses/stage1-cover`, auth);
+    if (cov.status !== 200) throw new Error(`staff GET stage1-cover expected 200, got ${cov.status} (route shadowed by /api/expenses/:id again?)`);
+    const body = await cov.json();
+    if (typeof body?.active !== 'boolean') throw new Error('stage1-cover did not return {active: boolean}');
+    const post = await fetch(`${BASE}/api/expenses/stage1-cover`, { method: 'POST', headers: { ...auth.headers, 'content-type': 'application/json' }, body: JSON.stringify({ active: true }) });
+    if (post.status !== 403) throw new Error(`victoria POST stage1-cover expected 403, got ${post.status}`);
+    const list = await fetch(`${BASE}/api/expenses`, auth);
+    if (list.status !== 403) throw new Error(`victoria GET /api/expenses (admin list) expected 403, got ${list.status}`);
+  });
+
   await step(page, p, 'staff-evidence-plans-list', async () => {
     // r471: Evidence Plans (arrived via the d0b79fe JOGQK merge) — staff
     // list must stay reachable. Node-side fetch, no page-log noise.

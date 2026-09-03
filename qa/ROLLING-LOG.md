@@ -84,18 +84,68 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r482 · 2026-09-03 ~01:20 UTC · FULL — rotation #1 BGP staff desktop 1440px — ROUND IN PROGRESS
-- Heartbeat. Bring-up: canonical recipe held 47th consecutive time (qa:pg
-  once → run-smoke restore clean → seed-personas per r451 rule BEFORE
-  two-bot, fresh session no stale cross file). Regression: smoke GREEN 42/0.
-- Two-bot round 482 as 3 foreground chunks (r447 pattern, r458
-  chunk-runner): victoria exit 0 (2×400 standing) / mark exit 0 (9 issues
-  = 1×503 keyless + 8×403 probe-by-design — standing signature exact) /
-  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
-  Server logs: 0 raw 500/502/504 (3866×200, expected 4xx/503 families,
-  single 422 = r462 cover-raster by design). Triage: 0 app bugs from the
-  harness.
-- Journey (staff desktop 1440px) still to run — final entry replaces this.
+### r482 · 2026-09-03 ~02:00 UTC · FULL — rotation #1 BGP staff desktop 1440px · 2 bugs fixed
+- Bring-up: canonical recipe held 47th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0 ×2
+  (before, and FRESH_BUILD=1 after the fixes). Two-bot round 482 as 3
+  foreground chunks (r447 pattern, r458 chunk-runner): victoria exit 0
+  (2×400 standing) ×2 / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (3866×200, expected 4xx/503 families, single 422 = r462
+  cover-raster by design). Triage: 0 app bugs from the harness.
+- Journey (Victoria @1440px, UI login via Client/guest reveal —
+  "compliance & pipeline sweep before the partners' meeting: dashboard →
+  deals hub (WIP default tab, table + BOARD toggle, New Deal dialog) →
+  deal detail (U124 Gail's letting, parties/fees rails) → KYC Clouseau
+  compliance board (counterparty kanban) → Covenant Watch → Property
+  Pathway → Evidence Plans desktop → /expenses + /my-expenses +
+  /expenses/approvals → Lease Events"): all render clean, 0 pageerrors,
+  0 h-overflow at 1440px; only noise-family 4xx/5xx besides the two bugs
+  below. WIP by-team £0 rows = UX-141, already logged.
+- BUG FIXED 1 (journey → /expenses as non-admin Victoria): the admin-only
+  /expenses and /expenses/revolut ROUTES were unguarded client-side —
+  sidebar hides them from non-admins, but a deep link rendered the full
+  admin chrome ("Send pending to Wendy", "Re-post to Xero", "New
+  Cardholder") over 403'd data, showing a LYING "No spend yet this month"
+  empty state. Both routes now wrapped in the existing AdminRoute
+  (App.tsx; matches server requireAdmin — auth/me already folds
+  ADMIN_EMAILS into isAdmin), and expenses-nav-tabs.tsx hides the "All
+  expenses" tab for non-admins so approvers don't get a bouncing tab.
+  /expenses/approvals stays open to all staff (approver surface,
+  requireAuth APIs). Verified in-browser: victoria bounced to "/" with no
+  admin chrome, approvals renders "Inbox zero" with only its own tab;
+  woody unaffected (admin page + both tabs render, summary 200).
+- BUG FIXED 2 (found on /expenses/approvals): GET /api/expenses/
+  stage1-cover 403'd for EVERYONE — shadowed by GET /api/expenses/:id
+  declared above it (the exact class the r-era comment there documents:
+  userCanAccessExpense("stage1-cover") → 403; admins got 403 too since
+  the missing-row check precedes the admin override). So the approvals
+  page's cover state never loaded: Wendy/Layla's "Layla is covering"
+  badge and button label were always stuck on "Ask for help" even with
+  cover active. Fixed by adding "stage1-cover" to the :id skip list
+  (stripe-issuing.ts:587); it was the ONLY literal /api/expenses/<x> GET
+  after :id missing from it. Verified: GET 200 {active:false} for layla/
+  woody/victoria, POST still 403 for victoria (Wendy/Layla/admin gate
+  intact), :id route behaviour unchanged. tsc clean, FRESH_BUILD smoke
+  re-green.
+- Harness growth: staff-expenses-cover-and-admin-gate (stage1-cover GET
+  200 + non-admin POST 403 + admin list 403) — PASSED inside a full
+  victoria chunk re-run, signature stays 2×400.
+- NOT bugs: GET /api/expenses/:id returns 403 (not 404) for a missing row
+  even as admin — pre-existing userCanAccessExpense order (missing-row
+  check first), no user-facing surface hits it; deals hub landing on the
+  WIP Report tab from the sidebar "Deals" entry is the intended hub
+  default.
+- Bugs fixed: 2. Deferred: none new. Carried (data, staff decision):
+  Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+  Suggestions: UX-NOTES 142 (AdminRoute bounce is silent — toast would
+  stop it reading as a broken link). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r482 had the journey → r483 LIGHT (watch
+  staff-expenses-cover-and-admin-gate's first standard-order run); then
+  rotation #2 Landsec client desktop 1440px.
 
 ### r481 · 2026-09-03 ~00:45 UTC · LIGHT (r480 had the journey) — GREEN
 - Bring-up: canonical recipe held 46th consecutive time (qa:pg once →

@@ -27,11 +27,15 @@ export function ExpensesNavTabs() {
     queryKey: ["/api/expenses/pending-approval"],
     refetchInterval: 60_000,
   });
+  // "All expenses" is the admin page (/expenses is AdminRoute-gated) —
+  // non-admin approvers on /expenses/approvals only get their own tab.
+  const { data: me } = useQuery<{ isAdmin?: boolean } | null>({ queryKey: ["/api/auth/me"] });
+  const tabs = me?.isAdmin ? TABS : TABS.filter((t) => t.href !== "/expenses");
 
   return (
     <div className="mb-4">
       <nav className="flex flex-wrap gap-1.5">
-        {TABS.map((t) => {
+        {tabs.map((t) => {
           const active = location === t.href || (t.href === "/expenses" && location === "/expenses/");
           const badge = t.href === "/expenses/approvals" && pending.length > 0 ? pending.length : null;
           return (
