@@ -71,7 +71,7 @@ export default function ListingDetail() {
   ].filter(Boolean).join(" — ");
 
   const keyInfo: Array<[string, string | null]> = [
-    ["Location", listing.location || listing.postcode],
+    ["Address", listing.addressLine || listing.location || listing.postcode],
     ["Size", formatSqft(listing.sqft)],
     ["Rent", formatRent(listing.askingRent) || "On application"],
     ["Rates", listing.ratesPa ? `£${Math.round(listing.ratesPa).toLocaleString("en-GB")} pa` : "To be re-assessed"],
@@ -95,7 +95,17 @@ export default function ListingDetail() {
           <span className="text-bgp-wine">{listing.location || "Availability"}</span>
         </p>
         <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2 border-b border-bgp-wine/25 pb-6">
-          <h1 className="display text-3xl md:text-5xl leading-tight">{displayName}</h1>
+          <div>
+            <h1 className="display text-3xl md:text-5xl leading-tight">{displayName}</h1>
+            {(listing.propertyName !== listing.unitName || listing.addressLine) && (
+              <p className="mt-2 text-[15px] md:text-base font-light text-bgp-ink/80">
+                {[
+                  listing.propertyName && listing.propertyName !== listing.unitName ? listing.propertyName.replace(/^\[Sample\]\s*/, "") : null,
+                  listing.addressLine,
+                ].filter(Boolean).join(" · ")}
+              </p>
+            )}
+          </div>
           {headline && <p className="font-display italic text-bgp-ink/70 text-lg md:text-xl">{headline}</p>}
         </div>
       </section>

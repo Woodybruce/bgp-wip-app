@@ -37,7 +37,12 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
         )}
       </div>
       <p className="mt-1 text-sm font-light text-bgp-ink/70">
-        {(listing.location || listing.propertyName) && <span>{listing.location || listing.propertyName}<br /></span>}
+        {listing.propertyName && listing.propertyName !== listing.unitName && (
+          <span className="text-bgp-ink/85">{listing.propertyName}<br /></span>
+        )}
+        {(listing.addressLine || listing.location || listing.postcode) && (
+          <span>{listing.addressLine || listing.location || listing.postcode}<br /></span>
+        )}
         <span className="tabular">{details || "Details on application"}</span>
       </p>
       <p className="mt-3">
