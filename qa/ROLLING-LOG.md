@@ -84,18 +84,26 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r495 · 2026-09-03 ~21:00 UTC · LIGHT (r494 had the journey) — round in progress
-- Provisional heartbeat. Bring-up: canonical recipe held 60th consecutive
-  time (qa:pg once → run-smoke restore clean → seed-personas via node/pg
-  runner, honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
-- Two-bot 495 as 3 foreground chunks (r447/r458 pattern), STANDARD ORDER,
-  fresh cross-495.json: victoria exit 0 (2×400 standing) / mark exit 0
-  (9 issues = 1×503 keyless + 8×403 probe-by-design — standing signature
-  exact) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11
-  at 390px. Server logs: 0 raw 500/502/504 (3796×200, expected
-  4xx/503 families, single 422 = r462 cover-raster by design; 5×400
-  standing). Triage list: 0 app bugs; no deferred bugs to pick up
-  (r494 deferred none).
+### r495 · 2026-09-03 ~21:00 UTC · LIGHT (r494 had the journey) — GREEN
+- Bring-up: canonical recipe held 60th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
+  hammerson 2 verified). Regression: smoke GREEN 42/0.
+- Two-bot 495 as 3 foreground chunks (r447/r458 pattern, tsx via
+  node tsx/cli.mjs), STANDARD ORDER, fresh cross-495.json: victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (3796×200, expected 4xx/503 families, single 422 = r462
+  cover-raster by design; 5×400 standing). Error-line sweep: all
+  keyless-env families (AI auth, Azure/M365 creds, LR cert, ENOTFOUND
+  RSS hosts) — known noise. Triage: 0 app bugs.
+- No journey (LIGHT). No deferred bugs to pick up (r494 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r495 was LIGHT → r496 FULL, rotation #4 BGP staff mobile 390px.
 
 ### r494 · 2026-09-03 ~10:30 UTC · FULL — rotation #3 Landsec client mobile 390px — GREEN
 - Bring-up: canonical recipe held 59th consecutive time (qa:pg once →
