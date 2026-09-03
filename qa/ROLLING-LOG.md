@@ -84,21 +84,43 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r499 · 2026-09-03 ~12:40 UTC · LIGHT (r498 had the journey) — ROUND IN PROGRESS
+### r499 · 2026-09-03 ~13:15 UTC · LIGHT (r498 had the journey) — GREEN
 - Bring-up: canonical recipe held 64th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
   hammerson 2 verified). Regression: smoke GREEN 42/0.
 - Two-bot 499 as 3 foreground chunks (r447/r458 pattern): victoria exit 0
   (2×400 standing) / woody,nick,sam exit 0 (0 issues) / mark exit 0 with
-  standing 1×503 + 8×403 signature PLUS 10 flow-failures — the shared
-  Playwright browser dies at client-mobile-brand-intel-cards ("Target
-  page, context or browser has been closed" cascade), REPRODUCED ×2 at
-  the same scenario boundary. phone-overflow-sweep 11/11 at 390px.
-  Server logs: 0 raw 500/502/504 across all chunks.
-- Triage in progress: browser-death cascade under investigation (fresh-
-  browser repro of the same page survives but the intel pill count is 0 —
-  checking whether the pill regressed or the repro auth is off).
-- Provisional — final entry to follow this round.
+  the standing 1×503 + 8×403 signature — final clean run 156 [ok], all
+  scenarios pass. phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 across all chunks. Triage: 0 app bugs.
+- HARNESS TRAP diagnosed (not an app bug — cost this round 3 mark
+  re-runs): the first two mark runs showed a 10-scenario flow-failure
+  cascade ("Target page, context or browser has been closed" from
+  client-mobile-brand-intel-cards onward). DEBUG=pw:browser showed the
+  browser closed GRACEFULLY exactly 480.0s after launch: the scratchpad
+  chunk-runner's spawnSync timeout (480s) SIGTERMed two-bot mid-chunk;
+  playwright's signal handler closes the shared browser but two-bot keeps
+  running (API-only scenarios still pass) and EXITS 0 — so a chunk-runner
+  timeout masquerades as a mid-round browser crash with a green exit
+  code. This container's mark chunk takes ~500s wall. RULE: set the
+  chunk-runner child timeout ≥ 565s (Bash exec cap 600s covers it), and
+  treat any "browser has been closed" cascade that starts at a fixed
+  wall-clock offset as a runner timeout before triaging as app/chromium.
+- Also re-confirmed (documented in-scenario, resurfaced on the late
+  re-runs): client-calendar-sees-own-events false-alarms ("scoping
+  regressed") when the mark chunk runs >30min after the victoria chunk —
+  the QA-CAL-MINE event is created at now+30min and /api/team-events only
+  serves future events. Keep victoria→mark chunk gap under ~25min.
+- No journey (LIGHT). No deferred bugs to pick up (r490–r498 deferred
+  none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none (both anomalies root-caused as harness setup, rules
+  above). Real-device keyboard-up composer check (r405) still open for
+  Woody.
+- Next: r499 was LIGHT → r500 FULL, rotation #2 Landsec client desktop
+  1440px.
 
 ### r498 · 2026-09-03 ~12:15 UTC · FULL — rotation #1 BGP staff desktop 1440px — GREEN
 - Bring-up: canonical recipe held 63rd consecutive time (qa:pg once →
