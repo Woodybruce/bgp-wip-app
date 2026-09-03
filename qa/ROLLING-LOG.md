@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r493 · 2026-09-03 ~18:30 UTC · LIGHT — ROUND IN PROGRESS (provisional)
+### r493 · 2026-09-03 ~18:30 UTC · LIGHT (r492 had the journey) — GREEN
 - Bring-up: canonical recipe held 58th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
   hammerson verified). Regression: smoke GREEN 42/0.
@@ -94,9 +94,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   probe-by-design — standing signature exact) / woody,nick,sam exit 0
   (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
   500/502/504 (3722×200, expected 4xx/503 families, single 422 = r462
-  cover-raster by design; 5×400 all probe-by-design). Triage: 0 app bugs.
-- Remaining this round: deferred-bug check (r492 deferred none new),
-  final entry.
+  cover-raster by design; 5×400 all probe-by-design; Error lines all
+  keyless-env AI auth). Triage: 0 app bugs.
+- No journey (LIGHT). No deferred bugs to pick up (r492 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r493 was LIGHT → r494 FULL, rotation #3 Landsec client mobile
+  390px.
 
 ### r492 · 2026-09-03 ~16:30 UTC · FULL — rotation #2 Landsec client desktop 1440px — GREEN
 - Bring-up: canonical recipe held 57th consecutive time (qa:pg once →
