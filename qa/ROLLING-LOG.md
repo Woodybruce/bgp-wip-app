@@ -84,6 +84,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r504 · 2026-09-03 ~19:20 UTC · FULL (rotation #4 BGP staff mobile 390px) — ROUND IN PROGRESS
+- Bring-up: canonical recipe held 69th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
+  hammerson 2 verified). Regression: smoke GREEN 42/0.
+- Two-bot 504 as 3 foreground chunks (with-server wrapper, 570s child
+  timeout), STANDARD ORDER, fresh cross-504.json: victoria exit 0 FIRST
+  RUN (2×400 standing) / mark exit 0, 158 [ok] (9 issues = 1×503 keyless
+  + 8×403 probe-by-design — standing signature exact) / woody,nick,sam
+  exit 0 (18 [ok], 0 issues). phone-overflow-sweep 11/11 at 390px.
+  Server logs: 0 raw 500/502/504 across all chunks. Triage: 0 app bugs.
+- Journey pending: Victoria @390px — surfaces recent staff-mobile rounds
+  skipped (requirements, brand profile, deals table/compliance board,
+  calendar/diary, comps on the phone shell).
+
 ### r503 · 2026-09-03 ~17:50 UTC · LIGHT (r502 had the journey) — GREEN
 - Bring-up: canonical recipe held 68th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
