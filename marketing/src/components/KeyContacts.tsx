@@ -7,7 +7,7 @@ export default function KeyContacts({ people, blurb }: { people: Person[]; blurb
       <h2 className="display text-3xl md:text-4xl text-bgp-red mb-8">Key contacts</h2>
       <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-5">
         {blurb && (
-          <p className="col-span-2 sm:col-span-1 text-sm font-light text-bgp-ink/70 leading-relaxed">{blurb}</p>
+          <p className="col-span-2 sm:col-span-1 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{blurb}</p>
         )}
         {people.map((p) => (
           <ContactCard key={p.name} person={p} />

@@ -19,22 +19,16 @@ export default function BrandRepresentation() {
 
       <section className="mx-auto max-w-6xl px-4 py-6">
         <h2 className="display text-2xl md:text-3xl mb-8">Case studies</h2>
-        <div className="space-y-10">
-          {BRAND_REP_CASE_STUDIES.map((cs, i) => (
-            <div key={cs.name} className={`p-6 md:p-8 ${i % 2 === 0 ? "bg-bgp-mist" : ""}`}>
-              <p className="label-caps mb-4">{cs.name}</p>
-              <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 items-center ${i % 2 === 1 ? "md:[direction:rtl]" : ""}`}>
-                <Placeholder className="aspect-[4/3] w-full [direction:ltr]" src={cs.image} alt={cs.name} />
-                <div className="[direction:ltr]">
-                  <p className="text-sm text-bgp-ink/70 leading-relaxed max-w-sm">{cs.blurb}</p>
-                  <p className="mt-4">
-                    <Link href={`/case-studies/${cs.slug}`} className="explore-link inline-block">
-                      Read more
-                    </Link>
-                  </p>
-                </div>
+        <div className="card-strip sm:grid-cols-2">
+          {BRAND_REP_CASE_STUDIES.map((cs) => (
+            <Link key={cs.slug} href={`/case-studies/${cs.slug}`} className="group block">
+              <div className="img-frame">
+                <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} />
               </div>
-            </div>
+              <p className="label-caps mt-4 group-hover:text-bgp-burgundy transition-colors">{cs.title}</p>
+              <p className="mt-2 text-[15px] font-light text-bgp-ink/85 leading-relaxed">{cs.blurb}</p>
+              <p className="mt-3"><span className="explore-link">Read more</span></p>
+            </Link>
           ))}
         </div>
       </section>

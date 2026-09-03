@@ -1,7 +1,6 @@
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import ClientRow from "../components/ClientRow";
-import { ARTICLES, HERO_STATEMENT, HOME_INTRO, LEASE_ADVISORY_CLIENTS, SERVICES, TESTIMONIAL } from "../lib/content";
+import { ARTICLES, HERO_STATEMENT, HOME_INTRO, SERVICES, TESTIMONIAL } from "../lib/content";
 
 // Per-section stats per the v2c layout. All figures real: transactions/brands
 // from brucegillinghampollard.com, £62m = LondonMetric Waitrose portfolio,
@@ -49,18 +48,10 @@ export default function Home() {
       <section className="mx-auto max-w-3xl px-4 pt-16 pb-4 text-center">
         <h2 className="display text-3xl md:text-4xl italic font-normal">{HOME_INTRO.lead}</h2>
         {HOME_INTRO.body.map((para) => (
-          <p key={para.slice(0, 24)} className="mt-5 text-sm font-light text-bgp-ink/75 leading-relaxed">
+          <p key={para.slice(0, 24)} className="mt-5 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
             {para}
           </p>
         ))}
-      </section>
-
-      {/* Trusted-by band — quiet blush ground, the estates we act for */}
-      <section className="mt-14 bg-bgp-pink/40 border-y border-bgp-pink">
-        <div className="mx-auto max-w-6xl px-4 py-12">
-          <p className="label-caps text-bgp-wine/70 text-center mb-8">Trusted by London's leading estates</p>
-          <ClientRow clients={LEASE_ADVISORY_CLIENTS.slice(0, 6)} />
-        </div>
       </section>
 
       <section className="mx-auto max-w-3xl px-4 pt-16 pb-2 text-center">
@@ -86,7 +77,7 @@ export default function Home() {
                 <div className="[direction:ltr] md:border-l md:border-bgp-wine/25 md:pl-8">
                   <span className="label-caps text-bgp-red/70 tabular">{String(i + 1).padStart(2, "0")}</span>
                   <h2 className="display text-3xl md:text-4xl mt-1.5">{service.name}</h2>
-                  <p className="mt-4 text-sm font-light text-bgp-ink/75 leading-relaxed max-w-sm">
+                  <p className="mt-4 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed max-w-sm">
                     {service.intro}
                   </p>
                   <p className="mt-5">
@@ -125,12 +116,12 @@ export default function Home() {
         <h2 className="display text-3xl md:text-4xl">News and insights</h2>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
           <p><Link href="/news" className="explore-link">Explore</Link></p>
-          <p className="text-sm font-light text-bgp-ink/75 leading-relaxed">
+          <p className="text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
             The latest news, lettings, transactions and opinion from the BGP team across
             leasing, investment, brand representation and placemaking.
           </p>
         </div>
-        <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-8">
+        <div className="mt-10 card-strip sm:grid-cols-3 sm:gap-8">
           {["behind-the-brand-yolk", "ardent-royal-exchange", "enduring-appeal-portman-estate"].map((slug) => ARTICLES.find((x) => x.slug === slug)!).map((a) => (
             <Link key={a.slug} href={`/news/${a.slug}`} className="group block border-t border-bgp-wine/40 pt-3">
               <p className="label-caps text-bgp-wine mb-3">{a.category}</p>

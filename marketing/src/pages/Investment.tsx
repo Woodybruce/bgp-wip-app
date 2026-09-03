@@ -1,7 +1,7 @@
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import Placeholder from "../components/Placeholder";
-import { CASE_STUDIES, INVESTMENT_CONTACTS, INVESTMENT_DEALS, SERVICES } from "../lib/content";
+import { caseStudyBySlug, INVESTMENT_CONTACTS, INVESTMENT_DEALS, SERVICES } from "../lib/content";
 
 export default function Investment() {
   const service = SERVICES.find((s) => s.slug === "investment")!;
@@ -28,7 +28,7 @@ export default function Investment() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-12">
+        <div className="card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-12">
           {INVESTMENT_DEALS.map((deal) => (
             <div key={deal.name} className="group">
               <div className="relative img-frame">
@@ -53,7 +53,7 @@ export default function Investment() {
       </section>
 
       <KeyContacts people={INVESTMENT_CONTACTS} />
-      <CaseStudyStrip caseStudy={CASE_STUDIES[1]} />
+      <CaseStudyStrip caseStudy={caseStudyBySlug("19-golden-square")} />
     </div>
   );
 }

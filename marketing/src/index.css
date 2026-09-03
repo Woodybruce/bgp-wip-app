@@ -23,8 +23,10 @@
   .explore-link {
     @apply label-caps text-bgp-red hover:text-bgp-wine transition-colors;
   }
+  /* \FE0E forces text presentation — iOS otherwise renders the arrow as a
+     blue emoji glyph */
   .explore-link::after {
-    content: " \2197";
+    content: " \2197\FE0E";
   }
   /* CONTACT link with full-width red underline (leasing cards) */
   .rule-link {
@@ -56,6 +58,15 @@
   .group:hover .img-frame img,
   .img-frame:hover img {
     transform: scale(1.04);
+  }
+  /* Card strip: horizontal swipe on phones, normal grid from sm up.
+     Pair with sm:grid-cols-N on the same element. */
+  .card-strip {
+    @apply flex gap-6 overflow-x-auto pb-4 -mx-4 px-4 [scrollbar-width:thin] sm:grid sm:overflow-visible sm:pb-0 sm:mx-0 sm:px-0;
+    -webkit-overflow-scrolling: touch;
+  }
+  .card-strip > * {
+    @apply shrink-0 w-[78vw] sm:w-auto sm:shrink;
   }
   /* Nav links: animated underline sweep */
   .nav-link {

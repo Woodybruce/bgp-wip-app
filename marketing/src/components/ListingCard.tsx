@@ -37,7 +37,7 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
         )}
       </div>
       <p className="mt-1 text-sm font-light text-bgp-ink/70">
-        {listing.location && <span>{listing.location}<br /></span>}
+        {(listing.location || listing.propertyName) && <span>{listing.location || listing.propertyName}<br /></span>}
         <span className="tabular">{details || "Details on application"}</span>
       </p>
       <p className="mt-3">

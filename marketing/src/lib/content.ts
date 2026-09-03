@@ -105,7 +105,6 @@ export const TEAM: Person[] = [
   { name: "Lucy Cope", title: "Associate Director, London Leasing", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
   { name: "Evie North", title: "Associate Director, Brand Representation", phone: "+44 (0)7595 349 057", email: "evie@brucegillinghampollard.com" },
   { name: "Alex Todd", title: "Senior Surveyor, Development", phone: "+44 (0)7526 504 806", email: "alext@brucegillinghampollard.com" },
-  { name: "Rob Barnes", title: "Surveyor, National Leasing", phone: "+44 (0)7494 751 653", email: "rob@brucegillinghampollard.com" },
   { name: "Millie Edwards", title: "Leasing", phone: OFFICE_PHONE, email: "TBC" },
   { name: "Emily Cann", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
   { name: "Will Penfold", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
@@ -153,6 +152,26 @@ export interface CaseStudy {
 // From the projects list on the current site; bodies marked [Sample] need
 // fuller copy from the relevant team.
 export const CASE_STUDIES: CaseStudy[] = [
+  {
+    slug: "lucent-piccadilly",
+    title: "Lucent, Piccadilly Lights",
+    service: "Leasing",
+    image: "/images/lucent-piccadilly.jpg",
+    blurb:
+      "Restaurant leasing for Landsec at Lucent W1 — the landmark development behind the world-famous Piccadilly Lights.",
+    facts: [
+      ["Service", "Leasing"],
+      ["Client", "Landsec"],
+      ["Scheme", "Lucent W1 — 144,000 sq ft"],
+      ["Sector", "Restaurant & leisure"],
+      ["Location", "Piccadilly Circus, W1"],
+    ],
+    body: [
+      "Lucent is Landsec's 144,000 sq ft development behind the Piccadilly Lights — office, retail and restaurant space on one of the most famous corners in the world, completed in 2023.",
+      "BGP advised Landsec on the food & beverage leasing of the scheme, shaping the restaurant strategy and securing occupiers for space that sits directly behind the Lights, with some of the highest footfall in the West End.",
+      "Photograph: Thomas Dahlstrøm Nielsen, CC BY-SA 4.0.",
+    ],
+  },
   {
     slug: "20-hanover-square",
     title: "20 Hanover Square",
@@ -301,6 +320,9 @@ export const CASE_STUDIES: CaseStudy[] = [
 ];
 
 export const BRAND_REP_CASE_STUDIES = CASE_STUDIES.filter((c) => c.service === "Brand Representation");
+
+export const caseStudyBySlug = (slug: string): CaseStudy =>
+  CASE_STUDIES.find((c) => c.slug === slug) ?? CASE_STUDIES[0];
 
 // Real transactions from the current site's investment track record.
 export interface InvestmentDeal {
