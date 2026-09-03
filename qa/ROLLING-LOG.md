@@ -84,6 +84,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r499 · 2026-09-03 ~12:40 UTC · LIGHT (r498 had the journey) — ROUND IN PROGRESS
+- Bring-up: canonical recipe held 64th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
+  hammerson 2 verified). Regression: smoke GREEN 42/0.
+- Two-bot 499 as 3 foreground chunks (r447/r458 pattern): victoria exit 0
+  (2×400 standing) / woody,nick,sam exit 0 (0 issues) / mark exit 0 with
+  standing 1×503 + 8×403 signature PLUS 10 flow-failures — the shared
+  Playwright browser dies at client-mobile-brand-intel-cards ("Target
+  page, context or browser has been closed" cascade), REPRODUCED ×2 at
+  the same scenario boundary. phone-overflow-sweep 11/11 at 390px.
+  Server logs: 0 raw 500/502/504 across all chunks.
+- Triage in progress: browser-death cascade under investigation (fresh-
+  browser repro of the same page survives but the intel pill count is 0 —
+  checking whether the pill regressed or the repro auth is off).
+- Provisional — final entry to follow this round.
+
 ### r498 · 2026-09-03 ~12:15 UTC · FULL — rotation #1 BGP staff desktop 1440px — GREEN
 - Bring-up: canonical recipe held 63rd consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
