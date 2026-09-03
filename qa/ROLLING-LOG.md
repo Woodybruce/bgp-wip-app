@@ -84,6 +84,27 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r503 · 2026-09-03 ~17:50 UTC · LIGHT (r502 had the journey) — GREEN
+- Bring-up: canonical recipe held 68th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
+  hammerson 2 verified). Regression: smoke GREEN 42/0.
+- Two-bot 503 as 3 foreground chunks (with-server wrapper, 570s child
+  timeout), STANDARD ORDER, fresh cross-503.json: victoria exit 0 FIRST
+  RUN — no cold-start stall this container (2×400 standing) / mark exit 0
+  (9 issues = 1×503 keyless + 8×403 probe-by-design — standing signature
+  exact) / woody,nick,sam exit 0 (18 [ok], 0 issues).
+  client-global-search-slice (r500) green again. phone-overflow-sweep
+  11/11 at 390px. Server logs: 0 raw 500/502/504 across all chunks
+  (status tally only 2xx/3xx/expected 4xx/503 families; single 422 =
+  r462 cover-raster). Triage: 0 app bugs.
+- No journey (LIGHT). No deferred bugs to pick up (r490–r502 deferred
+  none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey). New flakes: none.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r503 was LIGHT → r504 FULL, rotation #4 BGP staff mobile 390px.
+
 ### r502 · 2026-09-03 ~16:45 UTC · FULL (rotation #3 client mobile 390px) — GREEN
 - Bring-up: canonical recipe held 67th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
