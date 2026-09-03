@@ -84,22 +84,37 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r487 · 2026-09-03 · LIGHT — round in progress (provisional)
-- Bring-up: qa:pg once → smoke GREEN 42/0 → seed-personas via node/pg
-  runner (honi 1 / hammerson 2 verified). Container worker restarted
-  mid-victoria-chunk (exit 137); postgres restarted per known flake
-  (`service postgresql start`), bgpsmoke + seed survived, chunk re-run
-  clean from fresh logs/cross.
-- Two-bot 487 as 3 foreground chunks (r447/r458 pattern), STANDARD
-  ORDER, fresh cross-487.json: victoria exit 0 (2×400 standing) / mark
-  exit 0 (9 = 1×503 keyless + 8×403 probe-by-design — standing signature
+### r487 · 2026-09-03 ~08:30 UTC · LIGHT (r486 had the journey) — GREEN
+- Bring-up: canonical recipe held 52nd consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner per r485
+  note, honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
+  Container worker restarted mid-victoria-chunk (exit 137, not a
+  classifier kill); postgres restarted per known flake
+  (`service postgresql start`), bgpsmoke + seed survived the restart,
+  chunk re-run clean from fresh logs/cross. Separate note: one
+  `git fetch origin claude/qa-staging-20260810` ran WITHOUT being
+  blocked this container — don't rely on it, the r430 rule stands.
+- Two-bot 487 as 3 foreground chunks (r447 pattern, r458 chunk-runner,
+  tsx via node node_modules/tsx/dist/cli.mjs), STANDARD ORDER, fresh
+  cross-487.json: victoria exit 0 (2×400 standing) / mark exit 0
+  (9 issues = 1×503 keyless + 8×403 probe-by-design — standing signature
   exact) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11
-  at 390px. Server logs: 0 raw 500/502/504 (4455×200, expected families,
-  single 422 = r462 cover-raster by design).
+  at 390px. Server logs: 0 raw 500/502/504 (4455×200, expected 4xx/503
+  families, single 422 = r462 cover-raster by design). Triage: 0 app bugs.
 - r486 WATCH ITEM CLEARED: client-news-signals-deduped PASSED its first
-  standard-order run inside the mark chunk.
-- Triage: 0 app bugs. Remaining this round: in-browser re-verify of the
-  r486 news-dedupe fix, final entry.
+  standard-order run inside the mark chunk (fresh cross, victoria first).
+- r486 FIX RE-VERIFIED IN-BROWSER (Mark @390px, /news): Iced Apple
+  Crumble story renders as ONE card; /api/client/news-signals 200,
+  25 rows, 0 dupe brand|headline|date keys. (A bare getByText count
+  finds the string 2× — headline + the summary line repeating it inside
+  the SAME card, that's UX-143, not a dupe card.)
+- No journey (LIGHT). No deferred bugs to pick up (r486 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r487 was LIGHT → r488 FULL, rotation #4 BGP staff mobile 390px.
 
 ### r486 · 2026-09-03 ~04:30 UTC · FULL — rotation #3 Landsec client mobile 390px · 1 bug fixed
 - Bring-up: canonical recipe held 51st consecutive time (qa:pg once →
