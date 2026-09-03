@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r483 · 2026-09-03 ~02:15 UTC · LIGHT (r482 had the journey) — ROUND IN PROGRESS (heartbeat)
+### r483 · 2026-09-03 ~02:30 UTC · LIGHT (r482 had the journey) — GREEN
 - Bring-up: canonical recipe held 48th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
   fresh session no stale cross file). Regression: smoke GREEN 42/0.
@@ -93,11 +93,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   = 1×503 keyless + 8×403 probe-by-design — standing signature exact) /
   woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
   Server logs: 0 raw 500/502/504 (3719×200, expected 4xx/503 families,
-  single 422 = r462 cover-raster by design). Triage: 0 app bugs so far.
+  single 422 = r462 cover-raster by design). Triage: 0 app bugs.
 - r482 WATCH ITEM CLEARED: staff-expenses-cover-and-admin-gate PASSED its
   first standard-order run inside the victoria chunk.
-- Remaining this round: in-browser re-verify of r482's two expenses fixes
-  (non-admin /expenses bounce + stage1-cover 200), final entry.
+- r482 FIXES RE-VERIFIED IN-BROWSER (dev server + playwright, 1440px, 9/9
+  checks): victoria GET stage1-cover 200 {active:false} + POST still 403
+  (Wendy/Layla/admin gate intact); victoria deep-link /expenses bounces
+  to "/" with zero admin chrome, /expenses/approvals renders Inbox zero
+  with ONLY its own tab; woody (admin) /expenses full page + both tabs,
+  stage1-cover 200. Screenshots clean.
+- No journey (LIGHT). No deferred bugs to pick up (r482 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r483 was LIGHT → r484 FULL, rotation #2 Landsec client desktop
+  1440px.
 
 ### r482 · 2026-09-03 ~02:00 UTC · FULL — rotation #1 BGP staff desktop 1440px · 2 bugs fixed
 - Bring-up: canonical recipe held 47th consecutive time (qa:pg once →
