@@ -3798,19 +3798,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     longitude: string | null;
   }) => {
     const addr: any = r.propertyAddress;
-    const formatted: string = typeof addr === "string" ? addr : (addr?.formatted || "");
-    let segments = formatted
-      .split(",")
-      .map((s: string) => s.trim())
-      .filter((s: string) => s && !/^(UK|United Kingdom|England|Scotland|Wales)$/i.test(s));
+    const isCountry = (s: string) => /^(UK|United Kingdom|England|Scotland|Wales|Greater London)$/i.test(s);
     const pn = (r.propertyName || "").trim().toLowerCase();
-    if (segments.length > 2 && pn && segments[0].toLowerCase().includes(pn)) segments = segments.slice(1);
+    // Two shapes in the wild: structured {street, city, postcode, ...} from the
+    // property form, or a single geocoder string ({formatted} / {address} / plain).
+    let segments: string[];
+    let city: string | null = null;
+    if (addr && typeof addr === "object" && (addr.street || addr.city || addr.postcode)) {
+      city = addr.city ? String(addr.city).trim() : null;
+      const street = addr.street ? String(addr.street).trim() : "";
+      const pcText = addr.postcode ? String(addr.postcode).trim() : "";
+      segments = [street, [city, pcText].filter(Boolean).join(" ")].filter(Boolean);
+    } else {
+      const formatted: string = typeof addr === "string" ? addr : (addr?.formatted || addr?.address || "");
+      segments = formatted
+        .split(",")
+        .map((s: string) => s.trim())
+        .filter((s: string) => s && !isCountry(s));
+      if (segments.length > 2 && pn && segments[0].toLowerCase().includes(pn)) segments = segments.slice(1);
+    }
     const joined = segments.join(", ");
     const pc = joined.match(UK_POSTCODE_RE);
     const outward = pc ? pc[1].toUpperCase() : null;
     let location = r.location;
     if (!location && segments.length) {
-      const town = segments[segments.length - 1].replace(UK_POSTCODE_RE, "").replace(/,\s*$/, "").trim();
+      const town = (city || segments[segments.length - 1]).replace(UK_POSTCODE_RE, "").replace(/,\s*$/, "").trim();
       location = town ? (/^london$/i.test(town) && outward ? `London ${outward}` : town) : outward;
     }
     return {
