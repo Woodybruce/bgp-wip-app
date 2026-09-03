@@ -13,6 +13,18 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+141. 2026-09-03 · BGP staff / mobile 390px (QA r480) · skimming the WIP
+    report on the phone before a team call · the "Net fees by team" chart
+    shows £0 for both teams (National, National Leasing) while the header
+    says £250,000 total — the £250K deal has no team attributed, and fees
+    without a team simply vanish from the by-team split, so the chart
+    contradicts the total with no explanation (the Agent Summary tab
+    handles the same case with a clear "no fees attributed yet — assign a
+    BGP contact" empty state) · Suggest: add an "Unassigned" bar to the
+    by-team (and by-client/by-property, if applicable) breakdowns when
+    attributed fees don't sum to the total, or reuse the Agent Summary
+    empty-state hint.
+
 140. 2026-09-03 · Landsec client / mobile 390px (QA r478) · checking which
     brands are trading on the phone · the Brand Intelligence hub on mobile
     shows only Brand Explorer — the Turnover Board tab the client uses on

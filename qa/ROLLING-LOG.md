@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r480 · 2026-09-03 · FULL — rotation #4 BGP staff mobile 390px — ROUND IN PROGRESS
+### r480 · 2026-09-03 · FULL — rotation #4 BGP staff mobile 390px — GREEN
 - Bring-up: canonical recipe held 45th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
   stale cross file removed). Regression: smoke GREEN 42/0.
@@ -95,8 +95,38 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   Server logs: 0 raw 500/502/504 (news-feed "500 articles" text only,
   r413 class; status tally 3705×200, expected 4xx/503 families, single
   422 = r462 cover-raster by design). Triage: 0 app bugs from the harness.
-- Journey (staff mobile 390px, Victoria) in progress — final entry to
-  replace this one.
+- Journey (Victoria @390px iPhone UA+touch, UI login via Client/guest
+  reveal — "on-site at Bluewater between viewings: check the tracker, log
+  this morning's viewing, open the unit's files, skim the WIP report
+  before the team call, glance at Evidence Plans"): login → Messages
+  cold-open (intended 4-tab layout) → /available (phone card list, status
+  chips, search "L112" filters live) → Files dialog on BX10 (STAFF
+  variant: Upload + Create in Doc Studio + Info-sheet — client/staff
+  split holds both ways with r452) → Add Viewing on L112 end-to-end
+  (date defaults today, save → "Viewing added" toast, badge → Viewing
+  (1), row shows attendees/date + edit/delete pencils on reopen, API row
+  correct) → /wip-report (pill tabs, filter chips, WIP/INVOICED KPI
+  tiles, monthly bars, deal-detail card list all fit; AGENT SUMMARY tab
+  shows clean "no fees attributed" empty state) → /evidence-plans (clean
+  empty state + New-plan dialog fits at 390px, PDF/image helper text).
+  0 pageerrors, 0 non-noise 4xx/5xx, 0 h-overflow on all 16 screenshots.
+  Judged the redesigned tracker/WIP/Files surfaces AS INTENDED per round
+  brief. Bugs from the journey: 0.
+- NOT bugs: GET /api/auth/microsoft 500 "Microsoft SSO not configured"
+  when tapping Sign in with Microsoft — keyless local env (getSsoMsalClient
+  null), login page shows its error state; prod has Entra creds. Post-save
+  viewings list momentarily shows only the toast before the invalidated
+  query refetches (row present on reopen; invalidations all correct in
+  available-units.tsx ~619).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 141 (WIP "Net fees by team"
+  shows £0 rows while unattributed fees vanish from the split — needs an
+  Unassigned bucket). New flakes: none. Real-device keyboard-up composer
+  check (r405) still open for Woody. Journey left one QA-VIEWING-R480 row
+  on L112 (swept by run-round purge / next restore).
+- Next: r480 had the journey → r481 LIGHT; then rotation #1 BGP staff
+  desktop 1440px.
 
 ### r479 · 2026-09-02 ~23:30 UTC · LIGHT (r478 had the journey) — GREEN
 - Bring-up: canonical recipe held 44th consecutive time (qa:pg once →
