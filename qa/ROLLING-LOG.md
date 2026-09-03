@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r481 · 2026-09-03 ~00:45 UTC · LIGHT (r480 had the journey) — round in progress
+### r481 · 2026-09-03 ~00:45 UTC · LIGHT (r480 had the journey) — GREEN
 - Bring-up: canonical recipe held 46th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
   fresh session no stale cross file). Regression: smoke GREEN 42/0.
@@ -98,7 +98,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   SIGKILL on the tsx wrapper orphaned the server, r450 class) and reused
   the still-healthy chunk-1 server — all traffic in one log, orphan
   pid-killed after the sweep. No app impact.
-- No journey (LIGHT). Deferred-bug pickup + final entry to follow.
+- r474's staff-brands-then-crm-not-poisoned, r472's
+  staff-evidence-plan-lifecycle and r458's
+  staff-tracker-pitch-button-visible all green again in standard order.
+- No journey (LIGHT). No deferred bugs to pick up (r480 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r481 was LIGHT → r482 FULL, rotation #1 BGP staff desktop 1440px.
 
 ### r480 · 2026-09-03 · FULL — rotation #4 BGP staff mobile 390px — GREEN
 - Bring-up: canonical recipe held 45th consecutive time (qa:pg once →
