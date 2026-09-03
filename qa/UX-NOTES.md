@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+152. 2026-09-03 · BGP staff / mobile 390px (QA r504) · reviewed a brand
+    profile then moved on to the calendar · the profile's auto-fired store
+    scan failed a few seconds later (keyless env) and its red "Store search
+    failed / GOOGLE_API_KEY not configured" toast popped mid-screen over the
+    calendar — a raw config error on a page that had nothing to do with it.
+    Suggestion: don't toast failures of background auto-fired scans at all
+    (log to the stores diagnostic strip instead); keep toasts for
+    user-initiated scans. Related: #96 (friendly wording), 149 (mid-screen
+    placement).
+
 151. 2026-09-03 · Landsec client / mobile 390px (QA r502) · opened the Files
     dialog on a Letting Tracker unit · the generator row reads "Info sheet —
     branded PDF for agents/tenants", which is BGP-side language: to a

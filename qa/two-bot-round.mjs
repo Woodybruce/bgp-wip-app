@@ -1628,6 +1628,48 @@ async function victoriaRound(page, cross) {
     cross.compStamp = stamp;
   });
 
+  // r504: the comp detail dialog was a hard grid-cols-2 — at 390px each
+  // column got ~160px, the 112px labels left ~40px value slivers and long
+  // values collided with the Transaction column. Fixed with grid-cols-1
+  // sm:grid-cols-2; the phone must render the sections stacked.
+  await step(page, p, 'staff-comp-detail-mobile-stacks', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/comps`, nav);
+      const card = mob.getByText(`QA-COMP R${ROUND}`, { exact: false }).first();
+      await card.waitFor({ timeout: 30000 });
+      await card.tap();
+      await mob.locator('[role="dialog"]').waitFor({ timeout: 20000 });
+      const m = await mob.evaluate(() => {
+        const dlg = document.querySelector('[role="dialog"]');
+        const h4s = [...dlg.querySelectorAll('h4')];
+        const det = h4s.find((h) => /property details/i.test(h.textContent));
+        const trn = h4s.find((h) => /transaction/i.test(h.textContent));
+        if (!det || !trn) return { why: 'section headings missing' };
+        const grid = det.closest('.grid');
+        return {
+          stacked: trn.getBoundingClientRect().top >= det.getBoundingClientRect().bottom,
+          gridOverflow: grid ? grid.scrollWidth - grid.clientWidth : 0,
+        };
+      });
+      if (m.why) throw new Error(`comp detail dialog: ${m.why}`);
+      if (!m.stacked) throw new Error('comp detail sections side-by-side at 390px (grid-cols-1 regression)');
+      if (m.gridOverflow > 4) throw new Error(`comp detail grid h-scrolls at 390px (${m.gridOverflow}px overflow)`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Agent books a deal on a Landsec property WITH a BGP fee. The client round
   // then confirms the deal shows up on Mark's board (cross-persona visibility)
   // but every fee field is stripped from his view — staff set fees, clients

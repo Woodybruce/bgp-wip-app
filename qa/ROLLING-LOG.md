@@ -84,19 +84,57 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r504 · 2026-09-03 ~19:20 UTC · FULL (rotation #4 BGP staff mobile 390px) — ROUND IN PROGRESS
+### r504 · 2026-09-03 ~19:50 UTC · FULL (rotation #4 BGP staff mobile 390px) · 1 bug fixed
 - Bring-up: canonical recipe held 69th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
-  hammerson 2 verified). Regression: smoke GREEN 42/0.
+  hammerson 2 verified). Regression: smoke GREEN 42/0 (and again
+  FRESH_BUILD=1 after the fix; that restore wipes seed-personas — re-seed
+  before any two-bot re-run).
 - Two-bot 504 as 3 foreground chunks (with-server wrapper, 570s child
   timeout), STANDARD ORDER, fresh cross-504.json: victoria exit 0 FIRST
   RUN (2×400 standing) / mark exit 0, 158 [ok] (9 issues = 1×503 keyless
   + 8×403 probe-by-design — standing signature exact) / woody,nick,sam
   exit 0 (18 [ok], 0 issues). phone-overflow-sweep 11/11 at 390px.
-  Server logs: 0 raw 500/502/504 across all chunks. Triage: 0 app bugs.
-- Journey pending: Victoria @390px — surfaces recent staff-mobile rounds
-  skipped (requirements, brand profile, deals table/compliance board,
-  calendar/diary, comps on the phone shell).
+  Server logs: 0 raw 500/502/504 across all chunks. Triage: 0 app bugs
+  from the harness.
+- Journey (Victoria @390px iPhone UA+touch, UI login via Client/guest
+  reveal — "on the train to a client meeting: live requirements, brand
+  profile, compliance board, calendar/diary, comps for the pitch, Image
+  Studio glance" — surfaces recent staff-mobile rounds skipped): login →
+  /requirements (LEASING/INVESTMENT pills, fit/active stat tiles, card w/
+  Edit/Delete/Match; Add-requirement dialog + Match dialog both clean at
+  390px, Match lists matching AVA units) → /brands → Honi Poke profile
+  (CHAT/CONTACTS/INTEL/STORES/SOCIAL/COMPLIANCE pills, Ask ChatBGP chips,
+  per-brand chat composer) → /compliance-board (pill tabs, risk filter,
+  counterparty cards w/ Investigate + Manage KYC) → /calendar + /diary
+  (both land on Calendar; CRM team filter chips, day grid, QA-CAL residue
+  rows) → /comps (stat strip, comp card → detail dialog → BUG below; AI
+  Generate leads stat is span-not-button for non-admin = UX #26 as
+  designed) → /image-studio (Library/Brand Library/Collections, category
+  chips). 0 pageerrors, 0 h-overflow on 17 screenshots, non-noise 4xx/5xx
+  none (store-scan toast = r379 keyless noise family).
+- BUG FIXED (comp detail dialog unreadable at 390px): the dialog's two
+  section grids were hard `grid-cols-2`, so on a phone each column got
+  ~160px, the 112px `w-28` DetailField labels left ~40px value slivers
+  and long values (property name) visually collided with the Transaction
+  column. Now `grid-cols-1 sm:grid-cols-2` (comps.tsx ×2) — phone stacks
+  Property Details → Transaction → Area (RICS) → Rental Analysis.
+  Verified visually + geometry probe (Property/Term rows disjoint,
+  0 grid overflow). tsc clean, FRESH_BUILD smoke 42/0.
+- Harness growth: staff-comp-detail-mobile-stacks in two-bot (victoria,
+  after agent-add-scheme-comp — asserts Transaction stacks below Property
+  Details at 390px + no grid h-overflow on the round's own QA-COMP).
+  Green in a full standard-order victoria re-run (75 [ok], 2×400
+  standing). NOTE: that re-run (round tag 504b) leaves QA-R504b residue
+  rows (comp/cal/req) — r450 precedent, swept by the next round's purge.
+- Bugs fixed: 1 (above). Deferred: none. Carried (data, staff decision):
+  Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+  Suggestions: UX-NOTES 152 (background auto-fired store-scan failures
+  shouldn't toast — the red GOOGLE_API_KEY toast from a brand profile
+  lands mid-screen on the calendar you navigated to). New flakes: none.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r504 had the journey → r505 LIGHT; then rotation #1 BGP staff
+  desktop 1440px.
 
 ### r503 · 2026-09-03 ~17:50 UTC · LIGHT (r502 had the journey) — GREEN
 - Bring-up: canonical recipe held 68th consecutive time (qa:pg once →
