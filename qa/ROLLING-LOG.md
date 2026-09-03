@@ -84,10 +84,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r510 · 2026-09-03 · FULL (rotation #3 Landsec client mobile 390px) — ROUND IN PROGRESS
-- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
-  purge + seed-personas via node/pg runner, honi 1 / hammerson 2 verified).
-  Regression: smoke GREEN 42/0.
+### r510 · 2026-09-03 ~21:10 UTC · FULL (rotation #3 Landsec client mobile 390px) — GREEN
+- Bring-up: canonical recipe held 75th consecutive time (qa:pg once →
+  run-smoke restore clean → purge + seed-personas via node/pg runner,
+  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
 - Two-bot 510 as 3 foreground chunks (with-server wrapper w/ lsof port
   kill, 570s child timeout), STANDARD ORDER, fresh cross-510.json:
   victoria exit 0 FIRST RUN (2×400 standing signature exact) / mark exit 0
@@ -96,8 +96,39 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (status tally
   on [express] request lines; single 422 = r462 cover-raster). Triage:
   0 app bugs from the harness.
-- Journey (client mobile 390px, mark.warne) in progress — final entry to
-  follow.
+- Journey (Mark @390px iPhone UA, UI login via Client/guest reveal — "on
+  the train to Bluewater: portfolio glance, dig INTO the property page,
+  add a brand to my CRM, log an offer on a unit, check contacts, guard
+  spot-check"): dashboard clean (greeting, tracker KPI 77/1/0/78, team
+  card, tiles) → /properties/:id Bluewater ALL SIX pill tabs exercised at
+  390px — Overview (ownership card, This Week's Focus task add, news
+  feed), Boards (brochures empty-state + Brand Gap 297 stores), Deals &
+  Units (2 linked deals + 76 live lettings lists), Files & Contacts
+  (SharePoint "ask your BGP team" degrade + Linked Contacts 5 grouped
+  rows), KYC (Compliance & KYC visible per 2026-08-01 decision, parked
+  checks, no staff actions), Activity (deal-move feed) — all clean, 0
+  h-overflow → /brands hub + "Add a brand to your CRM" dialog EXEMPLARY
+  on mobile (Testco family: In CRM / Added+Remove / Add states) → tracker
+  search U124 → Offers dialog: full add-offer form renders at 390px,
+  saved offer listed ("Testco Cinema · Pending · £125,000 p.a.") — row
+  deleted in-round via pg (NOT QA-prefixed; purge wouldn't sweep it) →
+  /contacts CRM page clean (slice counts 9/0/9) → /wip-report correctly
+  bounces client to /deals/list. 0 pageerrors, 0 non-noise 4xx/5xx
+  (response-listener clean; only URL-less console echoes of listed noise
+  families), 0 h-overflow on ~20 shots.
+- Journey-script notes (harness): property pill-tab labels are Title Case
+  in the DOM (CSS uppercases) — getByText('BOARDS', exact) fails, use
+  /^Boards$/i; offer-dialog company/contact are selects (first input is
+  the date — don't blind-fill); offer submit works from the native select
+  path. Tracker offer button matches 'button:has-text("Offer")'.
+- Bugs fixed: 0 (nothing broken found — harness AND journey). Deferred:
+  none. Carried (data, staff decision): Bluewater tenancy SPINE duplicates
+  (U062 ×4, L090 ×2, L130 ×2). Suggestions: none new (property Overview
+  all-dash Status/Asset Class/Area card is sparse fixture data, not UX).
+  New flakes: none. Real-device keyboard-up composer check (r405) still
+  open for Woody.
+- Next: r510 had the journey → r511 LIGHT; then rotation #4 BGP staff
+  mobile 390px.
 
 ### r509 · 2026-09-03 ~20:30 UTC · LIGHT (r508 had the journey) — GREEN
 - Bring-up: canonical recipe held 74th consecutive time (qa:pg once →
