@@ -273,13 +273,18 @@ function PlanView({ planId }: { planId: string }) {
   const unlinkedCount = entries.filter(e => !e.unit_id).length;
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/evidence-plans", planId] });
 
-  // Latest Zone A per unit — drives the label's second line on the plan.
+  // Latest Zone A per unit — drives the dot's figure on the plan.
   const latestZaByUnit = useMemo(() => {
     const m = new Map<string, number>();
     for (const e of entries) {
       if (!e.unit_id || e.zone_a == null) continue;
       if (!m.has(e.unit_id)) m.set(e.unit_id, Number(e.zone_a)); // entries arrive newest-first
     }
+    return m;
+  }, [entries]);
+  const evidenceCountByUnit = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of entries) if (e.unit_id) m.set(e.unit_id, (m.get(e.unit_id) || 0) + 1);
     return m;
   }, [entries]);
 
@@ -547,37 +552,43 @@ function PlanView({ planId }: { planId: string }) {
                     const c = centroid(poly);
                     const isSel = u.id === selectedId;
                     const za = latestZaByUnit.get(u.id);
-                    // Label sized to its unit's box: a small kiosk must not
-                    // carry a plan-wide banner of text. And the plan already
-                    // prints tenant names/logos on the blocks (Woody,
-                    // 2026-09-02) — so a name-only ref gets no text overlay,
-                    // just the outline and its Zone A figure; proper unit
-                    // refs (B12, K21) still show.
+                    const evCount = evidenceCountByUnit.get(u.id) || 0;
+                    // Transparent outlines — the plan's own artwork carries
+                    // names/logos; we add only a small evidence dot with its
+                    // Zone A figure (Woody, 2026-09-03: like the original
+                    // annotated plan, and smaller).
                     const boxW = (Math.max(...poly.map(p => p.x)) - Math.min(...poly.map(p => p.x))) * 100;
                     const boxH = (Math.max(...poly.map(p => p.y)) - Math.min(...poly.map(p => p.y))) * 100 * aspect;
                     const label = String(u.unit_ref || "");
                     const isRealRef = /\d/.test(label) && label.length <= 10;
-                    const fit = Math.min((boxW * 1.6) / Math.max(2, label.length), boxH * 0.5);
-                    const fontSize = Math.max(0.55, Math.min(Math.max(1.1, 2.4 / Math.sqrt(zoom)), fit));
-                    const zaSize = Math.max(0.5, Math.min(Math.max(0.9, 1.8 / Math.sqrt(zoom)), Math.min((boxW * 1.3) / 8, boxH * 0.45)));
+                    const fit = Math.min((boxW * 1.6) / Math.max(2, label.length), boxH * 0.45);
+                    const refSize = Math.max(0.45, Math.min(Math.max(0.8, 1.4 / Math.sqrt(zoom)), fit));
+                    const zaSize = Math.max(0.45, Math.min(Math.max(0.7, 1.2 / Math.sqrt(zoom)), Math.min((boxW * 1.2) / 8, boxH * 0.4)));
+                    const dotR = Math.max(0.28, Math.min(0.55, Math.min(boxW, boxH) * 0.14)) / Math.sqrt(zoom) * 1.2;
                     return (
                       <g key={u.id} style={{ pointerEvents: "auto", cursor: "pointer" }}
                         onClick={e => { e.stopPropagation(); if (!drawing && !dragging.current?.moved) setSelectedId(u.id); }}>
                         <polygon points={pts}
-                          fill={isSel ? "hsl(17 60% 45% / 0.30)" : za != null ? "hsl(17 60% 45% / 0.14)" : "hsl(220 10% 40% / 0.10)"}
-                          stroke={isSel ? "hsl(17 60% 45%)" : "hsl(220 10% 35% / 0.55)"}
-                          strokeWidth={isSel ? 0.35 : 0.18} vectorEffect="non-scaling-stroke" />
-                        {isRealRef && (
-                          <text x={c.x * 100} y={c.y * 100 * aspect - (za != null ? zaSize * 0.7 : 0)} textAnchor="middle" dominantBaseline="middle"
-                            style={{ fontSize, fontWeight: 700, fill: "#1C1917", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: fontSize * 0.15 }}>
+                          fill={isSel ? "hsl(17 60% 45% / 0.22)" : "transparent"}
+                          stroke={isSel ? "hsl(17 60% 45%)" : evCount > 0 ? "hsl(17 60% 45% / 0.65)" : "hsl(220 10% 35% / 0.4)"}
+                          strokeWidth={isSel ? 0.3 : 0.14} vectorEffect="non-scaling-stroke" />
+                        {isRealRef && (isSel || zoom > 2.5) && (
+                          <text x={c.x * 100} y={c.y * 100 * aspect - (evCount > 0 ? zaSize * 0.9 : 0)} textAnchor="middle" dominantBaseline="middle"
+                            style={{ fontSize: refSize, fontWeight: 700, fill: "#1C1917", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: refSize * 0.15 }}>
                             {label}
                           </text>
                         )}
-                        {za != null && (
-                          <text x={c.x * 100} y={c.y * 100 * aspect + (isRealRef ? fontSize * 0.75 : 0)} textAnchor="middle" dominantBaseline="middle"
-                            style={{ fontSize: zaSize, fontWeight: 700, fill: "hsl(17 60% 38%)", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: zaSize * 0.15 }}>
-                            £{za.toLocaleString("en-GB", { maximumFractionDigits: 0 })} ZA
-                          </text>
+                        {evCount > 0 && (
+                          <>
+                            <circle cx={c.x * 100} cy={c.y * 100 * aspect - (za != null ? zaSize * 0.85 : 0)} r={dotR}
+                              fill="hsl(17 60% 45%)" stroke="#FFFFFF" strokeWidth={dotR * 0.35} />
+                            {za != null && (
+                              <text x={c.x * 100} y={c.y * 100 * aspect + zaSize * 0.55} textAnchor="middle" dominantBaseline="middle"
+                                style={{ fontSize: zaSize, fontWeight: 700, fill: "hsl(17 60% 38%)", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: zaSize * 0.16 }}>
+                                £{za.toLocaleString("en-GB", { maximumFractionDigits: 0 })}
+                              </text>
+                            )}
+                          </>
                         )}
                       </g>
                     );
