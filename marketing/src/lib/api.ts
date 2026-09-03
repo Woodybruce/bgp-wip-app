@@ -20,6 +20,8 @@ export interface Listing {
   epcRating: string | null;
   propertyName: string | null;
   propertyAddress: unknown;
+  addressLine: string | null;
+  brochureUrl?: string;
   postcode: string | null;
   latitude: string | null;
   longitude: string | null;
@@ -49,6 +51,7 @@ export const SAMPLE_LISTINGS: Listing[] = [
     epcRating: "B",
     propertyName: "[Sample] Nova, Victoria",
     propertyAddress: null,
+    addressLine: null,
     postcode: "SW1V 1RB",
     latitude: null,
     longitude: null,
@@ -73,6 +76,7 @@ export const SAMPLE_LISTINGS: Listing[] = [
     epcRating: "C",
     propertyName: "[Sample] 30 Grosvenor Square",
     propertyAddress: null,
+    addressLine: null,
     postcode: "W1S 1JY",
     latitude: null,
     longitude: null,
@@ -97,6 +101,7 @@ export const SAMPLE_LISTINGS: Listing[] = [
     epcRating: "B",
     propertyName: "[Sample] Middle Eight, Great Queen Street",
     propertyAddress: null,
+    addressLine: null,
     postcode: "W1F 9JG",
     latitude: null,
     longitude: null,

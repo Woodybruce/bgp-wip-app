@@ -75,7 +75,7 @@ export async function downloadParticulars(listing: Listing) {
 
   // Key details
   const rows: Array<[string, string]> = [
-    ["Location", listing.location || listing.postcode || "—"],
+    ["Address", listing.addressLine || listing.location || listing.postcode || "—"],
     ["Size", formatSqft(listing.sqft) || "On application"],
     ["Rent", formatRent(listing.askingRent) || "On application"],
     ["Rates", listing.ratesPa ? `£${Math.round(listing.ratesPa).toLocaleString("en-GB")} pa` : "To be re-assessed — prospective tenants should confirm any rating liability directly"],
