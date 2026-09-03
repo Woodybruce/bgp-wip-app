@@ -84,6 +84,42 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r501 · 2026-09-03 ~15:00 UTC · LIGHT (r500 had the journey) — GREEN
+- Bring-up: canonical recipe held 66th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
+  hammerson 2 verified). Regression: smoke GREEN 42/0.
+- Two-bot 501 as 3 foreground chunks (r447/r458 pattern, 570s child
+  timeout), STANDARD ORDER, fresh cross-501.json: victoria exit 0 (2×400
+  standing) / mark exit 0, 158 [ok] (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (18 [ok], 0 issues). phone-overflow-sweep 11/11 at 390px. Server logs:
+  0 raw 500/502/504 across all chunks (status tally only 2xx/3xx/expected
+  4xx/503 families; single 422 = r462 cover-raster). Triage: 0 app bugs.
+- r500 FIX VERIFIED: client-global-search-slice PASSED its first
+  standard-order run in the mark chunk (Bakery in, Fashion in, Jewellers
+  out, rival Brent empty, own Bluewater present) — the clientBrandSliceSql
+  search fix holds.
+- FLAKE (harness, first-run): the round's FIRST victoria chunk — first
+  two-bot against a freshly booted server on this container — stalled
+  ~6 min inside staff-document-briefs-catalog's page.evaluate fetch (34
+  scenarios green in the first ~3 min, then nothing) until the 570s child
+  timeout SIGTERMed it, producing the r499 "browser has been closed"
+  cascade + exit 1. Immediate identical re-run: whole chunk clean in well
+  under the cap, standing 2×400 signature. r262 family (cold first run);
+  RULE: re-run a first-chunk stall once before triaging as app. Lost the
+  first run's server request log to a capture bug (spawnSync blocks the
+  runner's event loop — pipe data never drained; runner now writes server
+  output straight to a file via fd, keep doing that).
+- No journey (LIGHT). No deferred bugs to pick up (r490–r500 deferred
+  none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey). New flakes: the first-chunk
+  stall above (documented, harness-side). Real-device keyboard-up
+  composer check (r405) still open for Woody.
+- Next: r501 was LIGHT → r502 FULL, rotation #3 Landsec client mobile
+  390px.
+
 ### r500 · 2026-09-03 ~19:15 UTC · FULL — rotation #2 Landsec client desktop 1440px · 1 bug fixed
 - Bring-up: canonical recipe held 65th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
