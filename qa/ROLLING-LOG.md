@@ -84,6 +84,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r498 · 2026-09-03 ~11:40 UTC · FULL — rotation #1 BGP staff desktop 1440px — IN PROGRESS
+- Heartbeat (triage done, journey pending). Bring-up: canonical recipe held
+  63rd consecutive time (qa:pg once → run-smoke restore clean →
+  seed-personas via node/pg runner, honi 1 / hammerson 1 verified).
+  Regression: smoke GREEN 42/0.
+- Two-bot 498 as 3 foreground chunks (r447/r458 pattern, tsx via
+  node tsx/cli.mjs), STANDARD ORDER, fresh cross-498.json: victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (3763×200, expected 4xx/503 families, single 422 = r462
+  cover-raster by design; 5×400 standing; Error lines all keyless-env).
+  Triage: 0 app bugs from the harness. No deferred bugs to pick up
+  (r490–r497 deferred none).
+- Journey next: Victoria @1440px staff desktop.
+
 ### r497 · 2026-09-03 ~11:10 UTC · LIGHT (r496 had the journey) — GREEN
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas via node/pg runner, honi 1 / hammerson 2 verified).
