@@ -186,6 +186,24 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
 
         if (existingArr.length > 0) continue;
 
+        // URL alone is an unstable dedupe key for Google News items: the
+        // stored URL flips between the wrapped RSS form and the unwrapped
+        // publisher form (backfillMissingImagesUpTo rewrites it), so the next
+        // pass can re-ingest the same story under the other form. Same source
+        // + title + published timestamp is the same article either way.
+        const pubDate = item.pubDate ? new Date(item.pubDate) : null;
+        if (pubDate && !isNaN(pubDate.getTime())) {
+          const sameStory = await db.select({ id: newsArticles.id })
+            .from(newsArticles)
+            .where(and(
+              eq(newsArticles.sourceId, source.id),
+              eq(newsArticles.title, item.title),
+              eq(newsArticles.publishedAt, pubDate),
+            ))
+            .limit(1);
+          if (sameStory.length > 0) continue;
+        }
+
         let imgUrl = extractImageUrl(item);
         if (!imgUrl) {
           imgUrl = await fetchOgImage(articleUrl);

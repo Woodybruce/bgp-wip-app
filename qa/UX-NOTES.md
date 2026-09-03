@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+144. 2026-09-03 · Landsec client / mobile 390px (QA r486) · logging a viewing
+    then an offer from the Letting Tracker unit card · after Save, the
+    success toast ("Viewing added" / "Offer added") renders as a large card
+    centred over the middle of the dialog, exactly covering the just-added
+    row for ~4s — the user can't see the thing they just created until the
+    toast fades, and it also sits mid-form when the offer form is open ·
+    Suggest: anchor toasts to the bottom edge (above the bottom nav) on the
+    phone shell so dialog content stays visible.
+
 143. 2026-09-03 · Landsec client / desktop 1440px (QA r484) · skimming Brand
     News for signals across the tenant slice · every article card shows a
     summary line that is a verbatim copy of the headline (title and

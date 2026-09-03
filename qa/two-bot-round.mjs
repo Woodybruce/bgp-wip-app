@@ -5940,6 +5940,24 @@ async function markRound(page, cross) {
     const write = await fetch(`${BASE}/api/evidence-plans`, { method: 'POST', body: new FormData(), ...auth });
     if (write.status !== 403) throw new Error(`client POST /api/evidence-plans expected 403, got ${write.status}`);
   });
+
+  await step(page, p, 'client-news-signals-deduped', async () => {
+    // r486: the news ingest can land the same story twice (Google News URL
+    // wrap/unwrap flip defeats the URL dedupe), and the client Brand News
+    // tab rendered the duplicate. The endpoint now collapses identical
+    // (brand, headline, signal_date) rows — assert none survive.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const r = await fetch(`${BASE}/api/client/news-signals?limit=200`, auth);
+    if (r.status !== 200) throw new Error(`client news-signals expected 200, got ${r.status}`);
+    const rows = await r.json();
+    if (!Array.isArray(rows)) throw new Error('client news-signals did not return an array');
+    const seen = new Set();
+    for (const s of rows) {
+      const k = `${s.brand_company_id}|${s.headline}|${s.signal_date || s.created_at}`;
+      if (seen.has(k)) throw new Error(`duplicate story in client news feed: "${String(s.headline).slice(0, 80)}"`);
+      seen.add(k);
+    }
+  });
 }
 
 // ─── Additional personas ──────────────────────────────────────────────────

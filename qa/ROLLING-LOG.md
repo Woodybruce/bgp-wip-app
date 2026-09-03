@@ -84,18 +84,70 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r486 · 2026-09-03 ~08:00 UTC · FULL — rotation #3 Landsec client mobile 390px — ROUND IN PROGRESS
-- Provisional heartbeat. Bring-up: canonical recipe held 51st consecutive
-  time (qa:pg once → run-smoke restore clean → seed-personas via node/pg
-  runner per r485 note, verified Honi Poke + Hammerson rows). Regression:
-  smoke GREEN 42/0.
+### r486 · 2026-09-03 ~04:30 UTC · FULL — rotation #3 Landsec client mobile 390px · 1 bug fixed
+- Bring-up: canonical recipe held 51st consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner per r485
+  note — direct psql still assumed blocked, runner reads the .sql over
+  the pg driver; verified Honi Poke + Hammerson rows). Regression: smoke
+  GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the fix).
 - Two-bot round 486 as 3 foreground chunks (r447 pattern, r458
-  chunk-runner, tsx via node_modules/tsx/dist/cli.mjs): victoria exit 0
-  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
-  probe-by-design — standing signature exact) / woody,nick,sam exit 0
-  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
-  500/502/504. Triage: 0 app bugs from the harness.
-- Journey (Mark @390px iPhone UA) still to run.
+  chunk-runner, tsx via node node_modules/tsx/dist/cli.mjs): victoria
+  exit 0 (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless +
+  8×403 probe-by-design — standing signature exact) / woody,nick,sam
+  exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs:
+  0 raw 500/502/504. Triage: 0 app bugs from the harness.
+- Journey (Mark @390px iPhone UA+touch, UI login via Client/guest reveal —
+  "Friday on site: log this morning's viewing at U124 and the offer that
+  came in, check the deal, look at the brand, message the team, skim
+  news"): login → Portfolio dashboard (KPI 77/1/0/78 holds) → Deals tab →
+  Letting Tracker /available search U124 → Viewings dialog ADD (date
+  defaults today, UX2 holds) → EDIT (notes persist) → DELETE (row +
+  count clean up) → Offers dialog ADD (date defaults today) → DELETE →
+  client deal detail #U124 Gail's letting (no fee/commission words,
+  parity Link-landlord/tenant controls per 2026-07 decision) → Honi Poke
+  brand profile (pill tabs incl. COMPLIANCE per standing decision;
+  key-contact "add role…" inline editor is INTENDED client parity —
+  /api/crm/contacts PUT is CLIENT_ALLOWED_WRITES, slice-scoped) →
+  /messages (ChatBGP pinned) → News. 0 pageerrors, 0 non-noise 4xx/5xx,
+  0 h-overflow on 17 screenshots. Harness note: viewing rows have NO
+  per-row testid — `viewing-event-*` only exists on diary-linked rows
+  (Calendar button); detect rows by text, controls by aria-label.
+- BUG FIXED (journey → client News tab): the same story rendered TWICE as
+  separate cards ("Starbucks UK launches Iced Apple Crumble…", identical
+  headline/source/date). Root cause chain: news_articles dedupe is
+  URL-only, but backfillMissingImagesUpTo rewrites Google News wrapped
+  URLs to publisher URLs (and the resolver is flaky), so the next fetch
+  pass re-ingests the same story under the other URL form (no unique
+  constraint on url — the backfill's catch comment assumes one that
+  doesn't exist; reproduced across my two chunk-server boots: identical
+  304-char wrapped URLs, rows 4.5min apart) → duplicate article rows
+  become duplicate brand_signals (upsertBrandSignal also keyed on source
+  URL) → client Brand News + brand-profile Signals show dupes. Fixed at
+  all three levels, none title-only (fixture has DISTINCT stories sharing
+  generic titles, e.g. "Speaker Details" ×6 — key is source+title+
+  published_at): (1) news-feeds.ts fetch pass also skips same
+  (sourceId, title, publishedAt); (2) news-brand-linking.ts
+  upsertBrandSignal also skips same (brand, headline, signal_date);
+  (3) /api/client/news-signals (routes.ts) DISTINCT ON (brand, headline,
+  COALESCE(signal_date, created_at)) so existing prod duplicates vanish
+  from the UI without a data migration. tsc clean, FRESH_BUILD smoke
+  re-green 42/0, verified via API (200, 1 Iced-Apple row, 0 dupe keys,
+  order still newest-first) AND visually at 390px (single card).
+- Harness growth: two-bot +1 client-news-signals-deduped (GET
+  news-signals, no two rows share brand|headline|date). Passed in a
+  post-fix mark chunk; that chunk's 12 flow-failures + 1×404 were ALL the
+  documented stale-cross class (the FRESH_BUILD smoke restore wiped
+  victoria's cross rows while cross-486.json survived) — r487 should
+  watch its first standard-order run (victoria before mark, fresh cross).
+- Bugs fixed: 1 (above). Deferred: none new. Carried (data, staff
+  decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: UX-NOTES 144 (mobile toast renders centred over
+  the tracker dialog, hiding the just-added row for ~4s). New flakes:
+  none. Real-device keyboard-up composer check (r405) still open for
+  Woody.
+- Next: r486 had the journey → r487 LIGHT (watch
+  client-news-signals-deduped in standard order); then rotation #4 BGP
+  staff mobile 390px.
 
 ### r485 · 2026-09-03 ~06:30 UTC · LIGHT (r484 had the journey) — GREEN
 - Bring-up: canonical recipe held 50th consecutive time (qa:pg once →
