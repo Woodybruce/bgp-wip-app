@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r515 · 2026-09-03 · LIGHT (r514 had the journey) — round in progress
+### r515 · 2026-09-03 · LIGHT (r514 had the journey) — GREEN
 - Bring-up: canonical recipe held 80th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
@@ -96,7 +96,25 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (status tally
   on request lines; single 422 = r462 cover-raster; 403s flat 1-3/route,
   no storm). Triage: 0 app bugs from the harness.
-- LIGHT round work in progress (deferred-bug check + spot-check).
+- No journey (LIGHT). No deferred bugs to pick up (r490–r514 deferred
+  none). Spot-check instead: chatbgp-app-map.ts STALENESS AUDIT (the
+  KEEP-CURRENT file — stale lines become confident wrong ChatBGP answers;
+  never audited since the tracker/WIP/Files/Evidence-Plans redesigns
+  landed). Cross-checked map claims against code: staff phone tabs
+  exactly 4 (Dashboard/Messages/Deals/News) + client 5 (Portfolio/
+  Messages/Deals/Tasks/News) = mobile-bottom-nav.tsx exact; WIP report
+  tab set (WIP Report/Agent Summary/Fee Check/Needs Attention, seniors
+  gates) = wip-report.tsx exact; tracker Deal Status vocabulary
+  (Marketing→…→Invoiced) present; /evidence-plans, /m/images, /m/profile,
+  /settings routes all mounted in App.tsx; "/cashflow just redirects to
+  /finance" = true (pages/cashflow.tsx is a replace-redirect). NO stale
+  lines found — map is current.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r515 was LIGHT → r516 FULL, rotation #2 Landsec client desktop
+  1440px.
 
 ### r514 · 2026-09-03 · FULL (rotation #1 BGP staff desktop 1440px) — GREEN
 - Bring-up: canonical recipe held 79th consecutive time (qa:pg once →
