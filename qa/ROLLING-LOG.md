@@ -84,6 +84,35 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r505 · 2026-09-03 ~18:15 UTC · LIGHT (r504 had the journey) — GREEN
+- Bring-up: canonical recipe held 70th consecutive time (qa:pg once →
+  run-smoke restore clean → purge + seed-personas via node/pg runner, honi 1
+  / hammerson 2 verified; purge swept the r504b QA residue as planned).
+  Regression: smoke GREEN 42/0.
+- Two-bot 505 as 3 foreground chunks (with-server wrapper, 570s child
+  timeout), STANDARD ORDER, fresh cross-505.json: victoria exit 0 FIRST RUN
+  (2×400 standing signature exact) / mark exit 0, 158 [ok] (9 issues = 1×503
+  keyless + 8×403 probe-by-design — standing signature exact) / woody,nick,
+  sam exit 0 (18 [ok], 0 issues). phone-overflow-sweep 11/11 at 390px.
+  Server log: 0 raw 500/502/504 (status tally only 2xx/3xx/expected 4xx/503
+  families; single 422 = r462 cover-raster). Triage: 0 app bugs.
+- r504 FIX VERIFIED: staff-comp-detail-mobile-stacks passed in the victoria
+  chunk (Transaction stacks below Property Details at 390px, no grid
+  h-overflow) — the comps.tsx grid-cols-1 sm:grid-cols-2 fix holds.
+- SETUP CAUTION (harness, this round): the with-server wrapper's
+  server.kill on the tsx PARENT doesn't kill the node child (r212 gotcha
+  resurfaced) — chunks 2/3 + overflow booted servers that died EADDRINUSE
+  and silently ran against chunk 1's still-live server. Same DB, results
+  valid (all requests landed in one log), but kill via lsof -ti:5000 in
+  future wrappers. Also: a bare numeric grep for 500 false-positives on
+  "[News Feed] … from 500 articles" — tally on request lines only.
+- No journey (LIGHT). No deferred bugs to pick up (r490–r504 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r505 was LIGHT → r506 FULL, rotation #1 BGP staff desktop 1440px.
+
 ### r504 · 2026-09-03 ~19:50 UTC · FULL (rotation #4 BGP staff mobile 390px) · 1 bug fixed
 - Bring-up: canonical recipe held 69th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
