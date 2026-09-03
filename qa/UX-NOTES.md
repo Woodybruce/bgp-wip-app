@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+143. 2026-09-03 · Landsec client / desktop 1440px (QA r484) · skimming Brand
+    News for signals across the tenant slice · every article card shows a
+    summary line that is a verbatim copy of the headline (title and
+    description are identical for all wire rows), so each card says the same
+    thing twice and the list reads as noise · Suggest: hide the description
+    line when it equals (or startsWith) the headline, so cards collapse to
+    one line unless the summary genuinely adds information — pairs with the
+    existing near-duplicate-collapse suggestion for the News tab.
+
 142. 2026-09-03 · BGP staff / desktop 1440px (QA r482) · a non-admin staff
     member following a link to /expenses (e.g. from my-expenses' "ask Woody
     or Layla… on the Expenses admin page" hint) · since r482 the admin-only

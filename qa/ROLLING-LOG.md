@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r484 · 2026-09-03 ~04:00 UTC · FULL — rotation #2 Landsec client desktop 1440px — ROUND IN PROGRESS (heartbeat)
+### r484 · 2026-09-03 ~04:30 UTC · FULL — rotation #2 Landsec client desktop 1440px — GREEN
 - Bring-up: canonical recipe held 49th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
   two-bot, fresh session no stale cross file). Regression: smoke GREEN 42/0.
@@ -94,9 +94,34 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
   Server logs: 0 raw 500/502/504 (3754×200, expected 4xx/503 families,
   single 422 = r462 cover-raster by design). Triage: 0 app bugs from the
-  harness.
-- Journey (Mark @1440px client desktop) still to run — final entry replaces
-  this heartbeat.
+  harness. r482's staff-expenses-cover-and-admin-gate green again in
+  standard order.
+- Journey (Mark @1440px, UI login via Client/guest reveal — "mid-week
+  check-in: how are my deals progressing, log this morning's viewing, who
+  do I chase, message the team": dashboard KPIs → Deals hub table (client
+  variant) → deal detail #1003 U124 Gail's letting → Letting Tracker
+  search U124 → per-row Viewings dialog ADD → EDIT → DELETE end-to-end →
+  Bluewater property page (Linked Contacts/who-to-chase, Files, Compliance
+  & KYC) → /messages → ChatBGP → My Tasks → Brand News): all render clean,
+  0 pageerrors, 0 non-noise 4xx/5xx, 0 h-overflow at 1440px. Client deal
+  detail leaks NO fee/commission words; Files rail says "managed by the
+  BGP team"; inline Link-landlord picker on deals scopes to Landsec only;
+  viewing form date defaults today (UX2 holds), row persists + edit note
+  persists + delete cleans up (journey left no QA rows). client
+  /evidence-plans deep link = one 403 + silent bounce to "/" (r464
+  guard-mount class; gate itself held in two-bot). "+ Link landlord/
+  tenant"/inline status editors visible to clients on the Deals table =
+  the 2026-07 "client does as much as the agent" parity decision
+  (PUT deals + POST companies are CLIENT_ALLOWED_WRITES, fee cells
+  isClientDeals-gated) — judged as intended, not the r460 dead-end class.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 143 (Brand News cards repeat
+  the headline verbatim as the summary line — collapse when identical).
+  New flakes: none. Real-device keyboard-up composer check (r405) still
+  open for Woody.
+- Next: r484 had the journey → r485 LIGHT; then rotation #3 Landsec client
+  mobile 390px.
 
 ### r483 · 2026-09-03 ~02:30 UTC · LIGHT (r482 had the journey) — GREEN
 - Bring-up: canonical recipe held 48th consecutive time (qa:pg once →
