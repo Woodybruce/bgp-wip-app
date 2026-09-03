@@ -13,6 +13,21 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+147. 2026-09-03 · Landsec client / desktop 1440px (QA r492) · logging this
+    morning's offer on L112 from a brand not yet in the CRM · typed the
+    company name into the offer form's Company picker, got "No matches.",
+    saved anyway — the offer persisted as "No company" with the typed name
+    silently discarded (the field visibly resets to "Select company", but a
+    user focused on rent/terms will miss it). The API and the email-sync
+    path both accept free-text companyName, and the Investment Tracker's
+    CrmPicker already has an inline green "Create company '<name>'" row —
+    the Letting Tracker's CrmPicker (offers + viewings dialogs,
+    available-units.tsx:148) is the only picker without it. Suggestion:
+    port the investment-tracker onCreate affordance (or accept the typed
+    text as free-text companyName) so an unmatched company isn't lost.
+    Affects staff and clients alike; clients can POST companies
+    (allowlisted), so parity holds.
+
 146. 2026-09-03 · BGP staff / desktop 1440px (QA r490) · reviewing U124 on the
     Letting Tracker before a client call · searched "U124" (3 of 81 units),
     the header still read "Viewings 2 · Offers 1", but U124's own dialogs

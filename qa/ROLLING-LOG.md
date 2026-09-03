@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r492 · 2026-09-03 ~16:30 UTC · FULL — rotation #2 Landsec client desktop 1440px — ROUND IN PROGRESS
+### r492 · 2026-09-03 ~16:30 UTC · FULL — rotation #2 Landsec client desktop 1440px — GREEN
 - Bring-up: canonical recipe held 57th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
   hammerson 2 verified). Regression: smoke GREEN 42/0.
@@ -95,7 +95,33 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
   500/502/504 (3725×200, expected 4xx/503 families, single 422 = r462
   cover-raster by design). Triage: 0 app bugs from the harness.
-- Journey (Mark @1440px) pending — this entry is the heartbeat.
+- Journey (Mark @1440px, UI login via Client/guest reveal — "month-end
+  landlord review: dashboard → Letting Tracker → log/correct/remove an
+  offer on L112 → unit Files dialog → leasing schedule → calendar →
+  comps", judging tracker/Files redesigns as intended): dashboard KPIs
+  (passing-rent "—" holds), tracker 78 units + Actions cluster clean;
+  Offers dialog ADD end-to-end in-browser (date defaults today, toast,
+  row + header KPI 1→2 tick live); client Files dialog correct (4
+  category pills, Upload, Info sheet row, NO Doc Studio wording);
+  leasing board ARCHIVED banner + occupancy labels hold; calendar +
+  comps clean. 0 pageerrors, 0 non-noise 4xx/5xx, no h-overflow on 10
+  screenshots. Offer EDIT/DELETE as client verified via API probe
+  (POST/PATCH/DELETE all 200, own unit, probe cleaned up) — the
+  browser edit/delete leg keyed on the dropped company name (below)
+  so it skipped; journey's "No company" offer row deleted via DB.
+- NOT bugs: /turnover deep link as client = silent bounce to "/" (r464
+  guard-mount class, staff-only route not in client nav); QA-CAL-MINE-R492
+  calendar event + QA-COMP R492 comp row = this round's two-bot residue
+  (r450 precedent, wiped by next restore).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 147 (Letting Tracker offer/
+  viewing Company picker silently drops unmatched typed names — offer
+  saves as "No company"; investment tracker's picker already has inline
+  create; API accepts free-text companyName). New flakes: none.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r492 had the journey → r493 LIGHT; then rotation #3 Landsec
+  client mobile 390px.
 
 ### r491 · 2026-09-03 ~14:00 UTC · LIGHT (r490 had the journey) — GREEN
 - Bring-up: canonical recipe held 56th consecutive time (qa:pg once →
