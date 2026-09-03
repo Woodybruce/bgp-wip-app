@@ -88,7 +88,7 @@ pool.query(`
     notes TEXT,
     ts_matched_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  )`).then(() => pool.query(`ALTER TABLE evidence_plan_units ADD COLUMN IF NOT EXISTS level_id UUID, ADD COLUMN IF NOT EXISTS source TEXT`)).catch(() => {});
+  )`).then(() => pool.query(`ALTER TABLE evidence_plan_units ADD COLUMN IF NOT EXISTS level_id UUID, ADD COLUMN IF NOT EXISTS source TEXT, ADD COLUMN IF NOT EXISTS dot JSONB`)).catch(() => {});
 pool.query(`
   CREATE TABLE IF NOT EXISTS evidence_plan_entries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -537,7 +537,7 @@ router.post("/api/evidence-plans/:id/units", requireAuth, async (req: Request, r
 });
 
 const UNIT_FIELDS: Record<string, string> = {
-  unitRef: "unit_ref", tenantName: "tenant_name", polygon: "polygon",
+  unitRef: "unit_ref", tenantName: "tenant_name", polygon: "polygon", dot: "dot",
   leaseExpiry: "lease_expiry", breakDate: "break_date", reviewDate: "review_date",
   erv: "erv", passingRent: "passing_rent", sqft: "sqft", notes: "notes",
 };
@@ -548,7 +548,7 @@ router.put("/api/evidence-plans/units/:unitId", requireAuth, async (req: Request
     const vals: any[] = [];
     for (const [k, col] of Object.entries(UNIT_FIELDS)) {
       if (!(k in (req.body || {}))) continue;
-      vals.push(k === "polygon" ? JSON.stringify(req.body[k]) : (req.body[k] === "" ? null : req.body[k]));
+      vals.push(k === "polygon" || k === "dot" ? JSON.stringify(req.body[k]) : (req.body[k] === "" ? null : req.body[k]));
       sets.push(`${col} = $${vals.length}`);
     }
     if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
@@ -977,7 +977,7 @@ async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, o
 // box (plus margin) find the saturated fill pixels and take their bounding
 // box. AI coordinates are "close but offset"; the pixels are exact. Blocks
 // with no colour fill (white anchor stores) keep the AI box.
-function snapBoxToBlock(raw: Buffer, W: number, H: number, box: { x0: number; y0: number; x1: number; y1: number }) {
+function snapBoxToBlock(raw: Buffer, W: number, H: number, box: { x0: number; y0: number; x1: number; y1: number }): { x0: number; y0: number; x1: number; y1: number; fillFrac: number } {
   const m = 0.15; // window margin as a fraction of the box size
   const bw = box.x1 - box.x0, bh = box.y1 - box.y0;
   const wx0 = Math.max(0, Math.floor((box.x0 - bw * m) * W)), wx1 = Math.min(W - 1, Math.ceil((box.x1 + bw * m) * W));
@@ -997,14 +997,45 @@ function snapBoxToBlock(raw: Buffer, W: number, H: number, box: { x0: number; y0
       }
     }
   }
-  if (!total || hits / total < 0.05 || maxX < 0) return box; // no meaningful fill — keep AI box
+  const fillFrac = total ? hits / total : 0;
+  if (!total || fillFrac < 0.05 || maxX < 0) return { ...box, fillFrac }; // no meaningful fill — keep AI box
   const snapped = { x0: minX / W, y0: minY / H, x1: (maxX + 2) / W, y1: (maxY + 2) / H };
   // A snap adjusts edges, it doesn't leap: each edge may move at most half
   // a box-dimension from where the AI put it.
   return {
     x0: Math.max(snapped.x0, box.x0 - bw * 0.5), y0: Math.max(snapped.y0, box.y0 - bh * 0.5),
     x1: Math.min(snapped.x1, box.x1 + bw * 0.5), y1: Math.min(snapped.y1, box.y1 + bh * 0.5),
+    fillFrac,
   };
+}
+
+// Place a unit's evidence dot at its FRONTAGE: sample thin strips just
+// outside each edge of the box — the mall/walkway side is the whitest —
+// and put the dot just inside that edge (Woody, 2026-09-03: "dots should
+// be fixed to the frontage"). Null = no clear frontage → centroid.
+function frontageDot(raw: Buffer, W: number, H: number, box: { x0: number; y0: number; x1: number; y1: number }): { x: number; y: number } | null {
+  const whiteness = (x0: number, y0: number, x1: number, y1: number) => {
+    let white = 0, total = 0;
+    for (let y = Math.max(0, Math.floor(y0 * H)); y < Math.min(H, Math.ceil(y1 * H)); y += 2) {
+      for (let x = Math.max(0, Math.floor(x0 * W)); x < Math.min(W, Math.ceil(x1 * W)); x += 2) {
+        total++;
+        const i = (y * W + x) * 3;
+        const r = raw[i], g = raw[i + 1], b = raw[i + 2];
+        if (Math.max(r, g, b) - Math.min(r, g, b) < 25 && Math.min(r, g, b) > 195) white++;
+      }
+    }
+    return total ? white / total : 0;
+  };
+  const bw = box.x1 - box.x0, bh = box.y1 - box.y0;
+  const t = Math.min(bw, bh) * 0.4;
+  const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2;
+  const sides = [
+    { w: whiteness(box.x0, box.y0 - t, box.x1, box.y0), dot: { x: cx, y: box.y0 + bh * 0.15 } },
+    { w: whiteness(box.x0, box.y1, box.x1, box.y1 + t), dot: { x: cx, y: box.y1 - bh * 0.15 } },
+    { w: whiteness(box.x0 - t, box.y0, box.x0, box.y1), dot: { x: box.x0 + bw * 0.15, y: cy } },
+    { w: whiteness(box.x1, box.y0, box.x1 + t, box.y1), dot: { x: box.x1 - bw * 0.15, y: cy } },
+  ].sort((a, b) => b.w - a.w);
+  return sides[0].w > 0.3 ? sides[0].dot : null;
 }
 
 async function runDetectJob(planId: string, jobId: string, level: any, propertyId: string | null): Promise<void> {
@@ -1037,10 +1068,13 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
     for (const r of ev.rows) known.add(String(r.unit_ref));
     const knownList = [...known].slice(0, 200);
 
-    // 2×2 tiles with 20% overlap so seam units are fully visible somewhere.
+    // 3×3 tiles with 25% overlap — the closer the zoom, the better both
+    // recall (small kiosks) and box precision.
     const found: any[] = [];
-    for (const [ox, oy] of [[0, 0], [0.4, 0], [0, 0.4], [0.4, 0.4]] as [number, number][]) {
-      found.push(...await detectTile(sharp, file.data, W, H, ox, oy, 0.6, 0.6, knownList));
+    for (const oy of [0, 0.3, 0.6]) {
+      for (const ox of [0, 0.3, 0.6]) {
+        found.push(...await detectTile(sharp, file.data, W, H, ox, oy, 0.4, 0.4, knownList));
+      }
     }
 
     const { rows: existing } = await pool.query(`SELECT unit_ref FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2`, [planId, level.id]);
@@ -1067,11 +1101,16 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       const w = u.x1 - u.x0, h = u.y1 - u.y0;
       if (w < 0.004 || h < 0.004 || w * h > 0.12 || w / h > 10 || h / w > 10) continue; // junk boxes
       if (overlaps(u)) continue; // same block seen from two tiles under different labels
-      const { x0, y0, x1, y1 } = snapBoxToBlock(raw, W, H, u);
+      const { x0, y0, x1, y1, fillFrac } = snapBoxToBlock(raw, W, H, u);
+      // A tiny box on plain white isn't a unit — it's a line from a key
+      // list or a stray label (the "random ZA over nothing" bug). Big white
+      // blocks (anchor stores) are fine.
+      if (fillFrac < 0.05 && w * h < 0.004) continue;
       const polygon = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+      const dot = frontageDot(raw, W, H, { x0, y0, x1, y1 });
       const ins = await pool.query(
-        `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon, source) VALUES ($1,$2,$3,$4,$5,'ai') RETURNING id`,
-        [planId, level.id, ref, tenant, JSON.stringify(polygon)]);
+        `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon, source, dot) VALUES ($1,$2,$3,$4,$5,'ai',$6) RETURNING id`,
+        [planId, level.id, ref, tenant, JSON.stringify(polygon), dot ? JSON.stringify(dot) : null]);
       have.add(norm);
       accepted.push({ x0, y0, x1, y1 });
       created++;

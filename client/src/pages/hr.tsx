@@ -5976,6 +5976,8 @@ function XeroPayrollPanel() {
         d.linked ? `${d.linked} newly linked` : null,
         d.alreadyLinked ? `${d.alreadyLinked} already linked` : null,
         d.unmatched ? `${d.unmatched} Xero employees unmatched` : null,
+        d.tracking?.set ? `${d.tracking.set} tracking names set` : null,
+        d.tracking?.unmatchedPeople?.length ? `${d.tracking.unmatchedPeople.length} without a tracking match` : null,
       ].filter(Boolean).join(" · ");
       toast({ title: "Auto-link complete", description: bits || "Nothing to link" });
     },
