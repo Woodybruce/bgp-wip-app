@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r513 · 2026-09-03 · LIGHT (r512 had the journey) — round in progress
+### r513 · 2026-09-03 · LIGHT (r512 had the journey) — GREEN
 - Bring-up: canonical recipe held 78th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
@@ -95,7 +95,26 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   exact) / woody,nick,sam exit 0 (18 [ok], 0 issues). phone-overflow-sweep
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (single 422 =
   r462 cover-raster). Triage: 0 app bugs from the harness.
-- LIGHT round in progress — spot-check/deferred work to follow.
+- No journey (LIGHT). No deferred bugs to pick up (r490–r512 deferred
+  none). Spot-check instead: Evidence Plans canvas WITH a background plan
+  image + drawn polygon — the one state r506/r511 never saw. QA-R513 plan
+  created via multipart POST (name + background PNG in one call, sharp
+  dims recorded 1200×800), unit QA-U1 with normalised {x,y} 0..1 polygon,
+  1 unlinked entry. Canvas at 1440px: background img loads (naturalWidth
+  1200), polygon overlay renders at the right spot with unit label,
+  header count line "1 unit · 1 evidence entry · 1 unlinked" correct,
+  amber notice "1 evidence entry couldn't be matched to a drawn unit"
+  correct + helpful, 0 pageerrors, 0 h-overflow. NOT a bug: an unlinked
+  entry's tenant shows only in the facts panel on unit click — by design.
+  Plan deleted in-round (delete 200, 0 QA-R513 rows left).
+- Spot-check harness notes: POST /api/evidence-plans accepts the
+  background in the create multipart (field name `background`); polygon
+  is a normalised Pt[] (0..1) — ≥3 points renders on the canvas SVG.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r513 was LIGHT → r514 FULL, rotation #1 BGP staff desktop 1440px.
 
 ### r512 · 2026-09-03 ~22:30 UTC · FULL (rotation #4 BGP staff mobile 390px) — GREEN
 - Bring-up: canonical recipe held 77th consecutive time (qa:pg once →
