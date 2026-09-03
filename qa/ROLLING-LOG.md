@@ -84,11 +84,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r498 · 2026-09-03 ~11:40 UTC · FULL — rotation #1 BGP staff desktop 1440px — IN PROGRESS
-- Heartbeat (triage done, journey pending). Bring-up: canonical recipe held
-  63rd consecutive time (qa:pg once → run-smoke restore clean →
-  seed-personas via node/pg runner, honi 1 / hammerson 1 verified).
-  Regression: smoke GREEN 42/0.
+### r498 · 2026-09-03 ~12:15 UTC · FULL — rotation #1 BGP staff desktop 1440px — GREEN
+- Bring-up: canonical recipe held 63rd consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
+  hammerson 1 verified). Regression: smoke GREEN 42/0.
 - Two-bot 498 as 3 foreground chunks (r447/r458 pattern, tsx via
   node tsx/cli.mjs), STANDARD ORDER, fresh cross-498.json: victoria exit 0
   (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
@@ -98,7 +97,37 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   cover-raster by design; 5×400 standing; Error lines all keyless-env).
   Triage: 0 app bugs from the harness. No deferred bugs to pick up
   (r490–r497 deferred none).
-- Journey next: Victoria @1440px staff desktop.
+- Journey (Victoria @1440px, UI login via Client/guest reveal — "deal-
+  pipeline morning: dashboard → Deals hub (WIP Report landing tab) →
+  Letting Tracker → Deals table → open deal #1003 detail → Compliance
+  Board → Evidence Plans desktop → ChatBGP → Calendar → Tasks quick-add
+  round-trip", judging tracker/WIP/Files redesigns + Evidence Plans as
+  intended): dashboard KPIs/news/diary clean; Deals hub pill-tabs land on
+  WIP Report (chart, by-client/property/team, deal detail table); tracker
+  81 units, status pill row + Actions cluster clean; Deals table 3 deals,
+  TABLE/CARDS/BOARD toggles render; deal #1003 detail deep surface clean
+  (breadcrumb, Parties, Fee Allocation, Xero placeholder, KYC panel with
+  MLR scope + no-counterparties banner, Files rail, Linked Property,
+  Comments, Timeline/Audit log); Compliance Board 3 counterparties in
+  Documents-pending column, TABLE/CARDS/BOARD + counterparties/live-deals
+  toggles; Evidence Plans desktop empty state + header/empty-state New
+  plan CTAs; ChatBGP full-screen "Not Connected" = intended keyless
+  degradation; calendar Work-week with 2 QA two-bot events (residue,
+  r450 precedent); Tasks quick-add "QA-R498 probe task" → "Task created"
+  toast + row with pin/edit/subtask/delete controls (probe deleted via
+  API 200 — no residue). 0 pageerrors, 0 non-noise 4xx/5xx (only
+  ai-briefing 503 bursts), 0 h-overflow on 17 screenshots.
+- NOT bugs: /kyc 404 = my invented URL (real route is /compliance-board;
+  friendly not-found rendered as designed); deals-hub sidebar "Deals"
+  landing on WIP Report tab = intended hub design; "QA-R498-ayuj
+  Consultancy" on WIP + QA-CAL rows on calendar = two-bot residue.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (nothing rose to a note this
+  round). New flakes: none. Real-device keyboard-up composer check
+  (r405) still open for Woody.
+- Next: r498 had the journey → r499 LIGHT; then rotation #2 Landsec
+  client desktop 1440px.
 
 ### r497 · 2026-09-03 ~11:10 UTC · LIGHT (r496 had the journey) — GREEN
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
