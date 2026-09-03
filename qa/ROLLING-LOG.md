@@ -84,6 +84,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r492 · 2026-09-03 ~16:30 UTC · FULL — rotation #2 Landsec client desktop 1440px — ROUND IN PROGRESS
+- Bring-up: canonical recipe held 57th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
+  hammerson 2 verified). Regression: smoke GREEN 42/0.
+- Two-bot 492 as 3 foreground chunks (r447/r458 pattern, tsx via
+  node tsx/cli.mjs), STANDARD ORDER, fresh cross-492.json: victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (3725×200, expected 4xx/503 families, single 422 = r462
+  cover-raster by design). Triage: 0 app bugs from the harness.
+- Journey (Mark @1440px) pending — this entry is the heartbeat.
+
 ### r491 · 2026-09-03 ~14:00 UTC · LIGHT (r490 had the journey) — GREEN
 - Bring-up: canonical recipe held 56th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
