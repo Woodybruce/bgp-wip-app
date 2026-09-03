@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r506 · 2026-09-03 ~21:00 UTC · FULL (rotation #1 staff desktop 1440px) — ROUND IN PROGRESS
+### r506 · 2026-09-03 ~21:40 UTC · FULL (rotation #1 staff desktop 1440px) — GREEN
 - Bring-up: canonical recipe held 71st consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
@@ -96,7 +96,42 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
   500/502/504 (status tally only 2xx/3xx/expected 4xx/503 families;
   single 422 = r462 cover-raster). Triage: 0 app bugs from the harness.
-- Journey (staff desktop 1440px, victoria) pending — entry to be replaced.
+- Journey (Victoria desktop 1440px, UI login via Client/guest reveal —
+  "evening desk session across the redesigned surfaces recent rounds only
+  saw on mobile: WIP report, letting tracker + Files dialog, Evidence
+  Plans, deals, global search, then a sidebar sweep of CRM / People & HR /
+  My Card / Team Expenses / ChatBGP"): login → dashboard (leads card, news
+  feed, KPI tiles, diary grid all render) → /wip-report (REDESIGN JUDGED
+  AS INTENDED: fees-by-month chart, status chips, client/property/team
+  tiles, deal detail table — clean) → /available Letting Tracker (REDESIGN
+  AS INTENDED: FY strip, filters, status pill row, grouped table w/ icon
+  actions; search L112 → 2 of 81; General Tenancy Schedule board below) →
+  Files dialog via row icon (type chips, Upload/Doc Studio, info-sheet row
+  — clean; note staff desktop exposes Files as an icon w/ title tooltip,
+  not a labelled button) → /evidence-plans (empty state + New-plan dialog
+  both clean; fixture has no plans so canvas untested — plan lifecycle
+  covered API-side by staff-evidence-plan-lifecycle) → /deals (lands on
+  WIP Report tab of DealsHub — judged intended, tabs visible) → Ctrl+K
+  global search "Bluewater" (properties/WIP/comps grouped, deal names w/
+  property subtitles = r229 fix holds) → sidebar CRM /contacts (cards
+  view), People & HR /hr (ski target, teams, profile card), My Card
+  /my-expenses (clean "No card issued" empty state), /team-expenses
+  (clean empty state), /chatbgp ("Not Connected" = intended keyless
+  degradation). 0 pageerrors, 0 h-overflow on 15 shots, non-noise 4xx/5xx
+  none across all segments.
+- Bugs fixed: 0 (nothing broken found — harness AND journey). Deferred:
+  none. Carried (data, staff decision): Bluewater tenancy SPINE duplicates
+  (U062 ×4, L090 ×2, L130 ×2). Suggestions: none new (tenancy KPI "AVG ERV
+  £PSF 0" vs "PASSING RENT —" inconsistency re-observed at 1440px but
+  already logged twice in UX-NOTES — not duplicated). New flakes: none.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Setup note (harness): a fresh dev server's FIRST cold page load can take
+  >2.5s to hydrate the sidebar — journey scripts should waitFor a sidebar
+  label (45s cap) instead of fixed sleeps, else every getByText probe
+  no-ops (r262 flake family, cost one false "links not found" pass this
+  round).
+- Next: r506 had the journey → r507 LIGHT; then rotation #2 Landsec client
+  desktop.
 
 ### r505 · 2026-09-03 ~18:15 UTC · LIGHT (r504 had the journey) — GREEN
 - Bring-up: canonical recipe held 70th consecutive time (qa:pg once →
