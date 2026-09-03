@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r494 · 2026-09-03 ~20:30 UTC · FULL — rotation #3 Landsec client mobile 390px — ROUND IN PROGRESS
+### r494 · 2026-09-03 ~10:30 UTC · FULL — rotation #3 Landsec client mobile 390px — GREEN
 - Bring-up: canonical recipe held 59th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
   hammerson 1 verified). Regression: smoke GREEN 42/0.
@@ -95,7 +95,33 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
   500/502/504 (3827×200, expected 4xx/503 families, single 422 = r462
   cover-raster by design; 5×400 standing). Triage: 0 app bugs.
-- Journey (Mark @390px) in progress — entry to be finalised this round.
+- Journey (Mark @390px iPhone UA, UI login via Client/guest reveal —
+  "morning check-in on the phone: portfolio home → Letting Tracker →
+  unit Files dialog → Deals hub Properties tab → Bluewater property
+  (Overview / Boards / Deals & Units pills) → full tenancy board →
+  deal detail → Tasks create+complete → Messages/ChatBGP → News",
+  judging tracker/Files redesigns as intended): home widget 77/1/0/78
+  holds; tracker card list clean (status pills, Files/Viewing/Offer/
+  Interest/Edit actions); client Files dialog correct (4 pills, Upload,
+  Info sheet row, NO Doc Studio); property pills all render (brand-gap
+  503s = keyless noise); tenancy full board 200 units + stat tiles, no
+  h-overflow at any depth; deal detail (U124) clean; inline task create →
+  "Nice!" toast on complete → Completed 1→2 tick live (probe deleted via
+  API 200, delete UI verified present); ChatBGP greeting + chips, News
+  feed clean. 0 pageerrors, 0 non-noise 4xx/5xx, 0 h-overflow on 40+
+  screenshots across 4 passes.
+- NOT bugs: /property/:id deep link as client = silent bounce to "/"
+  (correct — client route is /properties/:id, guard working as designed);
+  tasks "Add a task… press Enter" is an input placeholder (text= locators
+  miss it — harness note, not app).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 148 (phone Tasks tab: AI
+  Daily Briefing card fills the first viewport before the task list —
+  start it collapsed or move below tasks). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r494 had the journey → r495 LIGHT; then rotation #4 BGP staff
+  mobile 390px.
 
 ### r493 · 2026-09-03 ~18:30 UTC · LIGHT (r492 had the journey) — GREEN
 - Bring-up: canonical recipe held 58th consecutive time (qa:pg once →

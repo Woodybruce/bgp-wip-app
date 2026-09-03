@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+148. 2026-09-03 · Landsec client / mobile 390px (QA r494) · tapped the Tasks
+    tab to check open tasks on the phone · the AI Daily Briefing card fills
+    the entire first viewport (title, spinner/Generate button, skeleton
+    lines) before the "Tasks" list — the thing the tab is named for starts
+    a full screen below the fold, and the one open task needs a scroll to
+    see. Suggestion: on the phone Tasks tab, start the briefing card
+    collapsed to its header row (like the property page's "Cost plan &
+    inputs" pattern, remembered per device) or move it below the task
+    list — tasks first on a tab called Tasks.
+
 147. 2026-09-03 · Landsec client / desktop 1440px (QA r492) · logging this
     morning's offer on L112 from a brand not yet in the CRM · typed the
     company name into the offer form's Company picker, got "No matches.",
