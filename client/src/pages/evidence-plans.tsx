@@ -34,7 +34,7 @@ type PlanLevel = {
 };
 type PlanUnit = {
   id: string; unit_ref: string; unit_norm?: string; ts_linked?: boolean;
-  tenant_name: string | null; level_id: string | null; polygon: Pt[] | null;
+  tenant_name: string | null; level_id: string | null; polygon: Pt[] | null; dot?: Pt | null;
   lease_expiry: string | null; break_date: string | null; review_date: string | null;
   erv: string | null; passing_rent: string | null; sqft: string | null; notes: string | null;
 };
@@ -76,6 +76,24 @@ const normRef = (raw: string) => String(raw || "")
 const MATTER_TYPE_LABELS: Record<string, string> = {
   rent_review: "Rent review", lease_renewal: "Lease renewal", dilapidations: "Dilapidations",
   service_charge: "Service charge", regear: "Regear", general: "General",
+};
+
+// Evidence transaction types → dot colour + key label. Colours picked to
+// hold against the teal-heavy plan artwork.
+const evidenceTypeKey = (t: string | null | undefined): "OML" | "LR" | "RR" | "RG" | "OTHER" => {
+  const s = String(t || "").toLowerCase();
+  if (/oml|open market/.test(s)) return "OML";
+  if (/renewal/.test(s)) return "LR";
+  if (/review/.test(s)) return "RR";
+  if (/re-?gear/.test(s)) return "RG";
+  return "OTHER";
+};
+const EVIDENCE_TYPE_META: Record<string, { label: string; colour: string }> = {
+  OML: { label: "OML", colour: "hsl(215 70% 42%)" },
+  LR: { label: "Lease renewal", colour: "hsl(268 45% 46%)" },
+  RR: { label: "Rent review", colour: "hsl(17 60% 45%)" },
+  RG: { label: "Re-gear", colour: "hsl(330 55% 42%)" },
+  OTHER: { label: "Other", colour: "hsl(220 10% 38%)" },
 };
 
 // ── List page ─────────────────────────────────────────────────────────────
@@ -287,6 +305,22 @@ function PlanView({ planId }: { planId: string }) {
     for (const e of entries) if (e.unit_id) m.set(e.unit_id, (m.get(e.unit_id) || 0) + 1);
     return m;
   }, [entries]);
+  // Latest full entry per unit — drives dot colour (transaction type) and
+  // the hover card. Entries arrive newest-first.
+  const latestEntryByUnit = useMemo(() => {
+    const m = new Map<string, Entry>();
+    for (const e of entries) if (e.unit_id && !m.has(e.unit_id)) m.set(e.unit_id, e);
+    return m;
+  }, [entries]);
+  const typesOnPlan = useMemo(() => {
+    const s = new Set<string>();
+    for (const e of entries) if (e.unit_id) s.add(evidenceTypeKey(e.transaction_type));
+    return s;
+  }, [entries]);
+  const [hover, setHover] = useState<{ unitId: string; x: number; y: number } | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [dotDraft, setDotDraft] = useState<{ unitId: string; x: number; y: number } | null>(null);
+  const [showZa, setShowZa] = useState<boolean>(() => { try { return localStorage.getItem("bgp-ep-za") !== "0"; } catch { return true; } });
 
   const toPlanCoords = (clientX: number, clientY: number): Pt | null => {
     const el = surfaceRef.current;
@@ -393,7 +427,7 @@ function PlanView({ planId }: { planId: string }) {
   const aspect = hasBg && activeLevel?.background_width ? (activeLevel.background_height || 0) / activeLevel.background_width : 0.7;
 
   return (
-    <div ref={fsRef} className="flex flex-col h-[calc(100dvh-var(--mobile-top,0px))] md:h-screen bg-background">
+    <div ref={fsRef} className="flex flex-col h-[calc(100dvh-var(--mobile-top,0px))] md:h-full bg-background">
       {/* Header */}
       <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap bg-background">
         <button onClick={() => navigate("/evidence-plans")} className="text-sm text-muted-foreground hover:text-foreground">←</button>
@@ -494,11 +528,23 @@ function PlanView({ planId }: { planId: string }) {
       <div className="flex flex-1 min-h-0 flex-col md:flex-row">
         {/* Plan canvas */}
         <div
+          ref={canvasRef}
           className="relative flex-1 min-h-[45dvh] overflow-hidden bg-muted/30 select-none touch-none"
           onWheel={e => {
             e.preventDefault();
-            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-            setZoom(z => Math.min(12, Math.max(0.5, z * factor)));
+            // Cursor-anchored zoom (the point under the mouse stays put) with
+            // gesture-scaled speed — centre-anchored fixed steps felt "very
+            // hard to control" (Woody, 2026-09-03). ctrlKey = trackpad pinch.
+            const rect = canvasRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0022));
+            const nz = Math.min(12, Math.max(0.5, zoom * factor));
+            if (nz === zoom) return;
+            const k = nz / zoom;
+            const mx = e.clientX - rect.left - rect.width / 2;
+            const my = e.clientY - rect.top - rect.height / 2;
+            setPan(p => ({ x: mx - (mx - p.x) * k, y: my - (my - p.y) * k }));
+            setZoom(nz);
           }}
           onPointerDown={e => {
             if (drawing) return;
@@ -551,45 +597,65 @@ function PlanView({ planId }: { planId: string }) {
                     const pts = poly.map(p => `${p.x * 100},${p.y * 100 * aspect}`).join(" ");
                     const c = centroid(poly);
                     const isSel = u.id === selectedId;
+                    const isHover = hover?.unitId === u.id;
                     const za = latestZaByUnit.get(u.id);
                     const evCount = evidenceCountByUnit.get(u.id) || 0;
-                    // Transparent outlines — the plan's own artwork carries
-                    // names/logos; we add only a small evidence dot with its
-                    // Zone A figure (Woody, 2026-09-03: like the original
-                    // annotated plan, and smaller).
+                    const latest = latestEntryByUnit.get(u.id);
+                    const typeColour = EVIDENCE_TYPE_META[evidenceTypeKey(latest?.transaction_type)].colour;
+                    // No visible boxes (Woody, 2026-09-03: misplaced squares
+                    // look bad) — the dot is the marker; the outline shows
+                    // only on hover (light) or selection (strong, so a wrong
+                    // box can be seen and redrawn).
                     const boxW = (Math.max(...poly.map(p => p.x)) - Math.min(...poly.map(p => p.x))) * 100;
                     const boxH = (Math.max(...poly.map(p => p.y)) - Math.min(...poly.map(p => p.y))) * 100 * aspect;
-                    const label = String(u.unit_ref || "");
-                    const isRealRef = /\d/.test(label) && label.length <= 10;
-                    const fit = Math.min((boxW * 1.6) / Math.max(2, label.length), boxH * 0.45);
-                    const refSize = Math.max(0.45, Math.min(Math.max(0.8, 1.4 / Math.sqrt(zoom)), fit));
                     const zaSize = Math.max(0.45, Math.min(Math.max(0.7, 1.2 / Math.sqrt(zoom)), Math.min((boxW * 1.2) / 8, boxH * 0.4)));
                     const dotR = Math.max(0.28, Math.min(0.55, Math.min(boxW, boxH) * 0.14)) / Math.sqrt(zoom) * 1.2;
                     return (
                       <g key={u.id} style={{ pointerEvents: "auto", cursor: "pointer" }}
-                        onClick={e => { e.stopPropagation(); if (!drawing && !dragging.current?.moved) setSelectedId(u.id); }}>
+                        onClick={e => { e.stopPropagation(); if (!drawing && !dragging.current?.moved) setSelectedId(u.id); }}
+                        onMouseMove={e => {
+                          const rect = canvasRef.current?.getBoundingClientRect();
+                          if (rect) setHover({ unitId: u.id, x: e.clientX - rect.left, y: e.clientY - rect.top });
+                        }}
+                        onMouseLeave={() => setHover(h => (h?.unitId === u.id ? null : h))}>
                         <polygon points={pts}
-                          fill={isSel ? "hsl(17 60% 45% / 0.22)" : "transparent"}
-                          stroke={isSel ? "hsl(17 60% 45%)" : evCount > 0 ? "hsl(17 60% 45% / 0.65)" : "hsl(220 10% 35% / 0.4)"}
-                          strokeWidth={isSel ? 0.3 : 0.14} vectorEffect="non-scaling-stroke" />
-                        {isRealRef && (isSel || zoom > 2.5) && (
-                          <text x={c.x * 100} y={c.y * 100 * aspect - (evCount > 0 ? zaSize * 0.9 : 0)} textAnchor="middle" dominantBaseline="middle"
-                            style={{ fontSize: refSize, fontWeight: 700, fill: "#1C1917", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: refSize * 0.15 }}>
-                            {label}
-                          </text>
-                        )}
-                        {evCount > 0 && (
-                          <>
-                            <circle cx={c.x * 100} cy={c.y * 100 * aspect - (za != null ? zaSize * 0.85 : 0)} r={dotR}
-                              fill="hsl(17 60% 45%)" stroke="#FFFFFF" strokeWidth={dotR * 0.35} />
-                            {za != null && (
-                              <text x={c.x * 100} y={c.y * 100 * aspect + zaSize * 0.55} textAnchor="middle" dominantBaseline="middle"
-                                style={{ fontSize: zaSize, fontWeight: 700, fill: "hsl(17 60% 38%)", paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: zaSize * 0.16 }}>
-                                £{za.toLocaleString("en-GB", { maximumFractionDigits: 0 })}
-                              </text>
-                            )}
-                          </>
-                        )}
+                          fill={isSel ? "hsl(17 60% 45% / 0.14)" : "transparent"}
+                          stroke={isSel ? "hsl(17 60% 45%)" : isHover ? "hsl(220 10% 35% / 0.6)" : "transparent"}
+                          strokeWidth={isSel ? 0.3 : 0.16} vectorEffect="non-scaling-stroke" />
+                        {evCount > 0 && (() => {
+                          // Dot anchors to the unit's frontage (set by
+                          // detection, draggable when selected); centroid is
+                          // the fallback.
+                          const dp = dotDraft?.unitId === u.id ? dotDraft
+                            : (u.dot && typeof u.dot.x === "number" ? u.dot : c);
+                          const showFig = showZa && za != null;
+                          return (
+                            <>
+                              <circle cx={dp.x * 100} cy={dp.y * 100 * aspect} r={isSel ? dotR * 1.4 : dotR}
+                                fill={typeColour} stroke="#FFFFFF" strokeWidth={dotR * 0.35}
+                                style={isSel ? { cursor: "grab" } : undefined}
+                                onPointerDown={e => { if (!isSel) return; e.stopPropagation(); (e.target as Element).setPointerCapture(e.pointerId); }}
+                                onPointerMove={e => {
+                                  if (!isSel || e.buttons !== 1) return;
+                                  e.stopPropagation();
+                                  const pt = toPlanCoords(e.clientX, e.clientY);
+                                  if (pt) setDotDraft({ unitId: u.id, x: pt.x, y: pt.y });
+                                }}
+                                onPointerUp={e => {
+                                  if (dotDraft?.unitId !== u.id) return;
+                                  e.stopPropagation();
+                                  saveUnit.mutate({ id: u.id, patch: { dot: { x: dotDraft.x, y: dotDraft.y } } });
+                                  setDotDraft(null);
+                                }} />
+                              {showFig && (
+                                <text x={dp.x * 100} y={dp.y * 100 * aspect + dotR * 1.6 + zaSize * 0.6} textAnchor="middle" dominantBaseline="middle"
+                                  style={{ fontSize: zaSize, fontWeight: 700, fill: typeColour, paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: zaSize * 0.16 }}>
+                                  £{za!.toLocaleString("en-GB", { maximumFractionDigits: 0 })}
+                                </text>
+                              )}
+                            </>
+                          );
+                        })()}
                       </g>
                     );
                   })}
@@ -612,6 +678,68 @@ function PlanView({ planId }: { planId: string }) {
             <div className="absolute left-3 top-3 rounded-md bg-card border border-border px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm">
               Click the unit's corners · double-click to close · {draft.length} point{draft.length === 1 ? "" : "s"}
               {draft.length > 0 && <button className="ml-2 underline" onClick={() => setDraft([])}>clear</button>}
+            </div>
+          )}
+
+          {/* Hover card — the artifact-style pop-up */}
+          {hover && !drawing && (() => {
+            const u = units.find(x => x.id === hover.unitId);
+            if (!u) return null;
+            const latest = latestEntryByUnit.get(u.id);
+            const za = latestZaByUnit.get(u.id);
+            const tk = evidenceTypeKey(latest?.transaction_type);
+            const evCount = evidenceCountByUnit.get(u.id) || 0;
+            return (
+              <div className="absolute z-20 pointer-events-none rounded-xl border border-border bg-card shadow-lg px-3 py-2.5 w-[230px]"
+                style={{
+                  left: Math.max(8, Math.min(hover.x + 14, (canvasRef.current?.clientWidth || 400) - 240)),
+                  top: Math.max(8, Math.min(hover.y + 14, (canvasRef.current?.clientHeight || 300) - 160)),
+                }}>
+                <div className="flex items-center gap-1.5">
+                  {latest && (
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-white rounded px-1 py-0.5"
+                      style={{ background: EVIDENCE_TYPE_META[tk].colour }}>
+                      {EVIDENCE_TYPE_META[tk].label}
+                    </span>
+                  )}
+                  <span className="text-sm font-bold truncate">{u.unit_ref}</span>
+                </div>
+                {u.tenant_name && u.tenant_name !== u.unit_ref && <div className="text-[11px] text-muted-foreground truncate">{u.tenant_name}</div>}
+                {za != null ? (
+                  <div className="mt-1">
+                    <span className="text-lg font-bold tabular-nums" style={{ color: EVIDENCE_TYPE_META[tk].colour }}>
+                      £{za.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>{" "}
+                    <span className="text-[10px] text-muted-foreground">Zone A</span>
+                  </div>
+                ) : (
+                  <div className="mt-1 text-[11px] text-muted-foreground">No evidence yet</div>
+                )}
+                <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+                  {latest?.transaction_date && <><span>Evidence date</span><span className="text-foreground">{fmtDate(latest.transaction_date)}</span></>}
+                  {latest?.size_sqft != null && <><span>Size</span><span className="text-foreground">{Number(latest.size_sqft).toLocaleString("en-GB")} sq ft</span></>}
+                  {u.lease_expiry && <><span>Lease expiry</span><span className="text-foreground">{fmtDate(u.lease_expiry)}</span></>}
+                  {evCount > 1 && <><span>Evidence entries</span><span className="text-foreground">{evCount}</span></>}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Colour key + Zone A toggle */}
+          {typesOnPlan.size > 0 && (
+            <div className="absolute left-3 bottom-3 z-10 flex items-center gap-2 flex-wrap rounded-full bg-card/95 border border-border px-3 py-1.5 shadow-sm">
+              {Object.keys(EVIDENCE_TYPE_META).filter(k => typesOnPlan.has(k)).map(k => (
+                <span key={k} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <span className="w-2 h-2 rounded-full inline-block" style={{ background: EVIDENCE_TYPE_META[k].colour }} />
+                  {EVIDENCE_TYPE_META[k].label}
+                </span>
+              ))}
+              <button
+                className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${showZa ? "bg-foreground text-background border-foreground" : "border-border text-muted-foreground"}`}
+                onClick={() => setShowZa(s => { try { localStorage.setItem("bgp-ep-za", s ? "0" : "1"); } catch {} return !s; })}
+                data-testid="button-toggle-za">
+                £ ZA
+              </button>
             </div>
           )}
         </div>

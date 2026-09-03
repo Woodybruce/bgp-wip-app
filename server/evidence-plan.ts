@@ -88,7 +88,7 @@ pool.query(`
     notes TEXT,
     ts_matched_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  )`).then(() => pool.query(`ALTER TABLE evidence_plan_units ADD COLUMN IF NOT EXISTS level_id UUID, ADD COLUMN IF NOT EXISTS source TEXT`)).catch(() => {});
+  )`).then(() => pool.query(`ALTER TABLE evidence_plan_units ADD COLUMN IF NOT EXISTS level_id UUID, ADD COLUMN IF NOT EXISTS source TEXT, ADD COLUMN IF NOT EXISTS dot JSONB`)).catch(() => {});
 pool.query(`
   CREATE TABLE IF NOT EXISTS evidence_plan_entries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -537,7 +537,7 @@ router.post("/api/evidence-plans/:id/units", requireAuth, async (req: Request, r
 });
 
 const UNIT_FIELDS: Record<string, string> = {
-  unitRef: "unit_ref", tenantName: "tenant_name", polygon: "polygon",
+  unitRef: "unit_ref", tenantName: "tenant_name", polygon: "polygon", dot: "dot",
   leaseExpiry: "lease_expiry", breakDate: "break_date", reviewDate: "review_date",
   erv: "erv", passingRent: "passing_rent", sqft: "sqft", notes: "notes",
 };
@@ -548,7 +548,7 @@ router.put("/api/evidence-plans/units/:unitId", requireAuth, async (req: Request
     const vals: any[] = [];
     for (const [k, col] of Object.entries(UNIT_FIELDS)) {
       if (!(k in (req.body || {}))) continue;
-      vals.push(k === "polygon" ? JSON.stringify(req.body[k]) : (req.body[k] === "" ? null : req.body[k]));
+      vals.push(k === "polygon" || k === "dot" ? JSON.stringify(req.body[k]) : (req.body[k] === "" ? null : req.body[k]));
       sets.push(`${col} = $${vals.length}`);
     }
     if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
@@ -1009,6 +1009,35 @@ function snapBoxToBlock(raw: Buffer, W: number, H: number, box: { x0: number; y0
   };
 }
 
+// Place a unit's evidence dot at its FRONTAGE: sample thin strips just
+// outside each edge of the box — the mall/walkway side is the whitest —
+// and put the dot just inside that edge (Woody, 2026-09-03: "dots should
+// be fixed to the frontage"). Null = no clear frontage → centroid.
+function frontageDot(raw: Buffer, W: number, H: number, box: { x0: number; y0: number; x1: number; y1: number }): { x: number; y: number } | null {
+  const whiteness = (x0: number, y0: number, x1: number, y1: number) => {
+    let white = 0, total = 0;
+    for (let y = Math.max(0, Math.floor(y0 * H)); y < Math.min(H, Math.ceil(y1 * H)); y += 2) {
+      for (let x = Math.max(0, Math.floor(x0 * W)); x < Math.min(W, Math.ceil(x1 * W)); x += 2) {
+        total++;
+        const i = (y * W + x) * 3;
+        const r = raw[i], g = raw[i + 1], b = raw[i + 2];
+        if (Math.max(r, g, b) - Math.min(r, g, b) < 25 && Math.min(r, g, b) > 195) white++;
+      }
+    }
+    return total ? white / total : 0;
+  };
+  const bw = box.x1 - box.x0, bh = box.y1 - box.y0;
+  const t = Math.min(bw, bh) * 0.4;
+  const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2;
+  const sides = [
+    { w: whiteness(box.x0, box.y0 - t, box.x1, box.y0), dot: { x: cx, y: box.y0 + bh * 0.15 } },
+    { w: whiteness(box.x0, box.y1, box.x1, box.y1 + t), dot: { x: cx, y: box.y1 - bh * 0.15 } },
+    { w: whiteness(box.x0 - t, box.y0, box.x0, box.y1), dot: { x: box.x0 + bw * 0.15, y: cy } },
+    { w: whiteness(box.x1, box.y0, box.x1 + t, box.y1), dot: { x: box.x1 - bw * 0.15, y: cy } },
+  ].sort((a, b) => b.w - a.w);
+  return sides[0].w > 0.3 ? sides[0].dot : null;
+}
+
 async function runDetectJob(planId: string, jobId: string, level: any, propertyId: string | null): Promise<void> {
   const bump = (sets: string, vals: any[]) =>
     pool.query(`UPDATE evidence_plan_jobs SET ${sets}, updated_at = now() WHERE id = $${vals.length + 1}`, [...vals, jobId]).catch(() => {});
@@ -1078,9 +1107,10 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       // blocks (anchor stores) are fine.
       if (fillFrac < 0.05 && w * h < 0.004) continue;
       const polygon = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+      const dot = frontageDot(raw, W, H, { x0, y0, x1, y1 });
       const ins = await pool.query(
-        `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon, source) VALUES ($1,$2,$3,$4,$5,'ai') RETURNING id`,
-        [planId, level.id, ref, tenant, JSON.stringify(polygon)]);
+        `INSERT INTO evidence_plan_units (plan_id, level_id, unit_ref, tenant_name, polygon, source, dot) VALUES ($1,$2,$3,$4,$5,'ai',$6) RETURNING id`,
+        [planId, level.id, ref, tenant, JSON.stringify(polygon), dot ? JSON.stringify(dot) : null]);
       have.add(norm);
       accepted.push({ x0, y0, x1, y1 });
       created++;
