@@ -84,20 +84,36 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r489 · 2026-09-03 ~06:00 UTC · LIGHT (r488 had the journey) — round in progress
-- Provisional heartbeat. Bring-up: canonical recipe held (qa:pg once →
+### r489 · 2026-09-03 ~06:30 UTC · LIGHT (r488 had the journey) — GREEN
+- Bring-up: canonical recipe held 54th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
   hammerson 2 verified). Regression: smoke GREEN 42/0.
-- Two-bot 489 as 3 foreground chunks (r447/r458 pattern), STANDARD ORDER,
-  fresh cross-489.json: victoria exit 0 (2×400 standing) / mark exit 0
-  (9 issues = 1×503 keyless + 8×403 probe-by-design — standing signature
-  exact) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11
-  at 390px. Server logs: 0 raw 500/502/504 (3766×200, expected 4xx/503
-  families, single 422 = r462 cover-raster by design). Triage: 0 app bugs.
+- Two-bot 489 as 3 foreground chunks (r447/r458 pattern, tsx via
+  node tsx/cli.mjs), STANDARD ORDER, fresh cross-489.json: victoria
+  exit 0 (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless +
+  8×403 probe-by-design — standing signature exact) / woody,nick,sam
+  exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs:
+  0 raw 500/502/504 (3766×200, expected 4xx/503 families, single 422 =
+  r462 cover-raster by design). Triage: 0 app bugs.
 - r488 WATCH ITEM CLEARED: staff-crm-stats-active-deals PASSED its first
   standard-order run inside the victoria chunk.
-- Remaining this round: in-browser re-verify of r488's two fixes (Today
-  activeDeals tile, people.tsx BrandSearchHint), final entry.
+- r488 FIXES RE-VERIFIED IN-BROWSER (Victoria @390px iPhone UA, dev
+  server + playwright, 4/4 checks): /api/crm/stats returns
+  {deals:7, activeDeals:7}; /today Active Deals tile renders 7 (was
+  hardwired 0); /contacts (people.tsx) zero-hit "Honi" search shows the
+  "Looking for a brand? Search Brand Intelligence →" hint, gibberish
+  search shows none. Screenshots clean.
+- Harness note: for verify legs, the UI reads localStorage
+  bgp_auth_token (queryClient getAuthHeaders) — setting only the
+  harness-internal 'authToken' key leaves hard loads on the sign-in
+  screen (r454 persisted-null lookalike, actually just the wrong key).
+- No journey (LIGHT). No deferred bugs to pick up (r488 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r489 was LIGHT → r490 FULL, rotation #1 BGP staff desktop 1440px.
 
 ### r488 · 2026-09-03 ~05:00 UTC · FULL — rotation #4 BGP staff mobile 390px · 2 bugs fixed
 - Bring-up: canonical recipe held 53rd consecutive time (qa:pg once →
