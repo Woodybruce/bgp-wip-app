@@ -84,6 +84,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r511 · 2026-09-03 ~22:20 UTC · LIGHT (r510 had the journey) — round in progress
+- Bring-up: canonical recipe held 76th consecutive time (qa:pg once →
+  run-smoke restore clean → purge + seed-personas via node/pg runner,
+  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
+- Two-bot 511 as 3 foreground chunks (with-server wrapper w/ lsof port
+  kill, 570s child timeout), STANDARD ORDER, fresh cross-511.json:
+  victoria exit 0 FIRST RUN (2×400 standing signature exact) / mark exit 0
+  (9 issues = 1×503 keyless + 8×403 probe-by-design — standing signature
+  exact) / woody,nick,sam exit 0 (18 [ok], 0 issues). phone-overflow-sweep
+  11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (status tally
+  on [express] request lines; single 422 = r462 cover-raster). Triage:
+  0 app bugs from the harness.
+- No journey (LIGHT). No deferred bugs to pick up (r490–r510 deferred
+  none). Remainder of round: targeted spot-checks in progress.
+
 ### r510 · 2026-09-03 ~21:10 UTC · FULL (rotation #3 Landsec client mobile 390px) — GREEN
 - Bring-up: canonical recipe held 75th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
