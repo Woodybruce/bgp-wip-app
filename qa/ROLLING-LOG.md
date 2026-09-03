@@ -84,6 +84,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r481 · 2026-09-03 ~00:45 UTC · LIGHT (r480 had the journey) — round in progress
+- Bring-up: canonical recipe held 46th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
+  fresh session no stale cross file). Regression: smoke GREEN 42/0.
+- Two-bot round 481 as 3 foreground chunks (r447 pattern, r458
+  chunk-runner): victoria exit 0 (2×400 standing) / mark exit 0 (9 issues
+  = 1×503 keyless + 8×403 probe-by-design — standing signature exact) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
+  Server logs: 0 raw 500/502/504 (3819×200, expected 4xx/503 families,
+  single 422 = r462 cover-raster by design). Triage: 0 app bugs.
+- Harness note this round: chunks 2/3 + sweep hit EADDRINUSE (chunk 1's
+  SIGKILL on the tsx wrapper orphaned the server, r450 class) and reused
+  the still-healthy chunk-1 server — all traffic in one log, orphan
+  pid-killed after the sweep. No app impact.
+- No journey (LIGHT). Deferred-bug pickup + final entry to follow.
+
 ### r480 · 2026-09-03 · FULL — rotation #4 BGP staff mobile 390px — GREEN
 - Bring-up: canonical recipe held 45th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas per r451 rule BEFORE two-bot,
