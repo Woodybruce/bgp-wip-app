@@ -76,7 +76,7 @@ export default function TodayPage() {
     queryKey: ["/api/crm/deals?limit=5&sort=updated"],
   });
 
-  const { data: stats } = useQuery<{ totalDeals: number; activeDeals: number; totalContacts: number; totalProperties: number }>({
+  const { data: stats } = useQuery<{ deals: number; activeDeals: number; contacts: number; properties: number }>({
     queryKey: ["/api/crm/stats"],
   });
 

@@ -2140,6 +2140,19 @@ async function victoriaRound(page, cross) {
     if (list.status !== 403) throw new Error(`victoria GET /api/expenses (admin list) expected 403, got ${list.status}`);
   });
 
+  await step(page, p, 'staff-crm-stats-active-deals', async () => {
+    // r488: the mobile Today page's "Active Deals" KPI reads
+    // stats.activeDeals, which /api/crm/stats never returned — the tile was
+    // hardwired to 0 for everyone. Must be a number, and never exceed the
+    // total deal count. Node-side fetch, no page-log noise.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const r = await fetch(`${BASE}/api/crm/stats`, auth);
+    if (r.status !== 200) throw new Error(`GET /api/crm/stats expected 200, got ${r.status}`);
+    const body = await r.json();
+    if (typeof body?.activeDeals !== 'number') throw new Error('crm/stats has no numeric activeDeals (Today KPI regresses to 0)');
+    if (typeof body?.deals !== 'number' || body.activeDeals > body.deals) throw new Error(`activeDeals ${body.activeDeals} > deals ${body.deals}`);
+  });
+
   await step(page, p, 'staff-evidence-plans-list', async () => {
     // r471: Evidence Plans (arrived via the d0b79fe JOGQK merge) — staff
     // list must stay reachable. Node-side fetch, no page-log noise.

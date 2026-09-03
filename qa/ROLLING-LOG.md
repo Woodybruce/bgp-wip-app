@@ -84,18 +84,60 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r488 · 2026-09-03 ~05:00 UTC · FULL — rotation #4 BGP staff mobile 390px — ROUND IN PROGRESS
+### r488 · 2026-09-03 ~05:00 UTC · FULL — rotation #4 BGP staff mobile 390px · 2 bugs fixed
 - Bring-up: canonical recipe held 53rd consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
-  hammerson 2 verified). Regression: smoke GREEN 42/0.
+  hammerson 2 verified). Regression: smoke GREEN 42/0 ×2 (before, and
+  FRESH_BUILD=1 after the fixes).
 - Two-bot 488 as 3 foreground chunks (r447/r458 pattern, tsx via
   node tsx/cli.mjs), STANDARD ORDER, fresh cross-488.json: victoria exit 0
-  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  (2×400 standing) ×2 / mark exit 0 (9 issues = 1×503 keyless + 8×403
   probe-by-design — standing signature exact) / woody,nick,sam exit 0
   (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
   500/502/504 (3750×200, expected 4xx/503 families, single 422 = r462
   cover-raster by design). Triage: 0 app bugs from the harness.
-- Journey (staff mobile 390px) still to run — final entry will replace this.
+- Journey (Victoria @390px iPhone UA+touch, UI login via Client/guest
+  reveal — "Tuesday morning before viewings: check Today, add a task for
+  the Hammerson call, glance at the calendar, find a contact's number,
+  skim comps, open the U124 deal"): login → "/" cold-opens Messages
+  (intended 4-tab layout, r480) → /tasks (quick-add "press Enter" works,
+  toast + row + Today's Upcoming all consistent) → /today → /calendar
+  (day view + CRM overlay clean at 390) → /contacts (CRM landlords cards)
+  → /comps (strip + AI-leads line hold) → /deals/:id U124 Gail's letting
+  (OVERVIEW/BRAND/KYC/ACTIVITY/FILES pills all render, no overflow).
+  0 pageerrors, 0 non-noise 4xx/5xx, 0 h-overflow on all screenshots.
+  Journey QA task deleted via API afterwards.
+- BUG FIXED 1 (journey → /today): the "Active Deals" KPI on the staff
+  mobile Today page was hardwired to 0 for everyone — today.tsx reads
+  stats.activeDeals but /api/crm/stats (storage.getCrmStats) never
+  returned that field, so `?? 0` always won (prod included; page showed
+  0 ACTIVE DEALS above a Recent Deals list with live SOL deals).
+  getCrmStats now also counts crm_deals with status NULL or NOT IN
+  ('ARCH','COM','INV','WIT') — same "active" definition as the landlord
+  board SQL — and today.tsx's stats type matches the real payload.
+  Verified: API {deals:7, activeDeals:7}, Today tile shows 7 at 390px.
+- BUG FIXED 2 (journey → /contacts): searching the CRM for a tenant brand
+  ("Honi") dead-ends silently — 0 results, blank list, no pointer. The
+  Woody-confirmed zero-hit hint (UX-NOTES #13, built 2026-08-09 in
+  contacts.tsx) became dead code when /contacts was re-routed to
+  people.tsx (contacts.tsx now only serves contact detail). Restored as
+  BrandSearchHint in people.tsx on the Landlords + Agents tabs: zero-hit
+  search whose text matches any CRM company name shows "Looking for a
+  brand? Search Brand Intelligence →" (/brands link). Verified at 390px:
+  hint shows for "Honi", absent for gibberish. tsc clean, FRESH_BUILD
+  smoke re-green 42/0.
+- Harness growth: two-bot +1 staff-crm-stats-active-deals (stats returns
+  numeric activeDeals ≤ deals). PASSED inside a full victoria chunk
+  re-run post-fix; signature stays 2×400. r489 should watch its first
+  standard-order run.
+- Bugs fixed: 2. Deferred: none new. Carried (data, staff decision):
+  Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2).
+  Suggestions: UX-NOTES 145 (Today's Recent Deals renders an empty grey
+  stage chip for status-less deals). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r488 had the journey → r489 LIGHT (watch
+  staff-crm-stats-active-deals first standard-order run); then rotation
+  #1 BGP staff desktop 1440px.
 
 ### r487 · 2026-09-03 ~08:30 UTC · LIGHT (r486 had the journey) — GREEN
 - Bring-up: canonical recipe held 52nd consecutive time (qa:pg once →

@@ -13,6 +13,13 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+145. 2026-09-03 · BGP staff / mobile 390px (QA r488) · glancing at the Today
+    page's Recent Deals list between viewings · a deal with no status renders
+    an empty grey stage chip (a blank pill next to the deal name) — it reads
+    as a rendering glitch rather than "no stage yet" · Suggest: hide the
+    stage chip when the deal has no status, or show a muted "No stage" label
+    instead of an empty pill.
+
 144. 2026-09-03 · Landsec client / mobile 390px (QA r486) · logging a viewing
     then an offer from the Letting Tracker unit card · after Save, the
     success toast ("Viewing added" / "Offer added") renders as a large card
