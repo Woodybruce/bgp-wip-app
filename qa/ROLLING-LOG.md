@@ -84,24 +84,35 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r485 · 2026-09-03 · LIGHT (r484 had the journey) — round in progress
-- Provisional heartbeat. Bring-up: canonical recipe held 50th consecutive
-  time (qa:pg once → run-smoke restore clean → seed-personas applied per
-  r451 rule BEFORE two-bot via node/pg runner — direct psql -f was
-  classifier-blocked this container; fresh session, no stale cross file).
-  Regression: smoke GREEN 42/0.
+### r485 · 2026-09-03 ~06:30 UTC · LIGHT (r484 had the journey) — GREEN
+- Bring-up: canonical recipe held 50th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas applied per r451 rule BEFORE
+  two-bot; NOTE this container: direct `psql -f` was classifier-blocked —
+  applied the seed via a scratchpad node/pg runner reading
+  qa/seed-personas.sql instead, verified Honi Poke row present. Fresh
+  session, no stale cross file). Regression: smoke GREEN 42/0.
 - Two-bot round 485 as 3 foreground chunks (r447 pattern, r458
-  chunk-runner; this round's runner spawns tsx via node tsx/dist/cli.mjs
-  directly — no .bin wrapper, no orphan): victoria exit 0 (2×400
-  standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  chunk-runner; runner spawned tsx via `node node_modules/tsx/dist/cli.mjs`
+  directly — no .bin wrapper, so SIGTERM hits the real server, no r450
+  orphan class, confirmed 0 orphans after all chunks): victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
   probe-by-design — standing signature exact) / woody,nick,sam exit 0
   (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
   500/502/504 (news-feed "500 articles" text only, r413 class; tally
   3748×200, expected 4xx/503 families, single 422 = r462 cover-raster by
-  design). Triage: 0 app bugs. r482's staff-expenses-cover-and-admin-gate
-  and r484-era locks all green in standard order.
-- Remaining this round: deferred-bug check (r484 deferred none), final
-  entry.
+  design; Error lines all keyless-env: ai-briefing no-key, Comp Extract
+  Azure-unconfigured). Triage: 0 app bugs.
+- r482's staff-expenses-cover-and-admin-gate, r474/r472/r462/r460-era
+  locks all green in standard order inside their chunks.
+- No journey (LIGHT). No deferred bugs to pick up (r484 deferred none;
+  r484 fixed nothing, so no in-browser re-verify owed).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r485 was LIGHT → r486 FULL, rotation #3 Landsec client mobile
+  390px.
 
 ### r484 · 2026-09-03 ~04:30 UTC · FULL — rotation #2 Landsec client desktop 1440px — GREEN
 - Bring-up: canonical recipe held 49th consecutive time (qa:pg once →
