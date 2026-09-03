@@ -84,14 +84,29 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r491 · 2026-09-03 · LIGHT — round in progress (heartbeat)
-- Regression: smoke GREEN 42/0. Seed-personas via node/pg runner (honi 1 /
-  hammerson 2). Two-bot 491 as 3 foreground chunks, STANDARD ORDER, fresh
-  cross-491.json: victoria exit 0 (2×400 standing) / mark exit 0 (9 issues
-  = 1×503 keyless + 8×403 probe-by-design — standing signature exact) /
-  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
-  Server logs: 0 raw 500/502/504. Triage: 0 app bugs. No deferred bugs to
-  pick up (r490 deferred none). Final entry to follow.
+### r491 · 2026-09-03 ~14:00 UTC · LIGHT (r490 had the journey) — GREEN
+- Bring-up: canonical recipe held 56th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
+  hammerson 2 verified). Regression: smoke GREEN 42/0.
+- Two-bot 491 as 3 foreground chunks (r447/r458 pattern, tsx via
+  node tsx/cli.mjs), STANDARD ORDER, fresh cross-491.json: victoria exit 0
+  (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (3738×200, expected 4xx/503 families; single 422 verified
+  as the r462 cover-raster line, and the 400s are the standing
+  rocketreach + probe-by-design set). Triage: 0 app bugs.
+- All r486-r490 harness locks green in standard order (news-signals
+  dedupe, crm-stats active-deals, evidence-plans trio, properties
+  no-address-edit, brochure parity gate).
+- No journey (LIGHT). No deferred bugs to pick up (r490 deferred none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: none (no journey this round). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r491 was LIGHT → r492 FULL, rotation #2 Landsec client desktop
+  1440px.
 
 ### r490 · 2026-09-03 ~12:30 UTC · FULL — rotation #1 BGP staff desktop 1440px — GREEN
 - Bring-up: canonical recipe held 55th consecutive time (qa:pg once →
