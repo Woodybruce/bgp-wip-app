@@ -84,10 +84,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r496 · 2026-09-03 ~10:45 UTC · FULL (rotation #4 BGP staff mobile 390px) — ROUND IN PROGRESS
-- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
-  seed-personas via node/pg runner, honi 1 / hammerson 2 verified).
-  Regression: smoke GREEN 42/0.
+### r496 · 2026-09-03 ~11:30 UTC · FULL — rotation #4 BGP staff mobile 390px — GREEN
+- Bring-up: canonical recipe held 61st consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
+  hammerson 2 verified). Regression: smoke GREEN 42/0.
 - Two-bot 496 as 3 foreground chunks (r447/r458 pattern, tsx via
   node tsx/cli.mjs), STANDARD ORDER, fresh cross-496.json: victoria exit 0
   (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
@@ -96,7 +96,33 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   500/502/504 (3762×200, expected 4xx/503 families, single 422 = r462
   cover-raster by design; 5×400 standing; Error lines all keyless-env).
   Triage: 0 app bugs from the harness.
-- Journey (staff mobile 390px, Victoria) IN PROGRESS — final entry to follow.
+- Journey (Victoria @390px iPhone UA+touch, UI login via Client/guest
+  reveal — "on the phone between viewings: check home, WIP report numbers,
+  work the tracker — search U124, open the unit's Files dialog, log a
+  phone-call interest — peek at Evidence Plans, skim News, glance at the
+  Dashboard tab", judging tracker/WIP/Files redesigns + Evidence Plans as
+  intended): "/" cold-opens Messages (intended 4-tab layout holds);
+  /wip-report clean at 390px (hub pill-tabs, actions, WIP/INVOICED tiles,
+  fees-by-month, by-client/property/team lists — by-team £0 = UX-141);
+  tracker 3/81 on U124, card list + Files/Viewing/Offer/Interest/Edit
+  action cluster clean; staff Files dialog correct (4 pills, Upload +
+  Create in Doc Studio, Info sheet row); Interest dialog END-TO-END: add
+  via EntityCombobox (Honi Poke) + note → "Interest logged" toast + row +
+  card count Interest (1) tick live → Target button renders → delete
+  cleans up; Evidence Plans empty state + New-plan dialog clean at 390px
+  (scheme name, PDF/image file input, no overflow); News + staff mobile
+  Dashboard (billing KPIs, quick links, boards, briefing Generate
+  fallback, My Tasks) clean. 0 pageerrors, 0 non-noise 4xx/5xx,
+  0 h-overflow on 17 screenshots. Journey left no QA rows (interest
+  deleted in-flow).
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried
+  (data, staff decision): Bluewater tenancy SPINE duplicates (U062 ×4,
+  L090 ×2, L130 ×2). Suggestions: UX-NOTES 149 (toasts pop mid-screen
+  over the tracker dialogs' just-added row at 390px — bottom-anchor on
+  the phone shell). New flakes: none. Real-device keyboard-up composer
+  check (r405) still open for Woody.
+- Next: r496 had the journey → r497 LIGHT; then rotation #1 BGP staff
+  desktop 1440px.
 
 ### r495 · 2026-09-03 ~21:00 UTC · LIGHT (r494 had the journey) — GREEN
 - Bring-up: canonical recipe held 60th consecutive time (qa:pg once →

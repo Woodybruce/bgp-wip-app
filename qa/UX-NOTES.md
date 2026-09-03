@@ -13,6 +13,14 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+149. 2026-09-03 · BGP staff / mobile 390px (QA r496) · logged a phone-call
+    interest on U124 from the tracker's Interest dialog · the "Interest
+    logged" toast pops mid-screen and sits exactly over the row that was
+    just added, so for a few seconds you can't see the thing you just
+    created (same for the viewing/offer dialogs' toasts at 390px).
+    Suggestion: bottom-anchor toasts on the phone shell so the
+    confirmation stays out of the content's way.
+
 148. 2026-09-03 · Landsec client / mobile 390px (QA r494) · tapped the Tasks
     tab to check open tasks on the phone · the AI Daily Briefing card fills
     the entire first viewport (title, spinner/Generate button, skeleton
