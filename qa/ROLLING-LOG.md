@@ -84,17 +84,56 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r502 · 2026-09-03 ~21:30 UTC · FULL (rotation #3 client mobile 390px) — ROUND IN PROGRESS
+### r502 · 2026-09-03 ~16:45 UTC · FULL (rotation #3 client mobile 390px) — GREEN
 - Bring-up: canonical recipe held 67th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
   hammerson 2 verified). Regression: smoke GREEN 42/0.
 - Two-bot 502 as 3 foreground chunks (570s child timeout), STANDARD ORDER,
-  fresh cross-502.json: victoria exit 0 first run, no cold-start stall
-  (2×400 standing) / mark exit 0, 158 [ok] (9 issues = 1×503 keyless +
-  8×403 probe-by-design — standing signature exact) / woody,nick,sam
-  exit 0 (18 [ok], 0 issues). Server logs: 0 raw 500/502/504 across all
-  chunks (single 422 = r462 cover-raster). Triage: 0 app bugs.
-- Journey (Mark @390px) + overflow sweep: pending.
+  fresh cross-502.json: victoria exit 0 FIRST RUN — no cold-start stall
+  this container (2×400 standing) / mark exit 0, 158 [ok] (9 issues =
+  1×503 keyless + 8×403 probe-by-design — standing signature exact) /
+  woody,nick,sam exit 0 (18 [ok], 0 issues). client-global-search-slice
+  (r500) passed again. phone-overflow-sweep 11/11 at 390px. Server logs:
+  0 raw 500/502/504 across all chunks (single 422 = r462 cover-raster).
+  Triage: 0 app bugs.
+- Journey: Mark @390px iPhone UA, UI login via Client/guest reveal —
+  "evening on my phone: how's the portfolio, letting progress, dig into a
+  unit + files, message BGP, tasks, news, look up a tenant brand": login →
+  "/" Portfolio dashboard (greeting correct for 15:49 UTC, tracker KPI
+  77/1/0/78 consistent with tracker chips, team card, tiles, boards) →
+  Letting Tracker via tile (REDESIGN JUDGED AS INTENDED: status chips,
+  search, unit cards w/ Files/Viewing/Offer/Interest/Edit — clean at
+  390px) → Files dialog (redesign: type chips, upload, info-sheet row —
+  renders clean, modal correctly blocks bottom nav) → Viewings dialog
+  (form + date default fine) → search filters (L112 → 2 of 78) → Deals
+  tab (2 deals + "+2 letting deals" subtitle holds) → /messages → ChatBGP
+  thread (suggestion chips, composer) → /tasks (quick-add, briefing
+  degrades keyless) → /news (slice-relevant Starbucks items) → /brands
+  (9-brand slice, category tiles) → Honi Poke profile (pill tabs, Key
+  Contacts, BGP Engagement) → COMPLIANCE tab (Compliance & KYC panel
+  VISIBLE to client per 2026-08-01 decision, only public-CH links, no
+  staff actions — parked downstream checks render clean). 0 pageerrors,
+  0 non-noise 4xx/5xx, 0 h-overflow on 30 screenshots.
+- NOT bugs: (1) client tracker "Add unit"/"Edit" controls — intended
+  parity per server/index.ts CLIENT_ALLOWED_API comment ("client needs to
+  be able to do as much as the agent"; handlers scope-check + strip fee
+  fields). (2) Playwright tap on a /brands card text node fails
+  "intercepts pointer events" — the card's stretched full-cover anchor
+  (r213 nested-anchor pattern) intercepts, which IS the tap target for
+  real users; navigation works. Target the overlay `a[aria-label=<brand>]`
+  in future scripts. (3) Deals tab shows a ~2s skeleton on cold dev-server
+  lazy-chunk load — loads fine.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: UX-NOTES 151 (Files-dialog info-sheet copy is
+  BGP-side language for clients). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Setup note: with-server wrapper pattern (boot tsx dev server via spawn
+  w/ fd log + spawnSync the probe script + SIGKILL server) worked for all
+  journey segments; child scripts need ABSOLUTE paths (spawnSync cwd is
+  the repo).
+- Next: r502 had the journey → r503 LIGHT; then rotation #4 staff mobile
+  390px.
 
 ### r501 · 2026-09-03 ~15:00 UTC · LIGHT (r500 had the journey) — GREEN
 - Bring-up: canonical recipe held 66th consecutive time (qa:pg once →

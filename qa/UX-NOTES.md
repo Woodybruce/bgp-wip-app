@@ -13,6 +13,14 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+151. 2026-09-03 · Landsec client / mobile 390px (QA r502) · opened the Files
+    dialog on a Letting Tracker unit · the generator row reads "Info sheet —
+    branded PDF for agents/tenants", which is BGP-side language: to a
+    landlord client "for agents/tenants" reads like it's not for them, and
+    it's unclear what they'd get. Suggestion: client-facing copy for the
+    same control, e.g. "Unit info sheet — branded PDF" (keep the current
+    wording for staff).
+
 150. 2026-09-03 · Landsec client / desktop 1440px (QA r500) · tried to open
     an account/profile menu from the sidebar footer · clicking "Mark Warne"
     (or the MW avatar) does nothing — the only affordance there is the
