@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+150. 2026-09-03 · Landsec client / desktop 1440px (QA r500) · tried to open
+    an account/profile menu from the sidebar footer · clicking "Mark Warne"
+    (or the MW avatar) does nothing — the only affordance there is the
+    small logout arrow, and there is no client-facing account surface at
+    all (change password, notification prefs, email). Clients who want to
+    change their password have to ask BGP. Suggestion: make the name/avatar
+    open a small menu (Account, Log out) even if Account only offers a
+    change-password form for now.
+
 149. 2026-09-03 · BGP staff / mobile 390px (QA r496) · logged a phone-call
     interest on U124 from the tracker's Interest dialog · the "Interest
     logged" toast pops mid-screen and sits exactly over the row that was

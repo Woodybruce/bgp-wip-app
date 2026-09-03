@@ -84,21 +84,67 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r500 · 2026-09-03 ~18:30 UTC · ROUND IN PROGRESS (provisional)
-- FULL round, rotation #2 Landsec client desktop 1440px (journey pending).
+### r500 · 2026-09-03 ~19:15 UTC · FULL — rotation #2 Landsec client desktop 1440px · 1 bug fixed
 - Bring-up: canonical recipe held 65th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
-  hammerson 2 verified). Regression: smoke GREEN 42/0.
+  hammerson 2 verified). Regression: smoke GREEN 42/0 ×2 (before, and
+  FRESH_BUILD=1 after the fix).
 - Two-bot 500 as 3 foreground chunks (r447/r458 pattern, 570s child
   timeout per r499 rule), STANDARD ORDER, fresh cross-500.json: victoria
   exit 0 (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
   probe-by-design — standing signature exact) / woody,nick,sam exit 0
-  (0 issues). phone-overflow-sweep 11/11 at 390px (one exit-144 runner
-  blip on first sweep attempt, clean 11/11 on immediate re-run). Server
-  logs: 0 raw 500/502/504 (3655×200, expected 4xx/503 families, single
-  422 = r462 cover-raster; 2×"500" grep hits = news-feed text, r413
-  class). Triage: 0 app bugs from the harness.
-- Journey + final entry to follow this round.
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (3655×200, expected 4xx/503 families, single 422 = r462
+  cover-raster; 2×"500" grep hits = news-feed text, r413 class). Triage:
+  0 app bugs from the harness.
+- Journey (Mark @1440px, UI login via Client/guest reveal — "meeting-prep
+  afternoon on surfaces recent rounds skipped: dashboard → global search
+  Ctrl+K (Bluewater / Westgate / Hammerson probes) → Requirements → CRM
+  directory → Comps → My Tasks quick-add round-trip → News → notifications
+  bell → theme picker → user menu"): dashboard KPIs clean (passing-rent
+  "—" holds); Ctrl+K opens, own property + slice results correct;
+  Requirements client variant renders (0 active on fixture, header/table
+  fine); CRM 9-brand slice + Landsec contacts tabs clean; Comps clean
+  (QA-COMP residue r450 class); Tasks quick-add → "Task created" toast +
+  row (probe rows swept via DB at round end); News slice-relevant; bell
+  popover "All clear" clean; theme picker 5 palettes incl. Landsec navy;
+  0 pageerrors, 0 non-noise 4xx/5xx, 0 h-overflow on 19 screenshots.
+- BUG FIXED (client global search missed slice/extras brands): the
+  /api/search client branch had its OWN brand category regex list instead
+  of the canonical clientBrandSliceSql — so "Tenant - Bakery" brands
+  (Testco Bakery, in the CRM slice and visible on the client CRM page) and
+  self-added extras via crm_extra_brand_ids (Testco Fashion) returned NO
+  results in Ctrl+K while sitting in the client's own CRM directory —
+  exactly the CLAUDE.md "don't reintroduce ad-hoc gates" divergence.
+  routes.ts now uses clientBrandSliceSql(searchScopeId). Verified via API
+  (mark: Testco → 6 incl. Bakery+Fashion, Jewellers still out; Brent/
+  Hammerson/Sam Cole → 0; sam: Brent Cross in, Bluewater out; victoria
+  unchanged 7 results) and visually in the Ctrl+K dialog. tsc clean,
+  FRESH_BUILD smoke 42/0.
+- Harness growth: client-global-search-slice in two-bot (mark chunk —
+  Bakery in, Fashion in, Jewellers out, rival Brent empty, own Bluewater
+  present). Dry-run green on the restored DB via the scenario's exact
+  Bearer-auth path; WATCH its first standard-order run next round.
+- NOT bugs: "Hammerson" search shows the term only in the no-results echo
+  (no leak); "Westgate Test Centre" in Mark's search is LANDSEC's own
+  fixture property (rival is Brent Cross); duplicate QA-PROBE task rows
+  were this round's own first journey attempt (exit-144 runner blip)
+  re-running — cleaned up via DB.
+- Setup notes: exit code 144 on Bash calls running node+playwright/pkill
+  teardown is a wrapper artefact — the script's own work completes and
+  logs are intact; write output to a file and read it after, and expect
+  the in-script pkill cleanup NOT to have run (sweep stale
+  "server/index.ts" processes before the next server boot — a stale
+  server holding :5000 silently serves the OLD code to the next probe,
+  which cost this round one confusing verify pass).
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 150
+  (client sidebar name/avatar is inert — no account surface for clients).
+  New flakes: none. Real-device keyboard-up composer check (r405) still
+  open for Woody.
+- Next: r500 had the journey → r501 LIGHT (watch
+  client-global-search-slice's first standard-order run); then rotation
+  #3 Landsec client mobile 390px.
 
 ### r499 · 2026-09-03 ~13:15 UTC · LIGHT (r498 had the journey) — GREEN
 - Bring-up: canonical recipe held 64th consecutive time (qa:pg once →

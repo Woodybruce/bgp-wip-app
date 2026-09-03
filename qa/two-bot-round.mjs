@@ -3797,6 +3797,29 @@ async function markRound(page, cross) {
     if (r.brandTheme !== 200) throw new Error(`client brand-theme route not serving (${r.brandTheme})`);
   });
 
+  // Global search (Ctrl+K) for clients must match the canonical brand slice
+  // (clientBrandSliceSql: categories + self-added extras) and never leak the
+  // rival's world (r500: /api/search had its own category regex that missed
+  // Bakery and the crm_extra_brand_ids extras).
+  await step(page, p, 'client-global-search-slice', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const names = async (q) => {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { headers: auth }).catch(() => null);
+        if (!res || !res.ok) return null;
+        const j = await res.json().catch(() => ({}));
+        return (j.results || []).map((x) => x.name);
+      };
+      return { testco: await names('Testco'), brent: await names('Brent'), bluewater: await names('Bluewater') };
+    });
+    if (!r.testco) throw new Error('client /api/search failed');
+    if (!r.testco.includes('Testco Bakery')) throw new Error('slice-category brand (Testco Bakery) missing from client search');
+    if (!r.testco.includes('Testco Fashion')) throw new Error('self-added extra brand (Testco Fashion) missing from client search');
+    if (r.testco.includes('Testco Jewellers')) throw new Error('out-of-slice brand (Testco Jewellers) leaked into client search');
+    if (r.brent && r.brent.length) throw new Error(`rival property leaked into client search: ${r.brent.join(', ')}`);
+    if (!r.bluewater || !r.bluewater.some((n) => /bluewater/i.test(n))) throw new Error('own property missing from client search');
+  });
+
   // The client "add brand from the global directory" endpoints (terminal
   // side): search returns tenant brands, add writes crm_extra_brand_ids,
   // remove clears it. Client-scoped (staff get 403). Under all-brands these
