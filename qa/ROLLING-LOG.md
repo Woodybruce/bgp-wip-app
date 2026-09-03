@@ -84,20 +84,53 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r508 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) — IN PROGRESS
-- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
-  purge + seed-personas via node/pg runner, honi 1 / hammerson 2 verified).
-  Regression: smoke GREEN 42/0.
+### r508 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) — GREEN
+- Bring-up: canonical recipe held 73rd consecutive time (qa:pg once →
+  run-smoke restore clean → purge + seed-personas via node/pg runner,
+  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
 - Two-bot 508 as 3 foreground chunks (with-server wrapper w/ lsof port
   kill, 570s child timeout), STANDARD ORDER, fresh cross-508.json:
   victoria exit 0 FIRST RUN (2×400 standing signature exact) / mark exit 0
   (9 issues = 1×503 keyless + 8×403 probe-by-design — standing signature
-  exact) / woody,nick,sam 18 [ok], 0 issues (wrapper OOM-killed AFTER the
-  round summary printed — results intact; swept :5000 by hand).
-  phone-overflow-sweep 11/11 at 390px (same post-completion OOM kill).
-  Server logs: 0 raw 500/502/504 all chunks (status tally on request
-  lines; single 422 = r462 cover-raster). Triage: 0 app bugs.
-- Journey pending: Mark @1440px client desktop.
+  exact) / woody,nick,sam 18 [ok], 0 issues. phone-overflow-sweep 11/11 at
+  390px. Server logs: 0 raw 500/502/504 all chunks (status tally on
+  request lines; single 422 = r462 cover-raster). Triage: 0 app bugs.
+- CONTAINER QUIRK (harness): the with-server wrapper node process was
+  OOM-killed AFTER each chunk's round summary printed (every chunk this
+  container) — results intact because output goes straight to files;
+  killPort never runs, so sweep lsof -ti:5000 between chunks.
+- Journey (Mark @1440px, UI login via Client/guest reveal — "Thursday
+  morning before a Landsec asset-management call: portfolio dashboard →
+  letting tracker + search + Files dialog → Deals tab → Bluewater property
+  page (news, risk register, linked contacts, pipeline, plans) → brands
+  hub + self-add dialog → Honi Poke profile → ChatBGP → staff-route
+  guards"): dashboard clean (KPI tiles, tracker 78/77/1 consistent, tasks
+  card); /available tracker desktop redesign AS INTENDED (FY strip, status
+  pills, grouped table, search L112 → 2 of 78, General Tenancy Schedule
+  board below); Files dialog redesign clean (type chips, upload,
+  info-sheet row); /deals client variant clean (2 deals + "+2 letting
+  deals" subtitle); Bluewater property page clean incl. Plans panel
+  (client Upload-plan visible = intended parity, QA-PLAN-GATE pill = known
+  scenario residue swept by next purge); /brands hub Overview tab clean,
+  "Add a brand to your CRM" dialog exemplary (In CRM / Added+Remove / Add
+  states for Testco family); Honi Poke profile clean (keyless AI takes
+  degrade as intended); /messages → /chatbgp "Not Connected" intended;
+  /turnover + /evidence-plans bounce to "/" and /wip-report bounces to
+  /deals/list (CLIENT_ALLOWED_ROUTES guard — clean, no flash of staff
+  content). 0 pageerrors, 0 console errors, 0 non-noise 4xx/5xx,
+  0 h-overflow on 17 shots.
+- NOT bugs: desktop /brands lands on the OVERVIEW tab (no card grid), so
+  r502's a[aria-label=<brand>] selector doesn't exist there — journey
+  scripts should click the brand-name links (Turnover Leaders / Who's
+  Hot) at desktop.
+- Bugs fixed: 0 (nothing broken found — harness AND journey). Deferred:
+  none. Carried (data, staff decision): Bluewater tenancy SPINE duplicates
+  (U062 ×4, L090 ×2, L130 ×2). Suggestions: none new (tracker "Target
+  Sta…" truncated column header at 1440 is inside the table's own scroll
+  container per DESIGN.md — not logged). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r508 had the journey → r509 LIGHT; then rotation #3 Landsec
+  client mobile 390px.
 
 ### r507 · 2026-09-03 ~23:30 UTC · LIGHT (r506 had the journey) — GREEN
 - Bring-up: canonical recipe held 72nd consecutive time (qa:pg once →
