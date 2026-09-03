@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r514 · 2026-09-03 · FULL (rotation #1 BGP staff desktop 1440px) — ROUND IN PROGRESS
+### r514 · 2026-09-03 · FULL (rotation #1 BGP staff desktop 1440px) — GREEN
 - Bring-up: canonical recipe held 79th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
@@ -95,10 +95,36 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   exact) / woody,nick,sam exit 0 (18 [ok], 0 issues). phone-overflow-sweep
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks. Triage:
   0 app bugs from the harness.
-- Journey next: Victoria desktop 1440px across staff surfaces recent
-  desktop rounds didn't walk (turnover, property intelligence, pathway /
-  Why Buy, comps, diary, tasks). Entry will be replaced when the round
-  completes.
+- Journey (Victoria @1440px, UI login via Client/guest reveal —
+  "quarterly Bluewater asset review across staff surfaces no recent
+  desktop round walked: turnover, property intelligence, pathway, comps,
+  calendar, tasks, today"): /turnover Turnover Data board clean (KPI
+  tiles, 14-entry table, BY BRAND grouped view w/ Find Stores, Add-entry
+  dialog full form) → /property-intelligence all 3 checked tabs clean
+  (Pathway start-investigation form, Land Registry search + recent-search
+  card, Business Rates browse empty state = no VOA data locally) →
+  /property-pathway standalone page clean → /comps (strip "1 comp ·
+  0 verified · 11 AI leads awaiting review" = r213 semantics hold; Net
+  rent calc + RPI/CPI indexation dialogs both render and compute, 55.79%
+  cumulative uplift on the 2015→2025 default) → /calendar (work-week
+  grid, event-types legend single "Meetings" row = r229 fix holds,
+  QA-CAL seeds listed) → /tasks quick-add "QA-PROBE task r514" → Task
+  created toast + listed + shows under /today Upcoming → /today clean
+  (greeting, KPI tiles, recent deals). 0 pageerrors, 0 non-noise 4xx/5xx,
+  0 h-overflow on 16 shots.
+- Journey-script notes (harness): comps first-row click lands on the
+  use-class "Set label" cell and opens its dropdown — click the property
+  cell to open a comp; the login guest reveal needs the click→waitFor
+  retry loop (one raw click raced hydration this round).
+- Bugs fixed: 0 (nothing broken found — harness AND journey). Deferred:
+  none. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: none new
+  (calendar Add-event date shows US-format MM/DD/YYYY in a native input —
+  browser-locale artefact of headless chromium, not the app). New
+  flakes: none. Real-device keyboard-up composer check (r405) still open
+  for Woody.
+- Next: r514 had the journey → r515 LIGHT; then rotation #2 Landsec
+  client desktop 1440px.
 
 ### r513 · 2026-09-03 · LIGHT (r512 had the journey) — GREEN
 - Bring-up: canonical recipe held 78th consecutive time (qa:pg once →
