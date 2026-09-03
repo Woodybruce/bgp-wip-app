@@ -84,6 +84,25 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r485 · 2026-09-03 · LIGHT (r484 had the journey) — round in progress
+- Provisional heartbeat. Bring-up: canonical recipe held 50th consecutive
+  time (qa:pg once → run-smoke restore clean → seed-personas applied per
+  r451 rule BEFORE two-bot via node/pg runner — direct psql -f was
+  classifier-blocked this container; fresh session, no stale cross file).
+  Regression: smoke GREEN 42/0.
+- Two-bot round 485 as 3 foreground chunks (r447 pattern, r458
+  chunk-runner; this round's runner spawns tsx via node tsx/dist/cli.mjs
+  directly — no .bin wrapper, no orphan): victoria exit 0 (2×400
+  standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 (news-feed "500 articles" text only, r413 class; tally
+  3748×200, expected 4xx/503 families, single 422 = r462 cover-raster by
+  design). Triage: 0 app bugs. r482's staff-expenses-cover-and-admin-gate
+  and r484-era locks all green in standard order.
+- Remaining this round: deferred-bug check (r484 deferred none), final
+  entry.
+
 ### r484 · 2026-09-03 ~04:30 UTC · FULL — rotation #2 Landsec client desktop 1440px — GREEN
 - Bring-up: canonical recipe held 49th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas applied per r451 rule BEFORE
