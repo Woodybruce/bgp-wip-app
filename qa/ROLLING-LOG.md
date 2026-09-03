@@ -84,6 +84,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r491 · 2026-09-03 · LIGHT — round in progress (heartbeat)
+- Regression: smoke GREEN 42/0. Seed-personas via node/pg runner (honi 1 /
+  hammerson 2). Two-bot 491 as 3 foreground chunks, STANDARD ORDER, fresh
+  cross-491.json: victoria exit 0 (2×400 standing) / mark exit 0 (9 issues
+  = 1×503 keyless + 8×403 probe-by-design — standing signature exact) /
+  woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11 at 390px.
+  Server logs: 0 raw 500/502/504. Triage: 0 app bugs. No deferred bugs to
+  pick up (r490 deferred none). Final entry to follow.
+
 ### r490 · 2026-09-03 ~12:30 UTC · FULL — rotation #1 BGP staff desktop 1440px — GREEN
 - Bring-up: canonical recipe held 55th consecutive time (qa:pg once →
   run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
