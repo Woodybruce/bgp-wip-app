@@ -84,20 +84,47 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r490 · 2026-09-03 ~11:30 UTC · FULL — rotation #1 BGP staff desktop 1440px · ROUND IN PROGRESS
-- Provisional heartbeat. Bring-up: canonical recipe held 55th consecutive
-  time (qa:pg once → run-smoke restore clean → seed-personas via node/pg
-  runner, honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
+### r490 · 2026-09-03 ~12:30 UTC · FULL — rotation #1 BGP staff desktop 1440px — GREEN
+- Bring-up: canonical recipe held 55th consecutive time (qa:pg once →
+  run-smoke restore clean → seed-personas via node/pg runner, honi 1 /
+  hammerson 2 verified). Regression: smoke GREEN 42/0.
 - Two-bot 490 as 3 foreground chunks (r447/r458 pattern, tsx via
   node tsx/cli.mjs), STANDARD ORDER, fresh cross-490.json: victoria exit 0
   (2×400 standing) / mark exit 0 (9 issues = 1×503 keyless + 8×403
   probe-by-design — standing signature exact) / woody,nick,sam exit 0
   (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
   500/502/504 (3670×200 + expected 4xx/503 families, single 422 = r462
-  cover-raster by design). Triage: 0 app bugs from the harness.
-- Journey (staff desktop 1440px, letting tracker + WIP report + Files
-  dialog redesigns as intended design) still to run — final entry replaces
-  this one.
+  cover-raster by design). Triage: 0 app bugs from the harness. r489's
+  staff-crm-stats-active-deals + client-news-signals-deduped locks green
+  again in standard order.
+- Journey (Victoria @1440px, UI login via Client/guest reveal — "mid-week
+  prep for the Landsec call: WIP report → Letting Tracker U124 → log/edit/
+  delete a viewing → offers → unit Files dialog → Bluewater property →
+  tenancy full board → People & HR → News → Comps", judging the tracker/
+  WIP/Files redesigns as intended): WIP report clean (tabs, fees-by-month
+  chart, by-client/property/team, deal detail; by-team £0 = UX-141);
+  tracker search 3/81 + Actions & Activity icon cluster fine; viewing
+  ADD (date defaults today, UX2 holds) → EDIT (note persists) → DELETE
+  (row + count chip clean up, header KPI ticks live) all green; Offers +
+  Files dialogs render clean (tabs/Upload/Doc Studio/Info sheet); property
+  page (Files rail, Risk Register, Linked Contacts, Compliance & KYC) and
+  tenancy full board (200 units, KPI tiles) clean; People & HR, staff
+  News, Comps ("11 AI leads awaiting review" holds) clean. 0 pageerrors,
+  0 non-noise 4xx/5xx, no h-overflow on 23 screenshots. /my-card 404 seen
+  mid-journey was my harness's invented URL (sidebar "My Card" →
+  /my-expenses, green in r482) — the friendly not-found page rendered as
+  designed, not a bug.
+- Round residue (wiped by next restore, r450 precedent): #1006
+  "QA-R490-qldd Consultancy" on the WIP report + "QA-COMP R490" on Comps —
+  two-bot rows visible mid-round by design, not app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none new. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: UX-NOTES 146 (tracker header Viewings/Offers KPIs
+  ignore active search/filters — read as missing data next to a filtered
+  unit with none). New flakes: none. Real-device keyboard-up composer
+  check (r405) still open for Woody.
+- Next: r490 had the journey → r491 LIGHT; then rotation #2 Landsec client
+  desktop 1440px.
 
 ### r489 · 2026-09-03 ~06:30 UTC · LIGHT (r488 had the journey) — GREEN
 - Bring-up: canonical recipe held 54th consecutive time (qa:pg once →

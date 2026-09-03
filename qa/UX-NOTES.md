@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+146. 2026-09-03 · BGP staff / desktop 1440px (QA r490) · reviewing U124 on the
+    Letting Tracker before a client call · searched "U124" (3 of 81 units),
+    the header still read "Viewings 2 · Offers 1", but U124's own dialogs
+    said "No viewings recorded yet" / "No offers recorded yet" — the FY
+    header counts are tracker-wide and ignore the active search/filters, so
+    it reads like the data failed to load · Suggest: scope the header KPI
+    counts to the filtered rows (or label them "all units") when a search or
+    filter is active.
+
 145. 2026-09-03 · BGP staff / mobile 390px (QA r488) · glancing at the Today
     page's Recent Deals list between viewings · a deal with no status renders
     an empty grey stage chip (a blank pill next to the deal name) — it reads
