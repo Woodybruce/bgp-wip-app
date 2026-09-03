@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r512 · 2026-09-03 ~22:00 UTC · FULL (rotation #4 BGP staff mobile 390px) — ROUND IN PROGRESS
+### r512 · 2026-09-03 ~22:30 UTC · FULL (rotation #4 BGP staff mobile 390px) — GREEN
 - Bring-up: canonical recipe held 77th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
@@ -95,9 +95,37 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   exact) / woody,nick,sam exit 0 (18 [ok], 0 issues). phone-overflow-sweep
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks. Triage:
   0 app bugs from the harness.
-- Journey (staff mobile 390px) in progress — targeting surfaces recent
-  staff-mobile rounds skipped: letting tracker + Files dialog, tenancy
-  schedules, deals board, WIP report on mobile.
+- Journey (Victoria @390px iPhone UA+touch, UI login via Client/guest
+  reveal — "back at the hotel after viewings: work the letting tracker,
+  open a unit's Files, log-a-viewing form, rent-roll glance, WIP report,
+  Evidence Plans, deals board, dashboard" — the tracker/WIP/Files/tenancy
+  surfaces staff-MOBILE rounds had never journey-tested): login → lands on
+  Messages (phone shell is chat-first by design, App.tsx redirect — judged
+  intended) → /available Letting Tracker MOBILE CARD LIST exemplary (81
+  units, status pill row, grouped cards w/ Files/Viewing/Offer/Interest/
+  Edit; search L112 → 2 of 81) → Files dialog clean at 390px (type chips,
+  Upload/Doc Studio, info-sheet row) → Add Viewing dialog clean (full
+  form, date prefilled) → General Tenancy Schedule board at page bottom:
+  Bluewater expands INLINE to the full rent roll as unit cards (200 units,
+  search/Add/Full Board, status dropdown + Tracker/Plan per unit) — clean
+  → /wip-report mobile (header actions, filter chips, WIP/INVOICED tiles,
+  net-fees strip, DEAL DETAIL as cards w/ Columns picker, total row) —
+  clean → /evidence-plans empty state + New-plan dialog clean at 390px →
+  /deals card list clean → dashboard tab (greeting, billing KPIs, quick
+  links, boards, briefing Generate fallback, My Tasks) clean. 0 pageerrors,
+  0 non-noise 4xx/5xx, 0 h-overflow on 23 shots.
+- Journey-script notes (harness): the staff phone shell scrolls an inner
+  `flex-1 overflow-y-auto` div — window.scrollTo AND mouse.wheel at (0,0)
+  are NO-OPS; scroll the largest overflow-y-auto element via evaluate
+  (journey-512c pattern). Tenancy board rows expand inline (no navigation).
+- Bugs fixed: 0 (nothing broken found — harness AND journey). Deferred:
+  none. Carried (data, staff decision): Bluewater tenancy SPINE duplicates
+  (U062 ×4, L090 ×2, L130 ×2). Suggestions: none new (WIP mobile pre-chart
+  header stack is tall but coherent; "L112 Bluewater, Bluewater" card
+  title duplication is fixture unitName data, not UI). New flakes: none.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r512 had the journey → r513 LIGHT; then rotation #1 staff desktop
+  1440px.
 
 ### r511 · 2026-09-03 ~22:40 UTC · LIGHT (r510 had the journey) — GREEN
 - Bring-up: canonical recipe held 76th consecutive time (qa:pg once →
