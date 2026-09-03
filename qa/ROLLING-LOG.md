@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r507 · 2026-09-03 ~23:30 UTC · LIGHT (r506 had the journey) — round in progress
+### r507 · 2026-09-03 ~23:30 UTC · LIGHT (r506 had the journey) — GREEN
 - Bring-up: canonical recipe held 72nd consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
@@ -96,8 +96,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   11/11 at 390px. Server log: 0 raw 500/502/504 (status tally only
   2xx/3xx/expected 4xx/503 families; single 422 = r462 cover-raster).
   Triage: 0 app bugs from the harness.
-- LIGHT round: no journey. No deferred bugs to pick up (r490–r506
-  deferred none). Final entry pending.
+- No journey (LIGHT). No deferred bugs to pick up (r490–r506 deferred
+  none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r507 was LIGHT → r508 FULL, rotation #2 Landsec client desktop
+  1440px.
 
 ### r506 · 2026-09-03 ~21:40 UTC · FULL (rotation #1 staff desktop 1440px) — GREEN
 - Bring-up: canonical recipe held 71st consecutive time (qa:pg once →
