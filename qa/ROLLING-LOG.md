@@ -84,6 +84,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r527 · 2026-09-04 · LIGHT (r526 had the journey) — ROUND IN PROGRESS
+- Bring-up: canonical recipe held 90th time (qa:pg once → run-smoke restore
+  clean → purge + seed-personas via node/pg runner, honi 1 / hammerson 2
+  verified). Regression: smoke GREEN 42/0.
+- Two-bot 527 as 3 foreground chunks (with-server wrapper w/ lsof port kill,
+  570s child timeout), STANDARD ORDER, fresh cross-527.json: victoria exit 0
+  FIRST RUN (2×400 standing signature exact) / mark exit 0 FIRST RUN
+  (9 issues = 8×403 probe-by-design + 1×503 keyless — standing signature
+  exact; r526's new client-news-detail-not-echo scenario [ok]) /
+  woody,nick,sam exit 0 (18 [ok], 0 issues). Server logs: 0 raw 500/502/504
+  across all chunks (the " 500 " hits are the "[News Feed] Linked 15 brand
+  signals from 500 articles" line, not statuses). Triage: 0 app bugs.
+- No journey (LIGHT). Time going to verification of r526's fix + open items.
+- Final entry replaces this one.
+
 ### r526 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) · 1 bug fixed — GREEN
 - Bring-up: canonical recipe held 89th time (qa:pg once -> run-smoke restore
   clean -> purge + seed-personas via node/pg runner, honi 1 / hammerson 2
@@ -186,7 +201,9 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   (r405) still open for Woody.
 - Next: r525 was LIGHT → r526 FULL, rotation #2 Landsec client desktop
   1440px — good round to journey the client-facing batch items (read-only
-  deal parties, sliced Brand News, client info-sheet copy) as Mark. · 2026-09-04 · FULL (rotation #1 BGP staff desktop 1440px) · 1 bug fixed — GREEN
+  deal parties, sliced Brand News, client info-sheet copy) as Mark.
+
+### r524 · 2026-09-04 · FULL (rotation #1 BGP staff desktop 1440px) · 1 bug fixed — GREEN
 - Bring-up: canonical recipe held 87th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0 ×2
