@@ -88,17 +88,81 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r537 · 2026-09-04 21:32 UTC · LIGHT (r536 had the journey) · ROUND IN PROGRESS
+### r537 · 2026-09-04 · LIGHT (r536 had the journey) · 2 bugs fixed — BGP map layers + paywall cookie config open to clients
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN
-  42/0.
-- Two-bot round 537, all three chunks, standard order, each exit 0 first run.
-  Signatures EXACT vs r536: victoria 2×400, mark 9×403 + 1×503,
-  woody/nick/sam 0. All listed noise. 0 new issues from the scripted sweep.
-- Triage: nothing new. Whole budget to the client-isolation audit — teach
-  qa/client-allowed-get-audit.mjs the staffOnly + requestScope/listScope
-  tokens, then live-probe whatever new collection GETs the cleaner report
-  surfaces (BGP-internal business first).
+  42/0 before AND after the fixes.
+- Two-bot round 537, all three chunks, standard order, each exit 0 on its
+  first run. Signatures EXACT vs r536: victoria 2×400, mark 9×403 + 1×503,
+  woody/nick/sam 0. All listed noise. 0 new issues from the scripted sweep,
+  so the whole budget went to the client-isolation audit.
+- AUDIT SCRIPT taught the tokens r536 asked for — staffOnly, requestScope,
+  listScope — plus getChatThreadMembers (the /api/chat/threads/:id membership
+  check, which is real: creator-or-member, else 403). Report went from 8+46
+  hits to 5 param-addressed + 37 collections. The 5 addressable survivors are
+  hr/photo, brand-logo and three OS proxies — all global/keyless, no gate
+  needed.
+- Probed the 8 collection GETs that looked like BGP business rather than
+  client business, LIVE as mark vs victoria before judging any of them.
+  ALREADY FINE, closed without a change: /api/news-feed/saved (per-user —
+  mark got HIS saved articles, victoria none), /api/favorite-instructions
+  (per-user), /api/dashboard/my-portfolio (keyed on the caller's own
+  name+team), /api/dashboard-template (one global layout row),
+  /api/image-studio/ai-tag-uncategorised/status (403 to both — requireAdmin).
+  Left alone as global reference/diagnostic counters with no business content:
+  brand-logo-stats, news-feed image-stats / source-names, voa/* and
+  land-registry/* proxies, brands/turnover-research/status.
+- BUG FIXED 1 — /api/map-layers, and it had a UI to match. The handler returns
+  every layer with shared_with_team = TRUE, so a Landsec login read BGP's own
+  annotation layers — name, colour and item count — out of the /map sidebar.
+  Proven live: seeded "QA-PROBE BGP acquisition targets" (Victoria's, shared)
+  came back 200 to mark with mine:false. map_annotations was ALREADY
+  staff-only, so the panel was also dead UI for him: layer names over a
+  "+ new layer" Add and an Annotate block whose POSTs all 403. Now the family
+  is in CLIENT_BLOCKED_SUBPATHS; client-side loadMapLayers skips for clients
+  (same one-liner loadAnnotations already had) and both the Annotation-layers
+  and Annotate panels are staff-only. Also hid the two dead client toggles in
+  the Map Layers list — "Annotations" and "Tenancy Plans (uploaded)" both
+  point at gateway-blocked loaders that already no-op for clients, i.e.
+  switches permanently reading "ON · 0" (CLIENT_HIDDEN_LAYERS, next to
+  icomps/pathway).
+- BUG FIXED 2 — GET /api/news-feed/auth-cookies/health. Rode the allowed
+  /api/news-feed/ prefix on requireAuth alone and handed a landlord BGP's
+  paywall-subscription config: every publication BGP scrapes behind a login,
+  its env-var name and whether a cookie is set (Green Street News, Property
+  Week, …). No values, but it is BGP's own ops config. Only the staff Sources
+  tab reads it — clients get ClientNewsFeed instead (news.tsx:1481) — and the
+  cookie POST/DELETE were already write-denied, so the whole family is now
+  blocked. After: mark 403 on both, victoria 200 with the full status list.
+- Harness growth, the standard client-loses/staff-keeps pair: mark's
+  client-map-layer-scope grew `layers` (403 alongside pins/annotations/
+  external/plans) and client-news-intel-guard grew `cookies`; new victoria
+  staff-map-layers-and-news-config-kept does a full layer ROUNDTRIP
+  (create shared → listed by name with mine:true → delete 200) plus the
+  cookie health list with ≥1 publication row, so neither block can quietly
+  cost /map its sidebar or the Sources tab its panel. run-round.sh sweeps
+  QA-PROBE Layer% survivors. Both chunks re-run after the change: signatures
+  back to baseline exactly.
+- Verified VISUALLY at 1440px after the fixes (qa/smoke-shots/r537-map-*.png):
+  Victoria's /map keeps Annotation layers (with the shared probe layer) and
+  the Annotate tools; Mark's /map sidebar is Search History · CRM Properties ·
+  Deals · Comps · Lease Events · Available Properties · Edozo, then Retail
+  bands / Highlight postcode / Recent Searches — no gap where the panels were,
+  0 pageerrors and 0 non-noise 4xx on either.
+- Suggestions: UX-NOTES 176 + 177 (both staff-side, spotted in the same
+  sidebar: shared layer rows never name their owner though ownerId is already
+  returned; the Annotate footnote says "Saved per user" when annotations land
+  in a team-shared layer and the feed is firm-wide).
+- DEFERRED / carried: UX #150, #157, #162, #170, #171, #172, #174, #175 open
+  and unbuilt (171 = client PUT persists dealType/team/leaseLength/landlordId
+  — still needs Woody). Bluewater tenancy SPINE duplicates still carried.
+- New flakes: none. tsc clean. Real-device keyboard-up composer check (r405)
+  open for Woody.
+- Next: r537 was LIGHT → r538 is FULL, rotation #4 BGP staff MOBILE 390px.
+  The audit's remaining collection hits are all proxies/reference lists;
+  a future round wanting isolation work should switch method — walk the
+  param-addressed 59 for handlers whose scope helper is present but only
+  checks the PROPERTY when the row is addressed by something else.
 
 ### r536 · 2026-09-04 · FULL · rotation #3 Landsec client MOBILE 390px · 2 bugs fixed — firm fee summary + agent leaderboard open to clients
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →

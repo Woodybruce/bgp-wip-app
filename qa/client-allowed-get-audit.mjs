@@ -26,7 +26,12 @@ for (const f of files){
     // grab handler body ~ next 60 lines
     const body = lines.slice(i, i+70).join('\n');
     const guards = [];
-    for (const g of (body.match(/\b(forbids\w+|assert\w+|is\w*Scope\w*|clientBlockedForProperty|checkPropertyAccess|resolveCompanyScope|companyScopeId|clientUnitScopeSql|clientBrandSliceSql|isClientVisibleBrand|isClientRequestUser|requireStaff|isExternalUser|scopeCompanyId|getClientVisibleUserIds|isPropertyInScope|isDealInScope|isContactInScope|chat_thread_members|NO_ACCESS_SCOPE|clientCanReachChatMedia)\b/g) || []))
+    // r537: staffOnly (contact-verify.ts style flat staff gate),
+    // getChatThreadMembers (the chat thread-membership check in routes.ts)
+    // and
+    // requestScope/listScope (the scoped-SELECT builders) each cost r536 a
+    // wasted probe — both are real guards this audit could not see.
+    for (const g of (body.match(/\b(forbids\w+|assert\w+|is\w*Scope\w*|clientBlockedForProperty|checkPropertyAccess|resolveCompanyScope|companyScopeId|clientUnitScopeSql|clientBrandSliceSql|isClientVisibleBrand|isClientRequestUser|requireStaff|isExternalUser|scopeCompanyId|getClientVisibleUserIds|isPropertyInScope|isDealInScope|isContactInScope|chat_thread_members|NO_ACCESS_SCOPE|clientCanReachChatMedia|staffOnly|requestScope|listScope|getChatThreadMembers)\b/g) || []))
       guards.push(g);
     rows.push({file:f, line:i+1, path:p, guards});
   });

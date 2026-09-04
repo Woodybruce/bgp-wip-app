@@ -2497,6 +2497,42 @@ async function victoriaRound(page, cross) {
     if (r.board.status !== 200) throw new Error(`staff lost the individual leaderboard (expected 200, got ${r.board.status})`);
     if (!Array.isArray(r.board.body?.topBiller)) throw new Error('leaderboard came back without a topBiller list');
   });
+
+  // Staff-keeps counterpart to the r537 client blocks: the /map annotation
+  // layer sidebar and the news Sources tab's paywall-login panel both live
+  // behind newly-blocked prefixes, so prove staff still get a full layer
+  // roundtrip (create → listed with its name → delete) and the cookie
+  // health list. A regression here is a staff surface losing its data.
+  await step(page, p, 'staff-map-layers-and-news-config-kept', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const name = 'QA-PROBE Layer ' + Date.now();
+      const made = await fetch('/api/map-layers', {
+        method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name, color: '#ef4444', sharedWithTeam: true }),
+      }).catch(() => ({ ok: false, status: 0 }));
+      const createStatus = made.status;
+      const id = made.ok ? (await made.json().catch(() => ({})))?.id : null;
+      const listRes = await fetch('/api/map-layers', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const list = listRes.ok ? await listRes.json().catch(() => []) : [];
+      let delStatus = 0;
+      if (id) delStatus = (await fetch(`/api/map-layers/${id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      const cookiesRes = await fetch('/api/news-feed/auth-cookies/health', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const cookies = cookiesRes.ok ? await cookiesRes.json().catch(() => ({})) : null;
+      return {
+        createStatus, listStatus: listRes.status, delStatus,
+        seen: Array.isArray(list) && list.some((l) => l.name === name && l.mine === true),
+        cookieStatus: cookiesRes.status,
+        cookieCount: Array.isArray(cookies?.status) ? cookies.status.length : -1,
+      };
+    });
+    if (![200, 201].includes(r.createStatus)) throw new Error(`staff lost map-layer create (expected 200/201, got ${r.createStatus})`);
+    if (r.listStatus !== 200) throw new Error(`staff lost the map-layer list (expected 200, got ${r.listStatus})`);
+    if (!r.seen) throw new Error('staff map-layer list came back without the layer just created');
+    if (r.delStatus !== 200) throw new Error(`staff lost map-layer delete (expected 200, got ${r.delStatus})`);
+    if (r.cookieStatus !== 200) throw new Error(`staff lost the paywall cookie health list (expected 200, got ${r.cookieStatus})`);
+    if (r.cookieCount < 1) throw new Error('paywall cookie health came back without any publication rows');
+  });
 }
 
 async function markRound(page, cross) {
@@ -3708,8 +3744,13 @@ async function markRound(page, cross) {
         leads: await g('/api/news-intel/leads'),
         push: await p('/api/news-intel/leads/00000000-0000-0000-0000-000000000000/push'),
         fetch: await p('/api/news-feed/fetch'),
+        // r537: which paywalled publications BGP holds subscriber cookies
+        // for, by label + env-var name. Staff Sources tab only — a client
+        // login gets ClientNewsFeed, which never reads it.
+        cookies: await g('/api/news-feed/auth-cookies/health'),
       };
     });
+    if (r.cookies !== 403) throw new Error(`client read BGP's paywall cookie config (expected 403, got ${r.cookies})`);
     if (![200, 204].includes(r.articles)) throw new Error(`client news feed articles should be readable (expected 200, got ${r.articles})`);
     if (r.inbox !== 403) throw new Error(`client reached the news-intel inbox (expected 403, got ${r.inbox})`);
     if (r.leads !== 403) throw new Error(`client reached the news-intel leads (expected 403, got ${r.leads})`);
@@ -3808,13 +3849,18 @@ async function markRound(page, cross) {
         osStatus: await g('/api/os/ngd-status'),
         pins: await g('/api/map/pins'),
         annotations: await g('/api/map-annotations'),
+        // r537: map_annotations was already staff-only, but the LAYER list
+        // rode the allowed /api/map-layers prefix and returned every layer
+        // with shared_with_team = TRUE — so a landlord read BGP's own layer
+        // names and item counts out of the /map sidebar.
+        layers: await g('/api/map-layers'),
         external: await g('/api/external-properties'),
         plans: await g('/api/property-plans/in-viewport?bbox=51.49,-0.15,51.51,-0.13'),
       };
     });
     // OS proxies: anything but a gateway 403 — 200 with keys, 502/503 without.
     if (r.osSites === 403 || r.osStatus === 403) throw new Error(`client blocked from OS layers (sites ${r.osSites}, status ${r.osStatus}) — dead allowlist prefix regressed`);
-    for (const [k, v] of Object.entries({ pins: r.pins, annotations: r.annotations, external: r.external, plans: r.plans })) {
+    for (const [k, v] of Object.entries({ pins: r.pins, annotations: r.annotations, layers: r.layers, external: r.external, plans: r.plans })) {
       if (v !== 403) throw new Error(`BGP-internal map layer ${k} not refused for client (expected 403, got ${v})`);
     }
   });

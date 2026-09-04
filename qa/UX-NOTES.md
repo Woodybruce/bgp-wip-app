@@ -13,6 +13,30 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+177. 2026-09-04 · BGP staff / desktop 1440px (QA r537) · checking the /map
+   annotation-layer sidebar while gating it for clients · a layer shared with
+   the team shows as "Brent Cross deck  3  SHARED" — name, item count and a
+   SHARED tag, but never WHOSE it is, and the delete × only renders on your
+   own rows. So on a team with several shared layers a staff user can see the
+   set and not tell who to ask about one, or which of two similarly-named
+   layers is theirs. The handler already returns ownerId on every row, so
+   nothing new needs fetching. SUGGESTION: on shared rows that aren't yours,
+   print the owner's first name where the SHARED tag sits (resolve ownerId
+   through the staff directory, "· Victoria"), and keep SHARED only for your
+   own shared layers where the owner is implied.
+
+176. 2026-09-04 · BGP staff / desktop 1440px (QA r537) · same sidebar · the
+   Annotate panel's footnote reads "Tap any annotation on the map to delete
+   it. Saved per user." — but the panel immediately above it puts every new
+   annotation into the ACTIVE LAYER, which can be a team-shared one, and
+   /api/map-annotations returns the whole firm's annotations to any staff
+   login rather than just the caller's. "Saved per user" is therefore wrong
+   in both directions: colleagues see what you draw, and the × deletes rows
+   that may not be yours. SUGGESTION: replace the line with what actually
+   happens — "Saved to the active layer. Team-shared layers are visible to
+   everyone at BGP." — and, if delete really should be owner-only, enforce it
+   in the handler rather than implying it in the copy.
+
 175. 2026-09-04 · Landsec client / mobile 390px (QA r536) · "what's BGP got
    on this week" — opened Calendar on the phone · the CRM intelligence strip
    along the bottom shows Mark a tile reading "BUSIEST AGENT

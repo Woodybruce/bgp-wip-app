@@ -3735,6 +3735,20 @@ app.use("/api/branding/assets", express.static(
     // scope-check the property via clientBlockedForProperty.
     /^\/api\/properties\/[^/]+\/(360|orphan-deals|instructions|project-files|duplicate-units|unresolved-tenants|linkage-audit)\b/,
     /^\/api\/image-studio\/orphans/,
+    // BGP's own map work. /api/map-annotations is already staff-only, so the
+    // layer list was a name-only leak with nothing behind it: the handler
+    // returns every layer with shared_with_team = TRUE, i.e. a Landsec login
+    // read "Brent Cross deck", "acquisition targets" and their item counts
+    // out of the /map sidebar, and both the + new layer and delete controls
+    // 403'd. Whole family blocked; the client map keeps every scoped layer
+    // it had. (r537)
+    /^\/api\/map-layers\b/,
+    // Which paywalled publications BGP holds subscriber cookies for, by
+    // label, env-var name and source — BGP's own subscription config, riding
+    // the allowed /api/news-feed/ prefix on requireAuth alone. Only the
+    // staff Sources tab reads it (clients get ClientNewsFeed instead), and
+    // the cookie POST/DELETE are write-denied already. (r537)
+    /^\/api\/news-feed\/auth-cookies\b/,
   ];
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,

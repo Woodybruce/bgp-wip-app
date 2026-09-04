@@ -3457,7 +3457,11 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   // the gateway — skip them for clients instead of firing guaranteed 403s.
   const mapIsClientRef = useRef(false);
   mapIsClientRef.current = mapIsClient;
-  const CLIENT_HIDDEN_LAYERS = new Set(["icomps", "pathway"]);
+  // annot + tp join icomps/pathway (r537): map_annotations and
+  // property-plans are both staff-only at the gateway and their loaders
+  // already no-op for clients, so the toggles were switches with
+  // nothing behind them — permanently "ON · 0".
+  const CLIENT_HIDDEN_LAYERS = new Set(["icomps", "pathway", "annot", "tp"]);
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   // The blue pin dropped on the searched/resolved location. Lives in a ref
@@ -4729,6 +4733,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   useEffect(() => { loadAnnotations(); }, [loadAnnotations]);
 
   const loadMapLayers = useCallback(async () => {
+    if (mapIsClientRef.current) return; // staff-only at the gateway
     try {
       const r = await fetch("/api/map-layers", { credentials: "include" });
       if (!r.ok) return;
@@ -6225,7 +6230,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
 
         {/* Named annotation layers — group pins / labels / polygons /
             drive-times into a coherent set (e.g. "Brent Cross deck"),
-            toggle visibility, share with the team. */}
+            toggle visibility, share with the team. Staff only: the layers
+            are BGP's own and map_annotations is gateway-blocked for clients,
+            so for a client login this panel listed BGP layer names over
+            controls that all 403'd. */}
+        {!mapIsClient && (
+        <>
         <div className="border-t" />
         <div className="px-3 py-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -6297,7 +6307,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
         </div>
 
         {/* Annotation tools — drop coloured pins / text labels, plus a
-            postcode-highlight box. Saves to map_annotations. */}
+            postcode-highlight box. Saves to map_annotations — write-denied
+            for clients, so the whole block is staff only. */}
         <div className="border-t" />
         <div className="px-3 py-3 space-y-2.5">
           <p className="text-[11px] font-semibold text-gray-700">Annotate</p>
@@ -6360,6 +6371,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
             Tap any annotation on the map to delete it. Saved per user.
           </p>
         </div>
+        </>
+        )}
 
         {/* Postcode boundary highlight — quick red rectangle around an
             outcode or unit postcode via postcodes.io. Outcodes get the
