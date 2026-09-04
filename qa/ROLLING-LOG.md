@@ -84,21 +84,26 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r516 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) — ROUND IN PROGRESS
+### r517 · 2026-09-04 · LIGHT (r516 held the journey slot) — ROUND IN PROGRESS
 - Provisional heartbeat. Bring-up: canonical recipe held (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
-- Two-bot 516 as 3 foreground chunks (with-server wrapper w/ lsof port
-  kill, 570s child timeout), STANDARD ORDER, fresh cross-516.json:
+- Two-bot 517 as 3 foreground chunks (with-server wrapper w/ lsof port
+  kill, 570s child timeout), STANDARD ORDER, fresh cross-517.json:
   victoria exit 0 FIRST RUN (2×400 standing signature) / mark exit 0
   (9 issues = 1×503 keyless + 8×403 probe-by-design — standing signature
   exact) / woody,nick,sam exit 0 (18 [ok], 0 issues). phone-overflow-sweep
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (single 422 =
   r462 cover-raster; 403s flat 1-3/route, no storm). Triage: 0 app bugs
   from the harness.
-- Journey next: Mark @1440px desktop — deal detail pages, viewings dialog
-  end-to-end, Bluewater tenancy tab in depth (surfaces r492/r500/r508
-  skipped).
+- LIGHT round: no journey; spot-check TBD (no deferred bugs on the books
+  r490–r516).
+
+### r516 · 2026-09-04 · FULL (rotation #2 client desktop) — STALLED, superseded by r517
+- Session stalled mid-round after its heartbeat (triage done — smoke 42/0,
+  two-bot clean all chunks, overflow 11/11, 0 app bugs — but the client
+  desktop journey never ran). Rotation #2 journey debt carries to the next
+  FULL round (r518).
 
 ### r515 · 2026-09-03 · LIGHT (r514 had the journey) — GREEN
 - Bring-up: canonical recipe held 80th consecutive time (qa:pg once →
