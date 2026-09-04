@@ -3148,14 +3148,20 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                     onChange={handleFileSelect}
                     data-testid="input-chat-file-upload"
                   />
-                  <label
-                    htmlFor="chat-panel-file-upload"
-                    className={`shrink-0 h-10 w-10 inline-flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer${isSending ? " pointer-events-none opacity-50" : ""}`}
+                  {/* A real button, and NOT disabled while ChatBGP is
+                      replying: a long AI turn (a crawl, a big extraction)
+                      kept the paperclip dead for minutes ("add file button
+                      not working at all" — Woody, 2026-09-04). Files picked
+                      mid-reply simply ride along with the next send. */}
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="shrink-0 h-10 w-10 inline-flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer"
                     data-testid="button-chat-attach-file"
                     title="Attach files"
                   >
                     <Paperclip className="w-4 h-4" />
-                  </label>
+                  </button>
                 </>
               )}
               {isRecording ? (

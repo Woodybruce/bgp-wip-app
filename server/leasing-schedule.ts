@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import multer from "multer";
 import { requireAuth } from "./auth";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
-import { resolveBrandIdSubquery } from "./tenant-brand-resolver";
+import { normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 
 const router = Router();
 
@@ -295,8 +295,7 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
             SET tenancy_unit_id = COALESCE((
                   SELECT ts.id FROM tenancy_schedule_units ts
                    WHERE ts.property_id = u.property_id
-                     AND lower(trim(ts.unit_number)) = lower(trim(coalesce(u.unit_name, '')))
-                     AND coalesce(trim(ts.unit_number), '') <> ''
+                     AND ${normUnitSql("ts.unit_number")} = ${normUnitSql("u.unit_name")}
                    LIMIT 1
                 ), u.tenancy_unit_id),
                 tenant_company_id = COALESCE(${resolveBrandIdSubquery("coalesce(u.tenant_name, '')")}, u.tenant_company_id)
@@ -407,8 +406,7 @@ router.post("/api/leasing-schedule/unit", requireAuth, async (req, res) => {
             SET tenancy_unit_id = (
                   SELECT ts.id FROM tenancy_schedule_units ts
                    WHERE ts.property_id = u.property_id
-                     AND lower(trim(ts.unit_number)) = lower(trim(coalesce(u.unit_name, '')))
-                     AND coalesce(trim(ts.unit_number), '') <> ''
+                     AND ${normUnitSql("ts.unit_number")} = ${normUnitSql("u.unit_name")}
                    LIMIT 1
                 ),
                 tenant_company_id = COALESCE(
@@ -2152,7 +2150,7 @@ router.post("/api/leasing-schedule/property/:propertyId/sync-to-tenancy", requir
       const existing = await pool.query(
         `SELECT id FROM tenancy_schedule_units
           WHERE property_id = $1
-            AND lower(trim(unit_number)) = lower(trim($2))
+            AND ${normUnitSql("unit_number")} = ${normUnitSql("$2")}
           LIMIT 1`,
         [req.params.propertyId, l.unit_name || ""]
       );
@@ -2367,7 +2365,7 @@ router.get("/api/leasing-schedule/property/:propertyId/available-from-tenancy", 
          AND NOT EXISTS (
            SELECT 1 FROM leasing_schedule_units l
             WHERE l.property_id = t.property_id
-              AND lower(trim(l.unit_name)) = lower(trim(COALESCE(t.unit_number, '')))
+              AND ${normUnitSql("l.unit_name")} = ${normUnitSql("t.unit_number")}
          )
        ORDER BY t.grouping NULLS LAST, t.premises NULLS LAST, t.sort_order, t.unit_number
     `, [req.params.propertyId]);
