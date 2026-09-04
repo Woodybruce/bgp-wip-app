@@ -304,8 +304,38 @@ function FeeCheckTab() {
     </div>
   );
 
+  const blanks = data.filter(r => !r.fee && r.xeroNet > 0);
+  const fillBlanks = async () => {
+    const total = blanks.reduce((s, r) => s + r.xeroNet, 0);
+    if (!window.confirm(
+      `Fill ${blanks.length} blank recorded fee${blanks.length === 1 ? "" : "s"} from Xero (${money(total)} total)?\n\nOnly deals with NO recorded fee are touched — each is set to its Xero invoice net and logged on the deal. This updates the WIP report and the agents' commission.`,
+    )) return;
+    setSavingId("__bulk__");
+    try {
+      const r = await apiRequest("POST", "/api/wip/fill-blank-fees");
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "failed");
+      toast({ title: "Fees filled from Xero", description: `${j.filled} deal${j.filled === 1 ? "" : "s"} updated.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/wip/fee-reconciliation"] });
+      invalidateDealCaches();
+    } catch (e: any) {
+      toast({ title: "Couldn't fill fees", description: e?.message || "Please try again.", variant: "destructive" });
+    } finally { setSavingId(null); }
+  };
+
   return (
     <div className="space-y-3">
+      {blanks.length > 0 && (
+        <div className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-4 py-3" data-testid="fill-blank-fees-banner">
+          <p className="text-sm text-amber-900 dark:text-amber-200">
+            <strong>{blanks.length}</strong> invoiced deal{blanks.length === 1 ? " has" : "s have"} <strong>no recorded fee</strong> but a linked Xero invoice
+            ({money(blanks.reduce((s, r) => s + r.xeroNet, 0))} net) — invisible in the WIP and paying nobody commission.
+          </p>
+          <Button size="sm" onClick={fillBlanks} disabled={savingId === "__bulk__"} data-testid="button-fill-blank-fees">
+            {savingId === "__bulk__" ? "Filling…" : "Fill them from Xero"}
+          </Button>
+        </div>
+      )}
       <p className="text-sm text-muted-foreground">
         {data.length} deal{data.length === 1 ? "" : "s"} where the recorded fee doesn't match the net invoiced in Xero.
         The WIP and commission both use the <strong>recorded fee</strong>, so fix these on the Deals page to bring them in line with Xero.
