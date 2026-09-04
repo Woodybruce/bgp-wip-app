@@ -88,6 +88,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r536 · 2026-09-04 · FULL (rotation #3 Landsec client MOBILE 390px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  seed-personas into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN
+  42/0.
+- Two-bot round 536, all three chunks, standard order, each exit 0 first run.
+  Signatures EXACT vs r535: victoria 2×400, mark 9×403 + 1×503, woody/nick/sam
+  0. All listed noise. 0 new issues from the scripted sweep.
+- Next: client mobile 390px journey, then the r535 punch list (firm-summary /
+  individual-leaderboard first).
+
 ### r535 · 2026-09-04 · LIGHT (r534 had the journey) · 2 bugs fixed — CRM leads pipeline + landlord packs
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN
