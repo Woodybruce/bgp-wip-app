@@ -84,17 +84,45 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r520 · 2026-09-04 · FULL (rotation #3 Landsec client mobile 390px) — ROUND IN PROGRESS
-- Heartbeat: smoke GREEN 42/0; two-bot 520 as 3 foreground chunks
-  (with-server wrapper w/ lsof port kill, 570s child timeout), STANDARD
-  ORDER, fresh cross-520.json: victoria exit 0 FIRST RUN (2×400 standing
-  signature) / mark exit 0 (9 issues = 1×503 keyless + 8×403
-  probe-by-design — standing signature exact) / woody,nick,sam exit 0
-  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
-  500/502/504 all chunks (single 422 = r462 cover-raster; 403s flat
-  1-2/route, no storm). Triage: 0 app bugs from the harness.
-- Journey (Mark @390px iPhone UA) still to run: deal detail + Files
-  dialog, Evidence Plans, ChatBGP/messages, tasks, viewing lifecycle.
+### r520 · 2026-09-04 · FULL (rotation #3 Landsec client mobile 390px) — GREEN
+- Bring-up: canonical recipe held 83rd consecutive time (qa:pg once →
+  run-smoke restore clean → purge + seed-personas via node/pg runner,
+  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
+- Two-bot 520 as 3 foreground chunks (with-server wrapper w/ lsof port
+  kill, 570s child timeout), STANDARD ORDER, fresh cross-520.json:
+  victoria exit 0 FIRST RUN (2×400 standing signature) / mark exit 0
+  (9 issues = 1×503 keyless + 8×403 probe-by-design — standing signature
+  exact) / woody,nick,sam exit 0 (0 issues). phone-overflow-sweep 11/11
+  at 390px. Server logs: 0 raw 500/502/504 all chunks (single 422 = r462
+  cover-raster; 403s flat 1-2/route, no storm). Triage: 0 app bugs.
+- Journey (Mark @390px iPhone UA, UI login via Client/guest reveal —
+  "between meetings on my phone: messages/ChatBGP, my deals in depth,
+  log a viewing that just happened and fix it, tasks, news"): "/" lands
+  on Portfolio dashboard (greeting, tracker KPI 77/1/0/78, team card,
+  tiles, AI briefing Generate degrade) → /messages (ChatBGP pinned,
+  thread suggestion chips + composer clean) → Deals hub (2 deals +
+  "+2 letting deals" subtitle, tiles) → deal detail (Gail's letting):
+  Overview/Brand/Activity/Files pill tabs, no fee strings anywhere,
+  Files tab = "Documents are managed by the BGP team", Linked Property
+  card — clean at 390px → tracker /available: search U124 → Viewings
+  dialog FULL lifecycle on MOBILE: ADD (date defaults today) → row
+  renders with pencil/trash → EDIT (notes persist, EDITED stamp) →
+  DELETE ("Viewing removed", count back) — all clean → /tasks (quick-add
+  UI, briefing skeleton→degrade) → /news brand-news slice. 0 pageerrors,
+  0 non-noise 4xx/5xx, 0 h-overflow on 22 shots. NOTE: Evidence Plans is
+  staff-only by design (client-evidence-plans-gate 403s) — not a client
+  mobile surface.
+- Journey observations → UX-NOTES (no bugs): #154 Save Viewing accepts a
+  fully empty form (only defaulted date) and creates a "No company" row
+  — suggest disabling Save until any substantive field set; #155 client
+  deal-detail Parties card shows staff-worded "+ Link landlord/tenant"
+  pickers to the landlord themselves (extends #129).
+- Bugs fixed: 0 (nothing broken found — harness AND journey). Deferred:
+  none. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 ×4, L090 ×2, L130 ×2). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r520 had the journey → r521 LIGHT; then rotation #4 BGP staff
+  mobile 390px.
 
 ### r519 · 2026-09-04 · LIGHT (r518 had the journey) — GREEN
 - Bring-up: canonical recipe held 82nd consecutive time (qa:pg once →

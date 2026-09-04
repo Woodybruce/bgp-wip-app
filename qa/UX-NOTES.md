@@ -13,6 +13,26 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+155. 2026-09-04 · Landsec client / mobile 390px (QA r520) · opened their own
+    deal's detail page · the Overview "Parties" card shows empty Landlord/
+    Tenant slots with staff-worded "+ Link landlord" / "+ Link tenant"
+    affordances — to the landlord viewing their own deal the empty Landlord
+    slot plus staff jargon reads like the deal is set up wrong (same
+    complaint as #129 on the deals board's Client column). Suggestion:
+    for client users default the Landlord party to their own company and
+    show parties read-only-ish ("Not set yet — your BGP team will link
+    parties") rather than staff link-pickers.
+
+154. 2026-09-04 · Landsec client / mobile 390px (QA r520) · logged a viewing
+    from the tracker's Viewings dialog · tapping "Save Viewing" with the
+    form untouched (only the defaulted date) succeeds and creates a
+    "No company — 2026-09-04" row in the shared viewing log; on a phone the
+    button sits right under the keyboard so an accidental empty save is
+    easy, and the row flows into FY counts and staff reports. Company-less
+    viewings are intended (2026-08-09 #9), but a fully empty one carries no
+    information. Suggestion: disable Save until at least one of company/
+    contact/attendees/notes is set.
+
 153. 2026-09-04 · Landsec client / desktop 1440px (QA r518) · scanned the
     Bluewater Tenancy Schedule KPI strip on the property page · the Service
     Charge tile wraps its £11,370,076 total mid-digit ("£11,370,07 / 6") in
