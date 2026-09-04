@@ -2,6 +2,15 @@ export interface ListingFile {
   id: string;
   fileName: string;
   mimeType: string | null;
+  category?: string | null;
+  focalX?: number | null;
+  focalY?: number | null;
+}
+
+export interface ListingAgent {
+  name: string;
+  email: string | null;
+  phone: string | null;
 }
 
 export interface Listing {
@@ -10,6 +19,9 @@ export interface Listing {
   floor: string | null;
   sqft: number | null;
   askingRent: number | null;
+  rentPoa?: boolean | null;
+  leaseTerms?: string | null;
+  agents?: ListingAgent[];
   ratesPa: number | null;
   serviceChargePa: number | null;
   useClass: string | null;
@@ -153,3 +165,11 @@ export function formatRent(rent: number | null): string | null {
   if (!rent) return null;
   return `£${Math.round(rent).toLocaleString("en-GB")} pa`;
 }
+
+// object-position for a photo the team framed in the tracker (0–1 focal point).
+export const focalPosition = (f?: { focalX?: number | null; focalY?: number | null } | null): string | undefined =>
+  f && f.focalX != null && f.focalY != null ? `${Math.round(f.focalX * 100)}% ${Math.round(f.focalY * 100)}%` : undefined;
+
+// Rent label — explicit POA beats a blank figure.
+export const rentLabel = (l: { askingRent: number | null; rentPoa?: boolean | null }): string =>
+  l.rentPoa ? "POA" : (formatRent(l.askingRent) || "On application");

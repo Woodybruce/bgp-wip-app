@@ -85,6 +85,74 @@ function displayUnitName(name: string): string {
     .replace(/^[,\s-]+|[,\s]+$/g, "");
 }
 
+// Website column — opt-in publish with the same completeness gate the public
+// feed enforces (address, rent or POA, size, photo, lease terms).
+const PUBLIC_CODES = new Set<DealStatusCode>(["AVA", "NEG", "HOT", "SOL"]);
+function websiteMissing(u: any, property: any): string[] {
+  const m: string[] = [];
+  const addr = property?.address;
+  const hasPropAddr = !!(addr && (typeof addr === "string" ? addr.trim() : (addr.formatted || addr.address || addr.street || addr.postcode)));
+  if (!(u.unitAddress || hasPropAddr)) m.push("address");
+  if (u.askingRent == null && !u.rentPoa) m.push("rent or POA");
+  if (u.sqft == null) m.push("size");
+  if (!(u.photoCount > 0)) m.push("photo");
+  if (!(u.leaseTerms || "").trim()) m.push("lease terms");
+  return m;
+}
+function WebsitePill({ unit, property, code, onToggle }: { unit: any; property: any; code: DealStatusCode; onToggle: () => void }) {
+  const on = !!unit.showOnWebsite;
+  const missing = websiteMissing(unit, property);
+  let label = "Off", cls = "bg-muted text-muted-foreground", title = "Not on the website — click to display";
+  if (on && !PUBLIC_CODES.has(code)) { label = "Hidden"; cls = "bg-gray-400 text-white"; title = "Ticked for the website, but the deal status keeps it off (only Marketing → Solicitors show)"; }
+  else if (on && missing.length) { label = `Missing ${missing.length}`; cls = "bg-amber-500 text-white"; title = `Not live yet — add: ${missing.join(", ")}`; }
+  else if (on) { label = "Live"; cls = "bg-emerald-500 text-white"; title = "Live on bgp.uk.com — click to remove"; }
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={title}
+      className={`${cls} font-medium rounded-full text-[11px] px-2.5 py-1 whitespace-nowrap hover:opacity-90 transition-opacity`}
+      data-testid={`website-pill-${unit.id}`}
+    >
+      {label}
+    </button>
+  );
+}
+// Files dialog — click-to-set focal point the website crops photos around.
+function FocalPicker({ file, loadUrl, onSave }: { file: UnitMarketingFile; loadUrl: (p: string) => Promise<string>; onSave: (x: number, y: number) => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const fx = (file as any).focalX ?? 0.5;
+  const fy = (file as any).focalY ?? 0.5;
+  useEffect(() => {
+    let alive = true;
+    loadUrl(file.filePath).then(u => { if (alive) setUrl(u); }).catch(() => {});
+    return () => { alive = false; };
+  }, [file.filePath, loadUrl]);
+  return (
+    <div className="w-full mt-2" onClick={e => e.stopPropagation()}>
+      <p className="text-[11px] text-muted-foreground mb-1">Click the part of the photo the website should keep in frame.</p>
+      {url ? (
+        <div
+          className="relative inline-block max-w-full cursor-crosshair"
+          onClick={e => {
+            const r = e.currentTarget.getBoundingClientRect();
+            onSave(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)));
+          }}
+          data-testid={`focal-picker-${file.id}`}
+        >
+          <img src={url} alt="" className="max-h-64 rounded border" />
+          <span
+            className="pointer-events-none absolute w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-white shadow ring-1 ring-black/30 bg-primary/85"
+            style={{ left: `${fx * 100}%`, top: `${fy * 100}%` }}
+          />
+        </div>
+      ) : (
+        <div className="h-24 flex items-center justify-center text-xs text-muted-foreground">Loading photo…</div>
+      )}
+    </div>
+  );
+}
+
 const UNIT_STATUSES: DealStatusCode[] = ["OPP", "AVA"];
 // Status pill row: the live pipeline up front, the historic tail (Exchanged /
 // Completed / Withdrawn / Invoiced) folded behind one "Historic" pill that
@@ -192,6 +260,8 @@ interface UnitFormState {
   floor: string;
   sqft: string;
   askingRent: string;
+  rentPoa: boolean;
+  leaseTerms: string;
   ratesPa: string;
   serviceChargePa: string;
   useClass: string;
@@ -221,6 +291,8 @@ const emptyForm: UnitFormState = {
   floor: "",
   sqft: "",
   askingRent: "",
+  rentPoa: false,
+  leaseTerms: "",
   ratesPa: "",
   serviceChargePa: "",
   useClass: "",
@@ -247,6 +319,8 @@ function formToPayload(f: UnitFormState) {
     floor: f.floor || null,
     sqft: f.sqft ? parseFloat(f.sqft) : null,
     askingRent: f.askingRent ? parseFloat(f.askingRent) : null,
+    rentPoa: !!f.rentPoa,
+    leaseTerms: f.leaseTerms?.trim() || null,
     ratesPa: f.ratesPa ? parseFloat(f.ratesPa) : null,
     serviceChargePa: f.serviceChargePa ? parseFloat(f.serviceChargePa) : null,
     useClass: f.useClass || null,
@@ -273,6 +347,8 @@ function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id:
     floor: u.floor || "",
     sqft: u.sqft?.toString() || "",
     askingRent: u.askingRent?.toString() || "",
+    rentPoa: !!(u as any).rentPoa,
+    leaseTerms: (u as any).leaseTerms || "",
     ratesPa: u.ratesPa?.toString() || "",
     serviceChargePa: u.serviceChargePa?.toString() || "",
     useClass: u.useClass || "",
@@ -380,6 +456,7 @@ export default function AvailableUnitsPage() {
     { key: "existingTenant", label: "Existing Tenant" },
     { key: "unitStatus", label: "Unit Status" },
     { key: "pipelineStatus", label: "Deal Status" },
+    { key: "website", label: "Website" },
     { key: "client", label: "Client" },
     { key: "dealStatus", label: "Target Status" },
     { key: "category", label: "Category" },
@@ -915,6 +992,16 @@ export default function AvailableUnitsPage() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const bulkWebsiteMutation = useMutation({
+    mutationFn: async ({ ids, show }: { ids: string[]; show: boolean }) => {
+      await Promise.all(ids.map(id => apiRequest("PATCH", `/api/available-units/${id}`, { showOnWebsite: show })));
+    },
+    onSuccess: (_r, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      toast({ title: vars.show ? "Marked for the website" : "Removed from the website", description: `${vars.ids.length} unit${vars.ids.length !== 1 ? "s" : ""} — incomplete listings stay hidden until their details are filled in.` });
+      setSelectedIds(new Set());
+    },
+  });
   const bulkStatusMutation = useMutation({
     mutationFn: async ({ ids, status }: { ids: string[]; status: string }) => {
       const results = await Promise.all(ids.map(async id => {
@@ -1843,6 +1930,21 @@ export default function AvailableUnitsPage() {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" data-testid="bulk-website">
+                Website<ChevronDown className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem onClick={() => bulkWebsiteMutation.mutate({ ids: Array.from(selectedIds), show: true })} data-testid="bulk-website-on">
+                Display on website
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => bulkWebsiteMutation.mutate({ ids: Array.from(selectedIds), show: false })} data-testid="bulk-website-off">
+                Remove from website
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="destructive" size="sm" onClick={() => setBulkDeleteOpen(true)} data-testid="bulk-delete-units">
             <Trash2 className="w-3.5 h-3.5 mr-1.5" />Delete
           </Button>
@@ -1982,6 +2084,7 @@ export default function AvailableUnitsPage() {
                 {showCol("existingTenant") && <TableHead className="w-[90px] min-w-[80px] whitespace-nowrap" title="Existing tenant — from the tenancy schedule">Tenant</TableHead>}
                 {showCol("unitStatus") && <TableHead className="w-[100px] min-w-[96px]">Unit Status</TableHead>}
                 {showCol("pipelineStatus") && <TableHead className="w-[104px] min-w-[100px]">Deal Status</TableHead>}
+                {showCol("website") && <TableHead className="w-[92px] min-w-[88px]">Website</TableHead>}
                 {!hideClientCol && showCol("client") && (
                   <TableHead className="w-[128px] min-w-[120px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
@@ -2223,6 +2326,16 @@ export default function AvailableUnitsPage() {
                           labelMap={DEAL_PIPELINE_LABELS}
                           onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
                           allowClear={false}
+                        />
+                      </TableCell>
+                      )}
+                      {showCol("website") && (
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5">
+                        <WebsitePill
+                          unit={u}
+                          property={propertyMap[u.propertyId]}
+                          code={rowCode}
+                          onToggle={() => inlineUpdate(u.id, "showOnWebsite", !(u as any).showOnWebsite)}
                         />
                       </TableCell>
                       )}
@@ -4050,6 +4163,16 @@ function MarketingFilesDialog({
     }
   }, [unit, toast, section]);
 
+  const [focalFor, setFocalFor] = useState<string | null>(null);
+  const saveFocal = useCallback(async (fileId: string, focalX: number, focalY: number) => {
+    if (!unit) return;
+    try {
+      await apiRequest("PATCH", `/api/available-units/files/${fileId}`, { focalX, focalY });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit.id, "files"] });
+    } catch (e: any) {
+      toast({ title: "Couldn't save framing", description: e.message, variant: "destructive" });
+    }
+  }, [unit, toast]);
   const moveFile = useCallback(async (fileId: string, category: string) => {
     if (!unit) return;
     try {
@@ -4180,7 +4303,7 @@ function MarketingFilesDialog({
                         {sectionFiles.map(f => (
                   <div
                     key={f.id}
-                    className="flex items-center gap-2 p-3 rounded-lg border bg-muted/30 hover:bg-muted/60 transition-colors cursor-pointer"
+                    className="flex flex-wrap items-center gap-2 p-3 rounded-lg border bg-muted/30 hover:bg-muted/60 transition-colors cursor-pointer"
                     onClick={() => openFile(f)}
                     data-testid={`file-item-${f.id}`}
                   >
@@ -4195,6 +4318,18 @@ function MarketingFilesDialog({
                     {/* Always visible — hover-only actions don't exist on
                         a phone (Woody, 2026-09-01). */}
                     <div className="flex gap-0.5 shrink-0">
+                      {f.mimeType?.startsWith("image/") && (
+                        <Button
+                          variant={focalFor === f.id ? "secondary" : "ghost"}
+                          size="sm"
+                          className="h-7 px-2 text-[11px]"
+                          onClick={(e) => { e.stopPropagation(); setFocalFor(focalFor === f.id ? null : f.id); }}
+                          title="Set the point the website crops this photo around"
+                          data-testid={`button-frame-file-${f.id}`}
+                        >
+                          Frame
+                        </Button>
+                      )}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -4239,6 +4374,9 @@ function MarketingFilesDialog({
                         <X className="h-3.5 w-3.5" />
                       </Button>
                     </div>
+                    {focalFor === f.id && (
+                      <FocalPicker file={f} loadUrl={fetchFileBlobUrl} onSave={(x, y) => saveFocal(f.id, x, y)} />
+                    )}
                   </div>
                 ))}
                       </div>
@@ -4706,6 +4844,10 @@ function UnitFormDialog({
               <div>
                 <Label className="text-xs">Quoting Rent (£ p.a.)</Label>
                 <CurrencyInput value={form.askingRent} onChange={v => upd("askingRent", v)} placeholder="e.g. 85,000" prefix="£" />
+                <label className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                  <Checkbox checked={form.rentPoa} onCheckedChange={v => setForm({ ...form, rentPoa: !!v })} data-testid="checkbox-rent-poa" />
+                  Price on application (website shows POA)
+                </label>
               </div>
               <div>
                 <Label className="text-xs">% Agency fee</Label>
@@ -4802,6 +4944,16 @@ function UnitFormDialog({
                     {EPC_RATINGS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="col-span-2">
+                <Label>Lease terms <span className="text-muted-foreground font-normal">(shown on the website)</span></Label>
+                <Textarea
+                  value={form.leaseTerms}
+                  onChange={e => upd("leaseTerms", e.target.value)}
+                  placeholder="e.g. New effectively full repairing and insuring lease for a term to be agreed, subject to five-yearly upward-only rent reviews"
+                  rows={2}
+                  data-testid="input-lease-terms"
+                />
               </div>
               <div>
                 <Label>Location</Label>

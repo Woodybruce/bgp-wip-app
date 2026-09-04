@@ -1820,6 +1820,11 @@ export const availableUnits = pgTable("available_units", {
   notes: text("notes"),
   restrictions: text("restrictions"),
   fee: real("fee"),
+  // Public website (Sep 2026): opt-in per unit, published only when the
+  // listing is complete (address, rent or POA, sqft, photo, lease terms).
+  showOnWebsite: boolean("show_on_website").default(false),
+  rentPoa: boolean("rent_poa").default(false),
+  leaseTerms: text("lease_terms"),
   dealId: varchar("deal_id"),
   agentUserIds: text("agent_user_ids").array(),
   viewingsCount: integer("viewings_count").default(0),
@@ -1931,6 +1936,9 @@ export const unitMarketingFiles = pgTable("unit_marketing_files", {
   // brochure | floorplan | photo | other — the Files dialog's sections
   // (Woody, 2026-09-01: one Files home per unit, not separate folders).
   category: text("category").notNull().default("brochure"),
+  // Focal point (0–1 of width/height) the website crops photos around.
+  focalX: real("focal_x"),
+  focalY: real("focal_y"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -4,8 +4,8 @@ import Placeholder from "../components/Placeholder";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
 import ListingMap from "../components/ListingMap";
-import { CONTACT, LEASING_CONTACTS } from "../lib/content";
-import { Listing, fetchListing, fetchListings, fileUrl, formatRent, formatSqft, isImage } from "../lib/api";
+import { CONTACT, LEASING_CONTACTS, OFFICE_PHONE, type Person } from "../lib/content";
+import { Listing, fetchListing, fetchListings, fileUrl, focalPosition, formatSqft, isImage, rentLabel } from "../lib/api";
 import { downloadParticulars } from "../lib/particulars-pdf";
 
 // WhatsApp goes to the head of the leasing contact list — same number the
@@ -74,13 +74,23 @@ export default function ListingDetail() {
   const keyInfo: Array<[string, string | null]> = [
     ["Address", listing.addressLine || listing.location || listing.postcode],
     ["Size", formatSqft(listing.sqft)],
-    ["Rent", formatRent(listing.askingRent) || "On application"],
+    ["Rent", rentLabel(listing)],
     ["Rates", listing.ratesPa ? `£${Math.round(listing.ratesPa).toLocaleString("en-GB")} pa` : "To be re-assessed"],
+    ["Service charge", listing.serviceChargePa ? `£${Math.round(listing.serviceChargePa).toLocaleString("en-GB")} pa` : "On application"],
+    ["Lease terms", listing.leaseTerms || null],
     ["Use class", listing.useClass],
     ["Condition", listing.condition],
     ["Available", listing.availableDate || "Immediately"],
     ["EPC", listing.epcRating || "Available on request"],
+    ["Legal costs", "Each party to bear their own legal costs"],
   ];
+  const unitAgents: Person[] = (listing.agents || []).map((a) => ({
+    name: a.name,
+    title: "BGP Leasing",
+    phone: a.phone || OFFICE_PHONE,
+    email: a.email || CONTACT.email,
+  }));
+  const contacts = unitAgents.length ? unitAgents : LEASING_CONTACTS.slice(0, 3);
 
   const onDownload = async () => {
     setGenerating(true);
@@ -116,7 +126,7 @@ export default function ListingDetail() {
           <div>
             <div className="overflow-hidden">
               {images.length > 0 ? (
-                <img src={fileUrl(images[0].id)} alt={displayName} className="aspect-[16/10] w-full object-cover" />
+                <img src={fileUrl(images[0].id)} alt={displayName} className="aspect-[16/10] w-full object-cover" style={{ objectPosition: focalPosition(images[0]) }} />
               ) : (
                 <Placeholder className="aspect-[16/10] w-full" src={listing.image} alt={displayName} />
               )}
@@ -124,7 +134,7 @@ export default function ListingDetail() {
             {images.length > 1 && (
               <div className="mt-3 grid grid-cols-4 gap-3">
                 {images.slice(1, 5).map((f) => (
-                  <img key={f.id} src={fileUrl(f.id)} alt="" className="aspect-[4/3] w-full object-cover" />
+                  <img key={f.id} src={fileUrl(f.id)} alt="" className="aspect-[4/3] w-full object-cover" style={{ objectPosition: focalPosition(f) }} />
                 ))}
               </div>
             )}
@@ -201,7 +211,7 @@ export default function ListingDetail() {
       </section>
 
       <KeyContacts
-        people={LEASING_CONTACTS.slice(0, 3)}
+        people={contacts}
         blurb="Our team would be delighted to arrange a viewing or share full particulars."
       />
 

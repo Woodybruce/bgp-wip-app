@@ -84,7 +84,7 @@ export interface Person {
   photo?: string;
 }
 
-const OFFICE_PHONE = "+44 (0)20 3551 5260";
+export const OFFICE_PHONE = "+44 (0)20 3551 5260";
 
 // Titles and contact details from the BGP team directory / public site.
 export const TEAM: Person[] = [
