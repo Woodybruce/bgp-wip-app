@@ -84,6 +84,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r526 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) — ROUND IN PROGRESS
+- Bring-up: canonical recipe held 89th time (qa:pg once -> run-smoke restore
+  clean -> purge + seed-personas via node/pg runner, honi 1 / hammerson 2
+  verified). Regression: smoke GREEN 42/0.
+- Two-bot 526 as 3 foreground chunks (with-server wrapper, lsof port kill,
+  570s child timeout), STANDARD ORDER, fresh cross-526.json: victoria exit 0
+  FIRST RUN (2x400 standing signature exact) / mark exit 0 on the SECOND
+  attempt with 9 issues = standing signature exact (8x403 probe-by-design +
+  1x503 keyless); first mark attempt died on a boot-race ECONNRESET at its
+  own login POST (server log clean, no crash trace) - environment flake, see
+  below / woody,nick,sam exit 0 (18 [ok], 0 issues). Server logs: 0 raw
+  500/502/504 across all chunks (only 503 = keyless AI/M365 noise).
+- Triage: 0 app bugs from the harness.
+- Journey pending: Mark Warne @1440px on the confirmed client-facing UX batch
+  (read-only deal parties, sliced Brand News + empty state, Files-dialog
+  client info-sheet copy).
+
 ### r525 · 2026-09-04 · LIGHT (r524 had the journey) · UX 130-156 batch verified — GREEN
 - Bring-up: canonical recipe held 88th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
