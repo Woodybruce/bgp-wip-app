@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+153. 2026-09-04 · Landsec client / desktop 1440px (QA r518) · scanned the
+    Bluewater Tenancy Schedule KPI strip on the property page · the Service
+    Charge tile wraps its £11,370,076 total mid-digit ("£11,370,07 / 6") in
+    the embedded 7-column strip — the figure misreads at a glance (the Full
+    Board page fits it on one line). break-words was chosen deliberately over
+    clipping, so suggest compact formatting for 7-figure sums in the embedded
+    strip (e.g. "£11.37m", full figure on hover/title), matching the
+    dashboard's compact-KPI style.
+
 152. 2026-09-03 · BGP staff / mobile 390px (QA r504) · reviewed a brand
     profile then moved on to the calendar · the profile's auto-fired store
     scan failed a few seconds later (keyless env) and its red "Store search

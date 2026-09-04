@@ -84,10 +84,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r518 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) — ROUND IN PROGRESS (heartbeat)
-- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
-  purge + seed-personas via node/pg runner, honi 1 / hammerson 2 verified).
-  Regression: smoke GREEN 42/0.
+### r518 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) · 1 bug fixed — GREEN
+- Bring-up: canonical recipe held 81st consecutive time (qa:pg once →
+  run-smoke restore clean → purge + seed-personas via node/pg runner,
+  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0 ×2 (before
+  the fix and FRESH_BUILD=1 after).
 - Two-bot 518 as 3 foreground chunks (with-server wrapper w/ lsof port
   kill, 570s child timeout), STANDARD ORDER, fresh cross-518.json:
   victoria exit 0 FIRST RUN (2×400 standing signature) / mark exit 0
@@ -96,8 +97,47 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (single 422 =
   r462 cover-raster; 403s flat 1-3/route, no storm). Triage: 0 app bugs
   from the harness.
-- Journey (r516's carried debt: deal detail pages, viewings dialog
-  end-to-end, Bluewater tenancy tab in depth as Mark @1440px) — RUNNING.
+- Journey (Mark @1440px, UI login via Client/guest reveal — r516's carried
+  rotation-#2 debt: "quarterly landlord review: deal detail pages, log/
+  correct/remove a viewing end-to-end, Bluewater tenancy tab in depth"):
+  Deals hub clean (2 deals + tiles, +2-letting-deals subtitle) → deal
+  detail pages ×2 clean as client (no fee panel, Files "managed by the BGP
+  team", comments, Linked Property, audit rail) → Letting Tracker viewings
+  dialog FULL lifecycle in-browser: ADD (date defaults today, Honi Poke via
+  company picker, toast, row + FY strip 2→3 tick) → EDIT pencil (notes
+  persist + EDITED stamp) → DELETE trash (row gone) — all clean → Bluewater
+  property page: Tenancy Schedule accordion OPEN BY DEFAULT with 200 rows,
+  toggle closed/reopened works, KPI strip (Passing Rent "—" holds), U124
+  search 200→4 rows, Full Board navigates + renders (200 units, pills,
+  KPIs). 0 pageerrors, 0 non-noise 4xx/5xx, 0 h-overflow on 16 shots.
+- BUG FIXED (1): GET /api/crm/deals/:id/audit-log had NO scope check —
+  any logged-in client could pull ANY deal's change history by id
+  (verified live: rival client Sam read a Landsec deal's audit trail,
+  HTTP 200), and a client's own-deal history served the fee/AML/invoicing
+  old→new values the deal read deliberately strips (fee change rows with
+  amounts + changer name). Handler now mirrors the single-deal gate:
+  resolveCompanyScope + isDealInScope (rival → 403), and scoped callers
+  get rows minus CLIENT_HIDDEN_AUDIT_FIELDS (fee family, AML/KYC, Xero,
+  invoicing/poNumber) (server/crm.ts). Verified via API: sam → 403 both
+  deals, mark own deal 200 with 0 hidden-field rows, staff unchanged,
+  anon still 401 (router-level requireAuth). tsc clean, smoke re-green
+  42/0 on the rebuilt bundle, client deal page + audit panel visually
+  clean post-fix.
+- Harness growth: two-bot +1 client-deal-audit-scope (own audit 200 with
+  no fee/AML/invoicing rows; fixture rival deal 44444444… → 403; added to
+  NEGATIVE_PROBE_SCENARIOS). API sequence dry-run GREEN.
+- Journey-script notes (harness): the property-page Tenancy Schedule
+  accordion ([data-testid="toggle-schedule"]) is OPEN by default — a
+  "click to expand" step actually closes it (cost this round two false
+  reads); check row count before toggling. toggle-deal-audit resolves 2×
+  (mobile rail duplicate) — use :visible + .last().
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 153
+  (Service Charge KPI tile wraps £11,370,076 mid-digit in the embedded
+  7-col strip; Full Board fits it — suggest compact £11.37m). New flakes:
+  none. Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r518 had the journey → r519 LIGHT; then rotation #3 Landsec client
+  mobile 390px.
 
 ### r517 · 2026-09-04 · LIGHT (r516 held the journey slot) — GREEN
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
