@@ -3,6 +3,7 @@ import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
+import ListingMap from "../components/ListingMap";
 import { CONTACT, LEASING_CONTACTS } from "../lib/content";
 import { Listing, fetchListing, fetchListings, fileUrl, formatRent, formatSqft, isImage } from "../lib/api";
 import { downloadParticulars } from "../lib/particulars-pdf";
@@ -193,11 +194,7 @@ export default function ListingDetail() {
       <section className="mx-auto max-w-6xl px-4 py-8 md:py-10">
         <h2 className="display text-2xl md:text-3xl mb-6">Location</h2>
         {hasCoords ? (
-          <iframe
-            title="Location map"
-            className="h-72 md:h-80 w-full border border-bgp-line"
-            src={`https://www.openstreetmap.org/export/embed.html?bbox=${lon - 0.008}%2C${lat - 0.004}%2C${lon + 0.008}%2C${lat + 0.004}&layer=mapnik&marker=${lat}%2C${lon}`}
-          />
+          <ListingMap lat={lat} lon={lon} className="h-72 md:h-80 w-full" />
         ) : (
           <Placeholder label={listing.postcode ? `Map — ${listing.postcode}` : "Map TBC"} className="h-72 md:h-80 w-full" />
         )}
