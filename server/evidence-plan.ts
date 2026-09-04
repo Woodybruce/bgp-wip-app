@@ -145,6 +145,11 @@ async function relinkEntriesToUnit(planId: string, unitId: string, unitRef: stri
 // a block with the trading name while TAFs carry the unit ref, so names
 // are the join when refs don't meet.
 const normTenantName = (s: any) => String(s || "").toUpperCase().replace(/&/g, "AND").replace(/[^A-Z0-9]/g, "");
+// Corporate-suffix-stripped variant so plan labels meet the schedule's
+// legal entity names: "EE Ltd" → "EE", "Apple Retail UK Ltd" → "APPLE".
+const stripCoName = (s: any) => normTenantName(
+  String(s || "").replace(/\b(limited|ltd|plc|llp|inc|co|company|group|holdings?|international|europe|uk|gb|retail|stores)\b\.?,?/gi, " ")
+);
 
 // Plan-wide sweep: link every unlinked entry to a unit by ref, or by
 // tenant name when exactly one unit carries that tenant. Idempotent —
@@ -159,15 +164,16 @@ async function relinkAllEntries(planId: string): Promise<number> {
     const r = normaliseUnitRef(u.unit_ref);
     if (r && !byRef.has(r)) byRef.set(r, u.id);
     for (const nm of [u.tenant_name, u.unit_ref]) {
-      const t = normTenantName(nm);
-      if (!t || t.length < 3 || /^\d+$/.test(t)) continue;
-      byTenant.set(t, byTenant.has(t) && byTenant.get(t) !== u.id ? null : u.id);
+      for (const t of [normTenantName(nm), stripCoName(nm)]) {
+        if (!t || t.length < 3 || /^\d+$/.test(t)) continue;
+        byTenant.set(t, byTenant.has(t) && byTenant.get(t) !== u.id ? null : u.id);
+      }
     }
   }
   let linked = 0;
   for (const e of entries) {
     let uid = e.unit_ref ? byRef.get(normaliseUnitRef(e.unit_ref)) : undefined;
-    if (!uid && e.tenant) uid = byTenant.get(normTenantName(e.tenant)) || undefined;
+    if (!uid && e.tenant) uid = byTenant.get(normTenantName(e.tenant)) || byTenant.get(stripCoName(e.tenant)) || undefined;
     if (uid) {
       await pool.query(`UPDATE evidence_plan_entries SET unit_id = $1 WHERE id = $2`, [uid, e.id]);
       linked++;
@@ -421,12 +427,13 @@ router.get("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
     let propertyName: string | null = null;
     let matters: any[] = [];
     const tsByNorm = new Map<string, any>();
+    const tsNameKeys: { key: string; row: any }[] = [];
     if (plan.property_id) {
       const [prop, ts, m] = await Promise.all([
         pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [plan.property_id]),
         pool.query(
           `SELECT unit_number, trading_name, tenant_name, lease_expiry, break_date, next_review_date,
-                  erv_pa, passing_rent_pa, nia_sqft, gia_sqft
+                  erv_pa, passing_rent_pa, nia_sqft, gia_sqft, permitted_use, premises
              FROM tenancy_schedule_units WHERE property_id = $1`, [plan.property_id]),
         pool.query(
           `SELECT m.id, m.matter_type, m.status, m.acting_for, pu.unit_name
@@ -437,15 +444,67 @@ router.get("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
       for (const r of ts.rows) {
         const n = normaliseUnitRef(r.unit_number || "");
         if (n && !tsByNorm.has(n)) tsByNorm.set(n, r);
+        for (const nm of [r.trading_name, r.tenant_name]) {
+          const k = stripCoName(nm);
+          if (k && k.length >= 3) tsNameKeys.push({ key: k, row: r });
+        }
       }
       matters = m.rows.map((r: any) => ({ ...r, unit_norm: r.unit_name ? normaliseUnitRef(r.unit_name) : null }));
     }
-    const units = unitsQ.rows.map((u: any) => {
-      const norm = normaliseUnitRef(u.unit_ref);
-      const t = tsByNorm.get(norm);
-      if (!t) return { ...u, unit_norm: norm, ts_linked: false };
-      return {
+    // Tenant-name fallback when the ref doesn't meet the schedule: exact
+    // suffix-stripped key, else unique prefix ("JD Sports" → "JD Sports
+    // Fashion PLC"). Brands usually hold storage/ATM/cage demises alongside
+    // the shop, so non-retail rows only count when they're all there is —
+    // otherwise Ralph Lauren's container space blocks Unit A13 forever.
+    const looksAncillary = (r: any) =>
+      /storage|store\s*cage|container|car\s*park|atm|substation|advert|barrow|locker|sprinkler|plant/i
+        .test(`${r.permitted_use || ""} ${r.unit_number || ""} ${r.premises || ""}`);
+    const pickOne = (rows: any[]): any | null => {
+      const uniq = [...new Set(rows)];
+      if (uniq.length === 1) return uniq[0];
+      const retail = uniq.filter(r => !looksAncillary(r));
+      return retail.length === 1 ? retail[0] : null;
+    };
+    const tsByName = (label: any): any | null => {
+      const k = stripCoName(label);
+      if (!k || k.length < 3) return null;
+      const exact = tsNameKeys.filter(e => e.key === k);
+      if (exact.length) return pickOne(exact.map(e => e.row));
+      if (k.length >= 4) {
+        const pre = tsNameKeys.filter(e => e.key.startsWith(k));
+        if (pre.length) return pickOne(pre.map(e => e.row));
+      }
+      return null;
+    };
+    const takenNorms = new Set(unitsQ.rows.map((u: any) => normaliseUnitRef(u.unit_ref)).filter(Boolean));
+    const units: any[] = [];
+    for (const u of unitsQ.rows) {
+      let ref = u.unit_ref;
+      let norm = normaliseUnitRef(ref);
+      let t = tsByNorm.get(norm);
+      if (!t && plan.property_id) {
+        const nameOnly = !/\d/.test(String(ref || ""));
+        t = tsByName(u.tenant_name) || (nameOnly ? tsByName(ref) : null);
+        // Adopt the schedule's ref onto a name-only unit (once): the disc
+        // then reads "D2" instead of "JD Sports" and evidence carrying that
+        // ref relinks. Never steal a ref another unit already holds.
+        if (t && nameOnly && t.unit_number) {
+          const adopt = String(t.unit_number).replace(/^unit\s+/i, "").trim().slice(0, 40);
+          const aNorm = normaliseUnitRef(adopt);
+          if (adopt && aNorm && !takenNorms.has(aNorm)) {
+            await pool.query(
+              `UPDATE evidence_plan_units SET unit_ref = $1, tenant_name = COALESCE(NULLIF(tenant_name, ''), $2), updated_at = now() WHERE id = $3`,
+              [adopt, String(ref || "") || null, u.id]);
+            await relinkEntriesToUnit(plan.id, u.id, adopt);
+            takenNorms.add(aNorm);
+            ref = adopt; norm = aNorm;
+          }
+        }
+      }
+      if (!t) { units.push({ ...u, unit_ref: ref, unit_norm: norm, ts_linked: false }); continue; }
+      units.push({
         ...u,
+        unit_ref: ref,
         unit_norm: norm,
         ts_linked: true,
         tenant_name: t.trading_name || t.tenant_name || u.tenant_name,
@@ -455,8 +514,8 @@ router.get("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
         erv: t.erv_pa ?? u.erv,
         passing_rent: t.passing_rent_pa ?? u.passing_rent,
         sqft: t.nia_sqft ?? t.gia_sqft ?? u.sqft,
-      };
-    });
+      });
+    }
     const running = await pool.query(
       `SELECT id, kind, level_id, total_docs, done_docs FROM evidence_plan_jobs WHERE plan_id = $1 AND status = 'running' AND created_at > now() - interval '2 hours'`,
       [plan.id]).catch(() => ({ rows: [] as any[] }));

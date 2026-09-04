@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import multer from "multer";
-import { backfillPropertyTenants, backfillPropertyUnitFks, resolveBrandIdSubquery } from "./tenant-brand-resolver";
+import { backfillPropertyTenants, backfillPropertyUnitFks, normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import { fanOutTenancyStatus } from "./unit-mirror";
 
 const router = Router();
@@ -74,10 +74,11 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
        FROM available_units au
        LEFT JOIN crm_deals d ON d.id = au.deal_id
        WHERE au.property_id = $1
+         AND au.tenancy_unit_id IS NULL
          AND NOT EXISTS (
            SELECT 1 FROM tenancy_schedule_units ts
            WHERE ts.property_id = au.property_id
-             AND lower(trim(coalesce(nullif(trim(ts.unit_number), ''), ts.premises, ''))) = lower(trim(coalesce(au.unit_name, '')))
+             AND ${normUnitSql("coalesce(nullif(trim(ts.unit_number), ''), ts.premises)")} = ${normUnitSql("au.unit_name")}
          )
        ORDER BY lower(trim(coalesce(au.unit_name, ''))), au.created_at DESC`,
       [propertyId]
@@ -920,6 +921,14 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
     // via Re-sync.
     for (const id of insertedIds) {
       try { await fanOutTenancyStatus(pool, id); } catch {}
+    }
+
+    // Re-knit the Letting Tracker / leasing / deals FKs onto the fresh
+    // rows (clearExisting nulls them; a first import may find existing
+    // tracker units too). Normalised unit-name match — without this the
+    // tracker entries reappear as orphan VACANT bands after every import.
+    try { await backfillPropertyUnitFks(propertyId); } catch (e: any) {
+      console.warn("[tenancy-import] unit-FK backfill failed:", e?.message);
     }
 
     const unmatchedNote = unmatchedHeaders.length > 0

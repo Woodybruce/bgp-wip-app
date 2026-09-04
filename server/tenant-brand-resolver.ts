@@ -140,11 +140,21 @@ export async function resolveBrandIdForTenantName(tenantName: string): Promise<s
   return rows[0]?.brand_id || null;
 }
 
+// SQL twin of evidence-plan's normaliseUnitRef: uppercase, strip the
+// words UNIT/STORE/SHOP, collapse punctuation, drop leading zeros in
+// letter-digit tokens — so "Unit A01", "UNIT A1" and "A1" all meet.
+// Every unit-name join in the app should match through this, not raw
+// lower(trim()) equality (Woody, 2026-09-04: "they all need to be
+// matched" — the MRI import spells units differently from the tracker).
+export function normUnitSql(expr: string): string {
+  return `nullif(btrim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(upper(coalesce(${expr}, '')), '\\m(UNIT|STORE|SHOP)\\M', ' ', 'g'), '[^A-Z0-9/&-]+', ' ', 'g'), '([A-Z]+)0+([0-9])', '\\1\\2', 'g'), ' +', ' ', 'g')), '')`;
+}
+
 // SQL fragment that resolves a free-text unit reference (unit_name /
 // premises) on a given property to a tenancy_schedule_units.id —
 // the canonical unit FK. Used to backfill tenancy_unit_id on deals,
 // available_units, and leasing_schedule_units. Soft match by
-// lowercased trimmed unit_number; collisions return any matching
+// normalised unit_number; collisions return any matching
 // row (no good way to disambiguate without manual help).
 //
 // Pass the property param name as $propertyParam and the unit-name
@@ -153,8 +163,7 @@ export function resolveTenancyUnitIdSubquery(propertyParam: string, unitParam: s
   return `(
     SELECT id FROM tenancy_schedule_units
      WHERE property_id = ${propertyParam}
-       AND lower(trim(unit_number)) = lower(trim(coalesce(${unitParam}, '')))
-       AND coalesce(trim(unit_number), '') <> ''
+       AND ${normUnitSql("unit_number")} = ${normUnitSql(unitParam)}
      LIMIT 1
   )`;
 }
@@ -176,9 +185,7 @@ export async function backfillPropertyUnitFks(propertyId: string): Promise<{
         SET tenancy_unit_id = (
           SELECT ts.id FROM tenancy_schedule_units ts
            WHERE ts.property_id = $1
-             AND lower(trim(ts.unit_number)) = lower(trim(coalesce(
-               (SELECT unit_name FROM property_units pu WHERE pu.id = d.unit_id AND pu.property_id = $1), '')))
-             AND coalesce(trim(ts.unit_number), '') <> ''
+             AND ${normUnitSql("ts.unit_number")} = ${normUnitSql("(SELECT unit_name FROM property_units pu WHERE pu.id = d.unit_id AND pu.property_id = $1)")}
            LIMIT 1
         )
       WHERE (d.property_id = $1 OR EXISTS (
