@@ -1,11 +1,11 @@
 import { Link } from "wouter";
 import Placeholder from "./Placeholder";
-import { Listing, fileUrl, formatRent, formatSqft, isImage } from "../lib/api";
+import { Listing, fileUrl, focalPosition, formatRent, formatSqft, isImage } from "../lib/api";
 
 // v2c card: photo, serif address + TYPE label, details line, CONTACT rule-link
 export default function ListingCard({ listing, wide = false }: { listing: Listing; wide?: boolean }) {
   const img = listing.files.find(isImage);
-  const details = [formatSqft(listing.sqft), formatRent(listing.askingRent)].filter(Boolean).join(", ");
+  const details = [formatSqft(listing.sqft), listing.rentPoa ? "POA" : formatRent(listing.askingRent)].filter(Boolean).join(", ");
 
   return (
     <div className={wide ? "sm:col-span-2" : ""}>
@@ -16,6 +16,7 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
               src={fileUrl(img.id)}
               alt={listing.unitName}
               className="aspect-[4/3] w-full object-cover"
+              style={{ objectPosition: focalPosition(img) }}
               loading="lazy"
             />
           ) : (

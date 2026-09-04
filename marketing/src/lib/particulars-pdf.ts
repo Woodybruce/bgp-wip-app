@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import { Listing, formatRent, formatSqft } from "./api";
+import { Listing, formatSqft, rentLabel } from "./api";
 import { CONTACT, LEASING_CONTACTS } from "./content";
 
 // v19-branded property particulars, generated in the browser so it works on
@@ -77,13 +77,15 @@ export async function downloadParticulars(listing: Listing) {
   const rows: Array<[string, string]> = [
     ["Address", listing.addressLine || listing.location || listing.postcode || "—"],
     ["Size", formatSqft(listing.sqft) || "On application"],
-    ["Rent", formatRent(listing.askingRent) || "On application"],
+    ["Rent", rentLabel(listing)],
     ["Rates", listing.ratesPa ? `£${Math.round(listing.ratesPa).toLocaleString("en-GB")} pa` : "To be re-assessed — prospective tenants should confirm any rating liability directly"],
     ["Service charge", listing.serviceChargePa ? `£${Math.round(listing.serviceChargePa).toLocaleString("en-GB")} pa` : "On application"],
+    ["Lease terms", listing.leaseTerms || "On application"],
     ["Use class", listing.useClass || "—"],
     ["Condition", listing.condition || "—"],
     ["Available", listing.availableDate || "Immediately"],
     ["EPC", listing.epcRating || "Available on request"],
+    ["Legal costs", "Each party to bear their own legal costs"],
   ];
   doc.setFontSize(8);
   doc.setTextColor(...WINE);

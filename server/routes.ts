@@ -3806,6 +3806,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     location: string | null;
     latitude: string | null;
     longitude: string | null;
+    unitAddress?: string | null;
+    unitPostcode?: string | null;
   }) => {
     const addr: any = r.propertyAddress;
     const isCountry = (s: string) => /^(UK|United Kingdom|England|Scotland|Wales|Greater London)$/i.test(s);
@@ -3814,7 +3816,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     // property form, or a single geocoder string ({formatted} / {address} / plain).
     let segments: string[];
     let city: string | null = null;
-    if (addr && typeof addr === "object" && (addr.street || addr.city || addr.postcode)) {
+    // A unit's own address (property_units master) beats the property's.
+    const unitAddr = String(r.unitAddress || "").trim();
+    const unitPc = String(r.unitPostcode || "").trim();
+    if (unitAddr) {
+      segments = unitAddr.split(",").map((s: string) => s.trim()).filter((s: string) => s && !isCountry(s));
+      if (unitPc && !UK_POSTCODE_RE.test(unitAddr)) segments.push(unitPc);
+    } else if (addr && typeof addr === "object" && (addr.street || addr.city || addr.postcode)) {
       city = addr.city ? String(addr.city).trim() : null;
       const street = addr.street ? String(addr.street).trim() : "";
       const pcText = addr.postcode ? String(addr.postcode).trim() : "";
@@ -3837,7 +3845,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
     return {
       addressLine: joined || null,
-      postcode: r.postcode || (pc ? `${pc[1].toUpperCase()} ${pc[2].toUpperCase()}` : null),
+      postcode: unitPc || r.postcode || (pc ? `${pc[1].toUpperCase()} ${pc[2].toUpperCase()}` : null),
       location,
       latitude: r.latitude ?? (addr?.lat != null ? String(addr.lat) : null),
       longitude: r.longitude ?? (addr?.lng != null ? String(addr.lng) : null),
@@ -3852,20 +3860,25 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     next();
   });
 
-  const publicListingColumns = () => import("@shared/schema").then(({ availableUnits, crmProperties }) => ({
+  const publicListingColumns = () => import("@shared/schema").then(({ availableUnits, crmProperties, propertyUnits }) => ({
     id: availableUnits.id,
     unitName: availableUnits.unitName,
     floor: availableUnits.floor,
     sqft: availableUnits.sqft,
     askingRent: availableUnits.askingRent,
+    rentPoa: availableUnits.rentPoa,
     ratesPa: availableUnits.ratesPa,
     serviceChargePa: availableUnits.serviceChargePa,
     useClass: availableUnits.useClass,
     condition: availableUnits.condition,
     availableDate: availableUnits.availableDate,
+    leaseTerms: availableUnits.leaseTerms,
     marketingStatus: availableUnits.marketingStatus,
     location: availableUnits.location,
     epcRating: availableUnits.epcRating,
+    agentUserIds: availableUnits.agentUserIds,
+    unitAddress: propertyUnits.unitAddress,
+    unitPostcode: propertyUnits.unitPostcode,
     propertyName: crmProperties.name,
     propertyAddress: crmProperties.address,
     postcode: crmProperties.postcode,
@@ -3874,16 +3887,48 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     assetClass: crmProperties.assetClass,
   }));
 
+  // Publish gate (spec from the leasing team, Sep 2026): a ticked unit only
+  // goes live once the listing is complete — address, rent or POA, size, a
+  // photo and lease terms. Brochure is not a blocker: the site generates
+  // particulars when no PDF is uploaded. Returns the missing items (empty =
+  // publishable) so the tracker can show the same checklist.
+  const publicMissing = (r: any, files: Array<{ mimeType: string | null; category?: string | null }>): string[] => {
+    const missing: string[] = [];
+    if (!r.addressLine) missing.push("address");
+    if (r.askingRent == null && !r.rentPoa) missing.push("rent or POA");
+    if (r.sqft == null) missing.push("size");
+    if (!files.some(f => (f.mimeType || "").startsWith("image/") || f.category === "photo")) missing.push("photo");
+    if (!(r.leaseTerms || "").trim()) missing.push("lease terms");
+    return missing;
+  };
+  const publicAgents = async (rows: Array<{ agentUserIds: string[] | null }>) => {
+    const { users } = await import("@shared/schema");
+    const ids = Array.from(new Set(rows.flatMap(r => r.agentUserIds || []).filter(Boolean)));
+    if (!ids.length) return {} as Record<string, { name: string; email: string | null; phone: string | null }>;
+    const found = await db.select({ id: users.id, name: users.name, email: users.email, phone: users.phone }).from(users).where(inArray(users.id, ids));
+    return Object.fromEntries(found.map(u => [u.id, { name: u.name, email: u.email, phone: u.phone }]));
+  };
+  const publicShape = (r: any, files: any[], agentsById: Record<string, any>) => {
+    const { agentUserIds, unitAddress, unitPostcode, propertyAddress, ...rest } = r;
+    return {
+      ...rest,
+      files,
+      agents: (agentUserIds || []).map((id: string) => agentsById[id]).filter(Boolean),
+    };
+  };
+
   app.get("/api/public/leasing-listings", async (_req, res) => {
     try {
-      const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
+      const { availableUnits, crmProperties, propertyUnits, unitMarketingFiles } = await import("@shared/schema");
       const columns = await publicListingColumns();
       const notTenanted = await publicNotTenanted();
       const rows = await db
         .select(columns)
         .from(availableUnits)
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
+        .leftJoin(propertyUnits, eq(availableUnits.unitId, propertyUnits.id))
         .where(and(
+          eq(availableUnits.showOnWebsite, true),
           sql`${availableUnits.marketingStatus} IS NOT NULL`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
           notTenanted,
@@ -3897,17 +3942,21 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
               unitId: unitMarketingFiles.unitId,
               fileName: unitMarketingFiles.fileName,
               mimeType: unitMarketingFiles.mimeType,
+              category: unitMarketingFiles.category,
+              focalX: unitMarketingFiles.focalX,
+              focalY: unitMarketingFiles.focalY,
             })
             .from(unitMarketingFiles)
             .where(inArray(unitMarketingFiles.unitId, unitIds))
         : [];
       const byUnit: Record<string, typeof files> = {};
       for (const f of files) (byUnit[f.unitId] ||= []).push(f);
+      const agentsById = await publicAgents(rows);
       res.json(
         rows
           .map(r => ({ ...r, ...publicAddress(r), marketingStatus: publicStatus(r.marketingStatus) }))
-          .filter(r => r.marketingStatus !== null)
-          .map(r => ({ ...r, files: byUnit[r.id] || [] })),
+          .filter(r => r.marketingStatus !== null && publicMissing(r, byUnit[r.id] || []).length === 0)
+          .map(r => publicShape(r, (byUnit[r.id] || []).map(({ unitId, ...f }) => f), agentsById)),
       );
     } catch (err: any) {
       console.error("[routes] Public leasing listings error:", err?.message);
@@ -3917,15 +3966,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/public/leasing-listings/:id", async (req, res) => {
     try {
-      const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
+      const { availableUnits, crmProperties, propertyUnits, unitMarketingFiles } = await import("@shared/schema");
       const columns = await publicListingColumns();
       const notTenanted = await publicNotTenanted();
       const [row] = await db
         .select(columns)
         .from(availableUnits)
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
+        .leftJoin(propertyUnits, eq(availableUnits.unitId, propertyUnits.id))
         .where(and(
           eq(availableUnits.id, req.params.id),
+          eq(availableUnits.showOnWebsite, true),
           sql`${availableUnits.marketingStatus} IS NOT NULL`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
           notTenanted,
@@ -3936,12 +3987,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           id: unitMarketingFiles.id,
           fileName: unitMarketingFiles.fileName,
           mimeType: unitMarketingFiles.mimeType,
+          category: unitMarketingFiles.category,
+          focalX: unitMarketingFiles.focalX,
+          focalY: unitMarketingFiles.focalY,
         })
         .from(unitMarketingFiles)
         .where(eq(unitMarketingFiles.unitId, row.id));
       const pubStatus = publicStatus(row.marketingStatus);
-      if (!pubStatus) return res.status(404).json({ message: "Listing not found" });
-      res.json({ ...row, ...publicAddress(row), marketingStatus: pubStatus, files });
+      const shaped = { ...row, ...publicAddress(row), marketingStatus: pubStatus };
+      if (!pubStatus || publicMissing(shaped, files).length) return res.status(404).json({ message: "Listing not found" });
+      const agentsById = await publicAgents([row]);
+      res.json(publicShape(shaped, files, agentsById));
     } catch (err: any) {
       console.error("[routes] Public leasing listing error:", err?.message);
       res.status(500).json({ message: "Failed to fetch listing" });
@@ -3960,6 +4016,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
         .where(and(
           eq(availableUnits.id, file.unitId),
+          eq(availableUnits.showOnWebsite, true),
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
           notTenanted,
         ));
@@ -4032,6 +4089,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           au.viewings_count AS "viewingsCount",
           au.last_viewing_date AS "lastViewingDate",
           au.marketing_start_date AS "marketingStartDate",
+          au.show_on_website AS "showOnWebsite",
+          au.rent_poa AS "rentPoa",
+          au.lease_terms AS "leaseTerms",
+          pu.unit_address AS "unitAddress",
+          pu.unit_postcode AS "unitPostcode",
+          (SELECT count(*) FROM unit_marketing_files f
+            WHERE f.unit_id = au.id AND (f.category = 'photo' OR f.mime_type LIKE 'image/%'))::int AS "photoCount",
           au.created_at AS "createdAt",
           au.updated_at AS "updatedAt",
           p.name AS "propertyName",
@@ -6940,10 +7004,23 @@ These terms are indicative only and do not constitute a binding agreement.`;
   // the Files dialog (Woody, 2026-09-01).
   app.patch("/api/available-units/files/:fileId", requireAuth, async (req, res) => {
     try {
-      const category = String(req.body?.category || "");
-      if (!["brochure", "floorplan", "photo", "other"].includes(category)) {
-        return res.status(400).json({ message: "Invalid category" });
+      // Section move (category) and/or website focal point (focalX/Y, 0–1).
+      const patch: Record<string, any> = {};
+      if (req.body?.category !== undefined) {
+        const category = String(req.body.category || "");
+        if (!["brochure", "floorplan", "photo", "other"].includes(category)) {
+          return res.status(400).json({ message: "Invalid category" });
+        }
+        patch.category = category;
       }
+      for (const k of ["focalX", "focalY"] as const) {
+        if (req.body?.[k] !== undefined) {
+          const n = req.body[k] === null ? null : Number(req.body[k]);
+          if (n !== null && !(n >= 0 && n <= 1)) return res.status(400).json({ message: `${k} must be 0–1` });
+          patch[k] = n;
+        }
+      }
+      if (!Object.keys(patch).length) return res.status(400).json({ message: "Nothing to update" });
       const { unitMarketingFiles } = await import("@shared/schema");
       const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       if (!file) return res.status(404).json({ message: "File not found" });
@@ -6953,7 +7030,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
           return res.status(403).json({ message: "Unit is outside your portfolio" });
         }
       }
-      await db.update(unitMarketingFiles).set({ category }).where(eq(unitMarketingFiles.id, req.params.fileId as string));
+      await db.update(unitMarketingFiles).set(patch).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update file" });
