@@ -874,7 +874,27 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               invites mis-linking (UX #19). Already-linked slots stay visible
               either way so existing data is never hidden. */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-2">
-            {(() => { const partiesInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase"; return (<>
+            {(() => { const partiesInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase";
+            // UX #155 — clients get read-only party slots: staff-worded
+            // "+ Link landlord" pickers on their own deal read like the deal
+            // is set up wrong. Landlord defaults to their own company.
+            if (isClientDeal) {
+              const nameFor = (id: string | null | undefined) => id ? (companies.find(c => c.id === id)?.name || null) : null;
+              const slots: Array<[string, string | null]> = partiesInvestment
+                ? [["Vendor", nameFor(deal.vendorId)], ["Purchaser", nameFor(deal.purchaserId)]]
+                : [["Landlord", nameFor(deal.landlordId) || (ddUser as any)?.companyScopeName || null], ["Tenant", nameFor(deal.tenantId)]];
+              return (<>
+                {slots.map(([label, name]) => (
+                  <div key={label} className="flex flex-col gap-1" data-testid={`client-party-${label.toLowerCase()}`}>
+                    <p className="text-[10px] text-muted-foreground leading-tight">{label}</p>
+                    {name
+                      ? <span className="text-xs font-medium">{name}</span>
+                      : <span className="text-[11px] text-muted-foreground italic">Not set yet — your BGP team will link parties</span>}
+                  </div>
+                ))}
+              </>);
+            }
+            return (<>
             {(!partiesInvestment || deal.landlordId) && (
             <div className="flex flex-col gap-1">
               <p className="text-[10px] text-muted-foreground leading-tight">Landlord</p>

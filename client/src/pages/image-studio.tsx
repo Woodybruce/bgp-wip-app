@@ -814,7 +814,10 @@ export default function ImageStudio() {
     }
     const list = [...m.entries()].map(([name, v]) => ({ name, label: name, ...v }))
       .sort((x, y) => y.count - x.count);
-    if (unCount && unCover) list.push({ name: "__uncategorised__", label: "Uncategorised", cover: unCover, count: unCount });
+    // UX #138 — this folder groups images with no ADDRESS; calling it
+    // "Uncategorised" collided with the sidebar's category of that name
+    // (two different counts under one label read like a bug).
+    if (unCount && unCover) list.push({ name: "__uncategorised__", label: "No property", cover: unCover, count: unCount });
     return list;
   })();
   const albumsActive = libraryView === "albums" && !searchQuery && !propertyFilter

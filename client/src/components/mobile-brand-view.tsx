@@ -65,7 +65,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   // Same research trigger as the desktop Stores section — POST kicks the
   // background job, then poll /status until done (big brands take minutes).
   const storeScan = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (_vars?: { auto?: boolean }) => {
       const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`, { scope: "uk" });
       if (!res.ok && res.status !== 202) {
         const err = await res.json().catch(() => ({}));
@@ -88,11 +88,14 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         setTimeout(poll, 5000);
       });
     },
-    onSuccess: (out: any) => {
-      toast({ title: "Store search complete", description: out?.found ? `${out.found} stores found` : "0 stores found" });
+    onSuccess: (out: any, vars: any) => {
+      // UX #152 — auto-fired background scans don't toast.
+      if (!vars?.auto) toast({ title: "Store search complete", description: out?.found ? `${out.found} stores found` : "0 stores found" });
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
     },
-    onError: (e: any) => toast({ title: "Store search failed", description: e.message, variant: "destructive" }),
+    onError: (e: any, vars: any) => {
+      if (!vars?.auto) toast({ title: "Store search failed", description: e.message, variant: "destructive" });
+    },
   });
   // Expansion score — same endpoint as desktop's Expansion intelligence.
   const { data: hunter } = useQuery<any>({
@@ -115,7 +118,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     if (/landlord|client/i.test(co.company_type || "")) return;
     if ((data.stores || []).length > 0) return;
     autoScanFired.current = true;
-    storeScan.mutate();
+    storeScan.mutate({ auto: true });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, isClientViewer]);
 
@@ -172,8 +175,8 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     <div className="p-4 space-y-3 pb-6">
       {/* Hero + identity */}
       {heroSrc && (
-        <div className="h-44 rounded-xl overflow-hidden bg-muted">
-          <img src={heroSrc} alt="" className="w-full h-full object-cover" onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }} />
+        <div className="h-44 rounded-xl overflow-hidden bg-muted animate-pulse">
+          <img src={heroSrc} alt="" className="w-full h-full object-cover opacity-0 transition-opacity duration-500" onLoad={(e) => { e.currentTarget.classList.remove("opacity-0"); e.currentTarget.parentElement?.classList.remove("animate-pulse"); }} onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }} />
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
@@ -542,7 +545,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
               <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{ukStores.length}</Badge>
               {!isClientViewer && !storeScan.isPending && (
                 <button
-                  onClick={() => storeScan.mutate()}
+                  onClick={() => storeScan.mutate({})}
                   className="ml-auto text-[10px] px-2 py-0.5 rounded-full border bg-card hover:bg-muted normal-case tracking-normal"
                   data-testid="btn-mobile-research-stores"
                 >

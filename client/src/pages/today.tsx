@@ -292,6 +292,9 @@ export default function TodayPage() {
                     </div>
                   )}
                 </div>
+                {/* UX #145 — no status used to render a blank grey pill,
+                    which read as a glitch; hide the chip instead. */}
+                {deal.status && (
                 <span className={`text-[11px] font-medium px-2.5 py-1 rounded-full shrink-0 ${
                   deal.status === "Active" || deal.status === "active" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400" :
                   deal.status === "Under Offer" ? "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400" :
@@ -299,6 +302,7 @@ export default function TodayPage() {
                 }`}>
                   {deal.status}
                 </span>
+                )}
                 <ChevronRight className="w-4 h-4 text-muted-foreground/40 shrink-0" />
               </button>
             ))}

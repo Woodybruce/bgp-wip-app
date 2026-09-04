@@ -1027,12 +1027,13 @@ export default function WipReport() {
       if (!hay.includes(q)) return false;
     }
     if (skip !== "client" && selectedClients.size > 0) {
-      if (!e.client || !selectedClients.has(e.client)) return false;
+      const ok = e.client ? selectedClients.has(e.client) : selectedClients.has("Unassigned");
+      if (!ok) return false;
     }
     if (skip !== "team" && selectedTeams.size > 0) {
-      if (!e.team) return false;
-      const entryTeams = (e.team as string).split(",").map(t => t.trim()).filter(Boolean);
-      if (!entryTeams.some(t => selectedTeams.has(t))) return false;
+      const entryTeams = e.team ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean) : [];
+      const ok = entryTeams.length > 0 ? entryTeams.some(t => selectedTeams.has(t)) : selectedTeams.has("Unassigned");
+      if (!ok) return false;
     }
     if (selectedFiscalYears.size > 0) {
       const rawFy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
@@ -1047,12 +1048,13 @@ export default function WipReport() {
       if (e.month && !selectedMonths.has(e.month)) return false;
     }
     if (skip !== "agent" && selectedAgents.size > 0) {
-      if (!e.agent) return false;
-      const agentParts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean);
-      if (!agentParts.some(a => selectedAgents.has(a))) return false;
+      const agentParts = e.agent ? (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean) : [];
+      const ok = agentParts.length > 0 ? agentParts.some(a => selectedAgents.has(a)) : selectedAgents.has("Unassigned");
+      if (!ok) return false;
     }
     if (skip !== "project" && selectedProjects.size > 0) {
-      if (!e.project || !selectedProjects.has(e.project)) return false;
+      const ok = e.project ? selectedProjects.has(e.project) : selectedProjects.has("Unassigned");
+      if (!ok) return false;
     }
     if (skip !== "status" && selectedStatuses.size > 0) {
       if (!e.dealStatus || !selectedStatuses.has(e.dealStatus)) return false;
@@ -1175,11 +1177,15 @@ export default function WipReport() {
       }
       return [...agg.entries()].map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
     };
+    // UX #141 — fees with no attribution used to simply vanish from the
+    // breakdown, so the board contradicted the header total. "Unassigned"
+    // keeps the sum honest and is filterable like any row.
+    const orUnassigned = (keys: string[]) => (keys.length > 0 ? keys : ["Unassigned"]);
     return {
-      client: build("client", (e) => (e.client ? [e.client] : [])),
-      project: build("project", (e) => (e.project ? [e.project] : [])),
-      team: build("team", (e) => (e.team ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean) : [])),
-      agent: build("agent", (e) => (e.agent ? (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean) : [])),
+      client: build("client", (e) => orUnassigned(e.client ? [e.client] : [])),
+      project: build("project", (e) => orUnassigned(e.project ? [e.project] : [])),
+      team: build("team", (e) => orUnassigned(e.team ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean) : [])),
+      agent: build("agent", (e) => orUnassigned(e.agent ? (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean) : [])),
     };
   }, [entries, entryMatches]);
 

@@ -928,70 +928,28 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         {/* Admin/debug sync + inspect tools — hidden on mobile so the board is
             a clean Search + Add + cards layout, uniform with the others.
             Hidden for clients too: sync/import are staff-only writes. */}
-        {!isMobile && !isClientView && (<>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={syncPipnet}
-          disabled={pipnetSyncing}
-          data-testid="button-sync-pipnet"
-          title="Import active retail requirements from PIPnet"
-        >
-          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
-          Refresh PIPnet
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={wipeAndResyncPipnet}
-          disabled={pipnetSyncing}
-          data-testid="button-resync-pipnet"
-          title="Delete previous PIPnet imports and re-run with corrected mapping"
-        >
-          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
-          Wipe & resync
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={inspectPipnetHeaders}
-          data-testid="button-inspect-pipnet"
-          title="Show the column headers PIPnet is actually returning"
-        >
-          Inspect PIPnet
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={inspectPipnetDetail}
-          data-testid="button-inspect-pipnet-detail"
-          title="Fetch one requirement's detail page and dump every field"
-        >
-          Inspect Detail
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={syncTrl}
-          disabled={pipnetSyncing}
-          data-testid="button-sync-trl"
-          title="Pull every requirement from TheRequirementList"
-        >
-          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
-          Refresh TRL
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={wipeAndResyncTrl}
-          disabled={pipnetSyncing}
-          data-testid="button-resync-trl"
-          title="Delete previous TRL imports and re-run"
-        >
-          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
-          Wipe & resync TRL
-        </Button>
-        </>)}
+        {!isMobile && !isClientView && (
+        /* UX #132 — the six sync/inspect/wipe controls sat at equal weight
+           with everyday actions (two starting with "Wipe", one click from
+           the search box). One "Sync tools" dropdown keeps the everyday row
+           to Search + New Brand + Add requirement. */
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" data-testid="button-sync-tools" title="PIPnet / TRL import and debug tools">
+              {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+              Sync tools
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={syncPipnet} disabled={pipnetSyncing} data-testid="button-sync-pipnet">Refresh PIPnet</DropdownMenuItem>
+            <DropdownMenuItem onClick={wipeAndResyncPipnet} disabled={pipnetSyncing} data-testid="button-resync-pipnet">Wipe &amp; resync PIPnet</DropdownMenuItem>
+            <DropdownMenuItem onClick={inspectPipnetHeaders} data-testid="button-inspect-pipnet">Inspect PIPnet</DropdownMenuItem>
+            <DropdownMenuItem onClick={inspectPipnetDetail} data-testid="button-inspect-pipnet-detail">Inspect Detail</DropdownMenuItem>
+            <DropdownMenuItem onClick={syncTrl} disabled={pipnetSyncing} data-testid="button-sync-trl">Refresh TRL</DropdownMenuItem>
+            <DropdownMenuItem onClick={wipeAndResyncTrl} disabled={pipnetSyncing} data-testid="button-resync-trl">Wipe &amp; resync TRL</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        )}
         {!isClientView && (
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />

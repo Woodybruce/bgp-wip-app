@@ -145,6 +145,15 @@ function fmtCurrency(v: number | string) {
   return "£" + n.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
+// UX #153 — the embedded 7-column strip can't fit "£11,370,076" on one
+// line; 7-figure sums compact to "£11.37m" (full figure in the tooltip).
+function fmtCurrencyCompact(v: number | string) {
+  const n = Number(v);
+  if (!n) return "—";
+  if (Math.abs(n) >= 1_000_000) return "£" + (n / 1_000_000).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "m";
+  return fmtCurrency(n);
+}
+
 function fmtNum(v: number | string | null | undefined, dp = 0) {
   if (v === null || v === undefined || v === "") return "—";
   const n = Number(v);
@@ -1144,8 +1153,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
         {[
           { label: "Total NIA", value: fmtNum(totalNIA) + " sq ft", filter: null },
-          { label: "Passing Rent", value: fmtCurrency(totalRent), filter: null },
-          { label: "Avg ERV £psf", value: fmtNum(avgERV, 0), filter: null },
+          { label: "Passing Rent", value: fmtCurrencyCompact(totalRent), filter: null, full: fmtCurrency(totalRent) },
+          // UX #133 — a literal 0 read as "the ERV is £0" rather than
+          // "no ERV data"; match Passing Rent's em-dash empty state.
+          { label: "Avg ERV £psf", value: avgERV ? fmtNum(avgERV, 0) : "—", filter: null },
           { label: "WAULT", value: fmtNum(avgWAULT, 1) + " yrs", filter: null, sub: waultExcluded > 0 ? `${waultExcluded} excluded — placeholder expiry` : undefined },
           { label: "Occupied", value: String(occupied), filter: "Occupied" },
           { label: "Vacant", value: String(vacant), filter: "Vacant" },
@@ -1155,7 +1166,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           ...(inNeg > 0 ? [{ label: "In Negotiation", value: String(inNeg), filter: "In Negotiation" }] : []),
           ...(underOffer > 0 ? [{ label: "Under Offer", value: String(underOffer), filter: "Under Offer" }] : []),
           ...(leaseEvent > 0 ? [{ label: "Lease Event", value: String(leaseEvent), filter: "Lease Event" }] : []),
-          { label: "Service Charge", value: fmtCurrency(totalSC), filter: null },
+          { label: "Service Charge", value: fmtCurrencyCompact(totalSC), filter: null, full: fmtCurrency(totalSC) },
         ].map(s => (
           <div
             key={s.label}
@@ -1171,7 +1182,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
             <div className="text-[10px] text-gray-500 uppercase">{s.label}</div>
             {/* break-words so long single tokens (£11,370,076) wrap inside
                 the tile instead of clipping at its edge. */}
-            <div className="text-sm font-semibold tabular-nums leading-tight break-words">{s.value}</div>
+            <div className="text-sm font-semibold tabular-nums leading-tight break-words" title={(s as any).full && (s as any).full !== s.value ? (s as any).full : undefined}>{s.value}</div>
             {(s as any).sub && (
               <div className="text-[9px] text-amber-600 dark:text-amber-400 leading-tight" title="Leases with terms beyond 60 years are treated as placeholder expiry dates and excluded from WAULT">
                 {(s as any).sub}

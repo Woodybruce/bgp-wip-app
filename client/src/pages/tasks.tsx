@@ -403,7 +403,19 @@ export default function TasksPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [showEditDialog, setShowEditDialog] = useState(false);
-  const [briefingExpanded, setBriefingExpanded] = useState(true);
+  // UX #148 — on phones the briefing card filled the whole first viewport
+  // before any tasks; start collapsed there, remembered per device.
+  const [briefingExpanded, setBriefingExpandedRaw] = useState(() => {
+    try {
+      const v = localStorage.getItem("bgp_tasks_briefing_open");
+      if (v !== null) return v === "1";
+    } catch {}
+    return typeof window === "undefined" || window.innerWidth >= 768;
+  });
+  const setBriefingExpanded = (v: boolean) => {
+    setBriefingExpandedRaw(v);
+    try { localStorage.setItem("bgp_tasks_briefing_open", v ? "1" : "0"); } catch {}
+  };
   const [showCompletedSection, setShowCompletedSection] = useState(false);
   const [addingSubtaskFor, setAddingSubtaskFor] = useState<string | null>(null);
   const [subtaskTitle, setSubtaskTitle] = useState("");

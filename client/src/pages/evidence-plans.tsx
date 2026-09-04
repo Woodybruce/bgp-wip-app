@@ -320,6 +320,11 @@ function PlanView({ planId }: { planId: string }) {
   const [hover, setHover] = useState<{ unitId: string; x: number; y: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [dotDraft, setDotDraft] = useState<{ unitId: string; x: number; y: number } | null>(null);
+  // UX #137 — the unit-ref used to come from a raw window.prompt(); Esc
+  // silently threw the just-drawn outline away. App dialog keeps the
+  // polygon on Cancel so it can be re-named rather than redrawn.
+  const [pendingPoly, setPendingPoly] = useState<Pt[] | null>(null);
+  const [pendingRef, setPendingRef] = useState("");
   const [showZa, setShowZa] = useState<boolean>(() => { try { return localStorage.getItem("bgp-ep-za") !== "0"; } catch { return true; } });
 
   const toPlanCoords = (clientX: number, clientY: number): Pt | null => {
@@ -330,18 +335,18 @@ function PlanView({ planId }: { planId: string }) {
   };
 
   const addUnit = useMutation({
-    mutationFn: async (polygon: Pt[]) => {
-      const unitRef = window.prompt("Unit reference (e.g. A15, N10, E7A):")?.trim();
-      if (!unitRef) throw new Error("cancelled");
+    mutationFn: async ({ polygon, unitRef }: { polygon: Pt[]; unitRef: string }) => {
       const r = await apiRequest("POST", `/api/evidence-plans/${planId}/units`, { unitRef, polygon, levelId: activeLevel?.id || null });
       return r.json();
     },
     onSuccess: (u: any) => {
+      setPendingPoly(null);
+      setPendingRef("");
       invalidate();
       setSelectedId(u.id);
       if (u.adopted > 0) toast({ title: `Unit ${u.unit_ref} added`, description: `${u.adopted} waiting evidence entr${u.adopted === 1 ? "y" : "ies"} linked to it.` });
     },
-    onError: (e: any) => { if (e.message !== "cancelled") toast({ title: "Couldn't add unit", description: e.message, variant: "destructive" }); },
+    onError: (e: any) => toast({ title: "Couldn't add unit", description: e.message, variant: "destructive" }),
   });
 
 
@@ -498,6 +503,32 @@ function PlanView({ planId }: { planId: string }) {
 
       <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />
 
+      {/* UX #137 — unit-ref dialog for a just-drawn outline. Closing keeps
+          the polygon pending until Discard is chosen explicitly. */}
+      <Dialog open={!!pendingPoly} onOpenChange={(o) => { if (!o) { /* keep polygon; just hide */ } }}>
+        <DialogContent className="max-w-xs" onEscapeKeyDown={(e) => e.preventDefault()} onPointerDownOutside={(e) => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle className="text-sm">Name this unit</DialogTitle>
+          </DialogHeader>
+          <Input
+            autoFocus
+            placeholder="Unit reference (e.g. A15, N10, E7A)"
+            value={pendingRef}
+            onChange={(e) => setPendingRef(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && pendingRef.trim() && pendingPoly) addUnit.mutate({ polygon: pendingPoly, unitRef: pendingRef.trim() }); }}
+            data-testid="input-unit-ref"
+          />
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" size="sm" onClick={() => { setPendingPoly(null); setPendingRef(""); }} data-testid="button-discard-outline">
+              Discard outline
+            </Button>
+            <Button size="sm" disabled={!pendingRef.trim() || addUnit.isPending} onClick={() => pendingPoly && addUnit.mutate({ polygon: pendingPoly, unitRef: pendingRef.trim() })} data-testid="button-save-unit-ref">
+              {addUnit.isPending ? "Saving…" : "Save unit"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Level switcher — a scheme plan PDF becomes one level per page */}
       {levels.length > 1 && (
         <div className="px-4 py-1.5 border-b border-border flex items-center gap-1.5 overflow-x-auto bg-background">
@@ -587,7 +618,8 @@ function PlanView({ planId }: { planId: string }) {
                   setDrawing(false);
                   const poly = draft;
                   setDraft([]);
-                  addUnit.mutate(poly);
+                  setPendingRef("");
+                  setPendingPoly(poly);
                 }}
               >
                 <img src={`/api/evidence-plans/levels/${activeLevel!.id}/background?v=${encodeURIComponent(activeLevel!.background_key || "")}`} alt="" className="absolute inset-0 w-full h-full" draggable={false} />

@@ -236,7 +236,11 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
         {active.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-xs text-muted-foreground py-8 text-center border border-dashed rounded-md min-h-[180px]">
             <Upload className="w-5 h-5 mb-1 opacity-40" />
-            No brochures yet — drop a PDF here or use Add.
+            {/* UX #136 — drag-and-drop doesn't exist on touch; keep the
+                drop-zone copy for pointer devices only. */}
+            {typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches
+              ? "No brochures yet — use Add."
+              : "No brochures yet — drop a PDF here or use Add."}
           </div>
         ) : isHero ? (
           // Full-width row placement: give the hero preview real depth so

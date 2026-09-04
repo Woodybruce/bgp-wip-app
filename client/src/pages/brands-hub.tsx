@@ -258,6 +258,13 @@ export default function BrandsHub() {
         ))}
       </div>
       )}
+      {/* UX #140 — on the phone the other boards are hidden with no hint
+          they exist; stop the dead-end for someone hunting turnover data. */}
+      {isMobile && (
+        <p className="text-[11px] text-muted-foreground -mt-3" data-testid="mobile-boards-hint">
+          Turnover Board and the other boards are available on desktop.
+        </p>
+      )}
 
       {activeTab === "overview" && (<>
 
@@ -687,17 +694,29 @@ function BrandExplorer() {
     [allCompanies]
   );
 
-  const { data: brandNews = [] } = useQuery<any[]>({
+  const { data: brandNewsRaw = [] } = useQuery<any[]>({
     queryKey: ["/api/news-feed/articles", "brand-explorer"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/news-feed/articles?limit=40");
       const all = await res.json();
       return (all as any[])
         .filter((a: any) => a.category === "Retail" || a.category === "Hospitality")
-        .slice(0, 12);
+        .slice(0, 40);
     },
     staleTime: 300_000,
   });
+  // UX #139 — the Retail wire is mostly fashion copy; for client logins keep
+  // Hospitality stories plus anything mentioning a brand they can actually
+  // see, so the panel relates to the grid above it.
+  const brandNews = useMemo(() => {
+    if (!isClientExplorer) return brandNewsRaw.slice(0, 12);
+    const names = companies.map((c: any) => String(c.name || "").toLowerCase()).filter((n: string) => n.length >= 4);
+    return brandNewsRaw.filter((a: any) => {
+      if (a.category === "Hospitality") return true;
+      const text = `${a.title || ""} ${a.summary || ""}`.toLowerCase();
+      return names.some((n: string) => text.includes(n));
+    }).slice(0, 12);
+  }, [brandNewsRaw, isClientExplorer, companies]);
 
   const setCat = (v: string | null) => {
     setActiveCat(v);
@@ -1070,6 +1089,12 @@ function BrandExplorer() {
       </div>
 
       {/* Brand news feed */}
+      {isClientExplorer && brandNews.length === 0 && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="brand-news-empty">
+          <Newspaper className="w-4 h-4" />
+          No relevant stories for your brands right now.
+        </div>
+      )}
       {brandNews.length > 0 && (
         <div>
           <div className="flex items-center gap-2 mb-3">
