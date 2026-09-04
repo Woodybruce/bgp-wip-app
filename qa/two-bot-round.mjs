@@ -1854,10 +1854,62 @@ async function victoriaRound(page, cross) {
       await mob.waitForTimeout(1500);
       await mob.locator('[data-testid="offer-company"]').click();
       await mob.waitForTimeout(800);
-      await mob.locator('input[placeholder^="Search"]').last().fill('QA-PROBE Newco 528');
+      // Unique per run: an exact pre-existing name match makes the picker
+      // (correctly) offer no create row, which would read as a regression.
+      const newco = `QA-PROBE Newco ${ROUND}-${Date.now().toString().slice(-6)}`;
+      await mob.locator('input[placeholder^="Search"]').last().fill(newco);
       await mob.waitForTimeout(800);
       if (!(await mob.getByText(/Create company/i).count())) {
         throw new Error('staff lost the tracker inline company-create row');
+      }
+      // r530: the row existing is not the same as it WORKING — tap it and
+      // prove the company really lands in the CRM (the client counterpart
+      // scenario proves it stays hidden for them).
+      await mob.getByText(/Create company/i).first().click();
+      await mob.waitForTimeout(2500);
+      const trigger = await mob.locator('[data-testid="offer-company"]').innerText();
+      if (!trigger.includes(newco)) {
+        throw new Error(`inline create did not select the new company (trigger "${trigger.replace(/\n/g, ' ')}")`);
+      }
+      const auth = { Authorization: 'Bearer ' + page.qaToken };
+      const cos = await (await fetch(`${BASE}/api/crm/companies`, { headers: auth })).json();
+      const made = (Array.isArray(cos) ? cos : []).find((c) => c.name === newco);
+      if (!made) throw new Error('inline create left no company row in the CRM');
+      await fetch(`${BASE}/api/crm/companies/${made.id}`, { method: 'DELETE', headers: auth });
+    } finally { await mobCtx.close(); }
+  });
+
+  // r530: the WIP-report page header put the (wide) BGP logo and the
+  // title column side by side at every width, so on a 390px phone the
+  // title/subtitle were squeezed into ~110px and wrapped around the logo.
+  // Header must stack on the phone: logo above a full-width title.
+  await step(page, p, 'staff-wip-report-phone-header-stacked', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/wip-report`, nav);
+      await mob.waitForTimeout(5000);
+      const g = await mob.evaluate(() => {
+        const box = (sel) => {
+          const e = document.querySelector(sel);
+          if (!e) return null;
+          const r = e.getBoundingClientRect();
+          return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+        };
+        return { logo: box('[data-testid="wip-bgp-logo"]'), title: box('[data-testid="wip-report-title"]') };
+      });
+      if (!g.title) throw new Error('no WIP report title on the phone');
+      if (g.title.w < 280) throw new Error(`WIP phone title column squeezed to ${g.title.w}px (expected the full gutter width)`);
+      if (g.logo && g.logo.y + g.logo.h > g.title.y) {
+        throw new Error(`WIP phone header still side-by-side (logo bottom ${g.logo.y + g.logo.h} overlaps title top ${g.title.y})`);
       }
     } finally { await mobCtx.close(); }
   });

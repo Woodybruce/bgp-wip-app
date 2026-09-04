@@ -13,6 +13,29 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+166. 2026-09-04 · BGP staff / mobile 390px (QA r530) · between viewings,
+   wanted her own numbers · the phone home screen leads with "MY BILLING —
+   2026/27" showing £0 Billed / £0 Commission / £0 Potential / £0
+   Negotiating / £0 Solicitors, and immediately under it "TOTAL BILLING
+   £250,000". Read cold on a phone that looks like the app has lost her
+   figures, when the truth is the firm's six live deals simply have no BGP
+   contact set to her. Suggestion: when a staff user's own billing is all
+   zero, say why on the tile — "No deals with you as BGP contact yet" —
+   instead of five £0s, and label the tile below "TOTAL BILLING (firm)" so
+   the two numbers can't read as the same figure.
+
+165. 2026-09-04 · BGP staff / mobile 390px (QA r530) · wanted the Letting
+   Tracker on her phone · nothing on the phone shell points at it: the four
+   bottom tabs are Dashboard / Messages / Deals / News, and the home
+   screen's tiles are Deals, Expenses, Images, CRM + Brand Intelligence,
+   Comps, SharePoint, Property Intelligence. The tracker is reachable only
+   by typing the URL, by global search, or two hops via the billing tile →
+   WIP Report → its "Letting Tracker" pill. It is the board leasing staff
+   live in day to day, and the client shell shows a Tasks tab for less.
+   Suggestion: add a "Letting Tracker" tile to the phone home screen's
+   first tile row (it already renders a proper phone card list, verified
+   this round at 390px), or swap it in for one of the BOARDS tiles.
+
 164. 2026-09-04 · Landsec client / phone 390px + desktop (QA r529) · logged
    a viewing from the Letting Tracker and typed a brand the CRM doesn't
    hold yet · since r528 the client's company picker correctly no longer

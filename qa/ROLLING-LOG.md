@@ -88,21 +88,75 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r530 · 2026-09-04 · FULL (round in progress) · rotation #4 BGP staff mobile 390px
+### r530 · 2026-09-04 · FULL · rotation #4 BGP staff mobile 390px · 1 bug fixed
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas via node/pg runner, honi 1 / hammerson 2). Regression: smoke
-  GREEN 42/0.
+  GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the fix).
 - Two-bot 530 as 3 foreground chunks (with-server wrapper, 570s child
   timeout), standard order: victoria exit 0 first run (2×400 standing exact) /
   mark exit 0 on its THIRD attempt (9 issues = 8×403 probe-by-design + 1×503
   keyless — standing exact); the first TWO attempts died on the known r526
   boot-race ECONNRESET at mark's own login POST, clean server log both times
-  (r529 saw it once — it can repeat, retry rather than triage) /
+  (r529 saw it once — it CAN repeat back-to-back, retry rather than triage) /
   woody,nick,sam exit 0 (18 [ok], 0 issues). Server logs: 0 raw 500/502/504
   (the " 500 " grep hit is the "[News Feed] Linked 15 brand signals from 500
   articles" line). Triage: 0 app bugs from the harness.
-- Journey (staff mobile 390px, Victoria) + tracker create-company recheck:
-  in progress.
+- JOURNEY (Victoria, iPhone UA 390px, touch): dashboard → /tasks → Letting
+  Tracker (81 cards) → logged an offer company inline → /wip-report → /today
+  → /contacts → /requirements → /evidence-plans → /deals /news /messages.
+  hscroll 0 on every surface (sw=cw=390 throughout), 0 pageerrors, 0
+  non-noise 4xx/5xx across the whole journey.
+- r528 STAFF-SIDE GATE RE-CONFIRMED ON THE PHONE (this round's mandate): the
+  tracker inline "Create company" row is still there for Victoria in the
+  phone offer dialog AND STILL WORKS end to end — tapped it, toast "Company
+  created — QA-PROBE Newco 530 added to CRM", trigger switched to the new
+  name, and the row really exists in /api/crm/companies. Client counterpart
+  (Mark → "No matches.") re-verified by the harness scenario in chunk 2.
+- Also verified as intended, staff side: #156 header search + notifications
+  bell present on every phone page except "/" (the known #162 gap); #154
+  viewing Save disabled on an untouched form → enabled after one field →
+  saved with a bottom-anchored "Viewing added" toast and the row landed
+  (GET viewings confirms attendees/company/date); redesigned Files dialog
+  clean at 390px (ALL/BROCHURES/FLOOR PLANS/PHOTOS pill counts + empty
+  state + collapsed Info sheet); Evidence Plans renders its JOBS/EVIDENCE
+  PLANS tabs + empty state; tracker card titles carry no scheme word;
+  notifications bell opens a 10-item KYC list.
+- BUG FIXED (1, phone layout): the /wip-report page header kept the wide BGP
+  logo and the title column side by side at EVERY width — at 390px the logo
+  ate 235px of the 358px gutter, leaving the title centred in ~110px with
+  "6 transactions · Total net fees: £250,000 · Live data from CRM deals"
+  wrapping around it. Header now stacks on the phone (logo h-9 above a
+  full-width title, sm:flex-row restores the desktop row; text column
+  min-w-0). Verified visually at 390px: logo 91×36 at y189, title 358px wide
+  at y233, hscroll still 0; desktop 1440px unchanged.
+- NOT a bug (checked): the phone staff home screen scrolls its own
+  `flex-1 overflow-y-auto min-h-0` container (scrollHeight 1079 vs 780
+  viewport), not window — window.scrollTo/wheel leave scrollY at 0, so a
+  future probe must scroll the container or it will wrongly conclude the AI
+  briefing + My Tasks sections below the BOARDS tiles are unreachable.
+  ChatBGP's app map is current on this surface (4 staff bottom tabs, home
+  screen order, client's 5 tabs).
+- Harness growth: 2 scenarios — victoria staff-wip-report-phone-header-stacked
+  (390px geometry guard: title column ≥280px wide and the logo's bottom above
+  the title's top) and an extension of staff-tracker-inline-company-create-kept
+  from "the row exists" to "the row WORKS" (taps Create, asserts the trigger
+  and a real /api/crm/companies row, then DELETEs it). The newco name is now
+  unique per run — first cut reused "QA-PROBE Newco <round>" and false-failed
+  when a leftover row made the picker (correctly) offer no create row; also
+  added a QA-PROBE Newco% purge line to run-round.sh. Victoria chunk re-ran
+  to its exact standing signature with both scenarios [ok].
+- Deferred: none. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 165 (no
+  Letting Tracker entry point anywhere in the staff phone shell — URL,
+  global search or billing-tile → WIP Report → pill are the only ways in)
+  and 166 (phone "MY BILLING" tile shows five £0s directly above "TOTAL
+  BILLING £250,000" — reads as lost data when it just means no deal names
+  her as BGP contact). Still open: #150, #157, #158, #159, #160, #161,
+  #162, #163, #164. Real-device keyboard-up composer check (r405) open for
+  Woody.
+- New flakes: none (the mark-chunk login ECONNRESET is the known r526 one,
+  but note it can hit twice running).
+- Next: r530 was FULL → r531 LIGHT; then rotation #1 BGP staff desktop.
 
 ### r529 · 2026-09-04 · LIGHT (r528 had the journey) · 1 bug fixed — client isolation
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →

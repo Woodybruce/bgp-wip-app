@@ -1366,7 +1366,7 @@ export default function WipReport() {
       `}</style>
 
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between flex-shrink-0 mb-4">
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col items-start gap-2 min-w-0 sm:flex-row sm:items-center sm:gap-4">
           {isLandsec ? (
             <div
               className="h-12 px-4 rounded flex items-center justify-center"
@@ -1376,9 +1376,9 @@ export default function WipReport() {
               <span className="text-white font-bold text-lg tracking-tight">Landsec</span>
             </div>
           ) : (
-            <img src={bgpLogo} alt="BGP" className="h-12 w-auto invert" data-testid="wip-bgp-logo" />
+            <img src={bgpLogo} alt="BGP" className="h-9 w-auto invert sm:h-12" data-testid="wip-bgp-logo" />
           )}
-          <div>
+          <div className="min-w-0">
             <h1
               className="text-2xl font-bold tracking-tight"
               style={isLandsec ? { color: brand.primaryColor } : undefined}
