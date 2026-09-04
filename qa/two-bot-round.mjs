@@ -75,7 +75,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'rival-comp-files-and-reqinv-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1683,10 +1683,40 @@ async function victoriaRound(page, cross) {
       const create = await fetch('/api/crm/comps', { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ name: needle, tenantName: 'QA Comp Tenant', area: 'Bluewater' }) });
       if (!create.ok) return { ok: false, why: `create ${create.status}` };
-      return { ok: true };
+      const comp = await create.json().catch(() => ({}));
+      // r532: give the comp a file row so the client-side file sub-reads
+      // (own-scheme roundtrip + rival guard) have something to answer with.
+      let fileOk = false;
+      if (comp.id) {
+        const fd = new FormData();
+        fd.append('file', new Blob(['QA-PROBE comp evidence'], { type: 'text/plain' }), 'QA-PROBE comp evidence.txt');
+        const up = await fetch(`/api/crm/comps/${comp.id}/files`, { method: 'POST', credentials: 'include',
+          headers: { Authorization: auth.Authorization }, body: fd });
+        fileOk = up.ok;
+      }
+      return { ok: true, compId: comp.id || null, fileOk };
     }, stamp);
     if (!r.ok) throw new Error(`agent could not log a scheme comp (${r.why})`);
+    if (!r.fileOk) throw new Error('agent could not attach a file to the scheme comp');
     cross.compStamp = stamp;
+    cross.compId = r.compId;
+  });
+
+  // r532: a Landsec-owned investment requirement, so the client chunks can
+  // prove the detail read is company-scoped (list already was, /:id was not).
+  await step(page, p, 'agent-add-investment-requirement', async () => {
+    const stamp = `QA-REQINV R${ROUND} Landsec`;
+    const r = await page.evaluate(async ([needle, landsec]) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const create = await fetch('/api/crm/requirements-investment', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: needle, companyId: landsec, contactName: 'QA Probe Contact', comments: 'QA-PROBE confidential' }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const row = await create.json().catch(() => ({}));
+      return { ok: true, id: row.id || null };
+    }, [stamp, LANDSEC]);
+    if (!r.ok) throw new Error(`agent could not log an investment requirement (${r.why})`);
+    cross.reqInvStamp = stamp;
+    cross.reqInvId = r.id;
   });
 
   // r504: the comp detail dialog was a hard grid-cols-2 — at 390px each
@@ -2412,6 +2442,36 @@ async function markRound(page, cross) {
   });
 
   // 4. Comps: net-effective column present, no inline editors
+  // r532 counterpart to rival-comp-files-and-reqinv-guard: scoping those two
+  // sub-reads must not lock the OWNING landlord out of their own rows.
+  await step(page, p, 'client-comp-files-and-reqinv-own-roundtrip', async () => {
+    const compId = cross.compId;
+    const reqInvId = cross.reqInvId;
+    if (!compId && !reqInvId) return;
+    const r = await page.evaluate(async ([comp, reqInv]) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const out = {};
+      if (comp) {
+        const files = await fetch(`/api/crm/comps/${comp}/files`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.filesStatus = files.status;
+        out.fileRows = files.ok ? ((await files.json().catch(() => [])) || []).length : -1;
+        const bulk = await fetch(`/api/crm/comps/files/bulk?compIds=${comp}`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.bulkRows = bulk.ok ? ((await bulk.json().catch(() => [])) || []).length : -1;
+      }
+      if (reqInv) {
+        const detail = await fetch(`/api/crm/requirements-investment/${reqInv}`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.reqInvStatus = detail.status;
+        out.reqInvName = detail.ok ? ((await detail.json().catch(() => ({}))).name || '') : '';
+      }
+      return out;
+    }, [compId, reqInvId]);
+    if (compId && r.filesStatus !== 200) throw new Error(`owning client locked out of their own comp files (${r.filesStatus})`);
+    if (compId && r.fileRows < 1) throw new Error(`own comp files came back empty (${r.fileRows} rows)`);
+    if (compId && r.bulkRows < 1) throw new Error(`own comp files/bulk came back empty (${r.bulkRows} rows)`);
+    if (reqInvId && r.reqInvStatus !== 200) throw new Error(`owning client locked out of their own investment requirement (${r.reqInvStatus})`);
+    if (reqInvId && !/QA-REQINV/.test(r.reqInvName)) throw new Error(`own investment requirement detail did not carry the row (name="${r.reqInvName}")`);
+  });
+
   await step(page, p, 'client-comps-readonly', async () => {
     await page.goto(`${BASE}/comps`);
     await page.waitForLoadState('networkidle');
@@ -6786,6 +6846,34 @@ async function samRound(page, cross) {
   // r529: the three unit-INTEREST routes were requireAuth only while their
   // viewing/offer siblings all carried assertUnitInClientScope — a rival
   // client could read, add and delete interest on another landlord's unit.
+  // r532 (same class as r529/r531): GET sub-reads under the client-allowed
+  // /api/crm/ prefix that answered for ANY id while their scoped siblings
+  // (comp detail, requirements-investment list) gated correctly.
+  await step(page, p, 'rival-comp-files-and-reqinv-guard', async () => {
+    const compId = cross.compId;
+    const reqInvId = cross.reqInvId;
+    if (!compId && !reqInvId) return;
+    const r = await page.evaluate(async ([comp, reqInv]) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const out = {};
+      if (comp) {
+        const files = await fetch(`/api/crm/comps/${comp}/files`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.files = files.status;
+        const bulk = await fetch(`/api/crm/comps/files/bulk?compIds=${comp}`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.bulkStatus = bulk.status;
+        out.bulkRows = bulk.ok ? ((await bulk.json().catch(() => [])) || []).length : -1;
+      }
+      if (reqInv) {
+        const detail = await fetch(`/api/crm/requirements-investment/${reqInv}`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.reqInv = detail.status;
+      }
+      return out;
+    }, [compId, reqInvId]);
+    if (compId && r.files !== 403) throw new Error(`rival client read a Landsec comp's files (expected 403, got ${r.files})`);
+    if (compId && r.bulkRows !== 0) throw new Error(`rival client got ${r.bulkRows} Landsec comp file row(s) from /files/bulk (expected 0)`);
+    if (reqInvId && r.reqInv !== 403) throw new Error(`rival client read a Landsec investment requirement (expected 403, got ${r.reqInv})`);
+  });
+
   await step(page, p, 'rival-unit-interest-guard', async () => {
     const unitId = cross.briefUnitId;
     if (!unitId) return;

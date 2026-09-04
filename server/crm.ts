@@ -5192,6 +5192,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
     try {
       const req_ = await storage.getCrmRequirementInvestment(req.params.id);
       if (!req_) return res.status(404).json({ error: "Not found" });
+      // Same gate the list above applies — a scoped caller only ever sees
+      // their own company's investment requirements.
+      const reqInvScope = await resolveCompanyScope(req);
+      if (reqInvScope && (req_ as any).companyId !== reqInvScope) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       res.json(req_);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -5471,6 +5477,35 @@ Return a JSON object with these fields (use null for any field you cannot find):
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Which of these comps a scoped (client) caller may see — the same three
+  // tests the comps list applies: a property in their portfolio, they're the
+  // landlord, or a legacy comp naming their scheme in free text. The comp
+  // file sub-reads below use it so "what you can list, you can see files
+  // for" — they used to answer for ANY comp id.
+  const clientVisibleCompIds = async (scopeCompanyId: string, compIds: string[]): Promise<Set<string>> => {
+    const visible = new Set<string>();
+    if (!compIds.length) return visible;
+    const propRows = await pool.query(
+      `SELECT id, name FROM crm_properties
+        WHERE landlord_id = $1
+           OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)`,
+      [scopeCompanyId]
+    );
+    const propIds = new Set(propRows.rows.map((r: any) => r.id));
+    const propNames = propRows.rows
+      .map((r: any) => String(r.name || "").toLowerCase().replace(/,.*$/, "").trim())
+      .filter((n: string) => n.length >= 5);
+    for (const compId of compIds) {
+      const comp: any = await storage.getCrmComp(compId);
+      if (!comp) continue;
+      if (comp.propertyId && propIds.has(comp.propertyId)) { visible.add(compId); continue; }
+      if (comp.landlordCompanyId === scopeCompanyId) { visible.add(compId); continue; }
+      const hay = `${comp.name || ""} ${JSON.stringify(comp.address || "")}`.toLowerCase();
+      if (propNames.some(n => hay.includes(n))) visible.add(compId);
+    }
+    return visible;
+  };
+
   app.get("/api/crm/comps", requireAuth, async (req, res) => {
     try {
       const filters = {
@@ -5512,7 +5547,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.get("/api/crm/comps/files/bulk", requireAuth, async (req, res) => {
     try {
-      const compIds = (req.query.compIds as string || "").split(",").filter(Boolean);
+      let compIds = (req.query.compIds as string || "").split(",").filter(Boolean);
+      const bulkScope = await resolveCompanyScope(req);
+      if (bulkScope) {
+        const visible = await clientVisibleCompIds(bulkScope, compIds);
+        compIds = compIds.filter(id => visible.has(id));
+      }
       if (!compIds.length) return res.json([]);
       const placeholders = compIds.map((_, i) => `$${i + 1}`).join(",");
       const result = await pool.query(
@@ -5564,6 +5604,10 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.get("/api/crm/comps/:compId/files", requireAuth, async (req, res) => {
     try {
+      const filesScope = await resolveCompanyScope(req);
+      if (filesScope && !(await clientVisibleCompIds(filesScope, [req.params.compId as string])).size) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const result = await pool.query(
         `SELECT id, comp_id, file_name, file_path, file_size, mime_type, created_at FROM comp_files WHERE comp_id = $1 ORDER BY created_at DESC`,
         [req.params.compId]

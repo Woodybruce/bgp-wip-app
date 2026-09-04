@@ -38,7 +38,11 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM team_events WHERE title LIKE 'QA-VIS %' OR title LIKE 'QA-CAL-%' OR title LIKE 'QA Landsec brainstorm' OR title LIKE 'QA Other Client review';
   DELETE FROM unit_viewings WHERE attendees LIKE 'QA-VIEWING-%' OR attendees LIKE 'QA-VDEL-%';
   DELETE FROM unit_interest WHERE company_name LIKE 'QA-PROBE%';
+  -- comp_files rows hang off the QA comp (r532 file sub-read scenarios) —
+  -- drop them before the comp so nothing is orphaned.
+  DELETE FROM comp_files WHERE comp_id IN (SELECT id FROM crm_comps WHERE name LIKE 'QA-COMP%');
   DELETE FROM crm_comps    WHERE name LIKE 'QA-COMP%';
+  DELETE FROM crm_requirements_investment WHERE name LIKE 'QA-REQINV%';
   DELETE FROM property_plans WHERE floor = 'QA-PLAN-GATE';
   DELETE FROM turnover_data WHERE notes LIKE 'QA-PROBE%';
   -- client-pi-lookup-open resolves DA9 9ST each round; the resolve persists
