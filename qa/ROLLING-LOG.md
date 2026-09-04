@@ -88,6 +88,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r533 · 2026-09-04 · LIGHT (r532 had the journey) · round in progress
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean).
+  Regression: smoke GREEN 42/0.
+- Triage: nothing new from the smoke run — 0 failures, no non-noise errors.
+- Working the r532 deferred client-isolation punch list, item 1 first
+  (GET /api/chat-media/:filename — no thread-membership check, chat-media
+  also stores KYC docs) and item 2/3 if time allows. Standing cap: 2 fixes.
+
 ### r532 · 2026-09-04 · FULL · rotation #1 BGP staff desktop 1440px · 2 bugs fixed — client isolation
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   purge + seed-personas via node/pg runner, honi 1 / hammerson 2).
