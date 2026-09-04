@@ -88,6 +88,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r528 · 2026-09-04 · FULL (round in progress) · rotation #3 Landsec client mobile 390px
+- Bring-up: canonical recipe (qa:pg once → run-smoke restore → seed-personas
+  via node/pg runner, honi 1 / hammerson 2). Regression: smoke GREEN 42/0.
+- Two-bot 528 as 3 foreground chunks (with-server wrapper, 570s child
+  timeout), standard order, fresh cross-528.json: victoria exit 0 first run
+  (2×400 standing signature exact) / mark exit 0 first run (8×403 probe +
+  1×503 keyless — standing signature exact) / woody,nick,sam exit 0
+  (18 [ok], 0 issues). Server logs: 0 raw 500/502/504 across all chunks.
+- Triage: 0 app bugs from the harness. Journey next (client mobile 390px:
+  toasts #144/149, phone tracker cards #130/#135).
+
 ### r527 · 2026-09-04 · LIGHT (r526 had the journey) · 0 app bugs — GREEN
 - Bring-up: canonical recipe held 90th time (qa:pg once → run-smoke restore
   clean → purge + seed-personas via node/pg runner, honi 1 / hammerson 2
