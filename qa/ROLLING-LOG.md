@@ -84,6 +84,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r520 · 2026-09-04 · FULL (rotation #3 Landsec client mobile 390px) — ROUND IN PROGRESS
+- Heartbeat: smoke GREEN 42/0; two-bot 520 as 3 foreground chunks
+  (with-server wrapper w/ lsof port kill, 570s child timeout), STANDARD
+  ORDER, fresh cross-520.json: victoria exit 0 FIRST RUN (2×400 standing
+  signature) / mark exit 0 (9 issues = 1×503 keyless + 8×403
+  probe-by-design — standing signature exact) / woody,nick,sam exit 0
+  (0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 all chunks (single 422 = r462 cover-raster; 403s flat
+  1-2/route, no storm). Triage: 0 app bugs from the harness.
+- Journey (Mark @390px iPhone UA) still to run: deal detail + Files
+  dialog, Evidence Plans, ChatBGP/messages, tasks, viewing lifecycle.
+
 ### r519 · 2026-09-04 · LIGHT (r518 had the journey) — GREEN
 - Bring-up: canonical recipe held 82nd consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
