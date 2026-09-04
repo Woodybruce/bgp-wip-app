@@ -86,6 +86,11 @@ function displayUnitName(name: string): string {
 }
 
 const UNIT_STATUSES: DealStatusCode[] = ["OPP", "AVA"];
+// Status pill row: the live pipeline up front, the historic tail (Exchanged /
+// Completed / Withdrawn / Invoiced) folded behind one "Historic" pill that
+// expands on click (Woody, 2026-09-04 — "search pills include historic").
+const LIVE_PILL_STATUSES: DealStatusCode[] = ["OPP", "AVA", "NEG", "HOT", "SOL"];
+const HISTORIC_PILL_STATUSES: DealStatusCode[] = ["EXC", "COM", "WIT", "INV"];
 const UNIT_STAGE_EDITABLE = new Set<DealStatusCode>(["OPP", "AVA", "REP", "SPEC", "LIVE"]);
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
@@ -330,6 +335,7 @@ export default function AvailableUnitsPage() {
   // (SOL+ included) with the tenancy schedules underneath, instead of
   // clicking each status card in turn (Woody, 2026-08-06).
   const [viewAll, setViewAll] = useState(() => urlParam("view") === "all");
+  const [showHistoric, setShowHistoric] = useState(() => HISTORIC_PILL_STATUSES.includes(urlParam("status") as DealStatusCode));
   const [scheduleOpen, setScheduleOpen] = useState<Record<string, boolean>>({});
   // Header sort — Property/Unit and Client columns, A→Z / Z→A toggle.
   const [sortBy, setSortBy] = useState<"none" | "property" | "client">("none");
@@ -1299,6 +1305,10 @@ export default function AvailableUnitsPage() {
     }
     return result;
   }, [toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies, effByUnit]);
+  const historicCount = useMemo(
+    () => toolbarFiltered.filter(u => HISTORIC_PILL_STATUSES.includes((effByUnit[u.id] || "AVA") as DealStatusCode)).length,
+    [toolbarFiltered, effByUnit],
+  );
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1675,7 +1685,7 @@ export default function AvailableUnitsPage() {
           >
             All <span className="opacity-70 font-mono tabular-nums">{toolbarFiltered.length}</span>
           </Pill>
-          {MARKETING_STATUSES.map(s => {
+          {LIVE_PILL_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
             return (
               <Pill
@@ -1689,6 +1699,32 @@ export default function AvailableUnitsPage() {
               </Pill>
             );
           })}
+          <Pill
+            active={showHistoric}
+            onClick={() => {
+              if (showHistoric && HISTORIC_PILL_STATUSES.includes(statusFilter as DealStatusCode)) setStatusFilter("all");
+              setShowHistoric(!showHistoric);
+            }}
+            data-testid="stat-chip-historic"
+          >
+            Historic <span className="opacity-70 font-mono tabular-nums">{historicCount}</span>
+          </Pill>
+          {showHistoric && (<>
+          {HISTORIC_PILL_STATUSES.map(s => {
+            const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
+            return (
+              <Pill
+                key={s}
+                active={statusFilter === s}
+                onClick={() => { setViewAll(false); setStatusFilter(statusFilter === s ? "all" : s); }}
+                data-testid={`stat-chip-${s.toLowerCase()}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                {DEAL_PIPELINE_LABELS[s]} <span className="opacity-70 font-mono tabular-nums">{count}</span>
+              </Pill>
+            );
+          })}
+          </>)}
         </div>
       ) : (
       <div className="w-full overflow-x-auto">
@@ -1700,7 +1736,7 @@ export default function AvailableUnitsPage() {
           >
             All statuses <span className="font-mono normal-case opacity-60 tabular-nums">{toolbarFiltered.length}</span>
           </Pill>
-          {MARKETING_STATUSES.map(s => {
+          {LIVE_PILL_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
             return (
               <Pill
@@ -1714,6 +1750,32 @@ export default function AvailableUnitsPage() {
               </Pill>
             );
           })}
+          <Pill
+            active={showHistoric}
+            onClick={() => {
+              if (showHistoric && HISTORIC_PILL_STATUSES.includes(statusFilter as DealStatusCode)) setStatusFilter("all");
+              setShowHistoric(!showHistoric);
+            }}
+            data-testid="stat-card-historic"
+          >
+            Historic <span className="font-mono normal-case opacity-60 tabular-nums">{historicCount}</span>
+          </Pill>
+          {showHistoric && (<>
+          {HISTORIC_PILL_STATUSES.map(s => {
+            const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
+            return (
+              <Pill
+                key={s}
+                active={statusFilter === s}
+                onClick={() => { setViewAll(false); setStatusFilter(statusFilter === s ? "all" : s); }}
+                data-testid={`stat-card-${s.toLowerCase()}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                {DEAL_PIPELINE_LABELS[s]} <span className="font-mono normal-case opacity-60 tabular-nums">{count}</span>
+              </Pill>
+            );
+          })}
+          </>)}
         </div>
       </div>
       )}
@@ -2098,10 +2160,10 @@ export default function AvailableUnitsPage() {
                           // unit stage so a flip here can't regress the deal
                           // through the status mirror.
                           <span
-                            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
-                            title="Deal in progress — status is driven by the deal"
+                            className={`${STATUS_LABEL_COLORS["AVA"] || "bg-gray-500"} text-white font-medium rounded-full text-[11px] px-2.5 py-1 inline-block align-middle whitespace-nowrap opacity-60 cursor-default`}
+                            title="Deal in progress — unit status is driven by the deal"
+                            data-testid="unit-status-locked"
                           >
-                            <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS["AVA"] || "bg-gray-400"}`} />
                             Available
                           </span>
                         )}
