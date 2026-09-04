@@ -185,7 +185,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/kyc/company", companyId] });
       if (dealId) queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
-      toast({ title: "KYC approved", description: "6-month re-check reminder created automatically." });
+      toast({ title: "KYC approved", description: "Re-check reminder created automatically on the firm's configured cycle." });
     },
     onError: (e: any) => toast({ title: "Approve failed", description: e?.message, variant: "destructive" }),
   });
@@ -638,8 +638,8 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
                       <AlertDialogHeader>
                         <AlertDialogTitle>Approve KYC for {company.name}?</AlertDialogTitle>
                         <AlertDialogDescription>
-                          This will mark the company as KYC-approved for 6 months and create an automatic
-                          re-check reminder. Only do this if you've reviewed every checklist item and supporting
+                          This will mark the company as KYC-approved until the firm's configured re-check
+                          date and create an automatic reminder. Only do this if you've reviewed every checklist item and supporting
                           document. Your name and the timestamp will be recorded in the audit log.
                         </AlertDialogDescription>
                       </AlertDialogHeader>

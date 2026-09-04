@@ -632,24 +632,51 @@ export function PropertyDetail({ id }: { id: string }) {
                       ~70px and 'BGP Instruction' truncated to 'B…'.
                       Two columns gives each pill ~140px which fits
                       every label comfortably. */}
+                  {/* UX #134 — client viewers skip valueless cells: four
+                      "—" rows filled the first phone screen before any
+                      real content. Staff keep every cell (they edit). */}
+                  {(() => {
+                    const assetClass = (Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass) || "";
+                    const bgpTeam = Array.isArray(property.bgpEngagement) ? property.bgpEngagement.join(", ") : (property.bgpEngagement || "");
+                    const clientCells = [
+                      { label: "Status", value: property.status || "" },
+                      { label: "Asset Class", value: assetClass },
+                      { label: "BGP Team", value: bgpTeam },
+                      { label: "Website", value: property.website || "" },
+                    ].filter(c => c.value);
+                    if (isClientViewer) {
+                      return clientCells.length > 0 ? (
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 min-w-0">
+                          {clientCells.map(c => (
+                            <div key={c.label} className="min-w-0">
+                              <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">{c.label}</p>
+                              <span className="text-sm truncate block">{c.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null;
+                    }
+                    return (
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 min-w-0">
                     <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
-                      {isClientViewer ? <span className="text-sm">{property.status || "—"}</span> : <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />}
+                      <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
                     </div>
                     <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Asset Class</p>
-                      {isClientViewer ? <span className="text-sm">{(Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass) || "—"}</span> : <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />}
+                      <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
                     </div>
                     <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">BGP Team</p>
-                      {isClientViewer ? <span className="text-sm">{Array.isArray(property.bgpEngagement) ? property.bgpEngagement.join(", ") : (property.bgpEngagement || "—")}</span> : <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />}
+                      <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
                     </div>
                     <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Website</p>
-                      {isClientViewer ? <span className="text-sm truncate block">{property.website || "—"}</span> : <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate block" />}
+                      <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate block" />
                     </div>
                   </div>
+                    );
+                  })()}
 
                 {(() => {
                   // Only render ownership rows that have a value

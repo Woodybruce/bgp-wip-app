@@ -10,16 +10,18 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
   return (
     <div className={wide ? "sm:col-span-2" : ""}>
       <Link href={`/leasing/${listing.id}`} className="block group relative">
-        {img ? (
-          <img
-            src={fileUrl(img.id)}
-            alt={listing.unitName}
-            className="aspect-[4/3] w-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <Placeholder className="aspect-[4/3] w-full" src={listing.image} alt={listing.unitName} />
-        )}
+        <div className="img-frame">
+          {img ? (
+            <img
+              src={fileUrl(img.id)}
+              alt={listing.unitName}
+              className="aspect-[4/3] w-full object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <Placeholder className="aspect-[4/3] w-full" src={listing.image} alt={listing.unitName} />
+          )}
+        </div>
         {listing.marketingStatus === "Under Offer" && (
           <span className="absolute top-0 right-0 bg-bgp-red text-white label-caps px-3 py-1.5">
             Under offer
@@ -35,7 +37,12 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
         )}
       </div>
       <p className="mt-1 text-sm font-light text-bgp-ink/70">
-        {listing.location && <span>{listing.location}<br /></span>}
+        {listing.propertyName && listing.propertyName !== listing.unitName && (
+          <span className="text-bgp-ink/85">{listing.propertyName}<br /></span>
+        )}
+        {(listing.addressLine || listing.location || listing.postcode) && (
+          <span>{listing.addressLine || listing.location || listing.postcode}<br /></span>
+        )}
         <span className="tabular">{details || "Details on application"}</span>
       </p>
       <p className="mt-3">

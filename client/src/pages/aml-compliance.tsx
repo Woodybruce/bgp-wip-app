@@ -563,7 +563,7 @@ function FirmRiskAssessment() {
               </div>
             ))}
             <div className="flex gap-2">
-              <Button size="sm" onClick={() => saveMutation.mutate({ firmRiskAssessment: assessment, firmRiskAssessmentUpdatedBy: "current_user" })} disabled={saveMutation.isPending}>
+              <Button size="sm" onClick={() => saveMutation.mutate({ firmRiskAssessment: assessment })} disabled={saveMutation.isPending}>
                 <Save className="w-3 h-3 mr-1" /> Save Assessment
               </Button>
               <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>

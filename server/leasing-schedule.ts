@@ -1904,7 +1904,7 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
     wb.creator = "BGP Dashboard";
     const ws = wb.addWorksheet("Leasing Schedule");
 
-    const BGP_GREEN = "FF2E5E3F";
+    const BGP_GREEN = "FF6E0C25";
     const WHITE_FONT = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
     const HEADER_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: BGP_GREEN } };
     const THIN_BORDER: any = {

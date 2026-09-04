@@ -229,7 +229,15 @@ function HrPersonRedirect({ params }: { params: { userId: string } }) {
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const [, navigate] = useLocation();
-  useEffect(() => { if (user && !user.isAdmin) navigate("/"); }, [user, navigate]);
+  const { toast } = useToast();
+  // UX #142 — say why the redirect happened, or a followed link to an
+  // admin page reads as broken.
+  useEffect(() => {
+    if (user && !user.isAdmin) {
+      toast({ title: "That page needs admin access" });
+      navigate("/");
+    }
+  }, [user, navigate, toast]);
   if (!user || !user.isAdmin) return <PageLoader />;
   return <>{children}</>;
 }
@@ -643,6 +651,10 @@ function AuthenticatedApp() {
               return root.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
             })()}
           </span>
+          {/* UX #156 — the phone shell had no global-search or notifications
+              entry point; same palette + popover as the desktop header. */}
+          <GlobalSearch compact />
+          <NotificationCenter />
         </div>
         <div
           className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 md:pb-0"

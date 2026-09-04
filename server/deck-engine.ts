@@ -36,23 +36,23 @@ const EMBED_FONTS: Array<{ typeface: string; regular: string; bold: string }> = 
   { typeface: "Tiempos Text", regular: "TiemposText-Regular.ttf", bold: "TiemposText-Bold.ttf" },
 ];
 
-// ── BGP brand (Why Buy palette — green/gold, Georgia/Calibri) ──────────────
+// ── BGP brand (v19 rebrand — Bordeaux/Nectar, Georgia display / Lato body) ─
 // The ENTIRE deck look is driven from this block (+ the WORDMARK paths / WM_AR
 // below). Swap these values for the official Marketing brand pack when it's
 // available — nothing else in the engine needs to change.
-const NAVY = "2E5E3F", NAVY2 = "1A3A28", BONE = "EFEDE6", BONE2 = "E7E5DF",
+const NAVY = "6E0C25", NAVY2 = "4A0819", BONE = "EFEDE6", BONE2 = "E7E5DF",
   INK = "232323", PAPER = "FFFFFF", STONE = "F2F0E8", LINE = "D7DAD3",
-  MUTE = "5A6468", MIDBLUE = "6E8F79", FOOT = "8A9088", SUBNAVY = "9DB3A6";
-const GOLD = "C4A35A";
-const DISP = "Georgia", BODY = "Calibri";
+  MUTE = "5A6468", MIDBLUE = "9A4157", FOOT = "8A9088", SUBNAVY = "C08595";
+const GOLD = "FC9F8D";
+const DISP = "Georgia", BODY = "Lato";
 const W = 13.333, H = 7.5, MX = 0.62, CW = W - MX * 2;
 
 // Sequential green heat scale for index/percentile cells (darker = stronger).
 function heat(v: number): { fill: string; color: string } {
   if (v >= 88) return { fill: NAVY, color: PAPER };
   if (v >= 75) return { fill: MIDBLUE, color: PAPER };
-  if (v >= 62) return { fill: "9DB89F", color: NAVY };
-  if (v >= 50) return { fill: "C4D4C7", color: NAVY };
+  if (v >= 62) return { fill: "C08595", color: NAVY };
+  if (v >= 50) return { fill: "E3C2CA", color: NAVY };
   return { fill: "E6EDE7", color: NAVY };
 }
 const RISK: Record<string, { fill: string; color: string }> = {
@@ -588,7 +588,7 @@ function rChart(p: pptxgen, c: DeckCard) {
   if (Array.isArray(c.series) && c.series.length) data = c.series.map((sr: any) => ({ name: sr.name || "", labels: sr.labels || c.labels || [], values: (sr.values || []).map(Number) }));
   else if (Array.isArray(c.labels) && Array.isArray(c.values)) data = [{ name: c.title || "Series", labels: c.labels, values: c.values.map(Number) }];
   if (!data.length) { footer(s, c.footnote); return; }
-  const palette = ["2E5E3F", "6E8F79", "9DB89F", "C4D4C7", "1A3A28", "C4A35A"];
+  const palette = ["6E0C25", "9A4157", "C08595", "E3C2CA", "4A0819", "FC9F8D"];
   const multi = data.length > 1 || ct === "pie" || ct === "doughnut";
   try {
     s.addChart(ct as any, data, { x: MX, y: y0 + 0.15, w: CW, h: 4.6, chartColors: palette, showLegend: multi, legendPos: "b", legendFontFace: BODY, legendColor: MUTE, catAxisLabelColor: MUTE, valAxisLabelColor: MUTE, catAxisLabelFontFace: BODY, valAxisLabelFontFace: BODY, catAxisLabelFontSize: 10, valAxisLabelFontSize: 10, showTitle: false, dataLabelColor: NAVY, dataLabelFontFace: BODY } as any);
@@ -628,7 +628,7 @@ function renderBlock(p: pptxgen, s: Slide, b: any, x: number, y: number, w: numb
     else if (Array.isArray(b.labels) && Array.isArray(b.values)) data = [{ name: b.title || "", labels: b.labels, values: b.values.map(Number) }];
     let cy = y, chh = h;
     if (b.title) { s.addText(b.title, { x: x + pad, y, w: w - pad * 2, h: 0.3, fontFace: BODY, bold: true, fontSize: 7, color: NAVY }); cy = y + 0.34; chh = h - 0.34; }
-    if (data.length) try { s.addChart(ct as any, data, { x, y: cy, w, h: chh, chartColors: ["2E5E3F", "6E8F79", "9DB89F", "C4D4C7"], showLegend: false, showTitle: false, catAxisLabelColor: MUTE, valAxisLabelColor: MUTE, catAxisLabelFontFace: BODY, valAxisLabelFontFace: BODY, catAxisLabelFontSize: 8, valAxisLabelFontSize: 8 } as any); } catch {}
+    if (data.length) try { s.addChart(ct as any, data, { x, y: cy, w, h: chh, chartColors: ["6E0C25", "9A4157", "C08595", "E3C2CA"], showLegend: false, showTitle: false, catAxisLabelColor: MUTE, valAxisLabelColor: MUTE, catAxisLabelFontFace: BODY, valAxisLabelFontFace: BODY, catAxisLabelFontSize: 8, valAxisLabelFontSize: 8 } as any); } catch {}
     return;
   }
   if (kind === "table") {

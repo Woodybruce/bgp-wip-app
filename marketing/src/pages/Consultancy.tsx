@@ -3,7 +3,7 @@ import CaseStudyStrip from "../components/CaseStudyStrip";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
 import {
-  CASE_STUDIES,
+  caseStudyBySlug,
   CONSULTANCY_BODY,
   CONSULTANCY_CLIENTS,
   CONSULTANCY_CONTACTS,
@@ -18,9 +18,10 @@ export default function Consultancy() {
     <div>
       <section className="relative">
         <Placeholder className="h-72 md:h-96 w-full" src="/images/westminster.jpg" alt="Westminster and a London bus" />
+        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/70 via-bgp-ink/10 to-transparent" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
-            <p className="max-w-md text-xl md:text-2xl leading-snug bg-bgp-cream/90 p-4 -ml-4 font-display text-bgp-wine">{service.intro}</p>
+            <p className="max-w-xl text-2xl md:text-3xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>{service.intro}</p>
           </div>
         </div>
       </section>
@@ -66,7 +67,7 @@ export default function Consultancy() {
       </section>
 
       <KeyContacts people={CONSULTANCY_CONTACTS} />
-      <CaseStudyStrip caseStudy={CASE_STUDIES[3]} />
+      <CaseStudyStrip caseStudy={caseStudyBySlug("heddon-street")} />
     </div>
   );
 }

@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Pill } from "@/components/ui/pill";
 import { Label } from "@/components/ui/label";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -178,6 +179,12 @@ function MatterListView() {
           <Button onClick={() => setCreateOpen(true)} size="sm" className="gap-1.5">
             <Plus className="h-4 w-4" /> Add instruction
           </Button>
+        </div>
+        {/* Lease advisory toolset — jobs, evidence plans and comps together */}
+        <div className="flex items-center gap-1.5 mt-3">
+          <Pill active data-testid="pill-la-jobs">Jobs</Pill>
+          <Pill onClick={() => navigate("/evidence-plans")} data-testid="pill-la-evidence-plans">Evidence plans</Pill>
+          <Pill onClick={() => navigate("/comps")} data-testid="pill-la-comps">Comps</Pill>
         </div>
         <div className="flex items-center gap-2 mt-3 flex-wrap">
           <Input
@@ -470,6 +477,19 @@ type MatterDetailResponse = {
   workbooks: Array<{ id: string; matterId: string; kind: string; sharepointUrl: string | null; generatedAt: string }>;
 };
 
+// Quiet link to the property's evidence plan when one exists — the plan
+// shows this job on its unit, so the two stay one click apart.
+function MatterEvidencePlanLink({ propertyId }: { propertyId: string }) {
+  const { data: plans = [] } = useQuery<any[]>({ queryKey: ["/api/evidence-plans"] });
+  const plan = plans.find((p: any) => p.property_id === propertyId);
+  if (!plan) return null;
+  return (
+    <Link to={`/evidence-plans/${plan.id}`} className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2" data-testid="link-matter-evidence-plan">
+      View on evidence plan →
+    </Link>
+  );
+}
+
 function MatterDetailView({ id }: { id: string }) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
@@ -616,10 +636,13 @@ function MatterDetailView({ id }: { id: string }) {
         {/* Property */}
         <Card><CardContent className="p-4">
           <div className="text-xs text-muted-foreground mb-1">Property</div>
-          <Link to={`/properties/${matter.propertyId}`} className="font-medium hover:underline flex items-center gap-1.5">
-            <MapPin className="h-4 w-4 text-muted-foreground" />
-            {matter.propertyName || `${matter.propertyId.slice(0, 8)}…`}
-          </Link>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <Link to={`/properties/${matter.propertyId}`} className="font-medium hover:underline flex items-center gap-1.5">
+              <MapPin className="h-4 w-4 text-muted-foreground" />
+              {matter.propertyName || `${matter.propertyId.slice(0, 8)}…`}
+            </Link>
+            <MatterEvidencePlanLink propertyId={matter.propertyId} />
+          </div>
         </CardContent></Card>
 
         {/* Negotiation positions */}

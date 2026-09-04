@@ -86,6 +86,11 @@ function displayUnitName(name: string): string {
 }
 
 const UNIT_STATUSES: DealStatusCode[] = ["OPP", "AVA"];
+// Status pill row: the live pipeline up front, the historic tail (Exchanged /
+// Completed / Withdrawn / Invoiced) folded behind one "Historic" pill that
+// expands on click (Woody, 2026-09-04 — "search pills include historic").
+const LIVE_PILL_STATUSES: DealStatusCode[] = ["OPP", "AVA", "NEG", "HOT", "SOL"];
+const HISTORIC_PILL_STATUSES: DealStatusCode[] = ["EXC", "COM", "WIT", "INV"];
 const UNIT_STAGE_EDITABLE = new Set<DealStatusCode>(["OPP", "AVA", "REP", "SPEC", "LIVE"]);
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
@@ -145,22 +150,37 @@ function fmtCurrency(n: number | null | undefined) {
 // inside a Radix Dialog, where a portal'd Popover never receives pointer
 // events — clicking a company did nothing and every viewing saved with an
 // "Unknown" company.
-function CrmPicker({ items, value, valueName, onSelect, placeholder, testId }: {
+function CrmPicker({ items, value, valueName, onSelect, placeholder, testId, onCreate, createLabel }: {
   items: { id: string; name: string }[];
   value: string;
   valueName: string;
   onSelect: (id: string, name: string) => void;
   placeholder: string;
   testId: string;
+  onCreate?: (name: string) => Promise<{ id: string; label: string }>;
+  createLabel?: string;
 }) {
+  // A just-created row isn't in `items` until the query refetches, but the
+  // combobox selects it immediately — remember it so onSelect gets the name.
+  const lastCreated = useRef<{ id: string; label: string } | null>(null);
   return (
     <EntityCombobox
       items={items.map(i => ({ id: i.id, label: i.name }))}
       value={value}
-      onChange={(id) => onSelect(id, id ? (items.find(i => i.id === id)?.name ?? "") : "")}
+      onChange={(id) => {
+        const name = items.find(i => i.id === id)?.name
+          ?? (lastCreated.current?.id === id ? lastCreated.current.label : "");
+        onSelect(id, id ? name : "");
+      }}
       placeholder={placeholder}
       searchPlaceholder={`Search ${placeholder.toLowerCase()}...`}
       testId={testId}
+      onCreate={onCreate ? async (name) => {
+        const created = await onCreate(name);
+        lastCreated.current = created;
+        return created;
+      } : undefined}
+      createLabel={createLabel}
     />
   );
 }
@@ -330,6 +350,7 @@ export default function AvailableUnitsPage() {
   // (SOL+ included) with the tenancy schedules underneath, instead of
   // clicking each status card in turn (Woody, 2026-08-06).
   const [viewAll, setViewAll] = useState(() => urlParam("view") === "all");
+  const [showHistoric, setShowHistoric] = useState(() => HISTORIC_PILL_STATUSES.includes(urlParam("status") as DealStatusCode));
   const [scheduleOpen, setScheduleOpen] = useState<Record<string, boolean>>({});
   // Header sort — Property/Unit and Client columns, A→Z / Z→A toggle.
   const [sortBy, setSortBy] = useState<"none" | "property" | "client">("none");
@@ -520,6 +541,16 @@ export default function AvailableUnitsPage() {
   const { data: crmContacts = [] } = useQuery<CrmContact[]>({
     queryKey: ["/api/crm/contacts"],
   });
+
+  // Inline-create for the viewing/offer/interest pickers (UX #147) — an
+  // unmatched company typed into the picker used to be silently discarded.
+  const createCrmCompany = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), label: created.name as string };
+  };
 
   const { data: favoriteIds = [] } = useQuery<string[]>({
     queryKey: ["/api/favorite-instructions"],
@@ -1299,6 +1330,10 @@ export default function AvailableUnitsPage() {
     }
     return result;
   }, [toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies, effByUnit]);
+  const historicCount = useMemo(
+    () => toolbarFiltered.filter(u => HISTORIC_PILL_STATUSES.includes((effByUnit[u.id] || "AVA") as DealStatusCode)).length,
+    [toolbarFiltered, effByUnit],
+  );
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1482,7 +1517,14 @@ export default function AvailableUnitsPage() {
       {!isMobile && !compactHeader && (
       <Card>
         <CardContent className="px-4 py-2.5 flex items-center gap-6 flex-wrap">
-          <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
+          {/* UX #146 — these totals are tracker-wide; when a search/filter is
+              active say so, or a filtered view reads like the data failed. */}
+          <span className="text-xs text-muted-foreground">
+            FY {currentFYStart}/{currentFYStart + 1}
+            {(search.trim() || (statusFilter && statusFilter !== "all") || propertyFilter || assetClassFilter !== "all" || locationFilter !== "all" || bgpTeamFilter !== "all" || agentFilter !== "all") && (
+              <span className="block text-[10px]">all units</span>
+            )}
+          </span>
           {([
             { label: "Interest", icon: Flame,        data: interestMonthly, colour: "bg-violet-500", dim: "bg-violet-200 dark:bg-violet-800" },
             { label: "Viewings", icon: CalendarDays, data: viewingsMonthly, colour: "bg-blue-500", dim: "bg-blue-200 dark:bg-blue-800" },
@@ -1675,7 +1717,7 @@ export default function AvailableUnitsPage() {
           >
             All <span className="opacity-70 font-mono tabular-nums">{toolbarFiltered.length}</span>
           </Pill>
-          {MARKETING_STATUSES.map(s => {
+          {LIVE_PILL_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
             return (
               <Pill
@@ -1689,6 +1731,32 @@ export default function AvailableUnitsPage() {
               </Pill>
             );
           })}
+          <Pill
+            active={showHistoric}
+            onClick={() => {
+              if (showHistoric && HISTORIC_PILL_STATUSES.includes(statusFilter as DealStatusCode)) setStatusFilter("all");
+              setShowHistoric(!showHistoric);
+            }}
+            data-testid="stat-chip-historic"
+          >
+            Historic <span className="opacity-70 font-mono tabular-nums">{historicCount}</span>
+          </Pill>
+          {showHistoric && (<>
+          {HISTORIC_PILL_STATUSES.map(s => {
+            const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
+            return (
+              <Pill
+                key={s}
+                active={statusFilter === s}
+                onClick={() => { setViewAll(false); setStatusFilter(statusFilter === s ? "all" : s); }}
+                data-testid={`stat-chip-${s.toLowerCase()}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                {DEAL_PIPELINE_LABELS[s]} <span className="opacity-70 font-mono tabular-nums">{count}</span>
+              </Pill>
+            );
+          })}
+          </>)}
         </div>
       ) : (
       <div className="w-full overflow-x-auto">
@@ -1700,7 +1768,7 @@ export default function AvailableUnitsPage() {
           >
             All statuses <span className="font-mono normal-case opacity-60 tabular-nums">{toolbarFiltered.length}</span>
           </Pill>
-          {MARKETING_STATUSES.map(s => {
+          {LIVE_PILL_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
             return (
               <Pill
@@ -1714,6 +1782,32 @@ export default function AvailableUnitsPage() {
               </Pill>
             );
           })}
+          <Pill
+            active={showHistoric}
+            onClick={() => {
+              if (showHistoric && HISTORIC_PILL_STATUSES.includes(statusFilter as DealStatusCode)) setStatusFilter("all");
+              setShowHistoric(!showHistoric);
+            }}
+            data-testid="stat-card-historic"
+          >
+            Historic <span className="font-mono normal-case opacity-60 tabular-nums">{historicCount}</span>
+          </Pill>
+          {showHistoric && (<>
+          {HISTORIC_PILL_STATUSES.map(s => {
+            const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
+            return (
+              <Pill
+                key={s}
+                active={statusFilter === s}
+                onClick={() => { setViewAll(false); setStatusFilter(statusFilter === s ? "all" : s); }}
+                data-testid={`stat-card-${s.toLowerCase()}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                {DEAL_PIPELINE_LABELS[s]} <span className="font-mono normal-case opacity-60 tabular-nums">{count}</span>
+              </Pill>
+            );
+          })}
+          </>)}
         </div>
       </div>
       )}
@@ -1773,14 +1867,27 @@ export default function AvailableUnitsPage() {
               const size = deal?.totalAreaSqft ?? u.sqft;
               const vCount = viewingsCounts[u.id] || 0;
               const oCount = offersCounts[u.id] || 0;
-              // Area/Rent stay visible with "—" when unset so "not recorded"
-              // reads as data, not a hidden field (UX #42); Tenant still
-              // drops when there's no linked deal tenant.
+              // Empty rows hide on the phone card (UX #135, supersedes #42's
+              // "—" here) — on a sparse fixture the list was mostly em-dashes.
               const rows = [
-                { label: "Area", value: size ? `${Number(size).toLocaleString()} sq ft` : "—" },
+                ...(size ? [{ label: "Area", value: `${Number(size).toLocaleString()} sq ft` }] : []),
                 ...(tenant ? [{ label: "Tenant", value: tenant }] : []),
-                { label: "Rent p.a.", value: rent ? `£${Number(rent).toLocaleString()}` : "—" },
+                ...(rent ? [{ label: "Rent p.a.", value: `£${Number(rent).toLocaleString()}` }] : []),
               ];
+              // UX #130 — unit names often embed the property name; strip it
+              // from the title (the subtitle already carries the property) so
+              // the ~28 visible chars go to the unit reference.
+              const rawTitle = u.unitName || prop?.name || "Unit";
+              let cardTitle = rawTitle;
+              if (u.unitName && prop?.name) {
+                const propWords = prop.name.split(/[,·]/)[0].trim();
+                for (const strip of [prop.name, propWords]) {
+                  if (strip && cardTitle.toLowerCase() !== strip.toLowerCase()) {
+                    cardTitle = cardTitle.replace(new RegExp(`[,\\s·-]*${strip.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gi"), "").trim();
+                  }
+                }
+                cardTitle = cardTitle.replace(/^[,·\s-]+|[,·\s-]+$/g, "").trim() || rawTitle;
+              }
               return (
                 <Fragment key={u.id}>
                 {viewAll && code !== prevCode && (
@@ -1797,7 +1904,7 @@ export default function AvailableUnitsPage() {
                     <div className="min-w-0 flex-1">
                       {/* Unit first — a filtered list repeats the property name
                           150 times; the unit is what you scan for (UX #70). */}
-                      <span className="text-sm font-semibold leading-tight block truncate">{u.unitName || prop?.name || "Unit"}</span>
+                      <span className="text-sm font-semibold leading-tight block truncate">{cardTitle}</span>
                       {(prop?.name || u.floor) && (
                         <p className="text-xs text-muted-foreground truncate mt-0.5">{[u.unitName ? prop?.name : null, u.floor].filter(Boolean).join(" · ")}</p>
                       )}
@@ -2103,10 +2210,10 @@ export default function AvailableUnitsPage() {
                           // unit stage so a flip here can't regress the deal
                           // through the status mirror.
                           <span
-                            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
-                            title="Deal in progress — status is driven by the deal"
+                            className={`${STATUS_LABEL_COLORS["AVA"] || "bg-gray-500"} text-white font-medium rounded-full text-[11px] px-2.5 py-1 inline-block align-middle whitespace-nowrap opacity-60 cursor-default`}
+                            title="Deal in progress — unit status is driven by the deal"
+                            data-testid="unit-status-locked"
                           >
-                            <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS["AVA"] || "bg-gray-400"}`} />
                             Available
                           </span>
                         )}
@@ -3144,6 +3251,8 @@ export default function AvailableUnitsPage() {
                   onSelect={(id, name) => setInterestForm(f => ({ ...f, companyId: id, companyName: name }))}
                   placeholder="Company / brand"
                   testId="interest-company"
+                onCreate={createCrmCompany}
+                createLabel="company"
                 />
               </div>
               <Input type="date" className="min-w-0" value={interestForm.interestDate} onChange={e => setInterestForm(f => ({ ...f, interestDate: e.target.value }))} data-testid="interest-date" />
@@ -3246,6 +3355,8 @@ export default function AvailableUnitsPage() {
                     onSelect={(id, name) => setViewingForm(f => ({ ...f, companyId: id, companyName: name }))}
                     placeholder="Select company"
                     testId="viewing-company"
+                  onCreate={createCrmCompany}
+                  createLabel="company"
                   />
                 </div>
                 <div>
@@ -3293,7 +3404,9 @@ export default function AvailableUnitsPage() {
               </div>
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" size="sm" onClick={() => { setAddViewingOpen(false); setEditingViewingId(null); setViewingForm(emptyViewingForm()); }}>Cancel</Button>
-                <Button size="sm" disabled={!viewingForm.viewingDate || addViewingMutation.isPending || updateViewingMutation.isPending} onClick={() => editingViewingId ? updateViewingMutation.mutate({ id: editingViewingId, data: viewingForm }) : addViewingMutation.mutate(viewingForm)} data-testid="viewing-save">
+                {/* UX #154 — a save with only the defaulted date creates a meaningless
+                    "No company" row that flows into FY counts; require some content. */}
+                <Button size="sm" disabled={!viewingForm.viewingDate || !(viewingForm.companyName || viewingForm.contactName || viewingForm.attendees.trim() || viewingForm.notes.trim()) || addViewingMutation.isPending || updateViewingMutation.isPending} onClick={() => editingViewingId ? updateViewingMutation.mutate({ id: editingViewingId, data: viewingForm }) : addViewingMutation.mutate(viewingForm)} data-testid="viewing-save">
                   {(addViewingMutation.isPending || updateViewingMutation.isPending) ? "Saving..." : editingViewingId ? "Save Changes" : "Save Viewing"}
                 </Button>
               </div>
@@ -3391,6 +3504,8 @@ export default function AvailableUnitsPage() {
                     onSelect={(id, name) => setOfferForm(f => ({ ...f, companyId: id, companyName: name }))}
                     placeholder="Select company"
                     testId="offer-company"
+                  onCreate={createCrmCompany}
+                  createLabel="company"
                   />
                 </div>
                 <div>
@@ -4151,7 +4266,9 @@ function MarketingFilesDialog({
             >
               <span className="flex items-center gap-2">
                 <FileText className="h-4 w-4 text-muted-foreground" />
-                Info sheet — branded PDF for agents/tenants
+                {/* UX #151 — "for agents/tenants" is BGP-side language;
+                    landlord clients get neutral copy for the same control. */}
+                {isClient ? "Unit info sheet — branded PDF" : "Info sheet — branded PDF for agents/tenants"}
               </span>
               {sheetOpen ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
             </button>

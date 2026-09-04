@@ -39,6 +39,7 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
+import { legacyToCode } from "@shared/deal-status";
 import { registerIngestRoutes } from "./ingest-routes";
 import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { setupStripeIssuingRoutes } from "./stripe-issuing";
@@ -528,7 +529,9 @@ export async function registerRoutes(
         return res.status(404).end();
       }
       res.set("Content-Type", file.contentType);
-      res.set("Cache-Control", "public, max-age=31536000, immutable");
+      // chat-media also stores KYC documents (passports, bank statements) —
+      // auth-gated content must never be publicly cacheable.
+      res.set("Cache-Control", "private, max-age=3600");
       const downloadTypes = [
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "application/vnd.ms-excel",
@@ -3761,7 +3764,85 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Public leasing feed (bgp marketing website) ---
   // Read-only, unauthenticated. Exposes only marketing-safe fields for units
   // being publicly marketed, and skips properties with leasing privacy enabled.
-  const PUBLIC_MARKETING_STATUSES = ["Available", "Under Offer"];
+  // Public lifecycle (Woody, Sep 2026): AVA (Marketing/Available) shows as
+  // available; NEG/HOT/SOL show as "Under Offer"; everything else (OPP, REP,
+  // EXC, COM/Let, INV, WIT) is never public. Status values in the tracker are
+  // canonical deal-status codes or legacy labels — legacyToCode handles both.
+  const PUBLIC_CODE_MAP: Record<string, string> = {
+    AVA: "Available",
+    NEG: "Under Offer",
+    HOT: "Under Offer",
+    SOL: "Under Offer",
+  };
+  const publicStatus = (raw: string | null): string | null => {
+    const code = legacyToCode(raw);
+    return code ? PUBLIC_CODE_MAP[code] || null : null;
+  };
+  // Unit Status "Opportunity" (OPP) is never public — it isn't in
+  // PUBLIC_CODE_MAP. On top of that (Woody, 2026-09-04) a unit with a
+  // sitting tenant per the tenancy schedule is blocked regardless of its
+  // status: the "Available" default on imported rows can't be trusted for
+  // occupied space. Same tenant lookup as the tracker's Existing Tenant
+  // column (tenancy link first, else unit-name match within the property).
+  const publicNotTenanted = () => import("@shared/schema").then(({ availableUnits }) => sql`NOT EXISTS (
+    SELECT 1 FROM tenancy_schedule_units t
+     WHERE ((${availableUnits.tenancyUnitId} IS NOT NULL AND t.id = ${availableUnits.tenancyUnitId})
+         OR (${availableUnits.tenancyUnitId} IS NULL AND t.property_id = ${availableUnits.propertyId}
+             AND lower(trim(coalesce(nullif(trim(t.unit_number), ''), t.premises, ''))) = lower(trim(coalesce(${availableUnits.unitName}, '')))))
+       AND coalesce(nullif(trim(t.trading_name), ''), nullif(trim(t.tenant_name), '')) IS NOT NULL
+       AND lower(trim(coalesce(nullif(trim(t.trading_name), ''), t.tenant_name))) <> 'vacant'
+       AND lower(trim(coalesce(t.status, ''))) <> 'vacant'
+  )`);
+
+  // The tracker's Location field is rarely filled in, but nearly every
+  // property carries a geocoded address. Flatten it into a display address
+  // line, a postcode, an area for the website filter ("London W12") and map
+  // coordinates — the tracker's own Location / postcode win when present.
+  const UK_POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
+  const publicAddress = (r: {
+    propertyName: string | null;
+    propertyAddress: unknown;
+    postcode: string | null;
+    location: string | null;
+    latitude: string | null;
+    longitude: string | null;
+  }) => {
+    const addr: any = r.propertyAddress;
+    const isCountry = (s: string) => /^(UK|United Kingdom|England|Scotland|Wales|Greater London)$/i.test(s);
+    const pn = (r.propertyName || "").trim().toLowerCase();
+    // Two shapes in the wild: structured {street, city, postcode, ...} from the
+    // property form, or a single geocoder string ({formatted} / {address} / plain).
+    let segments: string[];
+    let city: string | null = null;
+    if (addr && typeof addr === "object" && (addr.street || addr.city || addr.postcode)) {
+      city = addr.city ? String(addr.city).trim() : null;
+      const street = addr.street ? String(addr.street).trim() : "";
+      const pcText = addr.postcode ? String(addr.postcode).trim() : "";
+      segments = [street, [city, pcText].filter(Boolean).join(" ")].filter(Boolean);
+    } else {
+      const formatted: string = typeof addr === "string" ? addr : (addr?.formatted || addr?.address || "");
+      segments = formatted
+        .split(",")
+        .map((s: string) => s.trim())
+        .filter((s: string) => s && !isCountry(s));
+      if (segments.length > 2 && pn && segments[0].toLowerCase().includes(pn)) segments = segments.slice(1);
+    }
+    const joined = segments.join(", ");
+    const pc = joined.match(UK_POSTCODE_RE);
+    const outward = pc ? pc[1].toUpperCase() : null;
+    let location = r.location;
+    if (!location && segments.length) {
+      const town = (city || segments[segments.length - 1]).replace(UK_POSTCODE_RE, "").replace(/,\s*$/, "").trim();
+      location = town ? (/^london$/i.test(town) && outward ? `London ${outward}` : town) : outward;
+    }
+    return {
+      addressLine: joined || null,
+      postcode: r.postcode || (pc ? `${pc[1].toUpperCase()} ${pc[2].toUpperCase()}` : null),
+      location,
+      latitude: r.latitude ?? (addr?.lat != null ? String(addr.lat) : null),
+      longitude: r.longitude ?? (addr?.lng != null ? String(addr.lng) : null),
+    };
+  };
 
   app.use("/api/public", (req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
@@ -3797,13 +3878,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
       const columns = await publicListingColumns();
+      const notTenanted = await publicNotTenanted();
       const rows = await db
         .select(columns)
         .from(availableUnits)
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
         .where(and(
-          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
+          sql`${availableUnits.marketingStatus} IS NOT NULL`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+          notTenanted,
         ))
         .orderBy(desc(availableUnits.createdAt));
       const unitIds = rows.map(r => r.id);
@@ -3820,7 +3903,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         : [];
       const byUnit: Record<string, typeof files> = {};
       for (const f of files) (byUnit[f.unitId] ||= []).push(f);
-      res.json(rows.map(r => ({ ...r, files: byUnit[r.id] || [] })));
+      res.json(
+        rows
+          .map(r => ({ ...r, ...publicAddress(r), marketingStatus: publicStatus(r.marketingStatus) }))
+          .filter(r => r.marketingStatus !== null)
+          .map(r => ({ ...r, files: byUnit[r.id] || [] })),
+      );
     } catch (err: any) {
       console.error("[routes] Public leasing listings error:", err?.message);
       res.status(500).json({ message: "Failed to fetch listings" });
@@ -3831,14 +3919,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
       const columns = await publicListingColumns();
+      const notTenanted = await publicNotTenanted();
       const [row] = await db
         .select(columns)
         .from(availableUnits)
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
         .where(and(
           eq(availableUnits.id, req.params.id),
-          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
+          sql`${availableUnits.marketingStatus} IS NOT NULL`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+          notTenanted,
         ));
       if (!row) return res.status(404).json({ message: "Listing not found" });
       const files = await db
@@ -3849,7 +3939,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         })
         .from(unitMarketingFiles)
         .where(eq(unitMarketingFiles.unitId, row.id));
-      res.json({ ...row, files });
+      const pubStatus = publicStatus(row.marketingStatus);
+      if (!pubStatus) return res.status(404).json({ message: "Listing not found" });
+      res.json({ ...row, ...publicAddress(row), marketingStatus: pubStatus, files });
     } catch (err: any) {
       console.error("[routes] Public leasing listing error:", err?.message);
       res.status(500).json({ message: "Failed to fetch listing" });
@@ -3861,16 +3953,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
       const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
       if (!file) return res.status(404).end();
+      const notTenanted = await publicNotTenanted();
       const [unit] = await db
-        .select({ id: availableUnits.id })
+        .select({ id: availableUnits.id, marketingStatus: availableUnits.marketingStatus })
         .from(availableUnits)
         .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
         .where(and(
           eq(availableUnits.id, file.unitId),
-          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+          notTenanted,
         ));
-      if (!unit) return res.status(404).end();
+      if (!unit || !publicStatus(unit.marketingStatus)) return res.status(404).end();
       const fileName = file.filePath.split("/").pop();
       if (fileName) {
         const stored = await getFile(`marketing-files/${fileName}`);

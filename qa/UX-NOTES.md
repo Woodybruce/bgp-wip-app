@@ -22,63 +22,6 @@ what happened · concrete suggested improvement.
    counters reflect the active search/filters (or the chip clears the search),
    so the numbers users see match the rows below.
 
-156. 2026-09-04 · BGP staff / mobile 390px (QA r522) · tried to look
-    something up quickly and check notifications between viewings · the
-    staff phone shell has NO global-search or notifications entry point —
-    desktop's header has both (⌘K search box + bell with a badge showing
-    10 unread), but on the phone Victoria can only search within
-    individual pages (tracker, brands, contacts) and never sees her
-    notifications at all. Suggestion: add a search icon and a bell (badge
-    count) to the phone-shell header, opening the same ⌘K palette and
-    notifications popover the desktop uses.
-
-155. 2026-09-04 · Landsec client / mobile 390px (QA r520) · opened their own
-    deal's detail page · the Overview "Parties" card shows empty Landlord/
-    Tenant slots with staff-worded "+ Link landlord" / "+ Link tenant"
-    affordances — to the landlord viewing their own deal the empty Landlord
-    slot plus staff jargon reads like the deal is set up wrong (same
-    complaint as #129 on the deals board's Client column). Suggestion:
-    for client users default the Landlord party to their own company and
-    show parties read-only-ish ("Not set yet — your BGP team will link
-    parties") rather than staff link-pickers.
-
-154. 2026-09-04 · Landsec client / mobile 390px (QA r520) · logged a viewing
-    from the tracker's Viewings dialog · tapping "Save Viewing" with the
-    form untouched (only the defaulted date) succeeds and creates a
-    "No company — 2026-09-04" row in the shared viewing log; on a phone the
-    button sits right under the keyboard so an accidental empty save is
-    easy, and the row flows into FY counts and staff reports. Company-less
-    viewings are intended (2026-08-09 #9), but a fully empty one carries no
-    information. Suggestion: disable Save until at least one of company/
-    contact/attendees/notes is set.
-
-153. 2026-09-04 · Landsec client / desktop 1440px (QA r518) · scanned the
-    Bluewater Tenancy Schedule KPI strip on the property page · the Service
-    Charge tile wraps its £11,370,076 total mid-digit ("£11,370,07 / 6") in
-    the embedded 7-column strip — the figure misreads at a glance (the Full
-    Board page fits it on one line). break-words was chosen deliberately over
-    clipping, so suggest compact formatting for 7-figure sums in the embedded
-    strip (e.g. "£11.37m", full figure on hover/title), matching the
-    dashboard's compact-KPI style.
-
-152. 2026-09-03 · BGP staff / mobile 390px (QA r504) · reviewed a brand
-    profile then moved on to the calendar · the profile's auto-fired store
-    scan failed a few seconds later (keyless env) and its red "Store search
-    failed / GOOGLE_API_KEY not configured" toast popped mid-screen over the
-    calendar — a raw config error on a page that had nothing to do with it.
-    Suggestion: don't toast failures of background auto-fired scans at all
-    (log to the stores diagnostic strip instead); keep toasts for
-    user-initiated scans. Related: #96 (friendly wording), 149 (mid-screen
-    placement).
-
-151. 2026-09-03 · Landsec client / mobile 390px (QA r502) · opened the Files
-    dialog on a Letting Tracker unit · the generator row reads "Info sheet —
-    branded PDF for agents/tenants", which is BGP-side language: to a
-    landlord client "for agents/tenants" reads like it's not for them, and
-    it's unclear what they'd get. Suggestion: client-facing copy for the
-    same control, e.g. "Unit info sheet — branded PDF" (keep the current
-    wording for staff).
-
 150. 2026-09-03 · Landsec client / desktop 1440px (QA r500) · tried to open
     an account/profile menu from the sidebar footer · clicking "Mark Warne"
     (or the MW avatar) does nothing — the only affordance there is the
@@ -87,195 +30,6 @@ what happened · concrete suggested improvement.
     change their password have to ask BGP. Suggestion: make the name/avatar
     open a small menu (Account, Log out) even if Account only offers a
     change-password form for now.
-
-149. 2026-09-03 · BGP staff / mobile 390px (QA r496) · logged a phone-call
-    interest on U124 from the tracker's Interest dialog · the "Interest
-    logged" toast pops mid-screen and sits exactly over the row that was
-    just added, so for a few seconds you can't see the thing you just
-    created (same for the viewing/offer dialogs' toasts at 390px).
-    Suggestion: bottom-anchor toasts on the phone shell so the
-    confirmation stays out of the content's way.
-
-148. 2026-09-03 · Landsec client / mobile 390px (QA r494) · tapped the Tasks
-    tab to check open tasks on the phone · the AI Daily Briefing card fills
-    the entire first viewport (title, spinner/Generate button, skeleton
-    lines) before the "Tasks" list — the thing the tab is named for starts
-    a full screen below the fold, and the one open task needs a scroll to
-    see. Suggestion: on the phone Tasks tab, start the briefing card
-    collapsed to its header row (like the property page's "Cost plan &
-    inputs" pattern, remembered per device) or move it below the task
-    list — tasks first on a tab called Tasks.
-
-147. 2026-09-03 · Landsec client / desktop 1440px (QA r492) · logging this
-    morning's offer on L112 from a brand not yet in the CRM · typed the
-    company name into the offer form's Company picker, got "No matches.",
-    saved anyway — the offer persisted as "No company" with the typed name
-    silently discarded (the field visibly resets to "Select company", but a
-    user focused on rent/terms will miss it). The API and the email-sync
-    path both accept free-text companyName, and the Investment Tracker's
-    CrmPicker already has an inline green "Create company '<name>'" row —
-    the Letting Tracker's CrmPicker (offers + viewings dialogs,
-    available-units.tsx:148) is the only picker without it. Suggestion:
-    port the investment-tracker onCreate affordance (or accept the typed
-    text as free-text companyName) so an unmatched company isn't lost.
-    Affects staff and clients alike; clients can POST companies
-    (allowlisted), so parity holds.
-
-146. 2026-09-03 · BGP staff / desktop 1440px (QA r490) · reviewing U124 on the
-    Letting Tracker before a client call · searched "U124" (3 of 81 units),
-    the header still read "Viewings 2 · Offers 1", but U124's own dialogs
-    said "No viewings recorded yet" / "No offers recorded yet" — the FY
-    header counts are tracker-wide and ignore the active search/filters, so
-    it reads like the data failed to load · Suggest: scope the header KPI
-    counts to the filtered rows (or label them "all units") when a search or
-    filter is active.
-
-145. 2026-09-03 · BGP staff / mobile 390px (QA r488) · glancing at the Today
-    page's Recent Deals list between viewings · a deal with no status renders
-    an empty grey stage chip (a blank pill next to the deal name) — it reads
-    as a rendering glitch rather than "no stage yet" · Suggest: hide the
-    stage chip when the deal has no status, or show a muted "No stage" label
-    instead of an empty pill.
-
-144. 2026-09-03 · Landsec client / mobile 390px (QA r486) · logging a viewing
-    then an offer from the Letting Tracker unit card · after Save, the
-    success toast ("Viewing added" / "Offer added") renders as a large card
-    centred over the middle of the dialog, exactly covering the just-added
-    row for ~4s — the user can't see the thing they just created until the
-    toast fades, and it also sits mid-form when the offer form is open ·
-    Suggest: anchor toasts to the bottom edge (above the bottom nav) on the
-    phone shell so dialog content stays visible.
-
-143. 2026-09-03 · Landsec client / desktop 1440px (QA r484) · skimming Brand
-    News for signals across the tenant slice · every article card shows a
-    summary line that is a verbatim copy of the headline (title and
-    description are identical for all wire rows), so each card says the same
-    thing twice and the list reads as noise · Suggest: hide the description
-    line when it equals (or startsWith) the headline, so cards collapse to
-    one line unless the summary genuinely adds information — pairs with the
-    existing near-duplicate-collapse suggestion for the News tab.
-
-142. 2026-09-03 · BGP staff / desktop 1440px (QA r482) · a non-admin staff
-    member following a link to /expenses (e.g. from my-expenses' "ask Woody
-    or Layla… on the Expenses admin page" hint) · since r482 the admin-only
-    /expenses and /expenses/revolut pages bounce non-admins back to the
-    Dashboard (previously they rendered the full admin chrome over silently
-    403'd data — "No spend yet this month" with dead admin buttons); the
-    bounce is the house AdminRoute pattern but happens with no explanation ·
-    Suggest: a one-line toast on the AdminRoute bounce ("That page needs
-    admin access") so the redirect doesn't read as a broken link.
-
-141. 2026-09-03 · BGP staff / mobile 390px (QA r480) · skimming the WIP
-    report on the phone before a team call · the "Net fees by team" chart
-    shows £0 for both teams (National, National Leasing) while the header
-    says £250,000 total — the £250K deal has no team attributed, and fees
-    without a team simply vanish from the by-team split, so the chart
-    contradicts the total with no explanation (the Agent Summary tab
-    handles the same case with a clear "no fees attributed yet — assign a
-    BGP contact" empty state) · Suggest: add an "Unassigned" bar to the
-    by-team (and by-client/by-property, if applicable) breakdowns when
-    attributed fees don't sum to the total, or reuse the Agent Summary
-    empty-state hint.
-
-140. 2026-09-03 · Landsec client / mobile 390px (QA r478) · checking which
-    brands are trading on the phone · the Brand Intelligence hub on mobile
-    shows only Brand Explorer — the Turnover Board tab the client uses on
-    desktop is deliberately hidden (brands-hub.tsx: other boards "still
-    being built" on mobile) with no hint it exists or that it's
-    desktop-only, so a client looking for turnover data on the phone finds
-    nothing · Suggest: when the mobile turnover board ships, expose the tab;
-    until then a small "Turnover Board is available on desktop" line (or a
-    read-only card-list variant) would stop the dead-end.
-
-139. 2026-09-03 · Landsec client / desktop 1440px (QA r476) · scanning the
-    Brand Explorer for hospitality brand intel · the "Brand News" panel under
-    the client's brand grid is a generic fashion-wire feed (WWD: Nike, Tom
-    Ford, PVH, Sydney Sweeney…) — the panel filters articles to the Retail
-    + Hospitality categories (brands-hub.tsx), and "Retail" is mostly
-    fashion wire copy, so nothing relates to the client's hospitality/
-    leisure/fitness slice or the 9 brands shown above it · for client
-    logins, narrow Brand News to the slice categories (or match article
-    text against visible brand names), with a "no relevant stories" empty
-    state.
-
-138. 2026-09-03 · BGP staff / desktop 1440px (QA r474) · picking a hero image
-    in Image Studio · the word "Uncategorised" means two different things on
-    the same screen: the CATEGORIES sidebar counts images whose category is
-    "Uncategorised" (1 here), while the albums grid's "Uncategorised" folder
-    counts images with no ADDRESS (2 here) — the mismatched numbers next to
-    the same label read like a bug · rename the album folder to something
-    address-flavoured ("No property / address") or unify the two counts.
-
-137. 2026-09-03 · BGP staff / desktop 1440px (QA r472) · outlining units on
-    a new Evidence Plan · after double-clicking to close an outline, the
-    unit reference is asked for via a raw browser prompt() window — the
-    only browser-chrome prompt in the app, it can't be styled, shows no
-    context, and a stray Esc silently throws the just-drawn outline away ·
-    replace with the app's own small dialog (unit ref field + Save/Cancel),
-    keeping the drawn polygon on Cancel so it can be re-named rather than
-    redrawn.
-
-136. 2026-09-02 · Landsec client / mobile 390px (QA r470) · reviewing
-    Bluewater's Boards section on the phone · the empty Brochures panel
-    reads "No brochures yet — drop a PDF here or use Add." — drag-and-drop
-    doesn't exist on a touch phone, so half the instruction is impossible
-    and reads desktop-first (same panel/copy also serves staff mobile) ·
-    on touch/mobile render the empty state as "No brochures yet — use Add"
-    (keep the drop-zone copy for pointer devices).
-
-135. 2026-09-02 · BGP staff / mobile 390px (QA r464) · working the Bluewater
-    letting tracker on the phone (75 units in Marketing) · every unit card
-    unconditionally reserves two label rows for Area and Rent p.a., and on
-    this fixture most render as "Area —" / "Rent p.a. —", so scanning the
-    list is mostly em-dash rows between unit names (the Tenant row already
-    hides itself when empty) · hide the Area/Rent rows on the phone card
-    when there's no value, matching the Tenant row's behaviour, so each
-    card shrinks to what's actually known and more units fit per screen.
-
-134. 2026-09-02 · Landsec client / mobile 390px (QA r462) · opening Bluewater's
-    property page to review the asset · the Overview tab's first card stacks
-    Status / Asset Class / BGP Team / Website — all four rendered as "—" on
-    the fixture — so the first phone viewport after the header is mostly
-    em-dashes before any real content (ownership, tasks, boards) appears ·
-    on the client's phone view, collapse fields with no value (or float the
-    populated Ownership rows to the top of the card) so the first screen
-    shows information, not placeholders.
-
-133. 2026-09-02 · Landsec client / desktop 1440px (QA r460) · reading the
-    full tenancy schedule board during a portfolio review · the KPI strip
-    mixes empty-state treatments: PASSING RENT shows "—" when no rent data
-    exists, but the tile next to it reads "AVG ERV £PSF 0" — a literal
-    zero that reads as "the ERV is £0" rather than "no ERV data" · show
-    "—" (like passing rent) when no units carry an ERV.
-
-132. 2026-09-02 · BGP staff / desktop 1440px (QA r458) · Requirements page
-    while prepping a pitch · the toolbar mixes everyday actions (search,
-    Add requirement, New Brand) with five maintenance/debug controls
-    ("Refresh PIPnet", "Wipe & resync", "Inspect PIPnet", "Inspect Detail",
-    "Refresh TRL", "Wipe & resync TRL") at equal visual weight — two of
-    them start with "Wipe", one click from the search box, and nothing
-    signals they're admin plumbing · move the inspect/wipe/resync controls
-    behind a single "Sync tools" dropdown (or admin-only visibility) so the
-    everyday row is Add requirement + search + New Brand.
-
-131. 2026-09-02 · BGP staff / mobile 390px (QA r456) · opening a brand
-    profile to prep a pitch on the phone · the 260px hero pane sits as a
-    bare grey block for the first several seconds while the flagship
-    street-view image loads (no spinner, no skeleton — on first visit it
-    reads as a broken/empty panel filling half the viewport; it only
-    collapses if the fetch errors) · give the hero pane a loading shimmer
-    or fade the image in, so slow mobile networks see "loading" rather
-    than "blank".
-
-130. 2026-09-02 · Landsec client / mobile 390px (QA r454) · scanning the
-    Letting Tracker cards on the phone · card titles read "L112 Bluewater,
-    Bluewater" / "U124/U125/U126, Bluewater, B…" with "Bluewater Shopping
-    Centre" repeated again on the subtitle line — the property name appears
-    up to three times per card because unit_name embeds it and the title
-    truncates at 390px before the distinguishing part · when the unit name
-    ends with (or contains) the property name the card title could strip
-    that suffix and let the subtitle carry the property, so the ~28 visible
-    title chars go to the unit reference the user is actually scanning for.
 
 129. 2026-09-02 · Landsec client / desktop 1440px (QA r452) · reviewing
     their own deals on the Deals board · both Landsec deals show an empty
@@ -892,6 +646,258 @@ below stay parked, not built. Rounds shouldn't re-log them.)
     Suggested: lead with the unit name, property as the subtitle (or
     property once as a group header when filtered to one centre).
    → DONE — built 2026-08-27 (UX batch I, Woody: "Do them all")
+
+Confirmed by Woody 2026-09-04 ("everything but 150" — #150 explicitly NOT
+confirmed, remains open above); built same day by the parent session
+(deployed with the r482-r522 bug-fix merge follow-up). #144 and #149 are
+one fix (bottom-anchored phone toasts); #135 supersedes #42's "—" rows on
+the phone tracker cards. Not yet browser-verified — QA rounds to judge the
+new behaviour as intended:
+156. 2026-09-04 · BGP staff / mobile 390px (QA r522) · tried to look
+    something up quickly and check notifications between viewings · the
+    staff phone shell has NO global-search or notifications entry point —
+    desktop's header has both (⌘K search box + bell with a badge showing
+    10 unread), but on the phone Victoria can only search within
+    individual pages (tracker, brands, contacts) and never sees her
+    notifications at all. Suggestion: add a search icon and a bell (badge
+    count) to the phone-shell header, opening the same ⌘K palette and
+    notifications popover the desktop uses.
+
+155. 2026-09-04 · Landsec client / mobile 390px (QA r520) · opened their own
+    deal's detail page · the Overview "Parties" card shows empty Landlord/
+    Tenant slots with staff-worded "+ Link landlord" / "+ Link tenant"
+    affordances — to the landlord viewing their own deal the empty Landlord
+    slot plus staff jargon reads like the deal is set up wrong (same
+    complaint as #129 on the deals board's Client column). Suggestion:
+    for client users default the Landlord party to their own company and
+    show parties read-only-ish ("Not set yet — your BGP team will link
+    parties") rather than staff link-pickers.
+
+154. 2026-09-04 · Landsec client / mobile 390px (QA r520) · logged a viewing
+    from the tracker's Viewings dialog · tapping "Save Viewing" with the
+    form untouched (only the defaulted date) succeeds and creates a
+    "No company — 2026-09-04" row in the shared viewing log; on a phone the
+    button sits right under the keyboard so an accidental empty save is
+    easy, and the row flows into FY counts and staff reports. Company-less
+    viewings are intended (2026-08-09 #9), but a fully empty one carries no
+    information. Suggestion: disable Save until at least one of company/
+    contact/attendees/notes is set.
+
+153. 2026-09-04 · Landsec client / desktop 1440px (QA r518) · scanned the
+    Bluewater Tenancy Schedule KPI strip on the property page · the Service
+    Charge tile wraps its £11,370,076 total mid-digit ("£11,370,07 / 6") in
+    the embedded 7-column strip — the figure misreads at a glance (the Full
+    Board page fits it on one line). break-words was chosen deliberately over
+    clipping, so suggest compact formatting for 7-figure sums in the embedded
+    strip (e.g. "£11.37m", full figure on hover/title), matching the
+    dashboard's compact-KPI style.
+
+152. 2026-09-03 · BGP staff / mobile 390px (QA r504) · reviewed a brand
+    profile then moved on to the calendar · the profile's auto-fired store
+    scan failed a few seconds later (keyless env) and its red "Store search
+    failed / GOOGLE_API_KEY not configured" toast popped mid-screen over the
+    calendar — a raw config error on a page that had nothing to do with it.
+    Suggestion: don't toast failures of background auto-fired scans at all
+    (log to the stores diagnostic strip instead); keep toasts for
+    user-initiated scans. Related: #96 (friendly wording), 149 (mid-screen
+    placement).
+
+151. 2026-09-03 · Landsec client / mobile 390px (QA r502) · opened the Files
+    dialog on a Letting Tracker unit · the generator row reads "Info sheet —
+    branded PDF for agents/tenants", which is BGP-side language: to a
+    landlord client "for agents/tenants" reads like it's not for them, and
+    it's unclear what they'd get. Suggestion: client-facing copy for the
+    same control, e.g. "Unit info sheet — branded PDF" (keep the current
+    wording for staff).
+
+149. 2026-09-03 · BGP staff / mobile 390px (QA r496) · logged a phone-call
+    interest on U124 from the tracker's Interest dialog · the "Interest
+    logged" toast pops mid-screen and sits exactly over the row that was
+    just added, so for a few seconds you can't see the thing you just
+    created (same for the viewing/offer dialogs' toasts at 390px).
+    Suggestion: bottom-anchor toasts on the phone shell so the
+    confirmation stays out of the content's way.
+
+148. 2026-09-03 · Landsec client / mobile 390px (QA r494) · tapped the Tasks
+    tab to check open tasks on the phone · the AI Daily Briefing card fills
+    the entire first viewport (title, spinner/Generate button, skeleton
+    lines) before the "Tasks" list — the thing the tab is named for starts
+    a full screen below the fold, and the one open task needs a scroll to
+    see. Suggestion: on the phone Tasks tab, start the briefing card
+    collapsed to its header row (like the property page's "Cost plan &
+    inputs" pattern, remembered per device) or move it below the task
+    list — tasks first on a tab called Tasks.
+
+147. 2026-09-03 · Landsec client / desktop 1440px (QA r492) · logging this
+    morning's offer on L112 from a brand not yet in the CRM · typed the
+    company name into the offer form's Company picker, got "No matches.",
+    saved anyway — the offer persisted as "No company" with the typed name
+    silently discarded (the field visibly resets to "Select company", but a
+    user focused on rent/terms will miss it). The API and the email-sync
+    path both accept free-text companyName, and the Investment Tracker's
+    CrmPicker already has an inline green "Create company '<name>'" row —
+    the Letting Tracker's CrmPicker (offers + viewings dialogs,
+    available-units.tsx:148) is the only picker without it. Suggestion:
+    port the investment-tracker onCreate affordance (or accept the typed
+    text as free-text companyName) so an unmatched company isn't lost.
+    Affects staff and clients alike; clients can POST companies
+    (allowlisted), so parity holds.
+
+146. 2026-09-03 · BGP staff / desktop 1440px (QA r490) · reviewing U124 on the
+    Letting Tracker before a client call · searched "U124" (3 of 81 units),
+    the header still read "Viewings 2 · Offers 1", but U124's own dialogs
+    said "No viewings recorded yet" / "No offers recorded yet" — the FY
+    header counts are tracker-wide and ignore the active search/filters, so
+    it reads like the data failed to load · Suggest: scope the header KPI
+    counts to the filtered rows (or label them "all units") when a search or
+    filter is active.
+
+145. 2026-09-03 · BGP staff / mobile 390px (QA r488) · glancing at the Today
+    page's Recent Deals list between viewings · a deal with no status renders
+    an empty grey stage chip (a blank pill next to the deal name) — it reads
+    as a rendering glitch rather than "no stage yet" · Suggest: hide the
+    stage chip when the deal has no status, or show a muted "No stage" label
+    instead of an empty pill.
+
+144. 2026-09-03 · Landsec client / mobile 390px (QA r486) · logging a viewing
+    then an offer from the Letting Tracker unit card · after Save, the
+    success toast ("Viewing added" / "Offer added") renders as a large card
+    centred over the middle of the dialog, exactly covering the just-added
+    row for ~4s — the user can't see the thing they just created until the
+    toast fades, and it also sits mid-form when the offer form is open ·
+    Suggest: anchor toasts to the bottom edge (above the bottom nav) on the
+    phone shell so dialog content stays visible.
+
+143. 2026-09-03 · Landsec client / desktop 1440px (QA r484) · skimming Brand
+    News for signals across the tenant slice · every article card shows a
+    summary line that is a verbatim copy of the headline (title and
+    description are identical for all wire rows), so each card says the same
+    thing twice and the list reads as noise · Suggest: hide the description
+    line when it equals (or startsWith) the headline, so cards collapse to
+    one line unless the summary genuinely adds information — pairs with the
+    existing near-duplicate-collapse suggestion for the News tab.
+
+142. 2026-09-03 · BGP staff / desktop 1440px (QA r482) · a non-admin staff
+    member following a link to /expenses (e.g. from my-expenses' "ask Woody
+    or Layla… on the Expenses admin page" hint) · since r482 the admin-only
+    /expenses and /expenses/revolut pages bounce non-admins back to the
+    Dashboard (previously they rendered the full admin chrome over silently
+    403'd data — "No spend yet this month" with dead admin buttons); the
+    bounce is the house AdminRoute pattern but happens with no explanation ·
+    Suggest: a one-line toast on the AdminRoute bounce ("That page needs
+    admin access") so the redirect doesn't read as a broken link.
+
+141. 2026-09-03 · BGP staff / mobile 390px (QA r480) · skimming the WIP
+    report on the phone before a team call · the "Net fees by team" chart
+    shows £0 for both teams (National, National Leasing) while the header
+    says £250,000 total — the £250K deal has no team attributed, and fees
+    without a team simply vanish from the by-team split, so the chart
+    contradicts the total with no explanation (the Agent Summary tab
+    handles the same case with a clear "no fees attributed yet — assign a
+    BGP contact" empty state) · Suggest: add an "Unassigned" bar to the
+    by-team (and by-client/by-property, if applicable) breakdowns when
+    attributed fees don't sum to the total, or reuse the Agent Summary
+    empty-state hint.
+
+140. 2026-09-03 · Landsec client / mobile 390px (QA r478) · checking which
+    brands are trading on the phone · the Brand Intelligence hub on mobile
+    shows only Brand Explorer — the Turnover Board tab the client uses on
+    desktop is deliberately hidden (brands-hub.tsx: other boards "still
+    being built" on mobile) with no hint it exists or that it's
+    desktop-only, so a client looking for turnover data on the phone finds
+    nothing · Suggest: when the mobile turnover board ships, expose the tab;
+    until then a small "Turnover Board is available on desktop" line (or a
+    read-only card-list variant) would stop the dead-end.
+
+139. 2026-09-03 · Landsec client / desktop 1440px (QA r476) · scanning the
+    Brand Explorer for hospitality brand intel · the "Brand News" panel under
+    the client's brand grid is a generic fashion-wire feed (WWD: Nike, Tom
+    Ford, PVH, Sydney Sweeney…) — the panel filters articles to the Retail
+    + Hospitality categories (brands-hub.tsx), and "Retail" is mostly
+    fashion wire copy, so nothing relates to the client's hospitality/
+    leisure/fitness slice or the 9 brands shown above it · for client
+    logins, narrow Brand News to the slice categories (or match article
+    text against visible brand names), with a "no relevant stories" empty
+    state.
+
+138. 2026-09-03 · BGP staff / desktop 1440px (QA r474) · picking a hero image
+    in Image Studio · the word "Uncategorised" means two different things on
+    the same screen: the CATEGORIES sidebar counts images whose category is
+    "Uncategorised" (1 here), while the albums grid's "Uncategorised" folder
+    counts images with no ADDRESS (2 here) — the mismatched numbers next to
+    the same label read like a bug · rename the album folder to something
+    address-flavoured ("No property / address") or unify the two counts.
+
+137. 2026-09-03 · BGP staff / desktop 1440px (QA r472) · outlining units on
+    a new Evidence Plan · after double-clicking to close an outline, the
+    unit reference is asked for via a raw browser prompt() window — the
+    only browser-chrome prompt in the app, it can't be styled, shows no
+    context, and a stray Esc silently throws the just-drawn outline away ·
+    replace with the app's own small dialog (unit ref field + Save/Cancel),
+    keeping the drawn polygon on Cancel so it can be re-named rather than
+    redrawn.
+
+136. 2026-09-02 · Landsec client / mobile 390px (QA r470) · reviewing
+    Bluewater's Boards section on the phone · the empty Brochures panel
+    reads "No brochures yet — drop a PDF here or use Add." — drag-and-drop
+    doesn't exist on a touch phone, so half the instruction is impossible
+    and reads desktop-first (same panel/copy also serves staff mobile) ·
+    on touch/mobile render the empty state as "No brochures yet — use Add"
+    (keep the drop-zone copy for pointer devices).
+
+135. 2026-09-02 · BGP staff / mobile 390px (QA r464) · working the Bluewater
+    letting tracker on the phone (75 units in Marketing) · every unit card
+    unconditionally reserves two label rows for Area and Rent p.a., and on
+    this fixture most render as "Area —" / "Rent p.a. —", so scanning the
+    list is mostly em-dash rows between unit names (the Tenant row already
+    hides itself when empty) · hide the Area/Rent rows on the phone card
+    when there's no value, matching the Tenant row's behaviour, so each
+    card shrinks to what's actually known and more units fit per screen.
+
+134. 2026-09-02 · Landsec client / mobile 390px (QA r462) · opening Bluewater's
+    property page to review the asset · the Overview tab's first card stacks
+    Status / Asset Class / BGP Team / Website — all four rendered as "—" on
+    the fixture — so the first phone viewport after the header is mostly
+    em-dashes before any real content (ownership, tasks, boards) appears ·
+    on the client's phone view, collapse fields with no value (or float the
+    populated Ownership rows to the top of the card) so the first screen
+    shows information, not placeholders.
+
+133. 2026-09-02 · Landsec client / desktop 1440px (QA r460) · reading the
+    full tenancy schedule board during a portfolio review · the KPI strip
+    mixes empty-state treatments: PASSING RENT shows "—" when no rent data
+    exists, but the tile next to it reads "AVG ERV £PSF 0" — a literal
+    zero that reads as "the ERV is £0" rather than "no ERV data" · show
+    "—" (like passing rent) when no units carry an ERV.
+
+132. 2026-09-02 · BGP staff / desktop 1440px (QA r458) · Requirements page
+    while prepping a pitch · the toolbar mixes everyday actions (search,
+    Add requirement, New Brand) with five maintenance/debug controls
+    ("Refresh PIPnet", "Wipe & resync", "Inspect PIPnet", "Inspect Detail",
+    "Refresh TRL", "Wipe & resync TRL") at equal visual weight — two of
+    them start with "Wipe", one click from the search box, and nothing
+    signals they're admin plumbing · move the inspect/wipe/resync controls
+    behind a single "Sync tools" dropdown (or admin-only visibility) so the
+    everyday row is Add requirement + search + New Brand.
+
+131. 2026-09-02 · BGP staff / mobile 390px (QA r456) · opening a brand
+    profile to prep a pitch on the phone · the 260px hero pane sits as a
+    bare grey block for the first several seconds while the flagship
+    street-view image loads (no spinner, no skeleton — on first visit it
+    reads as a broken/empty panel filling half the viewport; it only
+    collapses if the fetch errors) · give the hero pane a loading shimmer
+    or fade the image in, so slow mobile networks see "loading" rather
+    than "blank".
+
+130. 2026-09-02 · Landsec client / mobile 390px (QA r454) · scanning the
+    Letting Tracker cards on the phone · card titles read "L112 Bluewater,
+    Bluewater" / "U124/U125/U126, Bluewater, B…" with "Bluewater Shopping
+    Centre" repeated again on the subtitle line — the property name appears
+    up to three times per card because unit_name embeds it and the title
+    truncates at 390px before the distinguishing part · when the unit name
+    ends with (or contains) the property name the card title could strip
+    that suffix and let the subtitle carry the property, so the ~28 visible
+    title chars go to the unit reference the user is actually scanning for.
 
 Confirmed by Woody 2026-08-22 ("83"); built + visually verified same day
 by the parent session (390px iPhone UA):

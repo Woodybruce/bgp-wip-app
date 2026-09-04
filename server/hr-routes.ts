@@ -2201,6 +2201,70 @@ export function setupHrRoutes(app: Express) {
         newlyLinked.push({ name: user.name, employee: emp.fullName, via });
       }
 
+      // ── Tracking names (billings / commission) ─────────────────────────
+      // Per-person billings and the commission engine match invoice line
+      // tracking options against sp.xero_tracking_name; when it's blank they
+      // fall back to fragile display-name guessing (Woody, 2026-09-03: "HR
+      // panel doesn't seem correct" — all 41 profiles were blank). Fill
+      // blanks from Xero's actual tracking category options, conservatively:
+      // exact normalised match, then unique first+last token match, then a
+      // first-name match only when unambiguous on both sides.
+      const nameTokens = (s: string | null | undefined) =>
+        String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
+      let trackingSet = 0;
+      const trackingApplied: Array<{ name: string; option: string; via: string }> = [];
+      const trackingUnmatchedPeople: string[] = [];
+      let trackingError: string | null = null;
+      try {
+        const cats = await xeroApi(session, "TrackingCategories");
+        const options: string[] = [];
+        for (const c of cats?.TrackingCategories || []) {
+          for (const o of c?.Options || []) if (o?.Name) options.push(String(o.Name));
+        }
+        const { rows: peopleRows } = await pool.query(
+          `SELECT u.id, u.name, sp.xero_tracking_name
+             FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+            WHERE u.is_active = true`);
+        const usedOptions = new Set(
+          peopleRows.filter((p: any) => p.xero_tracking_name).map((p: any) => normaliseNameKey(p.xero_tracking_name)));
+        const optByKey = new Map<string, string>();
+        for (const o of options) if (!optByKey.has(normaliseNameKey(o))) optByKey.set(normaliseNameKey(o), o);
+
+        for (const p of peopleRows) {
+          if (p.xero_tracking_name || !p.name) continue;
+          const pt = nameTokens(p.name);
+          const first = pt[0], last = pt[pt.length - 1];
+          let chosen: string | null = null, via = "";
+          const exact = optByKey.get(normaliseNameKey(p.name));
+          if (exact && !usedOptions.has(normaliseNameKey(exact))) { chosen = exact; via = "exact"; }
+          if (!chosen && pt.length >= 2) {
+            const hits = options.filter(o => {
+              if (usedOptions.has(normaliseNameKey(o))) return false;
+              const ot = nameTokens(o);
+              return ot.includes(first) && ot.includes(last);
+            });
+            if (hits.length === 1) { chosen = hits[0]; via = "first+last"; }
+          }
+          if (!chosen && first) {
+            const byFirst = options.filter(o => !usedOptions.has(normaliseNameKey(o)) && nameTokens(o)[0] === first);
+            const peopleSameFirst = peopleRows.filter((q: any) => !q.xero_tracking_name && nameTokens(q.name)[0] === first);
+            if (byFirst.length === 1 && peopleSameFirst.length === 1) { chosen = byFirst[0]; via = "first name"; }
+          }
+          if (!chosen) { trackingUnmatchedPeople.push(p.name); continue; }
+          await pool.query(
+            `INSERT INTO staff_profiles (user_id, xero_tracking_name) VALUES ($1, $2)
+             ON CONFLICT (user_id) DO UPDATE
+               SET xero_tracking_name = COALESCE(staff_profiles.xero_tracking_name, EXCLUDED.xero_tracking_name)`,
+            [p.id, chosen]);
+          usedOptions.add(normaliseNameKey(chosen));
+          trackingSet++;
+          trackingApplied.push({ name: p.name, option: chosen, via });
+        }
+      } catch (e: any) {
+        trackingError = e.message;
+        console.error("[hr] tracking-name auto-link error:", e.message);
+      }
+
       res.json({
         linked,
         alreadyLinked: alreadyOk,
@@ -2208,6 +2272,12 @@ export function setupHrRoutes(app: Express) {
         unmatchedEmployees,
         newlyLinked,
         xeroTotal: employees.length,
+        tracking: {
+          set: trackingSet,
+          applied: trackingApplied,
+          unmatchedPeople: trackingUnmatchedPeople,
+          error: trackingError,
+        },
       });
     } catch (e: any) {
       console.error("[hr] xero link-employees error:", e.message);

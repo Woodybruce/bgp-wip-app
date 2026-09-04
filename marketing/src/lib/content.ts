@@ -49,8 +49,17 @@ export const NAV_ITEMS = [
   { label: "Team", href: "/team" },
 ] as const;
 
-export const HERO_STATEMENT =
-  "We combine deep market insight with relentless delivery to create impact and relationships that stand the test of time.";
+export const HERO_STATEMENT = "Great places are built through connected thinking.";
+
+// From Rebrand_Copy — Website: Homepage
+export const HOME_INTRO = {
+  lead: "We are bgp.",
+  body: [
+    "As the UK's largest independent retail and leisure property consultancy, we bring together specialists across our Leasing, Brand Representation, Lease Advisory and Investment teams to create strategies that unlock value.",
+    "Specialist expertise is at the heart of BGP; but it's our collaborative approach that sets us apart. By bringing together insight from across our teams, we provide considered, commercially focused advice that shapes successful places, stronger portfolios and lasting relationships.",
+  ],
+  servicesHeading: "Expertise across every stage of the property lifecycle.",
+};
 
 export const TESTIMONIAL = {
   quote:
@@ -90,16 +99,13 @@ export const TEAM: Person[] = [
   { name: "Lucy Gardiner", title: "Director, National Leasing", phone: "+44 (0)7741 877 452", email: "lucyg@brucegillinghampollard.com" },
   { name: "Lizzie Knights", title: "Director, London Leasing", phone: "+44 (0)7511 902 073", email: "lizzie@brucegillinghampollard.com" },
   { name: "Harry Elliott", title: "Director, Brand Representation", phone: "+44 (0)7568 367 777", email: "harrye@brucegillinghampollard.com" },
-  { name: "Emily Dumbell", title: "Director, Brand Representation", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
+  { name: "Emily Dumbell", title: "Director, National Leasing", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
   { name: "Nick Goodman", title: "Consultant, Investment", phone: "+44 (0)7818 012 432", email: "nickgoodman@brucegillinghampollard.com" },
-  { photo: "/images/team/ollie-wilkinson.jpg", name: "Ollie Wilkinson", title: "Associate Director, Investment", phone: "+44 (0)7736 869 317", email: "ollie@brucegillinghampollard.com" },
   { name: "Tom Cater", title: "Associate Director, Lease Advisory", phone: "+44 (0)7947 484 902", email: "tom@brucegillinghampollard.com" },
   { name: "Lucy Cope", title: "Associate Director, London Leasing", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
   { name: "Evie North", title: "Associate Director, Brand Representation", phone: "+44 (0)7595 349 057", email: "evie@brucegillinghampollard.com" },
   { name: "Alex Todd", title: "Senior Surveyor, Development", phone: "+44 (0)7526 504 806", email: "alext@brucegillinghampollard.com" },
-  { name: "Rob Barnes", title: "Surveyor, National Leasing", phone: "+44 (0)7494 751 653", email: "rob@brucegillinghampollard.com" },
   { name: "Millie Edwards", title: "Leasing", phone: OFFICE_PHONE, email: "TBC" },
-  { photo: "/images/team/danny-cardosi.jpg", name: "Danny Cardosi", title: "Title TBC", phone: OFFICE_PHONE, email: "TBC" },
   { name: "Emily Cann", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
   { name: "Will Penfold", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
   { name: "Luke Donohoe", title: "Graduate Surveyor, National Leasing", phone: "+44 (0)7983 855 926", email: "luke@brucegillinghampollard.com" },
@@ -117,20 +123,19 @@ export const LEASING_CONTACTS = byName(
   "Rupert Bentley-Smith",
   "Victoria Broadhead",
   "Lizzie Knights",
+  "Emily Dumbell",
   "Lucy Cope",
 );
 
 export const INVESTMENT_CONTACTS = byName(
   "Jack Barratt",
   "Nick Halley",
-  "Ollie Wilkinson",
-  "Danny Cardosi",
   "Jonny Palmer",
 );
 
 export const LEASE_ADVISORY_CONTACTS = byName("Peter Wood", "Tom Cater");
 
-export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Emily Dumbell", "Evie North");
+export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Evie North");
 
 export const CONSULTANCY_CONTACTS = byName("Tracey Pollard", "Alex Todd", "Libby Evans");
 
@@ -147,6 +152,26 @@ export interface CaseStudy {
 // From the projects list on the current site; bodies marked [Sample] need
 // fuller copy from the relevant team.
 export const CASE_STUDIES: CaseStudy[] = [
+  {
+    slug: "lucent-piccadilly",
+    title: "Lucent, Piccadilly Lights",
+    service: "Leasing",
+    image: "/images/lucent-piccadilly.jpg",
+    blurb:
+      "Restaurant leasing for Landsec at Lucent W1 — the landmark development behind the world-famous Piccadilly Lights.",
+    facts: [
+      ["Service", "Leasing"],
+      ["Client", "Landsec"],
+      ["Scheme", "Lucent W1 — 144,000 sq ft"],
+      ["Sector", "Restaurant & leisure"],
+      ["Location", "Piccadilly Circus, W1"],
+    ],
+    body: [
+      "Lucent is Landsec's 144,000 sq ft development behind the Piccadilly Lights — office, retail and restaurant space on one of the most famous corners in the world, completed in 2023.",
+      "BGP advised Landsec on the food & beverage leasing of the scheme, shaping the restaurant strategy and securing occupiers for space that sits directly behind the Lights, with some of the highest footfall in the West End.",
+      "Photograph: Thomas Dahlstrøm Nielsen, CC BY-SA 4.0.",
+    ],
+  },
   {
     slug: "20-hanover-square",
     title: "20 Hanover Square",
@@ -295,6 +320,9 @@ export const CASE_STUDIES: CaseStudy[] = [
 ];
 
 export const BRAND_REP_CASE_STUDIES = CASE_STUDIES.filter((c) => c.service === "Brand Representation");
+
+export const caseStudyBySlug = (slug: string): CaseStudy =>
+  CASE_STUDIES.find((c) => c.slug === slug) ?? CASE_STUDIES[0];
 
 // Real transactions from the current site's investment track record.
 export interface InvestmentDeal {
