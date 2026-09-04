@@ -75,7 +75,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'rival-comp-files-and-reqinv-guard', 'rival-chat-media-and-deal-subreads-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'rival-comp-files-and-reqinv-guard', 'rival-chat-media-and-deal-subreads-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard', 'staff-crm-leads-and-packs-kept']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -2459,6 +2459,26 @@ async function victoriaRound(page, cross) {
       throw new Error('staff deals table rendered client read-only party cells');
     }
   });
+
+  // Staff half of the r535 client-leads-guard additions: blocking the CRM
+  // leads pipeline and gating landlord packs for clients must not cost BGP
+  // its own prospecting board or its packs. A 404 on the pack filename is
+  // the RIGHT staff answer (no such file) — a 403 would mean the gate leaked
+  // onto staff.
+  await step(page, p, 'staff-crm-leads-and-packs-kept', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await fetch('/api/crm/leads', { headers: auth }).catch(() => ({ status: 0 }));
+      return {
+        list: list.status,
+        isArray: list.ok ? Array.isArray(await list.json().catch(() => null)) : false,
+        pack: (await fetch('/api/crm/landlord-packs/qa-probe-nonexistent-pack.pdf', { headers: auth }).catch(() => ({ status: 0 }))).status,
+      };
+    });
+    if (r.list !== 200) throw new Error(`staff lost the CRM leads pipeline (expected 200, got ${r.list})`);
+    if (!r.isArray) throw new Error('staff CRM leads list did not come back as an array');
+    if (r.pack === 403) throw new Error('the client landlord-pack gate leaked onto staff (403)');
+  });
 }
 
 async function markRound(page, cross) {
@@ -3623,11 +3643,24 @@ async function markRound(page, cross) {
       const list = await g('/api/leads');
       const stats = await g('/api/leads/stats');
       const generate = (await fetch('/api/leads/generate', { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status;
-      return { list, stats, generate };
+      // r535: /api/crm/leads is a DIFFERENT family from /api/leads above —
+      // BGP's own prospecting pipeline (the admin-only /leads page), and it
+      // rode the allowed /api/crm/ prefix unscoped, so a client could pull
+      // every prospect's name, email, phone and free-text notes.
+      const crmList = await g('/api/crm/leads');
+      const crmDetail = await g('/api/crm/leads/00000000-0000-0000-0000-000000000000');
+      // r535: landlord packs are one flat filename namespace across the firm;
+      // a filename no requirement in the client's slice references must be
+      // refused OUTRIGHT (403), not answered 404 (which leaks existence).
+      const strangePack = await g('/api/crm/landlord-packs/qa-probe-nonexistent-pack.pdf');
+      return { list, stats, generate, crmList, crmDetail, strangePack };
     });
     if (r.list !== 403) throw new Error(`client reached the AI leads board (expected 403, got ${r.list})`);
     if (r.stats !== 403) throw new Error(`client reached the leads stats (expected 403, got ${r.stats})`);
     if (r.generate !== 403) throw new Error(`client triggered AI lead generation (expected 403, got ${r.generate})`);
+    if (r.crmList !== 403) throw new Error(`client reached the CRM leads pipeline (expected 403, got ${r.crmList})`);
+    if (r.crmDetail !== 403) throw new Error(`client reached a CRM lead detail (expected 403, got ${r.crmDetail})`);
+    if (r.strangePack !== 403) throw new Error(`client reached an unreachable landlord pack (expected 403, got ${r.strangePack})`);
   });
 
   // The plain news feed (/api/news-feed/articles) is client-visible, but the

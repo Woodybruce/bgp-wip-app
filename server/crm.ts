@@ -5108,6 +5108,28 @@ Return a JSON object with these fields (use null for any field you cannot find):
   app.get("/api/crm/landlord-packs/:filename", async (req, res) => {
     try {
       const sanitized = path.basename(req.params.filename);
+      // landlord-packs is one flat namespace shared by every leasing
+      // requirement in the firm, and the filename is the only address. Staff
+      // are unrestricted (they reach these through the requirements board);
+      // a CLIENT may read a pack only when it hangs off a requirement they
+      // can already see — the same own-company-or-PIPnet rule the
+      // requirements list and detail reads use. (r535, chat-media class.)
+      const packScope = await resolveCompanyScope(req);
+      if (packScope) {
+        const { NO_ACCESS_SCOPE } = await import("./company-scope");
+        const esc = sanitized.replace(/[\\%_]/g, (c) => "\\" + c);
+        const reach = await pool.query(
+          `SELECT 1 FROM crm_requirements_leasing
+            WHERE landlord_pack LIKE $1 ESCAPE '\\'
+              AND (company_id = $2 OR ($3 AND 'PIPnet' = ANY(sources)))
+            LIMIT 1`,
+          [`%${esc}%`, packScope, packScope !== NO_ACCESS_SCOPE],
+        );
+        if (!reach.rows[0]) {
+          console.warn(`[landlord-packs] client ${packScope} denied ${sanitized}`);
+          return res.status(403).json({ error: "Not available to your account" });
+        }
+      }
       // Render in the browser by default (inline) so clicking a landlord pack
       // shows the PDF instead of force-downloading a blank tab. Download is
       // opt-in via ?download=1 (the popup offers a Download link).

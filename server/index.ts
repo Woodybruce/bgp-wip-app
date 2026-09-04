@@ -3695,6 +3695,13 @@ app.use("/api/branding/assets", express.static(
     //    matched here and keep working.
     /^\/api\/dashboard\/intelligence/,
     /^\/api\/crm\/(landlords|stats)\b/,
+    // BGP's own prospecting pipeline (the admin-only /leads page). The list
+    // and the :id detail were never company-scoped, so a Landsec login could
+    // pull every lead the firm is chasing — name, email, phone, free-text
+    // notes — through the network tab under the allowed /api/crm/ prefix.
+    // No client surface reads leads, so block the whole family (the
+    // convert-to-contact POST included). (r535)
+    /^\/api\/crm\/leads\b/,
     // property-deal-links + property-tenants are no longer blocked: the
     // client Properties page needs both maps and the handlers now scope
     // them to the caller's own portfolio (same pattern as property-agents).

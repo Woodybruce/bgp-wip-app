@@ -23,15 +23,23 @@ for (const f of files){
     // probe path: replace params with a sample so the blocked regexes can match
     const probe = p.replace(/:[A-Za-z0-9_]+/g,'00000000-0000-0000-0000-000000000000');
     if(blocked.some(re=>re.test(probe))) return;
-    if(!/:/.test(p)) return; // only id-addressable
     // grab handler body ~ next 60 lines
     const body = lines.slice(i, i+70).join('\n');
     const guards = [];
-    for (const g of (body.match(/\b(forbids\w+|assert\w+|is\w*Scope\w*|clientBlockedForProperty|checkPropertyAccess|resolveCompanyScope|companyScopeId|clientUnitScopeSql|clientBrandSliceSql|isClientVisibleBrand|isClientRequestUser|requireStaff|isExternalUser|scopeCompanyId|getClientVisibleUserIds|isPropertyInScope|isDealInScope|isContactInScope)\b/g) || []))
+    for (const g of (body.match(/\b(forbids\w+|assert\w+|is\w*Scope\w*|clientBlockedForProperty|checkPropertyAccess|resolveCompanyScope|companyScopeId|clientUnitScopeSql|clientBrandSliceSql|isClientVisibleBrand|isClientRequestUser|requireStaff|isExternalUser|scopeCompanyId|getClientVisibleUserIds|isPropertyInScope|isDealInScope|isContactInScope|chat_thread_members|NO_ACCESS_SCOPE|clientCanReachChatMedia)\b/g) || []))
       guards.push(g);
     rows.push({file:f, line:i+1, path:p, guards});
   });
 }
+// Param-addressed routes cover /:id AND /:filename-style params (the flat
+// filename namespaces — chat-media, landlord-packs — are the same class and
+// were being missed while this only looked for ids). Param-less COLLECTION
+// GETs get their own section: /api/crm/leads was firm-wide and client-readable
+// for exactly as long as this audit only looked at addressable routes (r535).
 const bad = rows.filter(r=>r.guards.length===0);
-console.log('== id-addressable client-allowed GETs with NO scope helper in first 70 lines:', bad.length, 'of', rows.length);
-for(const r of bad) console.log(`${r.path}   [${r.file}:${r.line}]`);
+const addressable = bad.filter(r=>/:/.test(r.path));
+const collections = bad.filter(r=>!/:/.test(r.path));
+console.log('== param-addressed client-allowed GETs with NO scope helper in first 70 lines:', addressable.length, 'of', rows.filter(r=>/:/.test(r.path)).length);
+for(const r of addressable) console.log(`${r.path}   [${r.file}:${r.line}]`);
+console.log('\n== param-less client-allowed COLLECTION GETs with NO scope helper (firm-wide list risk):', collections.length, 'of', rows.filter(r=>!/:/.test(r.path)).length);
+for(const r of collections) console.log(`${r.path}   [${r.file}:${r.line}]`);

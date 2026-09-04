@@ -13,6 +13,20 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+173. 2026-09-04 · BGP staff / desktop 1440px (QA r535) · while gating the CRM
+   leads pipeline, opened /leads as Victoria · the page is a working board
+   (search, "Add lead", a proper empty state) but it sits in the sidebar
+   BELOW the fold under "Core" with nothing linking it to the rest of the
+   prospecting flow — Brand Intelligence's AI leads (/api/leads), the
+   news-intel BD leads and Comps' "11 AI leads awaiting review" are three
+   OTHER lead pools, each on its own screen, none of them cross-referenced.
+   A new starter asked "where are our leads?" would find one of the four and
+   assume it was the list. SUGGESTION: not a new feature — one line of copy
+   on each of the four boards naming the other three and what each is for
+   ("manually-entered prospects", "AI-generated from brand signals",
+   "mined from news", "unreviewed comp evidence"), so the pools stop reading
+   as the same thing.
+
 172. 2026-09-04 · Landsec client / desktop 1440px (QA r534) · "quarterly
    leasing catch-up — whose buildings are these?" · on /properties the
    OWNERSHIP column truncates every chip to three characters ("Client /

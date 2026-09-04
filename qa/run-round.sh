@@ -26,6 +26,7 @@ psql -U bgp -h localhost bgp -tA -c "
   -- deletes its probe deal; the verdict row has no FK and would pile up)
   DELETE FROM deal_verdicts WHERE deal_id NOT IN (SELECT id FROM crm_deals);
   DELETE FROM crm_contacts WHERE name LIKE 'QA Contact%';
+  DELETE FROM crm_leads    WHERE name LIKE 'QA-PROBE Lead%';
   -- staff-tracker-inline-company-create-kept deletes its own newco (r530);
   -- sweep survivors of a mid-scenario death.
   DELETE FROM crm_companies WHERE name LIKE 'QA-PROBE Newco%';

@@ -88,18 +88,84 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r535 · 2026-09-04 · LIGHT (r534 had the journey) · ROUND IN PROGRESS
+### r535 · 2026-09-04 · LIGHT (r534 had the journey) · 2 bugs fixed — CRM leads pipeline + landlord packs
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN
-  42/0.
+  42/0 before AND after the fixes.
 - Two-bot round 535, all three chunks, standard order, each exit 0 on its
   first run. Signatures EXACT vs r534: victoria 2×400, mark 9×403 + 1×503,
-  woody/nick/sam 0. All listed noise (rocketreach-400, keyless-AI 503, the
-  by-design negative-probe 403s).
-- Triage: 0 new issues from the scripted sweep. Round now spends its budget
-  on the carried CLIENT-ISOLATION PUNCH LIST items 3 (unscoped GET
-  /api/crm/leads/:id) and 4 (GET /api/chatbgp/threads/:threadId/active-run
-  membership), then item 5 (re-run + teach client-allowed-get-audit.mjs).
+  woody/nick/sam 0. All listed noise. 0 new issues from the scripted sweep,
+  so the whole budget went to the carried CLIENT-ISOLATION PUNCH LIST.
+- PUNCH-LIST ITEM 4 — CLOSED, NOT A BUG: GET
+  /api/chatbgp/threads/:threadId/active-run DOES carry a thread-membership
+  check (creator or chat_thread_members row, else {active:false}); it just
+  uses no helper the audit script recognised. Re-probed: mark on a foreign
+  thread id → 200 {active:false}, no content. The audit now knows the token.
+- PUNCH-LIST ITEM 3 — BUG FIXED, and WORSE THAN LOGGED. It was filed as
+  "unscoped GET /api/crm/leads/:id", but the whole family was unscoped and
+  the LIST was the real hole: /api/crm/leads rides the allowed /api/crm/
+  prefix, so a Landsec login got 200 + every prospect BGP is chasing — name,
+  email, phone, free-text notes — through the network tab. Proven live before
+  the fix (seeded QA-PROBE lead came back in full to mark). No client surface
+  reads leads (the /leads page is admin-only in the sidebar), so the family
+  is now in CLIENT_BLOCKED_SUBPATHS — list, :id and the convert-to-contact
+  POST. After: victoria 200 with content, mark 403 on both.
+- BUG FIXED 2 (found by the item-5 audit work, same class as r533's
+  chat-media): GET /api/crm/landlord-packs/:filename — authenticated,
+  client-allowed via /api/crm/, and NO reachability check on one flat
+  firm-wide filename namespace. Any client login could pull any landlord
+  pack PDF. Now: staff unrestricted; a CLIENT may read a pack only when its
+  filename is referenced by a leasing requirement they can already see —
+  the SAME own-company-or-PIPnet rule the requirements list and :id reads
+  use. LIKE patterns escape \ % _ so a sanitised filename can't widen the
+  match, and denials log "[landlord-packs] client <id> denied <file>".
+  Probed both branches live: pack on a staff-only requirement → victoria
+  404 (no such file = reached the handler), mark 403; SAME pack once its
+  requirement is PIPnet-sourced → mark 404, i.e. the gate follows real
+  reachability rather than locking the legitimate client out. A client
+  asking for "%" → 403.
+- PUNCH-LIST ITEM 5 — DONE, and the audit script grew the blind spot that
+  hid today's bug. It only ever looked at routes with a param, so firm-wide
+  COLLECTION GETs under an allowed prefix were invisible — which is exactly
+  how /api/crm/leads survived five rounds of this list. It now reports two
+  sections (param-addressed — /:filename included, that part already worked
+  — and param-less collections) and knows chat_thread_members /
+  NO_ACCESS_SCOPE / clientCanReachChatMedia as guards. Post-fix:
+  8 param-addressed hits (was 10) and 46 collection hits.
+- NEW PUNCH LIST for r536+, from that second section. Most of the 46 are
+  external-data proxies (os/voa/land-registry/address-search) or global
+  reference lists (news-feed tags+sources, image-studio categories) and need
+  no gate. These four do NOT look like client business and are worth a
+  deliberate probe, in this order:
+  1. GET /api/dashboard/firm-summary        [hr-routes.ts:1227]
+  2. GET /api/dashboard/individual-leaderboard [hr-routes.ts:1290]
+  3. GET /api/crm/data-health               [contact-verify.ts:239]
+  4. GET /api/image-studio/collections      [image-studio.ts:3601]
+  (1 and 2 are firm performance/fee reporting — the highest-value pair.)
+- Harness growth, standard client-loses/staff-keeps pair: mark's existing
+  client-leads-guard grew crmList + crmDetail + an unreachable-pack probe
+  (all must 403 — note the scenario previously covered only /api/leads, a
+  DIFFERENT family, which is why it never caught this); new victoria
+  staff-crm-leads-and-packs-kept asserts leads list 200 + array and that the
+  pack gate did not leak onto staff (403 fails; 404 is the right answer).
+  Registered in NEGATIVE_PROBE_SCENARIOS so its deliberate 404 stays out of
+  the tally. Both chunks re-run after the change: signatures back to
+  baseline exactly.
+- Verified VISUALLY at 1440px after the fixes, both personas: victoria
+  /leads renders its board + empty state (block did not touch staff),
+  /requirements and /contacts clean; mark /requirements, /contacts, / clean.
+  0 pageerrors either side, 0 non-noise 4xx/5xx.
+- DEFERRED / carried: UX 171 (client PUT persists dealType/team/leaseLength/
+  landlordId on their own deal) untouched, still needs Woody. Bluewater
+  tenancy SPINE duplicates still carried. UX #150, #157, #162, #170, #171,
+  #172 open and unbuilt.
+- Suggestions: UX-NOTES 173 (four separate "leads" pools — CRM leads, brand
+  AI leads, news-intel leads, unreviewed comps — none cross-referenced).
+- New flakes: none. tsc clean. run-round.sh purge grew a QA-PROBE Lead line.
+  Real-device keyboard-up composer check (r405) open for Woody.
+- Next: r535 was LIGHT → r536 FULL, rotation #3 Landsec client mobile 390px.
+  Take the new 4-item punch list above as the fix budget if the journey is
+  clean.
 
 ### r534 · 2026-09-04 · FULL · rotation #2 Landsec client desktop 1440px · 1 bug fixed — client deals table party pickers
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
