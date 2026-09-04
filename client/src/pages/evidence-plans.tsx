@@ -131,21 +131,28 @@ function PlanList() {
   });
 
   return (
-    <div className="container mx-auto p-4 md:p-6 max-w-4xl space-y-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Evidence Plans</h1>
-          <p className="text-sm text-muted-foreground">{plans.length ? `${plans.length} scheme${plans.length === 1 ? "" : "s"}` : "Interactive scheme plans with rental evidence"}</p>
+    <div className="flex flex-col h-full min-h-screen">
+      {/* Header matches the Jobs / Comps pages — one Lease Advisory toolset. */}
+      <div className="border-b bg-background sticky top-0 z-10 px-4 lg:px-6 py-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <MapIcon className="h-5 w-5 text-primary" />
+            <div>
+              <h1 className="text-xl font-semibold">Evidence Plans</h1>
+              <p className="text-xs text-muted-foreground">{plans.length ? `${plans.length} scheme${plans.length === 1 ? "" : "s"}` : "Interactive scheme plans with rental evidence"}</p>
+            </div>
+          </div>
+          <Button onClick={() => setCreating(true)} size="sm" className="gap-1.5" data-testid="button-new-plan"><Plus className="h-4 w-4" /> New plan</Button>
         </div>
-        <Button onClick={() => setCreating(true)} data-testid="button-new-plan"><Plus className="w-4 h-4 mr-1.5" /> New plan</Button>
+        {/* Lease advisory toolset — jobs, evidence plans and comps together */}
+        <div className="flex items-center gap-1.5 mt-3">
+          <Pill onClick={() => navigate("/pla/matters")} data-testid="pill-la-jobs">Jobs</Pill>
+          <Pill active data-testid="pill-la-evidence-plans">Evidence plans</Pill>
+          <Pill onClick={() => navigate("/comps")} data-testid="pill-la-comps">Comps</Pill>
+        </div>
       </div>
 
-      {/* Part of the Lease Advisory toolset */}
-      <div className="flex items-center gap-1.5">
-        <Pill onClick={() => navigate("/pla/matters")} data-testid="pill-la-jobs">Jobs</Pill>
-        <Pill active data-testid="pill-la-evidence-plans">Evidence plans</Pill>
-      </div>
-
+      <div className="flex-1 overflow-auto p-4 lg:p-6">
       {isLoading ? (
         <div className="space-y-2">{[1, 2].map(i => <Skeleton key={i} className="h-20 rounded-2xl" />)}</div>
       ) : plans.length === 0 ? (
@@ -170,6 +177,7 @@ function PlanList() {
           ))}
         </div>
       )}
+      </div>
 
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent>
