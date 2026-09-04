@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r519 · 2026-09-04 · LIGHT (r518 had the journey) — round in progress
+### r519 · 2026-09-04 · LIGHT (r518 had the journey) — GREEN
 - Bring-up: canonical recipe held 82nd consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
@@ -96,10 +96,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (single 422 =
   r462 cover-raster; 403s flat 1-3/route, no storm; 50x grep hits =
   news-feed "500 articles" text, r413 class). Triage: 0 app bugs.
-- r518 FIX RE-VERIFIED in-harness: client-deal-audit-scope passed its
-  first standard-order run inside the mark chunk (server log shows
-  audit-log 200 own / 403 rival, exactly one each).
-- Spot-check + final entry to follow.
+- r518 FIX RE-VERIFIED twice: (1) in-harness — client-deal-audit-scope
+  passed its first standard-order run inside the mark chunk (server log:
+  audit-log 200 own / 403 rival, exactly one each); (2) direct API
+  spot-check on the Gail's fixture deal — staff 200 with 11 rows incl.
+  2 fee/AML-family rows (unfiltered), mark own-deal 200 with 9 rows and
+  0 hidden-family rows, anon 401. Full r518 matrix holds.
+- No journey (LIGHT). No deferred bugs to pick up (r490–r518 deferred
+  none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r519 was LIGHT → r520 FULL, rotation #3 Landsec client mobile
+  390px.
 
 ### r518 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) · 1 bug fixed — GREEN
 - Bring-up: canonical recipe held 81st consecutive time (qa:pg once →
