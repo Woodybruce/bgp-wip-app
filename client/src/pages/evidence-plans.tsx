@@ -433,11 +433,19 @@ function PlanView({ planId }: { planId: string }) {
       // A single-image replace targets the level being viewed; a multi-page
       // PDF refreshes every level server-side.
       if (kind === "background" && activeLevel) fd.append("levelId", activeLevel.id);
-      const r = await fetch(`/api/evidence-plans/${planId}/${kind}`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      // A LINKED plan's tenancy schedule lives on the property — route the
+      // file to the canonical importer so the property's schedule (the
+      // single source of truth) is what gets filled; the plan overlays it.
+      const linkedTs = kind === "import-tenancy" ? plan?.property_id || null : null;
+      if (linkedTs) fd.append("propertyId", linkedTs);
+      const url = linkedTs ? `/api/tenancy-schedule/import-excel` : `/api/evidence-plans/${planId}/${kind}`;
+      const r = await fetch(url, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Upload failed");
       invalidate();
-      if (kind === "import-tenancy") {
+      if (linkedTs) {
+        toast({ title: "Tenancy schedule imported", description: j.message || `${j.imported} rows imported to ${plan?.property_name || "the property"} — plan units pick the facts up automatically.` });
+      } else if (kind === "import-tenancy") {
         toast({ title: "Tenancy schedule imported", description: `${j.matched} unit${j.matched === 1 ? "" : "s"} matched${j.unmatched?.length ? ` · ${j.unmatched.length} TS rows had no unit on the plan` : ""}` });
       } else {
         toast({ title: "Plan image updated", description: (j.levels?.length || 0) > 1 ? `${j.levels.length} levels — outlines and data kept.` : "Outlines and data kept." });
@@ -533,15 +541,14 @@ function PlanView({ planId }: { planId: string }) {
           <Pill active={drawing} onClick={() => { setDrawing(d => !d); setDraft([]); }} data-testid="pill-draw-unit">
             <Pencil className="w-3 h-3 mr-1 inline" />{drawing ? "Drawing… (double-click to close)" : "Draw unit"}
           </Pill>
-          {plan.property_id ? (
+          {plan.property_id && (
             <Button variant="outline" size="sm" onClick={() => navigate(`/tenancy-schedule/${plan.property_id}`)} data-testid="button-open-ts">
               <FileSpreadsheet className="w-3.5 h-3.5 mr-1" /> Tenancy schedule
             </Button>
-          ) : (
-            <Button variant="outline" size="sm" onClick={() => tsInputRef.current?.click()} disabled={busy !== null} data-testid="button-import-ts">
-              {busy === "import-tenancy" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5 mr-1" />} Import tenancy schedule
-            </Button>
           )}
+          <Button variant="outline" size="sm" onClick={() => tsInputRef.current?.click()} disabled={busy !== null} data-testid="button-import-ts">
+            {busy === "import-tenancy" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5 mr-1" />} Import tenancy schedule
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" disabled={busy !== null} data-testid="button-ingest-taf">
@@ -750,26 +757,12 @@ function PlanView({ planId }: { planId: string }) {
                   {levelUnits.filter(u => Array.isArray(u.polygon) && u.polygon.length >= 3).map(u => {
                     const poly = u.polygon as Pt[];
                     const pts = poly.map(p => `${p.x * 100},${p.y * 100 * aspect}`).join(" ");
-                    const c = centroid(poly);
                     const isSel = u.id === selectedId;
                     const isHover = hover?.unitId === u.id;
-                    const za = latestZaByUnit.get(u.id);
-                    const evCount = evidenceCountByUnit.get(u.id) || 0;
-                    const latest = latestEntryByUnit.get(u.id);
-                    const typeColour = colourOf(evidenceTypeKey(latest?.transaction_type));
                     // No visible boxes (Woody, 2026-09-03: misplaced squares
                     // look bad) — the dot is the marker; the outline shows
                     // only on hover (light) or selection (strong, so a wrong
                     // box can be seen and redrawn).
-                    const boxW = (Math.max(...poly.map(p => p.x)) - Math.min(...poly.map(p => p.x))) * 100;
-                    const boxH = (Math.max(...poly.map(p => p.y)) - Math.min(...poly.map(p => p.y))) * 100 * aspect;
-                    // One standard size for every ZA figure (zoom-scaled
-                    // only) — per-box sizing made the rates read at all
-                    // different sizes (Woody, 2026-09-04).
-                    const zaSize = Math.max(0.62, Math.min(1.0, 1.15 / Math.sqrt(zoom)));
-                    // "Bigger generally, not as big as the original" (Woody,
-                    // 2026-09-04) — one standard radius, zoom-scaled only.
-                    const dotR = Math.max(0.42, Math.min(0.7, 0.88 / Math.sqrt(zoom)));
                     return (
                       <g key={u.id} style={{ pointerEvents: "auto", cursor: "pointer" }}
                         onClick={e => { e.stopPropagation(); if (!drawing && !dragging.current?.moved) setSelectedId(u.id); }}
@@ -782,58 +775,74 @@ function PlanView({ planId }: { planId: string }) {
                           fill="transparent"
                           stroke={isSel ? "hsl(17 60% 45%)" : isHover ? "hsl(220 10% 35% / 0.6)" : "transparent"}
                           strokeWidth={isSel ? 0.3 : 0.16} strokeDasharray={isSel ? "1 0.5" : undefined} vectorEffect="non-scaling-stroke" />
-                        {evCount > 0 && (() => {
-                          // Contained marker (Woody, 2026-09-04): a coloured
-                          // disc holding the unit ref and Zone A — neater
-                          // than dot + floating figure. Anchored to the
-                          // frontage; draggable when the unit is selected.
-                          const layout = markerLayout.get(u.id);
-                          const label = String(u.unit_ref || "");
-                          const isRealRef = /\d/.test(label) && label.length <= 8;
-                          const zaStr = za != null ? `£${za.toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
-                          const showFig = showZa && zaStr != null;
-                          // A decluttered-away marker renders as a small plain
-                          // dot at its true anchor — unless selected, which
-                          // always earns the full disc.
-                          const mini = !!layout?.mini && !isSel;
-                          const twoLine = !mini && isRealRef && showFig;
-                          const R = (mini ? layout!.r : (layout?.r ?? (twoLine ? 1.0 : 0.85) * Math.max(1.15, Math.min(1.9, 2.3 / Math.sqrt(zoom))))) * (isSel ? 1.15 : 1);
-                          const dp = dotDraft?.unitId === u.id ? { x: dotDraft.x * 100, y: dotDraft.y * 100 * aspect }
-                            : isSel && u.dot && typeof u.dot.x === "number" ? { x: u.dot.x * 100, y: u.dot.y * 100 * aspect }
-                            : layout ? { x: layout.x, y: layout.y }
-                            : { x: c.x * 100, y: c.y * 100 * aspect };
-                          const cx = dp.x, cy = dp.y;
-                          const refFont = Math.min(R * 0.58, (R * 2.6) / Math.max(2, label.length));
-                          const zaFont = zaStr ? Math.min(R * (twoLine ? 0.52 : 0.6), (R * 2.6) / zaStr.length) : 0;
-                          return (
-                            <g style={isSel ? { cursor: "grab" } : undefined}
-                              onPointerDown={e => { if (!isSel) return; e.stopPropagation(); (e.target as Element).setPointerCapture(e.pointerId); }}
-                              onPointerMove={e => {
-                                if (!isSel || e.buttons !== 1) return;
-                                e.stopPropagation();
-                                const pt = toPlanCoords(e.clientX, e.clientY);
-                                if (pt) setDotDraft({ unitId: u.id, x: pt.x, y: pt.y });
-                              }}
-                              onPointerUp={e => {
-                                if (dotDraft?.unitId !== u.id) return;
-                                e.stopPropagation();
-                                saveUnit.mutate({ id: u.id, patch: { dot: { x: dotDraft.x, y: dotDraft.y } } });
-                                setDotDraft(null);
-                              }}>
-                              <circle cx={cx} cy={cy} r={R} fill={typeColour} stroke="#FFFFFF" strokeWidth={R * 0.09} />
-                              {mini ? null : twoLine ? (
-                                <>
-                                  <text x={cx} y={cy - R * 0.32} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: refFont, fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{label}</text>
-                                  <text x={cx} y={cy + R * 0.38} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: zaFont, fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{zaStr}</text>
-                                </>
-                              ) : (
-                                <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: showFig ? zaFont : (isRealRef ? refFont : Math.min(R * 0.55, (R * 2.6) / 3)), fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>
-                                  {showFig ? zaStr : (isRealRef ? label : "£")}
-                                </text>
-                              )}
-                            </g>
-                          );
-                        })()}
+                      </g>
+                    );
+                  })}
+                  {/* Markers render in their own layer ABOVE every polygon —
+                      when each disc lived inside its unit's <g>, a later big
+                      unit's transparent polygon sat on top of earlier units'
+                      discs and swallowed their clicks (D15 selecting M&S). */}
+                  {levelUnits.filter(u => Array.isArray(u.polygon) && u.polygon.length >= 3 && (evidenceCountByUnit.get(u.id) || 0) > 0).map(u => {
+                    const poly = u.polygon as Pt[];
+                    const c = centroid(poly);
+                    const isSel = u.id === selectedId;
+                    const za = latestZaByUnit.get(u.id);
+                    const latest = latestEntryByUnit.get(u.id);
+                    const typeColour = colourOf(evidenceTypeKey(latest?.transaction_type));
+                    // Contained marker (Woody, 2026-09-04): a coloured
+                    // disc holding the unit ref and Zone A — neater
+                    // than dot + floating figure. Anchored to the
+                    // frontage; draggable when the unit is selected.
+                    const layout = markerLayout.get(u.id);
+                    const label = String(u.unit_ref || "");
+                    const isRealRef = /\d/.test(label) && label.length <= 8;
+                    const zaStr = za != null ? `£${za.toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
+                    const showFig = showZa && zaStr != null;
+                    // A decluttered-away marker renders as a small plain
+                    // dot at its true anchor — unless selected, which
+                    // always earns the full disc.
+                    const mini = !!layout?.mini && !isSel;
+                    const twoLine = !mini && isRealRef && showFig;
+                    const R = (mini ? layout!.r : (layout?.r ?? (twoLine ? 1.0 : 0.85) * Math.max(1.15, Math.min(1.9, 2.3 / Math.sqrt(zoom))))) * (isSel ? 1.15 : 1);
+                    const dp = dotDraft?.unitId === u.id ? { x: dotDraft.x * 100, y: dotDraft.y * 100 * aspect }
+                      : isSel && u.dot && typeof u.dot.x === "number" ? { x: u.dot.x * 100, y: u.dot.y * 100 * aspect }
+                      : layout ? { x: layout.x, y: layout.y }
+                      : { x: c.x * 100, y: c.y * 100 * aspect };
+                    const cx = dp.x, cy = dp.y;
+                    const refFont = Math.min(R * 0.58, (R * 2.6) / Math.max(2, label.length));
+                    const zaFont = zaStr ? Math.min(R * (twoLine ? 0.52 : 0.6), (R * 2.6) / zaStr.length) : 0;
+                    return (
+                      <g key={`marker-${u.id}`} style={{ pointerEvents: "auto", cursor: isSel ? "grab" : "pointer" }}
+                        onClick={e => { e.stopPropagation(); if (!drawing && !dragging.current?.moved) setSelectedId(u.id); }}
+                        onMouseMove={e => {
+                          const rect = canvasRef.current?.getBoundingClientRect();
+                          if (rect) setHover({ unitId: u.id, x: e.clientX - rect.left, y: e.clientY - rect.top });
+                        }}
+                        onMouseLeave={() => setHover(h => (h?.unitId === u.id ? null : h))}
+                        onPointerDown={e => { if (!isSel) return; e.stopPropagation(); (e.target as Element).setPointerCapture(e.pointerId); }}
+                        onPointerMove={e => {
+                          if (!isSel || e.buttons !== 1) return;
+                          e.stopPropagation();
+                          const pt = toPlanCoords(e.clientX, e.clientY);
+                          if (pt) setDotDraft({ unitId: u.id, x: pt.x, y: pt.y });
+                        }}
+                        onPointerUp={e => {
+                          if (dotDraft?.unitId !== u.id) return;
+                          e.stopPropagation();
+                          saveUnit.mutate({ id: u.id, patch: { dot: { x: dotDraft.x, y: dotDraft.y } } });
+                          setDotDraft(null);
+                        }}>
+                        <circle cx={cx} cy={cy} r={R} fill={typeColour} stroke="#FFFFFF" strokeWidth={R * 0.09} />
+                        {mini ? null : twoLine ? (
+                          <>
+                            <text x={cx} y={cy - R * 0.32} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: refFont, fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{label}</text>
+                            <text x={cx} y={cy + R * 0.38} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: zaFont, fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{zaStr}</text>
+                          </>
+                        ) : (
+                          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: showFig ? zaFont : (isRealRef ? refFont : Math.min(R * 0.55, (R * 2.6) / 3)), fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>
+                            {showFig ? zaStr : (isRealRef ? label : "£")}
+                          </text>
+                        )}
                       </g>
                     );
                   })}

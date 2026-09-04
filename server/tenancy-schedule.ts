@@ -689,6 +689,24 @@ const HEADER_ALIASES: Record<string, string> = {
   "inside the 1954 act": "outside_lt_act",   // value text carries the meaning
   "inside 1954 act": "outside_lt_act",
   "1954 act": "outside_lt_act",
+  // MRI managed-portfolio export (Brent Cross July 2026 feed)
+  "unit description": "unit_number",  // the human ref ("Unit D15") lives here…
+  "demise reference": "premises",     // …not in MRI's internal code (gbp085…)
+  "tenant trade name": "trading_name",
+  "demise type": "permitted_use",
+  "demise area sqft": "nia_sqft",
+  "lease start date": "lease_start",
+  "lease expiry date": "lease_expiry",
+  "current demise erv": "erv_pa",
+  "passing rent prf": "passing_rent_pa",
+  "demise s c": "service_charge",
+  "demise insurance": "insurance",
+  "unit status": "status",
+  "sc cap": "service_charge_cap",
+  "next effective break": "break_date",
+  "option type": "break_type",
+  "first unsettled review": "next_review_date",
+  "contracted out": "outside_lt_act",   // MRI: True = contracted out = OUTSIDE
 };
 
 router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("file"), async (req: any, res) => {
@@ -745,7 +763,7 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
       const field = HEADER_ALIASES[norm];
       if (field) {
         colToField[c] = field;
-        if (field === "outside_lt_act") ltActHeaderOutside[c] = /outside/.test(norm);
+        if (field === "outside_lt_act") ltActHeaderOutside[c] = /outside|contracted out/.test(norm);
       }
       else unmatchedHeaders.push(String(raw).trim());
     }
