@@ -13,6 +13,22 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+161. 2026-09-04 · BGP staff / desktop 1440px (QA r527) · opened a bookmarked
+   /subscriptions link as a non-admin (Victoria, Head of National) · the
+   page loads, but its "API Keys & Environment" panel reads "Status
+   unavailable" and still offers the admin controls: pressing "Test Apollo /
+   Xero / CH" paints three red XCircle tiles — "Apollo.io Request failed",
+   "Companies House Request failed", "Xero Request failed" plus a
+   "Connect / Reconnect Xero" prompt — because /api/integrations/status and
+   /api/integrations/ping are requireAdmin. It reads as "the firm's
+   integrations are down", not "this bit is admin-only". The page is out of
+   her sidebar (adminNavBase renders only when user.isAdmin), so this is the
+   pasted-URL/bookmark path — but /finance and /expenses route-gate
+   (EquityRoute/AdminRoute) while /subscriptions, /whatsapp, /addins and
+   /settings don't. Suggestion: either wrap /subscriptions in AdminRoute
+   like /expenses, or hide the keys panel for non-admins and label the
+   failure "Admin only" instead of a red request-failed state.
+
 160. 2026-09-04 · Landsec client / desktop 1440px (QA r526) · read Brand News
    for stories on their own brands · each card's footer prints the raw
    signal_type token from the database — "Starbucks · sector_move · 3 Aug

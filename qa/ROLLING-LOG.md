@@ -46,6 +46,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - 404 GET /api/client/sharepoint/root — fixture has no SharePoint folder
   linked; handler returns a clean "ask your BGP team" 404, files panel
   degrades (r375)
+- 400 GET /api/covenant/:companyNumber — no CH_API_KEY locally, so chFetch
+  throws "Companies House API key not configured" and the handler maps it to
+  400; /covenant-watch degrades cleanly (watched company card keeps its name
+  + last-checked date, no error UI) (r527)
 - "[goad datum fix] failed … relation goad_units does not exist" ~30s
   after dev-server boot — fixture has no goad_units (prod-only harvested
   table, not in the auto-migrate list); rolls back + retries next boot,
@@ -84,7 +88,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r527 · 2026-09-04 · LIGHT (r526 had the journey) — ROUND IN PROGRESS
+### r527 · 2026-09-04 · LIGHT (r526 had the journey) · 0 app bugs — GREEN
 - Bring-up: canonical recipe held 90th time (qa:pg once → run-smoke restore
   clean → purge + seed-personas via node/pg runner, honi 1 / hammerson 2
   verified). Regression: smoke GREEN 42/0.
@@ -92,12 +96,47 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   570s child timeout), STANDARD ORDER, fresh cross-527.json: victoria exit 0
   FIRST RUN (2×400 standing signature exact) / mark exit 0 FIRST RUN
   (9 issues = 8×403 probe-by-design + 1×503 keyless — standing signature
-  exact; r526's new client-news-detail-not-echo scenario [ok]) /
-  woody,nick,sam exit 0 (18 [ok], 0 issues). Server logs: 0 raw 500/502/504
-  across all chunks (the " 500 " hits are the "[News Feed] Linked 15 brand
-  signals from 500 articles" line, not statuses). Triage: 0 app bugs.
-- No journey (LIGHT). Time going to verification of r526's fix + open items.
-- Final entry replaces this one.
+  exact) / woody,nick,sam exit 0 (18 [ok], 0 issues). No repeat of r526's
+  login-POST ECONNRESET flake. Server logs: 0 raw 500/502/504 across all
+  chunks (grep " 500 " hits are the "[News Feed] Linked 15 brand signals
+  from 500 articles" line, not statuses). Per-issue JSONL audit: all 11 rows
+  match the standing signature scenario-for-scenario. Triage: 0 app bugs.
+- r526 FIX VERIFIED (harness + visual): two-bot client-news-detail-not-echo
+  [ok] on its first standard-order run, and Mark's /news at 1440px shows 25
+  headline-only cards with no card repeating its headline as the detail line
+  (DOM sweep for headline/detail pairs that normalise to a prefix of each
+  other: 0 candidates). Slice still correct (Starbucks/Amorino only), 0
+  pageerrors, hscroll 0.
+- LIGHT-round sweep instead of a journey — 25 less-visited staff routes as
+  Victoria @1440px (console + non-noise 4xx/5xx + hscroll + stuck-spinner +
+  boundary check on each): /contacts /image-studio /portfolios /land-registry
+  /document-studio /property-intelligence /news /covenant-watch /lease-events
+  /business-rates /compliance-board /aml-compliance /experian-audit
+  /enrichment /instructions /document-briefs /decks /board-report /reporting
+  /templates /tenant-rep /hunters/letting /hunters/investment /leads
+  /marketing-files /subscriptions /models /kyc-clouseau /property-pathway
+  /turnover /investment-tracker /pla/matters. All render, 0 pageerrors, 0
+  stuck spinners, hscroll 0 everywhere, empty states all worded.
+- NOT bugs from the sweep: /kyc and /pathway are not routes (real ones are
+  /kyc-clouseau and /property-pathway) — unknown routes render a clean
+  "Page not found" card with a Back to Dashboard button; /cashflow bounces
+  Victoria to "/" (EquityRoute — she is neither admin nor equity, and the
+  entry is not in her sidebar); /business-rates, /land-registry, /decks and
+  /templates are alias routes that redirect into the tabbed parents
+  (/property-intelligence?tab=…, /document-briefs?tab=…);
+  400 GET /api/covenant/:number is keyless-CH noise (added to the noise list).
+- Bugs fixed: 0 (nothing broken found — harness AND sweep). Deferred: none.
+  Carried (data, staff decision): Bluewater tenancy SPINE duplicates
+  (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 161 (non-admin staff
+  opening a bookmarked /subscriptions gets "Status unavailable" plus a Test
+  button that paints three red "Request failed" tiles — the endpoints are
+  requireAdmin; /finance and /expenses route-gate, /subscriptions,
+  /whatsapp, /addins, /settings don't). Still open from r526: UX 158/159/160
+  and #150/#157. Real-device keyboard-up composer check (r405) open for Woody.
+- Harness growth: none (no bug fixed, no new gate to lock).
+- New flakes: none. Housekeeping: repaired the r524 entry heading, which
+  r526's insertion had swallowed into the tail of the r525 entry.
+- Next: r527 was LIGHT → r528 FULL, rotation #3 Landsec client mobile 390px.
 
 ### r526 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) · 1 bug fixed — GREEN
 - Bring-up: canonical recipe held 89th time (qa:pg once -> run-smoke restore
