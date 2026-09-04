@@ -84,7 +84,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r521 · 2026-09-04 · LIGHT (r520 had the journey) — ROUND IN PROGRESS (heartbeat)
+### r521 · 2026-09-04 · LIGHT (r520 had the journey) — GREEN
 - Bring-up: canonical recipe held 84th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
@@ -94,8 +94,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   (9 issues = 1×503 keyless + 8×403 probe-by-design — standing signature
   exact) / woody,nick,sam exit 0 (18 [ok], 0 issues). phone-overflow-sweep
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (single 422 =
-  r462 cover-raster; 403s flat 1-3/route, no storm). Triage: 0 app bugs.
-- No deferred bugs to pick up (r490–r520 deferred none). Finalising.
+  r462 cover-raster; 403s flat 1-3/route, no storm). Per-issue JSONL
+  audit: all 11 rows match the standing signature scenario-for-scenario
+  (rocketreach-400, invalid-tracker-400, 8 probe-by-design 403s,
+  commentary-regen 503). Triage: 0 app bugs.
+- No journey (LIGHT). No deferred bugs to pick up (r490–r520 deferred
+  none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r521 was LIGHT → r522 FULL, rotation #4 BGP staff mobile 390px.
 
 ### r520 · 2026-09-04 · FULL (rotation #3 Landsec client mobile 390px) — GREEN
 - Bring-up: canonical recipe held 83rd consecutive time (qa:pg once →
