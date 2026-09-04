@@ -4070,6 +4070,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   // Related emails for a deal — searches user's Outlook inbox for emails mentioning the deal/property name
   app.get("/api/crm/deals/:id/related-emails", requireAuth, async (req, res) => {
     try {
+      // Same scope gate as the deal's other sub-reads: an out-of-scope id
+      // must 403 rather than answer, so a client can't probe deal existence.
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId && !(await isDealInScope(scopeCompanyId, req.params.id as string))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const deal = await storage.getCrmDeal(req.params.id as string);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
@@ -4130,6 +4136,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   // Related calendar events for a deal — searches user's Outlook calendar for events mentioning the deal/property name
   app.get("/api/crm/deals/:id/related-events", requireAuth, async (req, res) => {
     try {
+      // Same scope gate as the deal's other sub-reads: an out-of-scope id
+      // must 403 rather than answer, so a client can't probe deal existence.
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId && !(await isDealInScope(scopeCompanyId, req.params.id as string))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const deal = await storage.getCrmDeal(req.params.id as string);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 

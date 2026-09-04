@@ -54,6 +54,10 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM available_units WHERE unit_name = 'QA-REIMP-UNIT';
   DELETE FROM leasing_schedule_units WHERE unit_name = 'QA-REIMP-UNIT';
   DELETE FROM crm_properties WHERE name LIKE 'QA-REIMP Prop%';
+  -- r533 chat-media gate scenarios: the uploaded probe files and their
+  -- per-user upload-history rows (the thread rows go with the sweep below).
+  DELETE FROM user_upload_history WHERE original_name LIKE 'QA-PROBE chat media%';
+  DELETE FROM file_storage WHERE storage_key LIKE 'chat-media/%' AND original_name LIKE 'QA-PROBE chat media%';
   DELETE FROM chat_messages WHERE thread_id IN (SELECT id FROM chat_threads WHERE title LIKE 'QA-CHATDEL%' OR title LIKE 'QA Thread%');
   DELETE FROM chat_threads WHERE title LIKE 'QA-CHATDEL%' OR title LIKE 'QA Thread%';
   DELETE FROM unit_offers WHERE company_name LIKE 'QA-AOFFER-%' OR company_name LIKE 'QA-ODEL-%' OR company_name LIKE 'QA-OFFER-%' OR company_name LIKE 'QA-RIVAL-%';

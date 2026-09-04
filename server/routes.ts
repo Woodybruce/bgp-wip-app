@@ -4,13 +4,13 @@ import { storage } from "./storage";
 import { pool } from "./db";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql, isClientRequestUser } from "./company-scope";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import os from "os";
 import crypto from "crypto";
-import { saveFile, getFile, recordUserUpload } from "./file-storage";
+import { saveFile, getFile, recordUserUpload, clientCanReachChatMedia } from "./file-storage";
 import { contentDispositionFor } from "./utils/http-headers";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
@@ -522,6 +522,16 @@ export async function registerRoutes(
     try {
       const filename = String(req.params.filename || "");
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
+      // chat-media is a flat namespace shared with KYC documents, so a
+      // client login only gets files it can already reach (own upload, or
+      // posted in a thread it belongs to). Staff are unrestricted.
+      if (await isClientRequestUser(req)) {
+        const callerId = (req.session?.userId || req.tokenUserId) as string;
+        if (!(await clientCanReachChatMedia(callerId, filename))) {
+          console.warn(`[chat-media] client ${callerId} denied ${filename}`);
+          return res.status(403).json({ message: "Not available to your account" });
+        }
+      }
       const file = await getFile(`chat-media/${filename}`);
       if (!file) {
         const diskPath = path.join(CHAT_MEDIA_DIR, filename);

@@ -75,7 +75,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'rival-comp-files-and-reqinv-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'rival-comp-files-and-reqinv-guard', 'rival-chat-media-and-deal-subreads-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1719,6 +1719,42 @@ async function victoriaRound(page, cross) {
     cross.reqInvId = r.id;
   });
 
+  // r533: chat-media is one flat namespace (chat uploads, ChatBGP-generated
+  // docs, KYC passports/bank statements) behind a client-allowed download
+  // route. Victoria drops two staff files in: one shared into a thread Mark
+  // belongs to, one never shared — the client chunks prove the shared one
+  // still opens and the private one doesn't.
+  await step(page, p, 'agent-upload-chat-media', async () => {
+    const r = await page.evaluate(async (round) => {
+      const bearer = 'Bearer ' + localStorage.getItem('authToken');
+      const put = async (name) => {
+        const fd = new FormData();
+        fd.append('files', new Blob(['QA-PROBE chat media'], { type: 'text/plain' }), name);
+        const up = await fetch('/api/chat/upload', { method: 'POST', credentials: 'include',
+          headers: { Authorization: bearer }, body: fd });
+        if (!up.ok) return null;
+        return ((await up.json().catch(() => ({}))).files || [])[0] || null;
+      };
+      const shared = await put(`QA-PROBE chat media shared R${round}.txt`);
+      const priv = await put(`QA-PROBE chat media private R${round}.txt`);
+      if (!shared || !priv) return { ok: false, why: 'upload failed' };
+      const users = await (await fetch('/api/users', { credentials: 'include', headers: { Authorization: bearer } })).json().catch(() => []);
+      const mark = (Array.isArray(users) ? users : []).find((u) => (u.email || '').toLowerCase() === 'mark.warne@landsec.com');
+      if (!mark) return { ok: false, why: 'mark not in /api/users' };
+      const json = { 'Content-Type': 'application/json', Authorization: bearer };
+      const th = await (await fetch('/api/chat/threads', { method: 'POST', credentials: 'include', headers: json,
+        body: JSON.stringify({ title: `QA Thread R${round} media`, memberIds: [mark.id] }) })).json().catch(() => ({}));
+      if (!th.id) return { ok: false, why: 'thread create failed' };
+      const msg = await fetch(`/api/chat/threads/${th.id}/messages`, { method: 'POST', credentials: 'include', headers: json,
+        body: JSON.stringify({ role: 'user', content: 'QA-PROBE pack for review', attachments: [JSON.stringify(shared)] }) });
+      if (!msg.ok) return { ok: false, why: `message ${msg.status}` };
+      return { ok: true, shared: shared.url.replace('/api/chat-media/', ''), priv: priv.url.replace('/api/chat-media/', '') };
+    }, ROUND);
+    if (!r.ok) throw new Error(`agent could not stage chat-media files (${r.why})`);
+    cross.mediaShared = r.shared;
+    cross.mediaPrivate = r.priv;
+  });
+
   // r504: the comp detail dialog was a hard grid-cols-2 — at 390px each
   // column got ~160px, the 112px labels left ~40px value slivers and long
   // values collided with the Transaction column. Fixed with grid-cols-1
@@ -2470,6 +2506,50 @@ async function markRound(page, cross) {
     if (compId && r.bulkRows < 1) throw new Error(`own comp files/bulk came back empty (${r.bulkRows} rows)`);
     if (reqInvId && r.reqInvStatus !== 200) throw new Error(`owning client locked out of their own investment requirement (${r.reqInvStatus})`);
     if (reqInvId && !/QA-REQINV/.test(r.reqInvName)) throw new Error(`own investment requirement detail did not carry the row (name="${r.reqInvName}")`);
+  });
+
+  // r533 counterpart to rival-chat-media-and-deal-subreads-guard: gating
+  // chat-media must not lock the client out of files it legitimately has —
+  // its own upload, and a staff file shared into a thread it belongs to.
+  await step(page, p, 'client-chat-media-own-roundtrip', async () => {
+    const r = await page.evaluate(async ([shared, priv, round]) => {
+      const bearer = 'Bearer ' + localStorage.getItem('authToken');
+      const fd = new FormData();
+      fd.append('files', new Blob(['QA-PROBE client media'], { type: 'text/plain' }), `QA-PROBE chat media client R${round}.txt`);
+      const up = await fetch('/api/chat/upload', { method: 'POST', credentials: 'include',
+        headers: { Authorization: bearer }, body: fd });
+      const own = up.ok ? (((await up.json().catch(() => ({}))).files || [])[0] || null) : null;
+      const get = async (name) => name
+        ? (await fetch(`/api/chat-media/${name}`, { credentials: 'include', headers: { Authorization: bearer } }).catch(() => ({ status: 0 }))).status
+        : -1;
+      const out = {
+        uploadStatus: up.status,
+        ownStatus: await get(own && own.url.replace('/api/chat-media/', '')),
+        sharedStatus: await get(shared),
+        privateStatus: await get(priv),
+      };
+      out.ownName = own ? own.url.replace('/api/chat-media/', '') : null;
+      // Own deal sub-reads: keyless locally, so the pass mark is a 200
+      // carrying connected:false — not a 403.
+      const deals = await (await fetch('/api/crm/deals', { credentials: 'include', headers: { Authorization: bearer } })).json().catch(() => []);
+      const dealId = (Array.isArray(deals) ? deals : [])[0]?.id || null;
+      out.dealId = dealId;
+      if (dealId) {
+        for (const sub of ['related-emails', 'related-events']) {
+          const res = await fetch(`/api/crm/deals/${dealId}/${sub}`, { credentials: 'include', headers: { Authorization: bearer } }).catch(() => ({ status: 0 }));
+          out[sub] = res.status;
+        }
+      }
+      return out;
+    }, [cross.mediaShared || null, cross.mediaPrivate || null, ROUND]);
+    if (r.uploadStatus !== 200) throw new Error(`client could not upload to chat (${r.uploadStatus})`);
+    if (r.ownStatus !== 200) throw new Error(`client locked out of its OWN chat upload (${r.ownStatus})`);
+    if (cross.mediaShared && r.sharedStatus !== 200) throw new Error(`client locked out of a file shared into its own thread (${r.sharedStatus})`);
+    if (cross.mediaPrivate && r.privateStatus !== 403) throw new Error(`unshared staff chat-media readable by client (${r.privateStatus})`);
+    if (r.dealId && r['related-emails'] !== 200) throw new Error(`client locked out of its own deal related-emails (${r['related-emails']})`);
+    if (r.dealId && r['related-events'] !== 200) throw new Error(`client locked out of its own deal related-events (${r['related-events']})`);
+    cross.clientDealId = r.dealId;
+    cross.mediaClientOwn = r.ownName;
   });
 
   await step(page, p, 'client-comps-readonly', async () => {
@@ -6825,6 +6905,28 @@ async function samRound(page, cross) {
   // the tenant boundary: Sam editing or deleting the viewing/offer Victoria
   // logged on a Landsec unit must be refused. Complements
   // rival-client-write-guards, which only probes the POST side.
+  // r533: chat-media by filename, and the deal M365 sub-reads, both carried
+  // requireAuth only — a rival client could pull any chat attachment (KYC
+  // documents live in the same namespace) and probe deal existence.
+  await step(page, p, 'rival-chat-media-and-deal-subreads-guard', async () => {
+    const r = await page.evaluate(async ([shared, priv, own, dealId]) => {
+      const bearer = 'Bearer ' + localStorage.getItem('authToken');
+      const get = async (url) => url
+        ? (await fetch(url, { credentials: 'include', headers: { Authorization: bearer } }).catch(() => ({ status: 0 }))).status
+        : -1;
+      return {
+        shared: await get(shared && `/api/chat-media/${shared}`),
+        priv: await get(priv && `/api/chat-media/${priv}`),
+        own: await get(own && `/api/chat-media/${own}`),
+        emails: await get(dealId && `/api/crm/deals/${dealId}/related-emails`),
+        events: await get(dealId && `/api/crm/deals/${dealId}/related-events`),
+      };
+    }, [cross.mediaShared || null, cross.mediaPrivate || null, cross.mediaClientOwn || null, cross.clientDealId || null]);
+    for (const [k, want] of [['shared', 403], ['priv', 403], ['own', 403], ['emails', 403], ['events', 403]]) {
+      if (r[k] !== -1 && r[k] !== want) throw new Error(`rival ${k} came back ${r[k]}, expected ${want}`);
+    }
+  });
+
   await step(page, p, 'rival-viewing-offer-patch-guard', async () => {
     if (!cross.viewingId || !cross.offerId) return;
     const r = await page.evaluate(async (args) => {

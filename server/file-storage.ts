@@ -195,3 +195,53 @@ export async function syncFileToDisk(storageKey: string, diskPath: string): Prom
   };
   await saveFile(storageKey, data, mimeMap[ext] || "application/octet-stream", path.basename(diskPath));
 }
+
+// ── chat-media reachability ────────────────────────────────────────────────
+// chat-media is one flat namespace shared by chat uploads, ChatBGP-generated
+// documents and KYC uploads (passports, bank statements), and the download
+// route is client-allowed — so an external client login must not be able to
+// pull a file just because it knows (or guesses) a filename. A client may
+// read a chat-media file only when it is reachable from something they can
+// already see: a file they uploaded themselves, or one referenced by a
+// message in a thread they belong to (their own ChatBGP conversation is such
+// a thread). BGP staff are not gated here — chat-media is internal storage
+// and staff already reach these files through the surfaces that made them.
+function likePatternFor(filename: string): string {
+  return `%${filename.replace(/([\\%_])/g, "\\$1")}%`;
+}
+
+export async function clientCanReachChatMedia(
+  userId: string,
+  filename: string
+): Promise<boolean> {
+  const storageKey = `chat-media/${filename}`;
+  try {
+    await ensureUserUploadsTable();
+    const own = await pool.query(
+      `SELECT 1 FROM user_upload_history WHERE user_id = $1 AND storage_key = $2 LIMIT 1`,
+      [userId, storageKey]
+    );
+    if (own.rows.length > 0) return true;
+  } catch (e: any) {
+    console.warn("[file-storage] chat-media upload-history check failed:", e?.message);
+  }
+  try {
+    const pattern = likePatternFor(filename);
+    const shared = await pool.query(
+      `SELECT 1
+         FROM chat_messages cm
+         JOIN chat_threads ct ON ct.id = cm.thread_id
+         LEFT JOIN chat_thread_members m ON m.thread_id = ct.id AND m.user_id = $1
+        WHERE (ct.created_by = $1 OR m.user_id IS NOT NULL)
+          AND (cm.content LIKE $2 ESCAPE '\\'
+               OR EXISTS (SELECT 1 FROM unnest(COALESCE(cm.attachments, '{}')) a
+                           WHERE a LIKE $2 ESCAPE '\\'))
+        LIMIT 1`,
+      [userId, pattern]
+    );
+    return shared.rows.length > 0;
+  } catch (e: any) {
+    console.warn("[file-storage] chat-media thread check failed:", e?.message);
+    return false;
+  }
+}
