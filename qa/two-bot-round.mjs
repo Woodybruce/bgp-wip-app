@@ -2479,6 +2479,24 @@ async function victoriaRound(page, cross) {
     if (!r.isArray) throw new Error('staff CRM leads list did not come back as an array');
     if (r.pack === 403) throw new Error('the client landlord-pack gate leaked onto staff (403)');
   });
+
+  // Staff half of the r536 dashboard block: BGP's own firm fee summary and the
+  // per-agent leaderboard power the /hr overview hero, so the client gate must
+  // not cost staff either.
+  await step(page, p, 'staff-firm-dashboard-kept', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const j = async (url) => {
+        const res = await fetch(url, { headers: auth }).catch(() => ({ status: 0 }));
+        return { status: res.status, body: res.ok ? await res.json().catch(() => null) : null };
+      };
+      return { summary: await j('/api/dashboard/firm-summary'), board: await j('/api/dashboard/individual-leaderboard') };
+    });
+    if (r.summary.status !== 200) throw new Error(`staff lost the firm fee summary (expected 200, got ${r.summary.status})`);
+    if (typeof r.summary.body?.wipPence !== 'number') throw new Error('firm summary came back without a WIP figure');
+    if (r.board.status !== 200) throw new Error(`staff lost the individual leaderboard (expected 200, got ${r.board.status})`);
+    if (!Array.isArray(r.board.body?.topBiller)) throw new Error('leaderboard came back without a topBiller list');
+  });
 }
 
 async function markRound(page, cross) {
@@ -3383,10 +3401,21 @@ async function markRound(page, cross) {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
-      return { board: await g('/api/board-report'), reporting: await g('/api/reporting/summary') };
+      return {
+        board: await g('/api/board-report'),
+        reporting: await g('/api/reporting/summary'),
+        // r536: both rode the allowed /api/dashboard/ prefix on requireAuth
+        // alone. firm-summary handed a landlord BGP's billed YTD, WIP, ski
+        // target and headcount; individual-leaderboard is the per-agent
+        // billing strip. Only the staff-only /hr page reads either.
+        firmSummary: await g('/api/dashboard/firm-summary'),
+        leaderboard: await g('/api/dashboard/individual-leaderboard'),
+      };
     });
     if (r.board !== 403) throw new Error(`client reached the board report (expected 403, got ${r.board})`);
     if (r.reporting !== 403) throw new Error(`client reached the reporting summary (expected 403, got ${r.reporting})`);
+    if (r.firmSummary !== 403) throw new Error(`client read BGP's firm fee summary (expected 403, got ${r.firmSummary})`);
+    if (r.leaderboard !== 403) throw new Error(`client read the per-agent leaderboard (expected 403, got ${r.leaderboard})`);
   });
 
   // The BGP deal-report generator (recent-deals feed + branded PDF builder) is

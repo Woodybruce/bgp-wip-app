@@ -3694,6 +3694,13 @@ app.use("/api/branding/assets", express.static(
     //    /leasing-schedule/property/:id, /company-property-links — are not
     //    matched here and keep working.
     /^\/api\/dashboard\/intelligence/,
+    // BGP's own P&L. firm-summary is the firm-wide fee position — billed YTD,
+    // WIP, the ski target, deal count and headcount; individual-leaderboard is
+    // the per-agent billing/pipeline strip. Both rode the allowed
+    // /api/dashboard/ prefix on requireAuth alone, so a landlord login could
+    // read what BGP has billed and what each agent is worth. Only /hr reads
+    // them and that page is staff-only, so nothing client-side breaks. (r536)
+    /^\/api\/dashboard\/(firm-summary|individual-leaderboard)\b/,
     /^\/api\/crm\/(landlords|stats)\b/,
     // BGP's own prospecting pipeline (the admin-only /leads page). The list
     // and the :id detail were never company-scoped, so a Landsec login could

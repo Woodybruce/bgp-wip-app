@@ -88,15 +88,64 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r536 · 2026-09-04 · FULL (rotation #3 Landsec client MOBILE 390px) · ROUND IN PROGRESS
+### r536 · 2026-09-04 · FULL · rotation #3 Landsec client MOBILE 390px · 2 bugs fixed — firm fee summary + agent leaderboard open to clients
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN
-  42/0.
-- Two-bot round 536, all three chunks, standard order, each exit 0 first run.
-  Signatures EXACT vs r535: victoria 2×400, mark 9×403 + 1×503, woody/nick/sam
-  0. All listed noise. 0 new issues from the scripted sweep.
-- Next: client mobile 390px journey, then the r535 punch list (firm-summary /
-  individual-leaderboard first).
+  42/0 before AND after the fixes.
+- Two-bot round 536, all three chunks, standard order, each exit 0 on its
+  first run. Signatures EXACT vs r535: victoria 2×400, mark 9×403 + 1×503,
+  woody/nick/sam 0. All listed noise. 0 new issues from the scripted sweep.
+- JOURNEY (Mark Warne, iPhone UA @ 390px) — "on the train: check the Bluewater
+  lettings position": / (Portfolio home) → /properties → /available → /deals →
+  /brands → /comps → /requirements → /calendar → /news → /tasks → /messages.
+  Every surface rendered, 0 pageerrors, 0 overflow at 390px, and the ONLY
+  4xx in the whole walk were 2× 404 GET /api/hr/photo/<id> (missing-photo
+  noise class — the BGP-team avatars on the home card). Bottom nav
+  Portfolio|Messages|Deals|Tasks|News with Portfolio active at "/" — layout
+  swap still holds. NOT a bug: typing /tracker as a client lands on the
+  Portfolio dashboard (no such client route; the home tile is the way in).
+- PUNCH-LIST ITEM 1 + 2 — BOTH REAL, BOTH FIXED. Probed live first:
+  GET /api/dashboard/firm-summary returned 200 to Mark with BGP's own P&L —
+  billed YTD, £250k WIP, the £4m ski target, days remaining, deal count and
+  headcount (18). GET /api/dashboard/individual-leaderboard returned 200 too
+  (empty in this fixture, but it is the per-agent billing/pipeline/kudos
+  strip). Both rode the allowed /api/dashboard/ prefix on requireAuth alone —
+  only /^\/api\/dashboard\/intelligence/ was blocked. Now in
+  CLIENT_BLOCKED_SUBPATHS. Nothing client-side reads either (grep: only
+  hr-overview.tsx, and /hr is staff-only), so no 403 storm — Mark's mobile
+  home re-walked after the fix, 0 non-noise 4xx.
+- PUNCH-LIST ITEM 3 — NOT A BUG, CLOSED. GET /api/crm/data-health already
+  calls staffOnly(req,res) in contact-verify.ts; probed live, Mark gets 403
+  and Victoria 200. The audit script doesn't know the staffOnly token.
+- PUNCH-LIST ITEM 4 — NOT A BUG, CLOSED. GET /api/image-studio/collections
+  scopes through requestScope(): the WHERE clause is company_id = $1 OR
+  property_id IN (scoped props) for scoped callers. Mark gets his own
+  "Brand · Landsec" folder only. Audit didn't recognise requestScope/listScope.
+  → The r535 punch list is now fully worked; nothing carried from it.
+- Harness growth, the standard client-loses/staff-keeps pair: mark's existing
+  client-firm-reporting-guard grew firmSummary + leaderboard (both must 403
+  alongside board-report and reporting/summary); new victoria
+  staff-firm-dashboard-kept asserts 200 on both AND that the payloads still
+  carry wipPence / topBiller, so the block can't quietly cost /hr its hero.
+  Not registered in NEGATIVE_PROBE_SCENARIOS (it makes no deliberate 4xx).
+  Both chunks re-run after the change: signatures back to baseline exactly.
+- Verified VISUALLY after the fixes: Victoria /hr at 1440px still renders
+  "Ski target 2026 · £0 billed of £4.00m target · +£250k WIP · 119 days left"
+  plus the Teams board and her own commission card; Mark's phone home clean.
+- Suggestions: UX-NOTES 174 (client phone comp cards carry only a truncated
+  name — no rent/size/date, which is the whole point of rent-review
+  evidence), 175 (client Calendar CRM strip shows "BUSIEST AGENT
+  victoria@brucegillinghampollard.com" — raw internal email as a name, and a
+  BGP-internal ranking framed at a landlord).
+- DEFERRED / carried: UX #150, #157, #162, #170, #171, #172 open and unbuilt
+  (171 = client PUT persists dealType/team/leaseLength/landlordId — still
+  needs Woody). Bluewater tenancy SPINE duplicates still carried.
+- New flakes: none. tsc clean. Real-device keyboard-up composer check (r405)
+  open for Woody.
+- Next: r536 was FULL → r537 LIGHT (skip the journey). The r535 punch list is
+  exhausted; a LIGHT round could re-run qa/client-allowed-get-audit.mjs after
+  teaching it the staffOnly and requestScope tokens (both cost this round a
+  probe) and work whatever new collection GETs it surfaces.
 
 ### r535 · 2026-09-04 · LIGHT (r534 had the journey) · 2 bugs fixed — CRM leads pipeline + landlord packs
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →

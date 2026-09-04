@@ -13,6 +13,35 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+175. 2026-09-04 · Landsec client / mobile 390px (QA r536) · "what's BGP got
+   on this week" — opened Calendar on the phone · the CRM intelligence strip
+   along the bottom shows Mark a tile reading "BUSIEST AGENT
+   victoria@brucegillinghampollard.com — 2 events in 30 days". Two things
+   read wrong to a landlord: the person is identified by her raw work EMAIL
+   rather than her name (everywhere else in the client shell — "YOUR BGP
+   TEAM", portfolio contacts — she is "Victoria, Head of National"), and
+   "busiest agent" is a BGP-internal activity ranking framed as if the
+   client should care who at BGP is busiest. The handler already company-
+   jails the numbers, so the data is his own; it's the framing and the
+   identifier that jar. SUGGESTION: resolve the agent to a display name (fall
+   back to the email only if no user row matches), and for client viewers
+   relabel the tile to something portfolio-facing — "YOUR BGP CONTACT ·
+   Victoria — 2 events in 30 days" — or drop that one tile from the client
+   strip and keep the five portfolio tiles.
+
+174. 2026-09-04 · Landsec client / mobile 390px (QA r536) · "check the comps
+   evidence before the rent review" — opened Comps on the phone · the phone
+   card list gives each comp ONE line: the comp name truncated
+   ("QA-COMP R536, Bluewater Shopping …") plus an AI button. No rent, no
+   £/sq ft, no size, no date, no unit. For rent-review evidence the number
+   IS the content, so the list is unreadable at a glance and every comp
+   needs a tap to be worth anything — while the strip directly above it
+   already prints "1 comp · 0 verified · 0 areas". Desktop shows the columns.
+   SUGGESTION: give the phone card the same three facts the desktop row
+   leads with — rent (£/sq ft), size, and date — as a sub-line under the
+   name, and let the name wrap to two lines instead of truncating, per the
+   desktop-table / phone-card-list rule in docs/DESIGN.md.
+
 173. 2026-09-04 · BGP staff / desktop 1440px (QA r535) · while gating the CRM
    leads pipeline, opened /leads as Victoria · the page is a working board
    (search, "Add lead", a proper empty state) but it sits in the sidebar
