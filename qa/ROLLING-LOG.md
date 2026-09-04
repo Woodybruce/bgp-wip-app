@@ -88,6 +88,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r539 · 2026-09-04 · LIGHT (r538 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once → run-smoke restore → seed-personas
+  into bgpsmoke). Regression: smoke GREEN 42/0.
+- Two-bot round 539, all three chunks, each exit 0 first run. Signatures EXACT
+  vs r537/r538: victoria 2×400, mark 9×403 + 1×503, woody/nick/sam 0. All
+  listed noise. 0 new issues from the scripted sweep.
+- Triage list for this round (per parent notes): (1) r538 deferred
+  validateDOMNesting nested-button warning on the phone Messages → New Group
+  → Start Chat walk; (2) r538 deferred available_units doubled unit names —
+  fixture-only vs app should de-dupe; (3) the carried Bluewater tenancy SPINE
+  duplicates. Then a fresh surface if budget allows.
+
 ### r538 · 2026-09-04 · FULL · staff MOBILE 390px journey · 0 bugs fixed (nothing broken found) · 3 suggestions
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN
