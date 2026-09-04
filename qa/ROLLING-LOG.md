@@ -84,8 +84,8 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r523 · 2026-09-04 · LIGHT (r522 had the journey) — round in progress
-- Provisional heartbeat. Bring-up: canonical recipe held (qa:pg once →
+### r523 · 2026-09-04 · LIGHT (r522 had the journey) — GREEN
+- Bring-up: canonical recipe held 86th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
 - Two-bot 523 as 3 foreground chunks (with-server wrapper w/ lsof port
@@ -95,8 +95,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   exact) / woody,nick,sam exit 0 (18 [ok], 0 issues). phone-overflow-sweep
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (single 422 =
   r462 cover-raster; mark 403s flat 1-3/route, no storm). Triage: 0 app
-  bugs. r522's staff-turnover-bybrand-mobile-names passed its first
-  standard-order victoria run. Visual re-verify of the r522 fix to follow.
+  bugs.
+- r522 FIX RE-VERIFIED twice: (1) in-harness —
+  staff-turnover-bybrand-mobile-names passed its first standard-order
+  victoria run; (2) visual spot-check — Victoria @390px iPhone UA on
+  /turnover BY BRAND: all 12 group headers render full brand names
+  (span widths 162-219px, none truncated, min 96px holds), stats
+  right-aligned, Find Stores wraps below the name row, 0 h-overflow,
+  screenshot clean.
+- No journey (LIGHT). No deferred bugs to pick up (r490–r522 deferred
+  none).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r523 was LIGHT → r524 FULL, rotation #1 BGP staff desktop 1440px.
 
 ### r522 · 2026-09-04 · FULL (rotation #4 BGP staff mobile 390px) · 1 bug fixed — GREEN
 - Bring-up: canonical recipe held 85th consecutive time (qa:pg once →
