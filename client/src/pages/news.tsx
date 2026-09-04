@@ -66,6 +66,16 @@ const TEAMS = [
 
 const CATEGORIES = ["All", "Property", "Retail", "Investment", "Hospitality", "Planning"];
 
+// UX #143 — wire feeds often copy the headline into the description; a
+// summary that just repeats the title is noise, so hide it.
+function summaryAddsInfo(article: { title?: string | null; aiSummary?: string | null; summary?: string | null }): boolean {
+  const s = (article.aiSummary || article.summary || "").trim();
+  if (!s) return false;
+  const t = (article.title || "").trim().toLowerCase();
+  const sl = s.toLowerCase();
+  return !t || (sl !== t && !sl.startsWith(t));
+}
+
 function timeAgo(date: string | Date | null): string {
   if (!date) return "";
   const now = new Date();
@@ -615,7 +625,7 @@ function FeedTab() {
                         {article.title}
                       </h3>
 
-                      {(article.aiSummary || article.summary) && (
+                      {summaryAddsInfo(article) && (
                         <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
                           {article.aiSummary ? (
                             <>
@@ -771,7 +781,7 @@ function FeedTab() {
                         {article.title}
                       </h3>
 
-                      {(article.aiSummary || article.summary) && (
+                      {summaryAddsInfo(article) && (
                         <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
                           {article.aiSummary ? (
                             <>
@@ -1396,7 +1406,7 @@ function MobileNewsFeed() {
               </button>
             </div>
             <div className="text-[16px] font-semibold text-foreground leading-snug mb-1.5 tracking-tight">{article.title}</div>
-            {(article.aiSummary || article.summary) && (
+            {summaryAddsInfo(article) && (
               <div className="text-[13px] text-muted-foreground leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
             )}
           </div>

@@ -530,7 +530,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     if (!data || isClientViewer || autoStoresRan.current) return;
     autoStoresRan.current = true;
     if ((data.stores?.length || 0) === 0 && !researchStoresMutation.isPending) {
-      researchStoresMutation.mutate("uk");
+      researchStoresMutation.mutate({ scope: "uk", auto: true });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, currentUser]);
@@ -710,7 +710,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     // Kicks off the background research and polls /status until the job
     // finishes. For big brands (H&M has hundreds of UK locations) this
     // can run 1-3 minutes — past Railway's 60s edge timeout.
-    mutationFn: async (scope: "uk" | "global" = "uk") => {
+    mutationFn: async ({ scope = "uk" }: { scope?: "uk" | "global"; auto?: boolean } = {}) => {
       const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`, { scope });
       if (!res.ok && res.status !== 202) {
         const err = await res.json().catch(() => ({}));
@@ -740,7 +740,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         setTimeout(poll, POLL_INTERVAL);
       });
     },
-    onSuccess: (out: any) => {
+    onSuccess: (out: any, vars: any) => {
       const summary = Array.isArray(out?.diagnostics)
         ? out.diagnostics.find((d: any) => d.step === "places_summary")?.detail
           || out.diagnostics[out.diagnostics.length - 1]?.detail
@@ -749,7 +749,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       // catch a transient toast — they can read it inline when the empty
       // state shows.
       setStoresDiagnostic(out.found ? null : summary || "Google Places returned no UK matches.");
-      toast({
+      if (!vars?.auto) toast({
         title: "Store search complete",
         description: out.found
           ? `${out.found} stores found`
@@ -760,9 +760,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       }
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
     },
-    onError: (e: any) => {
+    onError: (e: any, vars) => {
       setStoresDiagnostic(e.message || "Store search failed");
-      toast({ title: "Store search failed", description: e.message, variant: "destructive" });
+      // UX #152 — auto-fired background scans log to the diagnostic strip
+      // only; a raw config-error toast was popping over unrelated pages.
+      if (!vars?.auto) toast({ title: "Store search failed", description: e.message, variant: "destructive" });
     },
   });
 
@@ -1588,27 +1590,36 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     : `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`)
                 : `/api/brand/gallery-image/${img.id}`;
               const firstImg = data.images[0];
+              // UX #131 — the pane sat as a bare grey block for seconds on
+              // slow networks; shimmer until the image paints, then fade in.
+              const imgLoaded = (e: React.SyntheticEvent<HTMLImageElement>) => {
+                e.currentTarget.classList.remove("opacity-0");
+                e.currentTarget.parentElement?.classList.remove("animate-pulse");
+              };
+              const heroImgClass = "w-full h-full object-cover opacity-0 transition-opacity duration-500";
               const imagePane = hero ? (
-                <img src={srcFor(hero)} alt={hero.file_name || ""} className="w-full h-full object-cover" />
+                <img src={srcFor(hero)} alt={hero.file_name || ""} className={heroImgClass} onLoad={imgLoaded} />
               ) : hasStreetView ? (
                 <img
                   src={`/api/brand/${companyId}/flagship-image${firstImg ? `?exclude=${encodeURIComponent(firstImg.id)}` : ""}`}
                   alt="Flagship store street view"
-                  className="w-full h-full object-cover"
+                  className={heroImgClass}
+                  onLoad={imgLoaded}
                   onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
                 />
               ) : firstImg ? (
                 <img
                   src={srcFor(firstImg)}
                   alt=""
-                  className="w-full h-full object-cover"
+                  className={heroImgClass}
+                  onLoad={imgLoaded}
                   onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
                 />
               ) : null;
               return (
                 <div className={`grid gap-1.5 rounded-md ${imagePane ? "grid-cols-2" : "grid-cols-1"}`} style={{ height: 260 }}>
                   {imagePane && (
-                    <div className="overflow-hidden rounded-md bg-muted/40">{imagePane}</div>
+                    <div className="overflow-hidden rounded-md bg-muted/40 animate-pulse">{imagePane}</div>
                   )}
                   <div className="h-full min-h-0">
                     <CompanyMiniChat companyId={companyId} companyName={c.name} fill />
@@ -1868,7 +1879,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       </span>
                       {!researchStoresMutation.isPending && (
                         <button
-                          onClick={() => researchStoresMutation.mutate("uk")}
+                          onClick={() => researchStoresMutation.mutate({ scope: "uk" })}
                           className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted"
                           data-testid="btn-research-stores-uk"
                         >
@@ -1899,7 +1910,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     </span>
                     {!isClientViewer && (
                     <button
-                      onClick={() => researchStoresMutation.mutate("uk")}
+                      onClick={() => researchStoresMutation.mutate({ scope: "uk" })}
                       disabled={researchStoresMutation.isPending}
                       className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
                       data-testid="btn-research-stores-uk"

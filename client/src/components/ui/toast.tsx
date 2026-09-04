@@ -14,7 +14,9 @@ const ToastViewport = React.forwardRef<
   <ToastPrimitives.Viewport
     ref={ref}
     className={cn(
-      "fixed top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 z-[100] flex max-h-screen w-[calc(100%-2rem)] max-w-sm flex-col-reverse items-center p-4 sm:left-auto sm:translate-x-0 sm:translate-y-0 sm:bottom-0 sm:right-0 sm:top-auto sm:w-full sm:flex-col md:max-w-[420px]",
+      // Phones: bottom-anchored above the bottom nav (UX #144/#149) — a
+      // centred toast sat exactly over the row the user just created.
+      "fixed bottom-20 left-1/2 -translate-x-1/2 z-[100] flex max-h-screen w-[calc(100%-2rem)] max-w-sm flex-col-reverse items-center p-4 sm:left-auto sm:translate-x-0 sm:bottom-0 sm:right-0 sm:w-full sm:flex-col md:max-w-[420px]",
       className
     )}
     {...props}
