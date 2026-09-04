@@ -88,6 +88,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r538 · 2026-09-04 · FULL (round in progress) · staff mobile 390px
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  seed-personas into bgpsmoke). Regression: smoke GREEN 42/0.
+- Two-bot round 538, all three chunks, standard order, each exit 0 first run.
+  Signatures EXACT vs r537: victoria 2×400, mark 9×403 + 1×503,
+  woody/nick/sam 0. All listed noise. 0 new issues from the scripted sweep.
+- Triage: nothing new to triage; whole budget to the staff-mobile journey
+  (rotation #4, Victoria on the phone shell at 390px).
+
 ### r537 · 2026-09-04 · LIGHT (r536 had the journey) · 2 bugs fixed — BGP map layers + paywall cookie config open to clients
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN
