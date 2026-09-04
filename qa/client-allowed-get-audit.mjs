@@ -1,3 +1,8 @@
+#!/usr/bin/env node
+// Client-isolation audit (r532): reads CLIENT_ALLOWED_API + CLIENT_BLOCKED_SUBPATHS
+// out of server/index.ts and lists every id-addressable GET a client login can
+// reach whose handler shows no scope helper in its first 70 lines. Run from the
+// repo root after any allowlist change; each hit needs a probe, not a guess.
 import fs from 'fs'; import path from 'path';
 const idx = fs.readFileSync('server/index.ts','utf8');
 function block(name){ const i = idx.indexOf('const '+name+' = ['); const j = idx.indexOf('];', i); return idx.slice(i, j); }
