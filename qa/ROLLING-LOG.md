@@ -84,10 +84,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r524 · 2026-09-04 · FULL (rotation #1 BGP staff desktop 1440px) — ROUND IN PROGRESS
+### r524 · 2026-09-04 · FULL (rotation #1 BGP staff desktop 1440px) · 1 bug fixed — GREEN
 - Bring-up: canonical recipe held 87th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
-  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
+  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0 ×2
+  (before, and FRESH_BUILD=1 after the fix).
 - Two-bot 524 as 3 foreground chunks (with-server wrapper w/ lsof port
   kill, 570s child timeout), STANDARD ORDER, fresh cross-524.json:
   victoria exit 0 FIRST RUN (2×400 standing signature) / mark exit 0
@@ -96,7 +97,45 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks. Per-issue
   JSONL audit: all 11 rows match the standing signature
   scenario-for-scenario. Triage: 0 app bugs from the harness.
-- Journey (staff desktop 1440px, victoria) to follow this heartbeat.
+- Journey (Victoria @1440px, UI login via Client/guest reveal —
+  "pipeline-review afternoon: dashboard, WIP report, Bluewater letting
+  tracker working U124 (viewings/offers/Files dialogs), Evidence Plans,
+  deals hub, Ctrl+K search" — WIP report/Files-dialog/Evidence Plans
+  redesigns judged AS INTENDED per brief): dashboard (KPIs, diary, news,
+  My Leads setup card) → /wip-report (chart, client/property/team
+  rollups, deal detail table, filters) → /available 81 units → U124
+  search → Viewings dialog ("No viewings recorded yet" + Add Viewing,
+  date defaults today) → Offers dialog (same pattern) → Files dialog
+  (ALL/BROCHURES/FLOOR PLANS/PHOTOS tabs, Upload + Doc Studio + Info
+  sheet row — NOTE info-sheet r437 gap is now IN staging) → /evidence-
+  plans (clean empty state + New plan dialog: scheme name + PDF/image
+  upload) → /deals hub → Ctrl+K "Bluewater" (properties/WIP/comps
+  groups). 0 pageerrors, 0 non-noise 4xx/5xx, hscroll 0 on all surfaces.
+- BUG FIXED (1): letting tracker zero-result empty state rendered
+  OFF-SCREEN at 1440px — the "No units match filters." cell spans all 16
+  columns of the 2600px-wide table and centred its content at x≈1550,
+  ~370px past the 1176px visible scroller, so a search/filter with no
+  hits showed a blank grey table with no message (journey hit it via
+  search + Viewings-chip intersection). Message now pinned to the
+  visible viewport (sticky left-0 wrapper, w-[min(100%,calc(100vw-
+  20rem))], data-testid tracker-empty-state) in available-units.tsx.
+  Verified visually at 1440px (icon + text centred in view, x=265
+  w=1120), tsc clean, FRESH_BUILD smoke 42/0.
+- Harness growth: two-bot +1 staff-tracker-empty-state-visible (search
+  QA-ZZZ-NO-SUCH-UNIT → empty-state testid present AND on-screen) —
+  GREEN inside a full victoria chunk re-run (2×400 standing only).
+- NOT bugs: FY strip "Viewings 2/Offers 1" while U124 dialogs show none —
+  strip counts are FY-wide across all units; QA-COMP R524 comp visible in
+  global search = two-bot residue (purge sweeps next round); Evidence
+  Plans list empty = fixture has no plans (lifecycle covered by two-bot).
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 157
+  (tracker FY strip counters don't reflect the active search — 0-row
+  intersection reads as broken). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r524 had the journey → r525 LIGHT (watch
+  staff-tracker-empty-state-visible's first standard-order run); then
+  rotation #2 Landsec client desktop 1440px.
 
 ### r523 · 2026-09-04 · LIGHT (r522 had the journey) — GREEN
 - Bring-up: canonical recipe held 86th consecutive time (qa:pg once →

@@ -1902,9 +1902,14 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
-                    <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                    {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
+                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-12 text-muted-foreground">
+                    {/* The table is wider than its scroll container, so a
+                        cell-centred message lands off-screen — pin it to the
+                        visible viewport instead. */}
+                    <div className="sticky left-0 w-[min(100%,calc(100vw-20rem))] text-center" data-testid="tracker-empty-state">
+                      <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                      {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : (

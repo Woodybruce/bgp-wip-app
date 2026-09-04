@@ -505,6 +505,32 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r524: the tracker's zero-result empty state ("No units match filters.")
+  // was centred across the FULL 2600px table width, so at 1440px it rendered
+  // ~370px past the visible scroller — users saw a blank grey table. The
+  // message is now pinned to the visible viewport (sticky left-0 wrapper);
+  // assert it stays on-screen when a filter matches nothing.
+  await step(page, p, 'staff-tracker-empty-state-visible', async () => {
+    await page.goto(`${BASE}/available`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3500);
+    const search = page.locator('input[placeholder*="earch" i]').first();
+    if (!(await search.count())) throw new Error('tracker search input missing');
+    await search.fill('QA-ZZZ-NO-SUCH-UNIT');
+    await page.waitForTimeout(1200);
+    const empty = page.locator('[data-testid="tracker-empty-state"]');
+    if (!(await empty.count())) throw new Error('zero-result tracker shows no empty-state message');
+    const box = await empty.evaluate((el) => {
+      const b = el.getBoundingClientRect();
+      return { x: b.x, w: b.width, vw: window.innerWidth };
+    });
+    if (box.x < 0 || box.x + Math.min(box.w, 200) > box.vw) {
+      throw new Error(`tracker empty state off-screen: x=${Math.round(box.x)} w=${Math.round(box.w)} viewport=${box.vw}`);
+    }
+    await search.fill('');
+    await page.waitForTimeout(800);
+  });
+
   // r411: the staff cold-open lands on /chatbgp, which renders the Messages
   // list — the bottom nav must light the Messages tab there (it shipped with
   // no tab active, leaving the cold-open screen unanchored). Needs real

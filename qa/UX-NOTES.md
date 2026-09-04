@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+157. 2026-09-04 · BGP staff / desktop 1440px (QA r524) · searched the Letting
+   Tracker for a unit, then clicked the FY "Viewings 2" strip chip to see
+   which units had viewings — the chip is a global toggle that intersects
+   with the search, so the list dropped to 0 rows while the strip still said
+   "Viewings 2", and the only explanation ("showing units with viewings —
+   click again to clear") sits far right in small text. Suggest the strip
+   counters reflect the active search/filters (or the chip clears the search),
+   so the numbers users see match the rows below.
+
 156. 2026-09-04 · BGP staff / mobile 390px (QA r522) · tried to look
     something up quickly and check notifications between viewings · the
     staff phone shell has NO global-search or notifications entry point —
