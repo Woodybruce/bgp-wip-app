@@ -84,24 +84,45 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r525 · 2026-09-04 · LIGHT — ROUND IN PROGRESS (provisional)
-- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
-  purge + seed-personas via node/pg runner, honi 1 / hammerson 2 verified).
-  Regression: smoke GREEN 42/0.
+### r525 · 2026-09-04 · LIGHT (r524 had the journey) · UX 130-156 batch verified — GREEN
+- Bring-up: canonical recipe held 88th consecutive time (qa:pg once →
+  run-smoke restore clean → purge + seed-personas via node/pg runner,
+  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
 - Two-bot 525 as 3 foreground chunks (with-server wrapper w/ lsof port
   kill, 570s child timeout), STANDARD ORDER, fresh cross-525.json:
   victoria exit 0 FIRST RUN (2×400 standing signature exact —
   staff-tracker-empty-state-visible passed its first standard-order run,
-  r524 fix holds) / mark exit 0 (10 issues = 9 standing + 1 NEW
-  flow-failure, triaged below) / woody,nick,sam exit 0 (18 [ok], 0
-  issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  r524 fix holds) / mark first run 10 issues (9 standing + 1 NEW
+  flow-failure, triaged below), re-run after harness update exit 0 with
+  9 issues = standing signature exact / woody,nick,sam exit 0 (18 [ok],
+  0 issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
   500/502/504 all chunks.
-- Triage: the one new row is client-deal-party-link-gates timing out on
+- Triage of the one new row: client-deal-party-link-gates timed out on
   its "Link tenant" click — NOT an app bug: UX #155 (confirmed batch)
-  intentionally replaced client party link-pickers with read-only slots.
-  Harness updated to assert the new intended behaviour (read-only
-  landlord/tenant slots render, no visible link-pickers, timeline/audit
-  gates unchanged, AML-kick listener kept). Mark-chunk re-run pending. · 2026-09-04 · FULL (rotation #1 BGP staff desktop 1440px) · 1 bug fixed — GREEN
+  intentionally replaced client party link-pickers with read-only slots
+  (deal-detail.tsx, testids client-party-landlord/tenant). HARNESS
+  UPDATED: scenario now asserts the new intended behaviour — read-only
+  slots render, Landlord defaults to the client's own company, no visible
+  link-pickers, timeline hidden / audit present unchanged, AML-kick
+  listener kept as a regression tripwire. [ok] on the mark re-run.
+- Confirmed-batch spot-verification (browser, staff@390px + 1440px), all
+  as intended: UX 156 phone-shell header has global search + bell (badge
+  10) on non-chat routes, popover renders clean notification cards at
+  390px (Messages landing keeps its own chat header — by design); UX
+  144/149 toast viewport is bottom-anchored (fixed bottom-20 above the
+  bottom nav); WIP report shows the "Unassigned" fee bucket (4 visible
+  texts); UX 153 Bluewater tenancy KPI strip shows compact £m, no raw
+  7-figure wrap. Two-bot also covered batch surfaces green:
+  client-evidence-plans-gate, client-files-no-doc-studio,
+  client-news-signals-deduped, staff-evidence-plan-lifecycle.
+- Bugs fixed: 0 app bugs (1 harness scenario updated for intended
+  behaviour). Deferred: none. Carried (data, staff decision): Bluewater
+  tenancy SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: none
+  (no journey). New flakes: none. Real-device keyboard-up composer check
+  (r405) still open for Woody.
+- Next: r525 was LIGHT → r526 FULL, rotation #2 Landsec client desktop
+  1440px — good round to journey the client-facing batch items (read-only
+  deal parties, sliced Brand News, client info-sheet copy) as Mark. · 2026-09-04 · FULL (rotation #1 BGP staff desktop 1440px) · 1 bug fixed — GREEN
 - Bring-up: canonical recipe held 87th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0 ×2
