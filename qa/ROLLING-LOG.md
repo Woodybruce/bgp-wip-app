@@ -88,20 +88,55 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r531 · 2026-09-04 · LIGHT (r530 had the journey) — ROUND IN PROGRESS
+### r531 · 2026-09-04 · LIGHT (r530 had the journey) · 1 bug fixed — client-teams isolation
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   purge + seed-personas via node/pg runner, honi 1 / hammerson 2).
-  Regression: smoke GREEN 42/0.
+  Regression: smoke GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the fix).
 - Two-bot 531 as 3 foreground chunks (with-server wrapper, 580s child
-  timeout), standard order, all THREE exit 0 on their FIRST run (no repeat
-  of the r526 login ECONNRESET): victoria 2×400 / mark 9 issues (8×403
-  probe-by-design + 1×503 keyless) / woody,nick,sam 18 [ok] 0 issues —
-  every one the standing signature exact. Server logs: 0 raw 500/502/504
-  (the " 500 " grep hit is the "[News Feed] Linked 16 brand signals from
-  500 articles" line). Per-issue JSONL audit: 11/11 rows match
-  scenario-for-scenario. Triage: 0 app bugs from the harness.
+  timeout), standard order, all THREE exit 0 on their FIRST run (no repeat of
+  the r526 login ECONNRESET): victoria 2×400 / mark 9 issues (8×403
+  probe-by-design + 1×503 keyless) / woody,nick,sam 18 [ok] 0 issues — every
+  one the standing signature exact. Server logs: 0 raw 500/502/504 (the
+  " 500 " grep hit is the "[News Feed] Linked 16 brand signals from 500
+  articles" line). Per-issue JSONL audit: 11/11 rows match
+  scenario-for-scenario. Triage: 0 app bugs from the harness. All three
+  chunks re-run after the fix, same signatures.
 - r530 FIX HOLDS: staff-wip-report-phone-header-stacked [ok] in chunk 1.
-- Round in progress — deferred-bug sweep + visual re-verification to follow.
+- BUG FIXED (1, client isolation — same class as r529): three GET sub-reads
+  under the client-allowed /api/client-teams/ prefix carried NO scope check
+  while their write siblings all did. Probed and reproduced as Sam
+  (Hammerson client): the board GET itself correctly 403'd, but
+  GET /api/client-teams/<LANDSEC>/member/:userId/properties returned
+  Landsec's WHOLE property list (id, name, postcode — Bluewater DA9 9ST +
+  Westgate WC2N 4HS) with an `assigned` flag per BGP staffer, /columns
+  returned their board config and /candidates BGP's 36-person staff
+  directory keyed to another client's board. All three now go through
+  client-teams.ts's existing forbidsClientScope (own company + same-named
+  unmerged siblings; staff unrestricted). Re-probed: sam 403/403/403; mark
+  (owner) and victoria unchanged 200s.
+- Verified VISUALLY at 1440px as Mark: "Your BGP Team" still renders —
+  "2 team members · Lead: Victoria Broadhead", 7 columns + UNASSIGNED
+  carrying Victoria Broadhead and Woody Bruce, Add column / Add to team
+  present; client-teams calls all 200 (board, columns, and /candidates when
+  the add-member picker opens), 0 pageerrors.
+- Harness growth: extended sam rival-team-board-isolated from the board GET
+  to all three sub-reads (each must 403) and added mark
+  client-team-board-own-subroutes — the owner's board + columns + candidates
+  + member-properties must all still answer with non-empty rows, so the gate
+  can't be "fixed" by locking the real client out. Both [ok] first run.
+- Setup note for future rounds: do NOT run the run-round purge BETWEEN
+  chunks — it deletes the QA rows chunk 1 created, and mark's
+  staff-creates → client-sees cross-checks then log ~12 false flow-failures
+  (agent-logged viewing/offer/contact/comp/brief/deal "not visible", deal
+  detail 404). Purge once before chunk 1, then leave the DB alone; a stale
+  QA_CROSS_FILE has the same effect.
+- Deferred: none. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 x4, L090 x2, L130 x2). Suggestions: UX-NOTES 167 (client
+  team board shows 7 empty "drop here" columns with both real people in
+  UNASSIGNED). Still open: #150, #157-#166. Real-device keyboard-up composer
+  check (r405) open for Woody.
+- New flakes: none.
+- Next: r531 was LIGHT -> r532 FULL, rotation #1 BGP staff desktop.
 
 ### r530 · 2026-09-04 · FULL · rotation #4 BGP staff mobile 390px · 1 bug fixed
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →

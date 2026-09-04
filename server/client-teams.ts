@@ -338,6 +338,11 @@ router.get("/api/client-teams/:clientCompanyId/member/:userId/properties", requi
   try {
     const pool = await getPool();
     const { clientCompanyId, userId } = req.params;
+    // A client login may only read its OWN board's property assignments —
+    // the rows carry the landlord's property names + postcodes, so an
+    // unscoped read handed a rival client this company's whole portfolio.
+    // (The POST sibling below was already scoped.)
+    if (await forbidsClientScope(req, String(clientCompanyId))) return res.status(403).json({ error: "Not available for client accounts" });
     const rows = await pool.query(`
       SELECT p.id, p.name,
              -- crm_properties.address is JSONB. Pick a readable line so
@@ -412,6 +417,7 @@ router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requ
 router.get("/api/client-teams/:clientCompanyId/candidates", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    if (await forbidsClientScope(req, String(req.params.clientCompanyId))) return res.status(403).json({ error: "Not available for client accounts" });
     // No longer filter out staff who are already on the team — duplicates
     // are now allowed so the same person can sit in multiple columns
     // (Investment + Lease Advisory, etc). Mark the existing-on-team count
@@ -450,6 +456,7 @@ const DEFAULT_COLUMNS = [
 router.get("/api/client-teams/:clientCompanyId/columns", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    if (await forbidsClientScope(req, String(req.params.clientCompanyId))) return res.status(403).json({ error: "Not available for client accounts" });
     const r = await pool.query(
       "SELECT name, sort_order, color_key FROM crm_client_team_columns WHERE client_company_id = $1 ORDER BY sort_order, name",
       [req.params.clientCompanyId]

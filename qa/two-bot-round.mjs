@@ -5445,6 +5445,41 @@ async function markRound(page, cross) {
     if (r.stillThere) throw new Error('deleted interest row still listed on the unit');
   });
 
+  // The owning landlord's own team board must keep every sub-read working —
+  // the r531 rival gate can't be "fixed" by locking the real client out of
+  // their org chart (the side sheet's property multi-select, the column list
+  // and the add-member picker all hang off these three).
+  await step(page, p, 'client-team-board-own-subroutes', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const cid = me?.companyScopeId || me?.user?.companyScopeId;
+      if (!cid) return { skip: true };
+      const board = await fetch(`/api/client-teams/${cid}`, { headers: auth });
+      if (!board.ok) return { ok: false, why: `board ${board.status}` };
+      const members = await board.json().catch(() => []);
+      const uid = (Array.isArray(members) ? members : []).map((m) => m.user_id).filter(Boolean)[0];
+      const out = { ok: true, cols: 0, cands: 0, props: null };
+      const cols = await fetch(`/api/client-teams/${cid}/columns`, { headers: auth });
+      if (!cols.ok) return { ok: false, why: `columns ${cols.status}` };
+      out.cols = (await cols.json().catch(() => [])).length;
+      const cands = await fetch(`/api/client-teams/${cid}/candidates`, { headers: auth });
+      if (!cands.ok) return { ok: false, why: `candidates ${cands.status}` };
+      out.cands = (await cands.json().catch(() => [])).length;
+      if (uid) {
+        const props = await fetch(`/api/client-teams/${cid}/member/${uid}/properties`, { headers: auth });
+        if (!props.ok) return { ok: false, why: `member properties ${props.status}` };
+        out.props = (await props.json().catch(() => [])).length;
+      }
+      return out;
+    });
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`client locked out of their own team board (${r.why})`);
+    if (r.cols === 0) throw new Error('own team board returned no columns');
+    if (r.cands === 0) throw new Error('own team board add-member picker returned no candidates');
+    if (r.props === 0) throw new Error('own team board member sheet listed no properties');
+  });
+
   // Staff-only deal operations that ride under the allowed /api/crm/deals
   // prefix must refuse clients: single + bulk delete, bulk field edits, the
   // internal per-agent fee split, and the firm-wide rent-analysis AI op.
@@ -6708,10 +6743,22 @@ async function samRound(page, cross) {
       const own = await fetch('/api/client-teams/99999999-1111-1111-1111-111111111111', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       const ownArray = own.ok ? Array.isArray(await own.json().catch(() => null)) : false;
       const foreign = (await fetch(`/api/client-teams/${window.QA_FIX.landsec}`, { headers: auth }).catch(() => ({ status: 0 }))).status;
-      return { ownOk: own.ok, ownArray, foreign };
+      // r531: the board GET was scoped but three sub-reads under the same
+      // allowed prefix were not — member/:id/properties handed a rival the
+      // landlord's whole property list (names + postcodes), and
+      // columns/candidates leaked their board config.
+      const subs = {};
+      for (const sub of ['member/00000000-0000-0000-0000-000000000000/properties', 'columns', 'candidates']) {
+        subs[sub.split('/')[0] === 'member' ? 'memberProperties' : sub] =
+          (await fetch(`/api/client-teams/${window.QA_FIX.landsec}/${sub}`, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      }
+      return { ownOk: own.ok, ownArray, foreign, subs };
     });
     if (!r.ownOk || !r.ownArray) throw new Error("rival client can't read their own team board");
     if (r.foreign !== 403) throw new Error(`rival client read the Landsec team board (expected 403, got ${r.foreign})`);
+    for (const [name, status] of Object.entries(r.subs)) {
+      if (status !== 403) throw new Error(`rival client read the Landsec team board's ${name} (expected 403, got ${status})`);
+    }
   });
 
   // The tracker-row edit endpoints (viewing/offer PATCH + DELETE) must hold

@@ -13,6 +13,19 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+167. 2026-09-04 · Landsec client / desktop 1440px (QA r531) · looked at
+   "Your BGP Team" on the dashboard while auditing the client-teams routes ·
+   the board renders SEVEN empty kanban columns (Office / Corporate,
+   Investment, Lease Advisory, National Leasing, Development, Tenant Rep,
+   London Leasing) each saying "drop here", with both of Landsec's actual
+   people — Victoria Broadhead and Woody Bruce — parked in an eighth
+   "UNASSIGNED" column, then ~300px of empty board below. A landlord reading
+   it cold sees a mostly-blank board and no answer to "who do I call".
+   Suggestion: collapse (or hide) columns with zero members for client
+   viewers and render UNASSIGNED first, so a 2-person team reads as two
+   cards rather than seven vacancies; keep the full column set on the staff
+   side, where the columns are the editing surface.
+
 166. 2026-09-04 · BGP staff / mobile 390px (QA r530) · between viewings,
    wanted her own numbers · the phone home screen leads with "MY BILLING —
    2026/27" showing £0 Billed / £0 Commission / £0 Potential / £0
