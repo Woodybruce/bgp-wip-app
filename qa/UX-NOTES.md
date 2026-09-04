@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+164. 2026-09-04 · Landsec client / phone 390px + desktop (QA r529) · logged
+   a viewing from the Letting Tracker and typed a brand the CRM doesn't
+   hold yet · since r528 the client's company picker correctly no longer
+   offers the staff-only "Create company" row, but what replaces it is a
+   bare "No matches." — a dead end that doesn't say the name can still be
+   typed into the notes, or that BGP add companies. Staff, one login over,
+   get "Create company '<name>'". Suggestion: give the client picker its
+   own empty state — "No match — type the brand in the notes and your BGP
+   team will add it" — so the removed control leaves guidance behind
+   rather than a full stop.
+
 163. 2026-09-04 · Landsec client / mobile 390px (QA r528) · logged an offer
    from a Letting Tracker unit card on the phone · "Save Offer" is enabled
    with the form untouched, so a stray tap creates an offer row with no

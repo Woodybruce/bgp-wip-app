@@ -88,20 +88,54 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r529 · 2026-09-04 · LIGHT · round in progress
+### r529 · 2026-09-04 · LIGHT (r528 had the journey) · 1 bug fixed — client isolation
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas via node/pg runner, honi 1 / hammerson 2). Regression: smoke
-  GREEN 42/0.
+  GREEN 42/0 ×2 (before, and FRESH_BUILD=1 after the fix).
 - Two-bot 529 as 3 foreground chunks (with-server wrapper, 570s child
   timeout), standard order: victoria exit 0 first run (2×400 standing exact) /
   mark exit 0 first run (8×403 probe-by-design + 1×503 keyless — standing
   exact) / woody,nick,sam exit 0 (18 [ok]) on its SECOND attempt — the first
-  died on the known r526 boot-race ECONNRESET at its own login POST. Server
-  logs: 0 raw 500/502/504. Triage: 0 app bugs from the harness.
-- r528 fixes verified in-harness: client-tracker-phone-card-titles [ok],
-  client-tracker-no-inline-company-create [ok], and the staff counterpart
-  staff-tracker-inline-company-create-kept [ok].
-- Visual verification + deferred-bug work in progress.
+  died on the known r526 boot-race ECONNRESET at its own login POST, clean
+  server log. Server logs: 0 raw 500/502/504. Per-issue JSONL audit: all 11
+  rows match the standing signature scenario-for-scenario. Triage: 0 app bugs
+  from the harness. All three chunks re-run after the fix, same signatures.
+- r528 FIXES VERIFIED VISUALLY (both surfaces, both personas):
+  #130 card titles — Mark's phone tracker cards now read L112 / MSU9 /
+  MSU3 (New) / U124/U125/U126 / EVU01 / L022 over a single "Bluewater
+  Shopping Centre" subtitle, no scheme word in any title.
+  Client company-create — 0 "Create company" rows and a "No matches." empty
+  state in BOTH the offer and viewing pickers, on the phone AND at 1440px
+  (desktop path goes button-offers-* → the list dialog → offer-add, which
+  r528 hadn't driven). Staff counterpart at 1440px: Victoria still gets the
+  create row in both dialogs (createRows=1 each). 0 pageerrors either side.
+- BUG FIXED (1, client isolation): the three unit-INTEREST routes
+  (GET/POST /api/available-units/:id/interest and DELETE
+  /api/available-units/interest/:interestId) were requireAuth ONLY, while
+  every viewing/offer sibling carries assertUnitInClientScope and all-*
+  aggregates carry clientUnitScopeSql. Probed and reproduced: Sam
+  (Hammerson client) could READ a Landsec Bluewater unit's interest list,
+  ADD a row to it (201) and DELETE a staff-created row (200, row gone).
+  Now scope-checked like the offers/viewings pattern — re-probed: sam
+  403/403/403, mark (owner) 200/201/200, staff unchanged, and the interest
+  dialog still opens clean for both personas with 0 /interest 4xx.
+- Not a bug (checked in the same audit): /api/available-units/all-files is
+  firm-wide and unscoped at the handler, but the client middleware
+  blocklist in server/index.ts blocks it outright; the all-viewings /
+  all-offers / all-interest aggregates all scope via clientUnitScopeSql.
+- Harness growth: 2 scenarios — sam rival-unit-interest-guard (GET+POST on a
+  Landsec unit must 403; registered in NEGATIVE_PROBE_SCENARIOS) and mark
+  client-unit-interest-own-roundtrip (the owning landlord's GET/POST/DELETE
+  on their own unit still works and the row really goes) — the gate can't be
+  "fixed" by locking the real client out. Both [ok] on their first run.
+- Deferred: none. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 164 (the
+  client company picker's replacement empty state is a bare "No matches."
+  with no guidance where staff get "Create company"). Still open: #150,
+  #157, #158, #159, #160, #161, #162, #163. Real-device keyboard-up composer
+  check (r405) open for Woody.
+- New flakes: none (the chunk-3 login ECONNRESET is the known r526 one).
+- Next: r529 was LIGHT → r530 FULL, rotation #4 BGP staff mobile 390px.
 
 ### r528 · 2026-09-04 · FULL · rotation #3 Landsec client mobile 390px · 2 bugs fixed
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
