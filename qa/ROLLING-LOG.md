@@ -88,20 +88,118 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r532 · 2026-09-04 · FULL · rotation #1 BGP staff desktop 1440px · ROUND IN PROGRESS
-- Bring-up: canonical recipe held (qa:pg once → run-smoke FRESH_BUILD=1
-  restore clean → purge + seed-personas via node/pg runner, honi 1 /
-  hammerson 2). Regression: smoke GREEN 42/0.
+### r532 · 2026-09-04 · FULL · rotation #1 BGP staff desktop 1440px · 2 bugs fixed — client isolation
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  purge + seed-personas via node/pg runner, honi 1 / hammerson 2).
+  Regression: smoke GREEN 42/0 ×2 (FRESH_BUILD=1 before and after the fixes).
 - Two-bot 532 as 3 foreground chunks (with-server wrapper, 580s child
   timeout), standard order, all THREE exit 0 on their FIRST run: victoria
   2×400 / mark 9 issues (8×403 probe-by-design + 1×503 keyless) /
-  woody,nick,sam 19 [ok] 0 issues — every one the standing signature exact.
-  Server logs: 0 raw 500/502/504 (the " 500 " grep hit is the "[News Feed]
-  Linked 17 brand signals from 500 articles" line). Triage: 0 app bugs from
-  the harness.
-- r530/r531 fixes hold: staff-wip-report-phone-header-stacked [ok],
-  rival-team-board-isolated + rival-unit-interest-guard [ok].
-- Journey + client-isolation GET sub-read audit in progress.
+  woody,nick,sam 0 issues — every one the standing signature exact. Server
+  logs: 0 raw 500/502/504 (the " 500 " grep hit is the "[News Feed] Linked
+  16 brand signals from 500 articles" line). Triage: 0 app bugs from the
+  harness. All three chunks re-run after the fixes with the 3 new scenarios,
+  same signatures.
+- r530/r531 fixes hold: staff-wip-report-phone-header-stacked,
+  rival-team-board-isolated, rival-unit-interest-guard all [ok].
+- SETUP TRAP (cost this round ~10 min, worth knowing): the with-server
+  wrapper's `trap kill $SRV` killed the `npx tsx` shim but NOT the node
+  child, so a server from chunk 1 stayed on :5000 and every later run
+  (chunks 2-3 and the first post-fix probe) silently hit PRE-FIX code —
+  the fix looked like it hadn't worked. Fix the wrapper: `setsid node
+  node_modules/tsx/dist/cli.mjs server/index.ts` + `kill -TERM -$SRV`
+  (process group), and refuse to start if :5000 already answers. Also:
+  do NOT `pkill -f "…server/index.ts"` from a Bash call — the pattern
+  matches the calling shell's own command line and kills the tool call
+  (exit 144).
+- CLIENT-ISOLATION SWEEP (the standing mandate). Enumerated
+  CLIENT_ALLOWED_API / CLIENT_BLOCKED_SUBPATHS out of server/index.ts with a
+  script and cross-checked every id-addressable GET under an allowed prefix
+  (60 routes) for a scope helper: 16 had none in the handler. Cleared as
+  by-design or otherwise gated: /api/os/* (external OS data, no BGP
+  internals), /api/hr/photo/:userId (BGP staff photos, needed by the team
+  board), /api/brand-logo/:name, /api/image-studio/collections/:id
+  (collectionInScope), /api/chat/threads/:id + /media (thread membership),
+  /api/crm/contacts/:id/{properties,deals,investment-tracker,requirements}
+  (forbidsContactRead), /api/crm/landlord-packs/:filename (401s
+  unauthenticated; only reachable with a filename off a row you can already
+  read). PROBED as Sam (Hammerson) against Landsec ids — 2 reproduced, both
+  fixed below.
+- BUG FIXED 1 (client isolation, r529/r531 class): the comp FILE sub-reads.
+  GET /api/crm/comps/:id correctly 403s a rival client and the comps LIST is
+  filtered to their own schemes, but GET /api/crm/comps/:compId/files and
+  GET /api/crm/comps/files/bulk?compIds=… carried requireAuth only. Probed
+  and reproduced: Sam pulled the file list of a Landsec Bluewater comp
+  (fileName "QA-PROBE Landsec HoTs.pdf", filePath, size, mime) — deal
+  evidence document names for a rival landlord's scheme. Bytes were never
+  exposed (the download lives at /api/comp-files/*, a prefix the client
+  gateway blocks outright). Both now go through a new clientVisibleCompIds
+  helper applying the SAME three tests the comps list uses (property in the
+  caller's portfolio / they're the landlord / legacy comp naming their
+  scheme in free text), so "what you can list, you can see files for":
+  /:compId/files 403s, /files/bulk filters rather than 403ing (one
+  out-of-scope id must not blank the whole PDF-export call). Re-probed: sam
+  403 + 0 bulk rows; mark (owner) 200 with the row via BOTH routes;
+  victoria unchanged.
+- BUG FIXED 2 (same class): GET /api/crm/requirements-investment/:id was
+  unscoped while the LIST right above it filters to
+  companyId === scopeCompanyId. Sam read a Landsec investment requirement in
+  full — name, contact name/email/mobile, comments, landlord-pack filename —
+  while the list correctly gave him []. Detail now applies the list's gate.
+  Re-probed: sam 403, mark 200 with the row, victoria unchanged.
+- Verified VISUALLY at 1440px after the fixes: /comps renders clean for BOTH
+  Victoria and Mark, each seeing the seeded Landsec comp, GET /api/crm/comps
+  200 and 0 pageerrors / 0 non-noise 4xx either side. The owner's file
+  roundtrip itself was verified at API level (probe + harness scenario), not
+  through the files panel — clicking the comp name on /comps follows the
+  property link rather than opening the detail drawer.
+- JOURNEY (Victoria, 1440px desktop): dashboard → /comps → /requirements →
+  /deals → /leasing-schedule → /wip-report → /evidence-plans → /contacts →
+  Bluewater property → its tenancy schedule → /calendar → /tasks. Every
+  surface sw=cw=1440 (no h-overflow), 0 pageerrors, 0 console errors, 0
+  non-noise 4xx/5xx across the whole journey. Letting tracker / WIP / Files
+  / Evidence Plans redesigns judged as intended — nothing reverted.
+- Harness growth: 3 scenarios. victoria agent-add-scheme-comp now also
+  captures the comp id and POSTs a real file to it (cross.compId), and a new
+  agent-add-investment-requirement creates a Landsec-owned row
+  (cross.reqInvId). sam rival-comp-files-and-reqinv-guard (files 403 + 0
+  bulk rows + reqinv 403; registered in NEGATIVE_PROBE_SCENARIOS) and mark
+  client-comp-files-and-reqinv-own-roundtrip (owner's files 200 with ≥1 row
+  via both routes, reqinv detail 200 carrying the name) — so the gate can't
+  be "fixed" by locking the real client out. All three [ok] first run.
+  run-round.sh purge grew comp_files (before the comp, so nothing orphans)
+  and QA-REQINV% lines.
+- DEFERRED — client-allowed GET punch list for a later round (from the sweep
+  above, none reproduced as a cross-client leak this round, all worth a
+  deliberate look):
+  1. GET /api/chat-media/:filename — any authenticated user can fetch ANY
+     chat attachment by filename, with no thread-membership check; the
+     handler's own comment notes chat-media also stores KYC documents
+     (passports, bank statements). Filenames are timestamp-prefixed, so
+     it's guess-resistance rather than a gate. Highest-value item here.
+  2. GET /api/crm/deals/:id/related-emails and /related-events — requireAuth
+     only; harmless today because they need the CALLER's own M365 token and
+     no client fixture holds one, so they answer {connected:false}. They do
+     still leak deal existence (404 vs 200) to any client. Gate them the way
+     the other deal sub-reads are gated before anyone connects M365.
+  3. GET /api/crm/leads/:id — unscoped detail read; 0 rows in the fixture so
+     nothing to probe. The /api/leads board is blocked for clients but this
+     one rides the allowed /api/crm/ prefix. Same one-line fix as bug 2.
+  4. GET /api/chatbgp/threads/:threadId/active-run — no membership check in
+     the handler; check whether the run payload carries thread content.
+  5. The audit script itself is worth keeping — it reads the two lists out of
+     server/index.ts and reports id-addressable allowed GETs with no scope
+     helper. Re-run it after any allowlist change.
+- Carried (data, staff decision): Bluewater tenancy SPINE duplicates
+  (U062 ×4, L090 ×2, L130 ×2).
+- Suggestions: UX-NOTES 168 (Comps says "Try adjusting your filters" when
+  the real answer is "all 11 comps are unreviewed AI leads" — no filter
+  change can help) and 169 (Requirements renders a bare table header over an
+  empty slab with no empty state at all, unlike every neighbouring board).
+  Still open: #150, #157-#167.
+- New flakes: none. tsc clean. Real-device keyboard-up composer check (r405)
+  open for Woody.
+- Next: r532 was FULL → r533 LIGHT; then rotation #2 Landsec client desktop.
 
 ### r531 · 2026-09-04 · LIGHT (r530 had the journey) · 1 bug fixed — client-teams isolation
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →

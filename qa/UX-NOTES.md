@@ -13,6 +13,31 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+169. 2026-09-04 · BGP staff / desktop 1440px (QA r532) · opened Requirements
+   to check what leasing briefs were live · the page renders the table HEADER
+   ROW (Name / Date / Status / Use / Requirement Type / Size / Req. Locations)
+   over a ~130px tall empty grey slab with NO empty state at all — no icon, no
+   copy, no call to action, just "0 active requirements" in the strip above.
+   Comps, Evidence Plans and the tracker all have a proper icon + sentence +
+   action empty state; Requirements is the odd one out, and a first-time user
+   can't tell whether it's empty or still loading. SUGGESTION: give both
+   Requirements tabs (LEASING and INVESTMENT) the house empty state — icon,
+   "No leasing requirements yet", one line of guidance, and an "Add
+   requirement" button that opens the same dialog as the header button.
+
+168. 2026-09-04 · BGP staff / desktop 1440px (QA r532) · went to Comps for
+   rent-review evidence on a Bluewater unit · the strip reads "0 comps · 0
+   verified · 11 AI leads awaiting review · 0 areas" and the body says "No
+   matching comps — Try adjusting your filters". The advice is wrong: no
+   filter change can help, because every one of the 11 comps in the system is
+   an unreviewed AI lead and the table only ever shows CONFIRMED comps. The
+   answer sits in the strip one line above, but nothing connects them, so the
+   user clears filters, re-searches, and concludes the comps database is
+   empty. SUGGESTION: when there are 0 confirmed comps but N leads, swap the
+   empty state for "All N comps are AI leads awaiting review" plus a button
+   that opens the leads panel; keep "Try adjusting your filters" for the case
+   where confirmed comps exist but the filters exclude them.
+
 167. 2026-09-04 · Landsec client / desktop 1440px (QA r531) · looked at
    "Your BGP Team" on the dashboard while auditing the client-teams routes ·
    the board renders SEVEN empty kanban columns (Office / Corporate,
