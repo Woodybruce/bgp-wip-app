@@ -88,14 +88,54 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r538 · 2026-09-04 · FULL (round in progress) · staff mobile 390px
+### r538 · 2026-09-04 · FULL · staff MOBILE 390px journey · 0 bugs fixed (nothing broken found) · 3 suggestions
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
-  seed-personas into bgpsmoke). Regression: smoke GREEN 42/0.
-- Two-bot round 538, all three chunks, standard order, each exit 0 first run.
-  Signatures EXACT vs r537: victoria 2×400, mark 9×403 + 1×503,
+  seed-personas into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN
+  42/0. Dev server tsx against bgpsmoke, phone context 390×844 + iPhone UA.
+- Two-bot round 538, all three chunks, standard order, each exit 0 on its
+  first run. Signatures EXACT vs r537: victoria 2×400, mark 9×403 + 1×503,
   woody/nick/sam 0. All listed noise. 0 new issues from the scripted sweep.
-- Triage: nothing new to triage; whole budget to the staff-mobile journey
-  (rotation #4, Victoria on the phone shell at 390px).
+- JOURNEY (rotation #4, first staff-phone journey in a while): Victoria on
+  site at Bluewater — "a keen operator asked about a unit". Home tiles →
+  Letting Tracker card list → tapped Interest on L112 → picked Honi Poke,
+  typed a note, logged it → tapped Target (2nd tap said "already a target",
+  clean idempotent toast) → Brands search "Honi" → brand profile pills
+  (Chat/Contacts/Intel/Stores/Social/Compliance) → global-search palette
+  from the phone header → Bluewater property page, all six section pills →
+  My Tasks, created a task → Messages, New Chat → Lucy Gardiner → sent a
+  message. Every step worked; interest, task and chat message all persisted
+  and re-rendered. Shots qa/smoke-shots/r538-*.png.
+- Also swept 20 further staff-phone routes (/m/profile, /m/images, /m/expenses,
+  /today, /diary, /wip-report, /kyc-clouseau, /covenant-watch, /lease-events,
+  /comps, /contacts, /deals, /news, /portfolios, /board-report, /image-studio,
+  /marketing-files, /pathway-review, /property-intelligence, /team-expenses):
+  0 pageerrors, 0 horizontal overflow, 0 non-noise 4xx. Checked the tracker's
+  Add unit / Viewing / Offer / Files dialogs at 390px — all four render and
+  fit. /expenses and /business-rates|/land-registry redirect on the phone
+  (to / and /property-intelligence) — the phone entry points are the home
+  Expenses tile → /m/expenses and the PI tabs, both fine, NOT dead ends.
+- BUGS: none worth a fix. Nothing in the journey was broken, so no code
+  changed and no new two-bot scenarios (rule 8 attaches them to fixes).
+- DEFERRED / noted, both minor: (1) React "validateDOMNesting: <button>
+  cannot appear as a descendant of <button>" fires once while walking
+  Messages → New Group → Start Chat on the phone; no nested pair survives in
+  the DOM at any of the three states (list/group/thread scanned), so it is a
+  transient render, cosmetic, no mis-tap reproduced. (2) available_units has
+  3 doubled unit names in the fixture ('L090 Bluewater', 'U062 Bluewater -
+  Upper Level', 'L130 Bluewater - Lower Level') — the tracker and the
+  property Boards list faithfully show two identical cards each. Fixture
+  data, same family as the carried Bluewater tenancy SPINE duplicates.
+- Suggestions: UX-NOTES 178, 179, 180 (all staff-phone, from this journey:
+  task-row trash deletes with no confirm while the phone chat list does
+  confirm; the 20px done-toggle on My Tasks; the Interest dialog's company
+  popover covering its own form + raw ISO date on the logged row).
+- Still open/unbuilt, do not report again: UX #150, #157, #162, #170, #171,
+  #172, #174, #175, #176, #177 (171 = client PUT persists dealType/team/
+  leaseLength/landlordId — needs Woody).
+- New flakes: login rate-limiter tripped mid-round after ~8 script logins
+  (known noise) — restarting the dev server clears it; the phone harness now
+  caches the Bearer token between scripts to avoid it. Real-device
+  keyboard-up composer check (r405) still open for Woody.
 
 ### r537 · 2026-09-04 · LIGHT (r536 had the journey) · 2 bugs fixed — BGP map layers + paywall cookie config open to clients
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →

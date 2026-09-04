@@ -13,6 +13,40 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+180. 2026-09-04 · BGP staff / mobile 390px (QA r538) · standing in the mall
+   logging a keen operator against unit L112 from the phone tracker · the
+   Interest dialog's company picker is a popover anchored under its trigger,
+   so on a 390×844 screen it opens straight over the rest of the form — Note
+   and "Log interest" are both underneath it — and the list runs off the
+   bottom edge (17 brands, 9 visible). It works (there is a search box), but
+   you pick blind to what you are filling in. The logged row then prints its
+   date as the raw "2026-09-04" while every other surface on the phone says
+   "4 Sep"/"4 September". SUGGESTION: on phones render the picker as a
+   bottom sheet (the pattern the Files and Add-unit dialogs already use)
+   rather than an anchored popover, and format the interest row's date the
+   same way the viewing/offer rows do.
+
+179. 2026-09-04 · BGP staff / mobile 390px (QA r538) · ticking off a task on
+   My Tasks between viewings · the done-toggle is a 20×20px circle at the
+   left of the row — the most-tapped control on the page and the smallest
+   thing on it, well under the 44px in docs/DESIGN.md, and it sits directly
+   beside the wrapping title so a near-miss opens nothing at all.
+   SUGGESTION: keep the 20px circle as the visual but give it a 44px
+   hit area (padding on the button, negative margin on the row) — no
+   layout change, and the row stops feeling like a target you have to aim
+   at one-handed.
+
+178. 2026-09-04 · BGP staff / mobile 390px (QA r538) · same task row · the
+   row's action cluster is pin / pencil / + / trash, each 28px wide and
+   ~6px apart on a 390px screen, and the trash deletes the task on the
+   first tap — no confirm, no undo toast (tasks.tsx:280 →
+   deleteMutation.mutate). The phone Messages list already does this
+   properly: swipe-delete a conversation and you get "Delete this
+   conversation? This cannot be undone." SUGGESTION: match it — confirm
+   (or an undo toast) before a task disappears, and move the trash out of
+   the inline cluster on phones into the edit sheet so it isn't a
+   thumb-width from the pencil.
+
 177. 2026-09-04 · BGP staff / desktop 1440px (QA r537) · checking the /map
    annotation-layer sidebar while gating it for clients · a layer shared with
    the team shows as "Brent Cross deck  3  SHARED" — name, item count and a
