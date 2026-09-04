@@ -921,10 +921,10 @@ async function runTafJob(planId: string, jobId: string, pdfs: { name: string; ge
           messages: [{ role: "user", content }],
         });
         const text = msg.content.filter((blk: any) => blk.type === "text").map((blk: any) => blk.text).join("");
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
+        {
           try {
-            const parsed = JSON.parse(jsonMatch[0]);
+            const parsed = extractJsonObject(text);
+            if (!parsed) throw new Error("unparseable");
             if (Array.isArray(parsed.tafs)) tafs.push(...parsed.tafs);
           } catch { /* batch unparseable — carry on with the rest */ }
         }
@@ -1020,6 +1020,33 @@ router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, uploadLarge.array
 // that immediately adopts its waiting evidence. Grounded with the unit
 // refs we already know (tenancy schedule + unlinked evidence) so labels
 // are read, not guessed.
+// Brace-balanced extraction of the first complete JSON object in a model
+// response — a trailing remark or a second object after the JSON killed
+// whole detect jobs via bare JSON.parse (prod, 2026-09-04).
+function extractJsonObject(text: string): any | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(text.slice(start, i + 1)); } catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
 const DETECT_PROMPT = (known: string[]) => `This image is PART of one level of a UK shopping centre letting plan. Thin magenta grid lines are drawn at EXACTLY 0.1 intervals of this image in both directions — use them to calibrate every coordinate you give.
 
 Identify every lettable unit whose block is FULLY visible in this image — shops, restaurants, kiosks — including blocks labelled only with a tenant name. A unit is a closed shape drawn on the floor-plan geometry (usually colour-filled).
@@ -1066,8 +1093,8 @@ async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, o
     }],
   });
   const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  const found: any[] = jsonMatch ? (JSON.parse(jsonMatch[0]).units || []) : [];
+  const parsed = extractJsonObject(text);
+  const found: any[] = Array.isArray(parsed?.units) ? parsed.units : [];
   const clamp = (v: any) => Math.min(1, Math.max(0, Number(v) || 0));
   const sx = width / W, sy = height / H;
   return found.map(u => ({
@@ -1142,7 +1169,7 @@ function frontageDot(raw: Buffer, W: number, H: number, box: { x0: number; y0: n
   return sides[0].w > 0.3 ? sides[0].dot : null;
 }
 
-async function runDetectJob(planId: string, jobId: string, level: any, propertyId: string | null): Promise<void> {
+async function runDetectJob(planId: string, jobId: string, level: any, propertyId: string | null, clearAiFirst = false): Promise<void> {
   const bump = (sets: string, vals: any[]) =>
     pool.query(`UPDATE evidence_plan_jobs SET ${sets}, updated_at = now() WHERE id = $${vals.length + 1}`, [...vals, jobId]).catch(() => {});
   try {
@@ -1173,11 +1200,35 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
     const knownList = [...known].slice(0, 200);
 
     // 3×3 tiles with 25% overlap — the closer the zoom, the better both
-    // recall (small kiosks) and box precision.
+    // recall (small kiosks) and box precision. One bad tile (unparseable
+    // model output, transient API error) costs that tile after one retry,
+    // never the job — a thrown tile used to kill the whole run.
     const found: any[] = [];
+    let failedTiles = 0;
     for (const oy of [0, 0.3, 0.6]) {
       for (const ox of [0, 0.3, 0.6]) {
-        found.push(...await detectTile(sharp, file.data, W, H, ox, oy, 0.4, 0.4, knownList));
+        let got: any[] | null = null;
+        for (let attempt = 0; attempt < 2 && got === null; attempt++) {
+          try { got = await detectTile(sharp, file.data, W, H, ox, oy, 0.4, 0.4, knownList); }
+          catch (e: any) { if (attempt === 1) { failedTiles++; console.error(`[evidence-plan] detect tile (${ox},${oy}) failed twice:`, e?.message); } }
+        }
+        if (got) found.push(...got);
+      }
+    }
+    if (found.length === 0) {
+      throw new Error(failedTiles === 9 ? "AI detection failed on every tile — existing outlines left untouched" : "No units found on this level's plan image — existing outlines left untouched");
+    }
+
+    // Replace-mode (Re-detect): clear the level's AI outlines only now that
+    // a successful read exists — a failed run must never wipe the level.
+    if (clearAiFirst) {
+      const { rows: old } = await pool.query(
+        `SELECT id FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2 AND source IS DISTINCT FROM 'manual'`,
+        [planId, level.id]);
+      if (old.length) {
+        const ids = old.map((r: any) => r.id);
+        await pool.query(`UPDATE evidence_plan_entries SET unit_id = NULL WHERE unit_id = ANY($1)`, [ids]);
+        await pool.query(`DELETE FROM evidence_plan_units WHERE id = ANY($1)`, [ids]);
       }
     }
 
@@ -1271,19 +1322,11 @@ router.post("/api/evidence-plans/:id/detect-units", requireAuth, async (req: Req
     const levels = await healLevels(plan);
     const level = levels.find((l: any) => l.id === String(req.body?.levelId || "")) || levels[0];
     if (!level?.background_key) return res.status(400).json({ error: "No plan image on this level yet" });
-    const { rows: old } = await pool.query(
-      `SELECT id FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2 AND source IS DISTINCT FROM 'manual'`,
-      [plan.id, level.id]);
-    if (old.length) {
-      const ids = old.map((r: any) => r.id);
-      await pool.query(`UPDATE evidence_plan_entries SET unit_id = NULL WHERE unit_id = ANY($1)`, [ids]);
-      await pool.query(`DELETE FROM evidence_plan_units WHERE id = ANY($1)`, [ids]);
-    }
     const { rows } = await pool.query(
       `INSERT INTO evidence_plan_jobs (plan_id, status, total_docs, kind, level_id, created_by) VALUES ($1, 'running', 1, 'detect', $2, $3) RETURNING id`,
       [plan.id, level.id, (req as any).session?.userId || null]);
-    res.json({ jobId: rows[0].id, cleared: old.length });
-    void runDetectJob(plan.id, rows[0].id, level, plan.property_id || null);
+    res.json({ jobId: rows[0].id });
+    void runDetectJob(plan.id, rows[0].id, level, plan.property_id || null, true);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
