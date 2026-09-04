@@ -1,10 +1,10 @@
 import { useState } from "react";
 import KeyContacts from "../components/KeyContacts";
-import CaseStudyStrip from "../components/CaseStudyStrip";
+import { Link } from "wouter";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
 import {
-  caseStudyBySlug,
+  LEASE_ADVISORY_CASE_STUDIES,
   LEASE_ADVISORY_CLIENTS,
   LEASE_ADVISORY_CONTACTS,
   LEASE_ADVISORY_SERVICES,
@@ -62,8 +62,22 @@ export default function LeaseAdvisory() {
         </div>
       </section>
 
+      <section className="mx-auto max-w-6xl px-4 py-10">
+        <span className="section-label">Case studies</span>
+        <div className="card-strip sm:grid-cols-2 lg:grid-cols-4 mt-6">
+          {LEASE_ADVISORY_CASE_STUDIES.map((cs) => (
+            <Link key={cs.slug} href={`/case-studies/${cs.slug}`} className="group block">
+              <div className="img-frame">
+                <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} />
+              </div>
+              <p className="label-caps mt-4 group-hover:text-bgp-burgundy transition-colors">{cs.title}</p>
+              <p className="mt-2 text-[15px] font-light text-bgp-ink/85 leading-relaxed">{cs.blurb}</p>
+              <p className="mt-3"><span className="explore-link">Read more</span></p>
+            </Link>
+          ))}
+        </div>
+      </section>
       <KeyContacts people={LEASE_ADVISORY_CONTACTS} />
-      <CaseStudyStrip caseStudy={caseStudyBySlug("20-hanover-square")} />
     </div>
   );
 }
