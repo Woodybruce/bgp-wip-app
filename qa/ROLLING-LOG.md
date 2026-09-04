@@ -84,6 +84,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r523 · 2026-09-04 · LIGHT (r522 had the journey) — round in progress
+- Provisional heartbeat. Bring-up: canonical recipe held (qa:pg once →
+  run-smoke restore clean → purge + seed-personas via node/pg runner,
+  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
+- Two-bot 523 as 3 foreground chunks (with-server wrapper w/ lsof port
+  kill, 570s child timeout), STANDARD ORDER, fresh cross-523.json:
+  victoria exit 0 FIRST RUN (2×400 standing signature) / mark exit 0
+  (9 issues = 1×503 keyless + 8×403 probe-by-design — standing signature
+  exact) / woody,nick,sam exit 0 (18 [ok], 0 issues). phone-overflow-sweep
+  11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (single 422 =
+  r462 cover-raster; mark 403s flat 1-3/route, no storm). Triage: 0 app
+  bugs. r522's staff-turnover-bybrand-mobile-names passed its first
+  standard-order victoria run. Visual re-verify of the r522 fix to follow.
+
 ### r522 · 2026-09-04 · FULL (rotation #4 BGP staff mobile 390px) · 1 bug fixed — GREEN
 - Bring-up: canonical recipe held 85th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
