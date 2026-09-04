@@ -809,8 +809,11 @@ function PlanView({ planId }: { planId: string }) {
                       : layout ? { x: layout.x, y: layout.y }
                       : { x: c.x * 100, y: c.y * 100 * aspect };
                     const cx = dp.x, cy = dp.y;
-                    const refFont = Math.min(R * 0.58, (R * 2.6) / Math.max(2, label.length));
-                    const zaFont = zaStr ? Math.min(R * (twoLine ? 0.52 : 0.6), (R * 2.6) / zaStr.length) : 0;
+                    // Sized down ~18% (Woody, 2026-09-04: "font size is too
+                    // large for the dots") — the disc, not the text, is the
+                    // marker; the hover card carries the readable figures.
+                    const refFont = Math.min(R * 0.48, (R * 2.15) / Math.max(2, label.length));
+                    const zaFont = zaStr ? Math.min(R * (twoLine ? 0.43 : 0.5), (R * 2.15) / zaStr.length) : 0;
                     return (
                       <g key={`marker-${u.id}`} style={{ pointerEvents: "auto", cursor: isSel ? "grab" : "pointer" }}
                         onClick={e => { e.stopPropagation(); if (!drawing && !dragging.current?.moved) setSelectedId(u.id); }}
@@ -839,7 +842,7 @@ function PlanView({ planId }: { planId: string }) {
                             <text x={cx} y={cy + R * 0.38} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: zaFont, fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{zaStr}</text>
                           </>
                         ) : (
-                          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: showFig ? zaFont : (isRealRef ? refFont : Math.min(R * 0.55, (R * 2.6) / 3)), fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>
+                          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: showFig ? zaFont : (isRealRef ? refFont : Math.min(R * 0.46, (R * 2.15) / 3)), fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>
                             {showFig ? zaStr : (isRealRef ? label : "£")}
                           </text>
                         )}
