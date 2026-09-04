@@ -653,9 +653,12 @@ interface InlineLinkSelectProps {
   onCreate?: (newName: string) => void;
   placeholder?: string;
   compact?: boolean;
+  // Read-only viewers (client logins) see who is linked, never the picker or
+  // its "create new company" row — both 403 for a client account.
+  readOnly?: boolean;
 }
 
-export function InlineLinkSelect({ value, options, href, onSave, onCreate, placeholder = "Link...", compact = false }: InlineLinkSelectProps) {
+export function InlineLinkSelect({ value, options, href, onSave, onCreate, placeholder = "Link...", compact = false, readOnly = false }: InlineLinkSelectProps) {
   const [open, setOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
 
@@ -664,6 +667,21 @@ export function InlineLinkSelect({ value, options, href, onSave, onCreate, place
     : options;
 
   const selectedName = value ? options.find(o => o.id === value)?.name : null;
+
+  if (readOnly) {
+    if (!selectedName) {
+      return <span className="text-xs text-muted-foreground" data-testid="inline-link-readonly">—</span>;
+    }
+    return href ? (
+      <Link href={href} className="min-w-0">
+        <span className="text-xs text-primary hover:underline cursor-pointer truncate block" title={selectedName} data-testid="inline-link-readonly">
+          {selectedName}
+        </span>
+      </Link>
+    ) : (
+      <span className="text-xs truncate block" title={selectedName} data-testid="inline-link-readonly">{selectedName}</span>
+    );
+  }
 
   return (
     <div className="flex items-center gap-1 min-w-0 max-w-full">

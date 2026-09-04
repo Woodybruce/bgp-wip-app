@@ -6667,6 +6667,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "landlordId", v || null)}
                             onCreate={(name) => createCompanyForDeal(deal.id, "landlordId", "Landlord / Client", name)}
                             placeholder="Link landlord"
+                            readOnly={isClientDeals}
                           />
                         </TableCell>
                       )}
@@ -6715,6 +6716,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               onSave={(v) => handleInlineSave(deal.id, "tenantId", v || null)}
                               onCreate={(name) => createCompanyForDeal(deal.id, "tenantId", "Tenant", name)}
                               placeholder="Link tenant"
+                              readOnly={isClientDeals}
                             />
                           </div>
                         </TableCell>

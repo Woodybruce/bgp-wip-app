@@ -2439,6 +2439,26 @@ async function victoriaRound(page, cross) {
     const after = await (await fetch(`${BASE}/api/evidence-plans`, { headers: { Authorization: auth.Authorization } })).json();
     if (after.some((pl) => pl.id === plan.id)) throw new Error('deleted plan still in the list');
   });
+
+  await step(page, p, 'staff-deals-table-editors', async () => {
+    // Other half of client-deals-table-read-only-parties (r534): the client
+    // read-only party cells must not cost staff their inline pickers.
+    // /deals opens on the WIP report for staff — the Deals tab holds the table.
+    await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForTimeout(3000);
+    await page.locator('text=Deals').nth(1).click({ timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(3000);
+    if (!(await page.locator('[data-testid="inline-link-select-trigger"]').count())) {
+      throw new Error('staff lost the inline party pickers on the deals table');
+    }
+    if (await page.locator('[data-testid="inline-link-readonly"]').count()) {
+      throw new Error('staff deals table rendered client read-only party cells');
+    }
+  });
 }
 
 async function markRound(page, cross) {
@@ -6499,6 +6519,33 @@ async function markRound(page, cross) {
       return null;
     });
     if (echo) throw new Error(`client news card repeats its headline as the detail line: "${echo}"`);
+  });
+
+  await step(page, p, 'client-deals-table-read-only-parties', async () => {
+    // r534: the Deals TABLE still handed clients the "+ Link landlord" /
+    // "+ Link tenant" pickers — staff jargon on their own deal, with an
+    // inline "create company" row whose POST 403s (the r528 dead-end class).
+    // Deal DETAIL has had read-only party slots since UX #155 (Woody,
+    // 2026-09-04); the list now matches. Staff keep the pickers
+    // (staff-deals-table-editors).
+    await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForTimeout(4000);
+    if (!(await page.locator('[data-testid="inline-link-readonly"]').count())) {
+      throw new Error('client deals table rendered no read-only party cells (did the table load?)');
+    }
+    if (await page.locator('[data-testid="inline-link-select-trigger"]').count()) {
+      throw new Error('client deals table still offers an inline party picker (UX #155 is list-wide)');
+    }
+    // The create-company row behind that picker really is closed to a client.
+    const probe = await page.request.post(`${BASE}/api/crm/companies`, {
+      headers: { Authorization: `Bearer ${page.qaToken}` },
+      data: { name: `QA-PROBE Newco ${ROUND}` },
+    });
+    if (probe.status() !== 403) throw new Error(`client company create returned ${probe.status()}, expected 403`);
   });
 }
 
