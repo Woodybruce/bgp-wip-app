@@ -4041,12 +4041,29 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       res.json(mirrorWarning ? { ...deal, mirrorWarning } : deal);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
+  // Audit fields whose change history must stay invisible to scoped
+  // clients — the same families stripDealFees hides on the deal itself
+  // (fee/invoicing), plus the staff-only AML/KYC and Xero trail.
+  const CLIENT_HIDDEN_AUDIT_FIELDS = new Set([
+    "fee", "feePercentage", "feeAgreement", "feeAgreementUrl", "feeNotes",
+    "commission", "poNumber", "invoicedAt", "invoicingNotes",
+    "xeroContactId", "xeroContactName", "kycApproved", "amlCheckCompleted",
+    "amlRiskLevel", "amlSourceOfFunds", "amlSourceOfWealth", "amlPepStatus",
+    "amlEddRequired", "amlIdVerified", "amlAddressVerified", "amlSarFiled",
+  ]);
   app.get("/api/crm/deals/:id/audit-log", async (req, res) => {
     try {
+      // Scope-jail like the deal read itself: a client only reads the
+      // history of deals in their own portfolio (was wide open — any
+      // logged-in client could pull any deal's fee/AML change trail).
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId && !(await isDealInScope(scopeCompanyId, req.params.id))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const logs = await db.select().from(dealAuditLog)
         .where(eq(dealAuditLog.dealId, req.params.id))
         .orderBy(sql`created_at DESC`);
-      res.json(logs);
+      res.json(scopeCompanyId ? logs.filter((l) => !CLIENT_HIDDEN_AUDIT_FIELDS.has(l.field)) : logs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

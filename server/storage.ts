@@ -250,7 +250,7 @@ export interface IStorage {
   deleteCrmLead(id: string): Promise<void>;
 
   crmSearchAll(query: string): Promise<{ type: string; id: string; name: string; detail?: string }[]>;
-  getCrmStats(): Promise<{ properties: number; deals: number; companies: number; contacts: number; leads: number; comps: number; requirementsLeasing: number; requirementsInvestment: number }>;
+  getCrmStats(): Promise<{ properties: number; deals: number; activeDeals: number; companies: number; contacts: number; leads: number; comps: number; requirementsLeasing: number; requirementsInvestment: number }>;
 
   getAppChangeRequests(): Promise<AppChangeRequest[]>;
   getAppChangeRequest(id: string): Promise<AppChangeRequest | undefined>;
@@ -1277,10 +1277,14 @@ export class DatabaseStorage implements IStorage {
     return results;
   }
 
-  async getCrmStats(): Promise<{ properties: number; deals: number; companies: number; contacts: number; leads: number; comps: number; requirementsLeasing: number; requirementsInvestment: number }> {
-    const [[p], [d], [co], [ct], [l], [cm], [rl], [ri]] = await Promise.all([
+  async getCrmStats(): Promise<{ properties: number; deals: number; activeDeals: number; companies: number; contacts: number; leads: number; comps: number; requirementsLeasing: number; requirementsInvestment: number }> {
+    const [[p], [d], [ad], [co], [ct], [l], [cm], [rl], [ri]] = await Promise.all([
       db.select({ count: sql<number>`count(*)` }).from(crmProperties),
       db.select({ count: sql<number>`count(*)` }).from(crmDeals),
+      // "active" matches the landlord board: anything not archived,
+      // completed, invoiced or withdrawn is still being worked.
+      db.select({ count: sql<number>`count(*)` }).from(crmDeals)
+        .where(sql`${crmDeals.status} IS NULL OR ${crmDeals.status} NOT IN ('ARCH','COM','INV','WIT')`),
       db.select({ count: sql<number>`count(*)` }).from(crmCompanies),
       db.select({ count: sql<number>`count(*)` }).from(crmContacts),
       db.select({ count: sql<number>`count(*)` }).from(crmLeads),
@@ -1289,7 +1293,8 @@ export class DatabaseStorage implements IStorage {
       db.select({ count: sql<number>`count(*)` }).from(crmRequirementsInvestment),
     ]);
     return {
-      properties: Number(p.count), deals: Number(d.count), companies: Number(co.count),
+      properties: Number(p.count), deals: Number(d.count), activeDeals: Number(ad.count),
+      companies: Number(co.count),
       contacts: Number(ct.count), leads: Number(l.count), comps: Number(cm.count),
       requirementsLeasing: Number(rl.count), requirementsInvestment: Number(ri.count),
     };

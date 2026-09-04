@@ -388,9 +388,9 @@ function Router() {
       <Route path="/edozo" component={PropertiesHub} />
       <Route path="/finance">{() => <EquityRoute><FinancePage /></EquityRoute>}</Route>
       <Route path="/cashflow">{() => <EquityRoute><CashflowPage /></EquityRoute>}</Route>
-      <Route path="/expenses" component={ExpensesAdmin} />
+      <Route path="/expenses">{() => <AdminRoute><ExpensesAdmin /></AdminRoute>}</Route>
       <Route path="/expenses/approvals" component={ExpensesApprovals} />
-      <Route path="/expenses/revolut" component={ExpensesRevolut} />
+      <Route path="/expenses/revolut">{() => <AdminRoute><ExpensesRevolut /></AdminRoute>}</Route>
       <Route path="/my-expenses" component={MyExpenses} />
       <Route path="/team-expenses" component={TeamExpenses} />
       <Route path="/portfolios/:id" component={Portfolios} />

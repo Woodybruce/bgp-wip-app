@@ -738,7 +738,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                   >
                     {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
                     <Building2 className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                    <span className="font-medium text-sm flex-1 min-w-0 truncate">{brandName}</span>
+                    <span className="font-medium text-sm flex-1 min-w-[8rem] truncate" data-testid="text-brand-group-name">{brandName}</span>
                     {draftCount > 0 && <Badge variant="secondary" className="text-[10px] bg-amber-100 text-amber-700">{draftCount} draft</Badge>}
                     <span className="text-xs text-muted-foreground">{brandEntries.length} store{brandEntries.length !== 1 ? "s" : ""}</span>
                     {totalTurnover > 0 && <span className="text-xs font-semibold tabular-nums">{formatCurrency(totalTurnover)}</span>}

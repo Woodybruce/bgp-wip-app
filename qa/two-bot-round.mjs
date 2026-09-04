@@ -75,7 +75,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -470,6 +470,36 @@ async function victoriaRound(page, cross) {
         clientW: document.documentElement.clientWidth,
       }));
       if (scrollW > clientW + 4) throw new Error(`staff dashboard overflows on mobile: scrollWidth ${scrollW} > viewport ${clientW}`);
+    } finally {
+      await mob.close();
+    }
+  });
+
+  // r522: the turnover BY BRAND group header crushed the brand name to a
+  // one-character truncate at 390px (name span was flex-1 min-w-0 while the
+  // stats + Find Stores button never shrank). The name now keeps min-w-[8rem]
+  // so the trailing items wrap below it — assert it stays readable and the
+  // page still fits the phone.
+  await step(page, p, 'staff-turnover-bybrand-mobile-names', async () => {
+    const mob = await page.context().newPage();
+    try {
+      await mob.setViewportSize({ width: 390, height: 780 });
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mob.goto(`${BASE}/turnover`, nav);
+      await mob.waitForTimeout(3500);
+      await mob.getByText(/by brand/i).first().click();
+      await mob.waitForTimeout(1500);
+      const names = mob.locator('[data-testid="text-brand-group-name"]');
+      if (!(await names.count())) throw new Error('BY BRAND view rendered no brand-group rows');
+      const w = await names.first().evaluate((el) => el.getBoundingClientRect().width);
+      if (w < 96) throw new Error(`brand-group name squeezed to ${Math.round(w)}px at 390px (min-w regression)`);
+      const { scrollW, clientW } = await mob.evaluate(() => ({
+        scrollW: document.documentElement.scrollWidth,
+        clientW: document.documentElement.clientWidth,
+      }));
+      if (scrollW > clientW + 4) throw new Error(`turnover BY BRAND overflows on mobile: ${scrollW} > ${clientW}`);
     } finally {
       await mob.close();
     }
@@ -1628,6 +1658,48 @@ async function victoriaRound(page, cross) {
     cross.compStamp = stamp;
   });
 
+  // r504: the comp detail dialog was a hard grid-cols-2 — at 390px each
+  // column got ~160px, the 112px labels left ~40px value slivers and long
+  // values collided with the Transaction column. Fixed with grid-cols-1
+  // sm:grid-cols-2; the phone must render the sections stacked.
+  await step(page, p, 'staff-comp-detail-mobile-stacks', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/comps`, nav);
+      const card = mob.getByText(`QA-COMP R${ROUND}`, { exact: false }).first();
+      await card.waitFor({ timeout: 30000 });
+      await card.tap();
+      await mob.locator('[role="dialog"]').waitFor({ timeout: 20000 });
+      const m = await mob.evaluate(() => {
+        const dlg = document.querySelector('[role="dialog"]');
+        const h4s = [...dlg.querySelectorAll('h4')];
+        const det = h4s.find((h) => /property details/i.test(h.textContent));
+        const trn = h4s.find((h) => /transaction/i.test(h.textContent));
+        if (!det || !trn) return { why: 'section headings missing' };
+        const grid = det.closest('.grid');
+        return {
+          stacked: trn.getBoundingClientRect().top >= det.getBoundingClientRect().bottom,
+          gridOverflow: grid ? grid.scrollWidth - grid.clientWidth : 0,
+        };
+      });
+      if (m.why) throw new Error(`comp detail dialog: ${m.why}`);
+      if (!m.stacked) throw new Error('comp detail sections side-by-side at 390px (grid-cols-1 regression)');
+      if (m.gridOverflow > 4) throw new Error(`comp detail grid h-scrolls at 390px (${m.gridOverflow}px overflow)`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Agent books a deal on a Landsec property WITH a BGP fee. The client round
   // then confirms the deal shows up on Mark's board (cross-persona visibility)
   // but every fee field is stripped from his view — staff set fees, clients
@@ -1754,6 +1826,28 @@ async function victoriaRound(page, cross) {
     const path = new URL(page.url()).pathname;
     if (path === '/login') throw new Error('authenticated /login did not redirect home');
     if (await page.getByText('Page not found').count()) throw new Error('authenticated /login landed on Page not found');
+  });
+
+  // r474: the Brand Intelligence overview's Research Turnover panel used to
+  // cache its TENANT-FILTERED company list under the bare
+  // ["/api/crm/companies"] query key, so for its 120s staleTime the CRM hub
+  // read "0 landlords · 0 agents · 0 contacts" (and landlord pickers went
+  // empty) after any /brands visit. Visit /brands, then /contacts, and
+  // require the CRM header to show real landlord counts.
+  await step(page, p, 'staff-brands-then-crm-not-poisoned', async () => {
+    await page.goto(`${BASE}/brands`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(4000); // overview tab mounts TurnoverResearchPanel
+    await page.goto(`${BASE}/contacts`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    let header = '';
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(1000);
+      header = await page.evaluate(() => {
+        const h1 = document.querySelector('[data-testid="text-page-title"]');
+        return h1?.parentElement?.textContent || '';
+      });
+      if (/[1-9]\d* landlords?/.test(header)) return; // real counts painted
+    }
+    throw new Error(`CRM hub landlord count never left zero after a /brands visit (header: "${header.slice(0, 80)}")`);
   });
 
   // r269: /messages is the mobile chat list; a mobile bookmark opened on
@@ -2097,6 +2191,72 @@ async function victoriaRound(page, cross) {
     if (bad.status !== 400) throw new Error(`brochure DELETE with bad id expected 400, got ${bad.status}`);
     const miss = await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/00000000-0000-4000-8000-000000000000`, { method: 'DELETE', ...auth });
     if (miss.status !== 404) throw new Error(`brochure DELETE with missing uuid expected 404, got ${miss.status}`);
+  });
+
+  await step(page, p, 'staff-expenses-cover-and-admin-gate', async () => {
+    // r482: GET /api/expenses/stage1-cover was shadowed by /api/expenses/:id
+    // (403 "not your expense" for every non-admin, so the approvals page's
+    // "Layla is covering" state never loaded). Must be 200 for any staff;
+    // the POST stays gated to Wendy/Layla/admins, and the admin expense
+    // list stays 403 for non-admin staff (the /expenses page itself is
+    // AdminRoute-gated client-side as of r482). Node-side fetch so the
+    // deliberate 403 rows don't land in the page issue log.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const cov = await fetch(`${BASE}/api/expenses/stage1-cover`, auth);
+    if (cov.status !== 200) throw new Error(`staff GET stage1-cover expected 200, got ${cov.status} (route shadowed by /api/expenses/:id again?)`);
+    const body = await cov.json();
+    if (typeof body?.active !== 'boolean') throw new Error('stage1-cover did not return {active: boolean}');
+    const post = await fetch(`${BASE}/api/expenses/stage1-cover`, { method: 'POST', headers: { ...auth.headers, 'content-type': 'application/json' }, body: JSON.stringify({ active: true }) });
+    if (post.status !== 403) throw new Error(`victoria POST stage1-cover expected 403, got ${post.status}`);
+    const list = await fetch(`${BASE}/api/expenses`, auth);
+    if (list.status !== 403) throw new Error(`victoria GET /api/expenses (admin list) expected 403, got ${list.status}`);
+  });
+
+  await step(page, p, 'staff-crm-stats-active-deals', async () => {
+    // r488: the mobile Today page's "Active Deals" KPI reads
+    // stats.activeDeals, which /api/crm/stats never returned — the tile was
+    // hardwired to 0 for everyone. Must be a number, and never exceed the
+    // total deal count. Node-side fetch, no page-log noise.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const r = await fetch(`${BASE}/api/crm/stats`, auth);
+    if (r.status !== 200) throw new Error(`GET /api/crm/stats expected 200, got ${r.status}`);
+    const body = await r.json();
+    if (typeof body?.activeDeals !== 'number') throw new Error('crm/stats has no numeric activeDeals (Today KPI regresses to 0)');
+    if (typeof body?.deals !== 'number' || body.activeDeals > body.deals) throw new Error(`activeDeals ${body.activeDeals} > deals ${body.deals}`);
+  });
+
+  await step(page, p, 'staff-evidence-plans-list', async () => {
+    // r471: Evidence Plans (arrived via the d0b79fe JOGQK merge) — staff
+    // list must stay reachable. Node-side fetch, no page-log noise.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const r = await fetch(`${BASE}/api/evidence-plans`, auth);
+    if (r.status !== 200) throw new Error(`staff GET /api/evidence-plans expected 200, got ${r.status}`);
+    const body = await r.json();
+    if (!Array.isArray(body)) throw new Error('staff GET /api/evidence-plans did not return an array');
+  });
+
+  await step(page, p, 'staff-evidence-plan-lifecycle', async () => {
+    // r472: full CRUD sweep of the Evidence Plans API — create plan, draw
+    // unit, add entry, delete plan (cascade must leave no orphan rows in
+    // the list payload). Node-side fetch, cleans up after itself.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const mk = await fetch(`${BASE}/api/evidence-plans`, { method: 'POST', headers: { Authorization: auth.Authorization }, body: (() => { const fd = new FormData(); fd.append('name', `QA-EVP R${ROUND}`); return fd; })() });
+    if (mk.status !== 200) throw new Error(`plan create expected 200, got ${mk.status}`);
+    const plan = await mk.json();
+    try {
+      const u = await fetch(`${BASE}/api/evidence-plans/${plan.id}/units`, { method: 'POST', headers: auth, body: JSON.stringify({ unitRef: 'QA1', polygon: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.1 }, { x: 0.2, y: 0.2 }] }) });
+      if (u.status !== 200) throw new Error(`unit create expected 200, got ${u.status}`);
+      const unit = await u.json();
+      const e = await fetch(`${BASE}/api/evidence-plans/${plan.id}/entries`, { method: 'POST', headers: auth, body: JSON.stringify({ unitId: unit.id, unitRef: 'QA1', tenant: 'QA Tenant', zoneA: 111 }) });
+      if (e.status !== 200) throw new Error(`entry create expected 200, got ${e.status}`);
+      const full = await (await fetch(`${BASE}/api/evidence-plans/${plan.id}`, { headers: { Authorization: auth.Authorization } })).json();
+      if (full.units?.length !== 1 || full.entries?.length !== 1) throw new Error(`plan detail expected 1 unit + 1 entry, got ${full.units?.length}/${full.entries?.length}`);
+    } finally {
+      const del = await fetch(`${BASE}/api/evidence-plans/${plan.id}`, { method: 'DELETE', headers: { Authorization: auth.Authorization } });
+      if (del.status !== 200) throw new Error(`plan delete expected 200, got ${del.status}`);
+    }
+    const after = await (await fetch(`${BASE}/api/evidence-plans`, { headers: { Authorization: auth.Authorization } })).json();
+    if (after.some((pl) => pl.id === plan.id)) throw new Error('deleted plan still in the list');
   });
 }
 
@@ -3709,6 +3869,29 @@ async function markRound(page, cross) {
     if (r.brandTheme !== 200) throw new Error(`client brand-theme route not serving (${r.brandTheme})`);
   });
 
+  // Global search (Ctrl+K) for clients must match the canonical brand slice
+  // (clientBrandSliceSql: categories + self-added extras) and never leak the
+  // rival's world (r500: /api/search had its own category regex that missed
+  // Bakery and the crm_extra_brand_ids extras).
+  await step(page, p, 'client-global-search-slice', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const names = async (q) => {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { headers: auth }).catch(() => null);
+        if (!res || !res.ok) return null;
+        const j = await res.json().catch(() => ({}));
+        return (j.results || []).map((x) => x.name);
+      };
+      return { testco: await names('Testco'), brent: await names('Brent'), bluewater: await names('Bluewater') };
+    });
+    if (!r.testco) throw new Error('client /api/search failed');
+    if (!r.testco.includes('Testco Bakery')) throw new Error('slice-category brand (Testco Bakery) missing from client search');
+    if (!r.testco.includes('Testco Fashion')) throw new Error('self-added extra brand (Testco Fashion) missing from client search');
+    if (r.testco.includes('Testco Jewellers')) throw new Error('out-of-slice brand (Testco Jewellers) leaked into client search');
+    if (r.brent && r.brent.length) throw new Error(`rival property leaked into client search: ${r.brent.join(', ')}`);
+    if (!r.bluewater || !r.bluewater.some((n) => /bluewater/i.test(n))) throw new Error('own property missing from client search');
+  });
+
   // The client "add brand from the global directory" endpoints (terminal
   // side): search returns tenant brands, add writes crm_extra_brand_ids,
   // remove clears it. Client-scoped (staff get 403). Under all-brands these
@@ -4811,6 +4994,26 @@ async function markRound(page, cross) {
     if (r.feeLeak) throw new Error('BGP fee fields leaked on the client deals list');
   });
 
+  // r518: the deal audit-log had NO scope check — any client could pull any
+  // deal's fee/AML change history by id. Own deal must serve (minus the
+  // hidden fee/AML/invoicing fields); a rival's fixture deal must refuse.
+  await step(page, p, 'client-deal-audit-scope', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(list) ? list : (list?.data || []);
+      const own = rows.find((d) => d.propertyId === window.QA_FIX.bluewater) || rows[0];
+      const ownRes = own ? await fetch(`/api/crm/deals/${own.id}/audit-log`, { headers: auth }) : null;
+      const ownRows = ownRes && ownRes.ok ? await ownRes.json() : [];
+      const hidden = ownRows.filter((l) => /fee|commission|invoic|poNumber|xero|aml|kyc/i.test(l.field || ''));
+      const rival = await fetch('/api/crm/deals/44444444-4444-4444-4444-444444444444/audit-log', { headers: auth });
+      return { haveOwn: !!own, ownStatus: ownRes ? ownRes.status : 0, hidden: hidden.length, rivalStatus: rival.status };
+    });
+    if (r.haveOwn && r.ownStatus !== 200) throw new Error(`client blocked from own deal's audit log (HTTP ${r.ownStatus})`);
+    if (r.hidden > 0) throw new Error(`client audit log leaked ${r.hidden} fee/AML/invoicing change row(s)`);
+    if (r.rivalStatus !== 403) throw new Error(`rival deal audit log served to client (HTTP ${r.rivalStatus}, want 403)`);
+  });
+
   // Locks in the terminal-side audit fix: a client reading ANOTHER
   // landlord's unit files/viewings/offers BY ID must be refused (was a
   // confirmed live cross-tenant leak). Uses the seeded Hammerson unit.
@@ -5849,6 +6052,38 @@ async function markRound(page, cross) {
         const stok = (await sl.json().catch(() => ({}))).token;
         if (stok) await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/${bid}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + stok } });
       }
+    }
+  });
+
+  await step(page, p, 'client-evidence-plans-gate', async () => {
+    // r471: Evidence Plans is a staff-only module (admin "Unfinished" nav,
+    // not in CLIENT_ALLOWED_API) — the client gateway must 403 reads,
+    // writes and the /source lookup. Node-side fetch so the deliberate
+    // 403 rows don't land in the page issue log (signature stays stable).
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const list = await fetch(`${BASE}/api/evidence-plans`, auth);
+    if (list.status !== 403) throw new Error(`client GET /api/evidence-plans expected 403, got ${list.status}`);
+    const src = await fetch(`${BASE}/api/evidence-plans/source?propertyId=${BLUEWATER}`, auth);
+    if (src.status !== 403) throw new Error(`client GET /api/evidence-plans/source expected 403, got ${src.status}`);
+    const write = await fetch(`${BASE}/api/evidence-plans`, { method: 'POST', body: new FormData(), ...auth });
+    if (write.status !== 403) throw new Error(`client POST /api/evidence-plans expected 403, got ${write.status}`);
+  });
+
+  await step(page, p, 'client-news-signals-deduped', async () => {
+    // r486: the news ingest can land the same story twice (Google News URL
+    // wrap/unwrap flip defeats the URL dedupe), and the client Brand News
+    // tab rendered the duplicate. The endpoint now collapses identical
+    // (brand, headline, signal_date) rows — assert none survive.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const r = await fetch(`${BASE}/api/client/news-signals?limit=200`, auth);
+    if (r.status !== 200) throw new Error(`client news-signals expected 200, got ${r.status}`);
+    const rows = await r.json();
+    if (!Array.isArray(rows)) throw new Error('client news-signals did not return an array');
+    const seen = new Set();
+    for (const s of rows) {
+      const k = `${s.brand_company_id}|${s.headline}|${s.signal_date || s.created_at}`;
+      if (seen.has(k)) throw new Error(`duplicate story in client news feed: "${String(s.headline).slice(0, 80)}"`);
+      seen.add(k);
     }
   });
 }

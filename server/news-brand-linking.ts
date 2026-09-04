@@ -922,6 +922,17 @@ async function upsertBrandSignal(brandId: string, brandName: string, article: {
     .where(and(eq(brandSignals.brandCompanyId, brandId), eq(brandSignals.source, article.url)))
     .limit(1);
   if (existing.length > 0) return;
+  // The URL is an unstable key for Google News articles (the wrapped RSS URL
+  // gets unwrapped to the publisher URL by the image backfill, and the next
+  // fetch pass re-ingests the story under the other form). Same headline on
+  // the same published timestamp for the same brand is the same story.
+  if (article.publishedAt) {
+    const sameStory = await pool.query(
+      `SELECT 1 FROM brand_signals WHERE brand_company_id = $1 AND headline = $2 AND signal_date = $3 LIMIT 1`,
+      [brandId, article.title.slice(0, 500), article.publishedAt]
+    );
+    if (sameStory.rows.length > 0) return;
+  }
 
   const classified = await classifySignal(brandName, article.title, article.summary);
 
