@@ -343,6 +343,56 @@ function PlanView({ planId }: { planId: string }) {
   };
   const [showZa, setShowZa] = useState<boolean>(() => { try { return localStorage.getItem("bgp-ep-za") !== "0"; } catch { return true; } });
 
+  // Marker declutter (Woody, 2026-09-04: "overlapping") — map-app style.
+  // Working in viewBox coordinates (isotropic on screen): higher Zone A
+  // places first; a colliding disc is nudged away a little; if there's
+  // still no room it collapses to a small plain dot at its true anchor.
+  // Radii shrink as you zoom in, so minis graduate to full discs.
+  const markerLayout = useMemo(() => {
+    const aspect = activeLevel?.background_width ? (activeLevel.background_height || 0) / activeLevel.background_width : 0.7;
+    const out = new Map<string, { x: number; y: number; r: number; mini: boolean }>();
+    const items = levelUnits
+      .filter(u => (evidenceCountByUnit.get(u.id) || 0) > 0 && Array.isArray(u.polygon) && (u.polygon as Pt[]).length >= 3)
+      .map(u => {
+        const poly = u.polygon as Pt[];
+        const dp = dotDraft?.unitId === u.id ? dotDraft
+          : (u.dot && typeof u.dot.x === "number" ? u.dot : centroid(poly));
+        const za = latestZaByUnit.get(u.id);
+        const label = String(u.unit_ref || "");
+        const isRealRef = /\d/.test(label) && label.length <= 8;
+        const twoLine = isRealRef && showZa && za != null;
+        const R = (twoLine ? 1.0 : 0.85) * Math.max(1.15, Math.min(1.9, 2.3 / Math.sqrt(zoom)));
+        return { id: u.id, ox: dp.x * 100, oy: dp.y * 100 * aspect, R, za: za ?? -1 };
+      })
+      .sort((a, b) => b.za - a.za);
+    const placed: Array<{ x: number; y: number; r: number }> = [];
+    for (const m of items) {
+      let x = m.ox, y = m.oy;
+      const r = m.R;
+      for (let iter = 0; iter < 4; iter++) {
+        const hit = placed.find(p => Math.hypot(p.x - x, p.y - y) < p.r + r + 0.15);
+        if (!hit) break;
+        const d = Math.hypot(hit.x - x, hit.y - y) || 0.01;
+        const need = hit.r + r + 0.2 - d;
+        x += ((x - hit.x) / d) * need;
+        y += ((y - hit.y) / d) * need;
+        if (Math.hypot(x - m.ox, y - m.oy) > r * 1.6) break; // don't wander off the unit
+      }
+      const collides = placed.some(p => Math.hypot(p.x - x, p.y - y) < p.r + r + 0.1);
+      const tooFar = Math.hypot(x - m.ox, y - m.oy) > r * 1.6;
+      if (collides || tooFar) {
+        const miniR = Math.max(0.3, r * 0.3);
+        out.set(m.id, { x: m.ox, y: m.oy, r: miniR, mini: true });
+        placed.push({ x: m.ox, y: m.oy, r: miniR });
+      } else {
+        out.set(m.id, { x, y, r, mini: false });
+        placed.push({ x, y, r });
+      }
+    }
+    return out;
+  }, [levelUnits, evidenceCountByUnit, latestZaByUnit, dotDraft, zoom, activeLevel, showZa]);
+
+
   const toPlanCoords = (clientX: number, clientY: number): Pt | null => {
     const el = surfaceRef.current;
     if (!el) return null;
@@ -737,15 +787,22 @@ function PlanView({ planId }: { planId: string }) {
                           // disc holding the unit ref and Zone A — neater
                           // than dot + floating figure. Anchored to the
                           // frontage; draggable when the unit is selected.
-                          const dp = dotDraft?.unitId === u.id ? dotDraft
-                            : (u.dot && typeof u.dot.x === "number" ? u.dot : c);
+                          const layout = markerLayout.get(u.id);
                           const label = String(u.unit_ref || "");
                           const isRealRef = /\d/.test(label) && label.length <= 8;
                           const zaStr = za != null ? `£${za.toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
                           const showFig = showZa && zaStr != null;
-                          const twoLine = isRealRef && showFig;
-                          const R = (twoLine ? 1.0 : 0.85) * Math.max(1.15, Math.min(1.9, 2.3 / Math.sqrt(zoom))) * (isSel ? 1.15 : 1);
-                          const cx = dp.x * 100, cy = dp.y * 100 * aspect;
+                          // A decluttered-away marker renders as a small plain
+                          // dot at its true anchor — unless selected, which
+                          // always earns the full disc.
+                          const mini = !!layout?.mini && !isSel;
+                          const twoLine = !mini && isRealRef && showFig;
+                          const R = (mini ? layout!.r : (layout?.r ?? (twoLine ? 1.0 : 0.85) * Math.max(1.15, Math.min(1.9, 2.3 / Math.sqrt(zoom))))) * (isSel ? 1.15 : 1);
+                          const dp = dotDraft?.unitId === u.id ? { x: dotDraft.x * 100, y: dotDraft.y * 100 * aspect }
+                            : isSel && u.dot && typeof u.dot.x === "number" ? { x: u.dot.x * 100, y: u.dot.y * 100 * aspect }
+                            : layout ? { x: layout.x, y: layout.y }
+                            : { x: c.x * 100, y: c.y * 100 * aspect };
+                          const cx = dp.x, cy = dp.y;
                           const refFont = Math.min(R * 0.58, (R * 2.6) / Math.max(2, label.length));
                           const zaFont = zaStr ? Math.min(R * (twoLine ? 0.52 : 0.6), (R * 2.6) / zaStr.length) : 0;
                           return (
@@ -764,7 +821,7 @@ function PlanView({ planId }: { planId: string }) {
                                 setDotDraft(null);
                               }}>
                               <circle cx={cx} cy={cy} r={R} fill={typeColour} stroke="#FFFFFF" strokeWidth={R * 0.09} />
-                              {twoLine ? (
+                              {mini ? null : twoLine ? (
                                 <>
                                   <text x={cx} y={cy - R * 0.32} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: refFont, fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{label}</text>
                                   <text x={cx} y={cy + R * 0.38} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: zaFont, fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{zaStr}</text>

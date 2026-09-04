@@ -7385,12 +7385,14 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                STRING_AGG(DISTINCT NULLIF(xi.invoice_number, ''), ', ') AS "invoiceNumbers"
           FROM crm_deals d
           JOIN xero_invoices xi ON xi.deal_id = d.id AND COALESCE(xi.status, '') <> 'ERROR'
-         WHERE d.fee IS NOT NULL
          GROUP BY d.id
         HAVING BOOL_OR(xi.line_amount IS NOT NULL)
            AND ABS(COALESCE(d.fee, 0) - SUM(COALESCE(xi.line_amount, 0))) > 1
          ORDER BY ABS(COALESCE(d.fee, 0) - SUM(COALESCE(xi.line_amount, 0))) DESC
       `);
+      // No d.fee IS NOT NULL guard: a BLANK fee with a real Xero invoice is
+      // the worst mismatch of all (invisible in WIP and commission), and it
+      // was invisible here too (Woody, 2026-09-04).
       const out = rows.map((r: any) => ({
         dealId: r.id,
         dealRef: r.dealRef,
@@ -7408,6 +7410,57 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       res.json(out);
     } catch (e: any) {
       console.error("[wip/fee-reconciliation]", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Auto-populate BLANK recorded fees from the linked Xero invoice's net —
+  // deals invoiced through Xero whose fee was never typed back onto the
+  // deal ("how can we invoice without the fee? Can you auto populate?" —
+  // Woody, 2026-09-04). Only fills where fee IS NULL or 0 and a non-error
+  // Xero invoice is linked with a positive net; never touches a recorded
+  // figure; every fill lands in the deal audit log.
+  app.post("/api/wip/fill-blank-fees", requireAuth, async (req, res) => {
+    try {
+      const senior = await isWipSenior(req);
+      const fullView = await hasWipFullView(req);
+      if (!senior && !fullView) return res.status(403).json({ error: "Not authorised" });
+      const { rows } = await pool.query(`
+        SELECT d.id, d.deal_ref AS "dealRef", d.name,
+               SUM(COALESCE(xi.line_amount, 0)) AS "xeroNet",
+               STRING_AGG(DISTINCT NULLIF(xi.invoice_number, ''), ', ') AS "invoiceNumbers"
+          FROM crm_deals d
+          JOIN xero_invoices xi ON xi.deal_id = d.id AND COALESCE(xi.status, '') <> 'ERROR'
+         WHERE COALESCE(d.fee, 0) = 0
+         GROUP BY d.id
+        HAVING SUM(COALESCE(xi.line_amount, 0)) > 0
+      `);
+      const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
+      let changedByName: string | null = null;
+      if (userId) {
+        const u = await pool.query(`SELECT name FROM users WHERE id = $1`, [userId]);
+        changedByName = u.rows[0]?.name || null;
+      }
+      const filled: Array<{ dealRef: string | null; name: string; fee: number }> = [];
+      for (const r of rows) {
+        const net = Math.round(Number(r.xeroNet) * 100) / 100;
+        if (!Number.isFinite(net) || net <= 0) continue;
+        await pool.query(`UPDATE crm_deals SET fee = $1 WHERE id = $2 AND COALESCE(fee, 0) = 0`, [net, r.id]);
+        await db.insert(dealAuditLog).values({
+          dealId: r.id,
+          field: "fee",
+          oldValue: null,
+          newValue: String(net),
+          reason: `Auto-filled from Xero net (${r.invoiceNumbers || "linked invoice"})`,
+          changedBy: userId,
+          changedByName,
+        }).catch(() => {});
+        filled.push({ dealRef: r.dealRef, name: r.name, fee: net });
+      }
+      console.log(`[wip] fill-blank-fees: ${filled.length} deal(s) filled by ${changedByName || userId || "?"}`);
+      res.json({ filled: filled.length, deals: filled });
+    } catch (e: any) {
+      console.error("[wip/fill-blank-fees]", e?.message);
       res.status(500).json({ error: e.message });
     }
   });

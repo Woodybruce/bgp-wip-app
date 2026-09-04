@@ -304,8 +304,38 @@ function FeeCheckTab() {
     </div>
   );
 
+  const blanks = data.filter(r => !r.fee && r.xeroNet > 0);
+  const fillBlanks = async () => {
+    const total = blanks.reduce((s, r) => s + r.xeroNet, 0);
+    if (!window.confirm(
+      `Fill ${blanks.length} blank recorded fee${blanks.length === 1 ? "" : "s"} from Xero (${money(total)} total)?\n\nOnly deals with NO recorded fee are touched — each is set to its Xero invoice net and logged on the deal. This updates the WIP report and the agents' commission.`,
+    )) return;
+    setSavingId("__bulk__");
+    try {
+      const r = await apiRequest("POST", "/api/wip/fill-blank-fees");
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "failed");
+      toast({ title: "Fees filled from Xero", description: `${j.filled} deal${j.filled === 1 ? "" : "s"} updated.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/wip/fee-reconciliation"] });
+      invalidateDealCaches();
+    } catch (e: any) {
+      toast({ title: "Couldn't fill fees", description: e?.message || "Please try again.", variant: "destructive" });
+    } finally { setSavingId(null); }
+  };
+
   return (
     <div className="space-y-3">
+      {blanks.length > 0 && (
+        <div className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-4 py-3" data-testid="fill-blank-fees-banner">
+          <p className="text-sm text-amber-900 dark:text-amber-200">
+            <strong>{blanks.length}</strong> invoiced deal{blanks.length === 1 ? " has" : "s have"} <strong>no recorded fee</strong> but a linked Xero invoice
+            ({money(blanks.reduce((s, r) => s + r.xeroNet, 0))} net) — invisible in the WIP and paying nobody commission.
+          </p>
+          <Button size="sm" onClick={fillBlanks} disabled={savingId === "__bulk__"} data-testid="button-fill-blank-fees">
+            {savingId === "__bulk__" ? "Filling…" : "Fill them from Xero"}
+          </Button>
+        </div>
+      )}
       <p className="text-sm text-muted-foreground">
         {data.length} deal{data.length === 1 ? "" : "s"} where the recorded fee doesn't match the net invoiced in Xero.
         The WIP and commission both use the <strong>recorded fee</strong>, so fix these on the Deals page to bring them in line with Xero.
@@ -887,8 +917,13 @@ export default function WipReport() {
     { key: "project", label: "Property", width: "w-28" },
     { key: "billingEntity", label: "Billing Entity", width: "w-24" },
     { key: "team", label: "Team", width: "w-24" },
+    // "Fee" is the deal's money at ANY stage (WIP + invoiced amounts) — the
+    // server zeroes amtWip once invoiced, so a WIP-only column read "—" on
+    // every invoiced row while the money hid in a default-hidden column
+    // ("fee still not showing on invoiced" — Woody, 2026-09-04). "Invoiced"
+    // (hidden by default) shows just the invoiced portion.
     { key: "amtWip", label: "Fee", width: "w-20" },
-    { key: "amtInvoice", label: "Fee Split", width: "w-20" },
+    { key: "amtInvoice", label: "Invoiced", width: "w-20" },
     { key: "dealDate", label: "Target Month", width: "w-24" },
     { key: "dealType", label: "Deal Type", width: "w-20" },
     { key: "agent", label: "BGP Contact", width: "w-20" },
@@ -1203,7 +1238,7 @@ export default function WipReport() {
         case "team": aVal = a.team || ""; bVal = b.team || ""; break;
         case "dealType": aVal = a.dealType || ""; bVal = b.dealType || ""; break;
         case "agent": aVal = a.agent || ""; bVal = b.agent || ""; break;
-        case "amtWip": aVal = a.amtWip || 0; bVal = b.amtWip || 0; break;
+        case "amtWip": aVal = (a.amtWip || 0) + (a.amtInvoice || 0); bVal = (b.amtWip || 0) + (b.amtInvoice || 0); break;
         case "amtInvoice": aVal = a.amtInvoice || 0; bVal = b.amtInvoice || 0; break;
         case "month": aVal = getMonthSortKey(a.month || ""); bVal = getMonthSortKey(b.month || ""); break;
         case "dealDate": {
@@ -2031,7 +2066,7 @@ export default function WipReport() {
                       {colVisible("team") && <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">{e.team || "—"}</td>}
                       {colVisible("amtWip") && (
                       <td className="px-2 py-1.5 text-foreground font-mono">
-                        {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
+                        {(e.amtWip || 0) + (e.amtInvoice || 0) ? formatFullCurrency((e.amtWip || 0) + (e.amtInvoice || 0)) : "—"}
                       </td>
                       )}
                       {colVisible("amtInvoice") && (
@@ -2138,7 +2173,7 @@ export default function WipReport() {
                     <td colSpan={1 + WIP_LEAD_KEYS.filter(colVisible).length} className="px-2 py-1.5 text-foreground">Total</td>
                     {colVisible("amtWip") && (
                       <td className="px-2 py-1.5 text-foreground font-mono">
-                        {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
+                        {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0))}
                       </td>
                     )}
                     {colVisible("amtInvoice") && (() => {
