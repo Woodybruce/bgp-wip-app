@@ -7,6 +7,7 @@ import {
   CASE_STUDIES,
   CONSULTANCY_CONTACTS,
   INVESTMENT_CONTACTS,
+  LEASE_ADVISORY_CONTACTS,
   LEASING_CONTACTS,
   Person,
 } from "../lib/content";
@@ -16,6 +17,7 @@ const CONTACTS_BY_SERVICE: Record<string, Person[]> = {
   Investment: INVESTMENT_CONTACTS.slice(0, 3),
   "Brand Representation": BRAND_REP_CONTACTS,
   Consultancy: CONSULTANCY_CONTACTS,
+  "Lease Advisory": LEASE_ADVISORY_CONTACTS,
 };
 
 export default function CaseStudyPage() {

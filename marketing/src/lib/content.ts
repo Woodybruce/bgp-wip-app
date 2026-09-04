@@ -29,7 +29,7 @@ export const SERVICES = [
     name: "Lease Advisory",
     image: "/images/st-christophers-place.jpg",
     intro:
-      "Rent reviews, lease renewals and restructuring — protecting and enhancing value through the life of the lease, with instructions spanning Canary Wharf (20+ years) and Chinatown London (since 1998).",
+      "Lease Advisory is a core discipline within BGP's asset management offer, providing landlords and tenants with clear, evidence-led advice across rent reviews, re-gears and lease restructuring.",
   },
   {
     slug: "consultancy",
@@ -94,7 +94,7 @@ export const TEAM: Person[] = [
   { name: "Rupert Bentley-Smith", title: "Equity Director, Co-Head London Estates", phone: "+44 (0)7876 354 160", email: "rupert@brucegillinghampollard.com" },
   { photo: "/images/team/jack-barratt.jpg", name: "Jack Barratt", title: "Equity Director, Head of Investment", phone: "+44 (0)7788 215 044", email: "jack@brucegillinghampollard.com" },
   { name: "Victoria Broadhead", title: "Head of National", phone: "+44 (0)7793 158 133", email: "victoria@brucegillinghampollard.com" },
-  { photo: "/images/team/peter-wood.jpg", name: "Peter Wood", title: "Head of Lease Consultancy", phone: "+44 (0)7872 602 336", email: "peter@brucegillinghampollard.com" },
+  { photo: "/images/team/peter-wood.jpg", name: "Peter Wood", title: "Head of Lease Consultancy and Asset Management", phone: "+44 (0)7872 602 336", email: "peter@brucegillinghampollard.com" },
   { photo: "/images/team/nick-halley.jpg", name: "Nick Halley", title: "Director, Investment", phone: "+44 (0)7766 042 736", email: "nick@brucegillinghampollard.com" },
   { name: "Lucy Gardiner", title: "Director, National Leasing", phone: "+44 (0)7741 877 452", email: "lucyg@brucegillinghampollard.com" },
   { name: "Lizzie Knights", title: "Director, London Leasing", phone: "+44 (0)7511 902 073", email: "lizzie@brucegillinghampollard.com" },
@@ -248,6 +248,17 @@ export const CASE_STUDIES: CaseStudy[] = [
       "[Sample] Full case study copy to follow from the consultancy team.",
     ],
   },
+  ...(["Hammerson", "Land Securities", "Bloomberg", "The Royal Exchange"] as const).map((client) => ({
+    slug: client.toLowerCase().replace(/^the /, "").replace(/[^a-z0-9]+/g, "-") + "-lease-advisory",
+    title: client,
+    service: "Lease Advisory",
+    blurb: `Lease advisory instruction for ${client} — rent reviews, renewals and restructuring aligned to the asset strategy.`,
+    facts: [["Service", "Lease Advisory"], ["Client", client]] as Array<[string, string]>,
+    body: [
+      `BGP's Lease Advisory team acts for ${client}, providing evidence-led advice across rent reviews, renewals and lease restructuring.`,
+      "[Sample] Full case study copy to follow from the Lease Advisory team.",
+    ],
+  })),
   {
     slug: "atis",
     title: "ATIS",
@@ -320,6 +331,7 @@ export const CASE_STUDIES: CaseStudy[] = [
 ];
 
 export const BRAND_REP_CASE_STUDIES = CASE_STUDIES.filter((c) => c.service === "Brand Representation");
+export const LEASE_ADVISORY_CASE_STUDIES = CASE_STUDIES.filter((c) => c.service === "Lease Advisory");
 
 export const caseStudyBySlug = (slug: string): CaseStudy =>
   CASE_STUDIES.find((c) => c.slug === slug) ?? CASE_STUDIES[0];
@@ -367,19 +379,21 @@ export const BRAND_REP_CLIENTS: Client[] = [
   { name: "Related", domain: "related.com" },
 ];
 
+// Per Pete Wood (2026-09-04) — his edit of the first draft list.
 export const LEASE_ADVISORY_CLIENTS: Client[] = [
-  { name: "Canary Wharf Group", domain: "canarywharf.com" },
-  { name: "Shaftesbury", domain: "shaftesburycapital.com" },
   { name: "Landsec", domain: "landsec.com" },
-  { name: "The Portman Estate", domain: "portmanestate.co.uk" },
-  { name: "The Crown Estate", domain: "thecrownestate.co.uk" },
-  { name: "Grosvenor", domain: "grosvenor.com" },
-  { name: "Columbia Threadneedle", domain: "columbiathreadneedle.com" },
+  { name: "Hammerson", domain: "hammerson.com" },
   { name: "Bloomberg", domain: "bloomberg.com" },
   { name: "Schroders", domain: "schroders.com" },
   { name: "Brookfield", domain: "brookfield.com" },
-  { name: "Qatari Diar", domain: "qataridiar.com" },
-  { name: "Legal & General", domain: "legalandgeneral.com" },
+  { name: "Columbia Threadneedle", domain: "columbiathreadneedle.com" },
+  { name: "Aberdeen", domain: "aberdeeninvestments.com" },
+  { name: "AXA", domain: "axa-im.com" },
+  { name: "Ardent", domain: "ardentcompanies.com" },
+  { name: "City of London", domain: "cityoflondon.gov.uk" },
+  { name: "Capital Real Estate Partners", domain: "capitalrealestatepartners.com" },
+  { name: "Din Tai Fung", domain: "dintaifung.co.uk" },
+  { name: "Barry's", domain: "barrys.com" },
 ];
 
 export const CONSULTANCY_CLIENTS: Client[] = [
@@ -403,21 +417,21 @@ export const LEASE_ADVISORY_SERVICES = [
   {
     name: "Lease renewals",
     detail:
-      "Negotiating renewals that balance security of income with flexibility, informed by the estate strategy behind each asset.",
+      "Negotiating renewals that enable landlords and occupiers to optimise value and manage risk, ensuring each agreement is structured around operational needs and supports the wider strategy for the asset.",
   },
   {
     name: "Lease restructuring",
     detail:
-      "Advice on regears, surrenders and re-lettings to align the lease structure with asset strategy — including re-gearing work such as the retail element of 55 Bishopsgate for Schroders.",
+      "Bespoke advice on re-gears, surrenders and re-lettings, to align the lease structure with asset or brand strategy.",
   },
   {
     name: "Portfolio & estate advisory",
     detail:
-      "Long-running estate-wide instructions including Canary Wharf (20+ years), Chinatown London (92 restaurants and 49 shops since 1998), Liverpool ONE and Trinity Leeds.",
+      "BGP provide portfolio and estate advisory across long-term instructions, bringing extensive experience in shaping strategy, managing lease events and ensuring assets perform in line with business objectives. We deliver coordinated advice across multi-asset holdings, identifying opportunities to enhance value, reduce risk and optimise performance throughout the ownership lifecycle.",
   },
   {
     name: "Expert advice",
-    detail: "[Sample] Expert witness and dispute resolution detail to be confirmed.",
+    detail: "Our team has extensive experience in dispute resolution, regularly acting as Expert Witness in rent review proceedings and providing representations to Arbitrators and Independent Experts, as well as preparing Expert Reports for Court.",
   },
 ];
 
