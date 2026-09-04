@@ -88,13 +88,71 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r534 · 2026-09-04 · FULL (in progress) · rotation #2 Landsec client desktop 1440px
-- Bring-up: qa:pg once, run-smoke restore clean. Regression: smoke GREEN 42/0.
-- Round in progress: two-bot three-chunk sweep (r533's carried debt — the 3
-  new chat-media/deal-sub-read scenarios have never run inside the harness),
-  then the client-desktop journey as mark.warne, including a BROWSER check
-  that Mark's own chat-media downloads still work after r533's gate.
-- Triage so far: nothing beyond known environment noise.
+### r534 · 2026-09-04 · FULL · rotation #2 Landsec client desktop 1440px · 1 bug fixed — client deals table party pickers
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  seed-personas into bgpsmoke). Regression: smoke GREEN 42/0.
+- r533's CARRIED DEBT CLEARED: all three two-bot chunks run, standard order,
+  every chunk exit 0 on its first run. victoria 2×400 / mark 10 issues /
+  woody,nick,sam 0 — signatures exact except mark, now 10 not 9: the extra
+  403 is r533's own by-design unshared-staff-file probe inside
+  client-chat-media-own-roundtrip. All THREE of r533's new scenarios
+  (agent-upload-chat-media, client-chat-media-own-roundtrip,
+  rival-chat-media-and-deal-subreads-guard) pass inside the harness.
+- CHAT-MEDIA GATE CONFIRMED FROM THE BROWSER (the round's other standing ask),
+  through the real AuthDownloadLink path (fetch → blob, ?token= appended):
+  as Mark, the staff file shared into a thread he belongs to → 200 text/plain
+  with a body; the never-shared staff file → 403 with the human message
+  "Not available to your account" that the chat markdown helper surfaces.
+  r533's gate follows reachability without locking the legitimate client out.
+- JOURNEY (Mark Warne, 1440px): dashboard → properties → Bluewater property
+  page → tenancy (bare redirect to Properties, by design) → tracker/deals →
+  requirements → brands → comps → news → tasks → calendar. 0 pageerrors,
+  0 non-noise 4xx/5xx across the whole walk. (The one 403, GET /api/portfolios,
+  is me typing a staff-only route: ClientRouteGuard bounces to / after the
+  page's query fires — the /hr guard-mount race class, not a bug.)
+- BUG FIXED: the client Deals TABLE still handed clients the "+ Link landlord"
+  / "+ Link tenant" inline pickers — staff jargon on their own deal, with the
+  inline "create company" row behind them whose POST /api/crm/companies 403s
+  (r528's dead-end class). Deal DETAIL has had read-only party slots since
+  UX #155 (Woody, 2026-09-04); the list now matches. InlineLinkSelect grew a
+  readOnly prop (name + link to the company, "—" when unset); passed at the
+  landlord + tenant cells only. Staff keep the pickers. tsc clean, verified
+  visually at 1440px for BOTH personas.
+- METHOD NOTE worth keeping: my first probe used PATCH /api/crm/deals/:id,
+  which 403s "Read-only access for client accounts", and I nearly "fixed" the
+  whole client table (and removed the New Deal button) on the strength of it.
+  The app's inline saves and its create dialog use PUT/POST, which clients ARE
+  allowed — client-create-deal-no-fee caught the New Deal removal as a
+  flow-failure. Probe with the method the UI actually uses before calling a
+  control a dead end.
+- DEFERRED (new, from that probe — real, needs Woody's call, logged as UX 171):
+  a client's PUT on their own deal persists dealType, team, leaseLength and
+  landlordId; only fee fields are stripped and only the AML gate blocks a
+  status jump. So a client can silently reassign which BGP TEAM and which
+  INTERNAL AGENT owns their deal. Suggested shape: strip BGP-internal
+  assignment fields from client PUTs server-side, then render those chips
+  read-only.
+- DEFERRED (carried from r532/r533, untouched this round): 3. unscoped GET
+  /api/crm/leads/:id; 4. GET /api/chatbgp/threads/:threadId/active-run
+  membership; 5. re-run qa/client-allowed-get-audit.mjs and teach it
+  /:filename params. Bluewater tenancy SPINE duplicates still carried.
+- Harness growth: mark client-deals-table-read-only-parties (read-only cells
+  present, 0 pickers, company-create still 403) + victoria
+  staff-deals-table-editors (pickers kept, no client read-only cells) — the
+  standard staff-keeps / client-loses cross-check pair. Both [ok] on re-run.
+- Committed to qa/: with-server.sh (r533's scratchpad wrapper, promoted as it
+  recommended — setsid + process-group kill + refuses to start if :5000
+  answers) and apply-sql.mjs (applies a .sql to bgpsmoke over TCP; lives in
+  qa/ so `pg` resolves).
+- Suggestions: UX-NOTES 171 (client-editable BGP team/agent on their own
+  deal), 172 (/properties ownership chip truncates the landlord to "Lan…"
+  with half the row empty), plus an r534 addendum to 169 (the empty
+  Requirements table reproduces for the client persona).
+- New flakes: none. tsc clean. Real-device keyboard-up composer check (r405)
+  open for Woody.
+- Next: r534 was FULL → r535 LIGHT (skip the journey; spend it on the
+  deferred list above, starting with the client-PUT field strip if Woody
+  confirms 171, else punch-list items 3-5).
 
 ### r533 · 2026-09-04 · LIGHT (r532 had the journey) · 2 bugs fixed — chat-media + deal M365 sub-reads
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →

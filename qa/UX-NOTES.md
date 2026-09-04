@@ -13,6 +13,31 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+172. 2026-09-04 · Landsec client / desktop 1440px (QA r534) · "quarterly
+   leasing catch-up — whose buildings are these?" · on /properties the
+   OWNERSHIP column truncates every chip to three characters ("Client /
+   Landlord · Lan…", "Freeholder · Landsec"), while STATUS, CLASS and TEAM
+   are all "—" and roughly 500px of the row sits empty. The one piece of
+   information the chip exists to carry — WHO — is the part that gets cut.
+   SUGGESTION: let the ownership cell take the slack from the empty columns
+   (or drop the "Client / Landlord ·" prefix to a tooltip and show the name),
+   so the landlord reads at a glance.
+
+171. 2026-09-04 · Landsec client / desktop 1440px (QA r534) · "tidy up my
+   own deal row on the Deals table" · r534 made the party pickers read-only
+   for clients (UX #155, list-wide). What is left is a QUESTION for Woody
+   rather than a defect: on their own deals a client can still inline-edit
+   DEAL STATUS, DEAL TYPE, LEASE TERMS, the property/unit link, and — the
+   part that looks wrong from BGP's side — the BGP TEAM and INTERNAL AGENT
+   chips. Probed against the running server: PUT /api/crm/deals/:id accepts
+   all of them from a client login (dealType, team, leaseLength, landlordId
+   all persisted; only fee fields are stripped and the AML gate blocks a
+   status jump to EXC). So a client can silently reassign which BGP team and
+   which BGP agent owns their deal. SUGGESTION: strip team/internalAgent (and
+   any other BGP-internal assignment field) from client PUTs server-side and
+   render those two chips read-only, and decide whether deal status/type
+   should be the client's to set at all or BGP's alone.
+
 170. 2026-09-04 · BGP staff / desktop 1440px (QA r533) · followed a
    "Messages" link/bookmark on desktop to pick up a team conversation · the
    route redirects to /chatbgp (by design — /messages is the mobile chat
@@ -36,6 +61,11 @@ what happened · concrete suggested improvement.
    Requirements tabs (LEASING and INVESTMENT) the house empty state — icon,
    "No leasing requirements yet", one line of guidance, and an "Add
    requirement" button that opens the same dialog as the header button.
+
+   (r534 addendum: identical on the LANDSEC CLIENT at 1440px — Mark's
+   Requirements page is headers over an empty grey block with no line
+   explaining what a requirement is or that BGP fills them in. Same fix,
+   both personas.)
 
 168. 2026-09-04 · BGP staff / desktop 1440px (QA r532) · went to Comps for
    rent-review evidence on a Bluewater unit · the strip reads "0 comps · 0
