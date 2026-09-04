@@ -2533,6 +2533,62 @@ async function victoriaRound(page, cross) {
     if (r.cookieStatus !== 200) throw new Error(`staff lost the paywall cookie health list (expected 200, got ${r.cookieStatus})`);
     if (r.cookieCount < 1) throw new Error('paywall cookie health came back without any publication rows');
   });
+
+  await step(page, p, 'staff-tenancy-dupe-no-second-tracker-card', async () => {
+    // r539: a duplicated spine row (same unit listed twice on the tenancy
+    // schedule) used to spawn a SECOND Letting Tracker card via
+    // fanOutTenancyStatus — the name-link only adopts unowned rows, so a
+    // sibling spine row's card was invisible to it. Add a duplicate-named
+    // tenancy row, assert the tracker card count for that name is unchanged,
+    // then delete the row we added. Node-side fetch, cleans up after itself.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const units = async () => {
+      const r = await fetch(`${BASE}/api/available-units?propertyId=${BLUEWATER}`, { headers: auth });
+      if (r.status !== 200) throw new Error(`staff GET /api/available-units expected 200, got ${r.status}`);
+      const body = await r.json();
+      return Array.isArray(body) ? body : (body.units || []);
+    };
+    const before = await units();
+    if (before.length === 0) throw new Error('staff tracker came back empty for Bluewater');
+    const name = before[0].unitName;
+    const countBefore = before.filter((u) => u.unitName === name).length;
+    const mk = await fetch(`${BASE}/api/tenancy-schedule/unit`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ property_id: BLUEWATER, unit_number: name, status: 'Vacant' }),
+    });
+    if (mk.status !== 200) throw new Error(`tenancy row create expected 200, got ${mk.status}`);
+    const row = await mk.json();
+    try {
+      const after = await units();
+      const countAfter = after.filter((u) => u.unitName === name).length;
+      if (countAfter !== countBefore) {
+        throw new Error(`duplicate spine row changed the tracker card count for "${name}": ${countBefore} -> ${countAfter}`);
+      }
+    } finally {
+      if (row?.id) await fetch(`${BASE}/api/tenancy-schedule/unit/${row.id}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-resync-mirror-is-idempotent', async () => {
+    // r539 companion: the property-wide "Re-sync" is the other amplifier —
+    // it fans out every spine row, so a dirty schedule used to grow the
+    // tracker on each press. Two consecutive re-syncs must leave the card
+    // count exactly where it started.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const count = async () => {
+      const r = await fetch(`${BASE}/api/available-units?propertyId=${BLUEWATER}`, { headers: auth });
+      if (r.status !== 200) throw new Error(`staff GET /api/available-units expected 200, got ${r.status}`);
+      const body = await r.json();
+      return (Array.isArray(body) ? body : (body.units || [])).length;
+    };
+    const before = await count();
+    for (let i = 0; i < 2; i++) {
+      const rs = await fetch(`${BASE}/api/properties/${BLUEWATER}/resync-mirror`, { method: 'POST', headers: auth });
+      if (rs.status !== 200) throw new Error(`staff resync-mirror expected 200, got ${rs.status}`);
+    }
+    const after = await count();
+    if (after !== before) throw new Error(`re-sync changed the Bluewater tracker card count: ${before} -> ${after}`);
+  });
 }
 
 async function markRound(page, cross) {

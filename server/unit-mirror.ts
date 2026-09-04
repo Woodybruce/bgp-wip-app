@@ -162,7 +162,20 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
       // Non-lettable revenue lines (lockers, vending, ATMs) never mirror
       // onto the tracker — they're schedule furniture, not shops.
       const { isJunkUnitName } = await import("./unit-junk");
-      if (!isJunkUnitName(t.unit_number)) {
+      // A duplicated spine row (the same unit listed twice on the tenancy
+      // schedule) must not spawn a second tracker card. The name-link above
+      // only adopts rows with no owner, so a sibling spine row's card is
+      // invisible to it — check by name before creating (Bluewater showed
+      // U062 four times, r539).
+      const twinAvail = unitNorm
+        ? await pool.query(
+            `SELECT id FROM available_units
+              WHERE property_id = $1 AND lower(trim(coalesce(unit_name, ''))) = $2
+              LIMIT 1`,
+            [t.property_id, unitNorm]
+          )
+        : { rows: [] as any[] };
+      if (!isJunkUnitName(t.unit_number) && twinAvail.rows.length === 0) {
         await pool.query(
           `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
            VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -186,11 +199,21 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
         [leasingStatus, tenancyId]
       );
     } else if (leasingStatus !== "Archived") {
-      await pool.query(
-        `INSERT INTO leasing_schedule_units (property_id, unit_name, sqft, rent_pa, status, tenancy_unit_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [t.property_id, t.unit_number, sqft, askingRent, leasingStatus, tenancyId]
-      );
+      const twinLs = unitNorm
+        ? await pool.query(
+            `SELECT id FROM leasing_schedule_units
+              WHERE property_id = $1 AND lower(trim(coalesce(unit_name, ''))) = $2
+              LIMIT 1`,
+            [t.property_id, unitNorm]
+          )
+        : { rows: [] as any[] };
+      if (twinLs.rows.length === 0) {
+        await pool.query(
+          `INSERT INTO leasing_schedule_units (property_id, unit_name, sqft, rent_pa, status, tenancy_unit_id)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [t.property_id, t.unit_number, sqft, askingRent, leasingStatus, tenancyId]
+        );
+      }
     }
   } catch (e: any) {
     // Best-effort — never break the tenancy write because a projection failed.
