@@ -187,9 +187,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
      one rides the allowed /api/crm/ prefix. Same one-line fix as bug 2.
   4. GET /api/chatbgp/threads/:threadId/active-run — no membership check in
      the handler; check whether the run payload carries thread content.
-  5. qa/client-allowed-get-audit.mjs (added this round) is worth keeping — it reads the two lists out of
-     server/index.ts and reports id-addressable allowed GETs with no scope
-     helper. Re-run it after any allowlist change.
+  5. qa/client-allowed-get-audit.mjs (added this round) reads the two lists
+     out of server/index.ts and reports id-addressable allowed GETs with no
+     scope helper — 16 before the fixes, 14 after. Re-run it after any
+     allowlist change; each hit needs a probe, not a guess.
 - Carried (data, staff decision): Bluewater tenancy SPINE duplicates
   (U062 ×4, L090 ×2, L130 ×2).
 - Suggestions: UX-NOTES 168 (Comps says "Try adjusting your filters" when
