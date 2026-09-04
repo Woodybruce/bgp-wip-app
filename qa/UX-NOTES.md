@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+156. 2026-09-04 · BGP staff / mobile 390px (QA r522) · tried to look
+    something up quickly and check notifications between viewings · the
+    staff phone shell has NO global-search or notifications entry point —
+    desktop's header has both (⌘K search box + bell with a badge showing
+    10 unread), but on the phone Victoria can only search within
+    individual pages (tracker, brands, contacts) and never sees her
+    notifications at all. Suggestion: add a search icon and a bell (badge
+    count) to the phone-shell header, opening the same ⌘K palette and
+    notifications popover the desktop uses.
+
 155. 2026-09-04 · Landsec client / mobile 390px (QA r520) · opened their own
     deal's detail page · the Overview "Parties" card shows empty Landlord/
     Tenant slots with staff-worded "+ Link landlord" / "+ Link tenant"

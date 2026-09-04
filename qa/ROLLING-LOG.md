@@ -84,10 +84,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r522 · 2026-09-04 · FULL (rotation #4 BGP staff mobile 390px) — ROUND IN PROGRESS
-- Heartbeat: triage done. Bring-up: canonical recipe held (qa:pg once →
+### r522 · 2026-09-04 · FULL (rotation #4 BGP staff mobile 390px) · 1 bug fixed — GREEN
+- Bring-up: canonical recipe held 85th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
-  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
+  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0 ×2
+  (before, and FRESH_BUILD=1 after the fix).
 - Two-bot 522 as 3 foreground chunks (with-server wrapper w/ lsof port
   kill, 570s child timeout), STANDARD ORDER, fresh cross-522.json:
   victoria exit 0 FIRST RUN (2×400 standing signature) / mark exit 0
@@ -96,7 +97,46 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw 500/502/504 all
   chunks (single 422 = r462 cover-raster; "500" grep hits = news-feed
   text, r413 class). Triage: 0 app bugs from the harness.
-- Staff-mobile journey (Victoria @390px) to follow this heartbeat.
+- Journey (Victoria @390px iPhone UA+touch, UI login via Client/guest
+  reveal — "between viewings: quick lookup + notifications, work a unit
+  OFFER lifecycle on the phone, turnover board, phone Images + My
+  Profile, news, dashboard" — offer lifecycle/turnover//m/* never
+  journey-tested at staff mobile): login lands Messages (intended) →
+  tracker U124 (3 of 81) OFFER FULL lifecycle on MOBILE: ADD via company
+  picker (Honi Poke) → "Offer added" toast + card ticks Offer (1) → EDIT
+  pencil ("Offer updated", note persists) → DELETE ("Offer removed", card
+  back to no-count; DB verified 0 residue) → /turnover TABLE cards clean,
+  BY BRAND → BUG below → /m/images (staff-lite empty state + admin-only
+  pointer — coherent) → /m/profile (photo, contact rows, HR link) clean →
+  /news LATEST/SAVED cards clean → dashboard tab (greeting, billing KPIs,
+  tiles, boards, briefing degrade) clean. 0 pageerrors, 0 non-noise
+  4xx/5xx, 0 h-overflow on 25 shots.
+- BUG FIXED (1): turnover BY BRAND group headers crushed the brand name
+  to a one-character truncate at 390px ("H…" for Hammerson/Honi Poke —
+  row identity lost; name span was flex-1 min-w-0 truncate while the
+  stats + Find Stores button never shrank in the flex-wrap row). Name now
+  keeps min-w-[8rem] (+ data-testid) so trailing items wrap below it
+  (turnover-board.tsx). Verified visually at 390px (full names, actions
+  wrap; desktop table view unaffected), tsc clean, FRESH_BUILD smoke
+  42/0.
+- Harness growth: two-bot +1 staff-turnover-bybrand-mobile-names (BY
+  BRAND at 390px: name span ≥96px + no h-overflow) — GREEN on its first
+  standard-order victoria chunk run (76 [ok], standing 2×400 only).
+- NOT bugs: staff phone shell header has no bell/global search (desktop
+  has both) — logged as UX-NOTES 156, not a regression; offer toast pops
+  mid-screen over the dialog = known UX-149; QA-PROBE turnover rows in
+  the table = two-bot residue, purge sweeps next round.
+- Setup note: FRESH_BUILD smoke restore can fail "database is being
+  accessed by other users" after with-server rounds — sweep server
+  processes (pkill -f server/index.ts) before re-running; a
+  pg_terminate_backend pass on bgpsmoke via node/pg is the fallback.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 156
+  (phone-shell search + notifications entry points). New flakes: none.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r522 had the journey → r523 LIGHT (watch
+  staff-turnover-bybrand-mobile-names' next run); then rotation #1 BGP
+  staff desktop 1440px.
 
 ### r521 · 2026-09-04 · LIGHT (r520 had the journey) — GREEN
 - Bring-up: canonical recipe held 84th consecutive time (qa:pg once →

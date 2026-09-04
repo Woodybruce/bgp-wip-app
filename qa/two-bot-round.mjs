@@ -475,6 +475,36 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r522: the turnover BY BRAND group header crushed the brand name to a
+  // one-character truncate at 390px (name span was flex-1 min-w-0 while the
+  // stats + Find Stores button never shrank). The name now keeps min-w-[8rem]
+  // so the trailing items wrap below it — assert it stays readable and the
+  // page still fits the phone.
+  await step(page, p, 'staff-turnover-bybrand-mobile-names', async () => {
+    const mob = await page.context().newPage();
+    try {
+      await mob.setViewportSize({ width: 390, height: 780 });
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mob.goto(`${BASE}/turnover`, nav);
+      await mob.waitForTimeout(3500);
+      await mob.getByText(/by brand/i).first().click();
+      await mob.waitForTimeout(1500);
+      const names = mob.locator('[data-testid="text-brand-group-name"]');
+      if (!(await names.count())) throw new Error('BY BRAND view rendered no brand-group rows');
+      const w = await names.first().evaluate((el) => el.getBoundingClientRect().width);
+      if (w < 96) throw new Error(`brand-group name squeezed to ${Math.round(w)}px at 390px (min-w regression)`);
+      const { scrollW, clientW } = await mob.evaluate(() => ({
+        scrollW: document.documentElement.scrollWidth,
+        clientW: document.documentElement.clientWidth,
+      }));
+      if (scrollW > clientW + 4) throw new Error(`turnover BY BRAND overflows on mobile: ${scrollW} > ${clientW}`);
+    } finally {
+      await mob.close();
+    }
+  });
+
   // r411: the staff cold-open lands on /chatbgp, which renders the Messages
   // list — the bottom nav must light the Messages tab there (it shipped with
   // no tab active, leaving the cold-open screen unanchored). Needs real
