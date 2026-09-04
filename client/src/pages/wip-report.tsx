@@ -917,8 +917,13 @@ export default function WipReport() {
     { key: "project", label: "Property", width: "w-28" },
     { key: "billingEntity", label: "Billing Entity", width: "w-24" },
     { key: "team", label: "Team", width: "w-24" },
+    // "Fee" is the deal's money at ANY stage (WIP + invoiced amounts) — the
+    // server zeroes amtWip once invoiced, so a WIP-only column read "—" on
+    // every invoiced row while the money hid in a default-hidden column
+    // ("fee still not showing on invoiced" — Woody, 2026-09-04). "Invoiced"
+    // (hidden by default) shows just the invoiced portion.
     { key: "amtWip", label: "Fee", width: "w-20" },
-    { key: "amtInvoice", label: "Fee Split", width: "w-20" },
+    { key: "amtInvoice", label: "Invoiced", width: "w-20" },
     { key: "dealDate", label: "Target Month", width: "w-24" },
     { key: "dealType", label: "Deal Type", width: "w-20" },
     { key: "agent", label: "BGP Contact", width: "w-20" },
@@ -1233,7 +1238,7 @@ export default function WipReport() {
         case "team": aVal = a.team || ""; bVal = b.team || ""; break;
         case "dealType": aVal = a.dealType || ""; bVal = b.dealType || ""; break;
         case "agent": aVal = a.agent || ""; bVal = b.agent || ""; break;
-        case "amtWip": aVal = a.amtWip || 0; bVal = b.amtWip || 0; break;
+        case "amtWip": aVal = (a.amtWip || 0) + (a.amtInvoice || 0); bVal = (b.amtWip || 0) + (b.amtInvoice || 0); break;
         case "amtInvoice": aVal = a.amtInvoice || 0; bVal = b.amtInvoice || 0; break;
         case "month": aVal = getMonthSortKey(a.month || ""); bVal = getMonthSortKey(b.month || ""); break;
         case "dealDate": {
@@ -2061,7 +2066,7 @@ export default function WipReport() {
                       {colVisible("team") && <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">{e.team || "—"}</td>}
                       {colVisible("amtWip") && (
                       <td className="px-2 py-1.5 text-foreground font-mono">
-                        {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
+                        {(e.amtWip || 0) + (e.amtInvoice || 0) ? formatFullCurrency((e.amtWip || 0) + (e.amtInvoice || 0)) : "—"}
                       </td>
                       )}
                       {colVisible("amtInvoice") && (
@@ -2168,7 +2173,7 @@ export default function WipReport() {
                     <td colSpan={1 + WIP_LEAD_KEYS.filter(colVisible).length} className="px-2 py-1.5 text-foreground">Total</td>
                     {colVisible("amtWip") && (
                       <td className="px-2 py-1.5 text-foreground font-mono">
-                        {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
+                        {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0))}
                       </td>
                     )}
                     {colVisible("amtInvoice") && (() => {
