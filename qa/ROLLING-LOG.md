@@ -88,6 +88,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r537 · 2026-09-04 21:32 UTC · LIGHT (r536 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  seed-personas into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN
+  42/0.
+- Two-bot round 537, all three chunks, standard order, each exit 0 first run.
+  Signatures EXACT vs r536: victoria 2×400, mark 9×403 + 1×503,
+  woody/nick/sam 0. All listed noise. 0 new issues from the scripted sweep.
+- Triage: nothing new. Whole budget to the client-isolation audit — teach
+  qa/client-allowed-get-audit.mjs the staffOnly + requestScope/listScope
+  tokens, then live-probe whatever new collection GETs the cleaner report
+  surfaces (BGP-internal business first).
+
 ### r536 · 2026-09-04 · FULL · rotation #3 Landsec client MOBILE 390px · 2 bugs fixed — firm fee summary + agent leaderboard open to clients
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN
