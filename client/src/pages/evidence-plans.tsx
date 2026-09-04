@@ -25,7 +25,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Map as MapIcon, Plus, Upload, ZoomIn, ZoomOut, Pencil, Trash2, FileSpreadsheet, FileText, X, Loader2, Maximize2, Minimize2, Sparkles } from "lucide-react";
+import { Map as MapIcon, Plus, Upload, ZoomIn, ZoomOut, Pencil, Trash2, FileSpreadsheet, FileText, X, Loader2, Maximize2, Minimize2, Sparkles, Crop as CropIcon } from "lucide-react";
 
 type Pt = { x: number; y: number };
 type PlanLevel = {
@@ -236,6 +236,9 @@ function PlanView({ planId }: { planId: string }) {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drawing, setDrawing] = useState(false);
+  const [cropping, setCropping] = useState(false);
+  const [cropRect, setCropRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const cropStart = useRef<Pt | null>(null);
   const [draft, setDraft] = useState<Pt[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const bgInputRef = useRef<HTMLInputElement>(null);
@@ -496,6 +499,11 @@ function PlanView({ planId }: { planId: string }) {
               <DropdownMenuItem onClick={() => tafFolderRef.current?.click()}>A whole folder…</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button variant={cropping ? "default" : "outline"} size="icon" className="h-8 w-8"
+            onClick={() => { setCropping(c => !c); setCropRect(null); setDrawing(false); setDraft([]); }}
+            title="Crop plan — drag the area to keep" disabled={!hasBg} data-testid="button-crop-plan">
+            <CropIcon className="w-3.5 h-3.5" />
+          </Button>
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={toggleFullscreen} title={isFullscreen ? "Exit full screen" : "Full screen"} data-testid="button-fullscreen">
             {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </Button>
@@ -582,17 +590,48 @@ function PlanView({ planId }: { planId: string }) {
           }}
           onPointerDown={e => {
             if (drawing) return;
+            if (cropping) {
+              const pt = toPlanCoords(e.clientX, e.clientY);
+              if (pt) { cropStart.current = pt; setCropRect({ x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y }); }
+              (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+              return;
+            }
             (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
             dragging.current = { start: { x: e.clientX, y: e.clientY }, panStart: pan, moved: false };
           }}
+          onPointerUp={async () => {
+            dragging.current = null;
+            if (!cropping || !cropRect || !cropStart.current) return;
+            cropStart.current = null;
+            const clamp = (v: number) => Math.min(1, Math.max(0, v));
+            const r = {
+              x0: clamp(Math.min(cropRect.x0, cropRect.x1)), y0: clamp(Math.min(cropRect.y0, cropRect.y1)),
+              x1: clamp(Math.max(cropRect.x0, cropRect.x1)), y1: clamp(Math.max(cropRect.y0, cropRect.y1)),
+            };
+            setCropping(false);
+            setCropRect(null);
+            if (r.x1 - r.x0 < 0.05 || r.y1 - r.y0 < 0.05) return;
+            if (!window.confirm(`Crop ${activeLevel?.name || "this level"} to the selected area? Units and dots move with it; the original image is kept in storage.`)) return;
+            try {
+              const resp = await apiRequest("POST", `/api/evidence-plans/levels/${activeLevel!.id}/crop`, r);
+              if (!resp.ok) throw new Error((await resp.json()).error || "failed");
+              setZoom(1); setPan({ x: 0, y: 0 });
+              invalidate();
+              toast({ title: "Plan cropped", description: "Outlines and dots remapped to the new frame." });
+            } catch (err: any) { toast({ title: "Crop failed", description: err.message, variant: "destructive" }); }
+          }}
           onPointerMove={e => {
+            if (cropping && cropStart.current && e.buttons === 1) {
+              const pt = toPlanCoords(e.clientX, e.clientY);
+              if (pt) setCropRect({ x0: cropStart.current.x, y0: cropStart.current.y, x1: pt.x, y1: pt.y });
+              return;
+            }
             const d = dragging.current;
             if (!d) return;
             const dx = e.clientX - d.start.x, dy = e.clientY - d.start.y;
             if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
             setPan({ x: d.panStart.x + dx, y: d.panStart.y + dy });
           }}
-          onPointerUp={() => { dragging.current = null; }}
           data-testid="evidence-plan-canvas"
         >
           {!hasBg ? (
@@ -662,37 +701,48 @@ function PlanView({ planId }: { planId: string }) {
                           stroke={isSel ? "hsl(17 60% 45%)" : isHover ? "hsl(220 10% 35% / 0.6)" : "transparent"}
                           strokeWidth={isSel ? 0.3 : 0.16} strokeDasharray={isSel ? "1 0.5" : undefined} vectorEffect="non-scaling-stroke" />
                         {evCount > 0 && (() => {
-                          // Dot anchors to the unit's frontage (set by
-                          // detection, draggable when selected); centroid is
-                          // the fallback.
+                          // Contained marker (Woody, 2026-09-04): a coloured
+                          // disc holding the unit ref and Zone A — neater
+                          // than dot + floating figure. Anchored to the
+                          // frontage; draggable when the unit is selected.
                           const dp = dotDraft?.unitId === u.id ? dotDraft
                             : (u.dot && typeof u.dot.x === "number" ? u.dot : c);
-                          const showFig = showZa && za != null;
+                          const label = String(u.unit_ref || "");
+                          const isRealRef = /\d/.test(label) && label.length <= 8;
+                          const zaStr = za != null ? `£${za.toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
+                          const showFig = showZa && zaStr != null;
+                          const twoLine = isRealRef && showFig;
+                          const R = (twoLine ? 1.0 : 0.85) * Math.max(1.15, Math.min(1.9, 2.3 / Math.sqrt(zoom))) * (isSel ? 1.15 : 1);
+                          const cx = dp.x * 100, cy = dp.y * 100 * aspect;
+                          const refFont = Math.min(R * 0.58, (R * 2.6) / Math.max(2, label.length));
+                          const zaFont = zaStr ? Math.min(R * (twoLine ? 0.52 : 0.6), (R * 2.6) / zaStr.length) : 0;
                           return (
-                            <>
-                              <circle cx={dp.x * 100} cy={dp.y * 100 * aspect} r={isSel ? dotR * 1.4 : dotR}
-                                fill={typeColour} stroke="#FFFFFF" strokeWidth={dotR * 0.35}
-                                style={isSel ? { cursor: "grab" } : undefined}
-                                onPointerDown={e => { if (!isSel) return; e.stopPropagation(); (e.target as Element).setPointerCapture(e.pointerId); }}
-                                onPointerMove={e => {
-                                  if (!isSel || e.buttons !== 1) return;
-                                  e.stopPropagation();
-                                  const pt = toPlanCoords(e.clientX, e.clientY);
-                                  if (pt) setDotDraft({ unitId: u.id, x: pt.x, y: pt.y });
-                                }}
-                                onPointerUp={e => {
-                                  if (dotDraft?.unitId !== u.id) return;
-                                  e.stopPropagation();
-                                  saveUnit.mutate({ id: u.id, patch: { dot: { x: dotDraft.x, y: dotDraft.y } } });
-                                  setDotDraft(null);
-                                }} />
-                              {showFig && (
-                                <text x={dp.x * 100} y={dp.y * 100 * aspect + dotR * 1.6 + zaSize * 0.6} textAnchor="middle" dominantBaseline="middle"
-                                  style={{ fontSize: zaSize, fontWeight: 700, fill: typeColour, paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: zaSize * 0.16 }}>
-                                  £{za!.toLocaleString("en-GB", { maximumFractionDigits: 0 })}
+                            <g style={isSel ? { cursor: "grab" } : undefined}
+                              onPointerDown={e => { if (!isSel) return; e.stopPropagation(); (e.target as Element).setPointerCapture(e.pointerId); }}
+                              onPointerMove={e => {
+                                if (!isSel || e.buttons !== 1) return;
+                                e.stopPropagation();
+                                const pt = toPlanCoords(e.clientX, e.clientY);
+                                if (pt) setDotDraft({ unitId: u.id, x: pt.x, y: pt.y });
+                              }}
+                              onPointerUp={e => {
+                                if (dotDraft?.unitId !== u.id) return;
+                                e.stopPropagation();
+                                saveUnit.mutate({ id: u.id, patch: { dot: { x: dotDraft.x, y: dotDraft.y } } });
+                                setDotDraft(null);
+                              }}>
+                              <circle cx={cx} cy={cy} r={R} fill={typeColour} stroke="#FFFFFF" strokeWidth={R * 0.09} />
+                              {twoLine ? (
+                                <>
+                                  <text x={cx} y={cy - R * 0.32} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: refFont, fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{label}</text>
+                                  <text x={cx} y={cy + R * 0.38} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: zaFont, fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{zaStr}</text>
+                                </>
+                              ) : (
+                                <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: showFig ? zaFont : (isRealRef ? refFont : Math.min(R * 0.55, (R * 2.6) / 3)), fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>
+                                  {showFig ? zaStr : (isRealRef ? label : "£")}
                                 </text>
                               )}
-                            </>
+                            </g>
                           );
                         })()}
                       </g>
@@ -701,6 +751,11 @@ function PlanView({ planId }: { planId: string }) {
                   {draft.length > 0 && (
                     <polygon points={draft.map(p => `${p.x * 100},${p.y * 100 * aspect}`).join(" ")}
                       fill="hsl(17 60% 45% / 0.15)" stroke="hsl(17 60% 45%)" strokeWidth={0.3} strokeDasharray="1 0.6" vectorEffect="non-scaling-stroke" />
+                  )}
+                  {cropRect && (
+                    <rect x={Math.min(cropRect.x0, cropRect.x1) * 100} y={Math.min(cropRect.y0, cropRect.y1) * 100 * aspect}
+                      width={Math.abs(cropRect.x1 - cropRect.x0) * 100} height={Math.abs(cropRect.y1 - cropRect.y0) * 100 * aspect}
+                      fill="hsl(215 70% 45% / 0.12)" stroke="hsl(215 70% 45%)" strokeWidth={0.3} strokeDasharray="1.2 0.8" vectorEffect="non-scaling-stroke" />
                   )}
                 </svg>
               </div>
@@ -717,6 +772,12 @@ function PlanView({ planId }: { planId: string }) {
             <div className="absolute left-3 top-3 rounded-md bg-card border border-border px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm">
               Click the unit's corners · double-click to close · {draft.length} point{draft.length === 1 ? "" : "s"}
               {draft.length > 0 && <button className="ml-2 underline" onClick={() => setDraft([])}>clear</button>}
+            </div>
+          )}
+          {cropping && (
+            <div className="absolute left-3 top-3 rounded-md bg-card border border-border px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm">
+              Crop: drag over the part of the plan to keep — release to confirm.
+              <button className="ml-2 underline" onClick={() => { setCropping(false); setCropRect(null); }}>cancel</button>
             </div>
           )}
 
@@ -775,9 +836,41 @@ function PlanView({ planId }: { planId: string }) {
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">Evidence · {activeLevel?.name || "this level"}</h3>
               <p className="text-[11px] text-muted-foreground mb-3">Hover or tap a marker on the plan, or pick from the list.</p>
               {unlinkedCount > 0 && (
-                <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300">
-                  {unlinkedCount} evidence entr{unlinkedCount === 1 ? "y" : "ies"} aren't matched to a unit yet — they link themselves as matching units appear (Re-detect, or draw the unit). No need to re-run the TAFs.
-                </div>
+                <details className="mb-3 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300" data-testid="unlinked-evidence">
+                  <summary className="cursor-pointer font-medium">
+                    {unlinkedCount} evidence entr{unlinkedCount === 1 ? "y" : "ies"} not matched to a unit — open to match them
+                  </summary>
+                  <p className="mt-1.5 mb-2 text-[10px] opacity-90">Their TAF unit refs don't match any drawn unit. They link themselves when a matching unit appears (Re-detect or Draw unit) — or pick the unit here.</p>
+                  <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                    {entries.filter(e => !e.unit_id).map(e => (
+                      <div key={e.id} className="rounded-md bg-card border border-border px-2 py-1.5 text-foreground">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-semibold truncate">{e.unit_ref || e.tenant || "—"}</span>
+                          <span className="text-[11px] font-bold tabular-nums shrink-0">{e.zone_a != null ? `£${Number(e.zone_a).toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : "—"}</span>
+                        </div>
+                        <div className="text-[10px] text-muted-foreground truncate">{EVIDENCE_TYPE_META[evidenceTypeKey(e.transaction_type)].label}{e.transaction_date ? ` · ${fmtDate(e.transaction_date)}` : ""}{e.tenant && e.tenant !== e.unit_ref ? ` · ${e.tenant}` : ""}</div>
+                        <select
+                          className="mt-1 w-full h-6 rounded border border-input bg-background px-1 text-[10px]"
+                          value=""
+                          onChange={async ev => {
+                            const unitId = ev.target.value;
+                            if (!unitId) return;
+                            try {
+                              const r = await apiRequest("PUT", `/api/evidence-plans/entries/${e.id}`, { unitId });
+                              if (!r.ok) throw new Error((await r.json()).error || "failed");
+                              invalidate();
+                            } catch (err: any) { toast({ title: "Couldn't link", description: err.message, variant: "destructive" }); }
+                          }}
+                          data-testid={`link-entry-${e.id}`}>
+                          <option value="">Link to unit…</option>
+                          {[...units].sort((a, b) => String(a.unit_ref).localeCompare(String(b.unit_ref), undefined, { numeric: true })).map(u => (
+                            <option key={u.id} value={u.id}>{u.unit_ref}{levels.length > 1 ? ` (${levels.find(l => l.id === u.level_id)?.name || "?"})` : ""}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </details>
               )}
               {(() => {
                 const levelUnitIds = new Set(levelUnits.map(u => u.id));

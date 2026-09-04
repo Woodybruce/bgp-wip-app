@@ -549,6 +549,57 @@ router.delete("/api/evidence-plans/levels/:levelId", requireAuth, async (req: Re
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Crop a level's plan to just the drawing (drop the page border, sidebar,
+// contact footer — Woody, 2026-09-04). Geometry is stored normalised, so
+// every unit polygon and dot on the level is remapped into the new frame;
+// the original image stays in file_storage.
+router.post("/api/evidence-plans/levels/:levelId/crop", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const levelId = String(req.params.levelId);
+    const { rows: [level] } = await pool.query(`SELECT * FROM evidence_plan_levels WHERE id = $1`, [levelId]);
+    if (!level?.background_key) return res.status(404).json({ error: "No plan image on this level" });
+    const clamp = (v: any) => Math.min(1, Math.max(0, Number(v) || 0));
+    const x0 = clamp(req.body?.x0), y0 = clamp(req.body?.y0);
+    const x1 = clamp(req.body?.x1), y1 = clamp(req.body?.y1);
+    const sw = x1 - x0, sh = y1 - y0;
+    if (sw < 0.05 || sh < 0.05) return res.status(400).json({ error: "Crop area is too small" });
+    const file = await getFile(level.background_key);
+    if (!file) return res.status(404).json({ error: "Plan image missing" });
+    const sharp = (await import("sharp")).default;
+    const meta = await sharp(file.data).metadata();
+    const W = meta.width || 0, H = meta.height || 0;
+    if (!W || !H) return res.status(400).json({ error: "Couldn't read the plan image" });
+    const region = {
+      left: Math.round(x0 * W), top: Math.round(y0 * H),
+      width: Math.max(1, Math.round(sw * W)), height: Math.max(1, Math.round(sh * H)),
+    };
+    const buf = await sharp(file.data).extract(region).jpeg({ quality: 90 }).toBuffer();
+    const key = `evidence-plans/${level.plan_id}/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.jpg`;
+    await saveFile(key, buf, "image/jpeg", "cropped-plan.jpg");
+    await pool.query(
+      `UPDATE evidence_plan_levels SET background_key=$1, background_width=$2, background_height=$3 WHERE id=$4`,
+      [key, region.width, region.height, levelId]);
+
+    // Remap this level's geometry into the cropped frame.
+    const { rows: units } = await pool.query(`SELECT id, polygon, dot FROM evidence_plan_units WHERE level_id = $1`, [levelId]);
+    const map = (p: any) => ({ x: (p.x - x0) / sw, y: (p.y - y0) / sh });
+    for (const u of units) {
+      const polygon = Array.isArray(u.polygon) ? u.polygon.map(map) : u.polygon;
+      const dot = u.dot && typeof u.dot.x === "number" ? map(u.dot) : u.dot;
+      await pool.query(`UPDATE evidence_plan_units SET polygon = $1, dot = $2 WHERE id = $3`,
+        [polygon ? JSON.stringify(polygon) : null, dot ? JSON.stringify(dot) : null, u.id]);
+    }
+    // Keep the plan-row mirror in sync when this is the first level.
+    const levels = await planLevels(level.plan_id);
+    if (levels[0]?.id === levelId) {
+      await pool.query(
+        `UPDATE evidence_plans SET background_key=$1, background_width=$2, background_height=$3, updated_at=now() WHERE id=$4`,
+        [key, region.width, region.height, level.plan_id]);
+    }
+    res.json({ ok: true, width: region.width, height: region.height, remapped: units.length });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.get("/api/evidence-plans/:id/background", requireAuth, async (req: Request, res: Response) => {
   try {
     const plan = await planOr404(String(req.params.id), res);
