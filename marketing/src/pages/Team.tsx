@@ -36,7 +36,7 @@ export default function Team() {
                   <img
                     src={p.photo}
                     alt=""
-                    className="h-9 w-9 rounded-full object-cover grayscale group-hover:grayscale-0 transition-all duration-300 shrink-0 self-center"
+                    className="h-9 w-9 rounded-full object-cover grayscale shrink-0 self-center"
                   />
                 )}
                 {p.name}
