@@ -84,7 +84,24 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r524 · 2026-09-04 · FULL (rotation #1 BGP staff desktop 1440px) · 1 bug fixed — GREEN
+### r525 · 2026-09-04 · LIGHT — ROUND IN PROGRESS (provisional)
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  purge + seed-personas via node/pg runner, honi 1 / hammerson 2 verified).
+  Regression: smoke GREEN 42/0.
+- Two-bot 525 as 3 foreground chunks (with-server wrapper w/ lsof port
+  kill, 570s child timeout), STANDARD ORDER, fresh cross-525.json:
+  victoria exit 0 FIRST RUN (2×400 standing signature exact —
+  staff-tracker-empty-state-visible passed its first standard-order run,
+  r524 fix holds) / mark exit 0 (10 issues = 9 standing + 1 NEW
+  flow-failure, triaged below) / woody,nick,sam exit 0 (18 [ok], 0
+  issues). phone-overflow-sweep 11/11 at 390px. Server logs: 0 raw
+  500/502/504 all chunks.
+- Triage: the one new row is client-deal-party-link-gates timing out on
+  its "Link tenant" click — NOT an app bug: UX #155 (confirmed batch)
+  intentionally replaced client party link-pickers with read-only slots.
+  Harness updated to assert the new intended behaviour (read-only
+  landlord/tenant slots render, no visible link-pickers, timeline/audit
+  gates unchanged, AML-kick listener kept). Mark-chunk re-run pending. · 2026-09-04 · FULL (rotation #1 BGP staff desktop 1440px) · 1 bug fixed — GREEN
 - Bring-up: canonical recipe held 87th consecutive time (qa:pg once →
   run-smoke restore clean → purge + seed-personas via node/pg runner,
   honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0 ×2

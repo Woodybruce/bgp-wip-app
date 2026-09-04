@@ -5436,11 +5436,12 @@ async function markRound(page, cross) {
   });
 
   await step(page, p, 'client-deal-party-link-gates', async () => {
-    // r263: linking a party on an own-portfolio deal is client-allowed (PUT
-    // parity), but the staff-only AML auto-kick must NOT fire for clients
-    // (it 403s and the "Running AML checks" toast lies), and the Timeline
-    // card must be hidden (its /api/deals/:id/timeline read is gateway-403;
-    // clients keep the Audit log).
+    // UX #155 (Woody 2026-09-04): clients get READ-ONLY party slots — no
+    // "Link landlord/tenant" pickers on their own deal (staff jargon read
+    // like the deal was set up wrong); Landlord defaults to their own
+    // company. r263's AML-kick worry is moot with no client link UI, but
+    // keep the listener so a regression that re-adds the picker + kick is
+    // caught. Timeline stays hidden (gateway-403 read); Audit log stays.
     const deal = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
@@ -5461,24 +5462,18 @@ async function markRound(page, cross) {
       await page.locator('[data-testid="toggle-deal-audit"]').first()
         .waitFor({ state: 'attached', timeout: 15000 })
         .catch(() => { throw new Error('client lost the (allowed) deal Audit log card'); });
-      // Link a tenant through the inline picker, then undo. The AML kick is
-      // client-side logic, so this must go through the real UI.
-      await page.locator('button:has-text("Link tenant")').locator('visible=true').first().click();
-      await page.waitForTimeout(600);
-      await page.fill('[data-testid="inline-link-search"]', 'Starbucks');
-      await page.waitForTimeout(600);
-      const opt = page.locator('button[data-testid^="inline-link-option-"]').first();
-      if (!(await opt.count())) throw new Error('tenant picker listed no options for "Starbucks"');
-      await opt.click();
-      await page.waitForTimeout(2000);
-      if (kycHits.length) throw new Error(`client party-link fired the staff-only AML kick (${kycHits.length}× /api/kyc/run-all-checks)`);
+      // Read-only party slots must render (leasing deal → landlord+tenant)…
+      await page.locator('[data-testid="client-party-tenant"]').first()
+        .waitFor({ state: 'attached', timeout: 15000 })
+        .catch(() => { throw new Error('client deal lost the read-only Tenant party slot (UX #155)'); });
+      const landlordSlot = (await page.locator('[data-testid="client-party-landlord"]').first().textContent().catch(() => '')) || '';
+      if (!landlordSlot.trim()) throw new Error('client deal Landlord party slot rendered empty (UX #155 defaults it)');
+      // …and the staff link-pickers must NOT.
+      const pickers = await page.locator('button:has-text("Link tenant"), button:has-text("Link landlord")').locator('visible=true').count();
+      if (pickers) throw new Error(`client sees ${pickers} staff party link-picker(s) on deal detail (UX #155 made parties read-only)`);
+      if (kycHits.length) throw new Error(`client deal detail fired the staff-only AML kick (${kycHits.length}× /api/kyc/run-all-checks)`);
     } finally {
       page.off('request', onReq);
-      // restore the fixture deal whether or not the assertions passed
-      await page.evaluate(async (id) => {
-        const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-        await fetch(`/api/crm/deals/${id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ tenantId: null }) });
-      }, deal.id);
     }
   });
 
