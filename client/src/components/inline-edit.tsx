@@ -666,10 +666,10 @@ export function InlineLinkSelect({ value, options, href, onSave, onCreate, place
   const selectedName = value ? options.find(o => o.id === value)?.name : null;
 
   return (
-    <div className="flex items-center gap-1 shrink-0">
+    <div className="flex items-center gap-1 min-w-0 max-w-full">
       {!compact && selectedName && href ? (
-        <Link href={href}>
-          <span className="text-xs text-primary hover:underline cursor-pointer truncate max-w-[100px] block">
+        <Link href={href} className="min-w-0 flex-1">
+          <span className="text-xs text-primary hover:underline cursor-pointer truncate block" title={selectedName}>
             {selectedName}
           </span>
         </Link>
