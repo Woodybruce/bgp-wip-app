@@ -1455,8 +1455,13 @@ function AutoTurnoverStatus() {
 function TurnoverResearchPanel({ onResearch, researchingId }: { onResearch: (id: string) => void; researchingId: string | null }) {
   const [search, setSearch] = useState("");
 
+  // Child key: this list is filtered to Tenant-type brands, so it must NOT be
+  // cached under the bare ["/api/crm/companies"] key — that key is shared by
+  // the CRM hub, landlord pickers and requirements page, and caching the
+  // filtered subset there made the CRM read "0 landlords · 0 agents" for the
+  // 120s staleTime after any Brand Intelligence visit.
   const { data: companies = [] } = useQuery<any[]>({
-    queryKey: ["/api/crm/companies"],
+    queryKey: ["/api/crm/companies", "tenant-brands"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/crm/companies");
       const all = await res.json();

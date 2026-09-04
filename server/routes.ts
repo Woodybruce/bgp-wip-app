@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { pool } from "./db";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql } from "./company-scope";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -1865,15 +1865,10 @@ export async function registerRoutes(
           pool.query(
             `SELECT id, name, role FROM crm_contacts WHERE company_id = $1 AND name ILIKE $2 LIMIT 8`,
             [searchScopeId, like]),
-          pool.query(
+          clientBrandSliceSql(searchScopeId).then(slice => pool.query(
             `SELECT id, name, company_type FROM crm_companies
-             WHERE name ILIKE $1 AND company_type ILIKE 'Tenant -%'
-               AND (company_type ILIKE '%Restaurant%' OR company_type ILIKE '%Dining%' OR company_type ILIKE '%F&B%'
-                 OR company_type ILIKE '%QSR%' OR company_type ILIKE '%Food%' OR company_type ILIKE '%Caf%'
-                 OR company_type ILIKE '%Coffee%' OR company_type ILIKE '%Bar%' OR company_type ILIKE '%Leisure%'
-                 OR company_type ILIKE '%Cinema%' OR company_type ILIKE '%Entertainment%' OR company_type ILIKE '%Fitness%'
-                 OR company_type ILIKE '%Gym%' OR company_type ILIKE '%Yoga%' OR company_type ILIKE '%Hotel%' OR company_type ILIKE '%Hospitality%')
-             LIMIT 8`, [like]),
+             WHERE name ILIKE $1 AND ${slice}
+             LIMIT 8`, [like])),
         ]);
         return res.json({
           results: [
@@ -5652,13 +5647,22 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!scope) return res.status(403).json({ message: "Client accounts only" });
       const sliceSql = await clientBrandSliceSql(scope, "c.id");
       const limit = Math.min(parseInt(String(req.query.limit || "60")) || 60, 200);
+      // DISTINCT ON collapses duplicate signals for the same story — the
+      // ingest pipeline dedupes on source URL, but Google News wraps/unwraps
+      // the same article under different URLs, so identical (brand, headline,
+      // date) rows exist in older data. Same story = same exact triple;
+      // distinct stories sharing a generic headline differ on signal_date.
       const q = await pool.query(
-        `SELECT s.id, s.brand_company_id, s.signal_type, s.headline, s.detail, s.source,
-                s.signal_date, s.sentiment, s.confidence, s.created_at, c.name AS brand_name
-           FROM brand_signals s
-           JOIN crm_companies c ON c.id = s.brand_company_id
-          WHERE ${sliceSql}
-          ORDER BY COALESCE(s.signal_date, s.created_at) DESC NULLS LAST
+        `SELECT * FROM (
+           SELECT DISTINCT ON (s.brand_company_id, s.headline, COALESCE(s.signal_date, s.created_at))
+                  s.id, s.brand_company_id, s.signal_type, s.headline, s.detail, s.source,
+                  s.signal_date, s.sentiment, s.confidence, s.created_at, c.name AS brand_name
+             FROM brand_signals s
+             JOIN crm_companies c ON c.id = s.brand_company_id
+            WHERE ${sliceSql}
+            ORDER BY s.brand_company_id, s.headline, COALESCE(s.signal_date, s.created_at), s.created_at DESC
+         ) t
+          ORDER BY COALESCE(t.signal_date, t.created_at) DESC NULLS LAST
           LIMIT $1`,
         [limit]
       );

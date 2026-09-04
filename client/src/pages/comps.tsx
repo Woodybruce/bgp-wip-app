@@ -3652,7 +3652,7 @@ export default function Comps() {
                   </Button>
                 </div>
               </DialogHeader>
-              <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
                 <div className="space-y-3">
                   <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> Property Details</h4>
                   <div className="space-y-2">
@@ -3699,7 +3699,7 @@ export default function Comps() {
                   </div>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
                 <div className="space-y-3">
                   <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><Ruler className="w-3.5 h-3.5" /> Area (RICS)</h4>
                   <div className="space-y-2">

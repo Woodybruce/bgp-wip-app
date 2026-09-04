@@ -91,6 +91,23 @@ function StatCard({ label, value, active }: { label: string; value: number | str
   );
 }
 
+// Brands don't live on this page — a zero-hit search that matches a company
+// name is usually someone hunting a brand (UX-NOTES #13; the hint moved here
+// from the old contacts list when /contacts became this page).
+function BrandSearchHint({ search, companies, resultCount }: { search: string; companies: CrmCompany[]; resultCount: number }) {
+  if (resultCount > 0 || search.trim().length < 2) return null;
+  const s = search.trim().toLowerCase();
+  const matchesCompany = companies.some((c) => (c.name || "").toLowerCase().includes(s));
+  if (!matchesCompany) return null;
+  return (
+    <p className="text-sm text-center text-muted-foreground py-4" data-testid="brand-search-hint">
+      <Link href="/brands" className="text-primary hover:underline">
+        Looking for a brand? Search Brand Intelligence →
+      </Link>
+    </p>
+  );
+}
+
 function LandlordsTab({
   companies,
   contacts,
@@ -211,6 +228,8 @@ function LandlordsTab({
         </div>
         <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>
       </div>
+
+      <BrandSearchHint search={search} companies={companies} resultCount={filtered.length} />
 
       {viewMode === "table" ? (
         <Card className="overflow-hidden">
@@ -591,6 +610,8 @@ function AgentsTab({
 
         <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "firm")}</p>
       </div>
+
+      <BrandSearchHint search={search} companies={companies} resultCount={filtered.length} />
 
       <div className="space-y-2">
         {filtered.map((company) => {
