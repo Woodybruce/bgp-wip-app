@@ -75,7 +75,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -5368,6 +5368,31 @@ async function markRound(page, cross) {
     if (r.stillThere) throw new Error('deleted viewing still visible in letting activity');
   });
 
+  // r529 counterpart to rival-unit-interest-guard: scoping the interest
+  // routes must not lock the OWNING client out of their own unit.
+  await step(page, p, 'client-unit-interest-own-roundtrip', async () => {
+    const stamp = `QA-PROBE interest R${ROUND}`;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { skip: true };
+      const get = await fetch(`/api/available-units/${unit.id}/interest`, { headers: auth });
+      if (!get.ok) return { ok: false, why: `GET ${get.status}` };
+      const post = await fetch(`/api/available-units/${unit.id}/interest`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: marker }) });
+      if (!post.ok) return { ok: false, why: `POST ${post.status}` };
+      const made = await post.json();
+      const del = await fetch(`/api/available-units/interest/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      if (!del.ok) return { ok: false, why: `DELETE ${del.status}` };
+      const after = await (await fetch(`/api/available-units/${unit.id}/interest`, { headers: auth })).json();
+      return { ok: true, stillThere: JSON.stringify(after).includes(marker) };
+    }, stamp);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`client interest lifecycle on their own unit failed (${r.why})`);
+    if (r.stillThere) throw new Error('deleted interest row still listed on the unit');
+  });
+
   // Staff-only deal operations that ride under the allowed /api/crm/deals
   // prefix must refuse clients: single + bulk delete, bulk field edits, the
   // internal per-agent fee split, and the firm-wide rent-analysis AI op.
@@ -6657,6 +6682,25 @@ async function samRound(page, cross) {
     if (r.vPatch !== 403) throw new Error(`rival client edited a Landsec viewing (expected 403, got ${r.vPatch})`);
     if (r.oPatch !== 403) throw new Error(`rival client edited a Landsec offer (expected 403, got ${r.oPatch})`);
     if (r.vDel !== 403) throw new Error(`rival client deleted a Landsec viewing (expected 403, got ${r.vDel})`);
+  });
+
+  // r529: the three unit-INTEREST routes were requireAuth only while their
+  // viewing/offer siblings all carried assertUnitInClientScope — a rival
+  // client could read, add and delete interest on another landlord's unit.
+  await step(page, p, 'rival-unit-interest-guard', async () => {
+    const unitId = cross.briefUnitId;
+    if (!unitId) return;
+    const r = await page.evaluate(async (foreign) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const s = async (url, method, body) =>
+        (await fetch(url, { method, credentials: 'include', headers: auth, body: body ? JSON.stringify(body) : undefined }).catch(() => ({ status: 0 }))).status;
+      return {
+        get: await s(`/api/available-units/${foreign}/interest`, 'GET'),
+        post: await s(`/api/available-units/${foreign}/interest`, 'POST', { companyName: 'QA-PROBE rival interest' }),
+      };
+    }, unitId);
+    if (r.get !== 403) throw new Error(`rival client read a Landsec unit's interest (expected 403, got ${r.get})`);
+    if (r.post !== 403) throw new Error(`rival client added interest to a Landsec unit (expected 403, got ${r.post})`);
   });
 }
 

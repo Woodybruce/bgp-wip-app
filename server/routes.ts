@@ -4233,6 +4233,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
+      const iUnit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, iUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitInterest } = await import("@shared/schema");
       const rows = await db.select().from(unitInterest)
         .where(eq(unitInterest.unitId, req.params.id as string))
@@ -4248,6 +4252,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // sweep. source stays null so manual rows are distinguishable.
   app.post("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
+      const iUnit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, iUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitInterest, insertUnitInterestSchema } = await import("@shared/schema");
       const parsed = insertUnitInterestSchema.parse({
         unitId: req.params.id,
@@ -4273,6 +4281,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/interest/:interestId", requireAuth, async (req, res) => {
     try {
       const { unitInterest } = await import("@shared/schema");
+      const [existing] = await db.select().from(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
+      if (existing) {
+        const iUnit = await storage.getAvailableUnit(existing.unitId);
+        if (await assertUnitInClientScope(req, iUnit?.propertyId)) {
+          return res.status(403).json({ message: "Unit is outside your portfolio" });
+        }
+      }
       await db.delete(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
       res.json({ ok: true });
     } catch (err: any) {
