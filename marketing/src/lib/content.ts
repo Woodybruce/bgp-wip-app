@@ -6,14 +6,14 @@ export const SERVICES = [
   {
     slug: "leasing",
     name: "Leasing",
-    image: "/images/portman-estate.jpg",
+    image: "/images/stills-preview-regent-street.jpg",
     intro:
       "Creating neighbourhoods that people love. Retail, restaurant and leisure leasing across London's leading estates and the UK's landmark destinations — acting for landlords including The Portman Estate, Grosvenor, The Crown Estate and Landsec.",
   },
   {
     slug: "investment",
     name: "Investment",
-    image: "/images/investment-main.jpg",
+    image: "/images/stills-preview-city-night.jpg",
     intro:
       "Acquisition and disposal advice across retail, leisure and mixed-use investments — from single assets to portfolios, acting for private clients, property companies and institutions including Aviva Investors, Legal & General and LondonMetric.",
   },
@@ -156,7 +156,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "lucent-piccadilly",
     title: "Lucent, Piccadilly Lights",
     service: "Leasing",
-    image: "/images/lucent-piccadilly.jpg",
+    image: "/images/stills-preview-piccadilly.jpg",
     blurb:
       "Restaurant leasing for Landsec at Lucent W1 — the landmark development behind the world-famous Piccadilly Lights.",
     facts: [
@@ -253,6 +253,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     title: client,
     service: "Lease Advisory",
     blurb: `Lease advisory instruction for ${client} — rent reviews, renewals and restructuring aligned to the asset strategy.`,
+    image: client === "The Royal Exchange" ? "/images/stills-preview-royal-exchange.jpg" : undefined,
     facts: [["Service", "Lease Advisory"], ["Client", client]] as Array<[string, string]>,
     body: [
       `BGP's Lease Advisory team acts for ${client}, providing evidence-led advice across rent reviews, renewals and lease restructuring.`,
@@ -263,7 +264,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "atis",
     title: "ATIS",
     service: "Brand Representation",
-    image: "/images/cafe.jpg",
+    image: "/images/stills-preview-central-cafe.jpg",
     blurb:
       "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building.",
     facts: [
@@ -297,7 +298,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "barrys-bootcamp",
     title: "Barry's Bootcamp",
     service: "Brand Representation",
-    image: "/images/gym.jpg",
+    image: "/images/stills-preview-gym.jpg",
     blurb:
       "Described as the 'hardest workout in the world' — acquisition strategy throughout London.",
     facts: [
