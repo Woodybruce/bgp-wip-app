@@ -88,6 +88,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r532 · 2026-09-04 · FULL · rotation #1 BGP staff desktop 1440px · ROUND IN PROGRESS
+- Bring-up: canonical recipe held (qa:pg once → run-smoke FRESH_BUILD=1
+  restore clean → purge + seed-personas via node/pg runner, honi 1 /
+  hammerson 2). Regression: smoke GREEN 42/0.
+- Two-bot 532 as 3 foreground chunks (with-server wrapper, 580s child
+  timeout), standard order, all THREE exit 0 on their FIRST run: victoria
+  2×400 / mark 9 issues (8×403 probe-by-design + 1×503 keyless) /
+  woody,nick,sam 19 [ok] 0 issues — every one the standing signature exact.
+  Server logs: 0 raw 500/502/504 (the " 500 " grep hit is the "[News Feed]
+  Linked 17 brand signals from 500 articles" line). Triage: 0 app bugs from
+  the harness.
+- r530/r531 fixes hold: staff-wip-report-phone-header-stacked [ok],
+  rival-team-board-isolated + rival-unit-interest-guard [ok].
+- Journey + client-isolation GET sub-read audit in progress.
+
 ### r531 · 2026-09-04 · LIGHT (r530 had the journey) · 1 bug fixed — client-teams isolation
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   purge + seed-personas via node/pg runner, honi 1 / hammerson 2).
