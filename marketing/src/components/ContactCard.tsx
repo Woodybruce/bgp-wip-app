@@ -16,7 +16,7 @@ export default function ContactCard({ person }: { person: Person }) {
     <div className="w-full group">
       <div className="img-frame">
         {person.photo ? (
-          <img src={person.photo} alt={person.name} className="aspect-[3/4] w-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500" />
+          <img src={person.photo} alt={person.name} className="aspect-[3/4] w-full object-cover grayscale" />
         ) : (
           <Monogram name={person.name} />
         )}
