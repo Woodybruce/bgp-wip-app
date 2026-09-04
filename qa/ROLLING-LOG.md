@@ -88,6 +88,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r535 · 2026-09-04 · LIGHT (r534 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  seed-personas into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN
+  42/0.
+- Two-bot round 535, all three chunks, standard order, each exit 0 on its
+  first run. Signatures EXACT vs r534: victoria 2×400, mark 9×403 + 1×503,
+  woody/nick/sam 0. All listed noise (rocketreach-400, keyless-AI 503, the
+  by-design negative-probe 403s).
+- Triage: 0 new issues from the scripted sweep. Round now spends its budget
+  on the carried CLIENT-ISOLATION PUNCH LIST items 3 (unscoped GET
+  /api/crm/leads/:id) and 4 (GET /api/chatbgp/threads/:threadId/active-run
+  membership), then item 5 (re-run + teach client-allowed-get-audit.mjs).
+
 ### r534 · 2026-09-04 · FULL · rotation #2 Landsec client desktop 1440px · 1 bug fixed — client deals table party pickers
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas into bgpsmoke). Regression: smoke GREEN 42/0.
