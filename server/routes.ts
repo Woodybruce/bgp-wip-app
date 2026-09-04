@@ -3783,6 +3783,21 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     const code = legacyToCode(raw);
     return code ? PUBLIC_CODE_MAP[code] || null : null;
   };
+  // Unit Status "Opportunity" (OPP) is never public — it isn't in
+  // PUBLIC_CODE_MAP. On top of that (Woody, 2026-09-04) a unit with a
+  // sitting tenant per the tenancy schedule is blocked regardless of its
+  // status: the "Available" default on imported rows can't be trusted for
+  // occupied space. Same tenant lookup as the tracker's Existing Tenant
+  // column (tenancy link first, else unit-name match within the property).
+  const publicNotTenanted = () => import("@shared/schema").then(({ availableUnits }) => sql`NOT EXISTS (
+    SELECT 1 FROM tenancy_schedule_units t
+     WHERE ((${availableUnits.tenancyUnitId} IS NOT NULL AND t.id = ${availableUnits.tenancyUnitId})
+         OR (${availableUnits.tenancyUnitId} IS NULL AND t.property_id = ${availableUnits.propertyId}
+             AND lower(trim(coalesce(nullif(trim(t.unit_number), ''), t.premises, ''))) = lower(trim(coalesce(${availableUnits.unitName}, '')))))
+       AND coalesce(nullif(trim(t.trading_name), ''), nullif(trim(t.tenant_name), '')) IS NOT NULL
+       AND lower(trim(coalesce(nullif(trim(t.trading_name), ''), t.tenant_name))) <> 'vacant'
+       AND lower(trim(coalesce(t.status, ''))) <> 'vacant'
+  )`);
 
   // The tracker's Location field is rarely filled in, but nearly every
   // property carries a geocoded address. Flatten it into a display address
@@ -3868,6 +3883,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
       const columns = await publicListingColumns();
+      const notTenanted = await publicNotTenanted();
       const rows = await db
         .select(columns)
         .from(availableUnits)
@@ -3875,6 +3891,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .where(and(
           sql`${availableUnits.marketingStatus} IS NOT NULL`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+          notTenanted,
         ))
         .orderBy(desc(availableUnits.createdAt));
       const unitIds = rows.map(r => r.id);
@@ -3907,6 +3924,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
       const columns = await publicListingColumns();
+      const notTenanted = await publicNotTenanted();
       const [row] = await db
         .select(columns)
         .from(availableUnits)
@@ -3915,6 +3933,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           eq(availableUnits.id, req.params.id),
           sql`${availableUnits.marketingStatus} IS NOT NULL`,
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+          notTenanted,
         ));
       if (!row) return res.status(404).json({ message: "Listing not found" });
       const files = await db
@@ -3939,6 +3958,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
       const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
       if (!file) return res.status(404).end();
+      const notTenanted = await publicNotTenanted();
       const [unit] = await db
         .select({ id: availableUnits.id, marketingStatus: availableUnits.marketingStatus })
         .from(availableUnits)
@@ -3946,6 +3966,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .where(and(
           eq(availableUnits.id, file.unitId),
           or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+          notTenanted,
         ));
       if (!unit || !publicStatus(unit.marketingStatus)) return res.status(404).end();
       const fileName = file.filePath.split("/").pop();
