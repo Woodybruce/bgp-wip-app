@@ -296,6 +296,13 @@ export function PropertyDetail({ id }: { id: string }) {
   const { data: agentLinks = [] } = useQuery<Array<{ propertyId: string; userId: string; role?: string | null }>>({
     queryKey: ["/api/crm/property-agents"],
   });
+  // Lease Advisory evidence plan linked to this property (staff only) —
+  // surfaces a jump straight from the property board to the plan.
+  const { data: evidencePlans = [] } = useQuery<Array<{ id: string; property_id: string | null }>>({
+    queryKey: ["/api/evidence-plans"],
+    enabled: !isClientViewer,
+  });
+  const linkedEvidencePlan = evidencePlans.find(p => p.property_id === id);
   const { data: allCompanies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
     queryFn: async () => {
@@ -564,6 +571,14 @@ export function PropertyDetail({ id }: { id: string }) {
                     Create document
                   </Button>
                 </Link>
+                {linkedEvidencePlan && (
+                  <Link href={`/evidence-plans/${linkedEvidencePlan.id}`}>
+                    <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-evidence-plan">
+                      <MapIcon className="w-3.5 h-3.5" />
+                      Evidence plan
+                    </Button>
+                  </Link>
+                )}
                 <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setFolderDialogOpen(true)} data-testid="button-setup-folders">
                   <FolderTree className="w-3.5 h-3.5" />
                   Set Up Folders

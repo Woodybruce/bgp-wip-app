@@ -1254,9 +1254,21 @@ router.get("/api/tenancy-schedule/property/:propertyId/links", requireAuth, asyn
       [propertyId]
     );
 
+    // Lease advisory jobs on this property, with the unit each one sits on
+    // so the schedule can badge the matching rows. Best-effort — a missing
+    // pla_matters table (fresh deploy) must not 500 the whole link map.
+    const matters = await pool.query(
+      `SELECT m.id, m.matter_type, m.status, pu.unit_name
+         FROM pla_matters m LEFT JOIN property_units pu ON pu.id = m.unit_id
+        WHERE m.property_id = $1
+        ORDER BY m.opened_at DESC`,
+      [propertyId]
+    ).catch(() => ({ rows: [] as any[] }));
+
     res.json({
       deals: deals.rows,
-      lettingUnits: lettingUnits.rows
+      lettingUnits: lettingUnits.rows,
+      matters: matters.rows
     });
   } catch (e: any) {
     res.status(500).json({ error: e.message });

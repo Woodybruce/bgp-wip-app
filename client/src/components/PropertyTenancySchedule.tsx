@@ -139,6 +139,27 @@ interface LettingLink {
   dealId: string | null;
 }
 
+interface MatterLink {
+  id: string;
+  matter_type: string;
+  status: string;
+  unit_name: string | null;
+}
+
+// Same canonical unit-ref form the server matches on (normaliseUnitRef /
+// normUnitSql) — "Unit A01", "UNIT A1" and "A1" all meet.
+function normRefKey(raw: any): string {
+  return String(raw || "")
+    .toUpperCase()
+    .replace(/\b(UNIT|STORE|SHOP)\b/g, " ")
+    .replace(/[^A-Z0-9/&-]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map(tok => tok.replace(/([A-Z]+)0+(\d)/g, "$1$2"))
+    .join(" ")
+    .trim();
+}
+
 function fmtCurrency(v: number | string) {
   const n = Number(v);
   if (!n) return "—";
@@ -651,7 +672,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     retry: false,
   });
 
-  const { data: links } = useQuery<{ deals: DealLink[]; lettingUnits: LettingLink[] }>({
+  const { data: links } = useQuery<{ deals: DealLink[]; lettingUnits: LettingLink[]; matters?: MatterLink[] }>({
     queryKey: ["/api/tenancy-schedule/property", propertyId, "links"],
     queryFn: async () => {
       const r = await fetch(`/api/tenancy-schedule/property/${propertyId}/links`, { headers: getAuthHeaders() });
@@ -942,6 +963,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   const matchLetting = (unit: TenancyUnit): LettingLink | undefined => {
     if (unit.letting_tracker_unit_id) return links?.lettingUnits.find(l => l.id === unit.letting_tracker_unit_id);
     return links?.lettingUnits.find(l => l.unit_name?.toLowerCase().includes(unit.unit_number?.toLowerCase()));
+  };
+
+  // Lease advisory job on this unit — matched on the canonical unit ref.
+  const matchMatter = (unit: TenancyUnit): MatterLink | undefined => {
+    if (isClientViewer) return undefined;
+    const n = normRefKey(unit.unit_number || unit.premises);
+    if (!n) return undefined;
+    return links?.matters?.find(m => normRefKey(m.unit_name) === n);
   };
 
   if (units.length === 0 && !showAddUnit) {
@@ -1338,6 +1367,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                     <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
                   </a>
                 )}
+                {matchMatter(unit) && (
+                  <a href={`/pla/matters/${matchMatter(unit)!.id}`} className="inline-flex items-center" title={`Lease advisory job: ${matchMatter(unit)!.matter_type.replace(/_/g, " ")}`} data-testid={`tenancy-matter-link-card-${unit.id}`}>
+                    <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer border-indigo-300 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 whitespace-nowrap">Job</Badge>
+                  </a>
+                )}
                 {letting ? (
                   <a href="/deals/letting" title={`On the Letting Tracker (${letting.marketing_status || "listed"})`} data-testid={`tenancy-on-tracker-card-${unit.id}`}>
                     <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50 whitespace-nowrap">LT</Badge>
@@ -1533,6 +1567,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   readOnly={!canEdit}
                   deal={matchDeal(unit)}
                   letting={matchLetting(unit)}
+                  matter={matchMatter(unit)}
                 />
               );
             })}
@@ -1630,7 +1665,7 @@ function TenantBrandPicker({
   );
 }
 
-function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote, promoting, onSendToTracker, sendingToTracker, readOnly, deal, letting, selected, onToggleSelect }: {
+function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote, promoting, onSendToTracker, sendingToTracker, readOnly, deal, letting, matter, selected, onToggleSelect }: {
   unit: TenancyUnit;
   columns: Col[];
   onUpdate: (id: string | number, field: string, val: string) => void;
@@ -1643,7 +1678,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
   onSendToTracker?: () => void;
   sendingToTracker?: boolean;
   readOnly?: boolean;
-  deal?: DealLink; letting?: LettingLink;
+  deal?: DealLink; letting?: LettingLink; matter?: MatterLink;
 }) {
   const isVacant = unit.status === "Vacant" || unit.is_vacant;
   // columns (incl. the inline Status select) + Links td + delete td.
@@ -1981,6 +2016,11 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
           {deal && (
             <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-${unit.id}`}>
               <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
+            </a>
+          )}
+          {matter && (
+            <a href={`/pla/matters/${matter.id}`} className="inline-flex items-center" title={`Lease advisory job: ${matter.matter_type.replace(/_/g, " ")} (${matter.status})`} data-testid={`tenancy-matter-link-${unit.id}`}>
+              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer border-indigo-300 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40">Job</Badge>
             </a>
           )}
           {/* View this unit on the plan — sets the URL hash so the
