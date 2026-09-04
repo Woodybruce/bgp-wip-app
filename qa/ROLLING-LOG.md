@@ -88,6 +88,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r534 · 2026-09-04 · FULL (in progress) · rotation #2 Landsec client desktop 1440px
+- Bring-up: qa:pg once, run-smoke restore clean. Regression: smoke GREEN 42/0.
+- Round in progress: two-bot three-chunk sweep (r533's carried debt — the 3
+  new chat-media/deal-sub-read scenarios have never run inside the harness),
+  then the client-desktop journey as mark.warne, including a BROWSER check
+  that Mark's own chat-media downloads still work after r533's gate.
+- Triage so far: nothing beyond known environment noise.
+
 ### r533 · 2026-09-04 · LIGHT (r532 had the journey) · 2 bugs fixed — chat-media + deal M365 sub-reads
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   seed-personas applied to bgpsmoke via a node/pg runner in the repo dir —
