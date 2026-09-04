@@ -84,6 +84,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r518 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) — ROUND IN PROGRESS (heartbeat)
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  purge + seed-personas via node/pg runner, honi 1 / hammerson 2 verified).
+  Regression: smoke GREEN 42/0.
+- Two-bot 518 as 3 foreground chunks (with-server wrapper w/ lsof port
+  kill, 570s child timeout), STANDARD ORDER, fresh cross-518.json:
+  victoria exit 0 FIRST RUN (2×400 standing signature) / mark exit 0
+  (9 issues = 1×503 keyless + 8×403 probe-by-design — standing signature
+  exact) / woody,nick,sam exit 0 (18 [ok], 0 issues). phone-overflow-sweep
+  11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (single 422 =
+  r462 cover-raster; 403s flat 1-3/route, no storm). Triage: 0 app bugs
+  from the harness.
+- Journey (r516's carried debt: deal detail pages, viewings dialog
+  end-to-end, Bluewater tenancy tab in depth as Mark @1440px) — RUNNING.
+
 ### r517 · 2026-09-04 · LIGHT (r516 held the journey slot) — GREEN
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
   purge + seed-personas via node/pg runner, honi 1 / hammerson 2
