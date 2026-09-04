@@ -84,10 +84,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r517 · 2026-09-04 · LIGHT (r516 held the journey slot) — ROUND IN PROGRESS
-- Provisional heartbeat. Bring-up: canonical recipe held (qa:pg once →
-  run-smoke restore clean → purge + seed-personas via node/pg runner,
-  honi 1 / hammerson 2 verified). Regression: smoke GREEN 42/0.
+### r517 · 2026-09-04 · LIGHT (r516 held the journey slot) — GREEN
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  purge + seed-personas via node/pg runner, honi 1 / hammerson 2
+  verified). Regression: smoke GREEN 42/0.
 - Two-bot 517 as 3 foreground chunks (with-server wrapper w/ lsof port
   kill, 570s child timeout), STANDARD ORDER, fresh cross-517.json:
   victoria exit 0 FIRST RUN (2×400 standing signature) / mark exit 0
@@ -96,8 +96,26 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   11/11 at 390px. Server logs: 0 raw 500/502/504 all chunks (single 422 =
   r462 cover-raster; 403s flat 1-3/route, no storm). Triage: 0 app bugs
   from the harness.
-- LIGHT round: no journey; spot-check TBD (no deferred bugs on the books
-  r490–r516).
+- No journey (LIGHT). No deferred bugs to pick up (r490–r516 deferred
+  none). Spot-check instead: a slice of the client-desktop surfaces the
+  stalled r516 owed — Mark @1440px in-browser: Deals hub renders correct
+  ("2 deals — Landsec · +2 letting deals" subtitle, All/Solicitors/
+  Exchanged tiles; the 3.5s skeleton was Vite dev cold-compile, gone by
+  12s), Letting Tracker table clean (78 units, status-pill row, Target
+  operator + actions cluster), /properties/:id Bluewater page clean
+  (breadcrumb, plan viewer — solid-salmon block IS the fixture's
+  test plan PNG, GET /api/plans/:id/image 200 — Linked Deals rail,
+  Available Units rail 76/75/1, Tenancy Schedule accordion, keyless
+  Property Intelligence empty state). 0 pageerrors, 0 non-noise 4xx/5xx,
+  0 h-overflow on all shots. Deal detail + viewings dialog + expanded
+  tenancy tab left for the r518 FULL journey (rotation #2 debt).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Carried (data,
+  staff decision): Bluewater tenancy SPINE duplicates (U062 ×4, L090 ×2,
+  L130 ×2). Suggestions: none (no journey). New flakes: none. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r517 was LIGHT → r518 FULL, rotation #2 Landsec client desktop
+  1440px (carries r516's stalled journey: deal detail pages, viewings
+  dialog end-to-end, Bluewater tenancy tab in depth).
 
 ### r516 · 2026-09-04 · FULL (rotation #2 client desktop) — STALLED, superseded by r517
 - Session stalled mid-round after its heartbeat (triage done — smoke 42/0,
