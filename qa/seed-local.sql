@@ -10,19 +10,19 @@ BEGIN;
 -- 1. crm_companies — 12 tracked tenant brands, 2 landlords, 2 agents, 1 lender
 -- ─────────────────────────────────────────────────────────────────────
 
-INSERT INTO crm_companies (id, name, company_type, is_tracked_brand, store_count, instagram_handle, domain, description) VALUES
-  ('qa-brand-2',  'Franco''s Coffee (QA)',        'Tenant - Café',           true, 14, 'francoscoffee.qa', 'francoscoffee.example', 'Independent speciality coffee roaster expanding across the South East.'),
-  ('qa-brand-3',  'Butter & Crumb (QA)',          'Tenant - Bakery',         true, 6,  NULL, NULL, 'Artisan bakery and patisserie, strong weekend trade.'),
-  ('qa-brand-4',  'Sakura Ramen Kitchen (QA)',    'Tenant - Restaurant',     true, 8,  'sakuraramen.qa', 'sakuraramen.example', 'Fast-casual ramen concept, targeting shopping centre food courts.'),
-  ('qa-brand-5',  'The Copper Grill (QA)',        'Tenant - Casual Dining',  true, NULL, NULL, NULL, 'Premium casual steakhouse, 3,500-5,000 sq ft requirement.'),
-  ('qa-brand-6',  'Velo Athletic (QA)',           'Tenant - Athleisure',     true, 11, NULL, 'veloathletic.example', 'Cycling-inspired athleisure brand, flagship-led rollout.'),
-  ('qa-brand-7',  'Harlow & Finch (QA)',          'Tenant - Fashion',        true, NULL, NULL, NULL, 'Contemporary womenswear, department store concessions plus solus stores.'),
-  ('qa-brand-8',  'Marlow Grocer (QA)',           'Tenant - Grocery',        true, 22, NULL, NULL, 'Premium convenience grocer, 2,000-4,000 sq ft high street units.'),
-  ('qa-brand-9',  'Pulse Fitness Studios (QA)',   'Tenant - Gym',            true, 9,  'pulsefitness.qa', NULL, 'Boutique HIIT studio operator, basement and first-floor space.'),
-  ('qa-brand-10', 'Zenith Climbing (QA)',         'Tenant - Leisure',        true, 4,  NULL, NULL, 'Bouldering and climbing centres, 15,000+ sq ft big-box leisure.'),
-  ('qa-brand-11', 'Orbit Mini Golf (QA)',         'Tenant - Experiential',   true, 5,  NULL, NULL, 'Competitive socialising mini golf with F&B, city centre units.'),
-  ('qa-brand-12', 'Bloom Beauty Rooms (QA)',      'Tenant - Beauty',         true, NULL, NULL, NULL, 'Beauty services and retail hybrid, 1,000-1,500 sq ft.'),
-  ('qa-brand-13', 'Quill & Marble (QA)',          'Tenant - Books & Stationery', true, 7, NULL, NULL, 'Design-led stationery and gifting, strong Christmas trade.')
+INSERT INTO crm_companies (id, name, company_type, store_count, instagram_handle, domain, description) VALUES
+  ('qa-brand-2',  'Franco''s Coffee (QA)',        'Tenant - Café', 14, 'francoscoffee.qa', 'francoscoffee.example', 'Independent speciality coffee roaster expanding across the South East.'),
+  ('qa-brand-3',  'Butter & Crumb (QA)',          'Tenant - Bakery', 6,  NULL, NULL, 'Artisan bakery and patisserie, strong weekend trade.'),
+  ('qa-brand-4',  'Sakura Ramen Kitchen (QA)',    'Tenant - Restaurant', 8,  'sakuraramen.qa', 'sakuraramen.example', 'Fast-casual ramen concept, targeting shopping centre food courts.'),
+  ('qa-brand-5',  'The Copper Grill (QA)',        'Tenant - Casual Dining', NULL, NULL, NULL, 'Premium casual steakhouse, 3,500-5,000 sq ft requirement.'),
+  ('qa-brand-6',  'Velo Athletic (QA)',           'Tenant - Athleisure', 11, NULL, 'veloathletic.example', 'Cycling-inspired athleisure brand, flagship-led rollout.'),
+  ('qa-brand-7',  'Harlow & Finch (QA)',          'Tenant - Fashion', NULL, NULL, NULL, 'Contemporary womenswear, department store concessions plus solus stores.'),
+  ('qa-brand-8',  'Marlow Grocer (QA)',           'Tenant - Grocery', 22, NULL, NULL, 'Premium convenience grocer, 2,000-4,000 sq ft high street units.'),
+  ('qa-brand-9',  'Pulse Fitness Studios (QA)',   'Tenant - Gym', 9,  'pulsefitness.qa', NULL, 'Boutique HIIT studio operator, basement and first-floor space.'),
+  ('qa-brand-10', 'Zenith Climbing (QA)',         'Tenant - Leisure', 4,  NULL, NULL, 'Bouldering and climbing centres, 15,000+ sq ft big-box leisure.'),
+  ('qa-brand-11', 'Orbit Mini Golf (QA)',         'Tenant - Experiential', 5,  NULL, NULL, 'Competitive socialising mini golf with F&B, city centre units.'),
+  ('qa-brand-12', 'Bloom Beauty Rooms (QA)',      'Tenant - Beauty', NULL, NULL, NULL, 'Beauty services and retail hybrid, 1,000-1,500 sq ft.'),
+  ('qa-brand-13', 'Quill & Marble (QA)',          'Tenant - Books & Stationery', 7, NULL, NULL, 'Design-led stationery and gifting, strong Christmas trade.')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO crm_companies (id, name, company_type, description) VALUES
@@ -142,17 +142,17 @@ ON CONFLICT (id) DO NOTHING;
 -- ─────────────────────────────────────────────────────────────────────
 
 INSERT INTO lease_events (id, property_id, address, tenant, tenant_company_id, unit_ref, event_type,
-  event_date, notice_date, current_rent, estimated_erv, sqft, status, landlord, source_evidence, notes) VALUES
+  event_date, notice_date, current_rent, estimated_erv, sqft, status, source_evidence, notes) VALUES
   ('qa-lev-1', 'qa-prop-3', 'Unit 1, Northbank Quarter, Leeds (QA)',   'The Copper Grill (QA)',  'qa-brand-5',  'Unit 1',  'Rent Review',
-   '2026-06-24', '2026-03-24', '£185,000', '£195,000', '4,800', 'Monitoring', 'Northbank Property Group (QA)', 'Manual', 'Review date passed — chase landlord for instruction.'),
+   '2026-06-24', '2026-03-24', '£185,000', '£195,000', '4,800', 'Monitoring', 'Manual', 'Review date passed — chase landlord for instruction.'),
   ('qa-lev-2', 'qa-prop-2', 'Unit 2, Westgate Centre, Oxford (QA)',    'Marlow Grocer (QA)',     'qa-brand-8',  'Unit 2',  'Rent Review',
-   '2026-09-29', '2026-06-29', '£118,000', '£125,000', '2,900', 'Contacted',  'Westgate Centre Estates (QA)',  'Manual', 'Landlord keen to instruct, proposal sent.'),
+   '2026-09-29', '2026-06-29', '£118,000', '£125,000', '2,900', 'Contacted',  'Manual', 'Landlord keen to instruct, proposal sent.'),
   ('qa-lev-3', 'qa-prop-2', 'Unit 1, Westgate Centre, Oxford (QA)',    'Harlow & Finch (QA)',    'qa-brand-7',  'Unit 1',  'Break Option',
-   '2026-11-10', '2026-05-10', '£145,000', '£152,000', '3,200', 'Monitoring', 'Westgate Centre Estates (QA)',  'Manual', 'Tenant trading well — break unlikely to be exercised.'),
+   '2026-11-10', '2026-05-10', '£145,000', '£152,000', '3,200', 'Monitoring',  'Manual', 'Tenant trading well — break unlikely to be exercised.'),
   ('qa-lev-4', 'qa-prop-3', 'Unit 4, Northbank Quarter, Leeds (QA)',   'Franco''s Coffee (QA)',  'qa-brand-2',  'Unit 4',  'Break Option',
-   '2027-03-25', '2026-09-25', '£46,500',  '£49,000',  '980',   'Monitoring', 'Northbank Property Group (QA)', 'Manual', 'Watching — tenant expanding elsewhere in scheme.'),
+   '2027-03-25', '2026-09-25', '£46,500',  '£49,000',  '980',   'Monitoring', 'Manual', 'Watching — tenant expanding elsewhere in scheme.'),
   ('qa-lev-5', 'qa-prop-2', 'Unit 5, Westgate Centre, Oxford (QA)',    'Bloom Beauty Rooms (QA)','qa-brand-12', 'Unit 5',  'Lease Expiry',
-   '2027-09-28', '2027-03-28', '£52,000',  '£55,000',  '1,250', 'Monitoring', 'Westgate Centre Estates (QA)',  'Manual', 'Renewal conversation to start Q1 2027.')
+   '2027-09-28', '2027-03-28', '£52,000',  '£55,000',  '1,250', 'Monitoring',  'Manual', 'Renewal conversation to start Q1 2027.')
 ON CONFLICT (id) DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────

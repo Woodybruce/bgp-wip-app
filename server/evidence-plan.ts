@@ -43,7 +43,7 @@ pool.query(`
     created_by VARCHAR,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  )`).catch(() => {});
+  )`).then(() => pool.query(`ALTER TABLE evidence_plans ADD COLUMN IF NOT EXISTS dot_colours JSONB`)).catch(() => {});
 pool.query(`
   CREATE TABLE IF NOT EXISTS evidence_plan_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -193,6 +193,54 @@ pool.query(`
      AND (e.created_at > k.created_at OR (e.created_at = k.created_at AND e.id > k.id))`)
   .then(r => { if (r.rowCount) console.log(`[evidence-plan] deduped ${r.rowCount} duplicate evidence entries`); })
   .catch(() => {});
+
+// One-time dot heal: units created before frontage dots existed (or drawn
+// by hand) get a dot computed from their polygon against the level raster,
+// so evidence dots line up without a re-detect (Woody, 2026-09-04). Runs
+// at most once per plan per boot; centroid is stored when no clear
+// frontage so the heal doesn't re-run forever.
+const dotHealRunning = new Set<string>();
+async function healFrontageDots(planId: string): Promise<void> {
+  if (dotHealRunning.has(planId)) return;
+  dotHealRunning.add(planId);
+  try {
+    const { rows: units } = await pool.query(
+      `SELECT id, level_id, polygon FROM evidence_plan_units WHERE plan_id = $1 AND dot IS NULL AND polygon IS NOT NULL`, [planId]);
+    if (units.length === 0) return;
+    const sharp = (await import("sharp")).default;
+    const byLevel = new Map<string, any[]>();
+    for (const u of units) {
+      if (!u.level_id) continue;
+      if (!byLevel.has(u.level_id)) byLevel.set(u.level_id, []);
+      byLevel.get(u.level_id)!.push(u);
+    }
+    let healed = 0;
+    for (const [levelId, levelUnits] of byLevel) {
+      const { rows: [level] } = await pool.query(`SELECT background_key FROM evidence_plan_levels WHERE id = $1`, [levelId]);
+      if (!level?.background_key) continue;
+      const file = await getFile(level.background_key);
+      if (!file) continue;
+      const meta = await sharp(file.data).metadata();
+      const W = meta.width || 0, H = meta.height || 0;
+      if (!W || !H) continue;
+      const raw = await sharp(file.data).removeAlpha().raw().toBuffer();
+      for (const u of levelUnits) {
+        const poly = Array.isArray(u.polygon) ? u.polygon : null;
+        if (!poly || poly.length < 3) continue;
+        const xs = poly.map((p: any) => p.x), ys = poly.map((p: any) => p.y);
+        const box = { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+        const dot = frontageDot(raw, W, H, box)
+          || { x: (box.x0 + box.x1) / 2, y: (box.y0 + box.y1) / 2 };
+        await pool.query(`UPDATE evidence_plan_units SET dot = $1 WHERE id = $2 AND dot IS NULL`, [JSON.stringify(dot), u.id]);
+        healed++;
+      }
+    }
+    if (healed) console.log(`[evidence-plan] frontage-dot heal on ${planId}: ${healed} units`);
+  } catch (e: any) {
+    console.error(`[evidence-plan] dot heal failed for ${planId}:`, e?.message);
+    dotHealRunning.delete(planId); // let a later load retry
+  }
+}
 
 async function planOr404(planId: string, res: Response): Promise<any | null> {
   const { rows } = await pool.query(`SELECT * FROM evidence_plans WHERE id = $1`, [planId]);
@@ -360,6 +408,7 @@ router.get("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
     // Heal linking on load: entries that arrived before their unit existed
     // (or match by tenant name) get attached here.
     await relinkAllEntries(plan.id).catch(() => {});
+    await healFrontageDots(plan.id).catch(() => {});
     const [unitsQ, entries] = await Promise.all([
       pool.query(`SELECT * FROM evidence_plan_units WHERE plan_id = $1 ORDER BY unit_ref`, [plan.id]),
       pool.query(`SELECT * FROM evidence_plan_entries WHERE plan_id = $1 ORDER BY transaction_date DESC NULLS LAST, created_at DESC`, [plan.id]),
@@ -430,6 +479,10 @@ router.put("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
     if ("propertyId" in (req.body || {})) {
       vals.push(req.body.propertyId || null);
       sets.push(`property_id = $${vals.length}`);
+    }
+    if ("dotColours" in (req.body || {})) {
+      vals.push(req.body.dotColours ? JSON.stringify(req.body.dotColours) : null);
+      sets.push(`dot_colours = $${vals.length}`);
     }
     if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
     vals.push(plan.id);
