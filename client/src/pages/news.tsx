@@ -69,11 +69,20 @@ const CATEGORIES = ["All", "Property", "Retail", "Investment", "Hospitality", "P
 // UX #143 — wire feeds often copy the headline into the description; a
 // summary that just repeats the title is noise, so hide it.
 function summaryAddsInfo(article: { title?: string | null; aiSummary?: string | null; summary?: string | null }): boolean {
-  const s = (article.aiSummary || article.summary || "").trim();
-  if (!s) return false;
-  const t = (article.title || "").trim().toLowerCase();
-  const sl = s.toLowerCase();
-  return !t || (sl !== t && !sl.startsWith(t));
+  return textAddsInfo(article.title, article.aiSummary || article.summary);
+}
+
+// Wire feeds also differ from the headline only in the " - Source" suffix
+// (title "Headline - The Grocer" vs summary "Headline  The Grocer"), so
+// compare on alphanumerics alone — either side may carry the source.
+function textAddsInfo(title?: string | null, body?: string | null): boolean {
+  const b = (body || "").trim();
+  if (!b) return false;
+  const key = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const t = key(title || "");
+  const s = key(b);
+  if (!t) return true;
+  return !(s === t || s.startsWith(t) || t.startsWith(s));
 }
 
 function timeAgo(date: string | Date | null): string {
@@ -1448,7 +1457,9 @@ function ClientNewsFeed() {
                   <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${sentimentDot(sig.sentiment)}`} />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium leading-snug">{sig.headline}</p>
-                    {sig.detail && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{sig.detail}</p>}
+                    {textAddsInfo(sig.headline, sig.detail) && (
+                      <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2" data-testid={`client-signal-detail-${sig.id}`}>{sig.detail}</p>
+                    )}
                     <p className="text-[11px] text-muted-foreground mt-1">
                       <a href={`/companies/${sig.brand_company_id}`} className="text-primary hover:underline">{sig.brand_name}</a>
                       {" · "}{sig.signal_type}

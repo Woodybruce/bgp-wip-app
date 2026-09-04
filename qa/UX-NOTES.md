@@ -13,6 +13,35 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+160. 2026-09-04 · Landsec client / desktop 1440px (QA r526) · read Brand News
+   for stories on their own brands · each card's footer prints the raw
+   signal_type token from the database — "Starbucks · sector_move · 3 Aug
+   2026", also "portfolio_change", "leadership" — machine field names in a
+   client-facing feed. Suggestion: map the tokens to sentence-case labels
+   ("Sector move", "News", "Opening") on the client feed, same as the deal
+   status labels do.
+
+159. 2026-09-04 · Landsec client / desktop 1440px (QA r526) · scanned the
+   portfolio dashboard KPI strip · two tiles end in a dangling fragment:
+   Total Units reads "124 occupied · 77 vacant · full rent roll" and
+   Occupancy "38.3% vacancy · of full rent roll", which next to a Passing
+   Rent tile showing "—  no passing rent recorded yet" reads as if a figure
+   failed to load rather than as a note about the denominator. Suggestion:
+   fold the qualifier into the tile's own sentence ("across the full rent
+   roll") or drop it — the strip already says which units are counted.
+
+158. 2026-09-04 · Landsec client / desktop 1440px (QA r526) · opened their
+   own deals from the Deals hub · #155 shipped read-only party slots on the
+   deal DETAIL page ("Not set yet — your BGP team will link parties"), but
+   the Deals TABLE one click earlier still shows the staff pickers for the
+   same two fields — the Client column's "+ Link landlord" (the open #129
+   complaint) and a Tenant column "+ Link tenant" that opens the full
+   company directory (Amorino, Honi Poke, Starbucks, Testco…) and writes
+   the deal. Same deal, two behaviours, one of them the one #155 was
+   confirmed to remove. Suggestion: decide #129 with #155's answer — client
+   party cells read-only in the table too (Client defaulting to their own
+   company), leaving the Edit dialog as the one place a client sets parties.
+
 157. 2026-09-04 · BGP staff / desktop 1440px (QA r524) · searched the Letting
    Tracker for a unit, then clicked the FY "Viewings 2" strip chip to see
    which units had viewings — the chip is a global toggle that intersects

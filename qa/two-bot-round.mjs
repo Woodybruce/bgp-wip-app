@@ -440,6 +440,11 @@ async function victoriaRound(page, cross) {
     // event and never the Hammerson one (the surface Woody reported dead).
     cross.calMine = mine;
     cross.calOther = other;
+    // GET /api/team-events only serves start_time >= now, so the cross-check
+    // is only meaningful while the seeded event is still in the future. A
+    // mark chunk re-run later in the round (r526) read the expired event as
+    // a scoping regression — stamp the deadline so it skips instead.
+    cross.calValidUntil = soon.toISOString();
     await page.goto(`${BASE}/calendar`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(4000);
@@ -2531,6 +2536,8 @@ async function markRound(page, cross) {
   // company_name scoping (an exact-string compare once blanked the calendar).
   await step(page, p, 'client-calendar-sees-own-events', async () => {
     if (!cross.calMine) return; // staff step skipped (midnight window)
+    // Seeded event already in the past (chunk re-run) — nothing to assert.
+    if (cross.calValidUntil && Date.parse(cross.calValidUntil) <= Date.now()) return;
     const r = await page.evaluate(async (args) => {
       const [mine, other] = args;
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
@@ -6106,6 +6113,32 @@ async function markRound(page, cross) {
       if (seen.has(k)) throw new Error(`duplicate story in client news feed: "${String(s.headline).slice(0, 80)}"`);
       seen.add(k);
     }
+  });
+
+  await step(page, p, 'client-news-detail-not-echo', async () => {
+    // r526: Google-News-shaped signals store detail = headline + source
+    // ("Headline - The Grocer" vs "Headline  The Grocer"), so every card on
+    // the client Brand News feed printed its own headline twice. The detail
+    // line is suppressed when it adds nothing — assert no card echoes.
+    await page.goto(`${BASE}/news`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3500);
+    if (!(await page.locator('[data-testid="client-news-feed"]').count())) {
+      throw new Error('client Brand News feed did not render');
+    }
+    const echo = await page.evaluate(() => {
+      const key = (v) => (v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      for (const card of Array.from(document.querySelectorAll('[data-testid^="client-signal-"]'))) {
+        if (/^client-signal-detail-/.test(card.getAttribute('data-testid') || '')) continue;
+        const detail = card.querySelector('[data-testid^="client-signal-detail-"]');
+        if (!detail) continue;
+        const head = card.querySelector('p');
+        const h = key(head && head.textContent);
+        const d = key(detail.textContent);
+        if (h && d && (d === h || d.startsWith(h) || h.startsWith(d))) return (head.textContent || '').slice(0, 80);
+      }
+      return null;
+    });
+    if (echo) throw new Error(`client news card repeats its headline as the detail line: "${echo}"`);
   });
 }
 

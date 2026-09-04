@@ -84,22 +84,69 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r526 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) — ROUND IN PROGRESS
+### r526 · 2026-09-04 · FULL (rotation #2 Landsec client desktop 1440px) · 1 bug fixed — GREEN
 - Bring-up: canonical recipe held 89th time (qa:pg once -> run-smoke restore
   clean -> purge + seed-personas via node/pg runner, honi 1 / hammerson 2
-  verified). Regression: smoke GREEN 42/0.
-- Two-bot 526 as 3 foreground chunks (with-server wrapper, lsof port kill,
+  verified). Regression: smoke GREEN 42/0 x2 (before, and FRESH_BUILD=1 after
+  the fix).
+- Two-bot 526 as 3 foreground chunks (with-server wrapper w/ lsof port kill,
   570s child timeout), STANDARD ORDER, fresh cross-526.json: victoria exit 0
-  FIRST RUN (2x400 standing signature exact) / mark exit 0 on the SECOND
-  attempt with 9 issues = standing signature exact (8x403 probe-by-design +
-  1x503 keyless); first mark attempt died on a boot-race ECONNRESET at its
-  own login POST (server log clean, no crash trace) - environment flake, see
-  below / woody,nick,sam exit 0 (18 [ok], 0 issues). Server logs: 0 raw
-  500/502/504 across all chunks (only 503 = keyless AI/M365 noise).
-- Triage: 0 app bugs from the harness.
-- Journey pending: Mark Warne @1440px on the confirmed client-facing UX batch
-  (read-only deal parties, sliced Brand News + empty state, Files-dialog
-  client info-sheet copy).
+  FIRST RUN (2x400 standing signature exact) / mark exit 0 with 9 issues =
+  standing signature exact (8x403 probe-by-design + 1x503 keyless), on its
+  SECOND attempt - the first died on a boot-race ECONNRESET at its own login
+  POST with a clean server log (new flake, below) / woody,nick,sam exit 0
+  (18 [ok], 0 issues). Server logs: 0 raw 500/502/504 across all chunks.
+  Triage: 0 app bugs from the harness.
+- Journey (Mark Warne @1440px, UI login - "Monday check-in: portfolio
+  dashboard, open my own deal and see who the parties are, read Brand News,
+  pull the info sheet for U124 off the tracker"): dashboard (KPI strip,
+  Letting Tracker 78 live lettings, tasks/briefing) -> /deals (2 deals +
+  "+2 letting deals" subtitle, TABLE view) -> deal #1003 detail -> /news
+  Brand News -> /available tracker, search U124 -> Files dialog -> info
+  sheet generate. 0 pageerrors, hscroll 0 on every surface, no non-noise
+  4xx/5xx.
+- Confirmed-batch client items verified AS INTENDED: UX 155 read-only deal
+  parties (Landlord slot pre-filled "Landsec", Tenant "Not set yet - your
+  BGP team will link parties", zero link-pickers on the detail page, BGP
+  contact named in the header); Brand News sliced to their own brands
+  (Starbucks/Amorino only, no rival-landlord stories) with the empty-state
+  copy in place for a brandless account; UX 151 client info-sheet copy in
+  the Files dialog ("Unit info sheet - branded PDF", not the staff
+  "for agents/tenants" wording) - and the client can actually generate it:
+  POST info-sheet 200, PDF lands in the unit's Files (probe row purged).
+- BUG FIXED (1): every card on the client Brand News feed printed its own
+  headline twice - Google-News-shaped signals store detail = headline +
+  source ("Headline - The Grocer" as the headline, "Headline  The Grocer"
+  as the detail), which the UX #143 dedupe missed because it compared raw
+  strings. news.tsx now compares on alphanumerics only (textAddsInfo, either
+  side may carry the source) and ClientNewsFeed uses it for sig.detail -
+  the staff/mobile summary guard gets the same normalisation. Verified
+  visually as Mark (25 cards, 13 real detail lines kept, 0 echoes), tsc
+  clean, FRESH_BUILD smoke 42/0.
+- Harness growth: two-bot +1 client-news-detail-not-echo (client Brand News
+  card whose detail line normalises to its own headline fails the round) -
+  [ok] inside two full mark chunk re-runs. Also hardened
+  client-calendar-sees-own-events: the staff step now stamps
+  cross.calValidUntil and the client step skips once the seeded event's
+  start_time has passed (GET /api/team-events serves start_time >= now, so a
+  mark re-run 45min later read the expired event as a scoping regression).
+- NOT bugs: client Deals table still offers staff party pickers while the
+  detail page is read-only (that is open UX #129 territory - logged as #158
+  rather than fixed, since clients ARE allowed to edit their own deals by
+  Woody's 2026-07 decision); info sheet files land under the BROCHURES tab.
+- Bugs deferred: none. Carried (data, staff decision): Bluewater tenancy
+  SPINE duplicates (U062 x4, L090 x2, L130 x2). Suggestions: UX-NOTES 158
+  (client deals-table party pickers vs #155), 159 (dashboard KPI dangling
+  "of full rent roll"), 160 (raw signal_type tokens on the client news
+  feed). Real-device keyboard-up composer check (r405) still open for Woody.
+- NEW FLAKE: a chunk can die on ECONNRESET at its first login POST even
+  though the server booted and answered /api/auth/me (server log clean, no
+  crash trace) - re-run the chunk, it passed identically second time.
+- NEW FLAKE (harness timing, now handled): the mark chunk must run within
+  30 minutes of the victoria chunk or the seeded calendar event expires;
+  the scenario skips instead of failing as of this round.
+- Next: r526 had the journey -> r527 LIGHT; then rotation #3 Landsec client
+  mobile 390px.
 
 ### r525 · 2026-09-04 · LIGHT (r524 had the journey) · UX 130-156 batch verified — GREEN
 - Bring-up: canonical recipe held 88th consecutive time (qa:pg once →
