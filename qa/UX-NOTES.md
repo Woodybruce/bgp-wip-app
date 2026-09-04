@@ -13,6 +13,26 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+163. 2026-09-04 · Landsec client / mobile 390px (QA r528) · logged an offer
+   from a Letting Tracker unit card on the phone · "Save Offer" is enabled
+   with the form untouched, so a stray tap creates an offer row with no
+   company, no rent and no date content behind it — the exact shape #154
+   was confirmed to block for viewings, on the sibling dialog two buttons
+   away (the viewing Save correctly stays disabled until company/contact/
+   attendees/notes is set). Suggestion: apply #154's guard to the offer
+   dialog — require at least one of company/contact/rent before Save
+   enables (and the same for the Interest dialog).
+
+162. 2026-09-04 · Landsec client / mobile 390px (QA r528) · opened the app on
+   the phone, wanted to search for a unit and check notifications from the
+   home tab · #156's phone-shell header search + bell are there on every
+   normal route (/available, /deals, /news…) but NOT on the Dashboard tab —
+   "/" renders the mobile dashboard shell, which has its own header with no
+   search icon and no bell, so the first screen of the app is the one place
+   the client can't search or see notifications from. Suggestion: put the
+   same GlobalSearch + NotificationCenter pair in the mobile dashboard
+   header so the entry points don't disappear on the home tab.
+
 161. 2026-09-04 · BGP staff / desktop 1440px (QA r527) · opened a bookmarked
    /subscriptions link as a non-admin (Victoria, Head of National) · the
    page loads, but its "API Keys & Environment" panel reads "Status

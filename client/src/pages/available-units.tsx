@@ -545,11 +545,18 @@ export default function AvailableUnitsPage() {
   // Inline-create for the viewing/offer/interest pickers (UX #147) — an
   // unmatched company typed into the picker used to be silently discarded.
   const createCrmCompany = async (name: string) => {
-    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim() });
-    const created = await r.json();
-    queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-    toast({ title: "Company created", description: `${created.name} added to CRM.` });
-    return { id: String(created.id), label: created.name as string };
+    try {
+      const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim() });
+      const created = await r.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      toast({ title: "Company created", description: `${created.name} added to CRM.` });
+      return { id: String(created.id), label: created.name as string };
+    } catch (e: any) {
+      // The combobox swallows the throw and leaves the picker untouched, so
+      // without this the create row just closed and nothing happened (r528).
+      toast({ title: "Couldn't create company", description: e?.message || "Please try again.", variant: "destructive" });
+      throw e;
+    }
   };
 
   const { data: favoriteIds = [] } = useQuery<string[]>({
@@ -1881,7 +1888,20 @@ export default function AvailableUnitsPage() {
               let cardTitle = rawTitle;
               if (u.unitName && prop?.name) {
                 const propWords = prop.name.split(/[,·]/)[0].trim();
-                for (const strip of [prop.name, propWords]) {
+                // r528: unit names embed the scheme's SHORT name ("L112
+                // Bluewater, Bluewater"), never its full one, so the full-name
+                // pass alone stripped nothing. Also try the name with its
+                // generic descriptor words removed ("Bluewater Shopping
+                // Centre" → "Bluewater"); ≥4 chars so a property called
+                // "The Centre" can't reduce to stripping "The".
+                const core = propWords
+                  .replace(/\b(shopping|retail|centre|center|park|mall|estate|quarter|arcade|outlet|village|scheme|plaza|house)\b/gi, "")
+                  .replace(/^the\b/i, "")
+                  .replace(/\s+/g, " ")
+                  .trim();
+                const strips = [prop.name, propWords];
+                if (core.length >= 4 && core.toLowerCase() !== propWords.toLowerCase()) strips.push(core);
+                for (const strip of strips) {
                   if (strip && cardTitle.toLowerCase() !== strip.toLowerCase()) {
                     cardTitle = cardTitle.replace(new RegExp(`[,\\s·-]*${strip.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gi"), "").trim();
                   }
@@ -3251,7 +3271,7 @@ export default function AvailableUnitsPage() {
                   onSelect={(id, name) => setInterestForm(f => ({ ...f, companyId: id, companyName: name }))}
                   placeholder="Company / brand"
                   testId="interest-company"
-                onCreate={createCrmCompany}
+                onCreate={isClientTracker ? undefined : createCrmCompany}
                 createLabel="company"
                 />
               </div>
@@ -3355,7 +3375,7 @@ export default function AvailableUnitsPage() {
                     onSelect={(id, name) => setViewingForm(f => ({ ...f, companyId: id, companyName: name }))}
                     placeholder="Select company"
                     testId="viewing-company"
-                  onCreate={createCrmCompany}
+                  onCreate={isClientTracker ? undefined : createCrmCompany}
                   createLabel="company"
                   />
                 </div>
@@ -3504,7 +3524,7 @@ export default function AvailableUnitsPage() {
                     onSelect={(id, name) => setOfferForm(f => ({ ...f, companyId: id, companyName: name }))}
                     placeholder="Select company"
                     testId="offer-company"
-                  onCreate={createCrmCompany}
+                  onCreate={isClientTracker ? undefined : createCrmCompany}
                   createLabel="company"
                   />
                 </div>

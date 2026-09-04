@@ -88,16 +88,63 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r528 · 2026-09-04 · FULL (round in progress) · rotation #3 Landsec client mobile 390px
-- Bring-up: canonical recipe (qa:pg once → run-smoke restore → seed-personas
-  via node/pg runner, honi 1 / hammerson 2). Regression: smoke GREEN 42/0.
+### r528 · 2026-09-04 · FULL · rotation #3 Landsec client mobile 390px · 2 bugs fixed
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  seed-personas via node/pg runner, honi 1 / hammerson 2). Regression: smoke
+  GREEN 42/0.
 - Two-bot 528 as 3 foreground chunks (with-server wrapper, 570s child
-  timeout), standard order, fresh cross-528.json: victoria exit 0 first run
-  (2×400 standing signature exact) / mark exit 0 first run (8×403 probe +
-  1×503 keyless — standing signature exact) / woody,nick,sam exit 0
-  (18 [ok], 0 issues). Server logs: 0 raw 500/502/504 across all chunks.
-- Triage: 0 app bugs from the harness. Journey next (client mobile 390px:
-  toasts #144/149, phone tracker cards #130/#135).
+  timeout), standard order: victoria exit 0 first run (2×400 standing exact)
+  / mark exit 0 first run (8×403 probe-by-design + 1×503 keyless — standing
+  exact) / woody,nick,sam exit 0 (18 [ok], 0 issues). Server logs: 0 raw
+  500/502/504 across all chunks. Triage: 0 app bugs from the harness.
+- JOURNEY (Mark, iPhone UA 390px, touch): dashboard → Letting Tracker →
+  logged a viewing then an offer from a unit card → /deals /tasks /news
+  /requirements. hscroll 0 everywhere, 0 pageerrors, 0 non-noise 4xx/5xx.
+- CONFIRMED-BATCH VERDICTS as the client sees them: #144/#149 GREEN —
+  "Viewing added" / "Offer added" toasts render bottom-anchored at y
+  614-684 of a 780px viewport while the row just created sits at 351-403,
+  measured no-overlap both times. #135 GREEN — sparse cards carry no
+  Area/Rent rows at all (no em-dash rows). #154 GREEN — viewing Save is
+  disabled on an untouched form. #156 GREEN on the client shell too
+  (button-global-search + button-notifications in the /available header).
+- BUG 1 FIXED (UX #130 shipped but ineffective): phone tracker card titles
+  still read "L112 Bluewater, Bluewater" / "U124/U125/U126, Bluewater,
+  Bluewater" over a "Bluewater Shopping Centre" subtitle — the strip pass
+  only tried the FULL property name, which unit_name never embeds (it
+  embeds the scheme's short form). Now also strips the property name minus
+  its generic descriptor words (shopping/retail/centre/park/mall/estate/…,
+  ≥4 chars, leading "The" dropped) so "The Centre" can't reduce to
+  stripping "The". Verified at 390px: L112 / MSU9 / MSU3 (New) /
+  U124/U125/U126 / EVU01 / L022, property once on the subtitle.
+- BUG 2 FIXED (silent client failure): the tracker viewing/offer/interest
+  company pickers offered Mark an inline "Create company" row whose POST
+  /api/crm/companies is staff-only — tapping it 403'd, the picker closed,
+  the trigger stayed "Select company" and NOTHING was said (entity-combobox
+  swallows the throw and expects the caller to toast; createCrmCompany
+  didn't). Same class as the r265 staff-only New Brand button. onCreate is
+  now undefined for client users (picker falls back to "No matches.") and
+  createCrmCompany toasts on failure. Verified: Mark 0 create rows in both
+  the offer and viewing dialogs; Victoria keeps the row and still creates
+  ("Company created — QA-PROBE Newco 528 added to CRM").
+- Harness growth: 3 scenarios — mark client-tracker-phone-card-titles (no
+  card title contains the subtitle's scheme word; also guards #135's
+  em-dash rows), mark client-tracker-no-inline-company-create (403 probe +
+  0 create rows in the phone offer dialog), victoria
+  staff-tracker-inline-company-create-kept (the staff counterpart — all
+  three at 390px iPhone UA). Both chunks re-ran to their exact standing
+  signatures with the new scenarios [ok]. First cut of the staff one drove
+  the DESKTOP button-offers-* row control and timed out on click at
+  1440px — phone context instead; noted in case a future scenario wants
+  that desktop control.
+- Deferred: none. Carried (data, staff decision): Bluewater tenancy SPINE
+  duplicates (U062 ×4, L090 ×2, L130 ×2). Suggestions: UX-NOTES 162 (phone
+  Dashboard tab is the one route with no #156 header search/bell — "/"
+  renders the mobile dashboard shell) and 163 (offer dialog Save is enabled
+  on an untouched form, the shape #154 was confirmed to block for
+  viewings). Still open: #150, #157, #158, #159, #160, #161. Real-device
+  keyboard-up composer check (r405) open for Woody.
+- New flakes: none.
+- Next: r528 was FULL → r529 LIGHT; then rotation #4 BGP staff mobile 390px.
 
 ### r527 · 2026-09-04 · LIGHT (r526 had the journey) · 0 app bugs — GREEN
 - Bring-up: canonical recipe held 90th time (qa:pg once → run-smoke restore

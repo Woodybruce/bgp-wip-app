@@ -1830,6 +1830,38 @@ async function victoriaRound(page, cross) {
   // out UNDER the sticky Actions & Activity column — the banner pointed at
   // a button the user couldn't see. The page now auto-scrolls the table
   // once so the first pitch button clears the pinned column.
+  await step(page, p, 'staff-tracker-inline-company-create-kept', async () => {
+    // r528 counterpart: hiding the inline "Create company" row for clients
+    // must not take it away from staff, who rely on it for a viewing/offer
+    // against a brand that isn't in the CRM yet (UX #147).
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/available`, nav);
+      await mob.waitForTimeout(4000);
+      const first = await mob.locator('[data-testid^="mobile-unit-"]').first().getAttribute('data-testid');
+      if (!first) throw new Error('no phone tracker card on the staff board');
+      const uid = first.replace('mobile-unit-', '');
+      await mob.locator(`[data-testid="unit-offer-${uid}"]`).click();
+      await mob.waitForTimeout(1500);
+      await mob.locator('[data-testid="offer-company"]').click();
+      await mob.waitForTimeout(800);
+      await mob.locator('input[placeholder^="Search"]').last().fill('QA-PROBE Newco 528');
+      await mob.waitForTimeout(800);
+      if (!(await mob.getByText(/Create company/i).count())) {
+        throw new Error('staff lost the tracker inline company-create row');
+      }
+    } finally { await mobCtx.close(); }
+  });
+
   await step(page, p, 'staff-tracker-pitch-button-visible', async () => {
     await page.goto(`${BASE}/available?pitchBrand=${BRAND}&pitchBrandName=PitchProbe`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(4000); // rows + the one-shot auto-scroll effect
@@ -6113,6 +6145,82 @@ async function markRound(page, cross) {
       if (seen.has(k)) throw new Error(`duplicate story in client news feed: "${String(s.headline).slice(0, 80)}"`);
       seen.add(k);
     }
+  });
+
+  await step(page, p, 'client-tracker-phone-card-titles', async () => {
+    // r528: UX #130 stripped only the FULL property name from phone tracker
+    // card titles, but unit_name embeds the scheme's short form — every card
+    // still read "L112 Bluewater, Bluewater" over a "Bluewater Shopping
+    // Centre" subtitle. Also guards #135 (no em-dash Area/Rent rows).
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/available`, nav);
+      await mob.waitForTimeout(4000);
+      const cards = await mob.locator('[data-testid^="mobile-unit-"]').count();
+      if (!cards) throw new Error('no phone tracker cards rendered at 390px');
+      const bad = await mob.evaluate(() => {
+        const out = { echo: null, dash: null };
+        for (const c of Array.from(document.querySelectorAll('[data-testid^="mobile-unit-"]'))) {
+          const title = (c.querySelector('span.font-semibold')?.textContent || '').trim();
+          const sub = (c.querySelector('p.text-muted-foreground')?.textContent || '').trim();
+          // the scheme's short name = the subtitle's first word
+          const core = sub.split(/[\s,·]+/)[0];
+          if (!out.echo && core.length >= 4 && title.toLowerCase() !== core.toLowerCase()
+              && title.toLowerCase().includes(core.toLowerCase())) out.echo = `${title} | ${sub}`;
+          if (!out.dash && /(Area|Rent p\.a\.)\s*[—–-]\s*$/m.test(c.innerText)) out.dash = title;
+        }
+        return out;
+      });
+      if (bad.echo) throw new Error(`phone tracker card title repeats the property name: "${bad.echo}"`);
+      if (bad.dash) throw new Error(`phone tracker card keeps an empty Area/Rent row (UX #135): ${bad.dash}`);
+    } finally { await mobCtx.close(); }
+  });
+
+  await step(page, p, 'client-tracker-no-inline-company-create', async () => {
+    // r528: the viewing/offer/interest company pickers offered clients an
+    // inline "Create company" row whose POST /api/crm/companies 403s — the
+    // row closed the picker and nothing happened, no error. Staff keep it
+    // (asserted in the victoria round).
+    const probe = await page.request.post(`${BASE}/api/crm/companies`, {
+      headers: { Authorization: `Bearer ${page.qaToken}` },
+      data: { name: 'QA-PROBE clientco 528' },
+    });
+    if (probe.status() !== 403) throw new Error(`client company create returned ${probe.status()}, expected 403`);
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/available`, nav);
+      await mob.waitForTimeout(4000);
+      const first = await mob.locator('[data-testid^="mobile-unit-"]').first().getAttribute('data-testid');
+      if (!first) throw new Error('no phone tracker card to open an offer on');
+      const uid = first.replace('mobile-unit-', '');
+      await mob.locator(`[data-testid="unit-offer-${uid}"]`).click();
+      await mob.waitForTimeout(1500);
+      await mob.locator('[data-testid="offer-company"]').click();
+      await mob.waitForTimeout(800);
+      await mob.locator('input[placeholder^="Search"]').last().fill('QA-PROBE clientco 528');
+      await mob.waitForTimeout(800);
+      if (await mob.getByText(/Create company/i).count()) {
+        throw new Error('client offer dialog still advertises inline company create (its POST 403s)');
+      }
+    } finally { await mobCtx.close(); }
   });
 
   await step(page, p, 'client-news-detail-not-echo', async () => {
