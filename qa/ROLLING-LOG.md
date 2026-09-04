@@ -88,13 +88,91 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r533 · 2026-09-04 · LIGHT (r532 had the journey) · round in progress
-- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean).
-  Regression: smoke GREEN 42/0.
-- Triage: nothing new from the smoke run — 0 failures, no non-noise errors.
-- Working the r532 deferred client-isolation punch list, item 1 first
-  (GET /api/chat-media/:filename — no thread-membership check, chat-media
-  also stores KYC docs) and item 2/3 if time allows. Standing cap: 2 fixes.
+### r533 · 2026-09-04 · LIGHT (r532 had the journey) · 2 bugs fixed — chat-media + deal M365 sub-reads
+- Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
+  seed-personas applied to bgpsmoke via a node/pg runner in the repo dir —
+  a scratchpad script can't resolve `pg`, so copy it into qa/ and run it
+  from there). Regression: smoke GREEN 42/0.
+- Round spent on the r532 deferred client-allowed GET punch list, items 1
+  and 2 (the standing cap of 2). No exploratory journey (LIGHT).
+- BUG FIXED 1 (punch-list item 1, highest value): GET /api/chat-media/:filename
+  had auth but NO reachability check — any authenticated user, client logins
+  included, could fetch ANY chat attachment by filename, and chat-media is one
+  flat namespace shared with ChatBGP-generated documents AND KYC uploads
+  (passports, bank statements, via /api/kyc/documents/upload). Timestamp-hex
+  filenames are guess-resistance, not a gate, and the filename leaks through
+  any surface that hands one out. Now: staff unrestricted (internal storage,
+  they reach these files through the surfaces that made them); a CLIENT may
+  read a file only when it is reachable from something they can already see —
+  their own upload (user_upload_history) or a file referenced by a message in
+  a thread they belong to (their own ChatBGP conversation is such a thread,
+  and the assistant reply is persisted BEFORE the SSE frame carrying the
+  download link, so generated docs are covered). Helper:
+  clientCanReachChatMedia in server/file-storage.ts; LIKE patterns escape
+  \ % _ so a sanitised filename can't widen the match. Denials log
+  "[chat-media] client <id> denied <file>" so a real lock-out shows up in
+  prod logs, and the 403 body carries a human message the chat markdown
+  download helper already surfaces.
+- BUG FIXED 2 (punch-list item 2): GET /api/crm/deals/:id/related-emails and
+  /related-events carried requireAuth only. Harmless today (they need the
+  CALLER's own M365 token, no client fixture holds one) but they answered
+  404-vs-200 on any deal id, leaking deal existence firm-wide, and would leak
+  content the moment a client connects M365. Both now run the same
+  resolveCompanyScope + isDealInScope gate the deal's other sub-reads use,
+  BEFORE the deal lookup, so an out-of-scope id 403s whether or not it exists.
+- PROBED at API level against a live server (all as expected, tsc clean):
+  staff file → victoria 200, mark 403, sam 403; mark's own upload → mark 200,
+  sam 403, victoria 200; victoria shares the staff file into a thread mark is
+  a member of → mark 200 (sam still 403), i.e. the gate follows real
+  reachability rather than locking the legitimate client out. Deal sub-reads:
+  mark 200 {connected:false} on his own deal, sam 403 on both.
+- Verified VISUALLY at 1440px after the fixes: /chatbgp and /messages for
+  BOTH mark and victoria — 0 pageerrors, 0 non-noise 4xx/5xx either side.
+  (Keyless env means ChatBGP itself shows its "Not Connected" card — noise,
+  and the seed of suggestion 170.)
+- Harness growth: 3 scenarios in the r529/r531/r532 shape. victoria
+  agent-upload-chat-media stages two staff files (one shared into a thread
+  with Mark, one never shared) → cross.mediaShared / cross.mediaPrivate; mark
+  client-chat-media-own-roundtrip (own upload 200, shared file 200, unshared
+  staff file 403, own deal related-emails/events 200) → cross.mediaClientOwn /
+  cross.clientDealId; sam rival-chat-media-and-deal-subreads-guard (all three
+  files 403 + both deal sub-reads 403, registered in NEGATIVE_PROBE_SCENARIOS).
+  run-round.sh purge grew user_upload_history + file_storage lines for
+  'QA-PROBE chat media%' (the QA Thread rows were already swept).
+- NOT RUN this round (time budget): the three two-bot chunks. The new
+  scenarios are syntax-checked (node --check) and every assertion in them was
+  proven by the equivalent API probe above, but they have NOT yet run inside
+  the harness — r534 should run the full three-chunk sweep FIRST and treat any
+  failure in these three as this round's debt.
+- HARNESS TRAP FIXED (r532's recommendation, applied): the with-server wrapper
+  now boots `setsid node node_modules/tsx/dist/cli.mjs server/index.ts`, kills
+  the whole process group (`kill -TERM -$SRV`) and REFUSES to start if :5000
+  already answers. Three server bring-ups this round, no stale-server
+  confusion. The wrapper lives in the session scratchpad (not committed) —
+  worth promoting to qa/ if a future round wants it permanent.
+- DEFERRED — remainder of the r532 punch list, unchanged and still worth a
+  deliberate look:
+  3. GET /api/crm/leads/:id — unscoped detail read (0 rows in the fixture);
+     same one-line gate as bug 2 above.
+  4. GET /api/chatbgp/threads/:threadId/active-run — no membership check;
+     check whether the run payload carries thread content.
+  5. Re-run qa/client-allowed-get-audit.mjs after these (14 hits after r532;
+     item 1 was not one of them — chat-media has no :id in the path — so the
+     audit script under-reports filename-addressed routes: worth teaching it
+     about /:filename params).
+  NEW (from this round's reading, not reproduced): chat-media is also served
+  by ?token= query param for mobile downloads — the gate covers that path too
+  (resolveCompanyScope reads req.tokenUserId), but any future chat-media-like
+  route must remember the query-token branch exists.
+- Carried (data, staff decision): Bluewater tenancy SPINE duplicates
+  (U062 ×4, L090 ×2, L130 ×2).
+- Suggestions: UX-NOTES 170 (desktop /messages redirects to ChatBGP, which is
+  a full-page dead end with no AI key — team chat should stay readable when
+  the AI service is down). Still open: #150, #157-#169.
+- New flakes: none. tsc clean. Real-device keyboard-up composer check (r405)
+  open for Woody.
+- Next: r533 was LIGHT → r534 FULL, rotation #2 Landsec client desktop — but
+  run the three two-bot chunks first (see NOT RUN above).
 
 ### r532 · 2026-09-04 · FULL · rotation #1 BGP staff desktop 1440px · 2 bugs fixed — client isolation
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →

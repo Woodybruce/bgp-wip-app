@@ -13,6 +13,18 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+170. 2026-09-04 · BGP staff / desktop 1440px (QA r533) · followed a
+   "Messages" link/bookmark on desktop to pick up a team conversation · the
+   route redirects to /chatbgp (by design — /messages is the mobile chat
+   tab), but with no AI key configured ChatBGP renders a FULL-PAGE dead end:
+   "Not Connected — AI service is not configured. Please contact your
+   administrator to enable ChatBGP." There is no nav, no thread list and no
+   way back to team chat from that screen — person-to-person messaging needs
+   no AI at all, so an AI outage (or a key rotation) reads as "messaging is
+   down". SUGGESTION: keep the ChatBGP composer disabled with that notice,
+   but still render the page shell + thread list, so team conversations stay
+   readable and openable when the AI service is unavailable.
+
 169. 2026-09-04 · BGP staff / desktop 1440px (QA r532) · opened Requirements
    to check what leasing briefs were live · the page renders the table HEADER
    ROW (Name / Date / Status / Use / Requirement Type / Size / Req. Locations)
