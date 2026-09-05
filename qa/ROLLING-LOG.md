@@ -88,6 +88,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r557 · 2026-09-05 · LIGHT (r556 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
+  two-bot in three chunks via qa/with-server.sh with QA_CROSS_FILE set).
+  Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r556, CONFIRMED: full three-chunk pass, every scenario
+  [ok], tally victoria 2x400 / mark 9x403 + 1x503 / woody,nick,sam 0 — the
+  r537-r556 signature exactly, fifteenth clean hand-off. All 12 logged issues
+  are listed noise (rocketreach-400 + investment-tracker-400, deliberate
+  client 403 gates, keyless-AI 503). 0 app bugs from the scripted regression.
+- In progress: r556's deferred app-wide bug (a reload within ~2s of an inline
+  change paints the pre-change value and never corrects — persisted
+  react-query cache restoring as FRESH).
+
 ### r556 · 2026-09-05 · FULL (rotation #1 staff desktop 1440px) · 2 bugs fixed — the Lease Events board could not be written to at all, and the tenancy KPI tiles filtered to a different number than they counted · 1 deferred · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
