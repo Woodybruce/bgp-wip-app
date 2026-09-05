@@ -88,6 +88,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r546 · 2026-09-05 · FULL (rotation #4 BGP staff MOBILE 390px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs -> .env written by hand). Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r545, CONFIRMED. Two-bot round 546 in three chunks with
+  QA_CROSS_FILE: victoria 2x400 (incl. [ok] staff-mlro-report-pdf and [ok]
+  staff-phone-chat-suggestions-kept), mark 9x403 + 1x503 (incl. [ok]
+  client-mlro-report-gate), woody/nick/sam 0. Signature unchanged from
+  r537-r545; r545's new scenario pair is green in a full pass.
+- Triage: no new issues from the scripted sweep — all counts are the known
+  deliberate-guard signature. Journey next.
+
 ### r545 · 2026-09-05 · LIGHT (r544 had the journey) · 1 bug fixed — the MLRO AML report PDF 500'd on every deal · 1 harness fix · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
   via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before, and GREEN 42/0
