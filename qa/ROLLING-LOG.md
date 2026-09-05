@@ -88,6 +88,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r551 · 2026-09-05 · LIGHT (r550 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; wrote .env at
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke, server started as
+  `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r550, CONFIRMED with a full three-chunk pass of my own
+  (QA_CROSS_FILE set): victoria 2x400, mark 9x403 + 1x503, woody/nick/sam 0 —
+  exactly the r537-r550 signature. All 12 logged issues are listed noise
+  (rocketreach-400 + investment-tracker-400, deliberate client 403 gates,
+  keyless-AI 503). 0 app bugs from the scripted regression.
+- Triage list: nothing outstanding from the scripted regression. LIGHT round,
+  so no journey; spending the time on an under-worked surface — the tenancy
+  schedule IMPORT/merge side (r550 covered read + export, import untouched).
+- Round in progress; this entry will be replaced by the final one.
+
 ### r550 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · 2 bugs fixed, one family — the tenancy schedule's unexpired term is MONTHS beside a Term in YEARS, and the Excel export disagreed with the board · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; no .env in a fresh container, wrote one at
