@@ -211,6 +211,17 @@ const SCHEDULE_STATUSES = [
   "Lease Event",    // upcoming break / expiry — actively managed
   "Archived",       // historical row, hidden from default filters
 ] as const;
+// A KPI tile counts a bucket of statuses ("Occupied" also covers Trading /
+// Let / Not Vacant from the Landsec feed) but clicking it used to filter on
+// exact string equality — so the Occupied tile read 124 and showed 87 rows,
+// and Vacant read 76 and showed 69 (r556). Tiles and their filters now share
+// one definition; a status with no bucket filters to itself.
+const STATUS_BUCKETS: Record<string, string[]> = {
+  "Occupied": ["Occupied", "Trading", "Let", "Not Vacant"],
+  "Vacant": ["Vacant", "Void", "Available", "AVA"],
+};
+const inStatusBucket = (status: string | null | undefined, bucket: string) =>
+  (STATUS_BUCKETS[bucket] || [bucket]).includes(status || "");
 const SCHEDULE_STATUS_COLOURS: Record<string, string> = {
   "Vacant":         "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
   "Void":           "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300", // Landsec feed
@@ -855,7 +866,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   }
 
   const filtered = units.filter(u => {
-    if (statusFilter && u.status !== statusFilter) return false;
+    if (statusFilter && !inStatusBucket(u.status, statusFilter)) return false;
     if (search) {
       const s = search.toLowerCase();
       const matchesSearch = [u.unit_number, u.tenant_name, u.trading_name, u.premises, u.permitted_use].some(f => f?.toLowerCase().includes(s));
@@ -897,10 +908,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   // Occupied + Trading both count as "in possession" for the headline
   // KPI. Vacant + In Negotiation + Under Offer + Lease Event all count
   // as "actionable" — surfaced as their own buckets below if non-zero.
-  const occupied = units.filter(u => u.status === "Occupied" || u.status === "Trading" || u.status === "Let" || u.status === "Not Vacant").length;
+  const occupied = units.filter(u => inStatusBucket(u.status, "Occupied")).length;
   // Void/Available/AVA are vacancy statuses too (dashboard counts them as
   // vacant; synthetic tracker rows arrive as their marketing status).
-  const vacant = units.filter(u => ["Vacant", "Void", "Available", "AVA"].includes(u.status || "")).length;
+  const vacant = units.filter(u => inStatusBucket(u.status, "Vacant")).length;
   const inNeg = units.filter(u => u.status === "In Negotiation").length;
   const underOffer = units.filter(u => u.status === "Under Offer").length;
   const leaseEvent = units.filter(u => u.status === "Lease Event").length;

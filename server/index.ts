@@ -142,6 +142,13 @@ installGoogleBudgetGuard();
     `CREATE INDEX IF NOT EXISTS idx_lease_events_property ON lease_events(property_id)`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_date ON lease_events(event_date)`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_status ON lease_events(status)`,
+    // PLA matters write their key dates out as lease events and rewrite them
+    // by matter, so the Drizzle schema carries matter_id and every insert
+    // names the column. Any database that never ran migrations/0009 answered
+    // "Log event" with a 400 ("column matter_id does not exist") — the board
+    // could not be written to at all (r556).
+    `ALTER TABLE lease_events ADD COLUMN IF NOT EXISTS matter_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS lease_events_matter_idx ON lease_events (matter_id) WHERE matter_id IS NOT NULL`,
     `CREATE TABLE IF NOT EXISTS property_intelligence_cache (
       cache_key TEXT PRIMARY KEY,
       payload JSONB NOT NULL,

@@ -88,21 +88,84 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r556 · 2026-09-05 · FULL (rotation #1 staff desktop 1440px) · ROUND IN PROGRESS
+### r556 · 2026-09-05 · FULL (rotation #1 staff desktop 1440px) · 2 bugs fixed — the Lease Events board could not be written to at all, and the tenancy KPI tiles filtered to a different number than they counted · 1 deferred · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
-  server via qa/with-server.sh). Regression: smoke GREEN 42/0.
-- CARRY-FORWARD FROM r555 CONFIRMED: full three-chunk two-bot pass with
-  QA_CROSS_FILE set, r555's two new assert-only scenarios in place. Every
-  scenario [ok]; tally victoria 2x400 / mark 9x403 + 1x503 / woody,nick,sam 0
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
+  dev server via qa/with-server.sh, which is foreground and tears the server
+  down after each command). Regression: smoke GREEN 42/0 before, and GREEN
+  42/0 with FRESH_BUILD=1 after the fixes.
+- CARRY-FORWARD FROM r555, CONFIRMED with a full three-chunk pass of my own
+  (QA_CROSS_FILE set, r555's two assert-only scenarios in place): every
+  scenario [ok], tally victoria 2x400 / mark 9x403 + 1x503 / woody,nick,sam 0
   — the r537-r555 signature exactly, fourteenth clean hand-off. All 12 logged
   issues are listed noise (rocketreach-400 + investment-tracker-400,
   deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted
   regression.
-- Journey in progress: Victoria @ 1440px — Bluewater tenancy board KPI tiles
-  -> lease expiries -> the Lease Events board (empty in the fixture) and its
-  embedded twin on /comps.
-- Triage so far: nothing beyond the noise list.
+- JOURNEY (Victoria @ 1440px, qa/r556-lease-events-journey.mjs; shots
+  qa/smoke-shots/r556j-*.png): "Peter is away — cover the lease-advisory
+  board: what is coming up at Bluewater, log the event I spotted, own it, and
+  check every surface that states it agrees." Bluewater tenancy board (200
+  rows, KPI tiles, tile filters) -> /lease-events (empty) -> Log-event dialog
+  -> inline owner + status pickers -> reload -> edit dialog -> the same board
+  embedded on /comps?tab=lease-events -> delete. 0 h-overflow, 0 pageerrors on
+  every leg.
+- BUG FIXED 1 (server/index.ts boot auto-migrate) — the Lease Events board
+  could not be written to AT ALL. Every "Log event" answered 400 and the
+  dialog just stayed open; the toast said "Save failed: column matter_id of
+  relation lease_events does not exist". Root cause: migrations/0009 adds
+  lease_events.matter_id (PLA matters write their key dates out as lease
+  events) and shared/schema.ts carries matterId, so every Drizzle insert names
+  the column — but the boot statements in server/index.ts that CREATE the
+  table on a restored database never had it. Any database restored from a
+  pre-0009 dump loses the whole write path: the board, ChatBGP's lease-event
+  tool (chatbgp.ts:8407) and the PLA matter writer all insert through Drizzle.
+  Fixed by adding the column + its partial index to the boot list, the same
+  self-heal pattern the file uses for every other drifted column (idempotent,
+  ADD COLUMN IF NOT EXISTS). Did NOT touch shared/schema.ts or migrations/.
+  Verified live on a FRESH restore: dialog creates, row lands with rent/ERV
+  intact, "DUE < 3 MONTHS" tile goes 0 -> 1, digest picks it up, delete clears.
+- BUG FIXED 2 (client/src/components/PropertyTenancySchedule.tsx) — a KPI tile
+  and the filter it applies disagreed. The OCCUPIED tile counts a bucket
+  (Occupied + Trading + Let + Not Vacant = 124 at Bluewater) but clicking it
+  set statusFilter and the row filter tested exact string equality, so the
+  board dropped to 87 rows; VACANT read 76 (Vacant + Void + Available + AVA)
+  and showed 69. Victoria clicks the number she is about to quote and gets a
+  shorter list with no explanation. Fixed: one STATUS_BUCKETS map now feeds
+  both the counts and the filter (a status with no bucket still filters to
+  itself, so In Negotiation / Under Offer / Lease Event are unchanged).
+  Verified live: 124 -> 124 rows, 76 -> 76 rows, tiles unchanged.
+- HARNESS GROWTH (qa/two-bot-round.mjs, both victoria, both [ok] on a re-run;
+  tally still 2x400): staff-lease-event-create-and-track (create -> list ->
+  rent/ERV round-trip -> status PATCH -> digest -> delete; guards the
+  matter_id regression) and staff-tenancy-tile-filters-its-own-count (each
+  tile's number must equal the row count its own click produces).
+  run-round.sh purge sweeps QA-PROBE lease event rows.
+- BUG DEFERRED (real, reproduced twice, app-wide not lease-events-specific):
+  a reload within ~2s of an inline change paints the PRE-change value and
+  never corrects itself. Sequence: set a board Status to Contacted (PATCH 200,
+  DB says Contacted), reload -> the row's picker reads "Monitoring" and so
+  does its edit dialog. Cause is the persisted react-query cache
+  (client/src/lib/query-persist.ts, localStorage, throttleTime 2000): the
+  snapshot flushed before the change restores on the next load, and because
+  its dataUpdatedAt is seconds old it counts as FRESH under the 15s staleTime,
+  so no refetch fires. Measured: reload 1.8s after the change -> board shows
+  Monitoring while the DB has Contacted; reload 6s after -> correct.
+  Probes qa/r556-status-probe*.mjs. Reads to the user as "my change went
+  back". Not fixed this round (two-fix cap, and the fix is in shared
+  cache config).
+- ALSO SEEN, not fixed: the lease-event PHONE card shows `currentRent ||
+  estimatedErv` as one unlabelled bold number, so an event with only an ERV
+  reads as passing rent (the desktop table labels both "Rent:" / "ERV:").
+- Suggestions added: UX-NOTES #213 (nothing carries the tenancy board's 72
+  dated expiries into the Lease Events board — Victoria must retype them; the
+  tenancy board even has a "Lease Event" status), #214 (the Lease Events edit
+  dialog shows the owner as a raw user UUID in a free-text box while the row
+  shows a proper person pill).
+- New flakes: none. tsc clean. NOTE for the next round: the fixture has ZERO
+  lease_events rows, so that board starts empty; the Bluewater tenancy
+  schedule is where the real expiry data lives.
+- Next journey: r556 had the journey -> r557 may be LIGHT; then rotation #2
+  Landsec client desktop.
 
 ### r555 · 2026-09-05 · LIGHT (r554 had the journey) · 2 bugs fixed, one family — the Board Report billed un-billed fees, and its own trend badge measured something else · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

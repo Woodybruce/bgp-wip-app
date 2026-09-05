@@ -3202,6 +3202,59 @@ async function victoriaRound(page, cross) {
     if (!/Quoting Rent/i.test(txt)) throw new Error('staff unit form lost Quoting Rent');
   });
 
+  await step(page, p, 'staff-lease-event-create-and-track', async () => {
+    // r556: the Lease Events board could not be written to at all — the
+    // Drizzle schema carries matter_id (migrations/0009) but a restored
+    // database never had the column, so every "Log event" answered 400
+    // ("column matter_id does not exist"). Guards the whole write path:
+    // create -> list -> status move -> digest -> delete.
+    const name = `QA-PROBE lease event R${ROUND}`;
+    const when = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
+    const out = await page.evaluate(async ([name, when]) => {
+      const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const post = await fetch('/api/lease-events', { method: 'POST', headers: h, body: JSON.stringify({ tenant: name, address: 'Bluewater Shopping Centre', unitRef: 'QA-U1', eventType: 'Rent Review', status: 'Monitoring', sourceEvidence: 'Manual', currentRent: '£125,000', estimatedErv: '£150,000', eventDate: when }) });
+      const created = post.ok ? await post.json() : await post.text();
+      if (!post.ok) return { createStatus: post.status, created };
+      const list = await (await fetch('/api/lease-events', { headers: h })).json();
+      const row = list.find(x => x.id === created.id);
+      const patch = await fetch(`/api/lease-events/${created.id}`, { method: 'PATCH', headers: h, body: JSON.stringify({ status: 'Contacted' }) });
+      const digest = await (await fetch('/api/lease-events/digest', { headers: h })).json();
+      const del = await fetch(`/api/lease-events/${created.id}`, { method: 'DELETE', headers: h });
+      const after = await (await fetch('/api/lease-events', { headers: h })).json();
+      return {
+        createStatus: post.status, row, patchStatus: patch.status,
+        inDigest: JSON.stringify(digest).includes(name),
+        delStatus: del.status, stillThere: after.some(x => x.id === created.id),
+      };
+    }, [name, when]);
+    if (out.createStatus !== 200) throw new Error(`lease-event create ${out.createStatus}: ${JSON.stringify(out.created).slice(0, 160)}`);
+    if (!out.row) throw new Error('created lease event missing from the board list');
+    if (out.row.currentRent !== '£125,000' || out.row.estimatedErv !== '£150,000') throw new Error(`rent/ERV not round-tripped: ${JSON.stringify([out.row.currentRent, out.row.estimatedErv])}`);
+    if (out.patchStatus !== 200) throw new Error(`status move ${out.patchStatus}`);
+    if (!out.inDigest) throw new Error('a Monitoring/Contacted event is missing from the lease-event digest');
+    if (out.delStatus !== 200 || out.stillThere) throw new Error('lease event not deleted');
+  });
+
+  await step(page, p, 'staff-tenancy-tile-filters-its-own-count', async () => {
+    // r556: the Occupied tile counted Occupied+Trading+Let+Not Vacant (124)
+    // but clicking it filtered on exact equality (87 rows); Vacant read 76
+    // and showed 69. A tile and the filter it applies must agree.
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    for (const tile of ['occupied', 'vacant']) {
+      const el = page.locator(`[data-testid="tenancy-stat-${tile}"]`).first();
+      if (!(await el.count())) throw new Error(`no ${tile} tile on the tenancy board`);
+      const n = parseInt((await el.innerText()).replace(/[^0-9]/g, ''), 10);
+      await el.click();
+      await page.waitForTimeout(1200);
+      const rows = await page.evaluate(() => document.querySelectorAll('tbody tr').length);
+      await el.click();
+      await page.waitForTimeout(600);
+      if (n !== rows) throw new Error(`${tile} tile says ${n} but its own filter shows ${rows} rows`);
+    }
+  });
+
 }
 
 async function markRound(page, cross) {

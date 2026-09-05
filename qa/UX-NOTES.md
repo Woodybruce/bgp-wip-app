@@ -13,6 +13,29 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+213. 2026-09-05 · BGP staff / desktop (QA r556) · Victoria's task was "what's
+   coming up at Bluewater in the next six months". The tenancy board holds the
+   answer — 72 of the 200 rows carry a lease expiry, two of them already
+   lapsed (23 Jun 2026, still "Occupied") and one expiring the next day — but
+   the Lease Events board, the screen built to work that pipeline, is empty
+   and can only be filled by retyping each one into the Log-event dialog. The
+   tenancy board even has a "Lease Event" status and a KPI tile for it, and
+   the two never meet. Suggestion: on the tenancy board, a row-level "Track as
+   lease event" action (and/or a bulk "add all expiries in the next 18 months")
+   that pre-fills tenant, unit, address, expiry date and passing rent/ERV from
+   the row, so the lease-advisory pipeline starts from the schedule the firm
+   already holds instead of from an empty board.
+
+214. 2026-09-05 · BGP staff / desktop (QA r556) · On the Lease Events board
+   the Owner column is a proper person picker (it renders a coloured "Victoria"
+   pill), but opening the same row's Edit dialog shows "Assigned to =
+   72715f6f-905d-40f4-bded-5275175f3e2b" — a raw user UUID in a free-text box,
+   under a placeholder that suggests an email ("peter@..."). Anyone editing
+   another field is one keystroke away from replacing a valid owner id with a
+   name the pill can't resolve. Suggestion: make the dialog's Assigned-to the
+   same team picker the board row uses (or at minimum show the person's name
+   and keep the id behind it).
+
 211. 2026-09-05 · BGP staff / desktop (QA r555) · Following one fee through
    every surface that shows it, the Board Report's headline card now correctly
    reads "FEES BILLED YTD £0" — but the board pack's whole point at month end
