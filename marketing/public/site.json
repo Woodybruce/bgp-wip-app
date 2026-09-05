@@ -1,0 +1,463 @@
+{
+  "generatedAt": "2026-09-05T08:14:19.893Z",
+  "site": "https://www.bgp.uk.com",
+  "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
+  "heroStatement": "Great places are built through connected thinking.",
+  "intro": {
+    "lead": "We are bgp.",
+    "body": [
+      "As the UK's largest independent retail and leisure property consultancy, we bring together specialists across our Leasing, Brand Representation, Lease Advisory and Investment teams to create strategies that unlock value.",
+      "Specialist expertise is at the heart of BGP; but it's our collaborative approach that sets us apart. By bringing together insight from across our teams, we provide considered, commercially focused advice that shapes successful places, stronger portfolios and lasting relationships."
+    ],
+    "servicesHeading": "Expertise across every stage of the property lifecycle."
+  },
+  "nav": [
+    {
+      "label": "Leasing",
+      "url": "https://www.bgp.uk.com/leasing"
+    },
+    {
+      "label": "Investment",
+      "url": "https://www.bgp.uk.com/investment"
+    },
+    {
+      "label": "Brand Representation",
+      "url": "https://www.bgp.uk.com/brand-representation"
+    },
+    {
+      "label": "Lease Advisory",
+      "url": "https://www.bgp.uk.com/lease-advisory"
+    },
+    {
+      "label": "Consultancy",
+      "url": "https://www.bgp.uk.com/consultancy"
+    },
+    {
+      "label": "Team",
+      "url": "https://www.bgp.uk.com/team"
+    }
+  ],
+  "services": [
+    {
+      "name": "Leasing",
+      "url": "https://www.bgp.uk.com/leasing",
+      "intro": "Creating neighbourhoods that people love. Retail, restaurant and leisure leasing across London's leading estates and the UK's landmark destinations — acting for landlords including The Portman Estate, Grosvenor, The Crown Estate and Landsec.",
+      "image": "https://www.bgp.uk.com/images/stills-preview-regent-street.jpg"
+    },
+    {
+      "name": "Investment",
+      "url": "https://www.bgp.uk.com/investment",
+      "intro": "Acquisition and disposal advice across retail, leisure and mixed-use investments — from single assets to portfolios, acting for private clients, property companies and institutions including Aviva Investors, Legal & General and LondonMetric.",
+      "image": "https://www.bgp.uk.com/images/stills-preview-city-night.jpg"
+    },
+    {
+      "name": "Brand Representation",
+      "url": "https://www.bgp.uk.com/brand-representation",
+      "intro": "Brand led retail estate advisory. Providing strategic support and market analysis for brand expansion across multi sector clients — acquiring space for brands to thrive in.",
+      "image": "https://www.bgp.uk.com/images/fred-perry-camden.jpg"
+    },
+    {
+      "name": "Lease Advisory",
+      "url": "https://www.bgp.uk.com/lease-advisory",
+      "intro": "Lease Advisory is a core discipline within BGP's asset management offer, providing landlords and tenants with clear, evidence-led advice across rent reviews, re-gears and lease restructuring.",
+      "image": "https://www.bgp.uk.com/images/st-christophers-place.jpg"
+    },
+    {
+      "name": "Consultancy",
+      "url": "https://www.bgp.uk.com/consultancy",
+      "intro": "Placemaking is central to our business philosophy. As such, we've evolved from traditional leasing to offering clients bespoke reporting, long-term consultancy, and strategic asset management services.",
+      "image": "https://www.bgp.uk.com/images/55-bishopsgate.jpg"
+    }
+  ],
+  "team": [
+    {
+      "name": "Woody Bruce",
+      "title": "Managing Director",
+      "phone": "+44 (0)7980 313 675",
+      "email": "woody@brucegillinghampollard.com",
+      "photo": null
+    },
+    {
+      "name": "Tracey Pollard",
+      "title": "Founding Director",
+      "phone": "+44 (0)7779 323 306",
+      "email": "tracey@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/tracey-pollard.jpg"
+    },
+    {
+      "name": "Charlotte Roberts",
+      "title": "Equity Director, Co-Head London Estates",
+      "phone": "+44 (0)7738 448 338",
+      "email": "charlotte@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/charlotte-roberts.jpg"
+    },
+    {
+      "name": "Rupert Bentley-Smith",
+      "title": "Equity Director, Co-Head London Estates",
+      "phone": "+44 (0)7876 354 160",
+      "email": "rupert@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/rupert-bentley-smith.jpg"
+    },
+    {
+      "name": "Jack Barratt",
+      "title": "Equity Director, Head of Investment",
+      "phone": "+44 (0)7788 215 044",
+      "email": "jack@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/jack-barratt.jpg"
+    },
+    {
+      "name": "Victoria Broadhead",
+      "title": "Head of National",
+      "phone": "+44 (0)7793 158 133",
+      "email": "victoria@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/victoria-broadhead.jpg"
+    },
+    {
+      "name": "Peter Wood",
+      "title": "Head of Lease Consultancy and Asset Management",
+      "phone": "+44 (0)7872 602 336",
+      "email": "peter@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/peter-wood.jpg"
+    },
+    {
+      "name": "Nick Halley",
+      "title": "Director, Investment",
+      "phone": "+44 (0)7766 042 736",
+      "email": "nick@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/nick-halley.jpg"
+    },
+    {
+      "name": "Lucy Gardiner",
+      "title": "Director, National Leasing",
+      "phone": "+44 (0)7741 877 452",
+      "email": "lucyg@brucegillinghampollard.com",
+      "photo": null
+    },
+    {
+      "name": "Lizzie Knights",
+      "title": "Director, London Leasing",
+      "phone": "+44 (0)7511 902 073",
+      "email": "lizzie@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/lizzie-knights.jpg"
+    },
+    {
+      "name": "Harry Elliott",
+      "title": "Director, Brand Representation",
+      "phone": "+44 (0)7568 367 777",
+      "email": "harrye@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/harry-elliott.jpg"
+    },
+    {
+      "name": "Emily Dumbell",
+      "title": "Director, National Leasing",
+      "phone": "+44 (0)7805 259 793",
+      "email": "emily@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/emily-dumbell.jpg"
+    },
+    {
+      "name": "Nick Goodman",
+      "title": "Consultant, Investment",
+      "phone": "+44 (0)7818 012 432",
+      "email": "nickgoodman@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/nick-goodman.jpg"
+    },
+    {
+      "name": "Tom Cater",
+      "title": "Associate Director, Lease Advisory",
+      "phone": "+44 (0)7947 484 902",
+      "email": "tom@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/tom-cater.jpg"
+    },
+    {
+      "name": "Lucy Cope",
+      "title": "Associate Director, London Leasing",
+      "phone": "+44 (0)7595 267 866",
+      "email": "lucy@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/lucy-cope.jpg"
+    },
+    {
+      "name": "Evie North",
+      "title": "Associate Director, Brand Representation",
+      "phone": "+44 (0)7595 349 057",
+      "email": "evie@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/evie-north.jpg"
+    },
+    {
+      "name": "Alex Todd",
+      "title": "Senior Surveyor, Development",
+      "phone": "+44 (0)7526 504 806",
+      "email": "alext@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/alex-todd.jpg"
+    },
+    {
+      "name": "Millie Edwards",
+      "title": "Leasing",
+      "phone": "+44 (0)20 3551 5260",
+      "email": "TBC",
+      "photo": null
+    },
+    {
+      "name": "Emily Cann",
+      "title": "Graduate Surveyor, London Leasing",
+      "phone": "+44 (0)7516 660 791",
+      "email": "emilyc@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/emily-cann.jpg"
+    },
+    {
+      "name": "Will Penfold",
+      "title": "Graduate Surveyor, London Leasing",
+      "phone": "+44 (0)7760 881 270",
+      "email": "willp@brucegillinghampollard.com",
+      "photo": null
+    },
+    {
+      "name": "Luke Donohoe",
+      "title": "Graduate Surveyor, National Leasing",
+      "phone": "+44 (0)7983 855 926",
+      "email": "luke@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/luke-donohoe.jpg"
+    },
+    {
+      "name": "Libby Evans",
+      "title": "Graduate Surveyor, Development",
+      "phone": "+44 (0)7931 462 768",
+      "email": "libbye@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/libby-evans.jpg"
+    },
+    {
+      "name": "Jonny Palmer",
+      "title": "Graduate, Investment",
+      "phone": "+44 (0)7506 439 429",
+      "email": "jonny@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/jonny-palmer.jpg"
+    },
+    {
+      "name": "Harriette Walker-Clark",
+      "title": "PA & Office Manager",
+      "phone": "+44 (0)20 3551 5260",
+      "email": "harriette@brucegillinghampollard.com",
+      "photo": null
+    },
+    {
+      "name": "Layla O'Driscoll",
+      "title": "PA & Office Manager",
+      "phone": "+44 (0)20 3551 5260",
+      "email": "layla@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/layla-odriscoll.jpg"
+    },
+    {
+      "name": "Cara Milligan",
+      "title": "PA — National",
+      "phone": "+44 (0)20 3551 5260",
+      "email": "cara@brucegillinghampollard.com",
+      "photo": "https://www.bgp.uk.com/images/team/cara-milligan.jpg"
+    }
+  ],
+  "keyContacts": {
+    "leasing": [
+      "Charlotte Roberts",
+      "Rupert Bentley-Smith",
+      "Victoria Broadhead",
+      "Lizzie Knights",
+      "Emily Dumbell",
+      "Lucy Cope"
+    ],
+    "investment": [
+      "Jack Barratt",
+      "Nick Halley",
+      "Jonny Palmer"
+    ],
+    "leaseAdvisory": [
+      "Peter Wood",
+      "Tom Cater"
+    ],
+    "brandRepresentation": [
+      "Harry Elliott",
+      "Evie North"
+    ],
+    "consultancy": [
+      "Tracey Pollard",
+      "Alex Todd",
+      "Libby Evans"
+    ]
+  },
+  "caseStudies": [
+    {
+      "title": "Lucent, Piccadilly Lights",
+      "service": "Leasing",
+      "url": "https://www.bgp.uk.com/case-studies/lucent-piccadilly",
+      "blurb": "Restaurant leasing for Landsec at Lucent W1 — the landmark development behind the world-famous Piccadilly Lights.",
+      "facts": {
+        "Service": "Leasing",
+        "Client": "Landsec",
+        "Scheme": "Lucent W1 — 144,000 sq ft",
+        "Sector": "Restaurant & leisure",
+        "Location": "Piccadilly Circus, W1"
+      },
+      "image": "https://www.bgp.uk.com/images/stills-preview-piccadilly.jpg"
+    },
+    {
+      "title": "20 Hanover Square",
+      "service": "Leasing",
+      "url": "https://www.bgp.uk.com/case-studies/20-hanover-square",
+      "blurb": "A 10,000 sq ft Mayfair restaurant opportunity for Great Portland Estates — one of the West End's landmark restaurant lettings.",
+      "facts": {
+        "Service": "Leasing",
+        "Client": "Great Portland Estates",
+        "Size": "10,000 sq ft",
+        "Sector": "Restaurant",
+        "Location": "Mayfair"
+      },
+      "image": "https://www.bgp.uk.com/images/hanover-square.jpg"
+    },
+    {
+      "title": "19 Golden Square, Soho",
+      "service": "Investment",
+      "url": "https://www.bgp.uk.com/case-studies/19-golden-square",
+      "blurb": "Acquired for Vectis Property Group for £10.5m, with redevelopment potential at the heart of Soho.",
+      "facts": {
+        "Service": "Investment",
+        "Client": "Vectis Property Group",
+        "Status": "Acquired",
+        "Price": "£10,500,000",
+        "Location": "Soho"
+      },
+      "image": "https://www.bgp.uk.com/images/city-towers.jpg"
+    },
+    {
+      "title": "213–214 Upper Street",
+      "service": "Investment",
+      "url": "https://www.bgp.uk.com/case-studies/213-214-upper-street",
+      "blurb": "Sold on behalf of a private client for £5.35m, reflecting a 3.62% cap rate on Islington's prime retail pitch.",
+      "facts": {
+        "Service": "Investment",
+        "Strategy": "Value add",
+        "Status": "Sold (March 2024)",
+        "Sector": "Retail",
+        "Price": "£5,350,000 / cap rate 3.62%",
+        "Location": "Islington"
+      },
+      "image": "https://www.bgp.uk.com/images/shop-boutique.jpg"
+    },
+    {
+      "title": "Heddon Street, The Crown Estate",
+      "service": "Consultancy",
+      "url": "https://www.bgp.uk.com/case-studies/heddon-street",
+      "blurb": "Long-term advice to The Crown Estate on one of the West End's best-loved restaurant and bar destinations, off Regent Street.",
+      "facts": {
+        "Service": "Consultancy",
+        "Client": "The Crown Estate",
+        "Sector": "Restaurant & bar",
+        "Location": "West End"
+      },
+      "image": "https://www.bgp.uk.com/images/heddon-street.jpg"
+    },
+    {
+      "title": "Hammerson",
+      "service": "Lease Advisory",
+      "url": "https://www.bgp.uk.com/case-studies/hammerson-lease-advisory",
+      "blurb": "Lease advisory instruction for Hammerson — rent reviews, renewals and restructuring aligned to the asset strategy.",
+      "facts": {
+        "Service": "Lease Advisory",
+        "Client": "Hammerson"
+      },
+      "image": null
+    },
+    {
+      "title": "Land Securities",
+      "service": "Lease Advisory",
+      "url": "https://www.bgp.uk.com/case-studies/land-securities-lease-advisory",
+      "blurb": "Lease advisory instruction for Land Securities — rent reviews, renewals and restructuring aligned to the asset strategy.",
+      "facts": {
+        "Service": "Lease Advisory",
+        "Client": "Land Securities"
+      },
+      "image": null
+    },
+    {
+      "title": "Bloomberg",
+      "service": "Lease Advisory",
+      "url": "https://www.bgp.uk.com/case-studies/bloomberg-lease-advisory",
+      "blurb": "Lease advisory instruction for Bloomberg — rent reviews, renewals and restructuring aligned to the asset strategy.",
+      "facts": {
+        "Service": "Lease Advisory",
+        "Client": "Bloomberg"
+      },
+      "image": null
+    },
+    {
+      "title": "The Royal Exchange",
+      "service": "Lease Advisory",
+      "url": "https://www.bgp.uk.com/case-studies/royal-exchange-lease-advisory",
+      "blurb": "Lease advisory instruction for The Royal Exchange — rent reviews, renewals and restructuring aligned to the asset strategy.",
+      "facts": {
+        "Service": "Lease Advisory",
+        "Client": "The Royal Exchange"
+      },
+      "image": "https://www.bgp.uk.com/images/stills-preview-royal-exchange.jpg"
+    },
+    {
+      "title": "ATIS",
+      "service": "Brand Representation",
+      "url": "https://www.bgp.uk.com/case-studies/atis",
+      "blurb": "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building.",
+      "facts": {
+        "Service": "Brand Representation",
+        "Client": "ATIS",
+        "Sector": "F&B — healthy grab & go",
+        "First site": "City Road, Atlas Building"
+      },
+      "image": "https://www.bgp.uk.com/images/stills-preview-central-cafe.jpg"
+    },
+    {
+      "title": "Fred Perry",
+      "service": "Brand Representation",
+      "url": "https://www.bgp.uk.com/case-studies/fred-perry",
+      "blurb": "One of the UK's most iconic brands, steeped in a rich history of music, sport and culture.",
+      "facts": {
+        "Service": "Brand Representation",
+        "Client": "Fred Perry",
+        "Sector": "Fashion retail",
+        "Coverage": "UK & international"
+      },
+      "image": "https://www.bgp.uk.com/images/shop-menswear.jpg"
+    },
+    {
+      "title": "Barry's Bootcamp",
+      "service": "Brand Representation",
+      "url": "https://www.bgp.uk.com/case-studies/barrys-bootcamp",
+      "blurb": "Described as the 'hardest workout in the world' — acquisition strategy throughout London.",
+      "facts": {
+        "Service": "Brand Representation",
+        "Client": "Barry's Bootcamp",
+        "Sector": "Fitness & wellness",
+        "Coverage": "London & UK"
+      },
+      "image": "https://www.bgp.uk.com/images/stills-preview-gym.jpg"
+    },
+    {
+      "title": "YOLK",
+      "service": "Brand Representation",
+      "url": "https://www.bgp.uk.com/case-studies/yolk",
+      "blurb": "Fine fast food, freshly prepared — from a 2014 pop-up to ten permanent locations across London.",
+      "facts": {
+        "Service": "Brand Representation",
+        "Client": "YOLK",
+        "Sector": "F&B — fine fast food",
+        "Locations": "10+ across London"
+      },
+      "image": "https://www.bgp.uk.com/images/food-hall.jpg"
+    }
+  ],
+  "contact": {
+    "addressLines": [
+      "First Floor",
+      "55 Wells Street",
+      "London W1T 3PT"
+    ],
+    "phone": "020 3551 5260",
+    "email": "harriette@brucegillinghampollard.com"
+  },
+  "listingsFeed": "https://chatbgp.app/api/public/leasing-listings",
+  "teamPhotosFeed": "https://chatbgp.app/api/public/team-photos"
+}

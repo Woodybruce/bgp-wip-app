@@ -8216,6 +8216,9 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "ingest_url") {
+    // bgp.uk.com is a JS app — its HTML carries only the title. Read the
+    // machine-readable site.json instead (see chatbgp-app-map).
+    if (typeof fnArgs.url === "string" && /(^|\/\/|\.)bgp\.uk\.com/i.test(fnArgs.url) && !/site\.json/i.test(fnArgs.url)) fnArgs.url = "https://www.bgp.uk.com/site.json";
     // Digest trade-press articles into structured deal facts — the prose
     // says "Fred Perry took 4,000 sq ft at £150 ZA"; the comps board wants
     // fields. Extraction only fires for property-press domains so ordinary
@@ -12591,6 +12594,9 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "ingest_url") {
+    // bgp.uk.com is a JS app — its HTML carries only the title. Read the
+    // machine-readable site.json instead (see chatbgp-app-map).
+    if (typeof fnArgs.url === "string" && /(^|\/\/|\.)bgp\.uk\.com/i.test(fnArgs.url) && !/site\.json/i.test(fnArgs.url)) fnArgs.url = "https://www.bgp.uk.com/site.json";
     const targetUrl = fnArgs.url as string;
     try {
       // Subscriber cookies (Green Street, Property Week, Drapers...) ride
