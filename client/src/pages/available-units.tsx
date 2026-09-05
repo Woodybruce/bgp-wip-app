@@ -140,6 +140,13 @@ function fmtNum(n: number | null | undefined) {
   return n.toLocaleString("en-GB");
 }
 
+// Activity rows print dates the way the rest of the app does — en-GB, not
+// the raw ISO string the <input type="date"> stores.
+function fmtDate(v: string | null | undefined) {
+  if (!v) return "";
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? v : d.toLocaleDateString("en-GB");
+}
 function fmtCurrency(n: number | null | undefined) {
   if (n == null) return "—";
   return `£${n.toLocaleString("en-GB")}`;
@@ -3207,7 +3214,7 @@ export default function AvailableUnitsPage() {
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">{i.companyName || i.contactName || "Unknown"}</p>
                   <p className="text-xs text-muted-foreground truncate">
-                    {[i.contactName && i.companyName ? i.contactName : null, i.interestDate].filter(Boolean).join(" · ")}
+                    {[i.contactName && i.companyName ? i.contactName : null, fmtDate(i.interestDate)].filter(Boolean).join(" · ")}
                   </p>
                   {i.notes && <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{i.notes}</p>}
                 </div>
@@ -3262,7 +3269,7 @@ export default function AvailableUnitsPage() {
               phone-call expression of interest can be recorded. */}
           <div className="border-t pt-3 space-y-2">
             <p className="text-xs font-medium">Log interest</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="min-w-0">
                 <CrmPicker
                   items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
@@ -3323,7 +3330,7 @@ export default function AvailableUnitsPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">{v.viewingDate}{v.viewingTime ? ` at ${v.viewingTime}` : ""}</span>
+                      <span className="text-xs text-muted-foreground">{fmtDate(v.viewingDate)}{v.viewingTime ? ` at ${v.viewingTime}` : ""}</span>
                       {/* Viewings live in the team calendar — link to the
                           actual event rather than making people hunt for it. */}
                       {v.calendarEventId && (
@@ -3392,8 +3399,11 @@ export default function AvailableUnitsPage() {
                 </div>
               </div>
               {/* min-w-0 — iOS date/time inputs refuse to shrink below their
-                  intrinsic width and pushed the Time field off-screen at 390px. */}
-              <div className="grid grid-cols-2 gap-3">
+                  intrinsic width and pushed the Time field off-screen at 390px.
+                  They still need a full column on the phone: a native date
+                  control wants ~166px and clipped its own value + picker in a
+                  half-width cell at 390px, so the pair stacks below sm. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="min-w-0">
                   <Label className="text-xs">Date</Label>
                   <Input type="date" className="min-w-0" value={viewingForm.viewingDate} onChange={e => setViewingForm(f => ({ ...f, viewingDate: e.target.value }))} data-testid="viewing-date" />
@@ -3483,7 +3493,7 @@ export default function AvailableUnitsPage() {
                         </Button>
                       )}
                       <Badge variant="outline" className={o.status === "Accepted" ? "bg-emerald-100 text-emerald-800" : o.status === "Rejected" ? "bg-red-100 text-red-800" : ""}>{o.status || "Pending"}</Badge>
-                      <span className="text-xs text-muted-foreground">{o.offerDate}</span>
+                      <span className="text-xs text-muted-foreground">{fmtDate(o.offerDate)}</span>
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit offer" title="Edit offer" onClick={() => {
                         setOfferForm({ companyName: o.companyName || "", companyId: o.companyId || "", contactName: o.contactName || "", contactId: o.contactId || "", offerDate: o.offerDate || "", rentPa: o.rentPa != null ? String(o.rentPa) : "", rentFreeMonths: o.rentFreeMonths != null ? String(o.rentFreeMonths) : "", termYears: o.termYears != null ? String(o.termYears) : "", breakOption: o.breakOption || "", incentives: o.incentives || "", premium: o.premium != null ? String(o.premium) : "", fittingOutContribution: o.fittingOutContribution != null ? String(o.fittingOutContribution) : "", comments: o.comments || "" });
                         setEditingOfferId(o.id);
@@ -3540,7 +3550,7 @@ export default function AvailableUnitsPage() {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="min-w-0">
                   <Label className="text-xs">Date</Label>
                   <Input type="date" className="min-w-0" value={offerForm.offerDate} onChange={e => setOfferForm(f => ({ ...f, offerDate: e.target.value }))} data-testid="offer-date" />
@@ -4663,7 +4673,7 @@ function UnitFormDialog({
               );
             })()}
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 col-span-2 sm:col-span-1">
             <Label>Available Date</Label>
             <Input type="date" className="min-w-0" value={form.availableDate} onChange={e => upd("availableDate", e.target.value)} />
           </div>
@@ -4844,7 +4854,7 @@ function UnitFormDialog({
                   </SelectContent>
                 </Select>
               </div>
-              <div>
+              <div className="col-span-2 sm:col-span-1">
                 <Label>Marketing Start Date</Label>
                 <Input type="date" value={form.marketingStartDate} onChange={e => upd("marketingStartDate", e.target.value)} />
               </div>

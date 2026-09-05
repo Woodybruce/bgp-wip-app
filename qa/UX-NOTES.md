@@ -13,6 +13,33 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+194. 2026-09-05 · BGP staff / mobile 390px (QA r546) · "the Letting Tracker
+   has no way in from the phone home screen". Victoria's phone home has an
+   Ask-ChatBGP row, My Billing, Total billing, Team Expenses, four tiles
+   (Deals / Expenses / Images / CRM) and a BOARDS row (Brand Intelligence /
+   Comps / SharePoint / Property Intelligence) — but nothing for /available,
+   which is the screen she actually works from standing in a unit. The only
+   routes to it on the phone are the global-search palette in the header or
+   a deep link. SUGGESTION: add a "Letting Tracker" tile to the phone home
+   tile grid (next to Deals), or a tracker card like the Team Expenses row
+   showing live counts (e.g. "12 available · 3 under offer").
+
+193. 2026-09-05 · BGP staff / mobile 390px (QA r546) · "file the travel
+   expense from the train". /m/expenses is receipt-photo-only: one "Add a
+   receipt" button feeding a file input, captioned "AI fills the rest".
+   Two gaps. (a) There is NO manual claim path — mileage, a train fare paid
+   by contactless with no paper receipt, or a lost receipt cannot be claimed
+   from the phone at all; she has to wait until she is at a desk. (b) When
+   the AI parse fails the WHOLE submission is rejected (400) and the photo
+   is discarded — the toast says "Upload failed" and RECENT still reads "No
+   expenses yet", so the claim is simply lost and she must re-shoot the
+   receipt. Verified locally with no AI key, but a Claude outage or an
+   unreadable receipt does the same thing in production. SUGGESTION: keep
+   the uploaded receipt whatever the AI does — save the expense as a draft
+   with the photo attached and let her fill merchant / amount / date by hand
+   (the desktop form already has those fields and an aiError fallback), and
+   add an "Enter manually" link under "Add a receipt" for no-receipt claims.
+
 192. 2026-09-05 · BGP staff (MLRO) + the CUSTOMER / desktop (QA r545) ·
    walked the tokenised KYC upload portal end to end for the first time:
    Victoria issues a link on a deal (POST /api/aml/deal/:id/upload-link),

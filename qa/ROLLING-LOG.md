@@ -88,16 +88,69 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r546 · 2026-09-05 · FULL (rotation #4 BGP staff MOBILE 390px) · ROUND IN PROGRESS
+### r546 · 2026-09-05 · FULL (rotation #4 BGP staff MOBILE 390px) · 2 bugs fixed — tracker date fields clipped on the phone + activity rows printing raw ISO dates · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs -> .env written by hand). Regression: smoke GREEN 42/0.
+  qa/apply-sql.mjs; no .env in a fresh container, wrote one at
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke). Regression:
+  smoke GREEN 42/0 before, and GREEN 42/0 with FRESH_BUILD=1 after the fixes.
 - CARRY-FORWARD FROM r545, CONFIRMED. Two-bot round 546 in three chunks with
   QA_CROSS_FILE: victoria 2x400 (incl. [ok] staff-mlro-report-pdf and [ok]
   staff-phone-chat-suggestions-kept), mark 9x403 + 1x503 (incl. [ok]
-  client-mlro-report-gate), woody/nick/sam 0. Signature unchanged from
-  r537-r545; r545's new scenario pair is green in a full pass.
-- Triage: no new issues from the scripted sweep — all counts are the known
-  deliberate-guard signature. Journey next.
+  client-mlro-report-gate), woody/nick/sam 0. Exactly the r537-r545
+  signature — r545's new scenario pair is green in a full pass.
+- JOURNEY (rotation #4): Victoria out of a viewing at Brent Cross BX10 on the
+  phone — "record the viewing, log the verbal offer, file the travel expense
+  before the train". Phone home -> /available card list -> Viewing dialog
+  (company picker, date, time, attendees, outcome, notes) SAVED and the row
+  re-rendered -> Offer dialog (rent 85k, 6 months RF, 10y, break Y5, 50k
+  fit-out, incentives, comments) SAVED and re-rendered -> Edit Unit and Files
+  dialogs -> /m/expenses receipt upload. r538 checked these four dialogs
+  RENDER at 390px; this round SUBMITTED through them, which is where the two
+  bugs were. Shots qa/smoke-shots/r546*-*.png. Journey script kept as
+  qa/r546-staff-mobile-journey.mjs.
+- BUG 1 FIXED (client/src/pages/available-units.tsx) — every <input
+  type="date"> in the tracker's Viewing / Offer / Interest / Edit-unit
+  dialogs sat in a hard grid-cols-2 cell. A native date control wants ~166px
+  intrinsic, so at 390px it clipped its own value AND its calendar picker:
+  viewing-date 25px, offer-date 25px, interest-date 10px, Available Date and
+  Marketing Start Date 14px each. An earlier round had already added min-w-0
+  (its comment is still there) — that stopped the BOX pushing off-screen but
+  the control still overflowed inside it, so the half-fix left the picker cut
+  off on the five fields Victoria uses most on site. The cells now stack
+  below sm (grid-cols-1 sm:grid-cols-2 / col-span-2 sm:col-span-1), the
+  file's own established phone pattern. VERIFIED: all five measure
+  scrollWidth === clientWidth at 390px (was 10-25px over), page h-overflow 0,
+  and the desktop dialog at 1440px is unchanged. Same measurement with
+  locale en-GB, so it is not a harness-locale artifact.
+- BUG 2 FIXED (same file) — the viewing, offer and interest rows printed the
+  raw ISO string the date input stores: "Honi Poke 2026-09-05 at 11:30",
+  "Pending 2026-09-05". Everywhere else in this file dates go through
+  toLocaleDateString("en-GB"). Added fmtDate next to fmtNum/fmtCurrency
+  (NaN-safe, falls back to the raw string) and used it on the three rows.
+  VERIFIED live: rows now read "05/09/2026 at 11:30" on both phone and
+  desktop (qa/smoke-shots/r546-after-*.png). tsc clean.
+- Two-bot: +1 scenario, victoria staff-phone-tracker-date-fields — real
+  mobile context (iPhone UA + touch + en-GB, per the r545 standing rule),
+  opens the Viewing / Offer / Interest dialogs on a phone unit card and
+  fails if any date/time input has scrollWidth > clientWidth, then asserts
+  the viewing rows contain no YYYY-MM-DD. Verified [ok] against the rebuilt
+  app; victoria chunk still 2x400.
+- NOT A BUG, checked before reporting: staff on mobile land on /chatbgp on a
+  cold open, not the dashboard — deliberate (App.tsx chatHomeDoneRef, once
+  per session, sessionStorage bgp-chat-home-done). The phone Expenses upload
+  400 is the listed keyless-AI noise (createExpenseFromReceipt needs an
+  Anthropic key) and it DOES surface a destructive toast, not a silent
+  dead end — but what happens to the claim afterwards is UX-NOTES 193.
+- Suggestions: UX-NOTES 193 (phone expenses is receipt-photo-only and a
+  failed AI parse discards the claim) and 194 (no Letting Tracker entry
+  point on the phone home). Still open/unbuilt, do not report again:
+  UX #150, #157, #162, #170, #171, #172, #174-#192.
+- New flakes: none. Harness note for the next round: qa/with-server.sh tears
+  the server down on exit, so a journey script MUST close its browser in a
+  finally block — one that didn't hung the whole Bash call to the 400s cap.
+  Also, a mobile page.goto right after a source edit needs a retry loop for
+  the unit cards; the cold vite recompile can outlast a flat 2.5s wait.
+- Next: r546 was FULL -> r547 LIGHT, then rotation #1 BGP staff desktop.
 
 ### r545 · 2026-09-05 · LIGHT (r544 had the journey) · 1 bug fixed — the MLRO AML report PDF 500'd on every deal · 1 harness fix · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas

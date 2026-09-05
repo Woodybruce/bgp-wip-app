@@ -596,6 +596,58 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r546: every <input type="date"> in the tracker's Viewing / Offer /
+  // Interest / Edit-unit dialogs sat in a hard grid-cols-2 cell at 390px. A
+  // native date control wants ~166px, so it clipped its own value and picker
+  // by 10-25px — Victoria could not see or tap the calendar on the phone.
+  // The cells now stack below sm. Same scenario also pins the activity rows
+  // printing en-GB dates rather than the raw ISO string the input stores.
+  await step(page, p, 'staff-phone-tracker-date-fields', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true, locale: 'en-GB', timezoneId: 'Europe/London',
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/available`, nav);
+      await mob.waitForTimeout(3500);
+      const unit = await mob.evaluate(() => {
+        const b = [...document.querySelectorAll('button')].find((e) => /^unit-viewing-/.test(e.getAttribute('data-testid') || ''));
+        return b ? b.getAttribute('data-testid').replace('unit-viewing-', '') : null;
+      });
+      if (!unit) throw new Error('no phone unit card with a Viewing action');
+      for (const [action, label] of [['viewing', 'Viewings'], ['offer', 'Offers'], ['interest', 'Interest']]) {
+        await mob.locator(`[data-testid="unit-${action}-${unit}"]`).first().click();
+        await mob.waitForTimeout(1500);
+        const bad = await mob.evaluate(() => {
+          const d = document.querySelector('[role="dialog"]');
+          if (!d) return 'no dialog';
+          const clipped = [...d.querySelectorAll('input')]
+            .filter((e) => ['date', 'time'].includes(e.getAttribute('type')))
+            .filter((e) => e.scrollWidth > e.clientWidth + 1)
+            .map((e) => `${e.getAttribute('data-testid') || e.type} clipped ${e.scrollWidth - e.clientWidth}px`);
+          return clipped.length ? clipped.join(', ') : '';
+        });
+        if (bad) throw new Error(`${label} dialog at 390px: ${bad}`);
+        await mob.keyboard.press('Escape');
+        await mob.waitForTimeout(900);
+      }
+      // activity rows read as UK dates, never the raw ISO the input stores
+      await mob.locator(`[data-testid="unit-viewing-${unit}"]`).first().click();
+      await mob.waitForTimeout(1500);
+      const txt = await mob.locator('[role="dialog"]').last().innerText();
+      if (/\b\d{4}-\d{2}-\d{2}\b/.test(txt)) throw new Error(`viewing rows still print raw ISO dates: ${txt.replace(/\s+/g, ' ').slice(0, 160)}`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // r448: the fullHeight PageLayout header actions row had no flex-wrap, so
   // Image Studio's Upload button sat entirely off-screen at 390px (clipped,
   // not scrollable — untappable on a phone). The row wraps now; assert the
