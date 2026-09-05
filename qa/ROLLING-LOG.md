@@ -88,18 +88,69 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r548 · 2026-09-05 · FULL (rotation #1 BGP staff desktop 1440px) — ROUND IN PROGRESS
+### r548 · 2026-09-05 · FULL (rotation #1 BGP staff desktop 1440px) · 2 bugs fixed — the requirement Match dialog contradicted the Fits cell beside it + quoting rent labelled psf · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; wrote .env at
+  qa/apply-sql.mjs; no .env in a fresh container, wrote one at
   postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke). Regression:
-  smoke GREEN 42/0.
+  smoke GREEN 42/0 before, and GREEN 42/0 with FRESH_BUILD=1 after the fixes.
 - CARRY-FORWARD FROM r547, CONFIRMED. Two-bot round 548 in three chunks with
   QA_CROSS_FILE: victoria 2x400 (incl. [ok] staff-wip-target-month-clearable),
   mark 9x403 + 1x503, woody/nick/sam 0 — exactly the r537-r547 signature.
   All 12 logged issues are listed noise (rocketreach-400 +
   investment-tracker-400, deliberate client 403 gates, keyless-AI 503).
   0 app bugs from the scripted regression.
-- Journey pending (staff desktop). Entry to be replaced with the final one.
+- JOURNEY (rotation #1): Victoria at her desk — "an operator has emailed a
+  new brief: capture it as a leasing requirement, run its matches, then tidy
+  up". /requirements -> Create Leasing Requirement (name, group, use / type /
+  size / location chips, comments) -> SAVED, dialog closed, row appeared,
+  board 1 -> 2 rows -> read the row's Fits cell -> Match dialog -> Edit
+  (re-opened prefilled, comments changed, saved, row updated). 0 pageerrors,
+  0 non-noise 4xx/5xx, h-overflow 0 throughout. Script
+  qa/r548-staff-requirements-journey.mjs, shots qa/smoke-shots/r548j-*.png.
+- BUG 1 FIXED (server/crm.ts + client/src/pages/requirements.tsx) — the
+  Requirements board ran TWO different matchers against the same row. The
+  Fits column reads /api/crm/requirements-leasing/matches (size band with
+  tolerance, use hints, location hits, client-scoped, AVA/NEG only); the
+  "Match" button beside it opened a dialog fed by the older
+  /api/requirements/matches/:id, which ANDs `use_class = ANY(use)` with a
+  literal `location ILIKE '%chip%'` over every available_unit. Victoria's
+  brand-new requirement showed FOUR fits in the cell and, one click away,
+  "No matching units found — try broadening the requirement criteria". Any
+  requirement whose location chip is a town the property row does not spell
+  the same way reads as zero demand-match on the surface staff actually open
+  to work it. Extracted the Fits ranker into rankUnitsForRequirement and
+  added GET /api/crm/requirements-leasing/:id/matches (same ranker, same
+  scoped unit pool, full unit detail, client visibility rule mirrored from
+  the requirement read); the dialog now calls it. VERIFIED LIVE before and
+  after on every board row: pre-fix cell 4 / dialog 0, post-fix cell 4 /
+  dialog 4 with the four units named, and a genuinely unmatchable
+  requirement still reads 0 / 0 (qa/smoke-shots/r548v-*.png, r548v2-*.png).
+- BUG 2 FIXED (same dialog) — it printed the unit's quoting rent as
+  "£52,030 psf" on a 364 sq ft unit. available_units.asking_rent is the
+  ANNUAL quoting rent (the tracker's own field is labelled "Quoting Rent
+  (£ p.a.)"), so every row in this dialog overstated £/sq ft by roughly the
+  unit's area — the number Victoria would quote off. Now "£52,030 p.a.".
+  Same pass tidied the dialog's dead fields (it was reading unit.unit_name /
+  unit.property_name off a payload that is camelCase) and renders
+  "size not recorded" for the size-unknown candidates the ranker allows.
+  tsc clean both fixes.
+- Two-bot: +1 victoria scenario, staff-requirement-match-dialog-agrees —
+  creates a requirement shaped to fit, asserts Fits-cell count == endpoint
+  length == rows rendered in the real dialog, fails on "No matching units
+  found" or on a "psf" label, deletes the probe in a finally. Verified [ok]
+  against the rebuilt app; victoria chunk still 2x400.
+- NOT A BUG, checked before reporting: the edit dialog looked like it came
+  back with no chips selected — it does prefill them; selected chips carry a
+  colour + text-white class, not data-state/aria-pressed, so the first probe
+  read them wrong. Confirmed live: Retail / Shopping Centre / Under 500 sq ft
+  / Clapham all lit on re-open, and the row keeps them after save.
+- Suggestions: UX-NOTES 197 (requirement size is fixed bands only, so a real
+  "1,200-1,800 sq ft" brief ends up in free-text where the matcher can't see
+  it) and 198 (the Match dialog is a dead end — the Fits cell gives every
+  unit a "+ brief" button, the fuller list gives none). Still open/unbuilt,
+  do not report again: UX #150, #157, #162, #170, #171, #172, #174-#196.
+- New flakes: none.
+- Next: r548 was FULL -> r549 LIGHT, then rotation #2 Landsec client desktop.
 
 ### r547 · 2026-09-05 · LIGHT (r546 had the journey) · 1 bug fixed — the WIP report's Target Month could be set but never cleared · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

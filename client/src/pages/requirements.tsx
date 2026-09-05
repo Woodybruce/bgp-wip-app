@@ -1306,10 +1306,12 @@ function NewBrandDialog({ open, onOpenChange, isClientView }: { open: boolean; o
 
 function RequirementMatchesDialog({ requirement, onClose }: { requirement: any | null; onClose: () => void }) {
   const { data: matches = [], isLoading } = useQuery<any[]>({
-    queryKey: ["/api/requirements/matches", requirement?.id],
+    // Same endpoint family as the Fits column — one ranker, so the dialog
+    // agrees with the cell the user clicked to open it (r548).
+    queryKey: ["/api/crm/requirements-leasing", requirement?.id, "matches"],
     queryFn: async () => {
       if (!requirement?.id) return [];
-      const res = await fetch(`/api/requirements/matches/${requirement.id}?type=leasing`, {
+      const res = await fetch(`/api/crm/requirements-leasing/${requirement.id}/matches`, {
         credentials: "include",
         headers: getAuthHeaders(),
       });
@@ -1339,16 +1341,15 @@ function RequirementMatchesDialog({ requirement, onClose }: { requirement: any |
           ) : (
             <div className="space-y-1 p-1">
               {matches.map((unit: any) => (
-                <div key={unit.id} className="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50 transition-colors" data-testid={`match-unit-${unit.id}`}>
+                <div key={unit.unitId} className="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50 transition-colors" data-testid={`match-unit-${unit.unitId}`}>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium">{unit.unit_name}</p>
-                    <p className="text-xs text-muted-foreground">{unit.property_name || ""} · {unit.use_class || ""}</p>
-                    {unit.location && <p className="text-[10px] text-muted-foreground">{unit.location}</p>}
+                    <p className="text-sm font-medium">{unit.unitName}</p>
+                    <p className="text-xs text-muted-foreground truncate">{[unit.propertyName, unit.useClass].filter(Boolean).join(" · ")}</p>
                   </div>
                   <div className="text-right shrink-0 ml-2">
-                    {unit.sqft && <p className="text-xs font-medium">{Number(unit.sqft).toLocaleString()} sqft</p>}
-                    {unit.asking_rent && <p className="text-[10px] text-muted-foreground">£{Number(unit.asking_rent).toLocaleString()} psf</p>}
-                    <Badge variant="outline" className="text-[9px] mt-0.5">{unit.marketing_status || "Available"}</Badge>
+                    <p className="text-xs font-medium">{unit.sizeUnknown ? "size not recorded" : `${Number(unit.sqft).toLocaleString()} sq ft`}</p>
+                    {unit.askingRent && <p className="text-[10px] text-muted-foreground">£{Number(unit.askingRent).toLocaleString("en-GB")} p.a.</p>}
+                    <Badge variant="outline" className="text-[9px] mt-0.5">{unit.marketingStatus === "NEG" ? "Under offer" : "Available"}</Badge>
                   </div>
                 </div>
               ))}

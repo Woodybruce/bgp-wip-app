@@ -13,6 +13,27 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+197. 2026-09-05 · BGP staff / desktop (QA r548) · Victoria captured a real
+   operator brief on Requirements — "1,200-1,800 sq ft, prime pitch". The
+   only size input is a chip row of fixed bands (Under 500 / 500-1,000 /
+   1,000-2,000 …), so the actual range she was given has to go in the
+   free-text Comments box, where the matcher never sees it. She picked the
+   nearest band instead, and the Fits column then matched on THAT band, not
+   on the brief. SUGGESTION: keep the bands as quick-pick, but add an
+   optional numeric min/max pair beside them that overrides the band when
+   filled — parseReqSize already parses a "1200-1800" string, so the
+   matching engine needs no change, only the honest number.
+
+198. 2026-09-05 · BGP staff / desktop (QA r548) · the "Matching Available
+   Units" dialog is a dead end. The Fits cell in the same row gives every
+   unit a "+ brief" button that puts it straight onto the unit brief; open
+   the fuller list through the Match button and the identical units become
+   plain read-only rows — no brief, no link to the unit, no way to log
+   interest. So the moment Victoria wants more than the top few fits, she
+   loses the action. SUGGESTION: give each dialog row the same "+ brief"
+   control (and make the unit name a link to the tracker unit), so the
+   dialog is the long version of the cell rather than a weaker one.
+
 196. 2026-09-05 · BGP staff / desktop (QA r547) · the notification bell is a
    nag counter, not an inbox. Victoria's bell carries a red "10" that never
    moves: every item is derived live from deal state (5 × "KYC not approved",

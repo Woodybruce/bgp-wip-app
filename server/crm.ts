@@ -4556,6 +4556,51 @@ Return a JSON object with these fields (use null for any field you cannot find):
     [/leisure/i, /leisure|cinema|bowl|golf|padel/i],
     [/retail/i, /retail|shop|store/i],
   ];
+  // The one ranker behind BOTH the Fits column and the per-requirement
+  // "Matching Available Units" dialog. They used to run different matchers,
+  // so a requirement could show "4 fits" in the table and "No matching units
+  // found" in the dialog opened from the same row (r548).
+  const rankUnitsForRequirement = (r: any, units: any[]): any[] => {
+    const range = parseReqSize(r.size);
+    if (!range) return [];
+    const uses = (r.use || []).join(" ");
+    const locs = (r.requirement_locations || [])
+      .map((l: string) => l.toLowerCase())
+      .filter((l: string) => l.length > 2 && !/^(london|greater london|central london \(zone 1\))$/i.test(l));
+    const hits: any[] = [];
+    for (const u of units) {
+      const unitText = `${u.unit_name || ""} ${u.use_class || ""}`;
+      const useHint = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(uses) && unitRe.test(unitText));
+      const propText = `${u.property_name || ""} ${u.address || ""}`.toLowerCase();
+      const locationHit = locs.some((l: string) => propText.includes(l));
+      if (u.sqft != null) {
+        // Size-verified fit: the area must sit inside the requirement's
+        // (tolerance-widened) range.
+        const sqft = Number(u.sqft);
+        if (!(sqft >= range.min && sqft <= range.max)) continue;
+        hits.push({
+          unitId: u.id, unitName: u.unit_name, sqft, sizeUnknown: false,
+          propertyId: u.property_id, propertyName: u.property_name,
+          useClass: u.use_class ?? null, marketingStatus: u.marketing_status ?? null,
+          askingRent: u.asking_rent ?? null,
+          useHint, locationHit, score: 2 + (useHint ? 1 : 0) + (locationHit ? 1 : 0),
+        });
+      } else if (useHint || locationHit) {
+        // No recorded area (most of the tracker) — still a candidate
+        // when the use or location lines up, ranked below every
+        // size-verified fit and flagged so the UI can say "size?".
+        hits.push({
+          unitId: u.id, unitName: u.unit_name, sqft: null, sizeUnknown: true,
+          propertyId: u.property_id, propertyName: u.property_name,
+          useClass: u.use_class ?? null, marketingStatus: u.marketing_status ?? null,
+          askingRent: u.asking_rent ?? null,
+          useHint, locationHit, score: (useHint ? 1 : 0) + (locationHit ? 1 : 0) - 1,
+        });
+      }
+    }
+    hits.sort((a, b) => b.score - a.score || Number(a.sqft ?? Infinity) - Number(b.sqft ?? Infinity));
+    return hits;
+  };
   // ── Brand portfolio activity — the honest pitch view ──────────────────
   // Replaces the old "Pitched into" (which conflated existing tenancies,
   // fuzzy name mentions and target lists, and never saw the letting
@@ -4852,7 +4897,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
     try {
       const scopeCompanyId = await resolveCompanyScope(req);
       const unitRows = await pool.query(
-        `SELECT au.id, au.unit_name, au.sqft, au.use_class,
+        `SELECT au.id, au.unit_name, au.sqft, au.use_class, au.marketing_status, au.asking_rent,
                 p.id AS property_id, p.name AS property_name, p.address::text AS address
            FROM available_units au
            JOIN crm_properties p ON p.id = au.property_id
@@ -4867,44 +4912,46 @@ Return a JSON object with these fields (use null for any field you cannot find):
       );
       const matches: Record<string, { count: number; top: any[] }> = {};
       for (const r of reqRows.rows) {
-        const range = parseReqSize(r.size);
-        if (!range) continue;
-        const uses = (r.use || []).join(" ");
-        const locs = (r.requirement_locations || [])
-          .map((l: string) => l.toLowerCase())
-          .filter((l: string) => l.length > 2 && !/^(london|greater london|central london \(zone 1\))$/i.test(l));
-        const hits: any[] = [];
-        for (const u of unitRows.rows) {
-          const unitText = `${u.unit_name || ""} ${u.use_class || ""}`;
-          const useHint = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(uses) && unitRe.test(unitText));
-          const propText = `${u.property_name || ""} ${u.address || ""}`.toLowerCase();
-          const locationHit = locs.some((l: string) => propText.includes(l));
-          if (u.sqft != null) {
-            // Size-verified fit: the area must sit inside the requirement's
-            // (tolerance-widened) range.
-            const sqft = Number(u.sqft);
-            if (!(sqft >= range.min && sqft <= range.max)) continue;
-            hits.push({
-              unitId: u.id, unitName: u.unit_name, sqft, sizeUnknown: false,
-              propertyId: u.property_id, propertyName: u.property_name,
-              useHint, locationHit, score: 2 + (useHint ? 1 : 0) + (locationHit ? 1 : 0),
-            });
-          } else if (useHint || locationHit) {
-            // No recorded area (most of the tracker) — still a candidate
-            // when the use or location lines up, ranked below every
-            // size-verified fit and flagged so the UI can say "size?".
-            hits.push({
-              unitId: u.id, unitName: u.unit_name, sqft: null, sizeUnknown: true,
-              propertyId: u.property_id, propertyName: u.property_name,
-              useHint, locationHit, score: (useHint ? 1 : 0) + (locationHit ? 1 : 0) - 1,
-            });
-          }
-        }
+        const hits = rankUnitsForRequirement(r, unitRows.rows);
         if (!hits.length) continue;
-        hits.sort((a, b) => b.score - a.score || a.sqft - b.sqft);
         matches[r.id] = { count: hits.length, top: hits.slice(0, 5) };
       }
       res.json({ unitPool: unitRows.rows.length, matches });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Single requirement, full match list — what the "Matching Available Units"
+  // dialog shows. Same ranker and same unit pool as the Fits column, so the
+  // dialog can never disagree with the cell that opened it.
+  app.get("/api/crm/requirements-leasing/:id/matches", requireAuth, async (req, res) => {
+    try {
+      const scopeCompanyId = await resolveCompanyScope(req);
+      const reqRow = await pool.query(
+        `SELECT id, name, size, use, requirement_locations, company_id, sources
+           FROM crm_requirements_leasing WHERE id = $1`,
+        [req.params.id]
+      );
+      const requirement = reqRow.rows[0];
+      if (!requirement) return res.json([]);
+      if (scopeCompanyId) {
+        // Same client rule as the requirement read itself: own-company or
+        // PIPnet-sourced only.
+        const { NO_ACCESS_SCOPE } = await import("./company-scope");
+        const visible = requirement.company_id === scopeCompanyId ||
+          (scopeCompanyId !== NO_ACCESS_SCOPE && Array.isArray(requirement.sources) && requirement.sources.includes("PIPnet"));
+        if (!visible) return res.status(404).json({ error: "Not found" });
+      }
+      const unitRows = await pool.query(
+        `SELECT au.id, au.unit_name, au.sqft, au.use_class, au.marketing_status, au.asking_rent,
+                p.id AS property_id, p.name AS property_name, p.address::text AS address
+           FROM available_units au
+           JOIN crm_properties p ON p.id = au.property_id
+          WHERE au.marketing_status IN ('AVA','NEG')
+            AND ($1::text IS NULL OR p.landlord_id = $1
+                 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))`,
+        [scopeCompanyId]
+      );
+      res.json(rankUnitsForRequirement(requirement, unitRows.rows));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

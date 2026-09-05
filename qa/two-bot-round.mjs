@@ -2500,6 +2500,49 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  await step(page, p, 'staff-requirement-match-dialog-agrees', async () => {
+    // r548: the Requirements board's Fits cell and the "Matching Available
+    // Units" dialog opened from the same row ran DIFFERENT matchers — a
+    // requirement could read "4 fits" in the table and "No matching units
+    // found / try broadening the criteria" in the dialog. Both now run one
+    // ranker. Creates a requirement shaped to fit, asserts cell count ==
+    // endpoint length == rows rendered in the dialog, then deletes it.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const mk = await fetch(`${BASE}/api/crm/requirements-leasing`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ name: `QA-REQ R${ROUND} fits`, status: 'Active', use: ['Retail'], size: ['Under 500 sq ft'] }),
+    });
+    if (mk.status !== 200 && mk.status !== 201) throw new Error(`requirement create expected 200/201, got ${mk.status}`);
+    const req = await mk.json();
+    try {
+      const bulk = await (await fetch(`${BASE}/api/crm/requirements-leasing/matches`, { headers: { Authorization: auth.Authorization } })).json();
+      const count = bulk?.matches?.[req.id]?.count ?? 0;
+      if (!count) throw new Error('probe requirement scored 0 fits — the fixture pool changed, scenario needs a reshape');
+      const one = await fetch(`${BASE}/api/crm/requirements-leasing/${req.id}/matches`, { headers: { Authorization: auth.Authorization } });
+      if (one.status !== 200) throw new Error(`per-requirement matches expected 200, got ${one.status}`);
+      const list = await one.json();
+      if (!Array.isArray(list) || list.length !== count) throw new Error(`Fits cell says ${count}, matches endpoint returns ${Array.isArray(list) ? list.length : 'non-array'}`);
+      await page.goto(`${BASE}/requirements`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => {
+        if (!/ERR_ABORTED/.test(String(e))) throw e;
+      });
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(3000);
+      const btn = page.locator(`[data-testid="button-match-leasing-${req.id}"]`);
+      if (!(await btn.count())) throw new Error('no Match button on the probe requirement row');
+      await btn.click();
+      await page.waitForTimeout(2200);
+      const rendered = await page.locator('[data-testid^="match-unit-"]').count();
+      if (rendered !== count) throw new Error(`match dialog rendered ${rendered} units, Fits cell says ${count}`);
+      const body = await page.evaluate(() => (document.querySelector('[role="dialog"]') || {}).innerText || '');
+      if (/No matching units found/.test(body)) throw new Error('match dialog says "No matching units found" while the row shows fits');
+      if (/psf/.test(body)) throw new Error('match dialog labels the quoting rent psf — available_units.asking_rent is p.a.');
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(600);
+    } finally {
+      await fetch(`${BASE}/api/crm/requirements-leasing/${req.id}`, { method: 'DELETE', headers: { Authorization: auth.Authorization } });
+    }
+  });
+
   await step(page, p, 'staff-evidence-plans-list', async () => {
     // r471: Evidence Plans (arrived via the d0b79fe JOGQK merge) — staff
     // list must stay reachable. Node-side fetch, no page-log noise.
