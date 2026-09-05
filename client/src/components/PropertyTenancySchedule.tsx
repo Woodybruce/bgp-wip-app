@@ -244,12 +244,14 @@ const COLUMNS: Col[] = [
   // Break Notice is now the date by which break notice has to be served.
   { field: "break_notice",     label: "Break Notice",   band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "lease_expiry",     label: "Expiry",         band: "Lease Details", width: 100, align: "center", type: "date" },
-  { field: "term_years",       label: "Term",           band: "Lease Details", width: 70,  align: "right", type: "num" },
+  { field: "term_years",       label: "Term (yrs)",     band: "Lease Details", width: 70,  align: "right", type: "num" },
   // The three Unexp columns are server-computed from their dates on every
-  // render (months) — read-only in the grid, no manual drift.
-  { field: "unexpired_term_break", label: "Unexp (Break)", band: "Lease Details", width: 90, align: "right", type: "num" },
-  { field: "unexpired_term",   label: "Unexp (Expiry)", band: "Lease Details", width: 90,  align: "right", type: "num" },
-  { field: "unexpired_term_review" as any, label: "Unexp (Review)", band: "Lease Details", width: 95, align: "right", type: "num" },
+  // render, in MONTHS — and they sit next to Term, which is in years, so the
+  // unit has to be on the label. Without it "Term 15.2 · Unexp 1" reads as a
+  // lease with a year to run when it has three weeks.
+  { field: "unexpired_term_break", label: "Unexp (Break) mths", band: "Lease Details", width: 100, align: "right", type: "num" },
+  { field: "unexpired_term",   label: "Unexp (Expiry) mths", band: "Lease Details", width: 105,  align: "right", type: "num" },
+  { field: "unexpired_term_review" as any, label: "Unexp (Review) mths", band: "Lease Details", width: 105, align: "right", type: "num" },
   { field: "next_review_date", label: "Next Review",    band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "outside_lt_act",   label: "L&T Act",        band: "Lease Details", width: 100, align: "left" },
   { field: "area_basement_gia", label: "Basement",      band: "Areas — GIA", width: 90,  align: "right", type: "num" },
@@ -1918,7 +1920,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
           // review dates on every render — display-only, no manual edits
           // to drift out of date.
           c.field === "unexpired_term" || c.field === "unexpired_term_break" || (c.field as string) === "unexpired_term_review" ? (
-            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap text-muted-foreground${stickyCls}`} title="Auto-calculated from the lease dates">
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap text-muted-foreground${stickyCls}`} title="Months remaining — auto-calculated from the lease dates">
               {displayVal || "—"}
             </td>
           ) :

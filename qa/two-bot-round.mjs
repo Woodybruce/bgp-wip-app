@@ -2581,6 +2581,49 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  await step(page, p, 'staff-tenancy-export-agrees-with-board', async () => {
+    // r550: the tenancy Excel export ran off the RAW table, so Term came out
+    // blank on every row and the unexpired terms were whatever the last import
+    // wrote — months stale, and years on BGP-authored sheets. The board
+    // derives both from the lease dates on every read (Woody, 2026-08-03), so
+    // the download disagreed with the screen for the same lease. Both now run
+    // withComputedTerms, and the headers state their unit (Term is years, the
+    // Unexp columns are months) so the two can't be read as the same scale.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const board = await (await fetch(`${BASE}/api/tenancy-schedule/property/${BLUEWATER}`, auth)).json();
+    if (!Array.isArray(board) || board.length === 0) throw new Error('tenancy board returned no rows');
+    const ex = await fetch(`${BASE}/api/tenancy-schedule/property/${BLUEWATER}/export-excel`, auth);
+    if (ex.status !== 200) throw new Error(`export expected 200, got ${ex.status}`);
+    const XLSX = await import('../node_modules/xlsx/xlsx.mjs');
+    const wb = XLSX.read(Buffer.from(await ex.arrayBuffer()), { type: 'buffer' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    const hdr = rows[3] || [];
+    for (const label of ['Term (yrs)', 'Unexp. Term (Break, mths)', 'Unexp. Term (Expiry, mths)']) {
+      if (!hdr.includes(label)) throw new Error(`export header missing "${label}" — the unit is back off the column`);
+    }
+    const ci = { unit: hdr.indexOf('Unit'), term: hdr.indexOf('Term (yrs)'), unexp: hdr.indexOf('Unexp. Term (Expiry, mths)') };
+    // Unit names repeat in the fixture, so compare only names that appear once.
+    const counts = new Map();
+    for (const u of board) { const k = String(u.unit_number || '').trim(); if (k) counts.set(k, (counts.get(k) || 0) + 1); }
+    const byUnit = new Map(board.filter((u) => counts.get(String(u.unit_number || '').trim()) === 1)
+      .map((u) => [String(u.unit_number || '').trim(), u]));
+    let compared = 0;
+    for (const row of rows.slice(4)) {
+      const key = String(row[ci.unit] || '').trim();
+      const b = byUnit.get(key);
+      if (!b) continue;
+      compared++;
+      const same = (x, y) => (x == null && y == null) || Number(x) === Number(y);
+      if (!same(row[ci.unexp], b.unexpired_term)) throw new Error(`${key}: export unexpired term ${row[ci.unexp]} vs board ${b.unexpired_term}`);
+      if (!same(row[ci.term], b.term_years)) throw new Error(`${key}: export term ${row[ci.term]} vs board ${b.term_years}`);
+    }
+    if (compared < 20) throw new Error(`only ${compared} units cross-checked — the export and the board stopped lining up`);
+    // Durations must not be totalled: a summed "months to expiry" column read
+    // as a portfolio figure.
+    const total = rows[rows.length - 1] || [];
+    if (Number(total[ci.unexp]) > 0) throw new Error(`export TOTAL row still sums the unexpired-term column (${total[ci.unexp]})`);
+  });
+
   await step(page, p, 'staff-evidence-plans-list', async () => {
     // r471: Evidence Plans (arrived via the d0b79fe JOGQK merge) — staff
     // list must stay reachable. Node-side fetch, no page-log noise.
@@ -3053,6 +3096,36 @@ async function markRound(page, cross) {
     if (r.dealId && r['related-events'] !== 200) throw new Error(`client locked out of its own deal related-events (${r['related-events']})`);
     cross.clientDealId = r.dealId;
     cross.mediaClientOwn = r.ownName;
+  });
+
+  await step(page, p, 'client-tenancy-export-agrees-with-board', async () => {
+    // r550, client half: Mark downloads the rent roll off his own property and
+    // sends it on. The file has to say the same thing the board said — same
+    // unexpired terms, same fixed term, and a header that states the unit.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const board = await (await fetch(`${BASE}/api/tenancy-schedule/property/${BLUEWATER}`, auth)).json();
+    if (!Array.isArray(board) || board.length === 0) throw new Error('client tenancy board returned no rows');
+    const ex = await fetch(`${BASE}/api/tenancy-schedule/property/${BLUEWATER}/export-excel`, auth);
+    if (ex.status !== 200) throw new Error(`client export of own property expected 200, got ${ex.status}`);
+    const XLSX = await import('../node_modules/xlsx/xlsx.mjs');
+    const wb = XLSX.read(Buffer.from(await ex.arrayBuffer()), { type: 'buffer' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    const hdr = rows[3] || [];
+    if (!hdr.includes('Unexp. Term (Expiry, mths)')) throw new Error('client export header lost the months unit');
+    const ci = { unit: hdr.indexOf('Unit'), unexp: hdr.indexOf('Unexp. Term (Expiry, mths)') };
+    const counts = new Map();
+    for (const u of board) { const k = String(u.unit_number || '').trim(); if (k) counts.set(k, (counts.get(k) || 0) + 1); }
+    const byUnit = new Map(board.filter((u) => counts.get(String(u.unit_number || '').trim()) === 1)
+      .map((u) => [String(u.unit_number || '').trim(), u]));
+    let compared = 0;
+    for (const row of rows.slice(4)) {
+      const b = byUnit.get(String(row[ci.unit] || '').trim());
+      if (!b) continue;
+      compared++;
+      const same = (x, y) => (x == null && y == null) || Number(x) === Number(y);
+      if (!same(row[ci.unexp], b.unexpired_term)) throw new Error(`${b.unit_number}: client export unexpired ${row[ci.unexp]} vs board ${b.unexpired_term}`);
+    }
+    if (compared < 20) throw new Error(`only ${compared} units cross-checked on the client export`);
   });
 
   await step(page, p, 'client-comps-readonly', async () => {

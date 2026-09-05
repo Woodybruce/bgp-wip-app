@@ -13,6 +13,25 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+201. 2026-09-05 · Landsec client / desktop 1440px (QA r550) · Mark clicked the
+   dashboard's "Expiring (6m) · 8" tile, picked a tenant off the popover and
+   landed on the Bluewater tenancy schedule — all 200 rows, unfiltered, with
+   no way to ask the board the question the tile just answered. To rebuild the
+   list he has to read the Expiry column down 200 rows, or sort by it and
+   count. SUGGESTION: an "Expiring ≤ 6m" lozenge in the schedule's stat strip
+   alongside Occupied / Vacant (the strip already filters on click), and carry
+   the tile's intent through the link — /tenancy-schedule/:id?expiring=6m —
+   so the click that started the question lands on its answer.
+
+202. 2026-09-05 · Landsec client / desktop 1440px (QA r550) · the tenancy
+   schedule's Excel export drops the one row the board shows that isn't a
+   tenancy record: the Letting Tracker's projected vacancy. The screen header
+   says "200 units", the file Mark forwards says "199 units" and is one unit
+   short, with nothing to say which. SUGGESTION: either export the projected
+   vacancies too (flagged in a Status/Source column so a rent roll isn't
+   inflated by them) or state the basis in the footer — "199 tenancy records ·
+   1 tracker vacancy not exported" — so the two counts explain themselves.
+
 199. 2026-09-05 · BGP staff / desktop (QA r549) · Victoria recorded a new
    letting comp, then opened Rent Analysis on it and worked the NER through
    properly — term, break, rent free, fit-out, NIA, ITZA. The calculator gets

@@ -16,6 +16,46 @@ async function getPool() {
   return dbPool;
 }
 
+// Unexpired terms and the fixed term are derived from the lease dates on
+// every read — stored/imported values no longer win, so the numbers can't go
+// stale (Woody, 2026-08-03). Shared by the board GET and the Excel export so
+// the download can't disagree with the screen. `unexpired_term*` are MONTHS;
+// `term_years` is years.
+export function withComputedTerms<T extends Record<string, any>>(rows: T[]): T[] {
+  const now = Date.now();
+  const monthsBetween = (iso: string | Date | null | undefined): number | null => {
+    if (!iso) return null;
+    const t = new Date(iso).getTime();
+    if (!t || isNaN(t)) return null;
+    return Math.max(0, Math.round((t - now) / (1000 * 60 * 60 * 24 * 30.4375)));
+  };
+  const earliest = (...dates: (string | Date | null | undefined)[]): Date | null => {
+    let min: number | null = null;
+    for (const d of dates) {
+      if (!d) continue;
+      const t = new Date(d).getTime();
+      if (!t || isNaN(t)) continue;
+      if (min === null || t < min) min = t;
+    }
+    return min === null ? null : new Date(min);
+  };
+  // 365.25 days per year keeps leap-year drift out of the fixed term.
+  const yearsBetween = (start: string | Date | null | undefined, end: string | Date | null | undefined): number | null => {
+    if (!start || !end) return null;
+    const a = new Date(start).getTime();
+    const b = new Date(end).getTime();
+    if (!a || !b || isNaN(a) || isNaN(b) || b < a) return null;
+    return Math.round(((b - a) / (1000 * 60 * 60 * 24 * 365.25)) * 10) / 10;
+  };
+  return rows.map((r: any) => ({
+    ...r,
+    unexpired_term: monthsBetween(r.lease_expiry),
+    unexpired_term_break: monthsBetween(earliest(r.lease_expiry, r.break_date, r.landlord_break_date)),
+    unexpired_term_review: monthsBetween(r.next_review_date),
+    term_years: (r.term_years && Number(r.term_years) > 0) ? r.term_years : yearsBetween(r.lease_start, r.lease_expiry),
+  }));
+}
+
 async function getUserInfo(pool: any, req: Request) {
   const userId = (req.session as any)?.userId || (req as any).tokenUserId;
   if (!userId) return null;
@@ -104,49 +144,10 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
       deal_ref: v.deal_ref,
     }));
 
-    // Compute unexpired-term (months) on the fly. `unexpired_term` runs to
-    // lease expiry; `unexpired_term_before_break` runs to the earliest of
-    // expiry / tenant break / landlord break. Keeps the value fresh without
-    // a daily cron — client sees today's number every render.
-    const now = Date.now();
-    const monthsBetween = (iso: string | Date | null | undefined): number | null => {
-      if (!iso) return null;
-      const t = new Date(iso).getTime();
-      if (!t || isNaN(t)) return null;
-      const diffMs = t - now;
-      return Math.max(0, Math.round(diffMs / (1000 * 60 * 60 * 24 * 30.4375)));
-    };
-    const earliest = (...dates: (string | Date | null | undefined)[]): Date | null => {
-      let min: number | null = null;
-      for (const d of dates) {
-        if (!d) continue;
-        const t = new Date(d).getTime();
-        if (!t || isNaN(t)) continue;
-        if (min === null || t < min) min = t;
-      }
-      return min === null ? null : new Date(min);
-    };
-    // term_years computed from lease_start → lease_expiry when missing.
-    // 365.25 days per year keeps leap-year drift out of the fixed term.
-    const yearsBetween = (start: string | Date | null | undefined, end: string | Date | null | undefined): number | null => {
-      if (!start || !end) return null;
-      const a = new Date(start).getTime();
-      const b = new Date(end).getTime();
-      if (!a || !b || isNaN(a) || isNaN(b) || b < a) return null;
-      return Math.round(((b - a) / (1000 * 60 * 60 * 24 * 365.25)) * 10) / 10;
-    };
-    const withComputed = occupied.rows.map((r: any) => ({
-      ...r,
-      // ALL unexpired terms are auto-calculated from their dates on every
-      // render — stored/imported values no longer win, so the numbers can't
-      // go stale (Woody, 2026-08-03). unexpired_term runs to expiry,
-      // _break to the earliest of expiry / tenant break / landlord break,
-      // _review to the next rent review.
-      unexpired_term: monthsBetween(r.lease_expiry),
-      unexpired_term_break: monthsBetween(earliest(r.lease_expiry, r.break_date, r.landlord_break_date)),
-      unexpired_term_review: monthsBetween(r.next_review_date),
-      term_years: (r.term_years && Number(r.term_years) > 0) ? r.term_years : yearsBetween(r.lease_start, r.lease_expiry),
-    }));
+    // Unexpired terms + fixed term come off the lease dates on every read
+    // (see withComputedTerms) — the Excel export runs the same helper so the
+    // download can't disagree with the board.
+    const withComputed = withComputedTerms(occupied.rows);
 
     res.json([...withComputed, ...derivedVacant]);
   } catch (e: any) {
@@ -573,6 +574,10 @@ const HEADER_ALIASES: Record<string, string> = {
   "term yrs": "term_years",
   "unexp term break": "unexpired_term_break",
   "unexp term expiry": "unexpired_term",
+  // The export now states the unit in the header; a re-imported export has to
+  // map back to the same fields.
+  "unexp term break mths": "unexpired_term_break",
+  "unexp term expiry mths": "unexpired_term",
   "months to expiry": "unexpired_term",  // Landsec feed gives months not years
   // Virtual capture columns — consumed during import, never inserted.
   "property": "__property",           // whole-portfolio files carry every asset
@@ -946,9 +951,9 @@ const EXPORT_COLUMNS: Array<{ field: string; label: string; band: string; width:
   { field: "break_details", label: "Break Details", band: "Lease Details", width: 22 },
   { field: "break_notice", label: "Notice/Note", band: "Lease Details", width: 18 },
   { field: "lease_expiry", label: "Expiry",      band: "Lease Details", width: 12, fmt: "date" },
-  { field: "term_years",  label: "Term",         band: "Lease Details", width: 8,  fmt: "num" },
-  { field: "unexpired_term_break", label: "Unexp. Term (Break)", band: "Lease Details", width: 12, fmt: "num" },
-  { field: "unexpired_term", label: "Unexp. Term (Expiry)", band: "Lease Details", width: 12, fmt: "num" },
+  { field: "term_years",  label: "Term (yrs)",   band: "Lease Details", width: 10, fmt: "num" },
+  { field: "unexpired_term_break", label: "Unexp. Term (Break, mths)", band: "Lease Details", width: 14, fmt: "num" },
+  { field: "unexpired_term", label: "Unexp. Term (Expiry, mths)", band: "Lease Details", width: 14, fmt: "num" },
   { field: "next_review_date", label: "Next Review", band: "Lease Details", width: 12, fmt: "date" },
   { field: "outside_lt_act", label: "L&T Act",   band: "Lease Details", width: 14 },
   { field: "measurement_type", label: "Measurement", band: "Lease Details", width: 14 },
@@ -1009,10 +1014,16 @@ router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAut
     const propResult = await pool.query("SELECT name FROM crm_properties WHERE id = $1", [propertyId]);
     const propertyName = propResult.rows[0]?.name || "Property";
 
-    const result = await pool.query(
+    const raw = await pool.query(
       "SELECT * FROM tenancy_schedule_units WHERE property_id = $1 ORDER BY grouping NULLS LAST, premises NULLS LAST, sort_order, id",
       [propertyId]
     );
+    // Same derivation the board runs (withComputedTerms) — the export used to
+    // ship the RAW stored columns, so Term came out blank on every row and the
+    // unexpired terms were whatever the last import wrote (months out of date,
+    // and in years on BGP-authored sheets). The downloaded rent roll now reads
+    // the same as the screen.
+    const result = { rows: withComputedTerms(raw.rows) };
 
     const ExcelJS = (await import("exceljs")).default;
     const wb = new ExcelJS.Workbook();
@@ -1107,7 +1118,12 @@ router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAut
     let idx = 0;
     let lastGrouping = "__none__";
     const totals: Record<string, number> = {};
-    const numericFields = EXPORT_COLUMNS.filter(c => c.fmt === "currency" || c.fmt === "currency_psf" || c.fmt === "num").map(c => c.field);
+    // Durations don't total — a column of "months to expiry" summed to 8,424
+    // read as a figure. Money and areas total; terms don't.
+    const NON_TOTALLING = new Set(["term_years", "unexpired_term_break", "unexpired_term", "unexpired_term_review"]);
+    const numericFields = EXPORT_COLUMNS
+      .filter(c => (c.fmt === "currency" || c.fmt === "currency_psf" || c.fmt === "num") && !NON_TOTALLING.has(c.field))
+      .map(c => c.field);
     for (const f of numericFields) totals[f] = 0;
 
     for (const u of result.rows) {
@@ -1137,7 +1153,7 @@ router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAut
         if (c.fmt === "currency" || c.fmt === "currency_psf" || c.fmt === "num") {
           const n = Number(raw);
           if (!isNaN(n)) {
-            totals[c.field] = (totals[c.field] || 0) + n;
+            if (!NON_TOTALLING.has(c.field)) totals[c.field] = (totals[c.field] || 0) + n;
             return n;
           }
           return null;

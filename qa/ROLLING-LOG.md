@@ -88,16 +88,78 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r550 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · ROUND IN PROGRESS
+### r550 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · 2 bugs fixed, one family — the tenancy schedule's unexpired term is MONTHS beside a Term in YEARS, and the Excel export disagreed with the board · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; wrote .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
-  dev server `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0.
+  qa/apply-sql.mjs; no .env in a fresh container, wrote one at
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke, server started as
+  `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0
+  before, and GREEN 42/0 with FRESH_BUILD=1 after the fixes.
 - CARRY-FORWARD FROM r549, CONFIRMED. Two-bot round 550 in three chunks with
   QA_CROSS_FILE: victoria 2x400 (incl. [ok] staff-comp-ner-surfaces-agree),
-  mark 9x403 + 1x503, woody/nick/sam 0 — exactly the r537-r549 signature.
-  All 12 logged issues are listed noise (rocketreach-400 + investment-tracker-400,
-  deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted regression.
-- Journey (Landsec client desktop, mark.warne@) in progress.
+  mark 9x403 + 1x503, woody/nick/sam 0 — exactly the r537-r549 signature. All
+  12 logged issues are listed noise (rocketreach-400 + investment-tracker-400,
+  deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted
+  regression. Signature held after the fixes with the 2 new scenarios in.
+- JOURNEY (rotation #2, Mark Warne at 1440px): "quarterly asset review at
+  Bluewater — which leases expire in the next 6 months, and does the schedule
+  agree with the tile I clicked to get here?". Portfolio dashboard -> Expiring
+  (6m) tile -> popover listed 8 leases with dates -> tenancy schedule (200
+  rows, stat strip, h-overflow 0) -> searched the tenant off the popover ->
+  read the row -> Excel export -> property page. 0 pageerrors, 0 non-noise
+  4xx/5xx. Scripts qa/r550-client-journey.mjs + qa/r550-verify.mjs, shots
+  qa/smoke-shots/r550j-*.png, r550v-*.png.
+- NOT BUGS, checked before reporting: the PASSING RENT tile reading "—/no
+  passing rent recorded yet" is honest — passing_rent_pa is null on all 201
+  fixture rows (UX #4, built 2026-08-08). Dashboard 201 units / 124 occupied /
+  77 vacant vs the board's 200 / 124 / 76 is Westgate's single vacant unit.
+  The risk register's "75 units vacant with no active deal" is 76 vacant minus
+  the one with a deal. All three reconcile.
+- BUGS FIXED (2, one family) — the number a landlord reads to find income at
+  risk meant something different on each surface.
+  1. client/src/components/PropertyTenancySchedule.tsx — the three Unexp
+     columns are MONTHS (server-computed, the code comment even says so) and
+     sat unlabelled next to Term, which is YEARS, under a WAULT tile in "yrs".
+     Nando's at SVL02 read "Term 15.2 · Unexp (Break) 1 · Unexp (Expiry) 1" —
+     that lease has three weeks left, not a year. A 2040 expiry read 163 next
+     to a Term of 15. Labels now carry the unit: "Term (yrs)", "Unexp (Break)
+     mths", "Unexp (Expiry) mths", "Unexp (Review) mths", tooltip "Months
+     remaining — auto-calculated from the lease dates".
+  2. server/tenancy-schedule.ts — the Excel export ran `SELECT *` over the raw
+     table, so it never saw the derivation the board applies on every read
+     (Woody, 2026-08-03: stored/imported values no longer win). Every row in
+     the downloaded rent roll had a BLANK Term, and its unexpired terms were
+     whatever the last import wrote — months stale across the board (SVL02:
+     screen 1, file 3; the 2154 placeholder: screen 1540, file 1542) and in
+     YEARS on BGP-authored sheets. Extracted the GET's inline compute into
+     `withComputedTerms()` and ran the export through it; export headers now
+     state their unit too ("Term (yrs)", "Unexp. Term (Break, mths)",
+     "Unexp. Term (Expiry, mths)") with import aliases added so a re-imported
+     export still maps. Also stopped the TOTAL row summing durations — it was
+     printing 8,424 under "months to expiry" as if it were a portfolio figure.
+  VERIFIED LIVE before and after (qa/r550-verify.mjs): 199/199 units now agree
+  between the board API and the parsed .xlsx on both term_years and
+  unexpired_term (the one flagged row is a duplicate unit_number in the
+  fixture, two rows sharing "SVU04 & Adjoining Premises"), TOTAL row blank on
+  all three duration columns, board header slice reads Expiry · Term (yrs) ·
+  Unexp (Break) mths · Unexp (Expiry) mths · Unexp (Review) mths, h-overflow
+  still 0 at 1440px. tsc clean.
+- Two-bot: +2 scenarios, one each side. victoria
+  staff-tenancy-export-agrees-with-board (parses the exported .xlsx, asserts
+  the three unit-bearing headers, cross-checks every singly-named unit's
+  term/unexpired against the board, and fails if the TOTAL row sums the
+  duration column) and mark client-tenancy-export-agrees-with-board (same
+  roundtrip on his own property — the client keeps the export and the file
+  keeps agreeing). Both [ok] against the rebuilt app; signatures unchanged.
+- Suggestions: UX-NOTES 201 (the Expiring (6m) tile hands Mark 200 unfiltered
+  rows — an "Expiring <= 6m" lozenge in the stat strip + carry the intent in
+  the link) and 202 (the export drops the tracker-projected vacancy, so the
+  screen says 200 units and the file says 199, unexplained). Still open and
+  unbuilt, do not report again: UX #150, #157, #162, #170, #171, #172,
+  #174-#200.
+- New flakes: none. Confirming r549's note: `pkill -f "server/index.ts"` exits
+  144 and kills the calling chain — issue it alone, then relaunch.
+- Next: r550 was FULL -> r551 LIGHT (skip the journey, spend it on triage and
+  deferred bugs).
 
 ### r549 · 2026-09-05 · LIGHT (r548 had the journey) · 2 bugs fixed, one family — a comp showed THREE different net effective rents on three surfaces · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
