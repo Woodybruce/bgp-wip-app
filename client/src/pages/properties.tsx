@@ -3188,6 +3188,20 @@ interface PropertyNewsArticle {
   source: "database" | "web";
 }
 
+// Wire feeds copy the headline into the description, differing only by the
+// source suffix ("Headline - The Grocer" vs "Headline  The Grocer"), so a
+// summary that repeats the title is noise — same test the Brand News page
+// uses (summaryAddsInfo in news.tsx, UX #143).
+function newsSummaryAddsInfo(title?: string | null, summary?: string | null): boolean {
+  const body = (summary || "").trim();
+  if (!body) return false;
+  const key = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const t = key(title || "");
+  const s = key(body);
+  if (!t) return true;
+  return !(s === t || s.startsWith(t) || t.startsWith(s));
+}
+
 function newsTimeAgo(date: string | Date | null): string {
   if (!date) return "";
   const now = new Date();
@@ -4950,7 +4964,7 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
                     ) : null}
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold leading-snug line-clamp-2">{article.title}</p>
-                      {article.summary && (
+                      {newsSummaryAddsInfo(article.title, article.summary) && (
                         <p className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5">{article.summary}</p>
                       )}
                       <div className="flex items-center gap-1.5 mt-1">

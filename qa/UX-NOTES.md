@@ -13,6 +13,32 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+191. 2026-09-05 · Landsec client / mobile 390px (QA r544) · "the agent asked
+   about U124 — which unit is that?" from the Letting Tracker search · the
+   filtered card list came back as "U124/U125/U126" twice and "U124" once,
+   and the unit Files dialog titled itself "U124/U125/U126, Bluewater,
+   Bluewater · Bluewater Shopping Centre". The repetition is in the DATA —
+   available_units.unit_name carries the imported label verbatim, and the
+   phone then prints unit + property + address on one truncating line, so the
+   only part that identifies the unit is what gets cut. Suggestion: normalise
+   the unit label on display — strip a trailing repetition of the property or
+   town from unit_name (and/or de-duplicate it at tenancy-import time), so a
+   card reads "U124/U125/U126 · Bluewater Shopping Centre" once. Two rows for
+   the same unit numbers (one with 9,307 sq ft, one with nothing) is the same
+   import-hygiene family as the carried Bluewater SPINE duplicates.
+
+190. 2026-09-05 · Landsec client / mobile 390px (QA r544) · opening his own
+   deal ("U124 Bluewater — Gail's letting", at Solicitors) from the phone
+   Deals tab · the whole Overview is Team / Parties / "Last updated" — 381
+   characters. Fees are stripped from clients by design, but rent p.a., lease
+   length and target completion date are not, and the page renders no row for
+   them at all when they are unset, so a landlord at Solicitors stage cannot
+   tell whether the terms are unknown to him or simply not recorded yet.
+   Suggestion: give the client deal Overview a commercial line — Rent p.a. /
+   Lease length / Target completion — with the same explicit "—" the
+   Properties table now uses (r542), so an empty deal reads as "BGP hasn't
+   filled this in" rather than as a broken page.
+
 189. 2026-09-05 · BGP staff / desktop 1440px (QA r543) · reading the Board
    Report before a partners' meeting · the top-left KPI is labelled "FEES
    BILLED YTD £707K" with the sub-line "7 total deals in pipeline" — but the

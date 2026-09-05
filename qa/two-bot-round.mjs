@@ -2714,6 +2714,25 @@ async function victoriaRound(page, cross) {
       await page.setViewportSize({ width: 1440, height: 900 });
     }
   });
+  await step(page, p, 'staff-phone-chat-suggestions-kept', async () => {
+    // Counterpart to mark's client-mobile-chat-suggestions-landlord-voiced
+    // (r544): staff keep the BGP-voiced starter prompts on the phone.
+    await page.setViewportSize({ width: 390, height: 844 });
+    try {
+      await page.goto(`${BASE}/chatbgp?ask=1`);
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(2500);
+      const chips = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-testid^="mobile-suggestion-"]')).map(el => el.textContent.trim()));
+      if (chips.length < 3) throw new Error(`staff phone chat lost its starter prompts (${chips.length})`);
+      if (!chips.some(c => /HOTs/i.test(c)) || !chips.some(c => /CRM contacts/i.test(c))) {
+        throw new Error(`staff phone starter prompts no longer BGP-voiced: ${chips.join(' | ')}`);
+      }
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 900 });
+    }
+  });
+
 }
 
 async function markRound(page, cross) {
@@ -6482,6 +6501,39 @@ async function markRound(page, cross) {
       await mob.getByText(/Sorry, the server rejected this|Sorry, the server returned/i).first()
         .waitFor({ state: 'visible', timeout: 25000 })
         .catch(() => { throw new Error('rejected chat send still shows no assistant/error bubble after 25s (recovery-poll regression)'); });
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r544: the phone shell offered a LANDLORD the staff starter prompts
+  // ("Draft HOTs for a property", "Search CRM contacts", the BGP calendar) —
+  // the desktop chat panel has had CLIENT_AI_SUGGESTIONS since long before,
+  // the phone list was never given the same split.
+  await step(page, p, 'client-mobile-chat-suggestions-landlord-voiced', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/chatbgp?ask=1`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(2500);
+      const chips = await mob.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-testid^="mobile-suggestion-"]')).map(el => el.textContent.trim()));
+      if (chips.length < 3) throw new Error(`client phone chat lost its starter prompts (${chips.length})`);
+      const staffVoiced = chips.filter(c => /HOTs|CRM contacts|my calendar/i.test(c));
+      if (staffVoiced.length) throw new Error(`staff-voiced starter prompts offered to a client: ${staffVoiced.join(' | ')}`);
+      if (!chips.some(c => /leases expire|vacant units/i.test(c))) {
+        throw new Error(`client starter prompts are not landlord-voiced: ${chips.join(' | ')}`);
+      }
     } finally {
       await mob.close();
       await mobCtx.close();

@@ -153,6 +153,16 @@ const AI_SUGGESTIONS: Array<{ label: string; icon: typeof Sparkles }> = [
   { label: "Search CRM contacts", icon: Users },
 ];
 
+// Client logins get the landlord-voiced prompts the desktop chat panel
+// already uses (CLIENT_AI_SUGGESTIONS in chat-panel.tsx) — no BGP calendar,
+// no HOTs drafting, no CRM jargon.
+const CLIENT_AI_SUGGESTIONS: Array<{ label: string; icon: typeof Sparkles }> = [
+  { label: "Which of my leases expire in the next 12 months?", icon: CalendarDays },
+  { label: "What's happening on my vacant units?", icon: Building2 },
+  { label: "Create a targeting brief for one of my units", icon: FileText },
+  { label: "What's the latest news on brands we're targeting?", icon: Newspaper },
+];
+
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif"];
 const isImageFile = (nameOrType: string) => {
   if (nameOrType.startsWith("image/")) return true;
@@ -2709,7 +2719,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               <p className="text-[15px] text-[#78716C] leading-relaxed max-w-[280px] mx-auto">How can I help today?</p>
             </div>
             <div className="grid grid-cols-1 gap-2 w-full max-w-sm">
-              {AI_SUGGESTIONS.map(s => {
+              {(currentUser?.role === "Client" || (currentUser as any)?.companyScopeId ? CLIENT_AI_SUGGESTIONS : AI_SUGGESTIONS).map(s => {
                 const Icon = s.icon;
                 return (
                   <button
@@ -2723,7 +2733,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                     data-testid={`mobile-suggestion-${s.label.slice(0, 10)}`}
                   >
                     <Icon className="w-[18px] h-[18px] text-[#78716C] shrink-0" />
-                    <span className="truncate">{s.label}</span>
+                    <span>{s.label}</span>
                   </button>
                 );
               })}
