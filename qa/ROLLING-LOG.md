@@ -88,6 +88,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r540 · 2026-09-05 · FULL (rotation #1 staff desktop) — ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once → run-smoke restore → seed-personas
+  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
+- Two-bot round 540, all three chunks, each exit 0 first run. Signatures EXACT
+  vs r537/r538/r539: victoria 2×400, mark 9×403 + 1×503, woody/nick/sam 0.
+  All listed noise. 0 new issues from the scripted sweep.
+- Journey pending: Victoria staff desktop 1440px.
+
 ### r539 · 2026-09-04 · LIGHT (r538 had the journey) · 1 bug fixed — duplicated tenancy rows spawned duplicate tracker cards · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once → run-smoke restore → seed-personas
   into bgpsmoke). Regression: smoke GREEN 42/0. Dev server tsx against
