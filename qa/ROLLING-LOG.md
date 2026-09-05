@@ -88,6 +88,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r548 · 2026-09-05 · FULL (rotation #1 BGP staff desktop 1440px) — ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; wrote .env at
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke). Regression:
+  smoke GREEN 42/0.
+- CARRY-FORWARD FROM r547, CONFIRMED. Two-bot round 548 in three chunks with
+  QA_CROSS_FILE: victoria 2x400 (incl. [ok] staff-wip-target-month-clearable),
+  mark 9x403 + 1x503, woody/nick/sam 0 — exactly the r537-r547 signature.
+  All 12 logged issues are listed noise (rocketreach-400 +
+  investment-tracker-400, deliberate client 403 gates, keyless-AI 503).
+  0 app bugs from the scripted regression.
+- Journey pending (staff desktop). Entry to be replaced with the final one.
+
 ### r547 · 2026-09-05 · LIGHT (r546 had the journey) · 1 bug fixed — the WIP report's Target Month could be set but never cleared · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; no .env in a fresh container, wrote one at
