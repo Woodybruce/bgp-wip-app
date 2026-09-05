@@ -6846,13 +6846,18 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
             dealType: deal.dealType || "",
           });
 
-          const completionStr = deal.completedAt || deal.exchangedAt || deal.targetDate || deal.updatedAt?.toISOString?.();
-          if (completionStr) {
-            const completionDate = new Date(completionStr);
-            if (completionDate >= yearStart && completionDate <= now) {
-              totalFeesYTD += deal.fee;
-              const monthKey = `${completionDate.getFullYear()}-${String(completionDate.getMonth() + 1).padStart(2, "0")}`;
-              monthlyFees[monthKey] = (monthlyFees[monthKey] || 0) + deal.fee;
+          // "Fees Billed YTD" means billed: only an invoiced deal counts, on the
+          // same INV test the WIP report uses. Anything still in the pipeline
+          // (NEG/SOL/EXC) or withdrawn is forecast, not revenue.
+          if (isInvoicedStatus(deal.status)) {
+            const billedStr = deal.invoicedAt || deal.completedAt || deal.exchangedAt || deal.updatedAt?.toISOString?.();
+            if (billedStr) {
+              const billedDate = new Date(billedStr);
+              if (billedDate >= yearStart && billedDate <= now) {
+                totalFeesYTD += deal.fee;
+                const monthKey = `${billedDate.getFullYear()}-${String(billedDate.getMonth() + 1).padStart(2, "0")}`;
+                monthlyFees[monthKey] = (monthlyFees[monthKey] || 0) + deal.fee;
+              }
             }
           }
         }
@@ -9585,11 +9590,15 @@ Rules:
             dealType: deal.dealType || "",
           });
 
-          const completionStr = deal.completedAt || deal.exchangedAt || deal.targetDate || deal.updatedAt?.toISOString?.();
-          if (completionStr) {
-            const completionDate = new Date(completionStr);
-            if (completionDate >= yearStart && completionDate <= now) {
-              totalFeesYTD += deal.fee;
+          // Same billed test as /api/board-report — the export must not tell a
+          // different story from the screen it exports.
+          if (isInvoicedStatus(deal.status)) {
+            const billedStr = deal.invoicedAt || deal.completedAt || deal.exchangedAt || deal.updatedAt?.toISOString?.();
+            if (billedStr) {
+              const billedDate = new Date(billedStr);
+              if (billedDate >= yearStart && billedDate <= now) {
+                totalFeesYTD += deal.fee;
+              }
             }
           }
         }

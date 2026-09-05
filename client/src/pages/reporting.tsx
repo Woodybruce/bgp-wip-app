@@ -198,6 +198,22 @@ export default function Reporting() {
   // Time to close buckets
   const timeToCloseBuckets = boardReport?.performance.timeToCloseBuckets || [];
 
+  // The Fees Billed card's delta must measure the same thing as the figure
+  // above it. kpiTrends.feesChange is the fee value of deals CREATED per month
+  // (any status), which read "+100%" next to a billed total of £0 — so derive
+  // the delta from the board report's own billed-per-month series instead.
+  const billedChange = (() => {
+    const series = boardReport?.performance.monthlyFees;
+    if (!series) return undefined;
+    const now = new Date();
+    const key = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const curr = series.find(m => m.month === key(now))?.total || 0;
+    const prev = series.find(m => m.month === key(prevDate))?.total || 0;
+    if (prev === 0) return curr > 0 ? 100 : 0;
+    return Math.round(((curr - prev) / prev) * 100);
+  })();
+
   return (
     <PageLayout
       title="Reporting & Analytics"
@@ -215,10 +231,10 @@ export default function Reporting() {
           <>
             <KpiCard
               icon={DollarSign}
-              label="Total Fees YTD"
+              label="Fees Billed YTD"
               value={formatCurrency(boardReport?.performance.totalFeesYTD || 0)}
-              subtitle="This financial year"
-              change={kpiTrends?.feesChange}
+              subtitle="Invoiced since 1 January"
+              change={billedChange}
             />
             <KpiCard
               icon={Handshake}

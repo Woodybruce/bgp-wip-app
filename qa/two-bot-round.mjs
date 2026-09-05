@@ -2809,6 +2809,65 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r555: "Fees Billed YTD" on the Board Report counted the fee of every deal
+  // touched this year — a deal still in negotiation read as billed revenue,
+  // while the WIP report on the same data said Invoiced £0. Assert the board
+  // number only ever counts invoiced deals, and that no un-invoiced priced
+  // deal's fee is inside it.
+  await step(page, p, 'staff-board-report-billed-is-invoiced-only', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const [br, dl] = await Promise.all([
+        fetch('/api/board-report', { headers: auth }).then(x => x.ok ? x.json() : null).catch(() => null),
+        fetch('/api/crm/deals', { headers: auth }).then(x => x.ok ? x.json() : null).catch(() => null),
+      ]);
+      if (!br || !Array.isArray(dl)) return null;
+      const INV = /^(inv|invoiced|billed)$/i;
+      const priced = dl.filter(d => Number(d.fee) > 0);
+      return {
+        billed: Number(br.performance?.totalFeesYTD || 0),
+        monthly: (br.performance?.monthlyFees || []).reduce((s, m) => s + Number(m.total || 0), 0),
+        invoicedTotal: priced.filter(d => INV.test(String(d.status || '').trim())).reduce((s, d) => s + Number(d.fee), 0),
+        openTotal: priced.filter(d => !INV.test(String(d.status || '').trim())).reduce((s, d) => s + Number(d.fee), 0),
+      };
+    });
+    if (!r) throw new Error('board report or deals list unavailable to staff');
+    if (r.billed > r.invoicedTotal) {
+      throw new Error(`Fees Billed YTD ${r.billed} exceeds the fees of all invoiced deals (${r.invoicedTotal}) — un-billed pipeline is being counted as revenue`);
+    }
+    if (r.openTotal > 0 && r.billed >= r.invoicedTotal + r.openTotal) {
+      throw new Error(`Fees Billed YTD ${r.billed} includes the ${r.openTotal} sitting on un-invoiced deals`);
+    }
+    if (r.monthly > r.billed) {
+      throw new Error(`Monthly Fee Revenue sums to ${r.monthly} against a Fees Billed YTD of ${r.billed}`);
+    }
+  });
+
+  // r555 counterpart (r550 lesson — a report and its own export must agree):
+  // the Board Report's Excel export duplicates the same fee maths, so assert
+  // its Executive Summary KPI matches the screen's number.
+  await step(page, p, 'staff-board-export-matches-screen', async () => {
+    const XLSX = await import('../node_modules/xlsx/xlsx.mjs');
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const br = await fetch('/api/board-report', { headers: auth }).then(x => x.ok ? x.json() : null).catch(() => null);
+      const xr = await fetch('/api/board-report/export-excel', { headers: auth }).catch(() => null);
+      if (!br || !xr || !xr.ok) return null;
+      const buf = new Uint8Array(await xr.arrayBuffer());
+      return { billed: Number(br.performance?.totalFeesYTD || 0), ct: xr.headers.get('content-type') || '', bytes: Array.from(buf) };
+    });
+    if (!r) throw new Error('board report export unavailable to staff');
+    if (!/spreadsheetml|officedocument/.test(r.ct)) throw new Error(`board export returned a non-xlsx body (content-type ${r.ct || 'none'})`);
+    const wb = XLSX.read(Uint8Array.from(r.bytes), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    const row = rows.find(x => String(x?.[0] || '').toLowerCase().includes('fees billed'));
+    if (!row) throw new Error('board export lost its Fees Billed YTD row');
+    const exported = Number(String(row[1] ?? '').replace(/[^0-9]/g, '') || 0);
+    if (exported !== Math.round(r.billed)) {
+      throw new Error(`board export says Fees Billed YTD ${row[1]} but the screen says ${r.billed}`);
+    }
+  });
+
   await step(page, p, 'staff-properties-table-pickers-kept', async () => {
     // Other half of client-properties-table-readonly-cells (r542): the client
     // read-only dash must not cost staff the tenant / BGP-contact pickers.

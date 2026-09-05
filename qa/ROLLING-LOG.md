@@ -88,17 +88,85 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r555 · 2026-09-05 · LIGHT (r554 had the journey) · ROUND IN PROGRESS
+### r555 · 2026-09-05 · LIGHT (r554 had the journey) · 2 bugs fixed, one family — the Board Report billed un-billed fees, and its own trend badge measured something else · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
-  server `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0.
-- CARRY-FORWARD FROM r554, CONFIRMED: full three-chunk two-bot pass with
-  QA_CROSS_FILE set — every scenario [ok], tally 2x400 + 9x403 + 1x503, the
-  r537-r554 signature exactly. Thirteenth clean hand-off. All 12 logged issues
-  are listed noise (rocketreach-400 + investment-tracker-400, deliberate client
-  403 gates, keyless-AI 503). 0 app bugs from the scripted regression.
-- Triage in progress. Working the fee chain per the standing lesson (follow one
-  fee from the deal record through every surface that shows it).
+  server `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN
+  42/0 before, and GREEN 42/0 with FRESH_BUILD=1 after the fixes.
+- CARRY-FORWARD FROM r554, CONFIRMED with a full three-chunk pass of my own
+  (QA_CROSS_FILE set): every scenario [ok], tally 2x400 + 9x403 + 1x503 —
+  the r537-r554 signature exactly, thirteenth clean hand-off. All 12 logged
+  issues are listed noise (rocketreach-400 + investment-tracker-400,
+  deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted
+  regression.
+- WORK (no journey — LIGHT): took the parent's fee-chain angle and followed ONE
+  fee from the deal record out to every surface that states it — /api/crm/deals
+  -> /api/wip -> /api/board-report -> the Board Report screen -> its Excel
+  export -> /reporting -> /api/portfolio/landsec/analytics. Both bugs are that
+  chain disagreeing with itself. Probes qa/r555-fee-chain.mjs,
+  qa/r555-board.mjs, qa/r555-board-export.mjs, desktop harness
+  qa/r555-desk.mjs; shots qa/smoke-shots/r555*-*.png.
+- BUG FIXED 1 (server/crm.ts, /api/board-report AND its /export-excel twin) —
+  the board pack billed money nobody had billed. Victoria's Board Report was
+  headed "FEES BILLED YTD £707K" while the WIP report on the same data says
+  Invoiced £0 / WIP £250,000, and the Landsec analytics endpoint splits
+  INV-vs-WIP properly. Root cause: totalFeesYTD counted EVERY deal with a fee
+  whose `completedAt || exchangedAt || targetDate || updatedAt` fell in this
+  calendar year — no status test at all, and `updatedAt` as the last fallback,
+  so merely editing a deal made its fee "billed". The £250,000 Broadgate deal
+  is at NEG (in negotiation) and a withdrawn deal would have counted too. The
+  same figure feeds MONTHLY FEE REVENUE (YTD). Fixed: both sites now gate on
+  the app's own canonical `isInvoicedStatus(deal.status)` (code INV — the same
+  test /api/wip uses for amtInvoice) and date off
+  `invoicedAt || completedAt || exchangedAt || updatedAt`. Verified live with a
+  probe: an INV deal at £111,000 lands in totalFeesYTD and monthlyFees, the
+  £250,000 NEG deal does not, and the figure returns to £0 when the probe is
+  deleted.
+- BUG FIXED 2 (client/src/pages/reporting.tsx) — the same number's trend badge
+  measured a different thing. /reporting showed the board-report figure as
+  "Total Fees YTD · This financial year" (a third name for it) with a green
+  "+100%" pinned to it from kpiTrends.feesChange — which is the fee value of
+  deals CREATED per month, any status, so it disagreed with the figure above it
+  in both definition and period. Fixed: card relabelled "Fees Billed YTD ·
+  Invoiced since 1 January" (matching the Board Report and the actual calendar
+  YTD the server computes) and the delta now derives from the board report's
+  own billed-per-month series. Verified live: reads "FEES BILLED YTD £0 ·
+  Invoiced since 1 January · 0%".
+- VERIFIED VISUALLY after the fixes (qa/r555-verify-ui.mjs, 1440px, Victoria):
+  Board Report "FEES BILLED YTD £0", MONTHLY FEE REVENUE degrades to an empty
+  chart with no error boundary, /reporting "Fee Income by Month — No data
+  available". 0 pageerrors, 0 h-overflow, no non-noise 4xx/5xx. tsc clean.
+  Client side cannot reach either surface (client-board-report-gate is [ok] in
+  this round's two-bot run, and /reporting is staff-only).
+- Two-bot: +2 staff scenarios, both assert-only, no writes, tally unchanged.
+  staff-board-report-billed-is-invoiced-only (fails if Fees Billed YTD exceeds
+  the fees of all invoiced deals, if it swallows the un-invoiced total, or if
+  the monthly series outruns the headline) and staff-board-export-matches-screen
+  (parses the exported workbook and fails if its Fees Billed YTD cell disagrees
+  with the API — the r550 report-vs-its-own-export shape). Both dry-run [ok]
+  against the rebuilt app (qa/r555-scenario-check.mjs); both would have FAILED
+  pre-fix (billed 706,789 vs invoicedTotal 0).
+- NOT BUGS, checked before reporting: the Landsec analytics quartet (fee/agent
+  cards) IS already hidden from client logins — clientHiddenBoards in
+  dashboard.tsx plus CLIENT_BOARD_REGISTRY in widget-picker.tsx both exclude
+  it, so the widget picker can't be used to add it. "PIPELINE BY TEAM
+  NationalLeasing" on the board chart is a recharts axis-tick artefact; the
+  export says "National Leasing". £0 billed in this fixture is honest — no deal
+  is at INV.
+- Suggestions: UX-NOTES 211 (the board card shows Billed YTD alone; put the WIP
+  book beside it) and 212 (AVG DEAL SIZE averages only the 2 priced deals while
+  the card next to it counts all 7 — say the denominator). Still open and
+  unbuilt, do not report again: UX #150, #157, #162, #170, #171, #172,
+  #174-#210.
+- New flakes: none new. Standing notes confirmed again: `pkill -f
+  "server/index.ts"` exits 144 and must be issued alone; the
+  `setsid <scratchpad>/dev.sh` launch-script pattern works; two-bot's full
+  three-chunk pass takes ~35 min, so start it before code reading.
+- Next: r555 was LIGHT -> r556 FULL, rotation #1 BGP staff desktop 1440px.
+  Under-worked and still unclaimed: ChatBGP as a working tool (its answers AND
+  its tool calls), Pathway / Why Buy generation, the client's Files & data-room
+  surfaces, Xero/invoicing, Image Studio generation, and the ChatBGP
+  PDF-signing tools (sign_pdf + save_signature).
 
 ### r554 · 2026-09-05 · FULL (rotation #4 BGP staff MOBILE 390px) · 2 bugs fixed — the WIP report's title mis-stated its own scope, and a priced deal showed no fee anywhere · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

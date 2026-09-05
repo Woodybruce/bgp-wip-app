@@ -13,6 +13,27 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+211. 2026-09-05 · BGP staff / desktop (QA r555) · Following one fee through
+   every surface that shows it, the Board Report's headline card now correctly
+   reads "FEES BILLED YTD £0" — but the board pack's whole point at month end
+   is "what have we earned and what's coming", and the only other number on
+   the card is an unrelated "7 total deals in pipeline". The WIP book (£250,000
+   unbilled in the fixture) is on a different screen entirely. Suggestion: put
+   the WIP figure beside the billed one on that card — "Billed YTD £0 · WIP
+   (unbilled) £250,000" — sourced from the same INV/WIP split the WIP report
+   uses, so the board sees revenue and forecast in one line instead of one
+   number that looks like the business did nothing this year.
+
+212. 2026-09-05 · BGP staff / desktop (QA r555) · Same pass, on the Board
+   Report's KPI strip: "AVG DEAL SIZE £353K — Across all deals with fees" is
+   computed over the two deals that carry a fee, while the five deals sitting
+   at £0 (most of the fixture's real letting deals) are excluded silently, and
+   the card next to it counts all seven. So the same strip mixes two different
+   denominators without saying so, and the average reads far higher than the
+   book. Suggestion: say the denominator on the card — "£353K · avg of 2
+   priced deals (5 deals have no fee recorded)" — so nobody quotes an average
+   that only two deals contributed to.
+
 209. 2026-09-05 · BGP staff / mobile 390px (QA r554) · Victoria opened the
    phone home screen at month end to see where her billing stood. The finance
    tile reads "MY BILLING — 2026/27  £0 Billed · £0 Commission · £0 Potential
