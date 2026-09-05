@@ -88,6 +88,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r544 · 2026-09-05 · FULL (rotation #3 Landsec client MOBILE 390px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
+  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
+- Two-bot round 544, victoria+mark in ONE process with QA_CROSS_FILE:
+  CONFIRMED the r543 carry-forward — signature still EXACT at victoria 2x400,
+  mark 9x403 + 1x503 with r543's two new scenarios
+  (staff-board-report-category-labels, client-board-report-gate) in place.
+  woody,nick,sam chunk running. All 12 logged issues are listed noise.
+- Triage so far: 0 new issues from the scripted sweep.
+- Journey in progress (Mark Warne, iPhone UA @390px) — "at Bluewater, an
+  agent has asked about a unit". Candidate finding: the letting-tracker unit
+  Files dialog subtitle repeats the property name ("U124/U125/U126,
+  Bluewater, Bluewater · Bluewater Shopping Centre") and truncates on the
+  phone. Under investigation.
+
 ### r543 · 2026-09-05 · LIGHT (r542 had the journey) · 2 bugs fixed — raw brand: UUIDs on the Board Report + dangling separator on Marketing Files · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
   into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before,
