@@ -1198,10 +1198,11 @@ function InlineDateInput({
 const datesCellTargetTimers = new Map<string, { val: string; timer: ReturnType<typeof setTimeout> }>();
 
 function DatesCell({
-  deal, onSave,
+  deal, onSave, clientView,
 }: {
   deal: any;
   onSave: (field: string, value: string | null) => void;
+  clientView?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const added = deal.createdAt ? formatDate(deal.createdAt) : null;
@@ -1219,10 +1220,10 @@ function DatesCell({
             {added ? `Added ${added}` : "—"}
           </span>
           {target ? (
-            <span className="text-xs font-medium">Target {target}</span>
+            <span className="text-xs font-medium">{clientView ? "Completion" : "Target"} {target}</span>
           ) : (
             <span className="text-[11px] text-muted-foreground italic flex items-center gap-1">
-              <Plus className="w-3 h-3" /> Target month
+              <Plus className="w-3 h-3" /> {clientView ? "Completion month" : "Target month"}
             </span>
           )}
         </button>
@@ -1234,7 +1235,7 @@ function DatesCell({
           <span className="text-xs">{added || "—"}</span>
         </div>
         <div className="grid grid-cols-[110px_1fr] items-center gap-2">
-          <Label className="text-xs text-muted-foreground">Target Month</Label>
+          <Label className="text-xs text-muted-foreground">{clientView ? "Expected completion" : "Target Month"}</Label>
           {/* Month picker, matching the WIP report — targets are forecast by
               month, so the deal stores the 1st of the chosen month. */}
           <input
@@ -1272,10 +1273,12 @@ function DatesCell({
             data-testid={`dates-target-input-${deal.id}`}
           />
         </div>
-        <p className="text-[10px] text-muted-foreground leading-tight pt-1 border-t">
-          Target Date drives the WIP report's month / fiscal-year bucket
-          until the deal exchanges.
-        </p>
+        {!clientView && (
+          <p className="text-[10px] text-muted-foreground leading-tight pt-1 border-t">
+            Target Date drives the WIP report's month / fiscal-year bucket
+            until the deal exchanges.
+          </p>
+        )}
       </PopoverContent>
     </Popover>
   );
@@ -6204,7 +6207,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 <div>
                   <p className="text-lg font-bold">{searchedDeals.length}</p>
                   <p className="text-xs text-muted-foreground">{isCompsMode ? "All Comps" : "All Deals"}</p>
-                  <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(searchedDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
+                  {!isClientDeals && (
+                    <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(searchedDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -6224,7 +6229,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   <div>
                     <p className="text-lg font-bold">{s.count}</p>
                     <p className="text-xs text-muted-foreground truncate max-w-[100px]">{DEAL_STATUS_LABELS[s.name as DealStatusCode] ?? s.name}</p>
-                    <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(s.feeTotal)}</p>
+                    {!isClientDeals && (
+                      <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(s.feeTotal)}</p>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -7028,6 +7035,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <DatesCell
                             deal={deal}
                             onSave={(field, value) => handleInlineSave(deal.id, field, value)}
+                            clientView={isClientDeals}
                           />
                         </TableCell>
                       )}
@@ -7122,7 +7130,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   {filteredDeals.length > 0 && (
                     <TableRow className="bg-muted/50 font-semibold border-t-2 hover:bg-muted/50">
                       <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="text-right py-2 text-xs">
-                        {filteredDeals.length} {isCompsMode ? "comps" : "deals"} · Total fees: {formatCurrency(filteredDeals.reduce((s, d) => s + (Number((d as any).fee) || 0), 0))}
+                        {filteredDeals.length} {isCompsMode ? "comps" : "deals"}{!isClientDeals && ` · Total fees: ${formatCurrency(filteredDeals.reduce((s, d) => s + (Number((d as any).fee) || 0), 0))}`}
                       </TableCell>
                     </TableRow>
                   )}

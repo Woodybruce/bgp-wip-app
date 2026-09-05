@@ -13,6 +13,23 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+207. 2026-09-05 · Landsec client / desktop (QA r553) · Sweeping Mark's own
+   forms for staff-only content, the Letting Tracker's Interest dialog
+   describes BGP's mailbox to him: "Brands and agents who've expressed
+   interest — mostly auto-detected from the team's inbox." A landlord reading
+   that learns his agent's email is being mined, and still isn't told where
+   any given row came from. Suggestion: for a client, say "logged by your BGP
+   team" (or, per row, "picked up by BGP" vs "logged by you") and keep the
+   inbox mechanics on the staff copy.
+
+208. 2026-09-05 · Landsec client / desktop (QA r553) · With BGP's fee
+   subtotals removed from his Deals tiles (this round's fix), the client's
+   status tiles now carry a count and nothing else — the whole value row is
+   gone, where staff still get a £ figure. A landlord's equivalent summary
+   isn't fees, it's rent: suggestion is to put total headline rent p.a. (or
+   passing rent) across the filtered deals in that slot for client accounts,
+   so the tiles stay as informative as staff's rather than just shorter.
+
 205. 2026-09-05 · Landsec client / mobile 390px (QA r552) · Mark was at
    Bluewater when an agent offered on U124 and wanted to record the offer and
    move the unit on. Logging the offer from the phone worked (Offer (1) on

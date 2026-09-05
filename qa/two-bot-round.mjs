@@ -2723,6 +2723,29 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  await step(page, p, 'staff-deals-table-fee-total-and-wip-kept', async () => {
+    // Other half of client-deals-table-no-bgp-fee-or-wip (r553): stripping
+    // BGP's fee totals and the WIP framing for the client must not cost staff
+    // either. /deals opens on the WIP report for staff — the table is /list.
+    await page.goto(`${BASE}/deals/list`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/deals/list`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForSelector('[data-testid^="dates-cell-"]', { timeout: 25000 })
+      .catch(() => { throw new Error('staff deals table never rendered a dates cell (did it load?)'); });
+    const body = await page.evaluate(() => document.body.innerText);
+    if (!/Total fees:/i.test(body)) throw new Error('staff lost the deals-table fee total');
+    const tile = await page.locator('[data-testid="card-group-all"]').first().innerText().catch(() => '');
+    if (!/£/.test(tile)) throw new Error('staff lost the fee subtotal on the deals tile');
+    const dc = page.locator('[data-testid^="dates-cell-"]').first();
+    await dc.click();
+    await page.waitForTimeout(1200);
+    const pop = await page.evaluate(() => document.querySelector('[data-radix-popper-content-wrapper]')?.innerText || '');
+    if (!/Target Month/.test(pop)) throw new Error('staff lost the Target Month row on the dates cell');
+    if (!/WIP report/i.test(pop)) throw new Error('staff lost the WIP-report hint on the dates cell');
+  });
+
   await step(page, p, 'staff-properties-table-pickers-kept', async () => {
     // Other half of client-properties-table-readonly-cells (r542): the client
     // read-only dash must not cost staff the tenant / BGP-contact pickers.
@@ -7334,6 +7357,37 @@ async function markRound(page, cross) {
       data: { name: `QA-PROBE Newco ${ROUND}` },
     });
     if (probe.status() !== 403) throw new Error(`client company create returned ${probe.status()}, expected 403`);
+  });
+
+  await step(page, p, 'client-deals-table-no-bgp-fee-or-wip', async () => {
+    // r553: the client's Deals table carried BGP's own fee reporting — a
+    // "Total fees: £0" footer and a £-subtotal on every status tile (always
+    // £0, because the API strips `fee` from a scoped caller) — and its Dates
+    // cell offered "+ Target month" over a popover that told the landlord
+    // "Target Date drives the WIP report's month / fiscal-year bucket". The
+    // month persisted on his PUT, so a client could move BGP's revenue
+    // forecast between fiscal months. Same family as r552's unit form: the
+    // fee COLUMNS were hidden for clients long ago (CLIENT_HIDDEN_COLS), the
+    // totals and the Dates cell were never given the same split. Staff keep
+    // both (staff-deals-table-fee-total-and-wip-kept).
+    await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForSelector('[data-testid^="dates-cell-"]', { timeout: 25000 })
+      .catch(() => { throw new Error('client deals table never rendered a dates cell (did it load?)'); });
+    const body = await page.evaluate(() => document.body.innerText);
+    if (/Total fees:/i.test(body)) throw new Error('client deals table still prints a BGP fee total');
+    const tile = await page.locator('[data-testid="card-group-all"]').first().innerText().catch(() => '');
+    if (/£/.test(tile)) throw new Error(`client deals tile still prints a fee subtotal: "${tile.replace(/\n+/g, ' ')}"`);
+    const dc = page.locator('[data-testid^="dates-cell-"]').first();
+    if (/Target month/i.test(await dc.innerText())) throw new Error('client dates cell still offers "Target month"');
+    await dc.click();
+    await page.waitForTimeout(1200);
+    const pop = await page.evaluate(() => document.querySelector('[data-radix-popper-content-wrapper]')?.innerText || '');
+    if (/WIP report/i.test(pop)) throw new Error('client dates popover still names BGP\'s WIP report');
+    if (!/Expected completion/i.test(pop)) throw new Error(`client dates popover lost the completion month: "${pop.replace(/\n+/g, ' | ')}"`);
   });
 
   await step(page, p, 'client-properties-table-readonly-cells', async () => {
