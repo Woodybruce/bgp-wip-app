@@ -674,6 +674,8 @@ function getToolProgressLabel(toolName: string): string {
     generate_why_buy_deck: "Building the Why Buy deck...",
     generate_document: "Generating document...",
     generate_brief_document: "Generating with Claude design...",
+    sign_pdf: "Signing the document...",
+    save_signature: "Storing your signature...",
     generate_image: "Generating image...",
     browse_sharepoint_folder: "Browsing SharePoint...",
     read_sharepoint_file: "Reading file...",
@@ -1237,7 +1239,8 @@ You are an active operational agent with full CRM read/write access, internet se
 
 ## HONESTY — never fabricate outcomes
 - Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
-- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_claude_designed_pdf\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_claude_designed_pdf\`, \`compile_brochure_from_pdfs\`, or \`sign_pdf\`. A made-up URL will 404 for the user.
+- **Signing documents**: **sign_pdf** stamps the user's signature + date (and Name/Title fields) onto a PDF they uploaded to chat. Read the document first, then pass the execution block's exact label texts as anchors. If they have no stored signature yet, either use style 'typed' (italic name) or ask them to upload a photo of their signature once and store it with **save_signature**. Always hand back the downloadMarkdown link and ask them to check placement before sending.
 - If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
 - For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
 - For template deletions, call \`delete_document_template\` — never just say "removed it".
@@ -4223,6 +4226,48 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           },
         },
         required: ["title", "sources"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "sign_pdf",
+      description: "Stamp a signature and date (plus Name/Title fields) onto an existing PDF the user uploaded to chat — NDAs, engagement letters, forms. Placement is by ANCHOR TEXT: read the document first (read_document) to see the execution block, then pass the exact label text next to where each mark goes. Uses the user's stored signature image when one exists (saved via save_signature); otherwise falls back to a typed italic signature of signerName. Returns a downloadMarkdown link to the signed copy — give it to the user verbatim and ask them to check placement.",
+      parameters: {
+        type: "object",
+        properties: {
+          chatMediaFilename: { type: "string", description: "The PDF's chat-media filename (from the /api/chat-media/ URL in chat context) or its original file name." },
+          page: { type: "number", description: "1-indexed page carrying the execution block. Omit to auto-find (searches from the last page back)." },
+          signatureAnchor: { type: "string", description: "Exact label text next to/under the signature spot, e.g. 'Signature:', 'Authorised Signatory', 'SIGNED for and on behalf of'. Omit to try common labels. Labels ending ':' or with a fill-line get the signature to their RIGHT; bare captions get it ABOVE." },
+          dateAnchor: { type: "string", description: "Label for the date field (default 'date'). Pass an empty string to skip dating." },
+          dateText: { type: "string", description: "Date text to write (default: today, e.g. '5 September 2026')." },
+          signerName: { type: "string", description: "The signer's full name — required when no stored signature image exists (typed italic signature)." },
+          style: { type: "string", enum: ["auto", "image", "typed"], description: "auto (default): stored image if available, else typed. image: require the stored signature. typed: always type the name." },
+          placement: { type: "string", enum: ["auto", "right", "above"], description: "Override the signature placement relative to its anchor." },
+          extraFields: {
+            type: "array",
+            description: "Additional printed fields to fill on the same page, e.g. [{anchor:'Name:', text:'Woody Bruce'},{anchor:'Title:', text:'Managing Director'}].",
+            items: { type: "object", properties: { anchor: { type: "string" }, text: { type: "string" } }, required: ["anchor", "text"] },
+          },
+        },
+        required: ["chatMediaFilename"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "save_signature",
+      description: "Store the user's real signature for sign_pdf, from a photo or scan they upload to chat. Cleans it automatically: background removed, ink recoloured to navy, cropped tight. Stored once per user and reused on every future sign_pdf. Returns a preview link — show it so the user can check the result.",
+      parameters: {
+        type: "object",
+        properties: {
+          chatMediaFilename: { type: "string", description: "The uploaded signature image's chat-media filename (from the /api/chat-media/ URL in chat context)." },
+        },
+        required: ["chatMediaFilename"],
       },
     },
   });
@@ -8548,6 +8593,26 @@ export async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] compile_brochure_from_pdfs error:", err?.message);
       return { data: { error: `Brochure compilation failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "sign_pdf") {
+    try {
+      const { signPdf } = await import("./chatbgp-design-tools");
+      return { data: await signPdf(fnArgs, req) };
+    } catch (err: any) {
+      console.error("[chatbgp] sign_pdf error:", err?.message);
+      return { data: { error: `PDF signing failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "save_signature") {
+    try {
+      const { saveUserSignature } = await import("./chatbgp-design-tools");
+      return { data: await saveUserSignature(fnArgs, req) };
+    } catch (err: any) {
+      console.error("[chatbgp] save_signature error:", err?.message);
+      return { data: { error: `Saving the signature failed: ${err?.message}` } };
     }
   }
 
