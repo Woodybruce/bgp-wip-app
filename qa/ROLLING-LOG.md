@@ -88,6 +88,24 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r545 · 2026-09-05 · LIGHT (r544 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs). Regression: smoke GREEN 42/0. Dev server on :5000
+  against bgpsmoke.
+- Two-bot round 545 (victoria+mark in one process with QA_CROSS_FILE) in
+  flight. TRIAGE SO FAR: victoria 2x400 (listed noise: rocketreach-discover,
+  investment-tracker invalid-payload probe), mark 403/503s tracking the
+  listed signature. ONE flow-failure, and it is the r544 CARRY-FORWARD:
+  victoria staff-phone-chat-suggestions-kept times out clicking
+  [data-testid="mobile-pinned-chatbgp"]. NOT an app bug — the scenario only
+  resized the desktop context to 390px, and use-mobile requires narrow AND a
+  touch UA, so /messages redirected to the DESKTOP /chatbgp page (which shows
+  the keyless "Not Connected" panel). mark's counterpart already used a real
+  mobile context; victoria's now does too (same iPhone-UA newContext +
+  mobSeedAuth + mobGoto pattern).
+- Round work continues on under-visited surfaces (KYC upload portal
+  end-to-end, staff -> customer).
+
 ### r544 · 2026-09-05 · FULL (rotation #3 Landsec client MOBILE 390px) · 2 bugs fixed — staff starter prompts on the client phone chat + wire-feed news summaries repeating the headline · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
   into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before,

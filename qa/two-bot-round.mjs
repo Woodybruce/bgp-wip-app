@@ -2717,24 +2717,37 @@ async function victoriaRound(page, cross) {
   await step(page, p, 'staff-phone-chat-suggestions-kept', async () => {
     // Counterpart to mark's client-mobile-chat-suggestions-landlord-voiced
     // (r544): staff keep the BGP-voiced starter prompts on the phone.
-    await page.setViewportSize({ width: 390, height: 844 });
+    // The phone shell needs a touch UA, not just a narrow viewport
+    // (use-mobile: narrow AND isTouchDevice) — resizing the desktop context
+    // leaves /messages redirecting to the desktop /chatbgp page (r545).
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
     try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
       // The starter prompts live on the AI thread's empty state, reached the
       // way a user reaches it: Messages -> the pinned ChatBGP row. A bare
       // /chatbgp?ask=1 open does not render them.
-      await page.goto(`${BASE}/messages`);
-      await page.waitForLoadState('networkidle').catch(() => {});
-      await page.waitForTimeout(2500);
-      await page.locator('[data-testid="mobile-pinned-chatbgp"]').first().click();
-      await page.waitForTimeout(2500);
-      const chips = await page.evaluate(() =>
+      await mobGoto(mob, `${BASE}/messages`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(2500);
+      await mob.locator('[data-testid="mobile-pinned-chatbgp"]').first().click();
+      await mob.waitForTimeout(2500);
+      const chips = await mob.evaluate(() =>
         Array.from(document.querySelectorAll('[data-testid^="mobile-suggestion-"]')).map(el => el.textContent.trim()));
       if (chips.length < 3) throw new Error(`staff phone chat lost its starter prompts (${chips.length})`);
       if (!chips.some(c => /HOTs/i.test(c)) || !chips.some(c => /CRM contacts/i.test(c))) {
         throw new Error(`staff phone starter prompts no longer BGP-voiced: ${chips.join(' | ')}`);
       }
     } finally {
-      await page.setViewportSize({ width: 1440, height: 900 });
+      await mob.close();
+      await mobCtx.close();
     }
   });
 
