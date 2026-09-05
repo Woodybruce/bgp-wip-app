@@ -88,6 +88,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r552 · 2026-09-05 · FULL (rotation #3 Landsec client MOBILE 390px) — ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; wrote .env at
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke, server started as
+  `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r551, CONFIRMED with a full three-chunk pass of my own
+  (QA_CROSS_FILE set, r551's two new scenarios in): victoria 2x400, mark
+  9x403 + 1x503, woody/nick/sam 0 — exactly the r537-r551 signature. All 12
+  logged issues are listed noise (rocketreach-400 + investment-tracker-400,
+  deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted
+  regression.
+- Triage: nothing outside the noise list. Journey next (client phone 390px).
+
 ### r551 · 2026-09-05 · LIGHT (r550 had the journey) · 2 bugs fixed, one family — the tenancy schedule could not read its own Excel export · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; wrote .env at
