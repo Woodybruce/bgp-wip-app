@@ -88,6 +88,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r550 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; wrote .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
+  dev server `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r549, CONFIRMED. Two-bot round 550 in three chunks with
+  QA_CROSS_FILE: victoria 2x400 (incl. [ok] staff-comp-ner-surfaces-agree),
+  mark 9x403 + 1x503, woody/nick/sam 0 — exactly the r537-r549 signature.
+  All 12 logged issues are listed noise (rocketreach-400 + investment-tracker-400,
+  deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted regression.
+- Journey (Landsec client desktop, mark.warne@) in progress.
+
 ### r549 · 2026-09-05 · LIGHT (r548 had the journey) · 2 bugs fixed, one family — a comp showed THREE different net effective rents on three surfaces · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs). NOTE for fresh containers: the dev server must be started
