@@ -88,6 +88,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r559 · 2026-09-05 · LIGHT (r558 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
+  two-bot in three chunks via qa/with-server.sh with QA_CROSS_FILE set).
+  Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r558, CONFIRMED with a full three-chunk pass of my own:
+  every scenario [ok], tally victoria 2x400 / mark 9x403 + 1x503 /
+  woody,nick,sam 0 — the r537-r558 signature exactly, eighteenth clean
+  hand-off. All 12 logged issues are listed noise. 0 app bugs from the
+  scripted regression.
+- Focus this round: sweep the app's deep links / pre-filtered navigations
+  (dashboard tiles, property lozenges, notification rows, search results)
+  and check each lands where its label promises — the r558 angle.
+
 ### r558 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · 1 bug fixed — the Letting Tracker ignored every status deep link and was stuck in "All statuses" mode · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
