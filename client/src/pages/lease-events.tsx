@@ -232,7 +232,13 @@ export default function LeaseEventsPage({ embedded }: { embedded?: boolean } = {
                   <span className="text-sm font-medium min-w-0 truncate">{ev.tenant || "—"}</span>
                   <div className="text-right shrink-0">
                     {(ev.currentRent || ev.estimatedErv) ? (
-                      <p className="text-sm font-mono tabular-nums font-semibold">{ev.currentRent || ev.estimatedErv}</p>
+                      /* Label which figure the bold number is — an event with
+                         only an ERV used to read as passing rent (the desktop
+                         table has said "Rent:" / "ERV:" all along). */
+                      <p className="text-sm font-mono tabular-nums font-semibold">
+                        <span className="text-[10px] font-sans font-normal text-muted-foreground mr-1">{ev.currentRent ? "Rent" : "ERV"}</span>
+                        {ev.currentRent || ev.estimatedErv}
+                      </p>
                     ) : (
                       <p className="text-sm text-muted-foreground">—</p>
                     )}

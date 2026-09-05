@@ -3255,6 +3255,79 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  await step(page, p, 'staff-reload-shows-the-saved-value', async () => {
+    // r557: the persisted react-query cache (localStorage) restored with the
+    // dataUpdatedAt of the fetch it captured, so a snapshot written seconds
+    // before a change counted as FRESH under the 15s staleTime — the board
+    // repainted the PRE-change value and fired NO request at all, so it never
+    // corrected itself ("my change went back"). A reload must show what the
+    // database holds, and must actually ask for it.
+    const name = `QA-PROBE cache R${ROUND}`;
+    const when = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+    const id = await page.evaluate(async ([name, when]) => {
+      const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/lease-events', { method: 'POST', headers: h, body: JSON.stringify({ tenant: name, eventType: 'Rent Review', status: 'Monitoring', sourceEvidence: 'Manual', eventDate: when }) });
+      return res.ok ? (await res.json()).id : null;
+    }, [name, when]);
+    if (!id) throw new Error('could not create the probe lease event');
+    try {
+      await page.goto(`${BASE}/lease-events`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await page.waitForLoadState('networkidle').catch(() => {});
+      const row = () => page.locator('table tbody tr', { hasText: name }).first();
+      await row().waitFor({ timeout: 30000 });
+      await page.waitForTimeout(3000); // let the persister flush a pre-change snapshot
+      let gets = 0;
+      const count = (rq) => { if (rq.method() === 'GET' && rq.url().endsWith('/api/lease-events')) gets++; };
+      const patched = await page.evaluate(async (id) => {
+        const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+        return (await fetch(`/api/lease-events/${id}`, { method: 'PATCH', headers: h, body: JSON.stringify({ status: 'Contacted' }) })).status;
+      }, id);
+      if (patched !== 200) throw new Error(`status write ${patched}`);
+      page.on('request', count);
+      await page.reload().catch(() => {});
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await row().waitFor({ timeout: 30000 });
+      await page.waitForTimeout(1500);
+      page.off('request', count);
+      const shown = (await row().locator('button[role="combobox"]').nth(0).innerText()).trim();
+      if (shown !== 'Contacted') throw new Error(`reload painted the stale value: board "${shown}", database "Contacted"`);
+      if (!gets) throw new Error('reload never asked the server for /api/lease-events (restored cache counted as fresh)');
+    } finally {
+      await page.evaluate(async (id) => {
+        await fetch(`/api/lease-events/${id}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      }, id).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-phone-lease-event-money-labelled', async () => {
+    // r557: the phone card printed `currentRent || estimatedErv` as one
+    // unlabelled bold number, so an event holding only an ERV read as passing
+    // rent. Every money figure on the card must say which one it is.
+    const name = `QA-PROBE erv only R${ROUND}`;
+    const when = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+    const id = await page.evaluate(async ([name, when]) => {
+      const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/lease-events', { method: 'POST', headers: h, body: JSON.stringify({ tenant: name, eventType: 'Rent Review', status: 'Monitoring', sourceEvidence: 'Manual', eventDate: when, estimatedErv: '£95,000' }) });
+      return res.ok ? (await res.json()).id : null;
+    }, [name, when]);
+    if (!id) throw new Error('could not create the probe lease event');
+    await page.setViewportSize({ width: 390, height: 844 });
+    try {
+      await page.goto(`${BASE}/lease-events`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await page.waitForLoadState('networkidle').catch(() => {});
+      const card = page.locator(`[data-testid="lease-event-card-${id}"]`).first();
+      await card.waitFor({ timeout: 30000 });
+      const txt = (await card.innerText()).replace(/\s+/g, ' ');
+      if (!/ERV\s*£95,000/.test(txt)) throw new Error(`phone card does not label its ERV: ${txt.slice(0, 160)}`);
+      if (/Rent\s*£/i.test(txt)) throw new Error(`phone card calls an ERV-only figure rent: ${txt.slice(0, 160)}`);
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.evaluate(async (id) => {
+        await fetch(`/api/lease-events/${id}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      }, id).catch(() => {});
+    }
+  });
+
 }
 
 async function markRound(page, cross) {

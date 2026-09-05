@@ -36,7 +36,7 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM user_tasks   WHERE title LIKE 'QA-PROBE task%';
   -- staff-lease-event-create-and-track deletes its own probe (r556); sweep
   -- survivors of a mid-scenario death.
-  DELETE FROM lease_events WHERE tenant LIKE 'QA-PROBE lease event%';
+  DELETE FROM lease_events WHERE tenant LIKE 'QA-PROBE %';
   DELETE FROM crm_requirements_leasing WHERE name LIKE 'QA-REQ%' OR name LIKE 'QA-PROBE req%';
   DELETE FROM unit_target_operators WHERE brief_id IN (SELECT id FROM unit_briefs WHERE title LIKE 'QA Brief%');
   -- staff-unit-brief-keeps-every-target cleans up after itself (r540); sweep
