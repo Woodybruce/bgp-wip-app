@@ -88,15 +88,80 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r541 · 2026-09-05 · LIGHT — ROUND IN PROGRESS
+### r541 · 2026-09-05 · LIGHT (r540 had the journey) · 3 bugs fixed, one family — invalid DOM nesting in interactive controls · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
-  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
+  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before,
+  and GREEN 42/0 with FRESH_BUILD=1 after the fixes.
 - Two-bot round 541, all three chunks, each exit 0 first run. Signatures EXACT
   vs r537-r540: victoria 2x400, mark 9x403 + 1x503, woody/nick/sam 0. All
   listed noise. 0 new issues from the scripted sweep.
-- Triage list for this round (LIGHT, no journey): (1) visually verify r540's
-  suggest-targets-dialog fix — find the property units panel; (2) the phone
-  Messages nested-<button> validateDOMNesting warning (capped spend).
+- CARRIED ITEM 1 — SETTLED, and the answer is not where r538-r540 were
+  looking. The Suggest-Targets dialog IS reachable: /deals/letting (Letting
+  Tracker), the ghost "* AI" button in a unit row's Target Tenant cell
+  (`button-suggest-targets-<unitId>`), which renders ONLY while that unit has
+  ZERO targets. Got it on screen and added two operators from it — screenshots
+  qa/smoke-shots/r541-01-suggest-dialog-pre.png (two rows) and
+  r541-02-both-targeted-pre.png (both rows "targeted", toast, one brief).
+  The tracker's own path (addUnitTarget -> ensureBriefFor) HELD: 1 brief, both
+  targets, confirmed in the DB and on GET /available-units/:id/brief. It also
+  held under a deliberate 60ms double-click of both "+ Target" buttons, so the
+  stale-`briefByUnit`-cache race I suspected is not reachable in practice.
+- CARRIED ITEM 1, the honest part: the property-page mount r540 hunted for is
+  DEAD CODE. `LeasingTrackerSummary` (client/src/pages/properties.tsx:3957) is
+  exported but rendered nowhere — property-detail.tsx:917 is a comment saying
+  it was removed. That mount is the ONLY caller that omits `onAdd`, so r540's
+  BUG FIXED 2 (the defaultAdd brief-reuse guard) is correct but currently
+  unreachable from the UI. Leave the fix in; it is the right behaviour if that
+  panel ever comes back. The dialog's own header comment still says
+  "letting tracker, property page" — stale, not worth a commit on its own.
+- METHOD that cracked both carried items: hook `page.on('console')`, match
+  /validateDOMNesting/, and `await arg.jsonValue()` each of `msg.args()` —
+  arg[1] is the offending tag, arg[2] the illegal parent, arg[3] the full
+  React component stack with src line numbers. Three rounds of guessing;
+  30 seconds with the args.
+- BUG FIXED 1 (client/src/components/suggest-targets-dialog.tsx) — found while
+  getting the dialog on screen: each suggestion's title was a <p> containing a
+  <Badge>, and Badge renders a <div>. "<div> cannot appear as a descendant of
+  <p>" on every open of the dialog. Title element is now a div; layout
+  unchanged (verified on the same screenshot).
+- BUG FIXED 2 (client/src/components/mobile-app.tsx, MobileChatView header) —
+  the carried phone-Messages warning, located exactly: the group header's
+  `button-mobile-group-settings` wrapped `renderHeaderAvatar()`, which for a
+  GROUP returns the `button-group-pic` button. Nested <button>. Fixed by making
+  the avatar a SIBLING of the settings button inside a flex row, not a child.
+  VERIFIED VISUALLY: identical phone walk (390px, /messages -> New Group ->
+  pick members -> Start Chat) logs no validateDOMNesting at all afterwards, and
+  a real group thread's header still renders avatar + camera badge + title +
+  member line (qa/smoke-shots/r541-12-phone-chat-thread-group.png).
+  Route note for the next round: /messages IS the phone Messages screen (App
+  hands it to MobileApp at mobile width); it is /m/messages that 404s.
+- BUG FIXED 3 (client/src/components/chat-panel.tsx, ThreadCard) — same family,
+  found BY the new scenario the moment it visited /messages: the hover-revealed
+  `button-delete-thread-<id>` sits inside the row's own <button>, so DESKTOP
+  Messages logged the nested-<button> warning once per thread row (34 in one
+  pass). Row root is now a div with role="button"/tabIndex/onKeyDown, keeping
+  keyboard operation and the exact layout. Counted as one family with 1 and 2
+  rather than a third independent fix; flagging it here because it does put the
+  round at three files.
+- Two-bot: +1 victoria scenario, staff-phone-chat-no-nested-controls — phone
+  viewport, /messages, open the first thread, assert
+  `document.querySelectorAll('button button, a a')` is empty, restore 1440px.
+  It was RED on first run (via the console collector, 34 console-errors) and is
+  green now; victoria is back to exactly 2x400.
+- Suggestions: UX-NOTES 185 (group header prints the creator twice —
+  "Victoria, Alex, Cara, Victoria") and 186 (live-requirement pitch rows are
+  titled with the REQUIREMENT name, so a brief can end up naming a requirement
+  instead of a brand).
+- Still open/unbuilt, do not report again: UX #150, #157, #162, #170, #171,
+  #172, #174-#186 (171 = client PUT persists dealType/team/leaseLength/
+  landlordId — needs Woody).
+- New flakes: none. The /login cold-vite flake DID recur twice (both scripted
+  walks); the fix that works is wait for networkidle + ~2.5s, then loop up to
+  4x clicking the "Client / guest sign in" reveal until an email field exists.
+- Deferred: nothing new. Real-device keyboard-up composer check (r405) still
+  open for Woody.
+- Next: r541 was LIGHT -> r542 takes the journey, rotation #2 Landsec client
+  desktop.
 
 ### r540 · 2026-09-05 · FULL (rotation #1 staff desktop 1440px) · 2 bugs fixed — stale Fits column + Suggest-Targets minting a brief per brand · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas

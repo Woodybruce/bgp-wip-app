@@ -13,6 +13,27 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+185. 2026-09-05 · BGP staff / phone 390px (QA r541) · opening a group chat
+   just created from Messages -> New Group · the member sub-line under the
+   group name reads "Victoria, Alex, Cara, Victoria · Tap to edit" — the
+   creator is printed once from `creatorName` and again from the members
+   list, so whoever made the group sees their own name twice, and the
+   duplicate eats one of the three name slots before the "+N" overflow.
+   Suggestion: drop the creator from the members slice before joining (or
+   drop the separate `creatorName` prefix and let the members list speak),
+   so three DISTINCT people show before the "+N".
+
+186. 2026-09-05 · BGP staff / desktop (QA r541) · asking the Letting
+   Tracker's AI "who should we pitch this unit to" · the suggestion rows
+   sourced from live requirements are titled with the REQUIREMENT's name,
+   not the operator's — a requirement recorded as "Unit 12 relocation" or
+   "2026 expansion" shows up in the pitch list under that name, and the
+   target it writes onto the unit's brief carries it too, so the brief ends
+   up naming a requirement instead of a brand. Suggestion: title live-
+   requirement suggestions with the requirement's company name where it has
+   one (`company_id` is already selected), keeping the requirement name as
+   the reason sub-line.
+
 183. 2026-09-05 · BGP staff / desktop (QA r540) · logging a new leasing
    requirement and expecting the Fits column to find space · the Add-
    requirement dialog's location input is a row of REGION chips (South East,

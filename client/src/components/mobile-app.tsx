@@ -2605,9 +2605,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             )}
             <div className="flex-1 min-w-0">
               {isGroup ? (
-                <button onClick={() => setShowGroupEdit(true)} className="flex items-center gap-3 w-full min-w-0 text-left" data-testid="button-mobile-group-settings">
+                // The group avatar is itself a button (it opens the
+                // group-pic picker), so it has to be a SIBLING of the
+                // group-settings button, never nested inside it — React
+                // warned "<button> cannot appear as a descendant of
+                // <button>" on every group thread (r541).
+                <div className="flex items-center gap-3 w-full min-w-0">
                   {renderHeaderAvatar()}
-                  <div className="flex-1 min-w-0">
+                  <button onClick={() => setShowGroupEdit(true)} className="flex-1 min-w-0 text-left" data-testid="button-mobile-group-settings">
                     <div className="text-[17px] font-semibold truncate">{threadTitle}</div>
                     {isGroup && threadMembers.length > 0 && (
                       <div className="text-xs text-white/60 truncate">
@@ -2616,8 +2621,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                         {" · Tap to edit"}
                       </div>
                     )}
-                  </div>
-                </button>
+                  </button>
+                </div>
               ) : (
                 <div className="flex items-center gap-3 w-full min-w-0">
                   {renderHeaderAvatar()}

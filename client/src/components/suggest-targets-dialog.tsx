@@ -82,13 +82,15 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
             {suggestions.map((s: any, i: number) => (
               <div key={`${s.companyId || s.name}-${i}`} className="flex items-center gap-2 border rounded-md px-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">
+                  {/* div, not <p> — Badge renders a div and React warns
+                      "<div> cannot appear as a descendant of <p>" (r541). */}
+                  <div className="text-sm font-medium truncate">
                     {s.name}
                     <Badge variant="outline" className={`ml-2 text-[9px] ${s.source === "live_requirement" ? "text-emerald-700 border-emerald-200" : "text-blue-700 border-blue-200"}`}>
                       {s.source === "live_requirement" ? "live requirement" : "brand"}
                     </Badge>
                     {s.aiScore != null && <span className="ml-2 text-[10px] text-muted-foreground tabular-nums">{s.aiScore}</span>}
-                  </p>
+                  </div>
                   <p className="text-[11px] text-muted-foreground truncate" title={s.reason || ""}>
                     {s.reason || [s.size, s.use, s.agent && `via ${s.agent}`].filter(Boolean).join(" · ")}
                   </p>

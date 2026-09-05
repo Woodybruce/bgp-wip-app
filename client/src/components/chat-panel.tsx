@@ -1089,9 +1089,16 @@ function ThreadCard({ thread, onClick, onDelete, currentUserId, userPics }: { th
   };
 
   return (
-    <button
+    // A div, not a <button> — the hover-revealed Delete control is itself a
+    // button and cannot legally live inside one (React warned "<button>
+    // cannot appear as a descendant of <button>" on every thread row, r541).
+    // role/tabIndex/onKeyDown keep the row keyboard-operable.
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-3 py-3 hover:bg-accent/50 transition-colors border-b border-border/50 group text-left`}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}
+      className={`w-full flex items-center gap-3 px-3 py-3 hover:bg-accent/50 transition-colors border-b border-border/50 group text-left cursor-pointer`}
       data-testid={`button-thread-${thread.id}`}
     >
       <div className="relative shrink-0">
@@ -1145,7 +1152,7 @@ function ThreadCard({ thread, onClick, onDelete, currentUserId, userPics }: { th
           </div>
         )}
       </div>
-    </button>
+    </div>
   );
 }
 

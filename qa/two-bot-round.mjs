@@ -2649,6 +2649,32 @@ async function victoriaRound(page, cross) {
       if (mine) await fetch(`${BASE}/api/unit-briefs/${briefId}`, { method: 'DELETE', headers: auth }).catch(() => {});
     }
   });
+
+  await step(page, p, 'staff-phone-chat-no-nested-controls', async () => {
+    // r541: the phone chat header nested the group-pic <button> INSIDE the
+    // group-settings <button> — invalid DOM that React warned about on every
+    // group thread. Nested interactive controls swallow taps unpredictably,
+    // so guard the whole phone chat surface, not just that one header.
+    await page.setViewportSize({ width: 390, height: 844 });
+    try {
+      await page.goto(`${BASE}/messages`);
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(2500);
+      const thread = page.locator('[data-testid^="mobile-thread-"]').first();
+      if (await thread.count()) {
+        await thread.click();
+        await page.waitForTimeout(2500);
+      }
+      const nested = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('button button, a a')).map(
+          (el) => `${el.tagName.toLowerCase()}[${el.getAttribute('data-testid') || el.className || ''}]`.slice(0, 80)
+        )
+      );
+      if (nested.length) throw new Error(`nested interactive controls on the phone chat surface: ${nested.join(', ')}`);
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 900 });
+    }
+  });
 }
 
 async function markRound(page, cross) {
