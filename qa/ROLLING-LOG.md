@@ -88,6 +88,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r554 · 2026-09-05 · FULL (rotation #4 BGP staff MOBILE 390px) — ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
+  server `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r553, CONFIRMED with a full three-chunk pass of my own
+  (QA_CROSS_FILE set): victoria 2x400, mark 9x403 + 1x503, woody/nick/sam 0 —
+  exactly the r537-r553 signature. Twelfth clean hand-off. Triage: all 12
+  logged issues are listed noise (rocketreach-400 + investment-tracker-400,
+  deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted
+  regression.
+- Journey next: Victoria on an iPhone context at 390px.
+
 ### r553 · 2026-09-05 · LIGHT (r552 had the journey) · 2 bugs fixed, one family — BGP's fee totals and its WIP-forecast month were on the client's Deals table · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
