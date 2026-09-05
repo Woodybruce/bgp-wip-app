@@ -13,6 +13,26 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+181. 2026-09-04 · BGP staff / desktop (QA r539) · looking at the Bluewater
+   Letting Tracker · three units show as two, three or four byte-identical
+   cards ('U062 Bluewater - Upper Level' ×4, 'L090 Bluewater' ×2, 'L130
+   Bluewater - Lower Level' ×2) because the tenancy schedule genuinely
+   carries the unit that many times. The projection now refuses to ADD a
+   twin (r539 fix), but nothing surfaces the ones already there — an agent
+   can't tell which card carries the viewings. Suggestion: flag same-name
+   cards on a property with a small "2 rows on the schedule" chip that opens
+   the existing tenancy merge tool, so a dirty imported schedule is visible
+   and fixable from where it hurts rather than only from the spine screen.
+
+182. 2026-09-04 · BGP staff / desktop (QA r539) · deleting a row from a
+   tenancy schedule · the delete cascade nulls the projection's
+   tenancy_unit_id but leaves the Letting Tracker card standing, now
+   attached to nothing. It is defensible (the card may own viewings), but it
+   is silent: the agent thinks they removed a unit and it stays on the
+   board. Suggestion: on tenancy-row delete, either say so in the toast
+   ("the tracker card stays — remove it separately") or offer to remove the
+   orphaned card when it has no viewings, offers or deal attached.
+
 180. 2026-09-04 · BGP staff / mobile 390px (QA r538) · standing in the mall
    logging a keen operator against unit L112 from the phone tracker · the
    Interest dialog's company picker is a popover anchored under its trigger,

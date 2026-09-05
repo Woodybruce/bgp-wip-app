@@ -88,17 +88,62 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r539 · 2026-09-04 · LIGHT (r538 had the journey) · ROUND IN PROGRESS
+### r539 · 2026-09-04 · LIGHT (r538 had the journey) · 1 bug fixed — duplicated tenancy rows spawned duplicate tracker cards · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once → run-smoke restore → seed-personas
-  into bgpsmoke). Regression: smoke GREEN 42/0.
+  into bgpsmoke). Regression: smoke GREEN 42/0. Dev server tsx against
+  bgpsmoke via qa/with-server.sh.
 - Two-bot round 539, all three chunks, each exit 0 first run. Signatures EXACT
   vs r537/r538: victoria 2×400, mark 9×403 + 1×503, woody/nick/sam 0. All
   listed noise. 0 new issues from the scripted sweep.
-- Triage list for this round (per parent notes): (1) r538 deferred
-  validateDOMNesting nested-button warning on the phone Messages → New Group
-  → Start Chat walk; (2) r538 deferred available_units doubled unit names —
-  fixture-only vs app should de-dupe; (3) the carried Bluewater tenancy SPINE
-  duplicates. Then a fresh surface if budget allows.
+- DEFERRED ITEM 1b + the carried Bluewater SPINE duplicates: SETTLED, and
+  they are one bug, not two. tenancy_schedule_units genuinely carries the
+  duplicates (U062 Upper Level ×4, L090 ×2, L130 ×2, SVU04 ×2 — the vacant
+  three are byte-identical rows). The APP then amplified them:
+  fanOutTenancyStatus keys its available_units / leasing_schedule_units
+  upsert on tenancy_unit_id ONLY, and its name-link adopt step only claims
+  rows with tenancy_unit_id IS NULL — so a sibling spine row's card is
+  invisible to it and each duplicate spine row minted its own card. The code
+  already documented the opposite intent ("No-op when a matching available /
+  leasing row already exists"); the guard was just incomplete.
+  ANSWER for Woody: the fixture data is dirty (that is real — Landsec sheet
+  rows repeated), AND the app should not have been re-projecting them.
+- BUG FIXED (server/unit-mirror.ts): before creating a projection row,
+  fanOutTenancyStatus now checks for an existing available_units /
+  leasing_schedule_units row on the same property with the same normalised
+  unit name and skips the insert. PROVEN both ways on the live app: adding a
+  5th duplicate-named spine row then re-syncing the property took Bluewater
+  76→77 cards (dup 4→5) on stashed pre-fix code, and 76→76 (dup 4→4) with
+  the fix. tsc clean. Visual re-check: /available and the Bluewater property
+  page render with 0 pageerrors (qa/smoke-shots/r539-tracker-bluewater.png,
+  r539-property.png).
+- NOT done, deliberately: the 8 duplicate cards already in the fixture are
+  left alone. They mirror real imported data and staff have the tenancy
+  merge tool; a QA round should not silently delete rows. Logged as UX 181.
+- Two-bot: +2 staff scenarios — staff-tenancy-dupe-no-second-tracker-card
+  (adds a duplicate-named spine row, asserts the tracker card count for that
+  name is unchanged, deletes the row) and staff-resync-mirror-is-idempotent
+  (two consecutive property re-syncs must not grow the card count). Both
+  green on the re-run; signature still 2×400.
+- DEFERRED ITEM 1a (validateDOMNesting nested <button> on the phone Messages
+  → New Group → Start Chat walk): NOT closed, still open and still cosmetic.
+  Read MobileNewGroupView in client/src/components/mobile-app.tsx — no nested
+  pair in that component (the member rows and team chips are flat buttons,
+  the footer is a single Button). Two browser attempts to catch the warning
+  with its React component stack cost more than they were worth: /m/messages
+  is NOT a route (it 404s to "Page not found" — the phone Messages screen is
+  bottom-bar state, not a URL), so the walk has to be driven by taps. Next
+  round: enter from the phone home shell, tap the Messages tab, and capture
+  console args (not just text) across the transition.
+- Suggestions: UX-NOTES 181 (surface same-name tracker cards with a chip
+  into the existing merge tool) and 182 (deleting a tenancy row silently
+  leaves its tracker card behind, unlinked — observed live this round).
+- Still open/unbuilt, do not report again: UX #150, #157, #162, #170, #171,
+  #172, #174, #175, #176, #177, #178, #179, #180 (171 = client PUT persists
+  dealType/team/leaseLength/landlordId — needs Woody).
+- New flakes: the /login guest form can miss its first click on a cold vite
+  chunk compile — two runs timed out on input-guest-email, the third passed
+  unchanged. Wait for the field, retry once, don't triage. Real-device
+  keyboard-up composer check (r405) still open for Woody.
 
 ### r538 · 2026-09-04 · FULL · staff MOBILE 390px journey · 0 bugs fixed (nothing broken found) · 3 suggestions
 - Bring-up: canonical recipe held (qa:pg once → run-smoke restore clean →
