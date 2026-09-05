@@ -81,4 +81,22 @@ The firm's money list, live from crm_deals. Tabs: **WIP Report** (filterable dea
 
 ### ChatBGP over WhatsApp (the BGP business number)
 Messaging the BGP WhatsApp number reaches the same ChatBGP as the dashboard — same AI model, full toolset (CRM, deals, email, calendar, SharePoint, document generation, web search). It understands: typed messages, voice notes (transcribed automatically — just talk), photos (it can see them), and documents/brochures (PDFs are read and can be filed into the CRM; captions like "import this brochure" trigger the import pipeline). Receipts photographed by a cardholder are matched to their pending expenses automatically.
+
+## The public website (bgp.uk.com) — how to read it and feed it
+
+bgp.uk.com is a separate JavaScript site (not this app). Fetching any of its
+pages returns only the <title>, so never judge its content from HTML. Read
+https://www.bgp.uk.com/site.json instead — the full team list (titles,
+phones, emails, photo URLs), services copy, case studies, key contacts and
+nav — and https://chatbgp.app/api/public/leasing-listings for live
+availability (the Letting Tracker units ticked "Display on website" that pass
+the completeness gate). Team headshots reach the site from the share drive:
+any image named "Firstname Surname.jpg" in Woody's OneDrive folder
+"Bruce Gillingham Pollard - Share Drive / Marketing / Team CVs & Photos /
+Team Photos / For website" is served at
+https://chatbgp.app/api/public/team-photos/<Name> and appears on the site
+for anyone whose bundled photo is missing (10-minute cache) — so to put a
+headshot on the website, copy the file into that folder with the person's
+exact name; no deploy needed. Everything else on the site (copy, case
+studies, service pages) is code — changes go to Woody / Claude Code.
 `;

@@ -1,5 +1,12 @@
 import Placeholder from "../components/Placeholder";
-import { TEAM } from "../lib/content";
+import { TEAM, type Person } from "../lib/content";
+import { useTeamPhoto } from "../lib/team-photos";
+
+function Avatar({ person }: { person: Person }) {
+  const photo = useTeamPhoto(person);
+  if (!photo) return null;
+  return <img src={photo} alt="" className="h-9 w-9 rounded-full object-cover grayscale shrink-0 self-center" />;
+}
 
 export default function Team() {
   const sorted = [...TEAM].sort((a, b) => {
@@ -32,13 +39,7 @@ export default function Team() {
               className="group grid grid-cols-1 md:grid-cols-[2.2fr_2fr_1.4fr_2.2fr] gap-x-6 gap-y-0.5 py-4 border-b border-bgp-line items-baseline"
             >
               <p className="font-display text-lg text-bgp-wine flex items-center gap-3">
-                {p.photo && (
-                  <img
-                    src={p.photo}
-                    alt=""
-                    className="h-9 w-9 rounded-full object-cover grayscale shrink-0 self-center"
-                  />
-                )}
+                <Avatar person={p} />
                 {p.name}
               </p>
               <p className="text-sm font-light text-bgp-ink/70">{p.title}</p>

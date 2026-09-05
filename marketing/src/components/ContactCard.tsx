@@ -1,4 +1,5 @@
 import type { Person } from "../lib/content";
+import { useTeamPhoto } from "../lib/team-photos";
 
 // Initials monogram on blush when no headshot exists — an empty grey
 // placeholder frame read as unfinished, which undermined the premium feel.
@@ -12,11 +13,12 @@ function Monogram({ name }: { name: string }) {
 }
 
 export default function ContactCard({ person }: { person: Person }) {
+  const photo = useTeamPhoto(person);
   return (
     <div className="w-full group">
       <div className="img-frame">
-        {person.photo ? (
-          <img src={person.photo} alt={person.name} className="aspect-[3/4] w-full object-cover grayscale" />
+        {photo ? (
+          <img src={photo} alt={person.name} className="aspect-[3/4] w-full object-cover grayscale" />
         ) : (
           <Monogram name={person.name} />
         )}

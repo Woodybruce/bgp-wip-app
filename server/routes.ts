@@ -3917,6 +3917,86 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     };
   };
 
+  // Team headshots for bgp.uk.com, read straight from the share drive's
+  // "For website" folder (app-only Graph token). Drop "Firstname Surname.jpg"
+  // in that folder and the site picks it up — no deploy. Listing cached 10
+  // min, image bytes 1 h; both degrade to empty/404 if Graph is unavailable.
+  const TEAM_PHOTOS_DRIVE_ID = process.env.TEAM_PHOTOS_DRIVE_ID || "b!_EckNDf-lUG0T_MQjE7Nqo-V_Y5rxp5Cp3bj2IIbLO3LyUrmoUjMSouD_tbkxpCE";
+  const TEAM_PHOTOS_FOLDER = process.env.TEAM_PHOTOS_FOLDER || "Bruce Gillingham Pollard - Share Drive/Marketing/Team CVs & Photos/Team Photos/For website";
+  type TeamPhoto = { id: string; file: string; name: string; mimeType: string; size: number; modified: string };
+  let teamPhotoList: { at: number; rows: TeamPhoto[] } | null = null;
+  const teamPhotoBytes = new Map<string, { at: number; buf: Buffer; mime: string }>();
+  const normName = (s: string) => s.toLowerCase().replace(/\.[a-z0-9]+$/, "").replace(/\b(bw|b&w|mono)\b/g, "").replace(/[^a-z]/g, "");
+  const listTeamPhotos = async (): Promise<TeamPhoto[]> => {
+    if (teamPhotoList && Date.now() - teamPhotoList.at < 10 * 60_000) return teamPhotoList.rows;
+    const { getAppGraphToken } = await import("./microsoft");
+    const token = await getAppGraphToken();
+    if (!token) return teamPhotoList?.rows || [];
+    const path = encodeURIComponent(TEAM_PHOTOS_FOLDER).replace(/%2F/g, "/");
+    const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${TEAM_PHOTOS_DRIVE_ID}/root:/${path}:/children?$top=200&$select=id,name,file,size,lastModifiedDateTime`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) {
+      console.warn("[team-photos] Graph list failed:", r.status, (await r.text()).slice(0, 200));
+      return teamPhotoList?.rows || [];
+    }
+    const j: any = await r.json();
+    const rows: TeamPhoto[] = (j.value || [])
+      .filter((it: any) => it.file && String(it.file.mimeType || "").startsWith("image/"))
+      .map((it: any) => ({
+        id: it.id,
+        file: it.name,
+        name: it.name.replace(/\.[a-z0-9]+$/i, "").replace(/\s*\b(BW|B&W|Mono)\b\s*/gi, " ").trim(),
+        mimeType: it.file.mimeType,
+        size: it.size,
+        modified: it.lastModifiedDateTime,
+      }));
+    teamPhotoList = { at: Date.now(), rows };
+    return rows;
+  };
+
+  app.get("/api/public/team-photos", async (_req, res) => {
+    try {
+      const rows = await listTeamPhotos();
+      res.header("Cache-Control", "public, max-age=600");
+      res.json(rows.map(r => ({ name: r.name, file: r.file, url: `/api/public/team-photos/${encodeURIComponent(r.name)}`, modified: r.modified })));
+    } catch (err: any) {
+      console.error("[team-photos] list error:", err?.message);
+      res.json([]);
+    }
+  });
+
+  app.get("/api/public/team-photos/:name", async (req, res) => {
+    try {
+      const want = normName(String(req.params.name || ""));
+      const rows = await listTeamPhotos();
+      const hit = rows.find(r => normName(r.name) === want) || rows.find(r => normName(r.file) === want);
+      if (!hit) return res.status(404).end();
+      const cached = teamPhotoBytes.get(hit.id);
+      if (cached && Date.now() - cached.at < 60 * 60_000) {
+        res.header("Content-Type", cached.mime);
+        res.header("Cache-Control", "public, max-age=3600");
+        return res.send(cached.buf);
+      }
+      const { getAppGraphToken } = await import("./microsoft");
+      const token = await getAppGraphToken();
+      if (!token) return res.status(503).end();
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${TEAM_PHOTOS_DRIVE_ID}/items/${hit.id}/content`, {
+        headers: { Authorization: `Bearer ${token}` },
+        redirect: "follow",
+      });
+      if (!r.ok) return res.status(404).end();
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length < 8 * 1024 * 1024) teamPhotoBytes.set(hit.id, { at: Date.now(), buf, mime: hit.mimeType });
+      res.header("Content-Type", hit.mimeType);
+      res.header("Cache-Control", "public, max-age=3600");
+      res.send(buf);
+    } catch (err: any) {
+      console.error("[team-photos] fetch error:", err?.message);
+      res.status(500).end();
+    }
+  });
+
   app.get("/api/public/leasing-listings", async (_req, res) => {
     try {
       const { availableUnits, crmProperties, propertyUnits, unitMarketingFiles } = await import("@shared/schema");
