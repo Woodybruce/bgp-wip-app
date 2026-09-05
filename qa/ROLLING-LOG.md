@@ -88,6 +88,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r542 · 2026-09-05 · ROUND IN PROGRESS · FULL (rotation #2 Landsec client desktop 1440px)
+- Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
+  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
+- Two-bot round 542 by chunk. victoria EXACT baseline (2x400). woody,nick,sam
+  EXACT baseline (0). mark chunk ran WITHOUT QA_CROSS_FILE (my miss) so it
+  read 12: 8x403 + 1x503 + 1x404 + 2 flow-failures. At least one is a proven
+  chunking artefact — client-brief-target-scope asserts `cross.briefId`, which
+  is written by victoria's staff-brief-target-create, so mark-in-isolation
+  can never satisfy it (two-bot-round.mjs:6458). Re-running victoria,mark in
+  one process to get the true joint signature; result in the final entry.
+- Journey pending: Mark Warne @1440px.
+
 ### r541 · 2026-09-05 · LIGHT (r540 had the journey) · 3 bugs fixed, one family — invalid DOM nesting in interactive controls · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
   into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before,
