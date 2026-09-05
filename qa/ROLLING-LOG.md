@@ -88,20 +88,86 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r551 · 2026-09-05 · LIGHT (r550 had the journey) · ROUND IN PROGRESS
+### r551 · 2026-09-05 · LIGHT (r550 had the journey) · 2 bugs fixed, one family — the tenancy schedule could not read its own Excel export · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; wrote .env at
   postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke, server started as
-  `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0.
+  `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0
+  before, and GREEN 42/0 with FRESH_BUILD=1 after the fixes.
 - CARRY-FORWARD FROM r550, CONFIRMED with a full three-chunk pass of my own
   (QA_CROSS_FILE set): victoria 2x400, mark 9x403 + 1x503, woody/nick/sam 0 —
   exactly the r537-r550 signature. All 12 logged issues are listed noise
   (rocketreach-400 + investment-tracker-400, deliberate client 403 gates,
-  keyless-AI 503). 0 app bugs from the scripted regression.
-- Triage list: nothing outstanding from the scripted regression. LIGHT round,
-  so no journey; spending the time on an under-worked surface — the tenancy
-  schedule IMPORT/merge side (r550 covered read + export, import untouched).
-- Round in progress; this entry will be replaced by the final one.
+  keyless-AI 503). 0 app bugs from the scripted regression. Signature held
+  unchanged after the fixes with the 2 new scenarios in.
+- LIGHT round, no journey. Spent it on an under-worked surface named by the
+  hand-off: the tenancy schedule IMPORT/merge side (r550 did the read side and
+  the export; the import was untouched). Did the real staff task rather than
+  loading the screen — pressed Excel, then fed that exact file back through
+  Import, which is what a user does after tidying a rent roll in Excel.
+  Both bugs fell straight out of it. Scripts qa/r551-roundtrip.mjs +
+  qa/r551-verify.mjs, shots qa/smoke-shots/r551v-board-*.png.
+- BUGS FIXED (2, one family) — the schedule could not survive its own export.
+  1. server/tenancy-schedule.ts — the export ships areas as "Basement (GIA)" /
+     "Ground (GIA)" / "GIA" / "NIA" / "ITZA / ITGF" while HEADER_ALIASES still
+     said "basement sq ft gia" / "gia sq ft" / "nia sq ft" / "itza itgf sq ft",
+     so 13 real columns came back unrecognised and every area was blanked on
+     re-import: Bluewater's 137 units with an NIA went to 0 (MSU4 lost 90,793
+     sq ft), plus Break Details. That is the sq ft the whole rent roll's psf
+     maths hangs off, and the UI reports it as one line inside a toast that
+     then fades. Fixed structurally rather than by hand: registerExportHeaderAliases()
+     derives an alias from every EXPORT_COLUMNS label at module load, so the
+     two sides cannot drift again when a column is renamed. Hand-written
+     aliases still win — they carry feed-specific meaning (Landsec's "Target
+     Rent" is an ERV, not passing rent).
+  2. Same file — the export's TOTAL row imported as a LEASE. "TOTAL" lands in
+     the tenant column, so hasUnit was truthy and it inserted a tenant called
+     TOTAL, status Occupied, carrying the portfolio's summed ERV 27,301,008,
+     service charge 11,370,076 and rates 12,415,721 as if it were one shop.
+     Bluewater went 200 rows -> 201, and the mirror fanned it out to the
+     leasing board as a NAMELESS row with 27.3m of rent_pa (confirmed in
+     leasing_schedule_units). Import now skips a totals row — no unit number
+     plus a tenant reading total/totals/sub-total/grand total, which is the
+     general rent-roll convention, not just our own label.
+  VERIFIED LIVE before and after, same round trip both times: unmatched
+  headers 14 -> 1 (just "#", a row-number column with no field), NIA-filled
+  rows 0 -> 137, MSU4 back to 90,793 sq ft, board rows 201 -> 200, phantom
+  TOTAL leases 1 -> 0, nameless leasing-board rows 0. Read the board in the
+  browser after the re-import (/tenancy-schedule/:propertyId, 1440px): 200
+  units, TOTAL NIA 623,653 sq ft, no TOTAL row in the grid, h-overflow 0,
+  0 pageerrors, 0 non-2xx. tsc clean.
+- NOT A BUG, checked before reporting: the client gateway already blocks the
+  import for client logins. The handler itself carries NO scope check — a
+  clearExisting upload names any propertyId — but /api/tenancy-schedule/import-excel
+  does not match CLIENT_ALLOWED_WRITES ("/api/tenancy-schedule/unit" only), so
+  Mark gets "Read-only access for client accounts" 403 on his own property and
+  on a rival's. Pinned with a scenario rather than left to the allowlist's
+  shape. Also not a bug: "199 units imported" against a board of 200 is the
+  known tracker-projected vacancy (UX #202), and it reconciles.
+- Two-bot: +2 scenarios, one each side. victoria
+  staff-tenancy-reimports-its-own-export (exports Bluewater, re-imports that
+  file into a throwaway property, fails on ANY unrecognised export header
+  besides "#", on fewer than 20 rows keeping their NIA, or on a totals row
+  landing as a lease; cleans up the property either way) and mark
+  client-no-tenancy-import (his clearExisting upload must 403 on Bluewater AND
+  on the rival property — the staff-keeps counterpart being the victoria one
+  above; registered in NEGATIVE_PROBE_SCENARIOS). Both [ok] against the
+  rebuilt app.
+- Suggestions: UX-NOTES 203 (an import that drops 13 columns says so once, in
+  a toast that fades — make it a dismissible panel above the board) and 204
+  (Import silently means REPLACE ALL when the board has rows, so a partial
+  sheet deletes the other 199 with no warning or undo — ask on upload). Still
+  open and unbuilt, do not report again: UX #150, #157, #162, #170, #171,
+  #172, #174-#202.
+- New flakes: none. Re-confirming: `pkill -f "server/index.ts"` exits 144 and
+  kills the calling chain — issue it alone, then relaunch. Route note for
+  future rounds: the full-page tenancy board is /tenancy-schedule/:propertyId
+  (there is no /property/:id — that 404s to "Page not found").
+- Next: r551 was LIGHT -> r552 FULL, rotation #3 Landsec client MOBILE 390px
+  (r550 took client desktop; r544 was the last client phone). Under-worked and
+  still unclaimed: ChatBGP as a working tool (ask it real questions, check the
+  answers AND its tool calls), Pathway / Why Buy generation, the client's
+  Files & data-room surfaces, Xero/invoicing, Image Studio generation.
 
 ### r550 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · 2 bugs fixed, one family — the tenancy schedule's unexpired term is MONTHS beside a Term in YEARS, and the Excel export disagreed with the board · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

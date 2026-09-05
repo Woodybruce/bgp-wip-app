@@ -696,6 +696,24 @@ const HEADER_ALIASES: Record<string, string> = {
   "1954 act": "outside_lt_act",
 };
 
+// The commonest sheet anyone re-imports is one WE exported — a user
+// downloads the rent roll, tidies it in Excel and uploads it again. Every
+// export label therefore has to map back to its own field, and hand-written
+// aliases drift the moment a column is renamed: the area block shipped as
+// "Basement (GIA)" / "GIA" / "NIA" / "ITZA / ITGF" while the aliases still
+// said "basement sq ft gia", so a round trip silently blanked the areas on
+// every row. Registering EXPORT_COLUMNS as aliases keeps the two sides tied
+// together (hand-written entries above still win — they carry feed-specific
+// meaning, e.g. Landsec's "Target Rent" is an ERV).
+function registerExportHeaderAliases() {
+  for (const col of EXPORT_COLUMNS) {
+    if (col.field.startsWith("__")) continue;
+    const norm = normaliseHeader(col.label);
+    if (!norm || HEADER_ALIASES[norm]) continue;
+    HEADER_ALIASES[norm] = col.field;
+  }
+}
+
 router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("file"), async (req: any, res) => {
   try {
     const pool = await getPool();
@@ -853,6 +871,15 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
         else if (lb) rec.break_type = "L";
       }
 
+      // Totals row — our own export writes "TOTAL" into the tenant column
+      // with no unit, and most third-party rent rolls end the same way.
+      // Without this it imported as a lease: a tenant called TOTAL, status
+      // Occupied, carrying the portfolio's summed ERV/service charge/rates
+      // (£27.3m at Bluewater), and the mirror fanned it out to the leasing
+      // board as a nameless row with £27.3m of rent.
+      const totalsLabel = String(rec.tenant_name ?? rec.unit_number ?? "").trim();
+      if (!rec.unit_number && /^(grand\s+)?(sub[-\s]?)?totals?$/i.test(totalsLabel)) continue;
+
       // Grouping row carry-forward — if only the grouping cell has a value
       // and there's no tenant or unit, treat as a band header.
       const hasUnit = rec.unit_number || rec.tenant_name;
@@ -1000,6 +1027,8 @@ const EXPORT_COLUMNS: Array<{ field: string; label: string; band: string; width:
   { field: "target_tenants",        label: "Target Tenants",      band: "Comments", width: 28 },
   { field: "underwriting_comments", label: "Underwriting Comments", band: "Comments", width: 28 },
 ];
+
+registerExportHeaderAliases();
 
 router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAuth, async (req, res) => {
   try {

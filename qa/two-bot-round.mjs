@@ -75,7 +75,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'rival-comp-files-and-reqinv-guard', 'rival-chat-media-and-deal-subreads-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard', 'staff-crm-leads-and-packs-kept']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-no-tenancy-import', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'rival-comp-files-and-reqinv-guard', 'rival-chat-media-and-deal-subreads-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard', 'staff-crm-leads-and-packs-kept']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -2624,6 +2624,51 @@ async function victoriaRound(page, cross) {
     if (Number(total[ci.unexp]) > 0) throw new Error(`export TOTAL row still sums the unexpired-term column (${total[ci.unexp]})`);
   });
 
+  await step(page, p, 'staff-tenancy-reimports-its-own-export', async () => {
+    // r551: the commonest sheet anyone uploads is one we exported — download
+    // the rent roll, tidy it in Excel, upload it again. Two things broke that
+    // round trip. (a) The export shipped areas as "Basement (GIA)" / "GIA" /
+    // "NIA" / "ITZA / ITGF" while the import aliases still said
+    // "basement sq ft gia", so 13 columns came back unrecognised and every
+    // area was silently blanked — 137 Bluewater units lost their NIA, the
+    // sq ft the whole rent roll's psf maths hangs off. (b) The export's TOTAL
+    // row imported as a LEASE: a tenant called TOTAL, status Occupied,
+    // carrying the portfolio's summed ERV (£27.3m), which the mirror then fanned
+    // out to the leasing board as a nameless £27.3m row. Import aliases are now
+    // derived from EXPORT_COLUMNS so the two sides can't drift again.
+    // Imported into a throwaway property; cleaned up either way.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const jsonAuth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const ex = await fetch(`${BASE}/api/tenancy-schedule/property/${BLUEWATER}/export-excel`, auth);
+    if (ex.status !== 200) throw new Error(`export expected 200, got ${ex.status}`);
+    const sheet = Buffer.from(await ex.arrayBuffer());
+    const mk = await fetch(`${BASE}/api/crm/properties`, { method: 'POST', headers: jsonAuth, body: JSON.stringify({ name: `QA-RT Prop R${ROUND}` }) });
+    if (mk.status !== 200 && mk.status !== 201) throw new Error(`property POST expected 200/201, got ${mk.status}`);
+    const prop = await mk.json();
+    try {
+      const fd = new FormData();
+      fd.append('file', new Blob([sheet], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'rent-roll.xlsx');
+      fd.append('propertyId', prop.id);
+      fd.append('clearExisting', 'false');
+      const up = await fetch(`${BASE}/api/tenancy-schedule/import-excel`, { method: 'POST', headers: { Authorization: 'Bearer ' + page.qaToken }, body: fd });
+      if (up.status !== 200) throw new Error(`import expected 200, got ${up.status}`);
+      const res = await up.json();
+      // "#" is a row-number column and has no field; anything else unmatched
+      // means an export label and its import alias have drifted apart.
+      const stray = (res.unmatchedHeaders || []).filter((h) => String(h).trim() !== '#');
+      if (stray.length) throw new Error(`export headers the import no longer recognises: ${stray.join(', ')}`);
+      const back = await (await fetch(`${BASE}/api/tenancy-schedule/property/${prop.id}`, auth)).json();
+      if (!Array.isArray(back) || back.length < 20) throw new Error(`re-import landed ${back?.length} rows`);
+      const withArea = back.filter((u) => Number(u.nia_sqft) > 0).length;
+      if (withArea < 20) throw new Error(`only ${withArea} rows kept their NIA through the round trip — the area block dropped again`);
+      const totals = back.filter((u) => /^(grand\s+)?(sub[-\s]?)?totals?$/i.test(String(u.tenant_name || '').trim()));
+      if (totals.length) throw new Error(`the export's TOTAL row imported as a lease (erv ${totals[0].erv_pa})`);
+    } finally {
+      await fetch(`${BASE}/api/tenancy-schedule/bulk-delete`, { method: 'POST', headers: jsonAuth, body: JSON.stringify({ propertyId: prop.id }) }).catch(() => {});
+      await fetch(`${BASE}/api/crm/properties/${prop.id}`, { method: 'DELETE', headers: jsonAuth }).catch(() => {});
+    }
+  });
+
   await step(page, p, 'staff-evidence-plans-list', async () => {
     // r471: Evidence Plans (arrived via the d0b79fe JOGQK merge) — staff
     // list must stay reachable. Node-side fetch, no page-log noise.
@@ -3096,6 +3141,25 @@ async function markRound(page, cross) {
     if (r.dealId && r['related-events'] !== 200) throw new Error(`client locked out of its own deal related-events (${r['related-events']})`);
     cross.clientDealId = r.dealId;
     cross.mediaClientOwn = r.ownName;
+  });
+
+  await step(page, p, 'client-no-tenancy-import', async () => {
+    // r551 counterpart to staff-tenancy-reimports-its-own-export: the round
+    // trip is a STAFF tool. The import handler itself carries no scope check —
+    // a clearExisting upload would wipe a schedule — so the client gateway is
+    // the only thing standing between a landlord login and someone else's
+    // rent roll. Mark keeps his export (checked below); he must not get the
+    // import, on his own property or anyone's.
+    const auth = { Authorization: 'Bearer ' + page.qaToken };
+    const rivalProp = '99999999-1111-1111-1111-111111111111'; // qa/seed-personas.sql
+    for (const pid of [BLUEWATER, rivalProp]) {
+      const fd = new FormData();
+      fd.append('file', new Blob([Buffer.from('not a real sheet')], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'x.xlsx');
+      fd.append('propertyId', pid);
+      fd.append('clearExisting', 'true');
+      const r = await fetch(`${BASE}/api/tenancy-schedule/import-excel`, { method: 'POST', headers: auth, body: fd });
+      if (r.status !== 403) throw new Error(`client tenancy import on ${pid} expected 403, got ${r.status}`);
+    }
   });
 
   await step(page, p, 'client-tenancy-export-agrees-with-board', async () => {

@@ -13,6 +13,27 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+203. 2026-09-05 · BGP staff / desktop (QA r551) · Victoria uploaded a rent roll
+   through Import. The toast reported "200 units imported · Unrecognised
+   columns (not imported): #, Break Details, Basement (GIA), ... ITZA / ITGF"
+   — a one-line success message with a comma list of dropped columns buried at
+   the end of it, gone as soon as the toast faded. Fourteen columns of a
+   200-row sheet were discarded and nothing on the board afterwards said so.
+   Suggestion: make the import result a small dismissible panel above the
+   board rather than a toast — "200 rows imported · 13 columns not recognised"
+   with the list expandable, and keep it until dismissed. Anything that drops
+   data is worth a second look, and a toast is the one UI element a user
+   cannot go back to.
+
+204. 2026-09-05 · BGP staff / desktop (QA r551) · Import silently chooses
+   between adding to the schedule and replacing it: the client sends
+   clearExisting=true whenever the board already has rows, so uploading a
+   partial sheet (one zone, a handful of corrected units) deletes the other
+   199 rows with no warning and no undo. Nothing in the UI says "Import"
+   means "replace everything". Suggestion: ask on upload — "Replace all 200
+   rows, or add these to the schedule?" — defaulting to replace so today's
+   behaviour is one click away, and name the row count in the confirm.
+
 201. 2026-09-05 · Landsec client / desktop 1440px (QA r550) · Mark clicked the
    dashboard's "Expiring (6m) · 8" tile, picked a tenant off the popover and
    landed on the Bluewater tenancy schedule — all 200 rows, unfiltered, with
