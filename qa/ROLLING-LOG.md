@@ -140,7 +140,8 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   aml/deal/:id/upload-links — counterparty CDD evidence is staff-only). Both
   use node-side fetch so the deliberate 403s stay out of the page issue log
   and the signature holds. Both assertions verified live against the fixed
-  build (victoria 200 %PDF, mark 403 + 403); a full victoria+mark pass WITH
+  build, and both scenario bodies dry-run verbatim (victoria 200 %PDF 2961
+  bytes, mark 403 + 403); a full victoria+mark pass WITH
   the new pair was not re-run (budget) — next round should confirm
   2x400 / 9x403 + 1x503 once more.
 - NOT A BUG, checked before reporting: the KYC portal upload succeeds even
