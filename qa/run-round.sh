@@ -36,6 +36,9 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM user_tasks   WHERE title LIKE 'QA-PROBE task%';
   DELETE FROM crm_requirements_leasing WHERE name LIKE 'QA-REQ%' OR name LIKE 'QA-PROBE req%';
   DELETE FROM unit_target_operators WHERE brief_id IN (SELECT id FROM unit_briefs WHERE title LIKE 'QA Brief%');
+  -- staff-unit-brief-keeps-every-target cleans up after itself (r540); sweep
+  -- survivors of a mid-scenario death.
+  DELETE FROM unit_target_operators WHERE operator_name LIKE 'QA-PROBE Target%';
   DELETE FROM unit_briefs WHERE title LIKE 'QA Brief%';
   DELETE FROM image_studio_images WHERE file_name = 'qa-unit-photo.jpg';
   DELETE FROM image_studio_collections WHERE name LIKE 'QA Folder R%';

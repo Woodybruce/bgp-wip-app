@@ -13,6 +13,29 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+183. 2026-09-05 · BGP staff / desktop (QA r540) · logging a new leasing
+   requirement and expecting the Fits column to find space · the Add-
+   requirement dialog's location input is a row of REGION chips (South East,
+   Midlands, National, Scotland …), but the fits engine only counts a
+   location when the chip text appears literally inside the property name or
+   address (`propText.includes(l)` in the matches handler). "South East"
+   never appears in "Bluewater Shopping Centre, DA9 9ST", so a region-level
+   requirement gets zero location credit and rides on its size band alone —
+   and a national requirement scores the same at every property. Suggestion:
+   map each region chip to its postcode areas (or a region column on the
+   property) so regional demand actually scores, and let "National" match
+   everything rather than nothing.
+
+184. 2026-09-05 · BGP staff / desktop (QA r540) · a requirement saved with no
+   size band · the fits engine bails on any requirement it can't parse a
+   size out of (`parseReqSize` returns null → `continue`), so the row sits
+   at "—" fits forever with "Set use / Set type / Set size" placeholders and
+   never counts towards the "N / M fit your available units" KPI. Nothing on
+   the board says why. Suggestion: the size band is the one field fits
+   cannot work without — either make it required in the create dialog, or
+   render the Fits cell as "Add a size to match units" (clickable into the
+   inline size picker) instead of a bare dash.
+
 181. 2026-09-04 · BGP staff / desktop (QA r539) · looking at the Bluewater
    Letting Tracker · three units show as two, three or four byte-identical
    cards ('U062 Bluewater - Upper Level' ×4, 'L090 Bluewater' ×2, 'L130

@@ -88,13 +88,81 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r540 · 2026-09-05 · FULL (rotation #1 staff desktop) — ROUND IN PROGRESS
-- Bring-up: canonical recipe (qa:pg once → run-smoke restore → seed-personas
-  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
+### r540 · 2026-09-05 · FULL (rotation #1 staff desktop 1440px) · 2 bugs fixed — stale Fits column + Suggest-Targets minting a brief per brand · 2 suggestions
+- Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
+  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before,
+  and GREEN 42/0 with FRESH_BUILD=1 after the fixes.
 - Two-bot round 540, all three chunks, each exit 0 first run. Signatures EXACT
-  vs r537/r538/r539: victoria 2×400, mark 9×403 + 1×503, woody/nick/sam 0.
+  vs r537/r538/r539: victoria 2x400, mark 9x403 + 1x503, woody/nick/sam 0.
   All listed noise. 0 new issues from the scripted sweep.
-- Journey pending: Victoria staff desktop 1440px.
+- JOURNEY (Victoria @1440px, UI login via the Client/guest reveal): "an
+  operator called wanting space — log the requirement, see what fits, put
+  them on the unit's brief, check the brand before recommending". /login ->
+  dashboard -> /requirements (Add requirement dialog: company picker, use /
+  size-band / region chips all render and save) -> Fits column -> "+ brief"
+  on the top fit -> /brands search "Honi" -> Honi Poke profile (all 8 pills,
+  keyless AI panels degrade as listed) -> /comps -> /contacts. Shots
+  qa/smoke-shots/r540-*.png. Everything persisted; only listed noise 4xx/5xx.
+- BUG FIXED 1 (client/src/pages/requirements.tsx) — the Fits column and its
+  "N / M fit your available units" KPI never refreshed after a write. The
+  matches query key is ["/api/crm/requirements-leasing/matches"], which is
+  NOT prefix-matched by the list key ["/api/crm/requirements-leasing"], so
+  every create/edit/delete/import invalidation missed it. PROVEN live: logged
+  a Starbucks requirement, row showed "—" fits and the KPI stayed 1/3 at
+  T+4s AND T+25s (staleTime is 15s, but nothing remounts while you sit on the
+  board); navigating away and back turned it into 15 fits and 2/3. Server was
+  right all along (/matches returned count 20 for the Honi Poke row while the
+  UI showed "—"). Fix: one invalidateRequirementsLeasing() helper that hits
+  both keys, used by create / update / inline edit / delete / the four sync
+  + bulk-import paths. VERIFIED VISUALLY after: a new Testco Gym requirement
+  filled its Fits cell (U124 Bluewater 4,803 …) and moved the KPI 2/3 -> 3/4
+  with no navigation (qa/smoke-shots/r540-10-fits-after-create-fixed.png).
+- BUG FIXED 2 (client/src/components/suggest-targets-dialog.tsx) — the
+  Suggest-Targets dialog's built-in add POSTed a BRAND-NEW brief for the unit
+  on every click (`POST /api/unit-briefs` with no existing-brief check),
+  while the unit only ever reads its NEWEST brief
+  (GET /api/available-units/:id/brief, order by created_at desc limit 1).
+  Add two suggested operators and the first one is orphaned — invisible on
+  the unit page and in the tracker's briefByUnit map. PROVEN at API level by
+  replaying the dialog's exact two-call sequence twice on U124/U125/U126:
+  0 -> 2 briefs, unit page saw only "Operator Two". The tracker
+  (ensureBriefFor) and the tenancy-schedule and requirements paths already
+  guarded; only this dialog's default didn't. Fix: look the unit's brief up
+  first and only create when there is none, plus invalidate the unit-scoped
+  brief query. tsc clean.
+  NOT VISUALLY VERIFIED, be honest: the dialog mounts without onAdd only on
+  the property page's units panel, and I could not get that panel on screen
+  (the sparkles buttons under "Deals & units" never rendered in three
+  attempts — the pill list is identical before and after the click; whoever
+  picks this up should find the units list first, maybe under Boards).
+  brand-suggestions itself is fine keyless: 200 with 1-2 rows once a live
+  requirement fits the unit (0 rows when none does — that is why an earlier
+  probe looked empty).
+- Two-bot: +2 victoria scenarios — staff-requirement-fits-matches (create a
+  1,000-2,000 sq ft Restaurant requirement -> /matches must return a non-empty
+  unit pool and >=1 named fit -> delete) and staff-unit-brief-keeps-every-
+  target (two targets on a unit must BOTH come back on that unit's brief).
+  Both green on the re-run; victoria signature still exactly 2x400.
+  run-round.sh purge now sweeps 'QA-PROBE Target%' operators.
+- Suggestions: UX-NOTES 183 (region chips are the dialog's location input but
+  fits only substring-matches them against the property name/address, so
+  "South East"/"National" score nothing) and 184 (a requirement with no size
+  band can never fit anything and the board never says so).
+- Still open/unbuilt, do not report again: UX #150, #157, #162, #170, #171,
+  #172, #174-#182 (171 = client PUT persists dealType/team/leaseLength/
+  landlordId — needs Woody).
+- CARRIED FORWARD, still open, still cosmetic: the validateDOMNesting nested
+  <button> warning on the phone Messages -> New Group -> Start Chat walk
+  (r538/r539). Not touched this round — the desktop journey used the budget.
+  Its advice stands: /m/messages is not a route, drive it by taps from the
+  phone home shell and capture console ARGS for the component stack.
+- New flakes: none new. The r539 cold-vite login flake did not recur; the
+  /login staff password form is behind the "Client / guest sign in" reveal —
+  a scripted journey must click that first or it times out looking for the
+  email field. Real-device keyboard-up composer check (r405) still open for
+  Woody.
+- Next: r540 had the journey -> r541 may be LIGHT; then rotation #2 Landsec
+  client desktop.
 
 ### r539 · 2026-09-04 · LIGHT (r538 had the journey) · 1 bug fixed — duplicated tenancy rows spawned duplicate tracker cards · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once → run-smoke restore → seed-personas

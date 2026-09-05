@@ -2589,6 +2589,66 @@ async function victoriaRound(page, cross) {
     const after = await count();
     if (after !== before) throw new Error(`re-sync changed the Bluewater tracker card count: ${before} -> ${after}`);
   });
+
+  await step(page, p, 'staff-requirement-fits-matches', async () => {
+    // r540: the Requirements board's "Fits" column and its KPI both come from
+    // /matches. A logged requirement with a size band must come back with at
+    // least one fitting unit, or the board's whole point is dead.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const cr = await fetch(`${BASE}/api/crm/requirements-leasing`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ name: 'QA-REQ-FITS', use: ['Restaurant'], size: ['1,000 - 2,000 sq ft'], requirementLocations: ['South East'], status: 'Active' }),
+    });
+    if (cr.status !== 201) throw new Error(`staff POST requirements-leasing expected 201, got ${cr.status}`);
+    const created = await cr.json();
+    try {
+      const m = await fetch(`${BASE}/api/crm/requirements-leasing/matches`, { headers: auth });
+      if (m.status !== 200) throw new Error(`staff GET requirements matches expected 200, got ${m.status}`);
+      const body = await m.json();
+      if (!body.unitPool) throw new Error('requirements matches returned an empty unit pool');
+      const hit = body.matches?.[created.id];
+      if (!hit || !hit.count) throw new Error('a 1,000-2,000 sq ft requirement matched no available unit');
+      if (!hit.top?.[0]?.unitName) throw new Error('fits row carries no unit name');
+    } finally {
+      await fetch(`${BASE}/api/crm/requirements-leasing/${created.id}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-unit-brief-keeps-every-target', async () => {
+    // r540: targets added from the Suggest-Targets dialog used to each mint a
+    // NEW brief for the unit, and the unit only ever reads its newest brief —
+    // so every target but the last one vanished. Two targets added to a unit
+    // must both come back on that unit's brief.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const ur = await fetch(`${BASE}/api/available-units?propertyId=${BLUEWATER}`, { headers: auth });
+    const units = await ur.json();
+    const unit = (Array.isArray(units) ? units : (units.units || []))[0];
+    if (!unit?.id) throw new Error('no Bluewater unit to brief');
+    const existing = await (await fetch(`${BASE}/api/available-units/${unit.id}/brief`, { headers: auth })).json();
+    let briefId = existing?.id;
+    let mine = false;
+    if (!briefId) {
+      const b = await fetch(`${BASE}/api/unit-briefs`, { method: 'POST', headers: auth, body: JSON.stringify({ unitId: unit.id }) });
+      if (b.status !== 200) throw new Error(`staff POST unit-briefs expected 200, got ${b.status}`);
+      briefId = (await b.json()).id; mine = true;
+    }
+    const names = ['QA-PROBE Target A', 'QA-PROBE Target B'];
+    try {
+      for (const operatorName of names) {
+        const t = await fetch(`${BASE}/api/unit-briefs/${briefId}/targets`, { method: 'POST', headers: auth, body: JSON.stringify({ operatorName, priority: 'B' }) });
+        if (t.status !== 200) throw new Error(`staff POST brief target expected 200, got ${t.status}`);
+      }
+      const view = await (await fetch(`${BASE}/api/available-units/${unit.id}/brief`, { headers: auth })).json();
+      const got = (view?.targets || []).map((t) => t.operatorName);
+      for (const n of names) if (!got.includes(n)) throw new Error(`unit brief lost target ${n} (sees: ${got.join(', ') || 'none'})`);
+    } finally {
+      const view = await (await fetch(`${BASE}/api/available-units/${unit.id}/brief`, { headers: auth })).json().catch(() => null);
+      for (const t of (view?.targets || [])) {
+        if (names.includes(t.operatorName)) await fetch(`${BASE}/api/unit-briefs/targets/${t.id}`, { method: 'DELETE', headers: auth }).catch(() => {});
+      }
+      if (mine) await fetch(`${BASE}/api/unit-briefs/${briefId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
 }
 
 async function markRound(page, cross) {
