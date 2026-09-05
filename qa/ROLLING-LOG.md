@@ -88,6 +88,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r543 · 2026-09-05 · LIGHT (r542 had the journey) — ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
+  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
+- Two-bot round 543, victoria+mark in ONE process with QA_CROSS_FILE (per the
+  r542 procedure note). 12 issues, signature EXACT vs r537-r542: victoria
+  2x400, mark 9x403 + 1x503. All listed noise. 0 new issues from the sweep.
+- Triage: nothing actionable from the scripted round. Spending the round on
+  under-visited surfaces (KYC Clouseau, covenant watch, lease events, WIP /
+  board report, evidence plans, image studio, marketing files, pathway
+  review, expenses) as staff desktop.
+
 ### r542 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · 1 bug fixed — blank Tenants / BGP Contacts cells on the client Properties table · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
   into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before,
