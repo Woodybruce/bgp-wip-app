@@ -2719,8 +2719,13 @@ async function victoriaRound(page, cross) {
     // (r544): staff keep the BGP-voiced starter prompts on the phone.
     await page.setViewportSize({ width: 390, height: 844 });
     try {
-      await page.goto(`${BASE}/chatbgp?ask=1`);
+      // The starter prompts live on the AI thread's empty state, reached the
+      // way a user reaches it: Messages -> the pinned ChatBGP row. A bare
+      // /chatbgp?ask=1 open does not render them.
+      await page.goto(`${BASE}/messages`);
       await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(2500);
+      await page.locator('[data-testid="mobile-pinned-chatbgp"]').first().click();
       await page.waitForTimeout(2500);
       const chips = await page.evaluate(() =>
         Array.from(document.querySelectorAll('[data-testid^="mobile-suggestion-"]')).map(el => el.textContent.trim()));
@@ -6523,8 +6528,11 @@ async function markRound(page, cross) {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
       await mobSeedAuth(mob, page);
-      await mobGoto(mob, `${BASE}/chatbgp?ask=1`, nav);
+      // Reached the way Mark reaches it: Messages -> the pinned ChatBGP row.
+      await mobGoto(mob, `${BASE}/messages`, nav);
       await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(2500);
+      await mob.locator('[data-testid="mobile-pinned-chatbgp"]').first().click();
       await mob.waitForTimeout(2500);
       const chips = await mob.evaluate(() =>
         Array.from(document.querySelectorAll('[data-testid^="mobile-suggestion-"]')).map(el => el.textContent.trim()));

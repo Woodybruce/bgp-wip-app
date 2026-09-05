@@ -88,20 +88,86 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r544 · 2026-09-05 · FULL (rotation #3 Landsec client MOBILE 390px) · ROUND IN PROGRESS
+### r544 · 2026-09-05 · FULL (rotation #3 Landsec client MOBILE 390px) · 2 bugs fixed — staff starter prompts on the client phone chat + wire-feed news summaries repeating the headline · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
-  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
-- Two-bot round 544, victoria+mark in ONE process with QA_CROSS_FILE:
-  CONFIRMED the r543 carry-forward — signature still EXACT at victoria 2x400,
-  mark 9x403 + 1x503 with r543's two new scenarios
-  (staff-board-report-category-labels, client-board-report-gate) in place.
-  woody,nick,sam chunk running. All 12 logged issues are listed noise.
-- Triage so far: 0 new issues from the scripted sweep.
-- Journey in progress (Mark Warne, iPhone UA @390px) — "at Bluewater, an
-  agent has asked about a unit". Candidate finding: the letting-tracker unit
-  Files dialog subtitle repeats the property name ("U124/U125/U126,
-  Bluewater, Bluewater · Bluewater Shopping Centre") and truncates on the
-  phone. Under investigation.
+  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before,
+  and GREEN 42/0 with FRESH_BUILD=1 after the fixes. NOTE for the rebuild
+  step: the dev server must be stopped first — run-smoke's restore fails with
+  "database bgpsmoke is being accessed by other users" while tsx holds
+  connections (pkill -f "server/index.ts", the pattern that actually matches).
+- CARRY-FORWARD FROM r543, CONFIRMED: two-bot round 544 (victoria+mark in ONE
+  process with QA_CROSS_FILE, then woody,nick,sam) came back at EXACTLY the
+  r537-r543 signature with r543's two new scenarios in place — victoria 2x400,
+  mark 9x403 + 1x503, woody/nick/sam 0 issues. All listed noise, 0 new issues
+  from the scripted sweep.
+- JOURNEY (Mark Warne, iPhone UA @390px, phone shell) — "I'm at Bluewater, an
+  agent has just asked me about a unit: what's happening on it, what's the
+  deal position, then message BGP and check my tasks": / (Portfolio home) ->
+  /deals -> deal detail -> /available (tracker search + unit Files dialog +
+  Viewings dialog + Interest dialog) -> /messages -> ChatBGP thread ->
+  /tasks -> /news -> /properties -> Bluewater property page. 0 pageerrors,
+  0 error boundaries, 0 h-overflow at 390px; the only 4xx/5xx across the walk
+  were listed noise (ai-briefing 503, hr/photo 404, client/sharepoint/root
+  404, the three brand-gaps 503s). Shots qa/smoke-shots/r544-*.png; harness
+  kept as qa/r544-client-mobile-journey.mjs (+ r544-scenario-check.mjs).
+- BUG FIXED 1 (client/src/components/mobile-app.tsx) — the phone chat's empty
+  state offered a LANDLORD the BGP-internal starter prompts: "Draft HOTs for
+  a property", "Search CRM contacts", "What's in my calendar today?". The
+  desktop chat panel has had CLIENT_AI_SUGGESTIONS ("Client logins get
+  landlord-voiced prompts — no BGP calendar, no CRM jargon") since long
+  before; the phone list was simply never given the same split. Added
+  CLIENT_AI_SUGGESTIONS to the phone shell with the same four landlord
+  prompts and picked the list on the standard role==='Client' ||
+  companyScopeId test; also dropped `truncate` from the chip label so the
+  longer landlord wording wraps instead of being cut at 390px. VERIFIED
+  VISUALLY as Mark (4 landlord chips, 0px overflow) and as Victoria (her four
+  unchanged) — qa/smoke-shots/r544-02-chatbgp-chips-after.png.
+- BUG FIXED 2 (client/src/pages/properties.tsx) — every card in the property
+  page's News Feed printed its headline TWICE: Google News RSS puts
+  "Headline&nbsp;&nbsp;Source" in the description, and the panel rendered
+  article.summary whenever it was non-empty. Two of each card's four lines
+  were the headline again and the source again. The Brand News page already
+  solved this (summaryAddsInfo/textAddsInfo, UX #143); properties.tsx now
+  carries the same alphanumeric-key test as newsSummaryAddsInfo, next to its
+  existing local newsTimeAgo copy. VERIFIED VISUALLY at 390px: cards are now
+  headline + source · date, 6 stories where 3 fitted before
+  (qa/smoke-shots/r544-02-prop-news-after-shot.png), and staff desktop
+  identical (r544-staff-property-news-after.png). Predicate spot-checked on
+  the four shapes (echo, echo+source suffix, real summary, empty). tsc clean
+  for both fixes.
+- Two-bot: +2 scenarios, the standard client-loses / staff-keeps pair — mark
+  client-mobile-chat-suggestions-landlord-voiced (>=3 chips, none matching
+  /HOTs|CRM contacts|my calendar/, at least one matching /leases expire|
+  vacant units/) and victoria staff-phone-chat-suggestions-kept (HOTs +
+  CRM contacts still present). PROCEDURE NOTE that cost the first re-run: the
+  starter prompts render ONLY on the AI thread's empty state reached the way
+  a user reaches it (/messages -> [data-testid="mobile-pinned-chatbgp"]).
+  Entering at /chatbgp?ask=1 lands on the composer with no chips, which read
+  as 2 flow-failures on round 5442. Both scenarios now navigate via /messages
+  and were verified live against the fixed build for BOTH personas
+  (qa/r544-scenario-check.mjs). They assert only and write nothing, so the
+  signature above still stands; a full victoria+mark pass WITH the corrected
+  pair was not re-run (budget) — next round should confirm 2x400 / 9x403 +
+  1x503 once more.
+- NOT A BUG, checked before reporting: the tracker's "U124/U125/U126,
+  Bluewater, Bluewater" card title and the two rows for the same unit numbers
+  are DATA — available_units.unit_name carries the imported label verbatim
+  (confirmed by query), not a rendering fault. Logged as UX 191 instead. The
+  client deal page showing no rent/target date is also data (both columns
+  NULL on the fixture deal) — logged as UX 190. Client desktop /chatbgp
+  renders no suggestion chips at all for either persona, so chatbgp.tsx's
+  staff-only SUGGESTIONS list was left alone rather than changed blind.
+- Suggestions: UX-NOTES 190 (client mobile deal Overview has no commercial
+  line — no rent p.a. / lease length / target completion row even as the "—"
+  the Properties table now uses) and 191 (unit labels repeat the property
+  name and duplicate rows survive import; normalise on display or at import).
+- Still open/unbuilt, do not report again: UX #150, #157, #162, #170, #171,
+  #172, #174-#191 (171 = client PUT persists dealType/team/leaseLength/
+  landlordId — needs Woody).
+- New flakes: none. Deferred: nothing new. Real-device keyboard-up composer
+  check (r405) still open for Woody.
+- Next: r544 was FULL -> r545 may be LIGHT; then rotation #4 BGP staff mobile
+  390px.
 
 ### r543 · 2026-09-05 · LIGHT (r542 had the journey) · 2 bugs fixed — raw brand: UUIDs on the Board Report + dangling separator on Marketing Files · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
