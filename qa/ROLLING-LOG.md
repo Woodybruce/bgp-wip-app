@@ -88,6 +88,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r560 · 2026-09-05 · FULL (rotation #3 Landsec client MOBILE 390px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
+  two-bot in three chunks via qa/with-server.sh with QA_CROSS_FILE set).
+  Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r559, CONFIRMED: full three-chunk pass, every scenario
+  [ok]. Tally victoria 4x400 / mark 9x403 + 1x503 / woody,nick,sam 0 —
+  twentieth clean hand-off. NOTE the victoria count moved 2x400 -> 4x400:
+  r559's two new scenarios (staff-brand-add-to-deal-lands-on-deals,
+  staff-company-links-open-the-record) both open a brand profile, which
+  auto-fires the keyless rocketreach discover 400. Same listed noise, two
+  more instances — new baseline is 4x400, not a regression.
+- Triage: all 14 logged issues are listed environment noise (rocketreach
+  discover 400 x4, deliberate client 403 gates x9, keyless-AI 503 x1).
+  0 app bugs from the scripted regression.
+- Journey + fixes: in progress.
+
 ### r559 · 2026-09-05 · LIGHT (r558 had the journey) · 2 bugs fixed — the brand profile's "Add to deal" landed on the WIP Report, and every `?highlight=` company link dumped the user on the CRM directory · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
