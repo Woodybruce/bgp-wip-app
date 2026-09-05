@@ -743,7 +743,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             <InlineLinkSelect
               value={comp.buyerCompanyId}
               options={companyOptions}
-              href={comp.buyerCompanyId ? `/companies?highlight=${comp.buyerCompanyId}` : undefined}
+              href={comp.buyerCompanyId ? `/companies/${comp.buyerCompanyId}` : undefined}
               onSave={(v) => handleUpdate(id, "buyerCompanyId", v)}
               onCreate={async (name) => { const c = await createCompany(name); handleUpdate(id, "buyerCompanyId", c.id); }}
               compact
@@ -762,7 +762,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             <InlineLinkSelect
               value={comp.sellerCompanyId}
               options={companyOptions}
-              href={comp.sellerCompanyId ? `/companies?highlight=${comp.sellerCompanyId}` : undefined}
+              href={comp.sellerCompanyId ? `/companies/${comp.sellerCompanyId}` : undefined}
               onSave={(v) => handleUpdate(id, "sellerCompanyId", v)}
               onCreate={async (name) => { const c = await createCompany(name); handleUpdate(id, "sellerCompanyId", c.id); }}
               compact

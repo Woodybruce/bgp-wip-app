@@ -88,19 +88,73 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r559 · 2026-09-05 · LIGHT (r558 had the journey) · ROUND IN PROGRESS
+### r559 · 2026-09-05 · LIGHT (r558 had the journey) · 2 bugs fixed — the brand profile's "Add to deal" landed on the WIP Report, and every `?highlight=` company link dumped the user on the CRM directory · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
   two-bot in three chunks via qa/with-server.sh with QA_CROSS_FILE set).
-  Regression: smoke GREEN 42/0.
+  Regression: smoke GREEN 42/0 before and GREEN 42/0 after both fixes.
 - CARRY-FORWARD FROM r558, CONFIRMED with a full three-chunk pass of my own:
   every scenario [ok], tally victoria 2x400 / mark 9x403 + 1x503 /
   woody,nick,sam 0 — the r537-r558 signature exactly, eighteenth clean
   hand-off. All 12 logged issues are listed noise. 0 app bugs from the
-  scripted regression.
-- Focus this round: sweep the app's deep links / pre-filtered navigations
-  (dashboard tiles, property lozenges, notification rows, search results)
-  and check each lands where its label promises — the r558 angle.
+  scripted regression. Re-confirmed after the fixes with the two new
+  scenarios in place (tally unchanged).
+- FOCUS (r558's angle, no journey): swept every deep link in client/src that
+  carries a query string and checked the DESTINATION actually reads it.
+  Method worth reusing: grep the navigate/Link call sites for `?`, then grep
+  the target page for a matching `URLSearchParams(...).get(...)`. Most
+  survived — ?pitchBrand (available-units), ?status/?propertyId/?search/?new
+  (deals list), ?runId (pathway), ?person/?tab (hr), ?type/?team/?new
+  (requirements), ?name/?address (kyc-clouseau), ?thread/?message (chatbgp),
+  ?property/?address (image-studio), ?propertyId (document-briefs) all have
+  live readers. Two families did not.
+- BUG FIXED 1 (client/src/components/brand-profile-panel.tsx) — the staff
+  "Add to deal" button on a brand profile, tooltip "Go to Deals to add this
+  brand to a deal", navigated to `/deals?search=<brand>`. But `/deals` is the
+  WIP REPORT tab (deals-hub defaults tab to wip-report on desktop) and only
+  the Deals LIST reads ?search=. Clicked as the user on Amorino's profile:
+  Victoria landed on "WIP Report — All Teams, 6 transactions, total net fees
+  £250,000" with an empty search box and no way to tell the click had done
+  anything except change the page. Fixed to `/deals/list?search=…` — the
+  route whose reader already exists (deals.tsx:5338). Verified by clicking
+  the real button: lands /deals/list?search=Amorino, Deals tab active, search
+  box reads "Amorino" (qa/smoke-shots/r559-fix1-add-to-deal.png). tsc clean.
+- BUG FIXED 2 (client/src/pages/comps.tsx, client/src/pages/investment-comps.tsx)
+  — `?highlight=<id>` is a convention SIX call sites write and NOTHING reads.
+  Four of them mean "open this company": the comps tenant-name link ("Open
+  matched CRM company"), the comps create-and-enrich redirect (its own
+  comment says "then navigate to the new record"), and the investment-comps
+  buyer and seller pickers. All four went to `/companies?highlight=<id>` and
+  landed on the unfiltered CRM directory — which opens on the LANDLORDS tab,
+  so a newly created brand company is not even in the list the user is
+  looking at. Fixed all four to `/companies/<id>`, a route that already
+  exists and opens the record (people.tsx:1079 useRoute("/companies/:id")).
+  Verified: /companies/<id> renders the Amorino record, 0 pageerrors
+  (qa/smoke-shots/r559-fix2-company-record.png). tsc clean.
+- HARNESS GROWTH (qa/two-bot-round.mjs, both victoria, both [ok], tally still
+  2x400): staff-brand-add-to-deal-lands-on-deals (click the real button —
+  URL must be /deals/list?…, the Deals tab must be active, and the search box
+  must hold the brand name) and staff-company-links-open-the-record (fetches
+  the two page sources through the vite dev server and fails if
+  `companies?highlight=` reappears, then confirms /companies/:id renders the
+  record).
+- DEFERRED (logged as UX #219, not fixed): the other two `?highlight=` writers
+  — contacts.tsx links a contact's requirements as `/requirements?highlight=`
+  and their investment items as `/investment-tracker?highlight=`. Same dead
+  param, but neither destination has a per-record route, so the fix is a new
+  reader (scroll-to + ring), not a one-line swap. Out of scope for a
+  two-bug round.
+- Suggestions added: UX-NOTES #219 (the two remaining ?highlight= links need
+  a real reader), #220 ("Add to deal" now lands on the Deals list but for a
+  brand with no deals — the normal case — it shows "No deals found" and the
+  New Deal form does not carry the brand through).
+- New flakes: the two-bot victoria chunk failed once at `POST /api/auth/login`
+  with a bare playwright request error immediately after several
+  back-to-back with-server.sh runs — the known login rate limiter, listed
+  noise. It cleared on the next run with no change; if a chunk dies at login,
+  just re-run it before triaging.
+- Next journey: rotation #3, Landsec client mobile 390px (real iPhone
+  context, not setViewportSize) — r558 deferred it and r559 was LIGHT.
 
 ### r558 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · 1 bug fixed — the Letting Tracker ignored every status deep link and was stuck in "All statuses" mode · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

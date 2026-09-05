@@ -3303,6 +3303,60 @@ async function victoriaRound(page, cross) {
     await trackerStatusDeepLink(page, 'staff');
   });
 
+  await step(page, p, 'staff-brand-add-to-deal-lands-on-deals', async () => {
+    // r559: the brand profile's "Add to deal" button navigated to
+    // /deals?search=<brand>, but /deals is the WIP REPORT — only the Deals
+    // list reads ?search=. The button landed the agent on a net-fees roll-up
+    // with nothing searched. It must land on the Deals list, brand in the box.
+    const brands = await page.evaluate(async () => {
+      const res = await fetch('/api/crm/companies?limit=5', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      const j = await res.json();
+      return Array.isArray(j) ? j : (j.companies || j.data || []);
+    });
+    const brand = brands[0];
+    if (!brand?.id) throw new Error('no CRM company to open');
+    await page.goto(`${BASE}/companies/${brand.id}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    const btn = page.locator('button', { hasText: 'Add to deal' }).first();
+    if (!(await btn.count())) throw new Error('no "Add to deal" button on the brand profile');
+    await btn.click();
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(3000);
+    if (!/\/deals\/list\?/.test(page.url())) throw new Error(`"Add to deal" landed on ${page.url()} — not the Deals list`);
+    const active = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="toggle-deals-"]')]
+      .filter(x => /bg-background/.test(x.className)).map(x => x.innerText.trim()).join(','));
+    if (!/Deals/.test(active)) throw new Error(`"Add to deal" opened the "${active}" tab, not Deals`);
+    const box = await page.evaluate(() => { const i = [...document.querySelectorAll('input')].find(x => /search/i.test(x.placeholder || '')); return i ? i.value : null; });
+    if ((box || '').trim() !== (brand.name || '').trim()) throw new Error(`Deals search box reads ${JSON.stringify(box)}, expected ${JSON.stringify(brand.name)}`);
+  });
+
+  await step(page, p, 'staff-company-links-open-the-record', async () => {
+    // r559: four call sites (comps tenant link, comps create-and-enrich,
+    // investment-comps buyer/seller) linked to /companies?highlight=<id>.
+    // Nothing anywhere reads ?highlight=, so every one of them dumped the
+    // user on the unfiltered CRM directory instead of the record. No link
+    // that promises a specific company may use that dead convention.
+    const src = await page.evaluate(async () => {
+      const files = ['/src/pages/comps.tsx', '/src/pages/investment-comps.tsx'];
+      const out = [];
+      for (const f of files) { const r = await fetch(f); out.push(r.ok ? await r.text() : ''); }
+      return out.join('\n');
+    });
+    if (src && /companies\?highlight=/.test(src)) throw new Error('a company link still uses the unread ?highlight= convention');
+    const brands = await page.evaluate(async () => {
+      const res = await fetch('/api/crm/companies?limit=5', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      const j = await res.json();
+      return Array.isArray(j) ? j : (j.companies || j.data || []);
+    });
+    const brand = brands[0];
+    await page.goto(`${BASE}/companies/${brand.id}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    const body = (await page.evaluate(() => document.body.innerText || '')).replace(/\s+/g, ' ');
+    if (!body.includes(brand.name)) throw new Error(`/companies/${brand.id} does not show ${brand.name}`);
+  });
+
   await step(page, p, 'staff-phone-lease-event-money-labelled', async () => {
     // r557: the phone card printed `currentRent || estimatedErv` as one
     // unlabelled bold number, so an event holding only an ERV read as passing

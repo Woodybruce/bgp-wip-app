@@ -2143,7 +2143,7 @@ export default function Comps() {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       toast({ title: "Company added to CRM", description: "Enrichment started — Apollo is filling in details." });
       if (created?.id) {
-        navigate(`/companies?highlight=${created.id}`);
+        navigate(`/companies/${created.id}`);
       }
     },
     onError: (err: any) => {
@@ -2981,7 +2981,7 @@ export default function Comps() {
                         if (companyId) {
                           return (
                             <Link
-                              href={`/companies?highlight=${companyId}`}
+                              href={`/companies/${companyId}`}
                               className="shrink-0 p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-primary transition-colors"
                               title="Open matched CRM company"
                               data-testid={`tenant-link-${comp.id}`}

@@ -13,6 +13,27 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+219. 2026-09-05 · BGP staff / desktop (QA r559) · Two links still carry the
+   dead `?highlight=<id>` convention after r559 fixed the four company ones:
+   the Contacts page links a contact's requirements as
+   `/requirements?highlight=<reqId>` and their investment items as
+   `/investment-tracker?highlight=<id>`. Neither page reads the param (the
+   fix used for companies — route straight to the record — isn't available
+   because neither has a per-record route), so both land the user on the
+   whole grid to hunt for the row they just clicked. Suggestion: give
+   Requirements and the Investment Tracker a `?highlight=` reader that
+   scrolls the row into view and rings it for a couple of seconds — the same
+   affordance the Letting Tracker's pitchBrand deep link already has.
+
+220. 2026-09-05 · BGP staff / desktop (QA r559) · The brand profile's "Add to
+   deal" button now lands correctly on the Deals list with the brand in the
+   search box (r559), but for a brand with no deals — the normal case for a
+   button called "Add to deal" — the result is "No deals found / Create a
+   deal or adjust your filters" and a New Deal button that opens an empty
+   form. The agent has to retype the brand they just came from. Suggestion:
+   carry the brand through to the create dialog (`?search=<name>&new=1` with
+   the tenant prefilled), so "Add to deal" actually starts the deal.
+
 217. 2026-09-05 · Landsec client / desktop 1440px (QA r558) · Mark's
    Requirements page renders the full leasing-requirements table — Name, Use,
    Size Req., Locations, Fits, Agent Contact, Landlord Pack — over the words
