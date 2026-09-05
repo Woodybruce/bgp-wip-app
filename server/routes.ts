@@ -3942,7 +3942,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
     const j: any = await r.json();
     const rows: TeamPhoto[] = (j.value || [])
-      .filter((it: any) => it.file && String(it.file.mimeType || "").startsWith("image/"))
+      // Thumbnails (e.g. an 8 KB Teams avatar) look worse than the initials
+      // placeholder — only real photos qualify.
+      .filter((it: any) => it.file && String(it.file.mimeType || "").startsWith("image/") && (it.size || 0) >= 40 * 1024)
       .map((it: any) => ({
         id: it.id,
         file: it.name,
@@ -3986,9 +3988,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         redirect: "follow",
       });
       if (!r.ok) return res.status(404).end();
-      const buf = Buffer.from(await r.arrayBuffer());
-      if (buf.length < 8 * 1024 * 1024) teamPhotoBytes.set(hit.id, { at: Date.now(), buf, mime: hit.mimeType });
-      res.header("Content-Type", hit.mimeType);
+      let buf = Buffer.from(await r.arrayBuffer());
+      let mime = hit.mimeType;
+      // Web-size, black and white (the site's headshot standard), JPEG —
+      // share-drive originals are often 2 MB+ colour files.
+      try {
+        const sharp = (await import("sharp")).default;
+        buf = await sharp(buf).rotate().resize(900, 1200, { fit: "inside", withoutEnlargement: true }).grayscale().jpeg({ quality: 85 }).toBuffer();
+        mime = "image/jpeg";
+      } catch (e: any) {
+        console.warn("[team-photos] resize failed, serving original:", e?.message);
+      }
+      teamPhotoBytes.set(hit.id, { at: Date.now(), buf, mime });
+      res.header("Content-Type", mime);
       res.header("Cache-Control", "public, max-age=3600");
       res.send(buf);
     } catch (err: any) {
