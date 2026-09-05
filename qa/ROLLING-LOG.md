@@ -88,19 +88,63 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r557 · 2026-09-05 · LIGHT (r556 had the journey) · ROUND IN PROGRESS
+### r557 · 2026-09-05 · LIGHT (r556 had the journey) · 2 bugs fixed — a reload could paint pre-change data and never ask the server, and the phone lease-event card called an ERV "rent" · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
   two-bot in three chunks via qa/with-server.sh with QA_CROSS_FILE set).
-  Regression: smoke GREEN 42/0.
-- CARRY-FORWARD FROM r556, CONFIRMED: full three-chunk pass, every scenario
-  [ok], tally victoria 2x400 / mark 9x403 + 1x503 / woody,nick,sam 0 — the
-  r537-r556 signature exactly, fifteenth clean hand-off. All 12 logged issues
-  are listed noise (rocketreach-400 + investment-tracker-400, deliberate
-  client 403 gates, keyless-AI 503). 0 app bugs from the scripted regression.
-- In progress: r556's deferred app-wide bug (a reload within ~2s of an inline
-  change paints the pre-change value and never corrects — persisted
-  react-query cache restoring as FRESH).
+  Regression: smoke GREEN 42/0 before, and GREEN 42/0 with FRESH_BUILD=1 after.
+- CARRY-FORWARD FROM r556, CONFIRMED with a full three-chunk pass of my own:
+  every scenario [ok], tally victoria 2x400 / mark 9x403 + 1x503 /
+  woody,nick,sam 0 — the r537-r556 signature exactly, fifteenth clean
+  hand-off. All 12 logged issues are listed noise. 0 app bugs from the
+  scripted regression. Re-confirmed after both fixes with the two new
+  scenarios in place (tally unchanged).
+- BUG FIXED 1 (client/src/lib/query-persist.ts) — r556's deferred bug, and it
+  is worse than "my change went back": after a reload the app can paint stale
+  data and NEVER ASK THE SERVER AT ALL. Deterministic repro
+  (qa/r557-stale-repro.mjs): load a board, let the persister flush, change a
+  row's status, reload -> board reads the old value, database holds the new
+  one, and GET /api/lease-events count since the reload = 0, still 0 five
+  seconds later. Root cause: the localStorage snapshot restores each query
+  with the dataUpdatedAt of the fetch it captured, so a snapshot written
+  seconds before the change counts as FRESH under the 15s staleTime and
+  refetchOnMount skips the request; only the 30s poll would eventually correct
+  it. Same mechanism hides a colleague's edit, not just your own. Fixed by
+  wrapping the persister's restoreClient to zero dataUpdatedAt on every
+  restored query: the cached data still paints instantly (the whole point of
+  the persisted cache) but counts as stale, so each query revalidates once as
+  it mounts — the "paint instantly, then refresh" the file's own comment
+  promises. Verified: same probe now reads "Contacted" with exactly 1 GET.
+  Did not touch throttleTime or the staleTime/poll config.
+- BUG FIXED 2 (client/src/pages/lease-events.tsx) — the phone card printed
+  `currentRent || estimatedErv` as one unlabelled bold number, so an event
+  carrying only an ERV read as passing rent (the desktop table has labelled
+  "Rent:" / "ERV:" all along). Now the bold figure is prefixed "Rent" or
+  "ERV" as appropriate; the secondary ERV line is unchanged. Verified in a
+  real iPhone context (qa/r557-verify-phone.mjs, shot
+  qa/smoke-shots/r557-phone-lease-events.png): "Rent £125,000 / ERV £140,000"
+  and "ERV £95,000". 0 h-overflow, 0 pageerrors.
+- HARNESS GROWTH (qa/two-bot-round.mjs, both victoria, both [ok], tally still
+  2x400): staff-reload-shows-the-saved-value (out-of-band status write ->
+  reload -> the board must show the database value AND must have issued the
+  GET) and staff-phone-lease-event-money-labelled (an ERV-only event must not
+  render a figure labelled Rent at 390px). run-round.sh purge widened to
+  QA-PROBE % lease events.
+- BRING-UP LESSON (cost ~10 min): FRESH_BUILD=1 run-smoke.sh RESTORES the
+  database, which wipes qa/seed-personas.sql AND every row the victoria chunk
+  created for the cross-file. Running the mark chunk straight after gave 16
+  false flow-failures (own comp files 403, own chat media 403, turnover/search
+  slice misses). Re-apply seed-personas AND re-run the victoria chunk before
+  mark whenever the DB has been restored mid-round.
+- Suggestions added: UX-NOTES #215 (inline board pickers save silently — no
+  in-flight or saved state, so a failed inline write is invisible), #216 (the
+  Lease Events urgency tiles are inert numbers; the tenancy board's tiles now
+  filter to what they count, r556 — these should too).
+- New flakes: none. tsc clean. NOTE for the next round: name probe rows with a
+  unique per-run suffix — a crashed probe leaves same-named lease_events rows
+  behind and the next run's locator matches the leftover, which produced two
+  contradictory "results" before it was spotted.
+- Next journey: rotation #2, Landsec client desktop (r557 was LIGHT).
 
 ### r556 · 2026-09-05 · FULL (rotation #1 staff desktop 1440px) · 2 bugs fixed — the Lease Events board could not be written to at all, and the tenancy KPI tiles filtered to a different number than they counted · 1 deferred · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

@@ -13,6 +13,28 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+215. 2026-09-05 · BGP staff / desktop + phone (QA r557) · Every inline board
+   picker (Lease Events Status and Owner, and the same pattern elsewhere)
+   saves silently: the control repaints the moment you choose, and whether the
+   write reached the server is invisible. When it doesn't, the only signal is
+   a destructive toast that can be missed on a long board — which is why the
+   stale-reload bug fixed this round read as "my change went back" rather than
+   as an obvious failure. Suggestion: give inline saves a visible lifecycle —
+   the control dims while the PATCH is in flight and shows a brief tick (or
+   reverts to the previous value with the row highlighted) when it lands or
+   fails, the way a save button already tells you.
+
+216. 2026-09-05 · BGP staff / desktop + phone (QA r557) · The Lease Events
+   board's four urgency tiles (OVERDUE, DUE < 3 MONTHS, DUE < 6 MONTHS,
+   WATCHING 18 MO) are read-only numbers — they carry no click handler at all,
+   and the board's only filters are status, type and free text. So the tile
+   that says the pipeline's most useful thing ("DUE < 3 MONTHS: 4") cannot
+   produce those four rows; the user has to eyeball the date column. r556 has
+   just established the opposite convention next door on the tenancy board,
+   where each KPI tile filters to exactly what it counts. Suggestion: make the
+   urgency tiles filter the board (and toggle off on a second click), matching
+   the tenancy board.
+
 213. 2026-09-05 · BGP staff / desktop (QA r556) · Victoria's task was "what's
    coming up at Bluewater in the next six months". The tenancy board holds the
    answer — 72 of the 200 rows carry a lease expiry, two of them already
