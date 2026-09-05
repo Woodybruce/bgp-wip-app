@@ -88,6 +88,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r547 · 2026-09-05 · LIGHT (r546 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; wrote .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke).
+  Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r546, CONFIRMED. Two-bot round 547 in three chunks with
+  QA_CROSS_FILE: victoria 2x400, mark 9x403 + 1x503, woody/nick/sam 0 —
+  exactly the r537-r546 signature. r546's staff-phone-tracker-date-fields
+  scenario green in a full pass.
+- Triage: all 12 logged issues are listed noise (rocketreach-400 family,
+  deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted
+  regression.
+- Plan for the rest of the round: exercise under-worked surfaces as a real
+  user — ChatBGP as a working tool, global search, notifications.
+
 ### r546 · 2026-09-05 · FULL (rotation #4 BGP staff MOBILE 390px) · 2 bugs fixed — tracker date fields clipped on the phone + activity rows printing raw ISO dates · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; no .env in a fresh container, wrote one at
