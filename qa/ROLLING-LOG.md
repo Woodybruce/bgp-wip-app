@@ -88,19 +88,67 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r547 · 2026-09-05 · LIGHT (r546 had the journey) · ROUND IN PROGRESS
+### r547 · 2026-09-05 · LIGHT (r546 had the journey) · 1 bug fixed — the WIP report's Target Month could be set but never cleared · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; wrote .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke).
-  Regression: smoke GREEN 42/0.
+  qa/apply-sql.mjs; no .env in a fresh container, wrote one at
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke). Regression:
+  smoke GREEN 42/0 before, and GREEN 42/0 with FRESH_BUILD=1 after the fix.
 - CARRY-FORWARD FROM r546, CONFIRMED. Two-bot round 547 in three chunks with
   QA_CROSS_FILE: victoria 2x400, mark 9x403 + 1x503, woody/nick/sam 0 —
   exactly the r537-r546 signature. r546's staff-phone-tracker-date-fields
-  scenario green in a full pass.
-- Triage: all 12 logged issues are listed noise (rocketreach-400 family,
-  deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted
-  regression.
-- Plan for the rest of the round: exercise under-worked surfaces as a real
-  user — ChatBGP as a working tool, global search, notifications.
+  scenario is green in a full pass. All 12 logged issues are listed noise
+  (rocketreach-400 + investment-tracker-400, deliberate client 403 gates,
+  keyless-AI 503). 0 app bugs from the scripted regression.
+- SURFACES WORKED (LIGHT round, no journey — under-worked surfaces USED, not
+  loaded, per the r546 lesson). All shots qa/smoke-shots/r547*-*.png.
+  (a) Landsec brand-slice CRM, the full self-add roundtrip as Mark:
+  Brand Explorer has no Testco Fashion -> Add brand dialog -> search ->
+  Add -> toast -> the row's name becomes a profile link -> /companies/:id
+  opens clean (2192 chars, no gate) -> Brand Explorer NOW lists it -> global
+  search finds it -> Remove puts it back. Out-of-slice Testco Jewellers
+  stayed invisible throughout. Scripts qa/r547-client-brand-selfadd.mjs,
+  qa/r547-client-explorer-search.mjs. NOT a bug: Brand Intelligence
+  OVERVIEW never names the brand — it is a tiles/KPI summary; the brand
+  lands on the Explorer tab and in TOTAL BRANDS.
+  (b) Staff WIP report (/wip-report): quick search filters 6 -> 3 rows,
+  row links click through to the deal, GET /api/wip/export-excel returns a
+  valid 8.8KB xlsx. /api/wip/health and /fee-reconciliation 403 for Victoria
+  (admin-gated, not a bug); /api/wip/agent-summary 200 [].
+  (c) Notifications + global ⌘K search, both personas. Staff bell = 10
+  derived items, row click navigates to the right deal; client bell = "All
+  clear". Search returns Properties / WIP / Comps / Companies / News for
+  staff and stays inside the slice for the client. Script
+  qa/r547-staff-notifications.mjs.
+- BUG FIXED (client/src/pages/wip-report.tsx) — the Deal Detail table's
+  inline Target Month <input type="month"> SAVED a new month fine but
+  silently swallowed a CLEAR. onChange bailed with `if (!val …) return`, so
+  an empty value never reached scheduleTargetSave and onBlur then flushed a
+  save that was never scheduled: zero requests, no toast, the cell looked
+  empty until the next refetch put the old month straight back. A wrong
+  forecast month could not be taken off a deal from the WIP report at all —
+  it stays in the partners' fee forecast and the Net-Fees-by-Month chart.
+  Fix: an empty value is a real edit — it goes through the same 1.2s debounce
+  (so a transient "" mid-retype is still superseded by the value that follows
+  it) and flushes as `targetDate: null`, with the toast reading "Target month
+  cleared". VERIFIED LIVE before and after: pre-fix the clear issued only a
+  heartbeat and the reload showed 2027-03 again; post-fix clear -> PUT
+  /api/crm/deals/:id 200 -> "Target month cleared" -> reload shows empty, and
+  setting still persists (2027-05 roundtrip). tsc clean, smoke re-green.
+  Probes qa/r547-wip-target-month.mjs (finds it) and qa/r547-verify.mjs.
+- Two-bot: +1 victoria scenario, staff-wip-target-month-clearable — drives
+  the real control on /wip-report (set 2027-04 -> reload -> assert, clear ->
+  reload -> assert empty, restore the original in a finally). Verified [ok]
+  against the rebuilt app; victoria chunk still 2x400.
+- Suggestions: UX-NOTES 195 (the Target Month cell is a bare native month
+  input in a read-only-looking table — no affordance) and 196 (the bell is a
+  nag counter: 10 derived items, no read state, no dismiss/snooze, badge
+  never moves, and the rows are plain divs with no keyboard path). Still
+  open/unbuilt, do not report again: UX #150, #157, #162, #170, #171, #172,
+  #174-#194.
+- New flakes: none. Harness note: do NOT `pkill -f "server/index.ts"` — the
+  pattern matches the pkill command's own bash line and kills the Bash call
+  (exit 144, cost r547 a step). Use `pkill -f "serve[r]/index.ts"`.
+- Next: r547 was LIGHT -> r548 FULL, rotation #1 BGP staff desktop.
 
 ### r546 · 2026-09-05 · FULL (rotation #4 BGP staff MOBILE 390px) · 2 bugs fixed — tracker date fields clipped on the phone + activity rows printing raw ISO dates · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

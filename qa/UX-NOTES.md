@@ -13,6 +13,32 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+196. 2026-09-05 · BGP staff / desktop (QA r547) · the notification bell is a
+   nag counter, not an inbox. Victoria's bell carries a red "10" that never
+   moves: every item is derived live from deal state (5 × "KYC not approved",
+   4 × "stuck in <status>", 1 × "N deals with no fee"), so there is no read
+   state, no dismiss, no snooze and no "mark all". Clicking a row does
+   navigate to the deal — correctly — but the row keeps its unread dot and
+   the badge still says 10 when you come back, so the bell teaches the team
+   to ignore it. SUGGESTION: give the derived notifications a per-user
+   dismissed/snoozed-until record (dismiss ⟶ hidden until that deal's
+   underlying condition changes, snooze ⟶ hidden for N days), show the badge
+   as undismissed-only, and add a "Mark all seen". Secondary: the rows are
+   plain <div onClick> in notification-center.tsx — no role, no tabIndex —
+   so the panel cannot be worked from the keyboard at all.
+
+195. 2026-09-05 · BGP staff / desktop (QA r547) · WIP report → nothing tells
+   you the Target Month cell is editable. On /wip-report the Deal Detail
+   table renders a bare native <input type="month"> per row, so an empty
+   target reads as the browser's "--------- ----" placeholder sitting in the
+   middle of an otherwise read-only-looking table — it looks like a broken
+   cell rather than "click here to forecast this fee". The rest of the row
+   uses styled inline editors (the Deal Status pill via InlineLabelSelect).
+   SUGGESTION: render the empty state as an "— Set month" affordance in the
+   table's own type scale that swaps to the month input on click, matching
+   the Deal Status cell, so the fee forecast reads as data with an edit
+   action rather than as a form field wedged into a report.
+
 194. 2026-09-05 · BGP staff / mobile 390px (QA r546) · "the Letting Tracker
    has no way in from the phone home screen". Victoria's phone home has an
    Ask-ChatBGP row, My Billing, Total billing, Team Expenses, four tiles

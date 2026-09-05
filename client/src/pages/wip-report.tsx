@@ -1254,16 +1254,22 @@ export default function WipReport() {
     pendingTargetSaves.current.delete(dealId);
     clearTimeout(pending.timer);
     try {
-      await apiRequest("PUT", `/api/crm/deals/${dealId}`, { targetDate: `${pending.val}-01` });
-      toast({ title: "Target month updated", description: "Applied to everyone on this deal." });
+      await apiRequest("PUT", `/api/crm/deals/${dealId}`, { targetDate: pending.val ? `${pending.val}-01` : null });
+      toast({ title: pending.val ? "Target month updated" : "Target month cleared", description: "Applied to everyone on this deal." });
       invalidateDealCaches();
     } catch (err: any) {
       toast({ title: "Couldn't save target month", description: err?.message || "Please try again.", variant: "destructive" });
     }
   };
   const scheduleTargetSave = (dealId: string, val: string) => {
-    const yr = parseInt(val.slice(0, 4), 10);
-    if (!yr || yr < 2000 || yr > 2100) return; // mid-typing year — not a real edit
+    // An empty value is a real edit — the user wiped the month off the deal
+    // (the picker's clear button, or deleting it). It goes through the same
+    // debounce, so a transient "" while retyping is superseded by the value
+    // that follows it and only the final state ever reaches the server.
+    if (val !== "") {
+      const yr = parseInt(val.slice(0, 4), 10);
+      if (!yr || yr < 2000 || yr > 2100) return; // mid-typing year — not a real edit
+    }
     const prev = pendingTargetSaves.current.get(dealId);
     if (prev) clearTimeout(prev.timer);
     pendingTargetSaves.current.set(dealId, { val, timer: setTimeout(() => flushTargetSave(dealId), 1200) });
@@ -2067,12 +2073,13 @@ export default function WipReport() {
                                   // Change events schedule a debounced save (scheduleTargetSave —
                                   // implausible mid-typing years never save); blur flushes at once, so
                                   // both the popup pick and typed edits land exactly once, when done.
+                                  // Clearing the field is a save too — it nulls the deal's target date.
                                   key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`}
                                   defaultValue={toDateInputValue(e.targetDate).slice(0, 7)}
                                   className="text-xs border border-border rounded px-1 py-0.5 w-[150px] focus:outline-none focus:border-ring"
                                   onChange={(ev) => {
                                     const val = ev.target.value;
-                                    if (!val || !e.dealId) return;
+                                    if (!e.dealId) return;
                                     // Month picker gives yyyy-MM; the deal stores a full date, so the
                                     // save pins the target to the 1st of the chosen month.
                                     scheduleTargetSave(e.dealId, val);

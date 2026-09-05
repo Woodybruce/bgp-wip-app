@@ -2458,6 +2458,48 @@ async function victoriaRound(page, cross) {
     if (typeof body?.deals !== 'number' || body.activeDeals > body.deals) throw new Error(`activeDeals ${body.activeDeals} > deals ${body.deals}`);
   });
 
+  await step(page, p, 'staff-wip-target-month-clearable', async () => {
+    // r547: the WIP report's inline Target Month <input type="month"> saved a
+    // new month fine but silently swallowed a CLEAR — onChange bailed on an
+    // empty value, so a wrong forecast month could never be taken off a deal
+    // (the field looked empty until the next refetch put the old month back).
+    // Drives the real control: set, reload, clear, reload, then restore.
+    await page.goto(`${BASE}/wip-report`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+    });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(3000);
+    const sel = 'tbody tr input[type="month"]';
+    if (!(await page.locator(sel).count())) throw new Error('no Target Month input on the WIP deal table');
+    const inp = page.locator(sel).first();
+    const original = await inp.inputValue();
+    const value = async () => {
+      await page.goto(`${BASE}/wip-report`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => {
+        if (!/ERR_ABORTED/.test(String(e))) throw e;
+      });
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(3000);
+      return page.locator(sel).first().inputValue();
+    };
+    const write = async (v) => {
+      const i = page.locator(sel).first();
+      await i.scrollIntoViewIfNeeded();
+      await i.fill(v);
+      await page.waitForTimeout(400);
+      await page.locator('h1').first().click({ force: true });   // blur flushes the debounced save
+      await page.waitForTimeout(2800);
+    };
+    try {
+      await write('2027-04');
+      if ((await value()) !== '2027-04') throw new Error('setting a target month did not persist');
+      await write('');
+      const cleared = await value();
+      if (cleared !== '') throw new Error(`clearing the target month did not persist — reload shows "${cleared}"`);
+    } finally {
+      await write(original || '');
+    }
+  });
+
   await step(page, p, 'staff-evidence-plans-list', async () => {
     // r471: Evidence Plans (arrived via the d0b79fe JOGQK merge) — staff
     // list must stay reachable. Node-side fetch, no page-log noise.
