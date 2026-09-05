@@ -2460,6 +2460,28 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  await step(page, p, 'staff-properties-table-pickers-kept', async () => {
+    // Other half of client-properties-table-readonly-cells (r542): the client
+    // read-only dash must not cost staff the tenant / BGP-contact pickers.
+    await page.goto(`${BASE}/properties`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/properties`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForSelector('[data-testid^="tenants-readonly-"], [data-testid^="add-tenant-"]', { timeout: 25000 })
+      .catch(() => { throw new Error('staff properties table never rendered a tenants cell (did it load?)'); });
+    for (const kind of ['add-tenant', 'add-agent']) {
+      if (!(await page.locator(`[data-testid^="${kind}-"]`).count())) {
+        throw new Error(`staff lost the ${kind} picker on the properties table`);
+      }
+    }
+    for (const kind of ['tenants', 'agents']) {
+      if (await page.locator(`[data-testid^="${kind}-readonly-"]`).count()) {
+        throw new Error(`staff properties table rendered the client read-only ${kind} cell`);
+      }
+    }
+  });
+
   // Staff half of the r535 client-leads-guard additions: blocking the CRM
   // leads pipeline and gating landlord packs for clients must not cost BGP
   // its own prospecting board or its packs. A 404 on the pack filename is
@@ -6796,6 +6818,33 @@ async function markRound(page, cross) {
       data: { name: `QA-PROBE Newco ${ROUND}` },
     });
     if (probe.status() !== 403) throw new Error(`client company create returned ${probe.status()}, expected 403`);
+  });
+
+  await step(page, p, 'client-properties-table-readonly-cells', async () => {
+    // r542: the client's Properties table printed NOTHING in the Tenants and
+    // BGP Contacts cells when a property had neither linked — a client has no
+    // "+" affordance, so the row read half-broken next to the "—" every other
+    // read-only column shows. Staff keep the pickers
+    // (staff-properties-table-pickers-kept).
+    await page.goto(`${BASE}/properties`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/properties`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    // The Properties table is a TAB inside DealsHub — wait for a real
+    // tenants cell (either shape) rather than a fixed sleep.
+    await page.waitForSelector('[data-testid^="tenants-readonly-"], [data-testid^="add-tenant-"]', { timeout: 25000 })
+      .catch(() => { throw new Error('client properties table never rendered a tenants cell (did it load?)'); });
+    for (const kind of ['tenants', 'agents']) {
+      if (!(await page.locator(`[data-testid^="${kind}-readonly-"]`).count())) {
+        throw new Error(`client properties table printed a BLANK ${kind} cell instead of a read-only dash`);
+      }
+    }
+    for (const kind of ['add-tenant', 'add-agent']) {
+      if (await page.locator(`[data-testid^="${kind}-"]`).count()) {
+        throw new Error(`client properties table still offers the ${kind} picker`);
+      }
+    }
   });
 }
 

@@ -13,6 +13,31 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+187. 2026-09-05 · Landsec client / desktop 1440px (QA r542) · "who is my BGP
+   contact for Bluewater?" from the Properties table · the BGP CONTACTS
+   column is empty for every client property, because it is fed by
+   `/api/crm/property-agents` (per-property staff links, which nobody fills
+   in) — while the client's own dashboard DOES name their BGP team from
+   `bgp_contact_user_ids` on the company row, and the Portfolio "Your BGP
+   Team" card renders a whole org chart from it. So the one place a landlord
+   looks per-building says nothing. Suggestion: when a property has no
+   property-agent links, fall back to the landlord company's
+   `bgp_contact_user_ids` for the client view (labelled "account team" so
+   it doesn't imply a per-building assignment). r542 fixed the cell rendering
+   as literal blank space; this is the data behind it.
+
+188. 2026-09-05 · Landsec client / desktop 1440px (QA r542) · checking rent
+   evidence on /comps before a regear conversation · the filter strip offers
+   seventeen hardcoded LONDON area chips (Mayfair, City, Covent Garden,
+   Marylebone, Chelsea, Fitzrovia, Farringdon, Islington, Kings Cross, Soho,
+   Midtown, Paddington, Richmond, East London, SE1 / London Bridge, Camden,
+   Other) directly under a stat reading "0 areas", to a landlord whose
+   portfolio is Bluewater (Kent) and Westgate. Every chip filters to nothing.
+   Suggestion: drive the area chips off the areas actually present in the
+   viewer's visible comps (that is what the "N areas" stat already counts),
+   and hide the strip entirely when that set is empty — the London list is
+   BGP's own patch, not a client's.
+
 185. 2026-09-05 · BGP staff / phone 390px (QA r541) · opening a group chat
    just created from Messages -> New Group · the member sub-line under the
    group name reads "Victoria, Alex, Cara, Victoria · Tap to edit" — the

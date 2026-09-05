@@ -560,6 +560,12 @@ export function InlineAgents({
     },
   });
 
+  // Same as the tenants cell: read-only + nothing assigned must still print
+  // something, or the client's Properties row shows an empty gap.
+  if (readOnly && assignedUsers.length === 0) {
+    return <span className="text-xs text-muted-foreground" data-testid={`agents-readonly-${propertyId}`}>—</span>;
+  }
+
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {assignedUsers.map(user => {
@@ -1372,6 +1378,13 @@ export function InlineTenants({
   const MAX_VISIBLE = 3;
   const visibleCompanies = assignedCompanies.slice(0, MAX_VISIBLE);
   const hiddenCount = assignedCompanies.length - MAX_VISIBLE;
+
+  // A client viewer has no "+" affordance, so with nothing linked the cell
+  // renders as blank space and the row reads half-broken. Match the
+  // read-only dash every other client-visible column uses.
+  if (readOnly && assignedCompanies.length === 0) {
+    return <span className="text-xs text-muted-foreground" data-testid={`tenants-readonly-${propertyId}`}>—</span>;
+  }
 
   return (
     <div className="flex items-center gap-1 flex-wrap">

@@ -88,17 +88,78 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r542 · 2026-09-05 · ROUND IN PROGRESS · FULL (rotation #2 Landsec client desktop 1440px)
+### r542 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · 1 bug fixed — blank Tenants / BGP Contacts cells on the client Properties table · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
-  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
-- Two-bot round 542 by chunk. victoria EXACT baseline (2x400). woody,nick,sam
-  EXACT baseline (0). mark chunk ran WITHOUT QA_CROSS_FILE (my miss) so it
-  read 12: 8x403 + 1x503 + 1x404 + 2 flow-failures. At least one is a proven
-  chunking artefact — client-brief-target-scope asserts `cross.briefId`, which
-  is written by victoria's staff-brief-target-create, so mark-in-isolation
-  can never satisfy it (two-bot-round.mjs:6458). Re-running victoria,mark in
-  one process to get the true joint signature; result in the final entry.
-- Journey pending: Mark Warne @1440px.
+  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before,
+  and GREEN 42/0 with FRESH_BUILD=1 after the fix.
+- Two-bot round 542. Signatures EXACT vs r537-r541: victoria 2x400,
+  mark 9x403 + 1x503, woody/nick/sam 0. All listed noise. 0 new issues from
+  the scripted sweep.
+- PROCEDURE NOTE, cost me ~15 minutes: I first ran the mark chunk WITHOUT
+  QA_CROSS_FILE and read 12 issues (8x403 + 503 + 404 + 2 flow-failures).
+  That deviation was ENTIRELY the missing cross state — client-brief-target-
+  scope asserts `cross.briefId` written by victoria's staff-brief-target-
+  create (two-bot-round.mjs:6458), and client-deal-detail-fee-stripped wants
+  victoria's deal id. Re-run as `QA_CROSS_FILE=... QA_PERSONAS=victoria,mark`
+  in ONE process and the signature was exact. Chunked runs MUST carry
+  QA_CROSS_FILE or the mark chunk is guaranteed-red for no reason.
+- JOURNEY (Mark Warne @1440px, real UI login through the Client/guest
+  reveal): "a Bluewater regear is coming up — who are my tenants, who at BGP
+  is on this building, and what rent evidence do we have". dashboard ->
+  /properties (table + cards) -> Bluewater property page (Overview / Boards /
+  Deals & units / Files & contacts / KYC / Activity pills, news feed,
+  tenancy + letting-tracker boards) -> /turnover -> /comps -> /tasks. Shots
+  qa/smoke-shots/r542-*.png. 0 pageerrors, 0 dom-nesting warnings, and the
+  ONLY 4xx across the whole walk were listed noise (401 /api/auth/me on the
+  pre-auth login screen, 404 /api/hr/photo/<id> for a BGP contact with no
+  photo — the missing-photo class).
+- NOT A BUG, checked before reporting: the dashboard "EXPIRING (6M) · click
+  to list" tile looked dead in my first pass. It is not — the popover is a
+  real Radix Popover on `[data-testid=kpi-expiring]` and both the count and
+  the list come from the SAME `portfolioData.leasingUnits` +
+  `isExpiringSoon` filter (dashboard.tsx:1477 and :1681), so they cannot
+  disagree. My selector had matched the compact non-button copy of the same
+  number at :1530. Also NOT a bug: /turnover renders the client dashboard —
+  that is ClientRouteGuard bouncing a staff-only route, the /portfolios class.
+- BUG FIXED (client/src/pages/properties.tsx) — on the client's Properties
+  table the TENANTS and BGP CONTACTS cells rendered as literal blank space,
+  next to the "—" that STATUS / CLASS / Team / Sq Ft all print, so the row
+  read half-broken. Cause: InlineTenants and InlineAgents return a bare
+  `<div className="flex …">` with nothing in it when the property has no
+  links; for staff that div still holds the dashed "+" picker, but a client
+  gets `readOnly` and the picker is stripped, leaving an empty cell. Both now
+  return the same read-only dash InlineLinkSelect has used since r534
+  (inline-edit.tsx:673). VERIFIED VISUALLY at 1440px for BOTH personas from
+  one FRESH_BUILD run (qa/smoke-shots/r542-11-client-properties-after.png,
+  r542-11-staff-properties-after.png): client 2 tenant dashes + 2 agent
+  dashes + 0 pickers; staff 4 add-tenant + 4 add-agent + 0 dashes. tsc clean.
+- CHECKED, and it is data not scoping: /api/crm/property-tenants and
+  /api/crm/property-agents return an EMPTY array for VICTORIA too, not just
+  for Mark — nobody fills the per-property links in. So this was only ever a
+  rendering bug; the underlying "the client can't see their BGP contact for
+  this building" gap is real and is logged as UX 187, not fixed here.
+- Two-bot: +2 scenarios, the standard client-loses / staff-keeps pair —
+  mark client-properties-table-readonly-cells (read-only dashes present in
+  both columns, 0 add-tenant/add-agent pickers) and victoria
+  staff-properties-table-pickers-kept (pickers present, 0 client dashes).
+  Both [ok]; victoria still exactly 2x400. Note for whoever copies them: the
+  Properties table is a TAB inside DealsHub, so a fixed sleep is not enough —
+  waitForSelector on the tenants cell (either shape) is what made them
+  reliable (first run failed on a 4s sleep).
+- Suggestions: UX-NOTES 187 (BGP CONTACTS is fed by per-property agent links
+  nobody fills in, while the client's own dashboard names their BGP team from
+  `bgp_contact_user_ids` — fall back to it for the client view) and 188
+  (/comps shows a client seventeen hardcoded LONDON area chips under a "0
+  areas" stat; drive the chips off the viewer's own comps).
+- Still open/unbuilt, do not report again: UX #150, #157, #162, #170, #171,
+  #172, #174-#188 (171 = client PUT persists dealType/team/leaseLength/
+  landlordId — needs Woody).
+- New flakes: none. The /login cold-vite flake did NOT recur in four scripted
+  walks with the networkidle + 2.5s + 4x-retry reveal loop. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Deferred: nothing new.
+- Next: r542 was FULL -> r543 may be LIGHT; then rotation #3 Landsec client
+  mobile 390px.
 
 ### r541 · 2026-09-05 · LIGHT (r540 had the journey) · 3 bugs fixed, one family — invalid DOM nesting in interactive controls · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
