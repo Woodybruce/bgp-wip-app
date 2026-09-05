@@ -88,6 +88,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r541 · 2026-09-05 · LIGHT — ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
+  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
+- Two-bot round 541, all three chunks, each exit 0 first run. Signatures EXACT
+  vs r537-r540: victoria 2x400, mark 9x403 + 1x503, woody/nick/sam 0. All
+  listed noise. 0 new issues from the scripted sweep.
+- Triage list for this round (LIGHT, no journey): (1) visually verify r540's
+  suggest-targets-dialog fix — find the property units panel; (2) the phone
+  Messages nested-<button> validateDOMNesting warning (capped spend).
+
 ### r540 · 2026-09-05 · FULL (rotation #1 staff desktop 1440px) · 2 bugs fixed — stale Fits column + Suggest-Targets minting a brief per brand · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
   into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before,
