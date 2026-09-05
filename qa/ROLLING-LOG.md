@@ -88,23 +88,81 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r545 · 2026-09-05 · LIGHT (r544 had the journey) · ROUND IN PROGRESS
-- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs). Regression: smoke GREEN 42/0. Dev server on :5000
-  against bgpsmoke.
-- Two-bot round 545 (victoria+mark in one process with QA_CROSS_FILE) in
-  flight. TRIAGE SO FAR: victoria 2x400 (listed noise: rocketreach-discover,
-  investment-tracker invalid-payload probe), mark 403/503s tracking the
-  listed signature. ONE flow-failure, and it is the r544 CARRY-FORWARD:
-  victoria staff-phone-chat-suggestions-kept times out clicking
-  [data-testid="mobile-pinned-chatbgp"]. NOT an app bug — the scenario only
-  resized the desktop context to 390px, and use-mobile requires narrow AND a
-  touch UA, so /messages redirected to the DESKTOP /chatbgp page (which shows
-  the keyless "Not Connected" panel). mark's counterpart already used a real
-  mobile context; victoria's now does too (same iPhone-UA newContext +
-  mobSeedAuth + mobGoto pattern).
-- Round work continues on under-visited surfaces (KYC upload portal
-  end-to-end, staff -> customer).
+### r545 · 2026-09-05 · LIGHT (r544 had the journey) · 1 bug fixed — the MLRO AML report PDF 500'd on every deal · 1 harness fix · 1 suggestion
+- Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
+  via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before, and GREEN 42/0
+  with FRESH_BUILD=1 after the fix (dev server stopped first, per the r544
+  note). No .env in a fresh container — write one pointing at
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke before `tsx`.
+- CARRY-FORWARD FROM r544, RESOLVED. Two-bot round 545 came back at the
+  r537-r544 signature for mark (9x403 + 1x503) and woody/nick/sam (0), and
+  victoria 2x400 — PLUS one flow-failure, and it was r544's own new scenario:
+  staff-phone-chat-suggestions-kept timed out clicking
+  [data-testid="mobile-pinned-chatbgp"]. NOT an app bug. The scenario only
+  resized the desktop context to 390px, but use-mobile requires narrow AND a
+  touch UA (checkIsMobile -> isTouchDevice), so the phone shell never mounted
+  and /messages redirected to the DESKTOP /chatbgp page — which in a keyless
+  env is the "Not Connected" panel, hence no chips and no pinned row. mark's
+  counterpart was already built on a real iPhone-UA newContext; victoria's
+  now uses the same mobCtx + mobSeedAuth + mobGoto pattern. Re-ran the
+  victoria chunk against the fix: [ok] staff-phone-chat-suggestions-kept,
+  chunk back to 2x400 only. GENERAL RULE worth keeping: a 390px scenario
+  that touches the phone shell MUST use a mobile context, never
+  setViewportSize on the desktop one.
+- SURFACE WORKED (not just loaded): the tokenised KYC upload portal
+  end-to-end — Victoria issues a link on a deal, then a CLEAN logged-out
+  context opens /kyc-upload/<token> and drops a document, then back to the
+  deal AML panel. Also the diary write path (Add event dialog -> saved ->
+  visible in the week grid -> deleted through the same API the UI uses).
+  Both work. Scripts kept: qa/r545-kyc-portal-probe.mjs,
+  qa/r545-diary-write-probe.mjs. Shots qa/smoke-shots/r545-*.png.
+- BUG FIXED (server/aml-compliance.ts, generateMlroReportBuffer) — clicking
+  "Download MLRO Report PDF" on ANY deal opened a tab reading
+  {"error":"column d.crm_company_id does not exist"}. The generator joined
+  crm_companies on d.crm_company_id, a column crm_deals does not have (deal
+  counterparties live on landlord_id / tenant_id — the same pair the KYC
+  panel checks). So the firm's regulator-facing AML report — the thing you
+  retain for FCA / HMRC inspection — could never be produced, and neither
+  could "Save to SharePoint", which runs the same generator. Now selects the
+  deal, resolves landlord + tenant from crm_companies, prints a Landlord and
+  Tenant line under Deal and a per-party Companies House number under Risk
+  assessment ("Not linked" / "—" when a side is empty). VERIFIED: 200 +
+  %PDF + ~3KB on all 6 fixture deals (was 500 on all 6); text extracted from
+  the PDF shows "Landlord: British Land Rival" on the one deal with a party
+  linked; clicking the button in the UI now downloads "MLRO Report - U124
+  Bluewater  Gails letting - 2026-09-05.pdf"
+  (qa/smoke-shots/r545-mlro-report-after.png). Save-to-SharePoint now fails
+  only on "Failed to authenticate with Microsoft" = listed env noise.
+  tsc clean.
+- Two-bot: +2 scenarios, the standard staff-keeps / client-loses pair —
+  victoria staff-mlro-report-pdf (200 + %PDF magic + >1KB on the first deal)
+  and mark client-mlro-report-gate (403 on mlro-report AND on
+  aml/deal/:id/upload-links — counterparty CDD evidence is staff-only). Both
+  use node-side fetch so the deliberate 403s stay out of the page issue log
+  and the signature holds. Both assertions verified live against the fixed
+  build (victoria 200 %PDF, mark 403 + 403); a full victoria+mark pass WITH
+  the new pair was not re-run (budget) — next round should confirm
+  2x400 / 9x403 + 1x503 once more.
+- NOT A BUG, checked before reporting: the KYC portal upload succeeds even
+  with no AI key (analyseSourceOfFundsDoc fails soft and returns
+  documentType "other"), so a Claude outage does not break the customer's
+  upload. The calendar's next/prev arrows moving a WEEK in Week view is
+  navigateView honouring viewMode, not a jump bug.
+- DEFERRED (needs Woody — it is a storage decision, not a patch): the KYC
+  portal never keeps the customer's file. processInboundKycFile writes ONE
+  metadata row to kyc_upload_files and lets the temp file be unlinked; the
+  bytes go nowhere, and NOTHING in the app reads kyc_upload_files (grep finds
+  only the CREATE TABLE and that INSERT). The MLRO's whole trace of a
+  delivered passport is "Used · 1 upload" on the link chip, with "AI
+  SOURCE-OF-FUNDS 0 docs" sitting right above it — while the portal tells the
+  customer in writing the docs are "stored securely in BGP's UK SharePoint".
+  Written up as UX-NOTES 192 with the three-part suggestion.
+- Suggestions: UX-NOTES 192 (above). Still open/unbuilt, do not report again:
+  UX #150, #157, #162, #170, #171, #172, #174-#191.
+- New flakes: none. Minor, not worth a fix on its own: the Add-event dialog
+  logs "Missing `Description` or `aria-describedby={undefined}` for
+  {DialogContent}" — one console warning, no user-visible effect.
+- Next: r545 was LIGHT -> r546 FULL, rotation #4 BGP staff mobile 390px.
 
 ### r544 · 2026-09-05 · FULL (rotation #3 Landsec client MOBILE 390px) · 2 bugs fixed — staff starter prompts on the client phone chat + wire-feed news summaries repeating the headline · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas

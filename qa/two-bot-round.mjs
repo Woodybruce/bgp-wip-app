@@ -2556,6 +2556,22 @@ async function victoriaRound(page, cross) {
     if (r.cookieCount < 1) throw new Error('paywall cookie health came back without any publication rows');
   });
 
+  await step(page, p, 'staff-mlro-report-pdf', async () => {
+    // r545: GET /api/aml/deal/:id/mlro-report 500'd on every deal —
+    // "column d.crm_company_id does not exist" — so the MLRO's
+    // regulator-facing PDF (and its Save-to-SharePoint twin, same
+    // generator) could never be produced. Node-side fetch: the response is
+    // a binary PDF, not something to read through page.evaluate.
+    const deals = await (await fetch(`${BASE}/api/crm/deals`, { headers: { Authorization: 'Bearer ' + page.qaToken } })).json();
+    const list = Array.isArray(deals) ? deals : (deals.deals || []);
+    if (!list.length) throw new Error('no deals to report on');
+    const r = await fetch(`${BASE}/api/aml/deal/${list[0].id}/mlro-report`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (r.status !== 200) throw new Error(`MLRO report expected 200, got ${r.status}: ${(await r.text()).slice(0, 120)}`);
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.slice(0, 4).toString() !== '%PDF') throw new Error(`MLRO report is not a PDF: ${buf.slice(0, 80).toString()}`);
+    if (buf.length < 1000) throw new Error(`MLRO report suspiciously small (${buf.length} bytes)`);
+  });
+
   await step(page, p, 'staff-board-report-category-labels', async () => {
     // r543: the Board Report's market-insights category breakdown was
     // printing the raw news_sources key "brand:<uuid>" as a board-facing
@@ -6747,6 +6763,19 @@ async function markRound(page, cross) {
         if (stok) await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/${bid}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + stok } });
       }
     }
+  });
+
+  await step(page, p, 'client-mlro-report-gate', async () => {
+    // r545 counterpart: the MLRO AML report is counterparty CDD evidence —
+    // risk level, PEP status, sanctions, source-of-funds red flags — and is
+    // staff-only. Node-side fetch so the deliberate 403s stay out of the
+    // page issue log.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const DEAL = '11110000-0000-0000-0000-000000000302'; // fixture: U124 Bluewater — Gail's letting
+    const pdf = await fetch(`${BASE}/api/aml/deal/${DEAL}/mlro-report`, auth);
+    if (pdf.status !== 403) throw new Error(`client GET mlro-report expected 403, got ${pdf.status}`);
+    const links = await fetch(`${BASE}/api/aml/deal/${DEAL}/upload-links`, auth);
+    if (links.status !== 403) throw new Error(`client GET aml upload-links expected 403, got ${links.status}`);
   });
 
   await step(page, p, 'client-board-report-gate', async () => {

@@ -13,6 +13,37 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+192. 2026-09-05 · BGP staff (MLRO) + the CUSTOMER / desktop (QA r545) ·
+   walked the tokenised KYC upload portal end to end for the first time:
+   Victoria issues a link on a deal (POST /api/aml/deal/:id/upload-link),
+   the customer opens /kyc-upload/<token> with no BGP login and drops a
+   proof-of-address. The customer's side is genuinely good — branded page,
+   the three doc types spelled out, one click to browse, the file comes back
+   ticked with its classification, no login, no overflow. What happens next
+   is the problem. processInboundKycFile (server/aml-portal.ts:265) runs the
+   AI analysis, writes ONE metadata row to kyc_upload_files (filename,
+   content type, size, ai_classification) and lets the temp file be
+   unlinked; the bytes are never stored anywhere. And NOTHING in the app
+   reads kyc_upload_files — grep finds only the CREATE TABLE and that INSERT.
+   So the MLRO's only evidence that a passport arrived is the "used · 1
+   upload" count on the link chip in the deal AML panel: no filename, no
+   classification, no way to open what the customer sent — and the two
+   panels sit inches apart on the deal page disagreeing with each other,
+   "AI SOURCE-OF-FUNDS 0 docs" directly above "CLIENT UPLOAD LINKS ·
+   Used · 1 upload" (qa/smoke-shots/r545-aml-upload-links.png). The portal
+   meanwhile tells the customer in writing that "Documents are stored
+   securely in BGP's UK SharePoint, accessible only to the deal team and our
+   MLRO", which is not currently true. Suggestion (needs Woody's call on
+   WHERE the bytes land — SharePoint via Graph like the deal Files panel, or
+   the existing kyc document store used by POST /api/kyc/documents/upload):
+   (a) persist the uploaded file, (b) put an "Documents received" list on
+   the deal AML panel reading kyc_upload_files — name · classification ·
+   size · when · open — so the sign-off has something to look at, and
+   (c) until (a) exists, soften the portal's storage promise. Verified live
+   this round: upload returns 200 and classifies even with no AI key (the
+   analyser fails soft), so this is about retention and visibility, not the
+   upload path itself. Shots qa/smoke-shots/r545-kyc-portal-*.png.
+
 191. 2026-09-05 · Landsec client / mobile 390px (QA r544) · "the agent asked
    about U124 — which unit is that?" from the Letting Tracker search · the
    filtered card list came back as "U124/U125/U126" twice and "U124" once,

@@ -1427,15 +1427,21 @@ router.post("/api/aml/deal/:id/mlr-scope", requireAuth, async (req: Request, res
 
 async function generateMlroReportBuffer(dealId: string): Promise<{ buffer: Buffer; filename: string; deal: any } | null> {
   const PDFDocument = (await import("pdfkit")).default;
-  const dealRow = await pool.query(
-    `SELECT d.*, c.name AS company_name, c.companies_house_number, c.aml_risk_level, c.aml_checklist
-     FROM crm_deals d
-     LEFT JOIN crm_companies c ON c.id = d.crm_company_id
-     WHERE d.id = $1`,
-    [dealId],
-  );
+  const dealRow = await pool.query(`SELECT * FROM crm_deals WHERE id = $1`, [dealId]);
   const d = dealRow.rows[0];
   if (!d) return null;
+
+  // Counterparties live on the deal as landlord_id / tenant_id (the same
+  // pair the KYC panel checks) — there is no crm_company_id column.
+  const partyRows = await pool.query(
+    `SELECT id, name, companies_house_number, aml_risk_level FROM crm_companies WHERE id = ANY($1::varchar[])`,
+    [[d.landlord_id, d.tenant_id].filter(Boolean)],
+  );
+  const partyById = new Map(partyRows.rows.map((r: any) => [r.id, r]));
+  const parties = [
+    { role: "Landlord", company: d.landlord_id ? partyById.get(d.landlord_id) : null, fallback: d.landlord_entity_name },
+    { role: "Tenant", company: d.tenant_id ? partyById.get(d.tenant_id) : null, fallback: d.tenant_entity_name },
+  ];
 
   const doc = new PDFDocument({ size: "A4", margins: { top: 60, bottom: 60, left: 50, right: 50 }, info: { Title: `MLRO Report — ${d.name}` }, bufferPages: true });
   const chunks: Buffer[] = [];
@@ -1450,7 +1456,7 @@ async function generateMlroReportBuffer(dealId: string): Promise<{ buffer: Buffe
 
   heading("Deal");
   line("Name", d.name);
-  line("Company", d.company_name);
+  parties.forEach((p) => line(p.role, p.company?.name || p.fallback || "Not linked"));
   line("Type", d.deal_type);
   line("Fee", d.fee != null ? `£${Number(d.fee).toLocaleString()}` : "—");
   line("Status", d.status);
@@ -1482,7 +1488,10 @@ async function generateMlroReportBuffer(dealId: string): Promise<{ buffer: Buffe
 
   heading("Risk assessment");
   line("Overall risk level", d.aml_risk_level || "Not assessed");
-  line("Companies House #", d.companies_house_number || "—");
+  parties.forEach((p) => {
+    if (p.company) line(`${p.role} — Companies House #`, p.company.companies_house_number || "—");
+  });
+  if (!parties.some((p) => p.company)) line("Companies House #", "—");
   line("Sanctions match", d.aml_sanctions_match ? "YES — review required" : "Clear");
   line("PEP status", d.aml_pep_status || "—");
 
