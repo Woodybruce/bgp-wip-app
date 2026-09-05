@@ -13,6 +13,31 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+199. 2026-09-05 · BGP staff / desktop (QA r549) · Victoria recorded a new
+   letting comp, then opened Rent Analysis on it and worked the NER through
+   properly — term, break, rent free, fit-out, NIA, ITZA. The calculator gets
+   it right, and then there is nowhere for the answer to go: the only exits
+   are "Download Excel" and "Close". The comp's own Net Effective / Overall
+   (psf) / £ psf (NIA) fields sit empty on the row behind unless she closes
+   the dialog and retypes each figure by hand into the schedule. SUGGESTION:
+   a "Save to comp" button in the calculator footer that writes back
+   netEffectiveRent, overallRate, effectiveRatePsf, niaSqft, itzaSqft, term,
+   breakClause, rentFreeMonths and fitoutContribution — the Excel export
+   already carries exactly that writeback map (appendBgpMeta's writeback
+   refs), so the fields are already identified; only the in-app path is
+   missing.
+
+200. 2026-09-05 · BGP staff / desktop (QA r549) · the Add Leasing Comp dialog
+   asks for the six fields that identify a comp (property, tenant, area, use
+   class, transaction type, headline rent, Zone A, date) but none of the ones
+   the schedule needs to devalue it — no area, no term, no break, no rent
+   free, no incentive. So every comp created in-app lands on the board with
+   "—" in Overall (psf), Net Effective and £ psf, and only fills in later if
+   someone remembers to open the detail panel. SUGGESTION: add a collapsed
+   "Lease terms (optional)" section to the create dialog carrying NIA, term,
+   break, rent free (mths) and tenant incentive — the same five inputs the
+   NER calculator asks for — so a comp is analysable the moment it is saved.
+
 197. 2026-09-05 · BGP staff / desktop (QA r548) · Victoria captured a real
    operator brief on Requirements — "1,200-1,800 sq ft, prime pitch". The
    only size input is a chip row of fixed bands (Under 500 / 500-1,000 /

@@ -88,20 +88,74 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r549 · 2026-09-05 · LIGHT (r548 had the journey) · ROUND IN PROGRESS
+### r549 · 2026-09-05 · LIGHT (r548 had the journey) · 2 bugs fixed, one family — a comp showed THREE different net effective rents on three surfaces · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; wrote .env at
-  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke; dev server needs
-  `npx tsx --env-file=.env server/index.ts` — plain tsx does NOT read .env).
-  Regression: smoke GREEN 42/0.
+  qa/apply-sql.mjs). NOTE for fresh containers: the dev server must be started
+  as `npx tsx --env-file=.env server/index.ts` — plain `npx tsx server/index.ts`
+  does NOT read .env and dies on "DATABASE_URL must be set". Regression: smoke
+  GREEN 42/0 before, and GREEN 42/0 with FRESH_BUILD=1 after the fixes.
 - CARRY-FORWARD FROM r548, CONFIRMED. Two-bot round 549 in three chunks with
   QA_CROSS_FILE: victoria 2x400 (incl. [ok] staff-requirement-match-dialog-
-  agrees + staff-wip-target-month-clearable), mark 9x403 + 1x503,
+  agrees and staff-wip-target-month-clearable), mark 9x403 + 1x503,
   woody/nick/sam 0 — exactly the r537-r548 signature. All 12 logged issues
   are listed noise (rocketreach-400 + investment-tracker-400, deliberate
   client 403 gates, keyless-AI 503). 0 app bugs from the scripted regression.
-- LIGHT round: skipping the journey; spending the time on under-worked
-  surfaces (comps creation, client Files / data room).
+- LIGHT round, spent on an under-worked surface: COMPS. Drove the real task
+  end-to-end as Victoria at 1440px — Add Leasing Comp (property, tenant,
+  area, £92,500 headline, £120 Zone A, Aug 2026) -> row on the schedule ->
+  View Details -> Rent Analysis -> filled the lease terms off the "lease"
+  (15 yr term, break at 10, 9 mo rent free, £50k fit-out, 780 sq ft NIA,
+  400 ITZA). Create/search/detail/calculator all clean, h-overflow 0, 0
+  pageerrors, 0 non-noise 4xx/5xx. Scripts qa/r549-comps-journey.mjs,
+  r549-comps-detail.mjs, r549-ner-task.mjs, r549-ner-disagree.mjs;
+  shots qa/smoke-shots/r549j-*, r549d-*, r549n-*, r549x-*.
+- BUGS FIXED (2, one family) — ONE comp, THREE net effective rents, all on
+  screen at once and all different. The schedule row showed £89,167 pa in the
+  devaluation column, £84,542 in the Net Effective column beside it, and the
+  Rent Analysis dialog one click away said £80,563 (£108.39 vs £103.29 psf).
+  NER is the number BGP advises and quotes off.
+  1. server/comp-devalue.ts — devalueComp read only comp.term, comp.rentFree
+     and comp.areaSqft. The app's own comp form writes the break into
+     breakClause, the rent free into rentFreeMonths and the area into
+     niaSqft/giaSqft, so every comp created or edited IN THE APP devalued
+     with rent free = 0, no break, and a null psf (the psf sub-line simply
+     never rendered). Now takes breakClause (term certain = earliest break),
+     rentFreeMonths || rentFree, and areaSqft || niaSqft || giaSqft; the
+     hover note says "(to break)" when the break shortens the term.
+  2. client/src/pages/comps.tsx — computeNetEffective amortised incentives
+     over the FULL lease term and ignored breakClause entirely, while the
+     NER calculator in the same page amortises to the break and labels itself
+     "Amortisation horizon = 10 yr (to break)". Added netEffectiveHorizon()
+     (break if inside the term, else term), used for both the stepped-rent
+     average and the amortisation, and for the two cells' disabled tests so a
+     break-only comp still computes. Formula tooltip now says "Term certain
+     (to break)" when that is what it used.
+  VERIFIED LIVE before and after on the same comp: pre-fix £89,167 /
+  £84,542 / £80,563 with a blank devaluation psf; post-fix all three read
+  £80,563 pa and £103.29 psf, server devaluation note "10 yr term certain
+  (to break) · 9 mo rent free · £50,000 capital"
+  (qa/smoke-shots/r549x-*.png before, r549v-*.png after). tsc clean.
+- Two-bot: +1 victoria scenario, staff-comp-ner-surfaces-agree — creates a
+  comp with term 15 / break 10 / 9 mo RF / £50k fit-out / 780 NIA and asserts
+  termCertainYears 10, rentFreeMonths 9, NER ~£80,563 and a non-null psf
+  ~£103.29, deleting the probe in a finally. Verified [ok] against the
+  rebuilt app; victoria chunk still 2x400. run-round.sh purge already sweeps
+  QA-COMP%.
+- NOT A BUG, checked before reporting: searching the comps board for
+  "QA-COMP r549" returned two rows — the second was a leftover probe comp
+  from the two-bot round, not a filter failure. The board also shows far
+  fewer rows than the comps count (13 in the fixture, 1 on the table): the
+  AI-extracted News comps are leads and live on the Leads tab by design.
+- Suggestions: UX-NOTES 199 (the Rent Analysis dialog is a dead end — the
+  only exits are Download Excel and Close, so the worked NER has to be
+  retyped into the schedule by hand) and 200 (the Add Leasing Comp dialog
+  asks for nothing the schedule needs to devalue the comp, so every new comp
+  lands with "—" in Overall psf / Net Effective / £ psf). Still open and
+  unbuilt, do not report again: UX #150, #157, #162, #170, #171, #172,
+  #174-#198.
+- New flakes: none. Note: `pkill -f "server/index.ts"` kills the calling bash
+  chain too (exit 144) — issue it as its own command, then relaunch.
+- Next: r549 was LIGHT -> r550 FULL, rotation #2 Landsec client desktop 1440px.
 
 ### r548 · 2026-09-05 · FULL (rotation #1 BGP staff desktop 1440px) · 2 bugs fixed — the requirement Match dialog contradicted the Fits cell beside it + quoting rent labelled psf · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

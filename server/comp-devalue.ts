@@ -37,7 +37,9 @@ function parseRentFreeMonths(s: string | null | undefined): number {
 }
 
 // "10 years", "10 yrs break 5", "10 (5th yr break)" → term certain = the
-// break year when one is stated, else the full term.
+// break year when one is stated, else the full term. The comp's separate
+// Break field is applied on top by devalueComp (the app's own form writes the
+// break there, not into the term string).
 function parseTermYears(s: string | null | undefined): number | null {
   if (!s) return null;
   const str = String(s).toLowerCase();
@@ -63,12 +65,16 @@ export function devalueComp(comp: {
   headlineRent?: string | null;
   passingRent?: string | null;
   term?: string | null;
+  breakClause?: string | null;
   rentFree?: string | null;
+  rentFreeMonths?: string | null;
   capex?: string | null;
   fitoutContribution?: string | null;
   areaSqft?: string | null;
+  niaSqft?: string | null;
+  giaSqft?: string | null;
 }): Devaluation | null {
-  const area = num(comp.areaSqft);
+  const area = num(comp.areaSqft) || num(comp.niaSqft) || num(comp.giaSqft);
   const rent = parseMoney(comp.headlineRent) || parseMoney(comp.passingRent);
   if (!rent) return null;
 
@@ -85,15 +91,19 @@ export function devalueComp(comp: {
   }
   if (headlinePa < 1000) return null; // can't be an annual rent — refuse rather than mislead
 
-  const termYears = parseTermYears(comp.term) ?? 5; // UK default assumption when unstated
-  const rentFreeMonths = parseRentFreeMonths(comp.rentFree);
+  const fullTerm = parseTermYears(comp.term) ?? 5; // UK default assumption when unstated
+  // The Break field is its own column on the comp — an earliest break there
+  // shortens the term certain exactly as one written into the term string does.
+  const breakYears = parseTermYears(comp.breakClause);
+  const termYears = breakYears && breakYears > 0 && breakYears < fullTerm ? breakYears : fullTerm;
+  const rentFreeMonths = parseRentFreeMonths(comp.rentFreeMonths || comp.rentFree);
   const rentFreeYears = Math.min(rentFreeMonths / 12, termYears);
   const capital = (num(comp.capex) || 0) + (num(comp.fitoutContribution) || 0);
 
   const ner = (headlinePa * (termYears - rentFreeYears) - capital) / termYears;
   if (!Number.isFinite(ner) || ner <= 0) return null;
 
-  const parts = [`${termYears} yr term certain`];
+  const parts = [`${termYears} yr term certain${termYears < fullTerm ? " (to break)" : ""}`];
   if (rentFreeMonths > 0) parts.push(`${Math.round(rentFreeMonths)} mo rent free`);
   if (capital > 0) parts.push(`£${Math.round(capital).toLocaleString("en-GB")} capital`);
   if (!comp.term) parts.push("term assumed 5 yrs");

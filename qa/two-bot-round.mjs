@@ -2543,6 +2543,44 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  await step(page, p, 'staff-comp-ner-surfaces-agree', async () => {
+    // r549: one comp, three net effective rents. The schedule's devaluation
+    // column read only comp.term/comp.rentFree/comp.areaSqft, so the Break and
+    // Rent Free (mths) fields the app's own form writes were silently dropped;
+    // the schedule's Net Effective cell amortised over the FULL term while the
+    // Rent Analysis dialog beside it amortised to the break. A 15-yr term with
+    // a 10-yr break, 9 mo rent free and £50k fit-out read £89,167 / £84,542 /
+    // £80,563 on the three surfaces. All three must now land on the same
+    // term-certain figure. Creates a comp, checks it, deletes it.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const mk = await fetch(`${BASE}/api/crm/comps`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({
+        name: `QA-COMP R${ROUND} NER surfaces`, tenant: 'QA NER Co', areaLocation: 'Clapham',
+        headlineRent: '92500', term: '15 years', breakClause: '10 years',
+        rentFreeMonths: '9', fitoutContribution: '50000', niaSqft: '780',
+      }),
+    });
+    if (mk.status !== 200 && mk.status !== 201) throw new Error(`comp create expected 200/201, got ${mk.status}`);
+    const comp = await mk.json();
+    try {
+      const list = await (await fetch(`${BASE}/api/crm/comps`, { headers: { Authorization: auth.Authorization } })).json();
+      const row = list.find((c) => c.id === comp.id);
+      if (!row) throw new Error('probe comp missing from the comps list');
+      const dv = row.devaluation;
+      if (!dv) throw new Error('probe comp devalued to null — the schedule would show no net effective rent');
+      // term certain 10 yrs (break), rent free 9 mo, £50k capital:
+      // (92500 * (10 - 0.75) - 50000) / 10 = 80,562.5
+      if (dv.termCertainYears !== 10) throw new Error(`devaluation used ${dv.termCertainYears} yr term certain, ignoring the 10-yr break`);
+      if (dv.rentFreeMonths !== 9) throw new Error(`devaluation read ${dv.rentFreeMonths} mo rent free, ignoring the Rent Free (mths) field`);
+      if (Math.abs(dv.netEffectiveRentPa - 80563) > 1) throw new Error(`devaluation NER ${dv.netEffectiveRentPa}, expected ~80563 over the term certain`);
+      if (dv.netEffectiveRentPsf === null) throw new Error('devaluation psf is null — NIA on the comp was not read');
+      if (Math.abs(dv.netEffectiveRentPsf - 103.29) > 0.05) throw new Error(`devaluation psf ${dv.netEffectiveRentPsf}, expected ~103.29`);
+    } finally {
+      await fetch(`${BASE}/api/crm/comps/${comp.id}`, { method: 'DELETE', headers: { Authorization: auth.Authorization } });
+    }
+  });
+
   await step(page, p, 'staff-evidence-plans-list', async () => {
     // r471: Evidence Plans (arrived via the d0b79fe JOGQK merge) — staff
     // list must stay reachable. Node-side fetch, no page-log noise.

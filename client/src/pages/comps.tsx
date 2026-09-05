@@ -475,10 +475,12 @@ function parseYears(v: string | null | undefined): number {
 function computeNetEffective(comp: CrmComp): number {
   const steps = parseSteppedRent(comp.headlineRent);
   if (steps.length === 0) return 0;
-  const term = parseYears(comp.term);
+  // Everything is measured over the term certain — to the earliest break when
+  // the comp records one.
+  const term = netEffectiveHorizon(comp);
   const y1 = steps[0];
-  // Average headline across the lease term. If steps are fewer than term, the final step
-  // is held for the remaining years (standard stepped-rent convention).
+  // Average headline across the term certain. If steps are fewer than the term, the final
+  // step is held for the remaining years (standard stepped-rent convention).
   let avgHeadline = y1;
   if (term > 0) {
     let totalRent = 0;
@@ -494,9 +496,19 @@ function computeNetEffective(comp: CrmComp): number {
   const rfValue = (y1 / 12) * rfMonths; // rent free is valued at year-1 rent
   const incentive = parseNum(comp.fitoutContribution); // Tenant incentive / capital contribution
   const totalIncentives = rfValue + incentive;
+  // Incentives amortise over that same term certain, so the schedule cell, the
+  // Rent Analysis dialog and the server devaluation all land on one number.
   if (!term) return avgHeadline;
   const annualisedIncentive = totalIncentives / term;
   return avgHeadline - annualisedIncentive;
+}
+
+// Amortisation horizon for a comp: years to the earliest break if one is
+// recorded and it falls inside the term, else the full term.
+function netEffectiveHorizon(comp: CrmComp): number {
+  const term = parseYears(comp.term);
+  const brk = parseYears(comp.breakClause || "");
+  return brk > 0 && (!term || brk < term) ? brk : term;
 }
 
 // Fallback data used until live ONS data loads.
@@ -3081,8 +3093,8 @@ export default function Comps() {
                         if (!ne) return null;
                         return Math.round(ne).toString();
                       }}
-                      formulaLabel="Net Eff = Avg headline (across stepped rents) − (Rent free £ + Tenant incentive £) ÷ Term"
-                      disabled={!parseNum(comp.headlineRent) || !parseYears(comp.term)}
+                      formulaLabel={`Net Eff = Avg headline (across stepped rents) − (Rent free £ + Tenant incentive £) ÷ ${netEffectiveHorizon(comp) && parseYears(comp.breakClause || "") === netEffectiveHorizon(comp) && parseYears(comp.breakClause || "") > 0 ? "Term certain (to break)" : "Term"}`}
+                      disabled={!parseNum(comp.headlineRent) || !netEffectiveHorizon(comp)}
                       currency
                       readOnly={isClientComps}
                     />
@@ -3100,7 +3112,7 @@ export default function Comps() {
                       }}
                       formulaLabel={`Net Eff psf = Net Effective ÷ ${preferredAreaField(comp.useClass) === "giaSqft" ? "GIA" : "NIA"}`}
                       disabled={
-                        (!parseNum(comp.netEffectiveRent) && (!parseNum(comp.headlineRent) || !parseYears(comp.term))) ||
+                        (!parseNum(comp.netEffectiveRent) && (!parseNum(comp.headlineRent) || !netEffectiveHorizon(comp))) ||
                         (!parseNum(comp.niaSqft) && !parseNum(comp.giaSqft))
                       }
                       currency
