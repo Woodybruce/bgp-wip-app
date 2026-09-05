@@ -88,6 +88,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r556 · 2026-09-05 · FULL (rotation #1 staff desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
+  server via qa/with-server.sh). Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r555 CONFIRMED: full three-chunk two-bot pass with
+  QA_CROSS_FILE set, r555's two new assert-only scenarios in place. Every
+  scenario [ok]; tally victoria 2x400 / mark 9x403 + 1x503 / woody,nick,sam 0
+  — the r537-r555 signature exactly, fourteenth clean hand-off. All 12 logged
+  issues are listed noise (rocketreach-400 + investment-tracker-400,
+  deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted
+  regression.
+- Journey in progress: Victoria @ 1440px — Bluewater tenancy board KPI tiles
+  -> lease expiries -> the Lease Events board (empty in the fixture) and its
+  embedded twin on /comps.
+- Triage so far: nothing beyond the noise list.
+
 ### r555 · 2026-09-05 · LIGHT (r554 had the journey) · 2 bugs fixed, one family — the Board Report billed un-billed fees, and its own trend badge measured something else · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
