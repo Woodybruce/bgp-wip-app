@@ -101,6 +101,15 @@ function requirementAgeDays(iso: string | null | undefined): number | null {
   return isNaN(t) ? null : Math.round((Date.now() - t) / 86400000);
 }
 
+// The Fits column and its "N / M fit your available units" KPI come from a
+// SEPARATE matches query whose key is not a prefix of the list key, so list
+// invalidations never refreshed it — a requirement just created or re-sized
+// showed "—" fits until the page was remounted (r540).
+const invalidateRequirementsLeasing = () => {
+  queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing/matches"] });
+};
+
 const PROGRESS_STAGES = [
   { key: "contacted" as const, label: "Contacted", color: "bg-emerald-500", borderColor: "border-emerald-500", hoverBorder: "hover:border-emerald-400" },
   { key: "detailsSent" as const, label: "Details Sent", color: "bg-blue-500", borderColor: "border-blue-500", hoverBorder: "hover:border-blue-400" },
@@ -313,7 +322,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         const s = await sres.json();
         if (s.state === "done") {
           const d = s.result || {};
-          queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+          invalidateRequirementsLeasing();
           const parts = [
             `${d.imported ?? 0} imported`,
             d.promoted ? `${d.promoted} added to requirements` : null,
@@ -411,7 +420,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Sync failed");
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       toast({ title: "TRL synced", description: `${data.discovered} discovered · ${data.imported} imported · ${data.failed} failed` });
     } catch (err: any) {
       toast({ title: "TRL sync failed", description: err.message, variant: "destructive" });
@@ -431,7 +440,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Resync failed");
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       toast({ title: "TRL wiped and re-synced", description: `${data.deletedReqs} deleted · ${data.imported} re-imported · ${data.failed} failed` });
     } catch (err: any) {
       toast({ title: "TRL resync failed", description: err.message, variant: "destructive" });
@@ -451,7 +460,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Resync failed");
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       const parts = [
         `${data.deletedReqs} deleted`,
         `${data.imported} re-imported`,
@@ -627,7 +636,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
     mutationFn: (data: Partial<CrmRequirementsLeasing>) =>
       apiRequest("POST", "/api/crm/requirements-leasing", data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       setCreateOpen(false);
       toast({ title: "Requirement created" });
     },
@@ -638,7 +647,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
     mutationFn: ({ id, data }: { id: string; data: Partial<CrmRequirementsLeasing> }) =>
       apiRequest("PUT", `/api/crm/requirements-leasing/${id}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       setEditItem(null);
       toast({ title: "Requirement updated" });
     },
@@ -647,14 +656,14 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
 
   const inlineUpdate = (id: string, data: Partial<CrmRequirementsLeasing>) => {
     apiRequest("PUT", `/api/crm/requirements-leasing/${id}`, data)
-      .then(() => queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] }))
+      .then(() => invalidateRequirementsLeasing())
       .catch((e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }));
   };
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/crm/requirements-leasing/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       setDeleteItem(null);
       toast({ title: "Requirement deleted" });
     },
@@ -667,7 +676,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
     try {
       const res = await apiRequest("POST", `/api/crm/bulk-import/${source}`);
       const data = await res.json();
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       const created = data.requirements?.created || 0;

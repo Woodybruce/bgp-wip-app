@@ -27,14 +27,24 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
 }) {
   const { toast } = useToast();
   const defaultAdd = async (pick: BrandPick) => {
-    const res = await apiRequest("POST", "/api/unit-briefs", { unitId: unit!.id });
-    const brief = await res.json();
+    // Reuse the unit's existing brief — a blind POST minted a SECOND brief
+    // per added brand, and the unit page only ever reads the newest one, so
+    // every target added before the last one vanished from the unit (r540).
+    const existing = await apiRequest("GET", `/api/available-units/${unit!.id}/brief`)
+      .then((r) => r.json())
+      .catch(() => null);
+    let brief = existing;
+    if (!brief?.id) {
+      const res = await apiRequest("POST", "/api/unit-briefs", { unitId: unit!.id });
+      brief = await res.json();
+    }
     await apiRequest("POST", `/api/unit-briefs/${brief.id}/targets`, {
       operatorName: pick.name,
       companyId: pick.companyId,
       priority: "B",
     });
     queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit!.id, "brief"] });
     toast({ title: "Target added", description: pick.name });
   };
   const add = onAdd || defaultAdd;
