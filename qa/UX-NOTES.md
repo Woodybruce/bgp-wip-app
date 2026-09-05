@@ -13,6 +13,28 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+209. 2026-09-05 · BGP staff / mobile 390px (QA r554) · Victoria opened the
+   phone home screen at month end to see where her billing stood. The finance
+   tile reads "MY BILLING — 2026/27  £0 Billed · £0 Commission · £0 Potential
+   · £0 Negotiating · £0 Solicitors", and the very next tile, same column, is
+   "TOTAL BILLING  £250,000". Two different scopes (her personal commission
+   vs the whole firm's WIP book) with near-identical names and nothing on the
+   second saying whose money it is — and in the fixture the £250,000 isn't
+   hers, her team's, or even her client's. Suggestion: name the scope on the
+   roll-up tile ("Firm WIP" or "Total billing — firm") and give it a sub-line
+   like "whole firm · tap for the WIP report", so the two tiles can't be read
+   as one number and its total.
+
+210. 2026-09-05 · BGP staff / mobile 390px (QA r554) · Same journey, on the
+   WIP report itself: the question Victoria actually has on the train is
+   "what's on MY book this month", and the phone report only answers it for
+   the whole firm. The slice exists — NET FEES BY BGP CONTACT and the BGP
+   Contact filter — but it's a filter sheet several taps down, and the money
+   tiles at the top (WIP / INVOICED / NET FEES BY MONTH) never move until you
+   find it. Suggestion: a "Mine" / "My team" / "All" pill row directly under
+   the header on the phone, defaulting to Mine, driving the same filter the
+   sheet sets — so the first number on the screen is the one she came for.
+
 207. 2026-09-05 · Landsec client / desktop (QA r553) · Sweeping Mark's own
    forms for staff-only content, the Letting Tracker's Interest dialog
    describes BGP's mailbox to him: "Brands and agents who've expressed

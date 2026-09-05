@@ -3295,9 +3295,11 @@ export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorM
           <div className="flex items-center gap-2 flex-wrap min-w-0">
             <Users className="w-4 h-4 shrink-0" />
             <h3 className="text-sm font-semibold">Fee Allocation</h3>
-            {totalFee > 0 && !editing && allocations && allocations.length > 0 && (
-              <Badge variant="secondary" className="text-[10px]">
-                {formatCurrency(totalAllocated)} of {formatCurrency(totalFee)} allocated
+            {totalFee > 0 && !editing && (
+              <Badge variant="secondary" className="text-[10px]" data-testid="badge-fee-total">
+                {allocations && allocations.length > 0
+                  ? `${formatCurrency(totalAllocated)} of ${formatCurrency(totalFee)} allocated`
+                  : `${formatCurrency(totalFee)} fee`}
               </Badge>
             )}
             {headlineRent != null && !editing && !feeBasisEditing && (

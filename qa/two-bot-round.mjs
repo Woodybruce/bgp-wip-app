@@ -2746,6 +2746,69 @@ async function victoriaRound(page, cross) {
     if (!/WIP report/i.test(pop)) throw new Error('staff lost the WIP-report hint on the dates cell');
   });
 
+  // r554: the WIP report's title must describe the rows it is actually
+  // showing. The server stopped scoping /api/wip by team (every staff user
+  // gets the firm-wide "Normal" view), but the header still fell back to the
+  // reader's own team — so Victoria's report read "WIP Report — National
+  // Leasing" over a £250,000 total made up entirely of another team's deal,
+  // while its own NET FEES BY TEAM panel said National Leasing £0.
+  await step(page, p, 'staff-wip-title-matches-its-rows', async () => {
+    const api = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/wip', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const b = await res.json().catch(() => null);
+      return { ok: true, userTeam: b?.userTeam || null, isAdmin: !!b?.isAdmin, canSeeAll: !!b?.canSeeAll };
+    });
+    if (!api.ok) throw new Error(`WIP fetch failed (${api.status})`);
+    await page.goto(`${BASE}/wip-report`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/wip-report`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForSelector('[data-testid="wip-report-title"]', { timeout: 25000 })
+      .catch(() => { throw new Error('WIP report never rendered its title (did it load?)'); });
+    const title = (await page.locator('[data-testid="wip-report-title"]').first().innerText()).replace(/\s+/g, ' ').trim();
+    // Rows are firm-wide unless a plain DB admin has sliced to a team, so the
+    // title must never carry the reader's own team name in that case.
+    if (!api.isAdmin && !api.canSeeAll && api.userTeam && title.includes(api.userTeam)) {
+      throw new Error(`WIP title claims a team slice that is not applied: "${title}" over firm-wide rows`);
+    }
+    if (!api.isAdmin && !api.canSeeAll && !/All Teams/.test(title)) {
+      throw new Error(`WIP title should read "All Teams" for a firm-wide view, got "${title}"`);
+    }
+  });
+
+  // r554: the deal page must state the fee it talks about. A staff deal with
+  // a fee but no agent split rendered "No split yet — Add Split shares the
+  // fee between BGP agents" and no figure anywhere on the page, so tapping
+  // the WIP report's biggest number through to its deal showed nothing to
+  // check it against.
+  await step(page, p, 'staff-deal-fee-shown-without-split', async () => {
+    const target = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/deals', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return null;
+      const deals = await res.json().catch(() => []);
+      const d = (Array.isArray(deals) ? deals : []).find((x) => Number(x.fee) > 0);
+      return d ? { id: d.id, fee: Number(d.fee) } : null;
+    });
+    if (!target) return; // no priced deal in the fixture — nothing to assert
+    await page.goto(`${BASE}/deals/${target.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/deals/${target.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForSelector('[data-testid="card-fee-allocation"]', { timeout: 25000 })
+      .catch(() => { throw new Error('staff deal page never rendered the Fee Allocation card'); });
+    const badge = await page.locator('[data-testid="badge-fee-total"]').first().innerText().catch(() => '');
+    if (!badge) throw new Error('staff deal page shows no fee figure for a priced deal');
+    const digits = badge.replace(/[^0-9]/g, '');
+    if (digits !== String(Math.round(target.fee))) {
+      throw new Error(`deal page fee badge "${badge}" disagrees with the deal's fee ${target.fee}`);
+    }
+  });
+
   await step(page, p, 'staff-properties-table-pickers-kept', async () => {
     // Other half of client-properties-table-readonly-cells (r542): the client
     // read-only dash must not cost staff the tenant / BGP-contact pickers.

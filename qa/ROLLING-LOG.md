@@ -88,17 +88,91 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r554 · 2026-09-05 · FULL (rotation #4 BGP staff MOBILE 390px) — ROUND IN PROGRESS
+### r554 · 2026-09-05 · FULL (rotation #4 BGP staff MOBILE 390px) · 2 bugs fixed — the WIP report's title mis-stated its own scope, and a priced deal showed no fee anywhere · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
-  server `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0.
+  server `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN
+  42/0 before, and GREEN 42/0 with FRESH_BUILD=1 after the fixes.
 - CARRY-FORWARD FROM r553, CONFIRMED with a full three-chunk pass of my own
   (QA_CROSS_FILE set): victoria 2x400, mark 9x403 + 1x503, woody/nick/sam 0 —
-  exactly the r537-r553 signature. Twelfth clean hand-off. Triage: all 12
-  logged issues are listed noise (rocketreach-400 + investment-tracker-400,
+  exactly the r537-r553 signature, twelfth clean hand-off. All 12 logged
+  issues are listed noise (rocketreach-400 + investment-tracker-400,
   deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted
-  regression.
-- Journey next: Victoria on an iPhone context at 390px.
+  regression. Signature re-confirmed on victoria + mark after the fixes with
+  the 2 new scenarios in (woody/nick/sam not re-run — nothing in this diff
+  touches a rival-client path).
+- JOURNEY (rotation #4, Victoria on an iPhone context at 390px, real mobile
+  context per note (b)): "month end, I'm on the train — check the WIP
+  forecast, open the deal behind the number, check the fee agrees". Phone
+  home -> finance tile -> TOTAL BILLING tile -> /wip-report on the phone ->
+  DEAL DETAIL row -> the deal itself. Followed the standing lesson and fed
+  each step's number into the next; both bugs are the two ends of that chain
+  disagreeing. 0 pageerrors, 0 h-overflow on any surface, no non-noise 4xx/5xx
+  (the /api/microsoft/property-folders 401 on the deal page is listed noise).
+  Harness qa/r554-staff-mobile-journey.mjs + r554-step2/-step4/-verify.mjs,
+  shots qa/smoke-shots/r554*-*.png.
+- BUG FIXED 1 (client/src/pages/wip-report.tsx) — the WIP report's title
+  claimed a team slice that is not applied. Victoria's report is headed "WIP
+  Report — National Leasing" and reads "6 transactions · Total net fees:
+  £250,000", while its OWN "NET FEES BY TEAM" panel on the same screen says
+  National Leasing £0 / National £0 / Unassigned £250,000 — the whole total
+  is one deal (Broadgate Secret Deal, British Land Rival) with team NULL and
+  BGP contact NULL. Root cause: the server deliberately stopped scoping
+  /api/wip by team (crm.ts ~7500, "Consistent firm-wide 'Normal' view: every
+  user sees the whole firm's WIP… The old per-team scoping was what made each
+  person's view differ"), but the client header still fell back to
+  `wipUserTeam` for a non-admin, non-canSeeAll reader. Confirmed live from the
+  API, not inferred: victoria gets isAdmin=false, canSeeAll=false,
+  userTeam="National Leasing", 6 firm-wide entries. This is the number a BGP
+  agent would quote at month end, mislabelled as her team's book. Fixed: that
+  fallback is now "All Teams", matching the rows actually rendered. The
+  isWipAdmin branch (which DOES filter by activeTeam) is untouched.
+- BUG FIXED 2 (client/src/pages/deals.tsx, FeeAllocationCard) — a priced deal
+  showed no fee. Tapping the WIP report's £250,000 row through to its deal
+  landed on a page with ZERO "£" on it, desktop and phone alike — the Fee
+  Allocation card printed "No split yet — Add Split shares the fee between
+  BGP agents", talking about a fee it never states. The deal record does
+  carry fee=250000 (verified via /api/crm/deals/:id). Cause: the "£X of £Y
+  allocated" badge was gated on `allocations.length > 0`, and the only other
+  fee-bearing badge is gated on `headlineRent != null` (null here), so a deal
+  with a fee and no split renders nothing. The client-facing branch of the
+  same card DOES show "BGP Fee / Total Fee" — so a landlord would have been
+  shown the figure a BGP agent could not. Fixed: the badge now renders
+  whenever totalFee > 0, reading "£250,000 fee" with no split and keeping
+  "£X of £Y allocated" verbatim when there is one.
+- VERIFIED LIVE on the phone after the fixes (qa/r554-verify.mjs): title
+  "WIP Report— All Teams", total still £250,000, deal page badge "£250,000
+  fee", h-overflow 0 on both. Client side unaffected and re-checked: mark's
+  GET /api/wip is still 403, and all four of his deals come back fee=null
+  (the API strips fee from a scoped caller, r553), so neither fix can reach
+  him. tsc clean.
+- Two-bot: +2 staff scenarios, both assert-only, no writes, tally unchanged.
+  staff-wip-title-matches-its-rows (reads isAdmin/canSeeAll/userTeam from the
+  API, then fails if a non-admin's title carries their own team name over
+  firm-wide rows, or doesn't read "All Teams") and
+  staff-deal-fee-shown-without-split (finds any deal with fee > 0, opens it,
+  and fails if the fee badge is missing or its digits disagree with the
+  deal's fee). Both [ok] against the rebuilt app.
+- NOT BUGS, checked before reporting: Victoria seeing British Land Rival's
+  deal at all is correct — she is BGP staff and BGP acts for that landlord;
+  the isolation is the CLIENT's (mark 403, rival chunk 0 issues). The phone's
+  /deals landing on the Deals list rather than the WIP report is the mobile
+  toggle default, not the r553 desktop gotcha.
+- Suggestions: UX-NOTES 209 (phone home stacks "MY BILLING … £0" directly
+  above an unscoped "TOTAL BILLING £250,000" — two different scopes, near-
+  identical names) and 210 (the phone WIP report can't answer "what's on MY
+  book" without digging into a filter sheet — wants a Mine/My team/All pill
+  row under the header). Still open and unbuilt, do not report again:
+  UX #150, #157, #162, #170, #171, #172, #174-#208.
+- New flakes: none new. Confirming the standing notes — `pkill -f
+  "server/index.ts"` still exits 144 and must be issued alone, and the
+  `setsid <scratchpad>/dev.sh &` launch-script pattern from r553 worked again
+  (inline setsid is still refused by the classifier).
+- Next: r554 had the journey -> r555 may be LIGHT; then rotation #1 BGP staff
+  desktop. Under-worked and still unclaimed: ChatBGP as a working tool (its
+  answers AND its tool calls), Pathway / Why Buy generation, the client's
+  Files & data-room surfaces, Xero/invoicing, Image Studio generation, and
+  the ChatBGP PDF-signing tools (sign_pdf + save_signature).
 
 ### r553 · 2026-09-05 · LIGHT (r552 had the journey) · 2 bugs fixed, one family — BGP's fee totals and its WIP-forecast month were on the client's Deals table · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
