@@ -341,7 +341,13 @@ export default function AvailableUnitsPage() {
   // Deep links from TrackerSummary lozenges / "Letting Tracker" buttons
   // carry ?propertyId= and ?status= — honour them on first mount (they
   // were silently ignored before).
-  const urlParam = (k: string) => { try { return new URLSearchParams(window.location.search).get(k) || "all"; } catch { return "all"; } };
+  const urlParamRaw = (k: string) => { try { return new URLSearchParams(window.location.search).get(k); } catch { return null; } };
+  // "all" is the no-filter sentinel for the status/property selects — but a
+  // MISSING param must not read as the literal value "all" for params that
+  // compare against it (r558: ?view= absent made viewAll permanently true,
+  // which short-circuits statusFilter, so every lozenge deep link landed
+  // unfiltered). Use urlParamRaw for those.
+  const urlParam = (k: string) => urlParamRaw(k) || "all";
   const [statusFilter, setStatusFilter] = useState(() => urlParam("status"));
   // Compact header (team feedback: the fixed header block was so tall the
   // table barely had scroll room). Hides the FY strip and swaps the big
@@ -356,7 +362,7 @@ export default function AvailableUnitsPage() {
   // "All statuses" view — every deal-status group laid out down the page
   // (SOL+ included) with the tenancy schedules underneath, instead of
   // clicking each status card in turn (Woody, 2026-08-06).
-  const [viewAll, setViewAll] = useState(() => urlParam("view") === "all");
+  const [viewAll, setViewAll] = useState(() => urlParamRaw("view") === "all");
   const [showHistoric, setShowHistoric] = useState(() => HISTORIC_PILL_STATUSES.includes(urlParam("status") as DealStatusCode));
   const [scheduleOpen, setScheduleOpen] = useState<Record<string, boolean>>({});
   // Header sort — Property/Unit and Client columns, A→Z / Z→A toggle.

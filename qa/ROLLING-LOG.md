@@ -88,16 +88,71 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r558 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · ROUND IN PROGRESS
+### r558 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · 1 bug fixed — the Letting Tracker ignored every status deep link and was stuck in "All statuses" mode · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
   two-bot in three chunks via qa/with-server.sh with QA_CROSS_FILE set).
-- Regression: smoke GREEN 42/0.
-- CARRY-FORWARD FROM r557, CONFIRMED: full three-chunk pass, every scenario
-  [ok], tally victoria 2x400 / mark 9x403 + 1x503 / woody,nick,sam 0 — the
-  r537-r557 signature exactly, seventeenth clean hand-off. All 12 logged
-  issues are listed noise. 0 app bugs from the scripted regression.
-- Journey pending: Landsec client desktop 1440px as mark.warne@.
+  Regression: smoke GREEN 42/0 before and GREEN 42/0 after the fix.
+- CARRY-FORWARD FROM r557, CONFIRMED with a full three-chunk pass of my own:
+  every scenario [ok], tally victoria 2x400 / mark 9x403 + 1x503 /
+  woody,nick,sam 0 — the r537-r557 signature exactly, seventeenth clean
+  hand-off. All 12 logged issues are listed noise. 0 app bugs from the
+  scripted regression. Re-confirmed after the fix with the two new scenarios
+  in place (tally unchanged).
+- JOURNEY (Mark Warne @ 1440px; shots qa/smoke-shots/r558j-*.png): "A lease at
+  Bluewater is running out and I have 77 vacant units — what is expiring, and
+  what is BGP actually working on?" Client dashboard KPI tiles -> EXPIRING (6M)
+  popover -> a named lease -> the Bluewater tenancy schedule -> back to the
+  dashboard tracker card -> the Letting Tracker -> /requirements. 0 h-overflow,
+  0 pageerrors on every leg.
+  Chain checks that PASSED and are worth not re-doing: the EXPIRING tile says
+  8 and its popover lists exactly 8; the first of them (Snowflake Gelato Group
+  Limited, "6 Sept 26") opens the tenancy schedule and the row's Expiry cell
+  reads 2026-09-06 — tile, list and board agree. Dashboard 201/124/77 vs the
+  Bluewater board 200/124/76 is the known Westgate unit.
+- BUG FIXED (client/src/pages/available-units.tsx) — the Letting Tracker
+  ignored ?status= entirely and always rendered the "All statuses" view.
+  Mark clicked the "1 Negotiating" badge on his own dashboard tracker card,
+  landed on /deals/letting?status=NEG, and got all 78 units with the ALL
+  STATUSES chip active. Reproduced identically for Victoria (?status=NEG and
+  no param both rendered 85 rows), so it hit staff and clients alike, on every
+  TrackerSummary lozenge/badge everywhere they appear (dashboard, property
+  pages, page-header strips) — whose own tooltip promises "open on the Letting
+  Tracker" pre-filtered. Root cause: the shared URL reader is
+  `get(k) || "all"` — "all" is the right no-filter sentinel for the status and
+  property SELECTS, but `viewAll` is initialised as `urlParam("view") === "all"`,
+  so a MISSING ?view= read as the literal string "all" and viewAll was
+  permanently TRUE. viewAll short-circuits the filter memo
+  (`viewAll ? [...toolbarFiltered] : statusFilter !== "all" ? …`), so
+  statusFilter never applied — and the board's own "hide SOL+ from the default
+  view so the tracker stays focused" rule was dead too. Fixed by splitting out
+  urlParamRaw (returns null when absent) and reading `view` through it; the
+  "all" default stays for the selects. Verified in the browser as BOTH
+  personas: ?status=NEG now renders 1 row for Mark / 2 for Victoria with the
+  NEGOTIATING chip active and the header reading "1 of 78 units"
+  (qa/smoke-shots/r558j-mark-status-deeplink.png), and the plain board renders
+  the pre-SOL set with no group headers. tsc clean.
+  NOTE for whoever reviews: this also changes the DEFAULT tracker view back to
+  the focused pre-SOL board (no per-status groups, no tenancy schedules
+  underneath). That is what the code has always intended — the All pill is a
+  toggle and ?view=all is its deep link — but it is a visible change for the
+  team, so flagging it.
+- HARNESS GROWTH (qa/two-bot-round.mjs, shared helper trackerStatusDeepLink):
+  staff-tracker-status-deeplink-filters (victoria) and
+  client-tracker-status-deeplink-filters (mark) — /deals/letting?status=NEG
+  must render strictly fewer rows than the unfiltered board, zero Marketing
+  rows and at least one Negotiating row. Both [ok]; tally unchanged.
+- Deferred / not bugs: client /requirements is legitimately empty for Mark
+  (requirements are BGP-owned) — logged as UX #217, not a bug. The repeated
+  tracker rows (four identical U062 · 1,408 sqft) are four distinct DB rows,
+  keyed by id — fixture data, not a render fan-out.
+- Suggestions added: UX-NOTES #217 (client Requirements is an empty grid with
+  no explanation on the one screen a landlord goes to for "who wants my
+  space"), #218 (every dashboard tracker-card row links to the whole tracker,
+  not to its unit).
+- New flakes: none.
+- Next journey: rotation #3, Landsec client mobile 390px (real iPhone context,
+  not setViewportSize).
 
 ### r557 · 2026-09-05 · LIGHT (r556 had the journey) · 2 bugs fixed — a reload could paint pre-change data and never ask the server, and the phone lease-event card called an ERV "rent" · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

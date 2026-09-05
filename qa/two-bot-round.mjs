@@ -3299,6 +3299,10 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  await step(page, p, 'staff-tracker-status-deeplink-filters', async () => {
+    await trackerStatusDeepLink(page, 'staff');
+  });
+
   await step(page, p, 'staff-phone-lease-event-money-labelled', async () => {
     // r557: the phone card printed `currentRent || estimatedErv` as one
     // unlabelled bold number, so an event holding only an ERV read as passing
@@ -3328,6 +3332,30 @@ async function victoriaRound(page, cross) {
     }
   });
 
+}
+
+async function trackerStatusDeepLink(page, who) {
+  // r558: available-units read its URL params through a helper that returns
+  // "all" for a MISSING param, and viewAll compared against "all" — so the
+  // "All statuses" mode was permanently on, which short-circuits statusFilter
+  // and made every TrackerSummary lozenge deep link ("open on the Letting
+  // Tracker" pre-filtered to that stage) land on the unfiltered board.
+  const rows = async () => page.evaluate(() => document.querySelectorAll('table tbody tr').length);
+  const badges = async (label) => page.evaluate((l) => [...document.querySelectorAll('table tbody tr')]
+    .filter(r => new RegExp(`\\b${l}\\b`).test(r.innerText || '')).length, label);
+  await page.goto(`${BASE}/deals/letting`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(3000);
+  const all = await rows();
+  if (all < 5) throw new Error(`${who}: unfiltered tracker rendered only ${all} rows`);
+  await page.goto(`${BASE}/deals/letting?status=NEG`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(3000);
+  const filtered = await rows();
+  if (filtered >= all) throw new Error(`${who}: ?status=NEG changed nothing — ${filtered} rows filtered vs ${all} unfiltered`);
+  const marketing = await badges('Marketing');
+  if (marketing) throw new Error(`${who}: ?status=NEG still shows ${marketing} Marketing row(s)`);
+  if (!(await badges('Negotiating'))) throw new Error(`${who}: ?status=NEG shows no Negotiating row`);
 }
 
 async function markRound(page, cross) {
@@ -7476,6 +7504,12 @@ async function markRound(page, cross) {
       if (seen.has(k)) throw new Error(`duplicate story in client news feed: "${String(s.headline).slice(0, 80)}"`);
       seen.add(k);
     }
+  });
+
+  await step(page, p, 'client-tracker-status-deeplink-filters', async () => {
+    // The client dashboard's tracker card badges are the same TrackerSummary
+    // lozenges, so a client clicking "1 Negotiating" must land pre-filtered too.
+    await trackerStatusDeepLink(page, 'client');
   });
 
   await step(page, p, 'client-tracker-phone-card-titles', async () => {

@@ -13,6 +13,29 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+217. 2026-09-05 · Landsec client / desktop 1440px (QA r558) · Mark's
+   Requirements page renders the full leasing-requirements table — Name, Use,
+   Size Req., Locations, Fits, Agent Contact, Landlord Pack — over the words
+   "0 active requirements / No active requirements found", and that is all a
+   client ever sees there (requirements are BGP-owned; nothing in the fixture
+   is shared out). A landlord with 77 vacant units at Bluewater arrives at this
+   screen precisely to ask "who is looking for space like mine", and gets an
+   empty grid with no explanation. Suggestion: for client logins either say
+   what the screen is for and why it is empty ("Requirements your BGP team has
+   shared with you — nothing shared yet; ask us to publish one"), or drop the
+   nav item until there is something in it.
+
+218. 2026-09-05 · Landsec client / desktop 1440px (QA r558) · The dashboard's
+   Letting Tracker card lists all 78 live lettings as individual rows, but
+   every row links to the same place — trackerHref(u.propertyId), i.e. the
+   whole tracker for that property — so clicking "L090 · 6,414 sqft" does not
+   take you to L090. The list also shows genuine repeats from the data (four
+   separate "U062 · Bluewater – Upper Level · 1,408 sqft" rows, two "L090"),
+   which is impossible to reason about when none of them opens. Suggestion:
+   deep-link each row to its own unit (the tracker already accepts a filter in
+   the URL — r558 fixed those params being ignored), and cap the card at the
+   top handful with an "and N more →".
+
 215. 2026-09-05 · BGP staff / desktop + phone (QA r557) · Every inline board
    picker (Lease Events Status and Owner, and the same pattern elsewhere)
    saves silently: the control repaints the moment you choose, and whether the
