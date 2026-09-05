@@ -88,6 +88,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r553 · 2026-09-05 · LIGHT (round in progress)
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
+  server `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r552, CONFIRMED with a full three-chunk pass of my own
+  (QA_CROSS_FILE set): victoria 2x400, mark 9x403 + 1x503, woody/nick/sam 0 —
+  exactly the r537-r552 signature. All 12 logged issues are listed noise
+  (rocketreach-400 + investment-tracker-400, deliberate client 403 gates,
+  keyless-AI 503). 0 app bugs from the scripted regression.
+- LIGHT round, no journey. Spending it on the hand-off's angle: sweeping the
+  OTHER client-visible forms and dialogs (deals, viewings, offers, interest,
+  files, requirements) for staff-only fields the way r552 swept the unit form.
+- (round in progress — this entry is provisional)
+
 ### r552 · 2026-09-05 · FULL (rotation #3 Landsec client MOBILE 390px) · 2 bugs fixed — BGP's internal fee split was on the landlord's own unit form + the phone home tile called the tracker total his portfolio · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; wrote .env at
