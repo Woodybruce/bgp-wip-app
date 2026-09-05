@@ -2715,6 +2715,7 @@ export default function AvailableUnitsPage() {
         onSubmit={() => createMutation.mutate({ data: formToPayload(form), feeRows: unitFeeRows, feeAllocType: unitFeeAllocType })}
         isPending={createMutation.isPending}
         isEdit={false}
+        hideFees={isClientTracker}
       />
 
       <UnitFormDialog
@@ -2736,6 +2737,7 @@ export default function AvailableUnitsPage() {
         onSubmit={() => editItem && updateMutation.mutate({ id: editItem.id, data: formToPayload(form) })}
         isPending={updateMutation.isPending}
         isEdit={true}
+        hideFees={isClientTracker}
       />
 
       <Dialog open={!!deleteItem} onOpenChange={v => { if (!v) setDeleteItem(null); }}>
@@ -4365,7 +4367,7 @@ function MarketingFilesDialog({
 function UnitFormDialog({
   open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, crmCompanies = [],
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
-  showAllFields, setShowAllFields, isEdit,
+  showAllFields, setShowAllFields, isEdit, hideFees = false,
   onSubmit, isPending,
 }: {
   open: boolean;
@@ -4384,6 +4386,9 @@ function UnitFormDialog({
   showAllFields: boolean;
   setShowAllFields: (v: boolean) => void;
   isEdit: boolean;
+  /** Client logins never see or set BGP's fee — same split the deal form
+      makes (deals.tsx hideFees). Quoting rent stays: it is theirs. */
+  hideFees?: boolean;
   onSubmit: () => void;
   isPending: boolean;
 }) {
@@ -4736,12 +4741,13 @@ function UnitFormDialog({
               Total so manual numbers survive). FeeAllocationEditor
               flows to the linked deal's allocations on submit. */}
           <div className="col-span-2 border-t pt-3 space-y-3">
-            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Financials & fee split</div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{hideFees ? "Financials" : "Financials & fee split"}</div>
+            <div className={`grid grid-cols-1 gap-3 ${hideFees ? "" : "sm:grid-cols-3"}`}>
               <div>
                 <Label className="text-xs">Quoting Rent (£ p.a.)</Label>
                 <CurrencyInput value={form.askingRent} onChange={v => upd("askingRent", v)} placeholder="e.g. 85,000" prefix="£" />
               </div>
+              {!hideFees && (<>
               <div>
                 <Label className="text-xs">% Agency fee</Label>
                 <Input type="number" step="0.01" value={form.feePercentage}
@@ -4761,7 +4767,9 @@ function UnitFormDialog({
                 <Label className="text-xs">Total fee (£)</Label>
                 <CurrencyInput value={form.fee} onChange={v => upd("fee", v)} placeholder="auto from rent × %" prefix="£" />
               </div>
+              </>)}
             </div>
+            {!hideFees && (
             <div>
               <Label className="text-xs">BGP fee split</Label>
               <div className="border rounded-md p-2.5 bg-muted/30">
@@ -4775,6 +4783,7 @@ function UnitFormDialog({
                 />
               </div>
             </div>
+            )}
           </div>
 
           <div className="col-span-2">

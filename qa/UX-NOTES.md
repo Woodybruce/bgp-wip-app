@@ -13,6 +13,31 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+205. 2026-09-05 · Landsec client / mobile 390px (QA r552) · Mark was at
+   Bluewater when an agent offered on U124 and wanted to record the offer and
+   move the unit on. Logging the offer from the phone worked (Offer (1) on
+   the card, every figure echoed back correctly), but there the trail stops:
+   the tracker's own filter chips right above read OPPORTUNITY / MARKETING /
+   NEGOTIATING / HOTS / SOLICITORS, and the Unit Status select in his Edit
+   dialog offers only Opportunity and Available — past marketing the unit is
+   "driven by the deal" (intended, 2026-09-01), and the phone card carries no
+   deal action. So the offer he just logged sits at "Pending" forever from his
+   side and the unit stays "Marketing" with an offer on it. Suggestion: put a
+   "Create deal from this offer" action on the offer row (client-safe — the
+   deal POST already forces their own company and strips fees), so the offer
+   drives the pipeline the board is built around.
+
+206. 2026-09-05 · Landsec client / mobile 390px (QA r552) · same journey —
+   after saving the offer Mark has no signal that BGP has it. The dialog shows
+   the row as "Pending" with no company on it (he had no CRM company to pick
+   on the phone), no "BGP notified" confirmation, and nothing appears on his
+   Tasks or Messages. A landlord who has just typed a £250,000 offer into his
+   phone at a shopping centre wants to know it reached someone. Suggestion:
+   on a client-authored offer or viewing, echo "Sent to your BGP team" in the
+   toast and raise it on the BGP side (deal/unit activity feed or the team's
+   notifications), and default the offer's company to free text so the row
+   isn't headed "No company".
+
 203. 2026-09-05 · BGP staff / desktop (QA r551) · Victoria uploaded a rent roll
    through Import. The toast reported "200 units imported · Unrecognised
    columns (not imported): #, Break Details, Basement (GIA), ... ITZA / ITGF"

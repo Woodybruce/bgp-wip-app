@@ -1,0 +1,20 @@
+import { go, report, tap, browser, page, BASE, ctx, user, shot } from './r552-client-mobile-journey.mjs';
+const UID = '99ee6031-384a-4799-94a4-8aba5dda89b1';
+const H = { Authorization: `Bearer ${user.token}` };
+await go('/available', 'tracker');
+await page.locator('input[placeholder*="Search" i]').first().fill('U124'); await page.waitForTimeout(1500);
+// --- viewing
+await tap(`[data-testid="unit-viewing-${UID}"]`, 'viewing-open');
+await page.fill('[data-testid="viewing-date"]', '2026-09-04');
+await page.fill('[data-testid="viewing-time"]', '11:30');
+await page.fill('[data-testid="viewing-attendees"]', 'QA-VIEWING-r552 agent + tenant rep');
+await page.fill('[data-testid="viewing-notes"]', 'QA-PROBE r552 viewing from phone');
+await shot('viewing-filled');
+await page.click('[data-testid="viewing-save"]');
+await page.waitForTimeout(2500);
+const dlg = page.locator('[role="dialog"]').last();
+console.log('\n--- VIEWINGS AFTER SAVE ---\n' + (await dlg.innerText().catch(() => '(none)')).slice(0, 1200));
+await shot('viewing-after');
+const vs = await (await ctx.request.get(`${BASE}/api/available-units/${UID}/viewings`, { headers: H })).json();
+console.log('\nAPI viewings ->', JSON.stringify(vs).slice(0, 700));
+await browser.close();

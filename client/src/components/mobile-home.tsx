@@ -395,7 +395,7 @@ export default function MobileHome() {
               </div>
               <div>
                 <p className="text-lg font-bold tabular-nums leading-tight">{unitStats.total}</p>
-                <p className="text-[10px] opacity-70">Units</p>
+                <p className="text-[10px] opacity-70">On tracker</p>
               </div>
             </div>
           </Link>

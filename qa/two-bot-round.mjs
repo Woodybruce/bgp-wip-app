@@ -3030,6 +3030,33 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  await step(page, p, 'staff-unit-form-keeps-fee-split', async () => {
+    // Counterpart to mark's client-unit-form-no-bgp-fee (r552): staff keep
+    // the agency fee, the total and the BGP House 15% / agents 85% split on
+    // the Letting Tracker unit form.
+    const units = await page.evaluate(async () => {
+      const r = await fetch('/api/available-units', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      return r.ok ? await r.json() : [];
+    });
+    const u = (Array.isArray(units) ? units : []).find(x => x.unitName);
+    if (!u) throw new Error('no available units to open');
+    await page.goto(`${BASE}/available`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2000);
+    const search = page.locator('input[placeholder*="Search" i]').first();
+    if (await search.count()) { await search.fill(u.unitName.slice(0, 24)); await page.waitForTimeout(1500); }
+    const btn = page.locator(`[data-testid="button-edit-${u.id}"]`).first();
+    if (!(await btn.count())) throw new Error(`staff lost the unit edit button for ${u.unitName}`);
+    await btn.scrollIntoViewIfNeeded().catch(() => {});
+    await btn.click();
+    await page.waitForTimeout(2200);
+    const txt = await page.locator('[role="dialog"]').last().innerText().catch(() => '');
+    for (const m of [/% Agency fee/i, /Total fee/i, /BGP fee split/i, /BGP House takes 15%/i]) {
+      if (!m.test(txt)) throw new Error(`staff unit form lost ${m} (${txt.length} chars)`);
+    }
+    if (!/Quoting Rent/i.test(txt)) throw new Error('staff unit form lost Quoting Rent');
+  });
+
 }
 
 async function markRound(page, cross) {
@@ -6883,6 +6910,52 @@ async function markRound(page, cross) {
       if (!chips.some(c => /leases expire|vacant units/i.test(c))) {
         throw new Error(`client starter prompts are not landlord-voiced: ${chips.join(' | ')}`);
       }
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r552: the Letting Tracker unit form showed a LANDLORD "% Agency fee",
+  // "Total fee" and the "BGP fee split" editor — BGP House's 15% off the top,
+  // the agents' 85% and the BGP staff roster to allocate it between. The deal
+  // form has hidden all of that from clients (deals.tsx hideFees) since long
+  // before; the unit form was never given the same split. The server already
+  // strips `fee` from a client PATCH, so the fields were inert as well as
+  // confidential. Quoting rent stays — it is the landlord's own number.
+  await step(page, p, 'client-unit-form-no-bgp-fee', async () => {
+    const units = await page.evaluate(async () => {
+      const r = await fetch('/api/available-units', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      return r.ok ? await r.json() : [];
+    });
+    const u = (Array.isArray(units) ? units : []).find(x => x.unitName);
+    if (!u) throw new Error('client sees no units on their own tracker');
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/available`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(2500);
+      const search = mob.locator('input[placeholder*="Search" i]').first();
+      if (await search.count()) { await search.fill(u.unitName.slice(0, 24)); await mob.waitForTimeout(1500); }
+      const btn = mob.locator(`[data-testid="unit-edit-${u.id}"]`).first();
+      if (!(await btn.count())) throw new Error(`client lost the phone unit edit button for ${u.unitName}`);
+      await btn.scrollIntoViewIfNeeded().catch(() => {});
+      await btn.click();
+      await mob.waitForTimeout(2200);
+      const txt = await mob.locator('[role="dialog"]').last().innerText().catch(() => '');
+      const leaked = [/% Agency fee/i, /Total fee/i, /BGP fee split/i, /BGP House takes 15%/i, /remaining 85%/i]
+        .filter(m => m.test(txt)).map(String);
+      if (leaked.length) throw new Error(`BGP fee arrangements shown to a client on the unit form: ${leaked.join(', ')}`);
+      if (!/Quoting Rent/i.test(txt)) throw new Error(`client lost Quoting Rent on their own unit (${txt.length} chars)`);
     } finally {
       await mob.close();
       await mobCtx.close();

@@ -88,18 +88,97 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r552 · 2026-09-05 · FULL (rotation #3 Landsec client MOBILE 390px) — ROUND IN PROGRESS
+### r552 · 2026-09-05 · FULL (rotation #3 Landsec client MOBILE 390px) · 2 bugs fixed — BGP's internal fee split was on the landlord's own unit form + the phone home tile called the tracker total his portfolio · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; wrote .env at
   postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke, server started as
-  `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0.
+  `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0
+  before, and GREEN 42/0 with FRESH_BUILD=1 after the fixes.
 - CARRY-FORWARD FROM r551, CONFIRMED with a full three-chunk pass of my own
-  (QA_CROSS_FILE set, r551's two new scenarios in): victoria 2x400, mark
-  9x403 + 1x503, woody/nick/sam 0 — exactly the r537-r551 signature. All 12
-  logged issues are listed noise (rocketreach-400 + investment-tracker-400,
+  (QA_CROSS_FILE set, r551's two scenarios in): victoria 2x400, mark 9x403 +
+  1x503, woody/nick/sam 0 — exactly the r537-r551 signature. All 12 logged
+  issues are listed noise (rocketreach-400 + investment-tracker-400,
   deliberate client 403 gates, keyless-AI 503). 0 app bugs from the scripted
-  regression.
-- Triage: nothing outside the noise list. Journey next (client phone 390px).
+  regression. Signature re-confirmed after the fixes on the victoria + mark
+  chunks with the 2 new scenarios in (woody/nick/sam not re-run — nothing in
+  this round's diff touches a rival-client path).
+- JOURNEY (rotation #3, Mark Warne on an iPhone context at 390px): "I'm at
+  Bluewater, an agent has just offered on U124 — record the offer off my phone
+  and move the unit on". Home tile -> tracker (via the tile, as he would) ->
+  searched U124 -> SUBMITTED an offer (£250,000 pa, 12 mo rent free, 10 yr
+  term, break Year 5, £50k fit-out) -> read it back -> SUBMITTED a viewing ->
+  opened the Edit dialog to move the unit on. Followed the r546 lesson and
+  submitted rather than only rendering: the offer and viewing both round-trip
+  correctly (every figure echoed back exactly, card went to Offer (1) /
+  Viewing (1), API rows match), and the tile's 77/1/0/78 agrees with the
+  board's ALL 78 / MARKETING 77 / NEGOTIATING 1. 0 pageerrors, 0 h-overflow,
+  no non-noise 4xx/5xx. Harness qa/r552-client-mobile-journey.mjs (+ step
+  scripts r552-offer/-viewing/-edit/-status2), shots qa/smoke-shots/r552-*.png.
+- BUG FIXED 1 (client/src/pages/available-units.tsx) — the Letting Tracker's
+  unit form showed a LANDLORD BGP's fee arrangements. Mark's own Edit dialog
+  on U124 carried a "FINANCIALS & FEE SPLIT" section with "% Agency fee",
+  "Total fee (£)" and the "BGP fee split" editor — the sentences "BGP House
+  takes 15% off the top automatically. Agents share the remaining 85%" and
+  "Add the agents earning on this deal", plus the BGP staff roster to
+  allocate it between. The repo's own rule is the opposite ("clients never
+  set or see BGP's fee", server/index.ts CLIENT_ALLOWED_WRITES), and the
+  server already deletes `fee` from a scoped client's PATCH — so the fields
+  were inert as well as confidential, and on ADD a non-empty split would
+  have PUT to /api/crm/deals/:id/fee-allocations and toasted a client
+  "fee split failed to save — open the deal to set the split there".
+  The DEAL form solved this long ago (deals.tsx `hideFees={isClientCreate}`);
+  the unit form was never given the same split — same shape as r544's phone
+  chat prompts. Fixed by mirroring that precedent exactly: UnitFormDialog
+  takes `hideFees`, both call sites pass `isClientTracker`, and for a client
+  the % / total / split all go while Quoting Rent stays (it is the landlord's
+  own number) and the section header drops to "Financials".
+- BUG FIXED 2 (client/src/components/mobile-home.tsx) — the phone home tile
+  read "MY PORTFOLIO — LETTING TRACKER · 77 Available · 1 Under offer · 0 Let
+  · 78 Units". The first three are tracker buckets and the fourth is their
+  sum, but labelled "Units" under "My portfolio" it reads as portfolio size —
+  and Mark's portfolio is 201 units, which is what his DESKTOP dashboard says
+  (r550). Same word, two surfaces, 78 vs 201. Relabelled "On tracker", which
+  is what it counts and matches the page it links to ("78 units — live deals
+  in progress"). Same family as r550's unit labels.
+  VERIFIED LIVE for both personas before and after, and again against the
+  FRESH_BUILD bundle (qa/r552-verify.mjs, shots qa/smoke-shots/r552v-*.png):
+  Mark's dialog 0 fee markers and Quoting Rent kept, his tile reading "On
+  tracker"; Victoria's desktop dialog still carrying all six fee markers.
+  h-overflow 0 at 390px. tsc clean.
+- NOT BUGS, checked before reporting: the Unit Status select offering only
+  Opportunity/Available is deliberate (2026-09-01 — past marketing the deal
+  drives the unit, and the field freezes to "driven by the deal"); "Add unit",
+  "Edit" and the offer/viewing/interest writes on a client's tracker are
+  intended parity ("client does as much as the agent"); `fee` and
+  `agentUserIds` are null on the fixture row so no fee NUMBER leaked, only the
+  fields and the 15%/85% wording; two L090 rows at 6,414 sq ft each are the
+  known fixture duplicate family (r550's SVU04), not a filter fault.
+- Two-bot: +2 scenarios, the standard client-loses / staff-keeps pair. mark
+  client-unit-form-no-bgp-fee (opens the Edit dialog on his own unit in a real
+  iPhone context and fails on ANY of "% Agency fee" / "Total fee" / "BGP fee
+  split" / "BGP House takes 15%" / "remaining 85%", or on losing Quoting Rent)
+  and victoria staff-unit-form-keeps-fee-split (the same dialog must keep all
+  four plus Quoting Rent). Both [ok] against the rebuilt app; assert-only, no
+  writes, and mark's runs in its own mobile context so the tally is unchanged.
+- Suggestions: UX-NOTES 205 (a client can log an offer but nothing can carry
+  it forward — no deal action on the phone card and the status select stops at
+  Available, so his offer sits "Pending" on a unit still reading "Marketing")
+  and 206 (no signal that BGP received a client-authored offer or viewing —
+  no "sent to your team", nothing on Tasks or Messages, and the row is headed
+  "No company"). Still open and unbuilt, do not report again: UX #150, #157,
+  #162, #170, #171, #172, #174-#204.
+- New flakes: none new, but two setup notes worth keeping. (1) The login rate
+  limiter WILL 429 mid-round if each step script logs in again — the journey
+  harness now caches the token to /tmp/r552-token.json and re-validates it
+  against /api/auth/me, which is worth copying. Once 429'd, only a server
+  restart clears it. (2) Relaunch the dev server detached with
+  `(setsid npx tsx --env-file=.env server/index.ts > log 2>&1 < /dev/null &)`
+  — and `pkill -f "server/index.ts"` still exits 144 and kills the calling
+  chain, so issue it alone.
+- Next: r552 was FULL -> r553 LIGHT (skip the journey, spend it on triage and
+  deferred bugs). Under-worked and still unclaimed: ChatBGP as a working tool,
+  Pathway / Why Buy generation, the client's Files & data-room surfaces,
+  Xero/invoicing, Image Studio generation.
 
 ### r551 · 2026-09-05 · LIGHT (r550 had the journey) · 2 bugs fixed, one family — the tenancy schedule could not read its own Excel export · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
