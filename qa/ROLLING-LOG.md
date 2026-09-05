@@ -88,16 +88,72 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r543 · 2026-09-05 · LIGHT (r542 had the journey) — ROUND IN PROGRESS
+### r543 · 2026-09-05 · LIGHT (r542 had the journey) · 2 bugs fixed — raw brand: UUIDs on the Board Report + dangling separator on Marketing Files · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas
-  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
-- Two-bot round 543, victoria+mark in ONE process with QA_CROSS_FILE (per the
-  r542 procedure note). 12 issues, signature EXACT vs r537-r542: victoria
-  2x400, mark 9x403 + 1x503. All listed noise. 0 new issues from the sweep.
-- Triage: nothing actionable from the scripted round. Spending the round on
-  under-visited surfaces (KYC Clouseau, covenant watch, lease events, WIP /
-  board report, evidence plans, image studio, marketing files, pathway
-  review, expenses) as staff desktop.
+  into bgpsmoke via qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before,
+  and GREEN 42/0 with FRESH_BUILD=1 after the fixes.
+- Two-bot round 543, all three chunks. victoria+mark run in ONE process with
+  QA_CROSS_FILE (the r542 procedure note — it works, no deviation this time).
+  Signature EXACT vs r537-r542: victoria 2x400, mark 9x403 + 1x503,
+  woody/nick/sam 0. All listed noise. 0 new issues from the scripted sweep,
+  so the whole budget went to under-visited surfaces.
+- SURFACE SWEEP (staff desktop 1440px, victoria): /kyc-clouseau,
+  /covenant-watch, /lease-events, /wip-report, /board-report, /evidence-plans,
+  /image-studio, /marketing-files, /pathway-review, /my-expenses,
+  /team-expenses. All 11 render, 0 error boundaries, 0 h-overflow, 0
+  pageerrors, 0 DOM-nesting warnings. Only 4xx across the lot was the listed
+  covenant 400 (no CH_API_KEY). Empty states are genuinely good on
+  lease-events / evidence-plans / pathway-review (they say what to do next).
+  Shots qa/smoke-shots/r543-*.png. Script kept: qa/r543-surface-sweep.mjs.
+- HARNESS NOTE worth reusing: qa/phone-overflow-sweep.mjs seeds the token as
+  localStorage 'authToken', but the APP reads 'bgp_auth_token' (queryClient,
+  socket, every hand-rolled fetch). Pages still work because the login POST
+  also sets the session cookie, but the websocket never connects and you get
+  "[ws] No auth token" on every route. Seed BOTH keys, or the right one, when
+  a scenario cares about sockets or Bearer-only paths.
+- BUG FIXED 1 (server/crm.ts, GET /api/board-report) — the Board Report's
+  MARKET INSIGHTS "category breakdown" listed
+  "brand:11110000-0000-0000-0000-000000000201  9" and
+  "brand:f20b8a35-...  1" straight under Retail/Property/Hospitality. Cause:
+  a per-brand Google News feed stores its news_sources.category as the
+  routing key "brand:<companyId>", articles inherit it, and the report
+  counted categories raw. This is a PRINTED, Excel-exported board deliverable
+  and the fixture already has 3 such keys over 95 articles — in prod, one row
+  per tracked brand. Brand keys now resolve to the company name (merging
+  duplicates; unresolvable ones fall into "Brand watch"). VERIFIED VISUALLY at
+  1440px: the same panel now reads Retail 160 / Property 50 / Hospitality 39 /
+  Investment 20 / Starbucks 9 / Amorino 1
+  (qa/smoke-shots/r543-board-report-categories-after.png).
+- BUG FIXED 2 (client/src/pages/marketing-files.tsx) — a file with no recorded
+  fileSize printed its meta line as "Rival Unit A ·  · 31/07/2026" (empty
+  middle field between two separators), because formatSize returns "" and the
+  separators were hardcoded around it. The three parts are now filtered and
+  joined. VERIFIED VISUALLY: the row reads "Rival Unit A · 31/07/2026"
+  (qa/smoke-shots/r543-marketing-files-after.png). tsc clean for both.
+- Two-bot: +2 scenarios, the standard staff-keeps / client-loses pair —
+  victoria staff-board-report-category-labels (200 + a non-empty breakdown +
+  no category starting with "brand:") and mark client-board-report-gate
+  (403 on /api/board-report AND on its export-excel; the firm-wide report
+  carries every client's fees). Both assertions verified live against the
+  fixed build (victoria 200 with clean labels, mark 403 + 403). NOTE: the
+  full victoria+mark pass with these two added was NOT re-run end-to-end —
+  the round's time budget ran out at that point; the scenarios were checked
+  standalone instead. Next round should confirm the signature is still
+  2x400 / 9x403+1x503 (the two new steps assert only, they write nothing).
+- NOT A BUG, checked before reporting: the WIP Report h1 reads "WIP
+  Report— National Leasing" in innerText — that is the team span's ml-2
+  margin, not a missing space; it renders correctly. /team-expenses having
+  no h1 and /my-expenses showing "No card issued" are correct empty states
+  for a fixture with no Revolut cards.
+- Suggestions: UX-NOTES 189 (Board Report "FEES BILLED YTD" is really
+  pipeline fees, not billed).
+- Still open/unbuilt, do not report again: UX #150, #157, #162, #170, #171,
+  #172, #174-#189 (171 = client PUT persists dealType/team/leaseLength/
+  landlordId — needs Woody).
+- New flakes: none. Deferred: nothing new. Real-device keyboard-up composer
+  check (r405) still open for Woody.
+- Next: r543 was LIGHT -> r544 takes the journey, rotation #3 Landsec client
+  mobile 390px.
 
 ### r542 · 2026-09-05 · FULL (rotation #2 Landsec client desktop 1440px) · 1 bug fixed — blank Tenants / BGP Contacts cells on the client Properties table · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke restore -> seed-personas

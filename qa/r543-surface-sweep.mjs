@@ -40,7 +40,7 @@ page.on('console', async (msg) => {
 });
 
 await page.goto(BASE).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
-await page.evaluate(([tok, u]) => { localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u)); }, [user.token, user]);
+await page.evaluate(([tok, u]) => { localStorage.setItem("bgp_auth_token", tok); localStorage.setItem('user', JSON.stringify(u)); }, [user.token, user]);
 
 let i = 0;
 for (const route of ROUTES) {

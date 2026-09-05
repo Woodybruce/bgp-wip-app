@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+189. 2026-09-05 · BGP staff / desktop 1440px (QA r543) · reading the Board
+   Report before a partners' meeting · the top-left KPI is labelled "FEES
+   BILLED YTD £707K" with the sub-line "7 total deals in pipeline" — but the
+   figure is the sum of fees across the whole PIPELINE (the fixture's £707K
+   is two un-invoiced negotiating deals), not fees actually billed. On a
+   board deliverable that is the one number nobody should have to
+   double-check. Suggestion: either rename the tile to "PIPELINE FEES YTD",
+   or keep the name and total only deals in an invoiced/completed status
+   (isInvoicedStatus already exists in @shared/deal-status) and show the
+   pipeline figure as a second tile.
+
 187. 2026-09-05 · Landsec client / desktop 1440px (QA r542) · "who is my BGP
    contact for Bluewater?" from the Properties table · the BGP CONTACTS
    column is empty for every client property, because it is fed by

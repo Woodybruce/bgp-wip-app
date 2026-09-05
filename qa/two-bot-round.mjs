@@ -2556,6 +2556,23 @@ async function victoriaRound(page, cross) {
     if (r.cookieCount < 1) throw new Error('paywall cookie health came back without any publication rows');
   });
 
+  await step(page, p, 'staff-board-report-category-labels', async () => {
+    // r543: the Board Report's market-insights category breakdown was
+    // printing the raw news_sources key "brand:<uuid>" as a board-facing
+    // label. Those rows must resolve to the brand's name.
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/board-report', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const body = res.ok ? await res.json().catch(() => ({})) : {};
+      const cats = body?.marketInsights?.categoryBreakdown || [];
+      return { status: res.status, cats: cats.map((c) => c.category) };
+    });
+    if (r.status !== 200) throw new Error(`staff lost the board report (expected 200, got ${r.status})`);
+    if (!r.cats.length) throw new Error('board report came back with no category breakdown');
+    const raw = r.cats.filter((c) => typeof c === 'string' && c.startsWith('brand:'));
+    if (raw.length) throw new Error(`board report still labels brand feeds with raw keys: ${raw.join(', ')}`);
+  });
+
   await step(page, p, 'staff-tenancy-dupe-no-second-tracker-card', async () => {
     // r539: a duplicated spine row (same unit listed twice on the tenancy
     // schedule) used to spawn a SECOND Letting Tracker card via
@@ -6657,6 +6674,18 @@ async function markRound(page, cross) {
         if (stok) await fetch(`${BASE}/api/properties/${BLUEWATER}/brochures/${bid}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + stok } });
       }
     }
+  });
+
+  await step(page, p, 'client-board-report-gate', async () => {
+    // r543: the firm-wide Board Report (every client's fees, every team's
+    // pipeline) is staff-only — the client gateway must 403 it and its
+    // Excel export. Node-side fetch so the deliberate 403s stay out of the
+    // page issue log.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const rep = await fetch(`${BASE}/api/board-report`, auth);
+    if (rep.status !== 403) throw new Error(`client GET /api/board-report expected 403, got ${rep.status}`);
+    const xls = await fetch(`${BASE}/api/board-report/export-excel`, auth);
+    if (xls.status !== 403) throw new Error(`client GET /api/board-report/export-excel expected 403, got ${xls.status}`);
   });
 
   await step(page, p, 'client-evidence-plans-gate', async () => {

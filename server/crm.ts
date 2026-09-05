@@ -6877,7 +6877,26 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         .slice(0, 15)
         .map(([tag, count]) => ({ tag, count }));
 
-      const categoryBreakdown = Object.entries(categoryCounts)
+      // Brand feeds carry the source key "brand:<companyId>" as their
+      // category, so the raw counts hand the board rows of bare UUIDs.
+      // Resolve them to the brand's name and merge duplicates.
+      const brandIds = Object.keys(categoryCounts)
+        .filter(c => c.startsWith("brand:"))
+        .map(c => c.slice("brand:".length));
+      const brandNames = new Map<string, string>();
+      if (brandIds.length) {
+        const rows = await db.select({ id: crmCompanies.id, name: crmCompanies.name })
+          .from(crmCompanies).where(inArray(crmCompanies.id, brandIds));
+        for (const r of rows) brandNames.set(r.id, r.name);
+      }
+      const labelledCounts: Record<string, number> = {};
+      for (const [category, count] of Object.entries(categoryCounts)) {
+        const label = category.startsWith("brand:")
+          ? (brandNames.get(category.slice("brand:".length)) || "Brand watch")
+          : category;
+        labelledCounts[label] = (labelledCounts[label] || 0) + count;
+      }
+      const categoryBreakdown = Object.entries(labelledCounts)
         .sort(([, a], [, b]) => b - a)
         .map(([category, count]) => ({ category, count }));
 
