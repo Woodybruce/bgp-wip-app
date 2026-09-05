@@ -88,6 +88,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r555 · 2026-09-05 · LIGHT (r554 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
+  server `npx tsx --env-file=.env server/index.ts`). Regression: smoke GREEN 42/0.
+- CARRY-FORWARD FROM r554, CONFIRMED: full three-chunk two-bot pass with
+  QA_CROSS_FILE set — every scenario [ok], tally 2x400 + 9x403 + 1x503, the
+  r537-r554 signature exactly. Thirteenth clean hand-off. All 12 logged issues
+  are listed noise (rocketreach-400 + investment-tracker-400, deliberate client
+  403 gates, keyless-AI 503). 0 app bugs from the scripted regression.
+- Triage in progress. Working the fee chain per the standing lesson (follow one
+  fee from the deal record through every surface that shows it).
+
 ### r554 · 2026-09-05 · FULL (rotation #4 BGP staff MOBILE 390px) · 2 bugs fixed — the WIP report's title mis-stated its own scope, and a priced deal showed no fee anywhere · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke,
