@@ -3304,6 +3304,51 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  await step(page, p, 'staff-unit-edit-keeps-the-deal-stage', async () => {
+    // r562: the Edit Unit dialog seeded its "Unit Status" from the unit ROW's
+    // own marketingStatus, which lags a deal that has moved past marketing.
+    // On a unit the board called Negotiating the field rendered an editable
+    // "Available", and saving ANY other field (a note after a viewing) pushed
+    // AVA back through the unit->deal status mirror and regressed the live
+    // deal — on the tracker, the deals board and the WIP stage totals.
+    // Saving the dialog must never move the deal.
+    const found = await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: h })).json();
+      const arr = Array.isArray(units) ? units : (units.units || []);
+      const deals = await (await fetch('/api/crm/deals', { headers: h })).json();
+      const byId = {}; for (const d of deals) byId[d.id] = d;
+      // NEG/HOT only — past that the unit drops out of the tracker's
+      // default view, so there would be no row to open.
+      const u = arr.find((x) => x.dealId && byId[x.dealId] && /^(NEG|HOT)$/.test(String(byId[x.dealId].status || '')));
+      return u ? { unitId: u.id, dealId: u.dealId, status: byId[u.dealId].status } : null;
+    });
+    if (!found) throw new Error('no unit linked to a past-marketing deal to test with');
+    await page.goto(`${BASE}/available`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    // desktop table uses button-edit-<id>, the phone card unit-edit-<id>
+    const edit = page.locator(`[data-testid="button-edit-${found.unitId}"], [data-testid="unit-edit-${found.unitId}"]`).first();
+    await edit.waitFor({ timeout: 30000 });
+    await edit.click();
+    const dialog = page.locator('[role="dialog"]').first();
+    await dialog.waitFor({ timeout: 15000 });
+    const shown = (await dialog.innerText()).replace(/\s+/g, ' ');
+    if (/Unit Status Available/.test(shown)) {
+      throw new Error(`Edit Unit offers "Available" on a unit whose deal is ${found.status} — saving would regress the deal`);
+    }
+    await dialog.locator('textarea').first().fill(`QA-R${ROUND} unit-edit stage guard`).catch(() => {});
+    await dialog.locator('button', { hasText: /^Save$/ }).first().click({ timeout: 15000 });
+    await page.waitForTimeout(2500);
+    const after = await page.evaluate(async (dealId) => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: h })).json();
+      return (deals.find((d) => d.id === dealId) || {}).status || null;
+    }, found.dealId);
+    if (after !== found.status) {
+      throw new Error(`saving the Edit Unit dialog moved the deal ${found.status} -> ${after}`);
+    }
+  });
+
   await step(page, p, 'staff-tracker-status-deeplink-filters', async () => {
     await trackerStatusDeepLink(page, 'staff');
   });

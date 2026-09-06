@@ -88,18 +88,82 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r562 · 2026-09-06 · FULL (rotation #4 BGP staff MOBILE 390px) · ROUND IN PROGRESS
+### r562 · 2026-09-06 · FULL (rotation #4 BGP staff MOBILE 390px) · 1 bug fixed — saving a note on the Letting Tracker's Edit Unit dialog silently regressed the live deal from Negotiating back to Marketing · 1 re-deferred · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
-  two-bot in three chunks via qa/with-server.sh with QA_CROSS_FILE set).
-  Regression: smoke GREEN 42/0.
+  browser work + two-bot via qa/with-server.sh). Regression: smoke GREEN 42/0
+  before and GREEN 42/0 after the fix.
 - Two-bot three-chunk pass: every scenario [ok]. Tally victoria 4x400 (all
   POST /rocketreach/discover, listed keyless noise) / mark 9x403 + 1x503 /
   woody,nick,sam 0 — baseline CONFIRMED, twenty-second clean hand-off.
   0 app bugs from the scripted regression.
-- Journey pending: Victoria @ 390px iPhone UA, phone shell, real task.
-- Picking up r561's deferred bug (client tracker compliance-gap dot reading
-  a fee field the client is deliberately never sent).
+- Journey: Victoria @ 390px iPhone UA + touch — "just out of a viewing at
+  Bluewater: log it on the tracker, then check the numbers behind it".
+  Phone home (cold open lands /chatbgp once, then Dashboard) -> Total billing
+  tile -> /wip-report -> tracker -> Negotiating chip -> Add Viewing (SUBMITTED,
+  company + contact + outcome + notes) -> reload -> Edit Unit (SUBMITTED).
+  CHECKED AND CLEAN: the "Total billing £250,000" tile ties exactly to
+  /api/wip (6 rows, 250000 WIP + 0 invoiced) AND to the WIP report it links
+  to ("Total net fees: £250,000", stage split 2+1+1+2 = 6 deals); the
+  Negotiating chip filtered to exactly the 2 units it counted; the viewing
+  saved, rendered with company/contact/outcome, and survived a reload
+  (r557 fix holds); no h-overflow on any phone surface.
+- BUG FIXED (client/src/pages/available-units.tsx, data integrity, serious):
+  the Edit Unit dialog seeded its form from the unit ROW's own
+  marketingStatus, while every board, chip, filter and card badge shows the
+  EFFECTIVE code (effByUnit — the linked deal's status wins). On a unit whose
+  deal has moved past marketing but whose row still reads AVA, the dialog's
+  own guard ("Past marketing the deal drives — freeze the field so saving
+  can't regress the deal via the status mirror") therefore never fired: the
+  Unit Status select rendered an editable "Available" on a unit the board
+  next to it called Negotiating. PROVEN as Victoria on the phone: opened Edit
+  on "Bluewater MSU9 letting" (board badge Negotiating), typed a note and
+  nothing else, hit Save -> PATCH /api/available-units sent marketingStatus
+  AVA -> the unit->deal status mirror pushed AVA onto deal #1002, the board
+  went MARKETING 79->80 / NEGOTIATING 2->1, the card badge flipped to
+  Marketing, and /api/crm/deals confirmed the deal itself was now AVA. A live
+  negotiation demoted by adding a note. Fix: unitToForm now takes the
+  effective code (effByUnit[u.id]) so the guard sees NEG and freezes the
+  field, and the payload carries the status that is actually on screen.
+  Verified visually after: field reads "Negotiating — driven by the deal",
+  the note saves, chips stay 79/2, deal stays NEG. Both call sites (desktop
+  table + phone card) fixed. tsc clean, smoke re-green.
+- HARNESS GROWTH (qa/two-bot-round.mjs): victoria ·
+  staff-unit-edit-keeps-the-deal-stage — finds a unit linked to a NEG/HOT
+  deal, opens the real Edit dialog, fails if it offers an editable
+  "Available", saves a note, and fails if the deal moved. [ok] and
+  non-vacuous (pre-fix it fails on the first assertion). Notes: the desktop
+  table's edit control is button-edit-<id>, the phone card's unit-edit-<id>;
+  restrict the pick to NEG/HOT because past that the unit drops out of the
+  tracker's default view.
+- RE-DEFERRED (r561's carry-forward, still not reproducible): the client
+  Letting Tracker per-unit compliance-gap dot computing
+  feeOk = deal.feeAgreement === "YES" on a field clients are deliberately
+  never sent. Tried harder this round: put deal #1002 to SOL with
+  feeAgreement NO / amlCheckCompleted YES (the exact dot conditions) and
+  loaded /available at 1600px as BOTH personas. NEW FINDING that blocks it —
+  the dot never renders for either persona because the Ref cell it lives in
+  is gated on deal?.dealRef and the row's deal did not resolve (the row
+  printed "—" in Ref); and a unit whose deal is SOL also drops out of the
+  tracker's default view, so it only appears via the Solicitors chip. So
+  there are potentially TWO bugs here: the dot's client-side fee test AND a
+  row whose deal ref does not resolve on the desktop table. Next round:
+  start from the desktop table's deal lookup for a SOL row, not from the dot.
+  Still open and unbuilt: UX #150, #157, #162, #170, #171, #172, #174-#225.
+- Suggestions added: UX-NOTES #224 (unit card shows viewing/offer COUNTS but
+  never the latest outcome — a just-logged "Offer Expected" looks identical
+  to a six-month-old "Not Interested"), #225 (Add Viewing's Contact picker
+  lists all 15 CRM contacts with no company shown, even after a company is
+  chosen — rival and Hammerson contacts among them).
+- New flakes: none. Setup notes: the phone cold open lands on /chatbgp once
+  per session (listed, not a bug) — a journey script must go('/') twice
+  before it can tap anything on the home screen.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r562 was FULL -> r563 LIGHT (skip the journey; spend it on the
+  re-deferred tracker Ref/dot pair above). Method worth reusing: open a
+  dialog from a card and check the FIELD it seeds against the BADGE on the
+  card behind it — then save the dialog changing nothing else and see what
+  moved.
 
 ### r561 · 2026-09-06 · LIGHT (r560 had the journey) · 1 bug fixed (two leaks, one scrubber) — every deal payload a client login could read carried BGP's MLRO working file, incl. SAR filed + NCA reference, and the property sub-read shipped the fee agreement's signed-document URL · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

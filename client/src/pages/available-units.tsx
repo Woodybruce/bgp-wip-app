@@ -272,7 +272,7 @@ function formToPayload(f: UnitFormState) {
   };
 }
 
-function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id: string; name: string } | null): UnitFormState {
+function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id: string; name: string } | null, effCode?: DealStatusCode | null): UnitFormState {
   return {
     unitName: u.unitName || "",
     propertyId: u.propertyId || "",
@@ -285,7 +285,13 @@ function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id:
     useClass: u.useClass || "",
     condition: u.condition || "",
     availableDate: u.availableDate || "",
-    marketingStatus: legacyToCode(u.marketingStatus) || "AVA",
+    // Seed from the EFFECTIVE code (the linked deal's status wins), the same
+    // one the boards show — not the unit's own row, which lags behind a deal
+    // that has moved past marketing. Seeding it raw let the dialog render an
+    // editable "Available" on a unit the board called Negotiating, and saving
+    // any other field then pushed AVA back through the status mirror and
+    // regressed the live deal (r562).
+    marketingStatus: effCode || legacyToCode(u.marketingStatus) || "AVA",
     epcRating: u.epcRating || "",
     location: u.location || "",
     notes: u.notes || "",
@@ -1972,7 +1978,7 @@ export default function AvailableUnitsPage() {
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => setInterestUnit(u)} data-testid={`unit-interest-${u.id}`}>
                       <Flame className="w-3.5 h-3.5" /> Interest{(interestCounts[u.id] || 0) ? ` (${interestCounts[u.id]})` : ""}
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), effByUnit[u.id])); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </Button>
                   </div>
@@ -2586,7 +2592,7 @@ export default function AvailableUnitsPage() {
                               variant="ghost"
                               size="sm"
                               className="h-7 w-7 p-0"
-                              onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
+                              onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), effByUnit[u.id])); setEditItem(u); }}
                               data-testid={`button-edit-${u.id}`}
                               title="Edit unit form (everything is also editable in the row)"
                             >

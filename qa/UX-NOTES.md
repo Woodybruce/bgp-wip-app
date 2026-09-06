@@ -13,6 +13,25 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+225. 2026-09-06 · BGP staff / mobile 390px (QA r562) · Journey "log a viewing
+    on the tracker" · The Add Viewing dialog's Contact picker lists EVERY
+    contact in the CRM even after a Company has been chosen — 15 names on a
+    390px screen, Hammerson's Head of Leasing and a rival landlord's contact
+    among them, with no company shown beside any of them. Straight after a
+    viewing, on a phone, you have to know which "Sam" is which. Suggested:
+    once a company is picked, filter the contact list to that company (with a
+    "show all" escape), and show the company as a sub-line on each name.
+    Needs Woody's numbered confirmation — not built.
+
+224. 2026-09-06 · BGP staff / mobile 390px (QA r562) · Journey "log a viewing
+    on the tracker" · The unit card's Viewing/Offer buttons carry a count —
+    "Viewing (2)", "Offer (1)" — but nothing on the card says what the latest
+    one was. The viewing I had just logged as "Offer Expected" looked
+    identical on the board to one logged six months ago as "Not Interested".
+    Suggested: put the most recent viewing's outcome and date on the card as
+    a sub-line, so the tracker reads as a pipeline rather than a counter.
+    Needs Woody's numbered confirmation — not built.
+
 223. 2026-09-06 · Landsec client / desktop (QA r561) · Payload audit of the
     client shell · A client deal row ships ~120 columns straight off
     crm_deals; the client shell renders perhaps fifteen of them. Everything
