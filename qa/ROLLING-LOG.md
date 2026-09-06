@@ -88,6 +88,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r567 · 2026-09-06 · LIGHT (r566 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke).
+  Regression: smoke GREEN 42/0.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (POST /rocketreach/discover + the deliberate invalid
+  POST /api/investment-tracker probe — listed keyless noise) / mark 9x403 +
+  1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, twenty-seventh clean
+  hand-off. 0 app bugs from the scripted regression.
+- Triage: nothing outside listed environment noise. Deep angle in progress.
+
 ### r566 · 2026-09-06 · FULL (rotation #2 Landsec client · desktop 1440px) · 1 bug fixed — the client's Tenancy Schedule rendered every money, area and date cell RAW, so the landlord and the agent read different strings off the same row · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
