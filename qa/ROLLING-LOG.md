@@ -91,7 +91,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 ### r570 · 2026-09-06 · FULL (rotation #4 BGP staff, mobile 390px) · 1 bug fixed — the unit payload's `viewingsCount` came from a denormalised column nothing has ever written, so it read 0 viewings on all 81 tracker units while the tracker's own live count read 2 on one of them · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; dev server via qa/with-server.sh). Regression: smoke
-  GREEN 42 checks / 0 failures.
+  GREEN 42 checks / 0 failures BEFORE the fix and GREEN 42/0 after it.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
   Tally victoria 4x400 on the first pass / 2x400 on the post-fix re-run —
   same two listed classes either way (POST /rocketreach/discover + the
