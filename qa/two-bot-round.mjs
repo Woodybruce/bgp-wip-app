@@ -2338,7 +2338,12 @@ async function victoriaRound(page, cross) {
   await step(page, p, 'staff-deal-verdict-flow', async () => {
     const r = await page.evaluate(async (round) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const past = new Date(Date.now() - 5 * 86400000).toISOString();
+      // Must land in a PAST month: pendingVerdictDeals only chases
+      // target_date < date_trunc('month', now()), so "5 days ago" silently
+      // stopped qualifying from the 6th of every month onward (caught r560,
+      // the round that crossed midnight into 2026-09-06).
+      const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      const past = new Date(firstOfMonth.getTime() - 5 * 86400000).toISOString();
       const cRes = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ name: `QA-R${round} verdict probe`, dealType: 'Consultant', status: 'SOL', fee: 1000, targetDate: past, internalAgent: ['Victoria Broadhead'] }) });
       const deal = cRes.ok ? await cRes.json() : null;
       if (!deal?.id) return { fail: `deal create ${cRes.status}` };
@@ -3383,6 +3388,24 @@ async function victoriaRound(page, cross) {
       await page.evaluate(async (id) => {
         await fetch(`/api/lease-events/${id}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
       }, id).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-calendar-insights-keep-busiest-agent', async () => {
+    // Staff half of client-calendar-insights-no-agent-leaderboard (r560).
+    // Blocking the leaderboard for clients must not cost the staff strip its
+    // Busiest Agent line, and the availability count must stop reading 0.
+    const d = await page.evaluate(async () => {
+      const r = await fetch('/api/microsoft/calendar/insights', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      return r.ok ? await r.json() : { status: r.status };
+    });
+    const insights = d.insights || [];
+    if (!insights.length) throw new Error(`staff calendar insights came back empty (${JSON.stringify(d).slice(0, 160)})`);
+    if (!insights.some((i) => i.type === 'busiestAgent')) throw new Error('staff strip lost its Busiest Agent insight');
+    const portfolio = insights.find((i) => i.title === 'Portfolio');
+    if (!portfolio) throw new Error('staff strip lost its Portfolio insight');
+    if (/, 0 currently available/.test(portfolio.detail)) {
+      throw new Error(`staff Portfolio insight is back to the dead property-status count: ${portfolio.detail}`);
     }
   });
 
@@ -7750,6 +7773,31 @@ async function markRound(page, cross) {
       if (await page.locator(`[data-testid^="${kind}-"]`).count()) {
         throw new Error(`client properties table still offers the ${kind} picker`);
       }
+    }
+  });
+
+  await step(page, p, 'client-calendar-insights-no-agent-leaderboard', async () => {
+    // r560: the client Calendar insight strip carried "BUSIEST AGENT —
+    // victoria@brucegillinghampollard.com — 2 events in 30 days" (a BGP
+    // staff-productivity metric keyed on the raw created_by email), and its
+    // Portfolio line read "0 currently available" off crm_properties.status,
+    // which is null for every centre — flatly contradicting the client's own
+    // Letting Tracker. Staff keep the leaderboard
+    // (staff-calendar-insights-keep-busiest-agent).
+    const d = await page.evaluate(async () => {
+      const r = await fetch('/api/microsoft/calendar/insights', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      return r.ok ? await r.json() : { status: r.status };
+    });
+    const insights = d.insights || [];
+    if (!insights.length) throw new Error(`client calendar insights came back empty (${JSON.stringify(d).slice(0, 160)})`);
+    if (insights.some((i) => i.type === 'busiestAgent')) throw new Error('client strip still carries the BGP agent leaderboard');
+    if (/brucegillinghampollard/i.test(JSON.stringify(insights))) {
+      throw new Error('client strip still prints a BGP staff email address');
+    }
+    const portfolio = insights.find((i) => i.title === 'Portfolio');
+    if (!portfolio) throw new Error('client strip lost its Portfolio insight');
+    if (/, 0 currently available/.test(portfolio.detail)) {
+      throw new Error(`client Portfolio insight says nothing is available while the tracker shows units: ${portfolio.detail}`);
     }
   });
 }

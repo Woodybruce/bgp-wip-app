@@ -13,6 +13,27 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+221. 2026-09-06 · Landsec client / mobile 390px (QA r560) · Journey "what has
+    BGP got outstanding on my portfolio" · The Calendar screen's insight strip
+    is the only place a landlord gets portfolio intelligence on the phone
+    (hottest property, viewing momentum, needs attention, deals, portfolio),
+    but it sits BELOW the day grid — Mark had to scroll past sixteen empty
+    hour rows (06:00–21:00, no events) to reach it, on a day with one viewing.
+    Suggested: on the phone, put the insight strip ABOVE the grid for client
+    viewers, or collapse an empty day to a single "Nothing in the diary today"
+    row. Needs Woody's numbered confirmation — not built.
+
+222. 2026-09-06 · Landsec client / mobile 390px (QA r560) · Same strip · It
+    labels Landsec — the viewer's OWN landlord company — as "MOST ACTIVE
+    TENANT ... Landsec — 1 viewing booked". The insight buckets viewings by
+    team_events.company_name, which for a client is nearly always their own
+    company, so a landlord is told his most active tenant is himself.
+    Suggested: for client viewers either drop the insight when the top
+    company IS the viewer's own company, or re-key it on the BRAND being
+    shown round (the tenant side of a viewing) rather than the event's
+    company_name. Needs Woody's numbered confirmation — not built.
+
+
 219. 2026-09-05 · BGP staff / desktop (QA r559) · Two links still carry the
    dead `?highlight=<id>` convention after r559 fixed the four company ones:
    the Contacts page links a contact's requirements as

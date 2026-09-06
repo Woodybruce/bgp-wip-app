@@ -88,22 +88,98 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r560 · 2026-09-05 · FULL (rotation #3 Landsec client MOBILE 390px) · ROUND IN PROGRESS
+### r560 · 2026-09-05/06 · FULL (rotation #3 Landsec client MOBILE 390px) · 2 bugs fixed — the client Calendar strip published a BGP agent leaderboard by email + told a landlord nothing in his portfolio was available · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
   two-bot in three chunks via qa/with-server.sh with QA_CROSS_FILE set).
-  Regression: smoke GREEN 42/0.
-- CARRY-FORWARD FROM r559, CONFIRMED: full three-chunk pass, every scenario
-  [ok]. Tally victoria 4x400 / mark 9x403 + 1x503 / woody,nick,sam 0 —
-  twentieth clean hand-off. NOTE the victoria count moved 2x400 -> 4x400:
-  r559's two new scenarios (staff-brand-add-to-deal-lands-on-deals,
-  staff-company-links-open-the-record) both open a brand profile, which
-  auto-fires the keyless rocketreach discover 400. Same listed noise, two
-  more instances — new baseline is 4x400, not a regression.
-- Triage: all 14 logged issues are listed environment noise (rocketreach
-  discover 400 x4, deliberate client 403 gates x9, keyless-AI 503 x1).
-  0 app bugs from the scripted regression.
-- Journey + fixes: in progress.
+  Regression: smoke GREEN 42/0 before and GREEN 42/0 after both fixes.
+- CARRY-FORWARD FROM r559, CONFIRMED with a full three-chunk pass of my own:
+  every scenario [ok], tally victoria 2x400 / mark 9x403 + 1x503 /
+  woody,nick,sam 0 — the r537-r559 signature, twentieth clean hand-off.
+  All listed noise. 0 app bugs from the scripted regression. Re-confirmed
+  after the fixes with the two new scenarios in place.
+  NOTE for the next round: the victoria 400 COUNT is not stable run-to-run.
+  My first pass logged 4x400 (rocketreach discover fired on r559's two new
+  brand-profile scenarios as well as the usual pair); later passes logged the
+  canonical 2x400. Same noise class either way — read the class, not the count.
+- HARNESS BUG FIXED (qa/two-bot-round.mjs, staff-deal-verdict-flow) — the
+  round crossed midnight into 2026-09-06 and the scenario went red with
+  "overdue deal missing from /api/deal-verdicts/pending". Not the app and not
+  a flake: the probe deal is created with targetDate = now - 5 days, but
+  pendingVerdictDeals only chases `target_date < date_trunc('month', now())`
+  (Woody's 2026-09-02 "past months only" rule). "5 days ago" is only in a past
+  month on the 1st-5th, so the scenario was guaranteed red from the 6th of
+  every month onward. Probe date is now first-of-month minus 5 days. Green.
+- JOURNEY (rotation #3, Mark Warne on a real iPhone context at 390px; shots
+  qa/smoke-shots/r560-*.png): "Monday, walking into a Landsec asset review —
+  off my phone, what has BGP got outstanding on my portfolio?" Phone home ->
+  Tasks -> Deals (bottom nav) -> the deals filter chips -> a deal profile ->
+  then every one of the eleven quick links on the phone home grid, tapped as
+  Mark and judged on what it delivered. 0 pageerrors, 0 h-overflow at 390px.
+  PASSED and worth not re-doing: home "MY TASKS (1)" agrees with /tasks
+  "1 open"; the Deals chips deliver exactly what they count (ALL 2 ->
+  2 rows, SOLICITORS 1 -> U124, EXCHANGED 1 -> MSU3); "2 deals + 2 letting
+  deals" reconciles with the Calendar strip's "4 active deals"; Requirements,
+  Brands, Comps, SharePoint, Property Intelligence, News, CRM and Images all
+  render a real client-appropriate screen (Images is a photo grid — 57 chars
+  of innerText is the grid, not an empty page).
+  NOT A BUG, checked: bare /deals on the phone looks blank for ~5s — the
+  Deals chunk is a lazy vite-dev import and PageLoader is text-free skeletons.
+  Wait 6s before calling a lazy tab empty.
+- BUG FIXED 1 (server/microsoft.ts, /api/microsoft/calendar/insights) — the
+  client Calendar insight strip carried "BUSIEST AGENT —
+  victoria@brucegillinghampollard.com — 2 events in 30 days". A BGP
+  staff-productivity metric, keyed on the raw team_events.created_by EMAIL,
+  rendered on a landlord's phone. Same class as r536's agent leaderboard,
+  which survived here because this endpoint is one clients legitimately use
+  and it was already scoped (fees nulled, deals/events/properties filtered by
+  resolveCompanyScope) — nobody had asked whether a SCOPED insight was still
+  an internal one. Now the busiestAgent insight is skipped whenever
+  insightsScope is set; staff keep it.
+- BUG FIXED 2 (same handler) — the strip's Portfolio line told Mark
+  "2 properties tracked, 0 currently available" while his own Letting Tracker,
+  two taps away on the same phone, said 77 Available. `availableProps` filtered
+  crm_properties.status for "available"/"to let", but a shopping centre's own
+  status row is NULL (all four fixture properties) — availability is held per
+  UNIT on the tracker. So the count was structurally 0 for every retail
+  portfolio, for staff too (Victoria also read "4 tracked, 0 available"), and
+  the Needs Attention insight — which derives from availableProps — could
+  never fire at all. Now a property counts as available when it has a live
+  unit on the tracker (marketing_status AVA/OPP, plus the legacy free-text
+  forms). Mark reads "2 properties tracked, 2 currently available" and gains
+  "NEEDS ATTENTION — 1 available property with no viewings: Westgate Test
+  Centre"; Victoria reads 4/4 and a 3-property Needs Attention line.
+  SIDE EFFECT, deliberate: reviving Needs Attention made nine insights where
+  the response sliced to eight, which silently dropped Portfolio (lowest
+  priority) off the STAFF strip. Cap raised to 9 so no line the team already
+  reads disappears.
+  Both fixes verified LIVE as Mark on the phone (tapped the Calendar quick
+  link, not a deep link): no BUSIEST AGENT row, no BGP email anywhere in the
+  strip, Portfolio reads 2/2 — qa/smoke-shots/r560-fix-calendar-client.png.
+  Staff strip re-read in the same run and keeps Busiest Agent. tsc clean.
+- HARNESS GROWTH (qa/two-bot-round.mjs), the standard client-loses/staff-keeps
+  pair, both [ok]: mark's client-calendar-insights-no-agent-leaderboard (no
+  busiestAgent insight, no /brucegillinghampollard/ anywhere in the payload,
+  and the Portfolio line must not read ", 0 currently available") and
+  victoria's staff-calendar-insights-keep-busiest-agent (busiestAgent still
+  present, Portfolio still present — that one would have caught the slice-to-8
+  regression — and its count no longer 0). Neither makes a deliberate 4xx, so
+  neither is registered in NEGATIVE_PROBE_SCENARIOS.
+- DEFERRED: nothing new. UX #150, #157, #162, #170, #171, #172, #174-#220 all
+  still open and unbuilt.
+- Suggestions added: UX-NOTES #221 (the phone Calendar buries the only
+  portfolio-intelligence strip a client gets below sixteen empty hour rows)
+  and #222 ("MOST ACTIVE TENANT — Landsec" names the viewer's own landlord
+  company as its own most active tenant).
+- New flakes: none beyond the two noted above (the unstable victoria 400
+  count, and the now-fixed month-boundary fragility in
+  staff-deal-verdict-flow). Real-device keyboard-up composer check (r405)
+  still open for Woody.
+- Next: r560 was FULL -> r561 may be LIGHT; then rotation #4, BGP staff
+  mobile 390px. Method worth reusing from this round: tap every entry in a
+  shell's own quick-link/nav grid as the persona and judge what it DELIVERS,
+  and on any surface a client shares with staff, ask not only "is it scoped"
+  but "is a scoped version of this still an internal number".
 
 ### r559 · 2026-09-05 · LIGHT (r558 had the journey) · 2 bugs fixed — the brand profile's "Add to deal" landed on the WIP Report, and every `?highlight=` company link dumped the user on the CRM directory · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
