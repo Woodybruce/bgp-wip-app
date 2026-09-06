@@ -88,6 +88,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r572 · 2026-09-06 · FULL (rotation #1 BGP staff · desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; dev server via qa/with-server.sh). Regression: smoke
+  GREEN 42 checks / 0 failures.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (POST /rocketreach/discover x3 + the deliberate
+  invalid POST /api/investment-tracker probe) / mark 9x403 + 1x503 /
+  woody,nick,sam 0 — BASELINE CONFIRMED, thirty-second consecutive clean
+  hand-off. 0 app bugs from the regression.
+- Flake: the woody/nick/sam chunk died once on the login rate limiter
+  (POST /api/auth/login after the victoria+mark chunks); a straight re-run
+  of the same chunk was 0 issues. Known 429 class, not an app bug.
+- Journey in progress — staff desktop 1440px.
+
 ### r571 · 2026-09-06 · LIGHT (r570 had the journey) · 2 bugs fixed — the client-facing asset-brief scorecard's WAULT read a column null on 100% of rows so it printed "—" on a scheme with 66 live leases, and its occupancy counted the tracker's own AVA code as OCCUPIED · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; dev server via qa/with-server.sh). Regression: smoke
