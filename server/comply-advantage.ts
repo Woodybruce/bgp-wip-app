@@ -38,6 +38,9 @@ export function isComplyAdvantageConfigured(): boolean {
  */
 export async function getToken(): Promise<string> {
   if (cachedToken && Date.now() < tokenExpiresAt) return cachedToken;
+  if (Date.now() < circuitOpenUntil) {
+    throw new Error(`ComplyAdvantage auth cooling down — ${circuitReason}`);
+  }
 
   const { username, password, realm } = getCredentials();
   if (!username || !password || !realm) {
@@ -52,6 +55,16 @@ export async function getToken(): Promise<string> {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    // A failed LOGIN must not retry once per screen: their 429 is a
+    // brute-force lockout ("account blocked after multiple consecutive
+    // login attempts") and every retry keeps the account locked — seen
+    // live 2026-09-06 when the KYC re-screen loop held the lock closed.
+    // Bad credentials (401/403) get the same treatment, shorter.
+    if ([401, 403, 429].includes(res.status)) {
+      circuitReason = `${res.status} on /v2/token`;
+      circuitOpenUntil = Date.now() + (res.status === 429 ? 60 : 15) * 60_000;
+      console.error(`[ComplyAdvantage] Auth failed (${res.status}) — pausing login attempts for ${res.status === 429 ? 60 : 15} minutes so the account can unlock. Check COMPLY_ADVANTAGE_USERNAME/PASSWORD/REALM on Railway.`);
+    }
     throw new Error(`ComplyAdvantage auth failed: ${res.status} ${body.slice(0, 200)}`);
   }
 
