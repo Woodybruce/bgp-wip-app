@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r577 · 2026-09-06 · LIGHT (r576 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (all POST /brand/:id/rocketreach/discover) / mark
+  9x403 + 1x503 + 1x404 (r576's listed brochure-file 404) / woody,nick,sam
+  0 — BASELINE CONFIRMED, thirty-sixth consecutive clean hand-off. The mark
+  chunk again exceeded the 600s foreground cap (known). 0 app bugs from the
+  regression.
+- Deep angle in progress: the SERVER half of the status-literal sweep
+  (r576 took the client half).
+
 ### r576 · 2026-09-06 · FULL (rotation #3 Landsec client · mobile 390px) · 1 bug fixed — the client property overview said "Area —" about a centre whose own tenancy schedule, one tab across, totals 623,653 sq ft · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
