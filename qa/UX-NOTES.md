@@ -13,6 +13,39 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+247. 2026-09-06 · Landsec client / emailed weekly update PDF (QA r573) ·
+    Mark's colleague opens the weekly update BGP emails them · Every copy of
+    the PDF carries a spurious blank second page. The per-page footer is
+    written at y=810 on an A4 page whose bottom margin is 60pt, so pdfkit
+    pushes it onto a fresh page — page 1 ends with no footer at all and the
+    client gets a two-page document with one page of content. Suggestion:
+    write the footer with the bottom margin temporarily zeroed
+    (`doc.page.margins.bottom = 0` around the footer loop) so it lands at the
+    foot of each real page and the document is one page long.
+
+248. 2026-09-06 · Landsec client / emailed weekly update PDF (QA r573) ·
+    the client reads their deal list in the weekly update · The list carries
+    no money at all — the report reads `rent_pa` then `pricing`, and both are
+    null on every deal in the Landsec feed (the same gap as #240), so a
+    client's weekly update is deal name, property and status only. The fee
+    and rent the app does hold for these deals live on the letting tracker
+    and the tenancy schedule. Suggestion: fall back to the tracker/schedule
+    figure (labelled with its source) before printing nothing.
+
+249. 2026-09-06 · BGP staff / Letting Hunter desktop (QA r573) · Victoria
+    scans "Landlords ranked by leasing opportunity" for targets · The page's
+    own subtitle says "Top scores have VOIDS, upcoming lease events, stale
+    competitor agents, or fresh acquisitions", but the Hunter Score
+    (server/landlord-hunter.ts) has no void term: it is upcomingSqft*0.001 +
+    upcomingEvents*5 + staleAgentCount*30 + recentAcq*15 + flag*50. A
+    landlord with 75 vacant units on the letting tracker scores exactly the
+    same as one with none. The void data is live and already sliced per
+    landlord (available_units / the leasing board's occupancy). Suggestion:
+    either add a void term to the score or drop "voids" from the subtitle.
+    Related, in the same query: `totalSqft` is summed from
+    `crm_properties.sqft`, which is null on every property in the fixture,
+    and the column is never rendered — a dead select behind a dead source.
+
 246. 2026-09-06 · BGP staff / desktop 1440px (QA r572) · Victoria reads the
     four KPI tiles at the top of her dashboard before a client update · Each
     tile pairs its headline with a coloured percentage badge and the words

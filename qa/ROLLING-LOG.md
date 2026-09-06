@@ -92,18 +92,80 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r573 · 2026-09-06 · LIGHT · ROUND IN PROGRESS
+### r573 · 2026-09-06 · LIGHT (no journey — r572 had one) · 1 bug fixed (two halves) — the CLIENT-FACING weekly update PDF counted completed and withdrawn deals as "ACTIVE DEALS" because it compared `status` against words the column never holds · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh).
-- Smoke GREEN 42 checks / 0 failures.
-- Two-bot three-chunk pass running (QA_CROSS_FILE shared) — tally to follow.
-- Triage angle this round: the dead-source sweep, driven off a scripted
-  all-null-column census of the whole fixture DB cross-referenced against
-  every aggregate/read in server/. Candidate under investigation: the
-  CLIENT-FACING weekly update PDF (server/weekly-report.ts) headlines
-  "ACTIVE DEALS" from `status !== "completed" && status !== "lost"` while
-  crm_deals.status holds the canonical 3-letter codes (COM/WIT/INV) — so
-  the filter excludes nothing.
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (all POST /brand/:id/rocketreach/discover — listed
+  keyless class; the investment-tracker probe did not run this pass) /
+  mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, thirty-third
+  consecutive clean hand-off. 0 app bugs from the regression. No chunk died
+  at login this round (the r572 flake did not recur).
+- ANGLE: scripted the dead-source sweep instead of eyeballing it —
+  qa/r573-deadcol-sweep.mjs censuses every all-null column in every
+  non-empty table of the fixture, then cross-references each against every
+  read in server/. It surfaced the weekly report in one pass.
+- BUG FIXED (server/weekly-report.ts — the PDF cron-emails to opted-in
+  client contacts, and the only document BGP pushes AT the client rather
+  than the client pulling). Its headline tile counted
+  `status !== "completed" && status !== "lost"`. `crm_deals.status` holds
+  the canonical 3-letter codes (shared/deal-status.ts: COM/WIT/INV/…), so
+  that filter excluded NOTHING — every completed, invoiced and withdrawn
+  deal was reported to the client as active. The correct predicate is
+  written out in full three times elsewhere (crm.ts:1482
+  `status NOT IN ('ARCH','COM','INV','WIT')`, ai-intelligence.ts:162, and
+  the shared `CLOSED_STATUSES` whose own comment says "use these instead of
+  maintaining divergent hardcoded strings in each file"). Fixed to
+  legacyToCode + CLOSED_STATUSES. Second half, same document: the deal list
+  sat under a SECOND heading also reading "ACTIVE DEALS" while iterating
+  every deal, so the heading contradicted the tile above it — renamed to
+  "YOUR DEALS" (nothing hidden from the client) and each row now carries its
+  live status label. That row's meta also headlined `stage`, which is NULL on
+  every deal in the fixture, while `status` sits populated in the same
+  payload; and it printed "Purchaser: —" for a vendor-only deal while
+  `landlord_name` and `vendor_name` were selected and dropped on the floor.
+  All three now render.
+- PROVEN before/after on a real generated PDF (probe: three Landsec deals
+  temporarily hung off one contact, one moved to COM and one to WIT;
+  FIXTURE RESTORED via qa/r573-probe-restore.mjs and verified). BEFORE:
+  "ACTIVE DEALS 3", list headed ACTIVE DEALS, three rows with property name
+  only. AFTER: "ACTIVE DEALS 1", list headed YOUR DEALS, rows reading
+  "Bluewater Shopping Centre · Negotiating · Landlord: Landsec",
+  "· Withdrawn", "· Completed". Shots qa/smoke-shots/r573-weekly-before.png
+  and r573-weekly-after.png (the PDF itself rendered in chromium). tsc clean.
+- New two-bot scenario: victoria ·
+  staff-weekly-report-counts-only-live-deals — creates one NEG and one WIT
+  probe deal against a real contact, pulls the actual PDF, parses its text
+  and fails if the ACTIVE DEALS tile is not 1, if the withdrawn deal is
+  listed with no status, or if the list is headed ACTIVE DEALS again. Guards
+  the whole document, not the query. Confirmed it FIRES on the pre-fix file
+  (reads "ACTIVE DEALS 2", no statuses) and passes on the fixed one; full
+  victoria chunk re-run green, 25/25 [ok].
+- DEFERRED (found, not fixed — two-bug cap): (a) every weekly PDF emits a
+  BLANK SECOND PAGE — the footer is written at y=810 on A4 with a 60pt
+  bottom margin, so pdfkit breaks to a new page and page 1 gets no footer
+  at all; one-line fix, zero the bottom margin around the footer loop
+  (also logged as UX #247 since it is cosmetic). (b) /api/hunters/letting
+  resolves a landlord's portfolio from `landlord_id` ALONE — the exact
+  predicate r572 replaced in /api/crm/landlords. It agrees on this fixture
+  (landlord_id == freeholder_id on all 4 properties) so there is no visible
+  symptom to show, but it is the same class and the canonical union is one
+  file away.
+- Also swept and CLEAN/not-actionable: crm_comps carries no numeric data at
+  all on this fixture (area, every rate, every rent column null on all 12
+  rows), so the brand-profile rent-affordability panel and the peer
+  benchmark are both honestly blank — note for anyone tempted to "fix" them
+  from a screenshot. Worth a look on prod data though: the brand's own
+  average parses with a bare `Number()` while the peer average two lines
+  below strips the currency mark with a regex, so a "£25.50" row would
+  count toward the peer figure and not the brand's.
+- FOR r574 (rotation #2 LANDSEC CLIENT DESKTOP 1440px): the client-facing
+  document family is where the last three finds live (r571 asset brief,
+  r573 weekly PDF). Client desktop should chase the OTHER things BGP
+  generates for them and check each figure against the board it claims to
+  summarise. UX #247/#248 both sit in the weekly PDF if Woody numbers them.
+- New flakes: none.
 
 ### r572 · 2026-09-06 · FULL (rotation #1 BGP staff · desktop 1440px) · 1 bug fixed — the Landlord Intelligence board's "Biggest portfolios" leaderboard read "0 properties" for every landlord because it counted a supplementary link table instead of the ownership columns the profile it links to reads · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

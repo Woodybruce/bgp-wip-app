@@ -14,6 +14,9 @@
 
 import { chromium } from '../node_modules/playwright/index.mjs';
 import { mkdirSync, appendFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { createRequire } from 'module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // Chunked runs (600s foreground-exec cap, r447): QA_PERSONAS picks which
 // persona rounds run; QA_CROSS_FILE persists the shared `cross` state between
@@ -3783,6 +3786,52 @@ async function victoriaRound(page, cross) {
       if (x.profile < 0) throw new Error(`${x.name}: property-summary unreadable for staff`);
       if (x.board !== x.profile) {
         throw new Error(`${x.name}: board says ${x.board} properties, its own profile lists ${x.profile}`);
+      }
+    }
+  });
+
+  // r573: the client weekly-update PDF headlined "ACTIVE DEALS" from
+  // `status !== "completed" && status !== "lost"`, but crm_deals.status holds
+  // the canonical 3-letter codes — so a completed or withdrawn deal was
+  // counted as active on a document emailed to the client, and the list under
+  // the same heading showed them with no status at all. Node-side: the PDF is
+  // the artifact the client receives, so assert on its own text.
+  await step(page, p, 'staff-weekly-report-counts-only-live-deals', async () => {
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'content-type': 'application/json' };
+    const cRes = await fetch(`${BASE}/api/crm/contacts`, { headers: auth });
+    const cJson = await cRes.json().catch(() => null);
+    const contacts = Array.isArray(cJson) ? cJson : (cJson?.contacts || []);
+    if (!contacts.length) throw new Error('no contacts to hang a weekly report on');
+    const contact = contacts[0];
+    const made = [];
+    try {
+      for (const [name, status] of [[`QA-PROBE weekly live R${ROUND}`, 'NEG'], [`QA-PROBE weekly dead R${ROUND}`, 'WIT']]) {
+        const r = await fetch(`${BASE}/api/crm/deals`, {
+          method: 'POST', headers: auth,
+          body: JSON.stringify({ name, dealType: 'Consultant', status, clientContactId: contact.id, internalAgent: ['Victoria Broadhead'] }),
+        });
+        const d = await r.json().catch(() => null);
+        if (!d?.id) throw new Error(`probe deal create failed (${r.status})`);
+        if (d.clientContactId !== contact.id) throw new Error('probe deal did not take the client contact — assertion would be vacuous');
+        made.push(d.id);
+      }
+      const pdfRes = await fetch(`${BASE}/api/weekly-report/${contact.id}.pdf`, { headers: { Authorization: auth.Authorization } });
+      if (pdfRes.status !== 200) throw new Error(`weekly-report PDF returned ${pdfRes.status}`);
+      const buf = Buffer.from(await pdfRes.arrayBuffer());
+      const { PDFParse } = nodeRequire('pdf-parse');
+      const text = String((await new PDFParse({ data: new Uint8Array(buf) }).getText()).text);
+      const tile = text.match(/ACTIVE DEALS\s*\n\s*(\d+)/);
+      if (!tile) throw new Error('weekly report has no ACTIVE DEALS figure');
+      if (Number(tile[1]) !== 1) {
+        throw new Error(`weekly report counts ${tile[1]} active deals — one is live, one is withdrawn`);
+      }
+      if (!/Withdrawn/.test(text)) throw new Error('the withdrawn deal is listed with no status on the client\'s own report');
+      if (/^ACTIVE DEALS$/m.test(text.split('EVENTS THIS WEEK')[1] || '')) {
+        throw new Error('the deal list is still headed ACTIVE DEALS while listing closed deals too');
+      }
+    } finally {
+      for (const id of made) {
+        await fetch(`${BASE}/api/crm/deals/${id}`, { method: 'DELETE', headers: auth }).catch(() => {});
       }
     }
   });
