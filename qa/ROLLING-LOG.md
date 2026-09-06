@@ -92,7 +92,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r576 · 2026-09-06 · FULL (rotation #3 Landsec client · mobile 390px) · ROUND IN PROGRESS
+### r576 · 2026-09-06 · FULL (rotation #3 Landsec client · mobile 390px) · 1 bug fixed — the client property overview said "Area —" about a centre whose own tenancy schedule, one tab across, totals 623,653 sq ft · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
   GREEN 42 checks / 0 failures.
@@ -100,10 +100,73 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   Tally victoria 4x400 (all POST /brand/:id/rocketreach/discover) / mark
   9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, thirty-fifth
   consecutive clean hand-off. No chunk died at login; the mark chunk fitted
-  inside the 600s cap this round.
-- Status-literal sweep run: 87 lists, 38 exact, 49 divergent. Working the
-  client-facing half (mobile-home tiles, available-units pill sets).
-- Journey and triage in progress.
+  inside the 600s cap. 0 app bugs from the regression.
+- Status-literal sweep (qa/r575-status-literal-sweep.mjs) run first: 87
+  lists, 38 exact, 49 divergent. Took the CLIENT half. CHECKED AND CLEAN, do
+  not re-report: available-units.tsx's LIVE_PILL_STATUSES / HISTORIC_PILL_
+  STATUSES split (EXC filed under "Historic") is Woody's 2026-09-04 pill
+  design, not a stale list; mobile-home.tsx's three tiles cover OPP+AVA /
+  NEG+HOT+SOL+EXC / COM+INV and reconcile exactly against the tracker
+  (77 + 1 + 0 = 78 on tracker) — REP/SPEC/LIVE/WIT are investment-side codes
+  no letting unit carries.
+- JOURNEY (Landsec client, iPhone UA + touch, 390x780): "landlord on the
+  move — check the portfolio, edit a unit from the phone, open the asset".
+  Phone home tiles -> Letting Tracker (78 cards) -> unit Edit dialog ->
+  save -> reload -> /properties -> property overview. Also swept /messages,
+  /deals, /tasks, /news, /brands, /requirements at 390px: no error
+  boundaries, no horizontal scroll, no page errors on any of them.
+- CHECKED AND CLEAN: the phone WRITE round-trips properly. Mark edited
+  Bluewater MSU9 from the phone (Size 4,321 sq ft, Quoting Rent £250,000),
+  the dialog fits 390px (scrollWidth == clientWidth), Save closed it, the
+  PATCH stuck (unit.sqft/askingRent), the linked deal's rentPa synced, the
+  card re-rendered the new Area and Rent rows after a full reload, and the
+  property's tenancy NIA moved by exactly the 4,321 typed in. Fixture
+  restored afterwards and NIA verified back to 623,652.5.
+- BUG FIXED (client/src/components/property-detail.tsx). The Ownership card's
+  Area figure reads `crm_properties.sqft` — a column blank on every property
+  in the fixture (and, per UX #235, in the wild) — so the client's property
+  overview printed "Area —" while the tenancy schedule ON THE SAME PAGE, one
+  tab across, totals 623,653 sq ft, and the Excel BGP emails him reproduces
+  it to the decimal. Now falls back to the tenancy schedule's own NIA sum
+  (`/api/tenancy-schedule/property/:id`, same query key the schedule tab
+  already uses, so the fetch is shared) and captions it "from tenancy
+  schedule". The stored column is untouched: staff still get the inline
+  editor, with the derived figure shown beneath it only while sqft is empty,
+  so nobody can accidentally freeze a derived number into the column.
+  This closes UX #235.
+- PROVEN before/after in the browser as Mark on the phone. BEFORE: "Area —".
+  AFTER: "Area 623,653 sq ft / from tenancy schedule" — matching the board
+  total r574 verified against the Excel. Shot qa/smoke-shots/r576-area-after.png
+  (before state visible in the round transcript). tsc clean.
+- New two-bot scenario: mark · client-property-area-reads-the-schedule —
+  loads the client property overview, sums the tenancy payload's nia_sqft
+  and fails if the Area cell does not carry that number. Passes on the fixed
+  build; NOT fire-tested against the pre-fix file (the before/after
+  measurement above is the proof instead).
+- DEFERRED (logged as UX #256-#258 instead): one status spelled three ways
+  on three client surfaces in one session — "Available" (phone home tile),
+  "MARKETING" (tracker pills + card badges), "Available" again (Edit dialog)
+  (#256); the phone /properties card headlines five fields that are null on
+  every client property row, so it carries nothing but the name (#257); the
+  client's /deals payload ships three rows while the ALL pill counts and
+  renders two — the third is a leftover QA fixture row, "QA-R1
+  FeeVisibility", status null, no property, still scoped to Landsec (#258).
+- Also still open and NOT taken: the weekly PDF's blank second page (#247),
+  /api/hunters/letting's landlord_id-only portfolio, #250, #251, and r575's
+  #252-#255 (the deal dialog's pre-HOT status picker is still the cheapest
+  of those).
+- New noise (add to the ignore list): 404 GET
+  /api/properties/:id/brochures/:id/file on the client property page —
+  same missing-file class as the brand/unit photo 404s.
+- New flakes: none.
+- FOR r577 (rotation #4 BGP STAFF MOBILE 390px): the angle that paid here
+  was a field the UI headlines being empty in the column it reads while the
+  live figure sits one tab away in the same page. The staff phone shell has
+  the same shape waiting: the phone property card, the phone deal cards and
+  the phone WIP rows all pick ONE column to headline. Also worth doing what
+  this round did and could not finish — drive a WRITE from the staff phone
+  end to end (the tracker Edit dialog round-tripped cleanly for the client;
+  the staff Add-unit and deal-stage paths were not driven).
 
 ### r575 · 2026-09-06 · LIGHT (no journey — r574 had one) · 1 bug fixed — the firm's ski-target WIP and forecast counted no deal at HOTs and still counted REP, deleted from WIP a week earlier · 4 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

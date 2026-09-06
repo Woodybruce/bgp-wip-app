@@ -61,6 +61,40 @@ what happened · concrete suggested improvement.
     Suggestion: render only the codes the feed can contain (SOL, EXC, COM,
     INV) and derive LIVE_CODES from the shared sets rather than retyping.
 
+256. 2026-09-06 · Landsec client / phone 390px, Letting Tracker + Portfolio
+    home (QA r576) · Mark checks his units on the train · The same unit
+    status is spelled three ways in one session: the phone home tile calls
+    the 77 AVA units "Available", the tracker's pill row and every card badge
+    call them "MARKETING" (DEAL_PIPELINE_LABELS), and the unit Edit dialog's
+    Unit Status select calls them "Available" again (DEAL_STATUS_LABELS).
+    Nothing is wrong, but a landlord reading "77 Available" then landing on a
+    board headed "MARKETING 77" has to work out they are the same number.
+    Suggestion: pick one client-facing word per code and let the pipeline
+    labels differ only where they genuinely carry more meaning.
+
+257. 2026-09-06 · Landsec client / phone 390px, /properties (QA r576) · Mark
+    opens his portfolio list · The phone property card (MobileCardView from
+    properties.tsx ~5927) headlines title + subtitle + five fields — Asset
+    Class, Team, Tenure, BGP Contacts, Sq Ft — every one of which is null on
+    a client's property rows (address, assetClass, tenure, sqft and status
+    are all blank on both Landsec properties, and property-agents/users are
+    staff data). The result is a card carrying nothing but the name the map
+    pin above it already shows. The figures the client dashboard renders for
+    the same property — units, occupancy, NIA, live lettings — are all
+    reachable. Suggestion: for client viewers, field the card from the
+    portfolio roll-up rather than the CRM columns BGP fills in for itself.
+
+258. 2026-09-06 · Landsec client / phone 390px, /deals (QA r576) · Mark
+    counts his deals · /api/crm/deals?excludeTrackerDeals=true ships the
+    client three rows; the board's ALL pill counts two and renders two. The
+    third is "QA-R1 FeeVisibility" — a leftover QA probe row with status
+    null and no property, left in the fixture by an early round and still
+    scoped to Landsec. Two things worth separating: the fixture row should
+    be cleaned out, and a status-less deal silently vanishing from every
+    pill while still riding the payload is the shape that has cost several
+    rounds. Suggestion: delete the fixture row; and count the ALL pill from
+    the same rows the list renders so payload and pill can never disagree.
+
 250. 2026-09-06 · Landsec client / dashboard desktop 1440px (QA r574) ·
     Mark reads "ACTIVE DEALS 4" and looks for the four · The tile counts
     every deal on a property he owns (landlord_id OR the property's

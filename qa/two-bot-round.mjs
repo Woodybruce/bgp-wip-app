@@ -8626,6 +8626,33 @@ async function markRound(page, cross) {
     }
   });
 
+  // r576: the client property OVERVIEW read crm_properties.sqft for its Area
+  // figure — a column no property in the fixture (and few in prod) has ever
+  // had typed into it — and printed "—" about a centre whose own tenancy
+  // schedule, one tab across on the same page, totals 623,653 sq ft. The
+  // overview now falls back to that total. Fails if the landlord's Area cell
+  // is blank while his tenancy schedule carries NIA.
+  await step(page, p, 'client-property-area-reads-the-schedule', async () => {
+    const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+    await page.goto(`${BASE}/properties/${BLUEWATER}`, nav);
+    await page.waitForTimeout(7000);
+    const got = await page.evaluate(async (pid) => {
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      const rows = res.ok ? await res.json() : [];
+      const nia = (Array.isArray(rows) ? rows : []).reduce((s, u) => s + Number(u.nia_sqft || 0), 0);
+      const label = Array.from(document.querySelectorAll('p')).find(el => el.textContent.trim() === 'Area');
+      return { nia, shown: label ? (label.parentElement?.innerText || '').replace(/\s+/g, ' ').trim() : null };
+    }, BLUEWATER);
+    if (!got.nia) throw new Error('fixture tenancy schedule carries no NIA to check against');
+    if (got.shown === null) throw new Error('no Area field on the client property overview');
+    const want = Math.round(got.nia).toLocaleString('en-GB');
+    if (!got.shown.includes(want)) {
+      throw new Error(`property overview Area reads "${got.shown}" while its own tenancy schedule totals ${want} sq ft`);
+    }
+  });
+
   // r561: every deal payload a client login can read carried BGP's MLRO
   // working file — the compliance/PEP/EDD notes, the risk rating, the MLR
   // scope reason and whether a SAR had been filed with its NCA reference —

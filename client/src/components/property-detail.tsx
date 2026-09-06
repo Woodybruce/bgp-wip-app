@@ -289,6 +289,21 @@ export function PropertyDetail({ id }: { id: string }) {
       return false;
     },
   });
+  // The Area figure below reads crm_properties.sqft, which is blank on every
+  // property the team has never typed one into — while the property's own
+  // tenancy schedule totals its NIA on the next tab. Fall back to that total
+  // so the overview stops saying "—" about a 623,653 sq ft centre. Same cache
+  // key the schedule tab uses, so the fetch is shared when both are open.
+  const { data: tenancyRows = [] } = useQuery<Array<{ nia_sqft: number | null }>>({
+    queryKey: ["/api/tenancy-schedule/property", id],
+    enabled: !!id,
+    staleTime: 5 * 60 * 1000,
+  });
+  const tenancyNia = useMemo(
+    () => (Array.isArray(tenancyRows) ? tenancyRows : []).reduce((s, u) => s + Number(u?.nia_sqft || 0), 0),
+    [tenancyRows],
+  );
+
   const { data: allUsers = [] } = useQuery<User[]>({
     queryKey: ["/api/users"],
   });
@@ -763,7 +778,21 @@ export function PropertyDetail({ id }: { id: string }) {
                 <div className="border-t pt-2 grid grid-cols-2 gap-x-4 gap-y-1">
                   <div>
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Area</p>
-                    {isClientViewer ? <span className="text-sm font-mono font-medium">{property.sqft ? `${Number(property.sqft).toLocaleString()} sq ft` : "—"}</span> : <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />}
+                    {isClientViewer ? (
+                      <span className="text-sm font-mono font-medium">
+                        {property.sqft ? `${Number(property.sqft).toLocaleString()} sq ft` : tenancyNia ? `${Math.round(tenancyNia).toLocaleString()} sq ft` : "—"}
+                      </span>
+                    ) : (
+                      <>
+                        <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
+                        {!property.sqft && !!tenancyNia && (
+                          <span className="block text-sm font-mono font-medium">{Math.round(tenancyNia).toLocaleString()} sq ft</span>
+                        )}
+                      </>
+                    )}
+                    {!property.sqft && !!tenancyNia && (
+                      <p className="text-[10px] text-muted-foreground leading-tight">from tenancy schedule</p>
+                    )}
                   </div>
                   {/* Competitor intel is BGP-internal — never shown to clients. */}
                   {!isClientViewer && (
