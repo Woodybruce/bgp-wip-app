@@ -92,6 +92,24 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r575 · 2026-09-06 · LIGHT (no journey — r574 had one) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written). Smoke GREEN 42 checks / 0 failures.
+- New durable asset: qa/r575-status-literal-sweep.mjs — censuses every
+  hardcoded deal-status literal list in client/ + server/ + shared/ and
+  diffs each against the canonical sets in shared/deal-status.ts. 86 lists
+  found, 38 match a canonical set exactly, 48 diverge.
+- TRIAGE from the sweep (the r573/r574 "vocabulary that has moved on" class):
+  (a) client/src/lib/crm-options.ts:141 `dealStatus` is the pre-HOT 10-code
+      list under a comment calling it "the canonical set" — so the Deals
+      board's inline Status cell and the deal create/edit dialog cannot set
+      HOTs at all, while the SAME table in WIP mode (WIP_STATUSES) can.
+  (b) client/src/components/deals-summary.tsx:27 LIVE_CODES is
+      ["REP","AVA","NEG","SOL","EXC"] — missing HOT (so the card says
+      "Nothing live on the Deals board" above its own "1 HOTs" chip) and
+      still carrying REP, dropped from WIP on 2026-08-31.
+  Both being fixed this round; verification and the final entry to follow.
+
 ### r574 · 2026-09-06 · FULL (rotation #2 Landsec client · desktop 1440px) · 1 bug fixed — a letting or deal sitting at HOTs (heads of terms) was dropped from every "live lettings / live deals" summary, including the client dashboard's Properties & Deals board · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
