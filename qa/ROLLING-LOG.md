@@ -88,6 +88,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r561 · 2026-09-06 · LIGHT (r560 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
+  two-bot in three chunks via qa/with-server.sh with QA_CROSS_FILE set).
+  Regression: smoke GREEN 42/0.
+- BASELINE CONFIRMED (own three-chunk pass): every scenario [ok]; tally
+  victoria 4x400 (all rocketreach-discover noise — the higher-count variant
+  r560 flagged, same class), mark 9x403 + 1x503, woody/nick/sam 0. The
+  r537-r560 signature, twenty-first clean hand-off. 0 app bugs from the
+  scripted regression.
+- Triage: all logged issues are listed environment noise; nothing to chase.
+- Focus this round (LIGHT, no journey): audit CLIENT-legitimate endpoints for
+  scoped-but-INTERNAL content (r560's angle) plus an under-worked surface.
+- Round in progress — final entry replaces this one.
+
 ### r560 · 2026-09-05/06 · FULL (rotation #3 Landsec client MOBILE 390px) · 2 bugs fixed — the client Calendar strip published a BGP agent leaderboard by email + told a landlord nothing in his portfolio was available · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
