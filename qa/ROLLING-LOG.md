@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r578 · 2026-09-06 · FULL (rotation #4 BGP staff · mobile 390px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh).
+  Smoke GREEN 42 checks / 0 failures.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (all POST /brand/:id/rocketreach/discover) / mark
+  9x403 + 1x503 + 1x404 (listed brochure-file 404) / woody,nick,sam 0 —
+  BASELINE CONFIRMED, thirty-seventh consecutive clean hand-off. The mark
+  chunk again exceeded the 600s foreground cap (known, harmless). 0 app
+  bugs from the regression itself.
+- Journey and deep angle in progress: staff phone shell at 390px (iPhone
+  UA + touch), plus the tail of the status-literal sweep.
+
 ### r577 · 2026-09-06 · LIGHT (r576 had the journey) · 2 bugs fixed, both from the SERVER half of the status sweep — the KYC compliance alert went silent at exactly the stage before the AML gate, and the Hunger Games boards ranked people on a status list the page's other two figures had already moved past · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
