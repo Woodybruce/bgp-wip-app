@@ -4,6 +4,24 @@ import { clearPersistedQueries } from "./query-persist";
 const AUTH_KEY = ["/api/auth/me"];
 type SessionUser = { id: string; role?: string | null; companyScopeId?: string | null; isAdmin?: boolean | null; activeTeam?: string | null };
 let verifiedIdentity: string | null | undefined;
+const verificationListeners = new Set<() => void>();
+
+export function subscribeSessionVerification(listener: () => void) {
+  verificationListeners.add(listener);
+  return () => { verificationListeners.delete(listener); };
+}
+
+export function getSessionVerificationSnapshot() {
+  return verifiedIdentity;
+}
+
+function setVerifiedIdentity(identity: string | null | undefined) {
+  if (verifiedIdentity === identity) return;
+  verifiedIdentity = identity;
+  // A successful probe can return structurally identical cached user data,
+  // so React Query alone may not notify the authenticated shell to render.
+  for (const listener of verificationListeners) listener();
+}
 
 export function sessionIdentity(user: SessionUser | null | undefined) {
   return user ? JSON.stringify([user.id, user.role, user.companyScopeId, !!user.isAdmin]) : null;
@@ -35,12 +53,12 @@ function reconcileSession(user: SessionUser | null) {
     : verifiedIdentity;
   const next = sessionIdentity(user);
   if (!user || previous !== next) clearSessionQueries();
-  verifiedIdentity = next;
+  setVerifiedIdentity(next);
 }
 
 export function refreshSession() {
   void queryClient.cancelQueries({ queryKey: AUTH_KEY });
-  verifiedIdentity = undefined;
+  setVerifiedIdentity(undefined);
   clearSessionQueries();
   queryClient.setQueryData(AUTH_KEY, null);
   return queryClient.fetchQuery<SessionUser | null>({ queryKey: AUTH_KEY, queryFn: getQueryFn({ on401: "returnNull" }), staleTime: 0 });

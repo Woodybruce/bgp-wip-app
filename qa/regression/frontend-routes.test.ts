@@ -24,5 +24,6 @@ test("the client mobile profile destination is explicitly permitted by the route
   assert.ok(profile);
   const allowedRoutes = app.match(/const CLIENT_ALLOWED_ROUTES = \[([\s\S]*?)\];/)![1];
   assert.ok(allowedRoutes.includes(`"${profile[1]}"`));
+  assert.match(app, /<Route path="\/settings\/profile" component=\{ProfileSettingsPage\}/);
   assert.equal(profile[2], "/m/profile");
 });

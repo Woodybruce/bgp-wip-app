@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore, lazy, Suspense } from "react";
 import { Switch, Route, useLocation } from "wouter";
-import { queryClient, getQueryFn, apiRequest, isSessionVerified, refreshSession, sessionIdentity } from "./lib/queryClient";
+import { queryClient, getQueryFn, apiRequest, refreshSession, sessionIdentity, subscribeSessionVerification, getSessionVerificationSnapshot } from "./lib/queryClient";
 import { isEquityUser } from "./lib/utils";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
@@ -60,6 +60,7 @@ const Models = lazy(() => import("@/pages/models"));
 // (client/src/pages/document-briefs.tsx); /templates and /decks redirect in.
 const DeckDetail = lazy(() => import("@/pages/deck-detail"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
+const ProfileSettingsPage = lazy(() => import("@/components/profile-photo-card").then(module => ({ default: module.ProfileSettingsPage })));
 const Comps = lazy(() => import("@/pages/comps"));
 const InvestmentComps = lazy(() => import("@/pages/investment-comps"));
 const HuntersLetting = lazy(() => import("@/pages/hunters-letting"));
@@ -340,9 +341,7 @@ function Router() {
       <Route path="/decks/:id" component={DeckDetail} />
       <Route path="/image-studio">{() => <StudioRoute><ImageStudio /></StudioRoute>}</Route>
       <Route path="/settings" component={SettingsPage} />
-      {/* /settings/profile is on the client allow-list (mobile shell links
-          it) but had no route — pasted links landed on NotFound. */}
-      <Route path="/settings/profile" component={SettingsPage} />
+      <Route path="/settings/profile" component={ProfileSettingsPage} />
       <Route path="/comps" component={Comps} />
       <Route path="/comps/:id" component={Comps} />
       <Route path="/admin/comps-leads">{() => <AdminRoute><CompsLeadsRedirect /></AdminRoute>}</Route>
@@ -624,6 +623,7 @@ function AuthenticatedApp() {
               // render their UUID as the title — show a friendly section
               // label instead and let the inner page own the real heading.
               if (location === "/") return "Dashboard";
+              if (location === "/settings/profile") return "My Profile";
               const seg = location.replace(/^\//, "").split("/");
               const root = seg[0];
               const hasId = seg.length > 1 && seg[1] && !["letting", "investment", "report", "properties", "list"].includes(seg[1]);
@@ -834,9 +834,11 @@ function AppContent() {
     retry: false,
     enabled: !isAddin && !isPublicKycUpload,
   });
+  const verifiedIdentity = useSyncExternalStore(subscribeSessionVerification, getSessionVerificationSnapshot, getSessionVerificationSnapshot);
+  const sessionVerified = user !== undefined && verifiedIdentity !== undefined && verifiedIdentity === sessionIdentity(user);
 
   useEffect(() => {
-    if (!isSessionVerified(user)) return;
+    if (!sessionVerified) return;
     setUserId(user?.id ?? null);
     // Staff can leave a client preview; real client accounts stay pinned.
     const isBgpStaff = ((user as any)?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
@@ -847,7 +849,7 @@ function AppContent() {
       : TEAMS.includes(activeTeam) ? activeTeam as TeamName : undefined);
     const extra = (user as any)?.additionalTeams;
     setAdditionalTeams(Array.isArray(extra) ? extra as TeamName[] : []);
-  }, [user, setUserTeam, setUserId, setAdditionalTeams, setTeamLocked, setServerActiveTeam]);
+  }, [user, sessionVerified, setUserTeam, setUserId, setAdditionalTeams, setTeamLocked, setServerActiveTeam]);
 
   useEffect(() => {
     if (isAddin || isPublicKycUpload) return;
@@ -868,7 +870,7 @@ function AppContent() {
     return <PublicKycUploadRoute />;
   }
 
-  if (!isSessionVerified(user) && isError) {
+  if (!sessionVerified && isError) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-background text-foreground">
         <p className="text-sm">Could not check your session. Please try again.</p>
@@ -877,7 +879,7 @@ function AppContent() {
     );
   }
 
-  if (isLoading || !isSessionVerified(user)) {
+  if (isLoading || !sessionVerified) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="space-y-4 text-center">

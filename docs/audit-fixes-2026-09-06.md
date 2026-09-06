@@ -1,6 +1,6 @@
 # Audit fixes — 6 September 2026
 
-Implementation starts from `ff3d2301`, after pulling the two commits since the audited `f78ffc9f` revision. Work is isolated in the Codex checkout; the original laptop checkout and its modified lockfile were preserved. Nothing has been pushed or deployed.
+Implementation starts from `ff3d2301`, after pulling the two commits since the audited `f78ffc9f` revision. The later testing pass also incorporated Claude's `cfbb7d3d` brand-panel update, merged locally as `c9e1f45b`. Work is isolated in the Codex checkout; the original laptop checkout and its modified lockfile were preserved. Nothing has been pushed or deployed.
 
 ## Client functionality
 
@@ -42,7 +42,23 @@ Final verification passed:
 - Actual disposable PostgreSQL integration: **passed** read-only enforcement, transaction timeout, single-statement rejection, sensitive-table policy and pool reuse; test database stopped.
 - `git diff --check`: **passed**.
 
- Local Node is 25.6.1; CI specifies Node 22. The updated workflow runs regression tests and typecheck before its existing browser smoke suite. The desktop/mobile UI has not been exercised in a browser during this patch; no live providers, client accounts or production records were used.
+The subsequent running-app tests found and fixed three gaps that the initial isolated tests missed:
+
+- Same-user persisted-cache restoration could leave the app on its loading logo: verification changed a module variable, while React Query retained the same user object and emitted no tracked-property notification. Verification now publishes a reactive snapshot; the app and team initialization both subscribe to it. The regression reproduces the zero-query-notification case.
+- The client profile URL mounted the entire Organisation settings page. It now renders only the personal profile card, uses a phone-friendly layout and avoids staff-only settings requests. Browser checks verify this before and after reload.
+- A second CRM middleware still rejected permitted property edits, bulk updates and property/deal links. The real HTTP tests initially passed 14/22 checks. Both gateways now admit the requested scoped operations, and the regression executes both gateways before the handler. Scope lookup failures return 503 instead of allowing the request through.
+
+Running-app validation used a disposable PostgreSQL 18 database restored from the repository's smoke fixture, with integration/session credentials and scheduled-job rows excluded. The app received only test configuration. Final results:
+
+- Desktop Chrome smoke: **53 checks passed**, including staff/client dashboards, property schedules and linked boards, letting tracker rows, deals, brands, tasks and client read scoping. The included tracker sync check passed its seven matching/deduplication assertions.
+- Phone Chrome using the iPhone 13 viewport: **21 checks passed**, including WIP tab/reload/Back, staff/client profiles and same-document account switching. A private self-only test conversation was present in the staff cache, then absent from the client's UI and persisted cache, with zero transient disclosures observed by a DOM mutation observer. Synthetic conversations were removed afterward.
+- Actual HTTP plus database verification: **22 checks passed** after the CRM fix. Owned/shared property and deal business edits, allowed bulk edits and links succeeded; foreign record access, self-granted links and mixed bulk batches were rejected without partial writes. Synthetic records were removed afterward.
+- Existing `--migrate-only` command: **passed** against the disposable database. No new schema or migration files were introduced.
+- Git handoff: a simulated Claude checkout pulled the combined commit successfully, preserved unrelated local edits and refused to overwrite a conflicting local edit. No GitHub push was involved.
+
+Smoke assertions now require authenticated page content and detect compact error boundaries. They check the current unified schedule, actual tracker unit rows and paths containing spaces. `qa/phone-session-smoke.mjs` preserves the phone scenarios and runs in CI after the desktop smoke suite.
+
+Local Node is 25.6.1; CI specifies Node 22. TypeScript, all 45 regression tests and production compilation were rerun after the application fixes. Browser tests used desktop Chrome and phone viewport emulation, not physical devices or Safari. No production records or authenticated Microsoft, Xero, AI or Experian integrations were tested; these results do not establish end-to-end live-provider or production-deployment behavior.
 
 ## Remaining work and limits
 
@@ -51,3 +67,4 @@ Final verification passed:
 - **SQL privilege separation is a further hardening step.** Read-only transactions enforce no writes; code policy blocks known sensitive tables/functions. A dedicated restricted database role/views would add an independent access boundary and requires database rollout work.
 - **Deployment bootstrap and operational limits:** Prefer the native platform for the first rollout, including the explicit existing migration command `npm run build -- --migrate-only` before startup. A webhook-driven first rollout necessarily uses the previously running deploy handler; the new protocol takes effect once the new bundle starts. Migration changes already applied to a database are not undone by restoring frontend/server artifacts. Previous releases and retained hashed assets need a retention policy. Changes to dependency manifests/lockfiles require a fresh release with matching installed dependencies; the in-app updater must not build against a stale dependency tree.
 - The larger unit-data consolidation, durable background jobs and performance profiling recommendations from the audit remain separate improvement work.
+- General company creation/amendment retains its previous CRM policy; the mismatch with the outer gateway's documented brand quick-create flow remains a separate issue. The new gateway exceptions cover scoped property/deal edits and relationships, not arbitrary company-field writes.

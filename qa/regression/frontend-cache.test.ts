@@ -34,7 +34,7 @@ globalThis.fetch = async (input) => {
 };
 
 const { QueryObserver, dehydrate } = await import("@tanstack/react-query");
-const { queryClient, apiRequest, getQueryFn, isSessionVerified, refreshSession } = await import("../../client/src/lib/queryClient");
+const { queryClient, apiRequest, getQueryFn, isSessionVerified, refreshSession, subscribeSessionVerification, getSessionVerificationSnapshot, sessionIdentity } = await import("../../client/src/lib/queryClient");
 const { persistOptions, clearPersistedQueries, QUERY_PERSIST_KEY } = await import("../../client/src/lib/query-persist");
 // Disable only the day-long GC timers so cancelled queries cannot keep the
 // Node test process alive; cache/auth/refetch behavior is otherwise unchanged.
@@ -57,13 +57,32 @@ after(() => {
   clearPersistedQueries();
 });
 
-test("restored auth is untrusted until verified, but same-user verification keeps cached data", async () => {
+test("same-user hydration notifies verification even when React Query emits no tracked-prop change", async () => {
   queryClient.setQueryData(authKey, currentUser);
   queryClient.setQueryData(privateKey, privateData);
-  assert.equal(isSessionVerified(currentUser), false);
-  await fetchAuth();
-  assert.equal(isSessionVerified(currentUser), true);
-  assert.deepEqual(queryClient.getQueryData(privateKey), privateData);
+  const observer = new QueryObserver(queryClient, {
+    queryKey: authKey,
+    refetchOnMount: false,
+    notifyOnChangeProps: ["data", "isLoading", "isError"],
+  });
+  let queryNotifications = 0;
+  const verificationSnapshots: Array<string | null | undefined> = [];
+  const unsubscribeQuery = observer.subscribe(() => { queryNotifications++; });
+  const unsubscribeVerification = subscribeSessionVerification(() => verificationSnapshots.push(getSessionVerificationSnapshot()));
+  const restoredUser = observer.getCurrentResult().data;
+  try {
+    assert.equal(isSessionVerified(currentUser), false);
+    assert.equal(getSessionVerificationSnapshot(), undefined);
+    await fetchAuth();
+    assert.equal(observer.getCurrentResult().data, restoredUser, "structural sharing keeps the restored object");
+    assert.equal(queryNotifications, 0, "App's tracked query props do not trigger a render");
+    assert.deepEqual(verificationSnapshots, [sessionIdentity(currentUser)], "the external store triggers the missing render/effect");
+    assert.equal(isSessionVerified(currentUser), true);
+    assert.deepEqual(queryClient.getQueryData(privateKey), privateData);
+  } finally {
+    unsubscribeVerification();
+    unsubscribeQuery();
+  }
 });
 
 test("expiry clears private observer data; another login and a denied refetch cannot recover it", async () => {

@@ -1407,27 +1407,29 @@ export function setupCrmRoutes(app: Express) {
   })();
 
   app.use("/api/crm", requireAuth);
-  // Client logins are read-only across the whole CRM surface — a client
-  // must never create/edit/delete/merge BGP records. (Landsec audit.)
-  // Exception: adding/amending contacts, which the contact routes scope to
-  // the client's own company or the hospitality-brand slice
-  // (clientCanTouchCompany); deletes stay staff-only.
+  // Keep this CRM guard aligned with the outer client gateway. Only the
+  // routes below implement client scope checks; unrelated imports, merges,
+  // destructive operations and internal tools remain staff-only.
   app.use("/api/crm", async (req: any, res: any, next: any) => {
     if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
-    if (
-      (req.method === "POST" && req.path === "/contacts") ||
-      (req.method === "PUT" && /^\/contacts\/[^/]+$/.test(req.path)) ||
-      // Clients may create + edit deals on their own portfolio (scoped +
-      // fee-stripped inside the handlers). DELETE stays staff-only.
-      (req.method === "POST" && req.path === "/deals") ||
-      (req.method === "PUT" && /^\/deals\/[^/]+$/.test(req.path))
-    ) return next();
     try {
-      if (await isClientRequestUser(req)) {
-        return res.status(403).json({ error: "Read-only access for client accounts" });
-      }
-    } catch {}
-    next();
+      if (!(await isClientRequestUser(req))) return next();
+      // Express matches routes without case/trailing-slash sensitivity.
+      // Normalize only for policy matching; handlers keep the original IDs.
+      const p = req.path.replace(/\/+$/, "").toLowerCase();
+      const allowed =
+        (req.method === "POST" && ["/contacts", "/deals"].includes(p)) ||
+        (req.method === "PUT" && /^\/(contacts|deals|properties)\/[^/]+$/.test(p)) ||
+        (req.method === "POST" && /^\/(properties|deals)\/bulk-update$/.test(p)) ||
+        // Relationship handlers validate both the visible company and the
+        // owned/shared property or deal before adding or removing a link.
+        (req.method === "POST" && /^\/companies\/[^/]+\/(properties|deals)$/.test(p)) ||
+        (req.method === "DELETE" && /^\/companies\/[^/]+\/(properties|deals)\/[^/]+$/.test(p));
+      if (allowed) return next();
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    } catch {
+      return res.status(503).json({ error: "Unable to verify client access" });
+    }
   });
   app.get("/api/crm/stats", async (_req, res) => {
     try {

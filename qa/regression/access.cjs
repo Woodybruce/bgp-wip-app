@@ -2,8 +2,10 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const { source, route, evaluate, find, ts } = require('./source-harness.cjs');
 let gate;
+let crmGate;
 const scopeLookups = [];
 let scopeFailure = false;
+let crmScopeFailure = false;
 const statuses = evaluate(source("shared/deal-status.ts"));
 const policy = ['CLIENT_ALLOWED_API', 'CLIENT_ALLOWED_WRITES', 'CLIENT_BLOCKED_SUBPATHS']
   .map(name => find('server/index.ts', n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === name))).join('\n');
@@ -14,6 +16,11 @@ evaluate(policy + '\n' + gateSource, { app: { use: (_, fn) => gate = fn }, pool:
     resolveCompanyScope: async () => 'client-a',
     isClientVisibleBrand: async id => id === 'visible-brand' || id === 'BrandID',
   }) });
+const crmGateSource = find('server/crm.ts', n => ts.isCallExpression(n) && n.expression.getText() === 'app.use' && n.arguments[0]?.getText() === '"/api/crm"' && n.getText().includes('isClientRequestUser'));
+evaluate(crmGateSource, { app: { use: (_, fn) => crmGate = fn }, isClientRequestUser: async () => {
+  if (crmScopeFailure) throw new Error('Synthetic CRM scope outage');
+  return true;
+} });
 async function requestGate(method, url) {
   let status;
   await gate({ method, originalUrl: url }, { status(n) { status = n; return this; }, json() {} }, () => status = 200);
@@ -37,15 +44,50 @@ function makeHandler(method, url, staff = false) {
     isPropertyInScope: async (_, id) => ['owned-property', 'shared-property'].includes(id),
     isDealInScope: async (_, id) => ['owned-deal', 'shared-deal'].includes(id), storage,
   });
-  return { writes, async invoke(params = {}, body = {}) {
+  return { writes, async invoke(params = {}, body = {}, throughGuards = false, spelling) {
     let status = 200; let data;
-    await handler({ session: { userId: 'client-user' }, params, body }, {
+    const originalUrl = spelling || url.replace(/:([A-Za-z]+)/g, (_, key) => params[key]);
+    const req = { session: { userId: 'client-user' }, params, body, method: method.toUpperCase(), originalUrl, path: originalUrl.replace(/^\/api\/crm/i, '') };
+    const res = {
       status(n) { status = n; return this; }, json(v) { data = v; },
-    });
+    };
+    if (throughGuards) await gate(req, res, () => crmGate(req, res, () => handler(req, res)));
+    else await handler(req, res);
     return { status, data };
   }};
 }
 (async () => {
+  // Exercise both real write gateways before the scoped handler. Testing
+  // either gateway or handlers alone missed the stale CRM read-only gate.
+  for (const [entities, singular] of [['properties', 'property'], ['deals', 'deal']]) {
+    for (const target of [`owned-${singular}`, `shared-${singular}`, `foreign-${singular}`]) {
+      const allowed = !target.startsWith('foreign-');
+      const link = makeHandler('post', `/api/crm/companies/:id/${entities}`);
+      assert.equal((await link.invoke({ id: 'visible-brand' }, { [`${singular}Id`]: target }, true)).status, allowed ? 200 : 403);
+      assert.equal(link.writes.length, allowed ? 1 : 0);
+      const unlink = makeHandler('delete', `/api/crm/companies/:id/${entities}/:${singular}Id`);
+      assert.equal((await unlink.invoke({ id: 'visible-brand', [`${singular}Id`]: target }, {}, true)).status, allowed ? 200 : 403);
+      assert.equal(unlink.writes.length, allowed ? 1 : 0);
+    }
+    for (const forbidden of [false, true]) {
+      const bulk = makeHandler('post', `/api/crm/${entities}/bulk-update`);
+      const result = await bulk.invoke({}, { ids: [`owned-${singular}`, `${forbidden ? 'foreign' : 'shared'}-${singular}`],
+        field: entities === 'properties' ? 'assetClass' : 'dealType', value: 'Retail' }, true);
+      assert.equal(result.status, forbidden ? 403 : 200);
+      assert.equal(bulk.writes.length, forbidden ? 0 : 2);
+    }
+  }
+  for (const target of ['owned-property', 'shared-property', 'foreign-property']) {
+    const h = makeHandler('put', '/api/crm/properties/:id');
+    const result = await h.invoke({ id: target }, { name: 'Scoped business edit' }, true, `/API/CRM/PROPERTIES/${target}/`);
+    assert.equal(result.status, target === 'foreign-property' ? 403 : 200);
+    assert.equal(h.writes.length, target === 'foreign-property' ? 0 : 1);
+  }
+  crmScopeFailure = true;
+  const deniedProbe = makeHandler('put', '/api/crm/properties/:id');
+  assert.equal((await deniedProbe.invoke({ id: 'owned-property' }, { name: 'Not saved' }, true)).status, 503);
+  assert.equal(deniedProbe.writes.length, 0);
+  crmScopeFailure = false;
   for (const [entities, singular] of [['properties', 'property'], ['deals', 'deal']]) {
     for (const target of [`owned-${singular}`, `shared-${singular}`]) {
       const h = makeHandler('post', `/api/crm/companies/:id/${entities}`);

@@ -82,6 +82,9 @@ jobs:
       - name: Run smoke suite
         run: SMOKE_BASE=http://localhost:5000 DATABASE_URL="postgresql://postgres@localhost:5432/bgpsmoke" node qa/smoke.mjs
 
+      - name: Run phone session smoke suite
+        run: SMOKE_BASE=http://localhost:5000 node qa/phone-session-smoke.mjs
+
       - name: App log on failure
         if: failure()
         run: tail -200 /tmp/smoke-app.log || true
