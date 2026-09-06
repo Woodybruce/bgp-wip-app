@@ -13,6 +13,48 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+238. 2026-09-06 · Landsec client / phone 390px (QA r568) · Mark opens the
+    phone app to get his Bluewater position before an asset review · The
+    client phone landing's one portfolio block is "MY PORTFOLIO — LETTING
+    TRACKER: 77 Available · 1 Under offer · 0 Let · 78 On tracker". There is
+    no money and no occupancy on it — a landlord's phone home screen tells
+    him only how many units his agent is marketing. The figures he came for
+    (623,653 sq ft, £11.37m service charge, 124 occupied / 75 vacant) are
+    three taps away on the property's Boards tab. Suggestion: put one
+    portfolio row above the tracker block — units, occupancy %, and the
+    best money figure available (passing rent, else total ERV) — each
+    tapping through to the tenancy board it counts.
+
+237. 2026-09-06 · Landsec client / phone + desktop (QA r568) · Mark reads the
+    tenancy board's KPI strip · The "AVG ERV £PSF" tile reads "—" on all
+    199 Bluewater rows because it averages `blended_erv`, which is null on
+    every row, while `erv_pa` is populated on 131 and `nia_sqft` on 137 —
+    so a genuine £psf is computable from data already in the payload. The
+    label also says £psf while the source field it falls back to is a
+    per-annum figure, so if blended_erv were ever populated the tile could
+    print an annual rent under a psf heading. Suggestion: compute the tile
+    as Σ erv_pa ÷ Σ nia_sqft over rows that have both (that IS £psf),
+    badge how many rows contributed the way WAULT badges its exclusions,
+    and keep blended_erv only as an override.
+
+236. 2026-09-06 · Landsec client / phone 390px (QA r568) · Mark taps the "LT"
+    badge on a vacant Bluewater card to see how the letting is going · The
+    badge lands on /deals/letting — the whole 78-unit tracker, unfiltered,
+    at the top — not the unit he tapped it on. Same shape as #231 (a row
+    link that drops the row). Suggestion: carry the unit through
+    (/deals/letting?unit=<id> or ?q=<unit_name>) and seed the tracker's own
+    search from it, so the badge lands on the unit whose card carried it.
+
+235. 2026-09-06 · Landsec client / phone 390px (QA r568) · Mark checks the
+    size of the scheme on his own property page · The Bluewater OVERVIEW
+    panel says "Area —" (crm_properties.sqft is null) while the property's
+    own tenancy board, one tab across, totals "TOTAL NIA 623,653 sq ft"
+    from its 199 rows. The landlord's property page therefore claims not to
+    know the size of a property it can measure. Suggestion: when sqft is
+    unset, show the tenancy board's Total NIA with a "from the tenancy
+    schedule" hint rather than an em-dash — and let staff accept it as the
+    property's area in one click.
+
 234. 2026-09-06 · Landsec client / desktop + phone card list (QA r567) · Mark
     reads a Bluewater unit on the tenancy card list · The phone card leads
     with Passing Rent as its one headline money figure (top-right, bold,

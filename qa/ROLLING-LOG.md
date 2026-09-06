@@ -88,17 +88,68 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r568 · 2026-09-06 · FULL (rotation #3 Landsec client · mobile 390px) · ROUND IN PROGRESS
+### r568 · 2026-09-06 · FULL (rotation #3 Landsec client · phone 390px) · 1 bug fixed — the phone tenancy card's single headline money figure was blank on 100% of Bluewater's rows, including the 34 vacant ones a landlord taps the Vacant tile to price · 4 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke).
-  Regression: smoke GREEN 42/0.
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
+  browser work + two-bot via qa/with-server.sh). Regression: smoke GREEN 42/0 before and GREEN 42/0 after the fix.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
-  Tally victoria 4x400 (all POST /rocketreach/discover — listed keyless
-  noise) / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED,
+  Tally victoria 4x400 first pass / 2x400 on the post-fix re-run — same two
+  listed keyless classes either way (POST /rocketreach/discover + the
+  deliberate invalid POST /api/investment-tracker probe; read the class, not
+  the count) / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED,
   twenty-eighth clean hand-off. 0 app bugs from the scripted regression.
-- Journey in progress: Mark on the phone shell (iPhone UA + touch, 390px),
-  carrying forward UX #234 (phone tenancy card headlines Passing Rent, null
-  on all 199 Bluewater rows) to confirm live.
+  Both new scenarios [ok] on the post-fix re-run of their chunks.
+- JOURNEY (Mark Warne, real phone context — iPhone UA + touch, 390px):
+  "asset review at Bluewater tomorrow; on the phone tonight, what's my
+  income position and which units are empty and what are they asking".
+  Landing -> /properties -> Bluewater -> BOARDS -> tenancy board -> Vacant
+  tile -> a vacant card's LT badge -> /deals/letting. No error boundary, no
+  overflow, no unlisted console noise on any surface.
+- BUG FIXED, and UX #234 PROMOTED FROM NOTE TO DEFECT
+  (client/src/components/PropertyTenancySchedule.tsx). r567 filed #234 for
+  this round to confirm live: the phone card leads with ONE money figure and
+  it was always passing_rent_pa. Confirmed on the phone shell, and worse
+  than filed. passing_rent_pa is null on ALL 199 Bluewater rows, so every
+  occupied card was headed "—" — MSU4 (NATL Amusements, 90,793 sq ft cinema)
+  showed the landlord a dash while the SAME ROW held erv_pa £2,541,000,
+  service charge £742,271 and rates £714,285, and the desktop's ERV column
+  printed "£2,541,000" for that record. The new part: the "£X asking"
+  fallback that already exists 20 lines above is gated on `is_vacant` — the
+  SYNTHETIC Letting-Tracker flag — not on the row's status, so it fires for
+  exactly one row on the property. Tap the VACANT tile (75) as a landlord
+  pricing his voids and you get 75 cards headed "—", when 34 of them carry
+  an erv_pa (MSU6 £958,650, U075A £491,260). Fix: the card headline falls
+  back to erv_pa when passing rent is unset, labelled "asking" on a vacant
+  row and "ERV" otherwise, "—" only when the row genuinely has neither.
+  Verified LIVE for BOTH personas at BOTH widths (qa/r568-verify.mjs, shots
+  qa/smoke-shots/r568-{mark,victoria}-{MSU4,MSU6,U075A}.png): phone now
+  reads "£2,541,000 ERV" / "£958,650 asking" / "£491,260 asking", identical
+  strings for Victoria and Mark, and each matches the ERV column of the
+  desktop row for the same record. tsc clean.
+- New two-bot pair: victoria/mark ·
+  staff|client-phone-tenancy-card-headline-money — opens the board in a real
+  mobile context, picks a payload row with no passing rent and an erv_pa,
+  and fails if that row's phone card carries no money string.
+- CHECKED, NOT BUGS: mobile tracker cards hiding empty Area/Rent rows is
+  UX #135 (supersedes #42), intended. The KPI tiles staying whole-board
+  while the list is filtered is the r556 design. The 200-vs-199 gap between
+  "200 units" and Occupied 124 + Vacant 75 is the synthetic tracker row,
+  already understood.
+- SUGGESTIONS (qa/UX-NOTES.md, NOT built): #235 property OVERVIEW says
+  "Area —" while its own tenancy board totals 623,653 sq ft; #236 a vacant
+  card's LT badge lands on the unfiltered 78-unit tracker, dropping the unit
+  it was on (#231's shape); #237 "AVG ERV £PSF" tile reads "—" because it
+  averages blended_erv (null on all 199) when erv_pa (131) ÷ nia_sqft (137)
+  is a real £psf sitting in the same payload — and the label says psf while
+  the field is per-annum; #238 the client phone landing's only portfolio
+  block is the letting-tracker counts, no money and no occupancy.
+- STILL OPEN, unchanged: the dead `readOnly` prop on PropertyTenancySchedule
+  (r567's deliberate leave-alone — this round's fix does not touch it, and
+  the vacant-branch/status-branch split it sits beside is now the reason the
+  headline fallback lives in the normal branch rather than being moved).
+- New flakes: none. qa/r568-verify.mjs's search box must be selected by
+  data-testid="tenancy-search" — a bare input[placeholder*=earch] picks up
+  the Messages thread search on the desktop shell.
 
 ### r567 · 2026-09-06 · LIGHT (r566 had the journey) · 1 bug fixed — half the tenancy schedule's money columns printed with no £, so Rates Payable read "190,088" beside Service Charge's "£252,312" on the same row, for staff and client alike · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
