@@ -3300,6 +3300,47 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r568 staff half of client-phone-tenancy-card-headline-money — the card
+  // headline rule is shared, so a regression would hit both shells.
+  await step(page, p, 'staff-phone-tenancy-card-headline-money', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/tenancy-schedule/${BLUEWATER}`, nav);
+      await mob.waitForTimeout(6000);
+      const seen = await mob.evaluate(async (pid) => {
+        const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+          headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        });
+        if (!res.ok) return { status: res.status };
+        const j = await res.json();
+        const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+        const pick = units.find((u) => !Number(u.passing_rent_pa) && Number(u.erv_pa) > 999);
+        if (!pick) return { noRow: true };
+        const card = document.querySelector(`[data-testid="tenancy-card-${pick.id}"]`);
+        if (!card) return { missing: pick.unit_number };
+        return { unit: pick.unit_number, erv: Number(pick.erv_pa), txt: card.innerText.replace(/\s+/g, ' ').trim() };
+      }, BLUEWATER);
+      if (seen.status) throw new Error(`staff tenancy payload returned ${seen.status} in the phone context`);
+      if (seen.noRow) throw new Error('fixture has no rent-free, ERV-bearing unit to check');
+      if (seen.missing) throw new Error(`unit ${seen.missing} is in the payload but has no phone card`);
+      const want = '£' + seen.erv.toLocaleString('en-GB');
+      if (!seen.txt.includes(want)) {
+        throw new Error(`staff phone card for ${seen.unit} shows no money — the row's ERV is ${want} but the card reads "${seen.txt.slice(0, 120)}"`);
+      }
+    } finally {
+      await mobCtx.close().catch(() => {});
+    }
+  });
+
   await step(page, p, 'staff-reload-shows-the-saved-value', async () => {
     // r557: the persisted react-query cache (localStorage) restored with the
     // dataUpdatedAt of the fetch it captured, so a snapshot written seconds
@@ -8209,6 +8250,52 @@ async function markRound(page, cross) {
       if (!/^£[\d,]+$/.test(val || '')) {
         throw new Error(`client ${label} "${val}" on ${seen.unit} prints without a currency mark`);
       }
+    }
+  });
+
+  // r568: the phone tenancy card leads with ONE money figure and it was
+  // always passing_rent_pa — null on every row of an imported rent roll (all
+  // 199 Bluewater rows), so every card was headed by a dash, including the
+  // status-Vacant rows a landlord taps the Vacant tile to price, while the
+  // same row carried an ERV the desktop's ERV column printed in full. The
+  // headline now falls back to ERV, labelled ("asking" on a vacant row,
+  // "ERV" otherwise). Staff half: staff-phone-tenancy-card-headline-money.
+  await step(page, p, 'client-phone-tenancy-card-headline-money', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/tenancy-schedule/${BLUEWATER}`, nav);
+      await mob.waitForTimeout(6000);
+      const seen = await mob.evaluate(async (pid) => {
+        const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+          headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        });
+        if (!res.ok) return { status: res.status };
+        const j = await res.json();
+        const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+        const pick = units.find((u) => !Number(u.passing_rent_pa) && Number(u.erv_pa) > 999);
+        if (!pick) return { noRow: true };
+        const card = document.querySelector(`[data-testid="tenancy-card-${pick.id}"]`);
+        if (!card) return { missing: pick.unit_number };
+        return { unit: pick.unit_number, erv: Number(pick.erv_pa), txt: card.innerText.replace(/\s+/g, ' ').trim() };
+      }, BLUEWATER);
+      if (seen.status) throw new Error(`client tenancy payload returned ${seen.status} in the phone context`);
+      if (seen.noRow) throw new Error('fixture has no rent-free, ERV-bearing unit to check');
+      if (seen.missing) throw new Error(`unit ${seen.missing} is in the payload but has no phone card`);
+      const want = '£' + seen.erv.toLocaleString('en-GB');
+      if (!seen.txt.includes(want)) {
+        throw new Error(`client phone card for ${seen.unit} shows no money — the row's ERV is ${want} but the card reads "${seen.txt.slice(0, 120)}"`);
+      }
+    } finally {
+      await mobCtx.close().catch(() => {});
     }
   });
 

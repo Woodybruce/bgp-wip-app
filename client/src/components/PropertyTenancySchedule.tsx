@@ -1334,7 +1334,20 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                     )
                   )}
                 </div>
-                <span className="font-mono tabular-nums text-sm font-semibold shrink-0">{fmtCurrency(unit.passing_rent_pa)}</span>
+                {/* The card's one money figure. Whole imported rent rolls
+                    carry no passing rent (all 199 Bluewater rows), so every
+                    card was headed by a dash — including the 34 status-Vacant
+                    rows a landlord taps the Vacant tile to price — while the
+                    same row held an ERV. Fall back to it, labelled, the way
+                    the synthetic-vacant branch above already does with
+                    "£405,273 asking" (r568, UX #234). */}
+                <span className="font-mono tabular-nums text-sm font-semibold shrink-0">
+                  {unit.passing_rent_pa
+                    ? fmtCurrency(unit.passing_rent_pa)
+                    : unit.erv_pa
+                      ? `${fmtCurrency(unit.erv_pa)} ${isVacant ? "asking" : "ERV"}`
+                      : "—"}
+                </span>
               </div>
               <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
                 {[unit.floor_level, unit.permitted_use].filter(Boolean).join(" · ") || "—"}
