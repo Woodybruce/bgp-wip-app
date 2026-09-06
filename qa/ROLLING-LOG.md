@@ -88,6 +88,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r571 · 2026-09-06 · LIGHT (r570 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs). Regression: smoke GREEN 42 checks / 0 failures.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (POST /rocketreach/discover + the deliberate invalid
+  POST /api/investment-tracker probe — both listed keyless noise) / mark
+  9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, thirty-first
+  consecutive clean hand-off. 0 app bugs from the regression.
+- Triage: nothing outside the noise list. Deep angle in progress.
+
 ### r570 · 2026-09-06 · FULL (rotation #4 BGP staff, mobile 390px) · 1 bug fixed — the unit payload's `viewingsCount` came from a denormalised column nothing has ever written, so it read 0 viewings on all 81 tracker units while the tracker's own live count read 2 on one of them · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; dev server via qa/with-server.sh). Regression: smoke
