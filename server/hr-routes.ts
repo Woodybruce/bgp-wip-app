@@ -1361,6 +1361,9 @@ export function setupHrRoutes(app: Express) {
         if (u.xero_tracking_name) nameToUser.set(u.xero_tracking_name.toLowerCase(), u);
       }
 
+      const { WIP_STATUSES } = await import("@shared/deal-status");
+      const PIPELINE_CODES = new Set<string>(WIP_STATUSES.filter(c => c !== "INV"));
+
       const agentStats = new Map<string, { user: any; billed: number; pipeline: number; activeCount: number; recentClose: number }>();
       for (const row of dealsRes.rows) {
         const u = nameToUser.get(row.agent);
@@ -1368,7 +1371,14 @@ export function setupHrRoutes(app: Express) {
         const cur = agentStats.get(u.id) || { user: u, billed: 0, pipeline: 0, activeCount: 0, recentClose: 0 };
         const pence = Math.round((parseFloat(row.portion) || 0) * 100);
         if (row.status === "INV" || row.status === "COM") cur.billed += pence;
-        if (["NEG", "SOL", "EXC", "COM"].includes(row.status)) {
+        // Same WIP vocabulary as the ski-target hero above (WIP_STATUSES
+        // minus INV, which the billed bucket covers) and as the team board
+        // this strip's own "Top team" tab reads. Was ("NEG","SOL","EXC",
+        // "COM"): it predated HOT and never held AVA, so an agent's letting
+        // at Available and their deal at heads of terms counted toward the
+        // firm's WIP and their team's total but toward neither their
+        // personal pipeline nor their active-deal count.
+        if (PIPELINE_CODES.has(row.status)) {
           cur.pipeline += pence;
           cur.activeCount += 1;
         }

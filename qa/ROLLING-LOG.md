@@ -92,18 +92,82 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r577 · 2026-09-06 · LIGHT (r576 had the journey) · ROUND IN PROGRESS
+### r577 · 2026-09-06 · LIGHT (r576 had the journey) · 2 bugs fixed, both from the SERVER half of the status sweep — the KYC compliance alert went silent at exactly the stage before the AML gate, and the Hunger Games boards ranked people on a status list the page's other two figures had already moved past · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
-  GREEN 42 checks / 0 failures.
+  GREEN 42 checks / 0 failures, and GREEN again after both fixes.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
   Tally victoria 4x400 (all POST /brand/:id/rocketreach/discover) / mark
   9x403 + 1x503 + 1x404 (r576's listed brochure-file 404) / woody,nick,sam
   0 — BASELINE CONFIRMED, thirty-sixth consecutive clean hand-off. The mark
-  chunk again exceeded the 600s foreground cap (known). 0 app bugs from the
-  regression.
-- Deep angle in progress: the SERVER half of the status-literal sweep
-  (r576 took the client half).
+  chunk again exceeded the 600s foreground cap (known, harmless). 0 app bugs
+  from the regression itself.
+- DEEP ANGLE: the SERVER half of qa/r575-status-literal-sweep.mjs, which
+  r576 left unswept — ~30 divergent lists across server/. Both bugs below
+  came out of it.
+- BUG 1 FIXED (server/routes.ts ~9562, the notification bell). The
+  "KYC not approved" alert matched `status IN ('SOL','EXC','COM','NEG')` —
+  written before HOT (added to the enum 2026-08-12). HOT sits between NEG
+  and SOL, and the AML gate (GATED_CODES = SOL/EXC/COM/INV) HARD-BLOCKS the
+  move into SOL. So the warning nagged at Negotiating, fell silent the
+  moment the deal reached heads of terms, and only came back at Solicitors —
+  by which time the gate had already refused the move. The one stage where
+  the warning is worth anything was the one stage it stopped warning about.
+  Now ('NEG','HOT','SOL','EXC','COM').
+  PROVEN in the browser as Victoria: BEFORE the bell rendered 5 kyc_gap
+  rows (NEG x2, SOL x2, EXC x1) and the HOT deal with kyc_approved=false
+  was absent; AFTER, 6 rows incl. "Deal in HOT without KYC clearance".
+  Shots qa/smoke-shots/r577-bell-before.png / -after.png.
+- BUG 2 FIXED (server/hr-routes.ts ~1371 + the popover in
+  client/src/pages/hr-overview.tsx). The Hunger Games strip's "Top pipeline"
+  and "Most active" boards bucketed on `["NEG","SOL","EXC","COM"]` while the
+  ski-target hero ON THE SAME PAGE counts AVA/NEG/HOT/SOL/EXC/COM (r575) and
+  the "Top team" tab in the SAME CARD counts everything NOT IN
+  ('INV','ARCH','WIT'). Three figures, one page, three vocabularies. Now
+  reads WIP_STATUSES minus INV from shared/deal-status.ts.
+  PROVEN with three probe deals all carrying one agent (AVA £40k + HOT £60k
+  + NEG £50k, Lucy Gardiner): BEFORE — Top team "National Leasing £150k",
+  Top pipeline "Lucy Gardiner £50k", Most active "1 deals". AFTER — £150k
+  and "3 deals", agreeing with the team board and the hero.
+  Shots r577-hr-before.png / -after.png. Probe rows RESTORED
+  (qa/r577-probe-setup.mjs / qa/r577-probe-restore.mjs).
+  The popover was also wrong in its own right — it described "Most active"
+  as "status not in (ARCH, WIT)", a rule the code has never run — so its
+  two lines now say what is actually computed.
+- New two-bot scenarios, both FIRE-TESTED (fail on the pre-fix files, pass
+  on the fixed ones): victoria · staff-kyc-alert-survives-the-step-into-hots
+  (creates a KYC-unapproved deal at NEG, checks the bell flags it, PUTs it
+  to HOT, checks the flag survives, deletes it) and victoria ·
+  staff-leaderboard-pipeline-counts-the-same-stages-as-wip (parks a £9,876
+  deal at HOTs on the logged-in agent and asserts their pipeline board and
+  active count both move by it).
+- DEFERRED as suggestions, not fixed (UX #259-#261): the "Top team" board
+  still uses the exclusion form so it counts OPP/REP/SPEC/LIVE and can
+  exceed the sum of its own members (#259); "Top biller" sums INV+COM per
+  person while the hero's billed is INV only, and that COM deal is also in
+  the pipeline board, counted twice (#260); the WIP data-quality report's
+  "no fee at all" bucket (server/crm.ts ~10146) filters the already-WIP set
+  down to NEG/SOL/EXC/COM/INV, so an AVA or HOT deal with no fee — exactly
+  the invisible money the bucket exists to catch — cannot appear in it
+  (#261).
+- SERVER SWEEP, CHECKED AND CLEAN (do not re-report): crm.ts 2532/3484
+  APPROVAL_STATUSES and 2546/3517 GATED_CODES are the senior-approval and
+  AML gates, deliberately SOL+/INV+ and documented as such; hr-routes.ts
+  1252 is r575's fixed firm-WIP list; index.ts 1480/1492 is the
+  auto-migrate canonicaliser, whose list is the set of codes it should pass
+  through untouched; property-asset-brief.ts 164 and hr-routes.ts 1248 are
+  COMMENTS, not code. mcp-server.ts 447 and review-wip-sync.ts 79/93 are
+  the already-logged #253 and #254.
+- Still open and NOT taken: #247 (weekly PDF blank second page — still the
+  cheapest one-liner on the list), #250, #251, #252 (the deal dialog's
+  pre-HOT status picker), #253, #254, #255, #256-#258, and
+  /api/hunters/letting's landlord_id-only portfolio.
+- New flakes: none. tsc clean. Fixture verified back to the shipped state.
+- FOR r578 (rotation #4 BGP STAFF MOBILE 390px): r576 asked for a staff-phone
+  WRITE driven end to end (the staff Add-unit and deal-stage paths were never
+  driven — the client Edit dialog was). Worth pairing with this round's
+  angle: the /hr page is the densest "same number, three arithmetics" surface
+  in the app and its phone rendering has never been swept.
 
 ### r576 · 2026-09-06 · FULL (rotation #3 Landsec client · mobile 390px) · 1 bug fixed — the client property overview said "Area —" about a centre whose own tenancy schedule, one tab across, totals 623,653 sq ft · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

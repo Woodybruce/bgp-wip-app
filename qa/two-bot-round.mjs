@@ -3969,6 +3969,73 @@ async function victoriaRound(page, cross) {
     if (said !== r.listCount) throw new Error(`no-fee alert counts ${said} but its own list holds ${r.listCount}`);
   });
 
+  // r577: the bell's "KYC not approved" alert matched ('SOL','EXC','COM',
+  // 'NEG') — a list written before HOT existed. HOT sits between NEG and
+  // SOL, and the AML gate hard-blocks the move INTO SOL, so the warning
+  // used to nag at Negotiating, fall silent the moment the deal reached
+  // heads of terms, and only return at Solicitors — by which point the
+  // gate had already refused the move. Walk one deal NEG -> HOT and the
+  // alert must survive the step.
+  await step(page, p, 'staff-kyc-alert-survives-the-step-into-hots', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const flagged = async (id) => {
+        const notifs = await (await fetch('/api/notifications', { headers: auth })).json();
+        return (Array.isArray(notifs) ? notifs : []).some((n) => n.type === 'kyc_gap' && n.dealId === id);
+      };
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-KYC HOTs R${round}`, status: 'NEG', dealType: 'New Letting', kycApproved: false }) });
+      if (!res.ok) return { ok: false, why: `deal POST ${res.status}` };
+      const deal = await res.json();
+      const atNeg = await flagged(deal.id);
+      const patch = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ status: 'HOT' }) });
+      const moved = patch.ok;
+      const atHot = moved ? await flagged(deal.id) : false;
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, atNeg, atHot, moved, patchStatus: patch.status };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a KYC-gap deal (${r.why})`);
+    if (!r.moved) throw new Error(`could not move the probe deal to HOTs (PUT ${r.patchStatus})`);
+    if (!r.atNeg) throw new Error('a KYC-unapproved deal at Negotiating raised no kyc_gap alert at all');
+    if (!r.atHot) throw new Error('the KYC alert disappeared when the deal moved NEG -> HOTs — the stage right before the AML gate is the one stage it stops warning about');
+  });
+
+  // r577: the Hunger Games strip computed "pipeline"/"most active" from
+  // ('NEG','SOL','EXC','COM') while the ski-target hero above it and the
+  // "Top team" tab beside it both counted AVA and HOT too — so an agent's
+  // deal at heads of terms showed up in the firm's WIP and in their team's
+  // total but in neither of their own boards.
+  await step(page, p, 'staff-leaderboard-pipeline-counts-the-same-stages-as-wip', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const name = (me && (me.name || (me.user && me.user.name))) || null;
+      if (!name) return { ok: false, why: 'no display name on /api/auth/me' };
+      const board = async () => {
+        const d = await (await fetch('/api/dashboard/individual-leaderboard', { headers: auth })).json();
+        const all = [...(d.topPipeline || []), ...(d.topActive || [])];
+        const row = all.find((x) => x.name === name);
+        return { pipeline: row ? row.pipelinePence : 0, active: row ? row.activeDeals : 0 };
+      };
+      const before = await board();
+      const FEE = 9876;
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-LB HOTs R${round}`, status: 'HOT', fee: FEE, dealType: 'New Letting',
+          internalAgent: [name], targetDate: new Date().toISOString().slice(0, 10) }) });
+      if (!res.ok) return { ok: false, why: `deal POST ${res.status}` };
+      const deal = await res.json();
+      const after = await board();
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, fee: FEE, before, after };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a leaderboard deal (${r.why})`);
+    const dFee = r.after.pipeline - r.before.pipeline;
+    const dCount = r.after.active - r.before.active;
+    if (dFee !== r.fee * 100) throw new Error(`a \u00a3${r.fee} deal at HOTs moved the agent's pipeline board by ${dFee}p (expected ${r.fee * 100}p) — heads of terms is missing from the leaderboard's WIP vocabulary`);
+    if (dCount !== 1) throw new Error(`a deal at HOTs moved the agent's active-deal count by ${dCount} (expected 1)`);
+  });
+
 }
 
 async function trackerStatusDeepLink(page, who) {

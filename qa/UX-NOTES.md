@@ -13,6 +13,37 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+259. 2026-09-06 · BGP staff / HR overview → Hunger Games "Top team" (QA r577)
+    · Woody reads a team's pipeline off the strip · /api/hr/team-summary
+    aggregates every deal `NOT IN ('INV','ARCH','WIT')` — the exclusion form,
+    written before REP was deleted from WIP (2026-08-31). So a team's total
+    still counts OPP / REP / SPEC / LIVE deals, while the ski-target hero
+    above it and (since r577) each individual's pipeline board count
+    WIP_STATUSES minus INV. On real data a team's number can therefore exceed
+    the sum of its own members' pipelines. Suggestion: point team-summary at
+    the same WIP_STATUSES set so all three figures on the page are the same
+    arithmetic, and drop the third hardcoded list.
+
+260. 2026-09-06 · BGP staff / HR overview (QA r577) · the same page shows two
+    numbers both labelled "billed" · the ski-target hero's billed is `status
+    = 'INV'` only (Xero-set), while the Hunger Games "Top biller" board sums
+    `INV or COM` per person — and the same COM deal is also counted in that
+    person's pipeline, so it is in two of the three boards at once. The
+    popover already describes the hero's rule ("deals invoiced this scheme
+    year, pulled from Xero"), not the one the code runs. Suggestion: decide
+    whether COM is billed or WIP (the hero says WIP) and make the leaderboard
+    agree, rather than counting it twice.
+
+261. 2026-09-06 · BGP staff / WIP data-quality report (QA r577) · the report
+    whose whole job is to surface money that will never be billed · its
+    "live pipeline deals with NO fee at all" bucket (server/crm.ts ~10146)
+    filters the already-WIP set down to ('NEG','SOL','EXC','COM','INV'),
+    dropping AVA and HOT. A letting sitting at Available or a deal at heads
+    of terms with no fee on it is exactly the invisible money the bucket
+    exists to catch, and it is the one thing the bucket cannot see.
+    Suggestion: drop the second filter entirely — the set is already
+    WIP_STATUSES, so `(r.fee || 0) > 0` is the only test it needs.
+
 252. 2026-09-06 · BGP staff / Deals board + deal dialog (QA r575) · Alex
     moves a deal back from Solicitors to heads of terms · `CRM_OPTIONS.dealStatus`
     (client/src/lib/crm-options.ts) is still the pre-HOT ten codes under a

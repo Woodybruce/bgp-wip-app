@@ -9555,11 +9555,17 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         });
       }
 
-      // KYC not approved on progressing deals
+      // KYC not approved on progressing deals. HOT (heads of terms) sits
+      // between NEG and SOL, and the AML gate hard-blocks the move into SOL —
+      // so HOT is the stage where this warning matters most. It was missing
+      // from the list, which predates the code (added 2026-08-12): the alert
+      // nagged at NEG, went silent the moment the deal reached heads of
+      // terms, and only came back at SOL, by which time the gate had already
+      // refused the move.
       const kycGaps = await pool.query(`
         SELECT id, name, status FROM crm_deals
         WHERE kyc_approved = false
-        AND status IN ('SOL', 'EXC', 'COM', 'NEG')
+        AND status IN ('NEG', 'HOT', 'SOL', 'EXC', 'COM')
         LIMIT 10
       `);
       for (const d of kycGaps.rows) {
