@@ -215,6 +215,28 @@ async function mobGoto(pg, url, nav) {
   }
 }
 
+// r569: read the tenancy board's "Avg ERV £psf" tile and work the same rate
+// out of the payload the board rendered from (area-weighted Σ ERV pa ÷ Σ NIA
+// over the rows carrying both). Shared by the staff and client halves.
+async function ervPsfTile(pg, propertyId) {
+  return pg.evaluate(async (pid) => {
+    const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+      headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+    });
+    if (!res.ok) return { status: res.status };
+    const j = await res.json();
+    const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+    const priced = units.filter((u) => Number(u.erv_pa) > 0 && Number(u.nia_sqft) > 0);
+    if (!priced.length) return { noRow: true };
+    const expect = priced.reduce((a, u) => a + Number(u.erv_pa), 0) / priced.reduce((a, u) => a + Number(u.nia_sqft), 0);
+    const el = document.querySelector('[data-testid="tenancy-stat-avg-erv-\u00a3psf"]');
+    if (!el) return { missing: true, expect, priced: priced.length };
+    const txt = el.innerText.replace(/\s+/g, ' ').trim();
+    const num = txt.match(/([\d,]+\.?\d*)\s*$/);
+    return { txt, shown: num ? Number(num[1].replace(/,/g, '')) : NaN, expect, priced: priced.length };
+  }, propertyId);
+}
+
 async function step(page, persona, scenario, fn) {
   currentScenario[persona] = scenario;
   if (process.env.QA_DEBUG) console.log(`  [dbg ${new Date().toISOString()}] step ${scenario}`);
@@ -3297,6 +3319,24 @@ async function victoriaRound(page, cross) {
     if (!/^£[\d,]+$/.test(seen.sc || '')) throw new Error(`staff service charge "${seen.sc}" on ${seen.unit} is not formatted money`);
     if (!/^£[\d,]+$/.test(seen.rates || '')) {
       throw new Error(`staff rates payable "${seen.rates}" on ${seen.unit} prints without a currency mark, beside service charge "${seen.sc}"`);
+    }
+  });
+
+  // r569: the "Avg ERV £psf" tile averaged blended_erv — a PER-ANNUM import
+  // column, null on all 199 Bluewater rows — so the headline rate read "—"
+  // on a board whose own ERV (pa) column prints figures. It now computes
+  // the rate its label promises from the payload beside it. Client half:
+  // client-tenancy-erv-psf-tile-reads-a-rate.
+  await step(page, p, 'staff-tenancy-erv-psf-tile-reads-a-rate', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    const seen = await ervPsfTile(page, BLUEWATER);
+    if (seen.status) throw new Error(`staff tenancy payload returned ${seen.status}`);
+    if (seen.noRow) throw new Error('fixture has no unit carrying both an ERV and an NIA');
+    if (seen.missing) throw new Error('no Avg ERV £psf tile on the tenancy board');
+    if (Math.abs(seen.shown - seen.expect) > 0.05) {
+      throw new Error(`staff Avg ERV £psf tile reads "${seen.txt}" but its own ${seen.priced} priced rows work out at ${seen.expect.toFixed(2)} psf`);
     }
   });
 
@@ -8250,6 +8290,21 @@ async function markRound(page, cross) {
       if (!/^£[\d,]+$/.test(val || '')) {
         throw new Error(`client ${label} "${val}" on ${seen.unit} prints without a currency mark`);
       }
+    }
+  });
+
+  // r569 client half of staff-tenancy-erv-psf-tile-reads-a-rate — the tile
+  // is the landlord's only headline rate on his own rent roll.
+  await step(page, p, 'client-tenancy-erv-psf-tile-reads-a-rate', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    const seen = await ervPsfTile(page, BLUEWATER);
+    if (seen.status) throw new Error(`client tenancy payload returned ${seen.status}`);
+    if (seen.noRow) throw new Error('fixture has no unit carrying both an ERV and an NIA');
+    if (seen.missing) throw new Error('no Avg ERV £psf tile on the client tenancy board');
+    if (Math.abs(seen.shown - seen.expect) > 0.05) {
+      throw new Error(`client Avg ERV £psf tile reads "${seen.txt}" but its own ${seen.priced} priced rows work out at ${seen.expect.toFixed(2)} psf`);
     }
   });
 

@@ -13,6 +13,34 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+239. 2026-09-06 · both personas / tenancy board desktop + phone (QA r569) ·
+    A landlord (or an agent pricing a void) wants the per-unit rate behind
+    the board's "Avg ERV £psf" headline · The board's payload carries
+    `rent_psf` on 107 of Bluewater's 199 rows — and it is exactly
+    erv_pa ÷ nia_sqft on every one of them (ANC1 £10.04, MSU4 £27.99, MSU6
+    £33.00, SVU02 £49.97) — but `rent_psf` is not in COLUMNS at all, so the
+    board never shows it. The user can see a total ERV per unit and a whole-
+    board average rate, and nothing in between; comparing two units on rate
+    means dividing by hand. · Add `rent_psf` to the Rental Income band as a
+    "num" column at 2 dp, labelled ERV £psf (not "Rent £psf" — the field
+    holds the ERV rate, not a passing-rent rate), sitting next to ERV (pa).
+    It needs no new data and it is the column the r569 tile averages.
+
+240. 2026-09-06 · both personas / tenancy board (QA r569) · Reading the
+    income position off the rent-roll board · `passing_rent_pa` is null on
+    100% of the Landsec feed (0 of 199 rows), and so are marketing_rent_pa,
+    the four rent_review amounts and turnover_rent_payable. The board's
+    "PASSING RENT" tile and its Passing Rent column therefore read "—" for
+    every user on every row — the same em-dash a unit with a genuinely £0
+    rent would show, so the board cannot distinguish "this feed carries no
+    passing rents" from "this unit is rent-free". · Where a money column is
+    empty on EVERY row of a property, say so once rather than 199 times:
+    tile sub-line "not in this feed" (the WAULT tile's existing amber sub
+    mechanism), and drop the column from the default column set for that
+    property instead of printing a dash 199 times. Cheaper alternative:
+    headline the tile on ERV with an "ERV" label, as r568 did for the phone
+    card headline.
+
 238. 2026-09-06 · Landsec client / phone 390px (QA r568) · Mark opens the
     phone app to get his Bluewater position before an asset review · The
     client phone landing's one portfolio block is "MY PORTFOLIO — LETTING

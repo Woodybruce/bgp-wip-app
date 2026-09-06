@@ -88,16 +88,72 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r569 · 2026-09-06 · LIGHT (r568 had the journey) · ROUND IN PROGRESS
+### r569 · 2026-09-06 · LIGHT (r568 had the journey) · 1 bug fixed — the tenancy board's only headline RATE ("Avg ERV £psf") averaged a per-annum column that is null on every row of the Landsec feed, so it read "—" on a board whose own ERV figures total £22.3m · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
+  qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before the fix and GREEN
+  42/0 after (FRESH_BUILD=1 rebuild).
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
-  Tally victoria 4x400 / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE
+  Tally victoria 4x400 on the first pass / 2x400 on the post-fix re-run —
+  same two listed keyless classes either way (POST /rocketreach/discover +
+  the deliberate invalid POST /api/investment-tracker probe; read the class,
+  not the count) / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE
   CONFIRMED, twenty-ninth clean hand-off. 0 app bugs from the regression.
-- Triage: all logged issues are listed classes (POST /rocketreach/discover +
-  the deliberate invalid POST /api/investment-tracker probe on victoria;
-  deliberate client 403 guard probes + keyless commentary 503 on mark).
-- Deep angle in progress: UX #237 (AVG ERV £PSF tile reads "—").
+  Both new scenarios [ok] on the post-fix re-run of their chunks.
+- No journey (LIGHT). Deep angle: UX #237, PROMOTED FROM NOTE TO DEFECT.
+- BUG FIXED (client/src/components/PropertyTenancySchedule.tsx). The
+  board's "AVG ERV £PSF" tile averaged `blended_erv`, which is (a) a
+  PER-ANNUM import column ("blended erv" in the importer's header map), not
+  a rate, and (b) null on 199 of 199 Bluewater rows — count(blended_erv)=0.
+  So the one headline RATE on the rent roll read "—" while the same payload
+  carried erv_pa on 131 rows and nia_sqft on 137, 107 rows with both,
+  totalling £22,309,070 over 527,940 sq ft. Same class as #234: a headline
+  computed from a column null everywhere, mislabelled, with the data to
+  compute it correctly sitting in the same payload. Fix: Σ ERV pa ÷ Σ NIA
+  over the rows carrying both — AREA-weighted, not a mean of per-unit rates
+  (a 200 sq ft kiosk at £200 psf would otherwise outweigh MSU4's 90,793 sq
+  ft cinema); 2 dp instead of 0 because it is a rate; "—" only when no row
+  carries both; and the tile's existing `full` tooltip mechanism now states
+  the basis ("£22,309,070 ERV ÷ 527,940 sq ft (107 of 200 units priced)") so
+  the coverage is visible rather than implied.
+- VERIFIED LIVE for BOTH personas at BOTH widths (qa/r569-verify.mjs, shots
+  qa/smoke-shots/r569-{victoria,mark}-{desktop,phone}-erv-tile.png): tile
+  reads 42.26 in all four, identical strings for Victoria and Mark, and each
+  matches the rate worked out independently from the payload the board
+  rendered from (42.26 psf from 107/200 rows). tsc clean.
+- CROSS-CHECK that confirms the figure: the payload also carries `rent_psf`,
+  and on every row it is EXACTLY erv_pa ÷ nia_sqft (ANC1 10.04, MSU4 27.99,
+  MSU6 33.00, SVL08 15.01, SVU02 49.97, U075A 44.48) — so the new tile is
+  the area-weighted mean of a per-unit rate the feed already computed, i.e.
+  it agrees with the board's own data rather than inventing a derivation.
+  `rent_psf` is NOT in COLUMNS, so the board never displays it -> UX #239.
+- New two-bot pair: victoria/mark · staff|client-tenancy-erv-psf-tile-reads-
+  a-rate, over a shared helper `ervPsfTile()` — reads the tile and fails if
+  it drifts more than 0.05 psf from Σ ERV ÷ Σ NIA over the payload's own
+  priced rows (so it catches the tile going blank AND the tile going wrong).
+- CHECKED, NOT BUGS: fmtCurrencyCompact(0) returns "—", not "£0", so the
+  Passing Rent tile does not falsely headline a £0 rent roll (it is a dash —
+  see #240). The tile staying whole-board while the list is filtered is the
+  r556 design, and the new tile keeps that.
+- SUGGESTIONS (qa/UX-NOTES.md, NOT built): #239 `rent_psf` is populated on
+  107 rows and exactly equals the ERV rate, but is not a column, so the user
+  can see a per-unit total and a board average and nothing in between; #240
+  passing_rent_pa (and marketing_rent_pa, all four rent_review amounts,
+  turnover_rent_payable) is null on 100% of the feed, so the Passing Rent
+  column prints the same dash 199 times and cannot be told apart from a
+  genuinely rent-free unit — say "not in this feed" once instead.
+- STILL OPEN, unchanged: the dead `readOnly` prop on PropertyTenancySchedule
+  (r567/r568's deliberate leave-alone; this round's fix does not touch it).
+  Deferred, not picked up this round: #235, #236, #238.
+- New flake: the two-bot MARK chunk failed at `login()` on its first attempt
+  on BOTH of this round's mark runs, then ran clean on the immediate retry —
+  the login rate limiter after many same-container logins (already a listed
+  flake). Cost ~4 min; retry once before triaging as real.
+- FOR r570 (rotation #4 BGP STAFF MOBILE 390px): the tenancy KPI strip is
+  2-up at 390px, so the new 2-dp rate and the WAULT sub-line share a row —
+  worth a look for wrap. Also worth a staff-phone eye on the Rental Income
+  band generally, given three of its columns are null on the whole feed.
+- Next journey: r569 was LIGHT -> r570 FULL, rotation #4 BGP staff mobile
+  390px.
 
 ### r568 · 2026-09-06 · FULL (rotation #3 Landsec client · phone 390px) · 1 bug fixed — the phone tenancy card's single headline money figure was blank on 100% of Bluewater's rows, including the 34 vacant ones a landlord taps the Vacant tile to price · 4 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

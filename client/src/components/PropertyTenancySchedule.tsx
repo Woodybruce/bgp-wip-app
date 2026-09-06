@@ -945,7 +945,20 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   const totalNIA = units.reduce((s, u) => s + Number(u.nia_sqft || 0), 0);
   const totalRent = units.reduce((s, u) => s + Number(u.passing_rent_pa || 0), 0);
   const totalSC = units.reduce((s, u) => s + Number(u.service_charge || 0), 0);
-  const avgERV = units.length ? units.reduce((s, u) => s + Number(u.blended_erv || 0), 0) / units.length : 0;
+  // "Avg ERV £psf" used to average blended_erv, which is (a) a PER-ANNUM
+  // import column, not a rate, and (b) null on every row of the Landsec
+  // feed — so the tile read "—" on a board whose own ERV (pa) column
+  // prints figures. Compute the rate the label promises from the fields
+  // that are actually populated: Σ ERV pa ÷ Σ NIA over the units that
+  // carry both. Area-weighted, not a mean of per-unit rates — a 200 sq ft
+  // kiosk at £200 psf would otherwise outweigh a 90,000 sq ft cinema.
+  const ervPsfUnits = units.filter(u => Number(u.erv_pa) > 0 && Number(u.nia_sqft) > 0);
+  const ervPsfRentTotal = ervPsfUnits.reduce((s, u) => s + Number(u.erv_pa), 0);
+  const ervPsfAreaTotal = ervPsfUnits.reduce((s, u) => s + Number(u.nia_sqft), 0);
+  const avgERV = ervPsfAreaTotal > 0 ? ervPsfRentTotal / ervPsfAreaTotal : 0;
+  const avgERVBasis = avgERV
+    ? `${fmtCurrency(ervPsfRentTotal)} ERV ÷ ${fmtNum(ervPsfAreaTotal)} sq ft (${ervPsfUnits.length} of ${units.length} units priced)`
+    : undefined;
   // WAULT is rent-weighted (Σ rent × term ÷ Σ rent), not a simple mean —
   // otherwise one 999-year ground lease at a peppercorn drags the figure
   // to absurdity. Falls back to the unweighted mean when no rents exist.
@@ -1196,7 +1209,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           { label: "Passing Rent", value: fmtCurrencyCompact(totalRent), filter: null, full: fmtCurrency(totalRent) },
           // UX #133 — a literal 0 read as "the ERV is £0" rather than
           // "no ERV data"; match Passing Rent's em-dash empty state.
-          { label: "Avg ERV £psf", value: avgERV ? fmtNum(avgERV, 0) : "—", filter: null },
+          { label: "Avg ERV £psf", value: avgERV ? fmtNum(avgERV, 2) : "—", filter: null, full: avgERVBasis },
           { label: "WAULT", value: fmtNum(avgWAULT, 1) + " yrs", filter: null, sub: waultExcluded > 0 ? `${waultExcluded} excluded — placeholder expiry` : undefined },
           { label: "Occupied", value: String(occupied), filter: "Occupied" },
           { label: "Vacant", value: String(vacant), filter: "Vacant" },
