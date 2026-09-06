@@ -1,0 +1,26 @@
+import { chromium } from '/home/user/bgp-wip-app/node_modules/playwright/index.mjs';
+const BASE='http://127.0.0.1:5000';
+const PROP='cccccccc-0000-0000-0000-000000000001';
+const browser = await chromium.launch({executablePath:'/opt/pw-browsers/chromium', args:['--no-sandbox']});
+const ctx = await browser.newContext({viewport:{width:1440,height:1000}});
+const page = await ctx.newPage();
+const r = await ctx.request.post(`${BASE}/api/auth/login`,{data:{username:'mark.warne@landsec.com',password:'B@nd0077!'}});
+const {token} = await r.json();
+await page.goto(BASE+'/login',{waitUntil:'domcontentloaded'}).catch(()=>{});
+await page.evaluate(t=>localStorage.setItem('authToken',t), token);
+await page.goto(BASE+'/tenancy-schedule/'+PROP,{waitUntil:'domcontentloaded'});
+await page.waitForTimeout(9000);
+await page.screenshot({path:'qa/smoke-shots/r566-s3-tenancy.png', fullPage:false});
+const info = await page.evaluate(()=>{
+  const heads=[...document.querySelectorAll('th')].map(th=>(th.textContent||'').replace(/\s+/g,' ').trim());
+  const rows=[...document.querySelectorAll('tbody tr')].slice(0,6).map(tr=>[...tr.querySelectorAll('td')].map(td=>(td.textContent||'').replace(/\s+/g,' ').trim()));
+  const kpi=[...document.querySelectorAll('[data-testid]')].map(el=>{const t=(el.textContent||'').replace(/\s+/g,' ').trim(); return t&&t.length<120?el.getAttribute('data-testid')+' :: '+t:null}).filter(Boolean).slice(0,60);
+  const btns=[...document.querySelectorAll('button')].map(b=>(b.textContent||'').replace(/\s+/g,' ').trim()).filter(t=>t&&t.length<40);
+  return {heads, rows, kpi, btns:[...new Set(btns)], rowCount:document.querySelectorAll('tbody tr').length};
+});
+console.log('HEADS:', JSON.stringify(info.heads));
+console.log('ROWCOUNT:', info.rowCount);
+for(const r of info.rows) console.log('ROW:', JSON.stringify(r));
+console.log('== KPI ==\n'+info.kpi.join('\n'));
+console.log('== BUTTONS ==\n'+info.btns.join(' | '));
+await browser.close();

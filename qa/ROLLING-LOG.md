@@ -88,16 +88,74 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r566 · 2026-09-06 · FULL (rotation #2 Landsec client · desktop 1440px) · ROUND IN PROGRESS
+### r566 · 2026-09-06 · FULL (rotation #2 Landsec client · desktop 1440px) · 1 bug fixed — the client's Tenancy Schedule rendered every money, area and date cell RAW, so the landlord and the agent read different strings off the same row · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke).
-  Regression: smoke GREEN 42/0.
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
+  browser work + two-bot via qa/with-server.sh). Regression: smoke GREEN 42/0
+  before and GREEN 42/0 after the fix.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
   Tally victoria 4x400 (POST /rocketreach/discover + the deliberate invalid
-  POST /api/investment-tracker probe — listed keyless noise) / mark 9x403 +
-  1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, twenty-sixth clean hand-off.
-  0 app bugs from the scripted regression.
-- Journey pending: Mark Warne at 1440px, a break-option task at Bluewater.
+  POST /api/investment-tracker probe — listed keyless noise, read the class
+  not the count) / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE
+  CONFIRMED, twenty-sixth clean hand-off. 0 app bugs from the scripted
+  regression.
+- Journey (Mark Warne, 1440px): "leases are running out at Bluewater — find
+  what expires next, read the tenancy, check what BGP is doing about it".
+  Dashboard -> EXPIRING (6M) tile -> popover -> Bluewater Tenancy Schedule ->
+  the Nando's SVL02 row -> Letting Tracker. The tile's 7 and its popover's 7
+  match the payload's 7 exactly (lease_expiry within 182 days), and every
+  popover row lands on a real schedule — that chain is sound.
+- BUG FIXED (client/src/components/PropertyTenancySchedule.tsx). The desktop
+  table has two cell branches: staff cells go through InlineEdit, which
+  formats before it renders; the read-only (client) branch returns
+  `{displayVal}` where displayVal is `String(raw)`. So on the SAME ROW of the
+  SAME BOARD: staff read Start "29 Jul 2011", Expiry "28 Sept 2026", NIA
+  "4,169", ERV "£206,360", Service Charge "£90,552", Insurance "£3,575",
+  Arrears "-26,176"; Mark read "2011-07-29", "2026-09-28", "4169", "206360",
+  "90551.805", "3575.305", "-26175.95". Six-figure sums with no separator and
+  three decimal places of pence, ISO dates, across ~20 numeric columns x 200
+  rows — on the landlord's most-used screen, showing the landlord's own money.
+  Fix: one `fmtCellForDisplay(field, type, raw)` helper carrying InlineEdit's
+  exact rules (same field-name currency test, same 2dp for psf/percent/term,
+  fmtDate for type "date"), used by the read-only cell; the three
+  server-computed Unexp columns stay raw + muted because staff render them
+  that way too, so the two views converge rather than diverging the other
+  way. Verified LIVE by rendering SVL02 as both personas back to back
+  (qa/r566-step9.mjs, shots r566-s9-mark.warne.png / r566-s9-victoria.png):
+  every checked cell now identical apart from the staff-only T/L/M break
+  chip. tsc clean, smoke re-green.
+- NOT A BUG, checked while there: Passing Rent "—" everywhere is the fixture
+  (passing_rent_pa null on all 200 rows), not scoping — Victoria sees "—"
+  too. The tenancy Excel export is byte-identical for Mark and Victoria
+  (47,093 bytes each), so the export never had the raw-cell problem. SVL02
+  genuinely is absent from the Letting Tracker (78 listings, no match) —
+  that is fixture state, filed as UX #233 rather than a defect.
+- HARNESS GROWTH (qa/two-bot-round.mjs): mark ·
+  client-schedule-cells-read-like-the-staff-view — picks a unit from the
+  client's OWN payload that has an expiry, a service charge > 999 and an NIA
+  > 999, finds its row in the rendered table by unit number, and asserts the
+  Expiry cell is not a raw ISO date, the Service Charge cell matches
+  /^£[\d,]+$/ and the NIA cell carries a thousands separator. Non-vacuous:
+  it fails on every one of those three on the pre-fix build.
+- Suggestions added: UX-NOTES #231 (the expiring-leases popover row opens the
+  200-row sheet at the top with no filter or highlight for the tenant
+  clicked), #232 (Rates Payable / Rateable Value / Capex / NOI / Topped Up
+  NOI / Deposit Held / Arrears are declared type "currency" but print with no
+  £, because the formatter tests the field NAME not the column type — affects
+  staff and client alike), #233 (the read-only row drops the staff "LT"
+  badge, so the client can see a lease expiring in three weeks but nothing
+  about whether it is being marketed).
+- Still open and unbuilt: UX #150, #157, #162, #170, #171, #172, #174-#233.
+- Carry-forward from r565: nothing left open. New flakes: none. The
+  "Message your team" button on the schedule is inside the collapsed chat
+  panel and is not clickable until the panel is opened — not a bug, but a
+  scripted click on it times out; open the panel first. Real-device
+  keyboard-up composer check (r405) still open for Woody.
+- Next: r566 was FULL -> r567 LIGHT. Rotation is due #3 Landsec client ·
+  mobile 390px. Method worth reusing: when a surface has a staff branch and a
+  client branch of the SAME component, render one identical row through both
+  and diff the strings cell by cell — a read-only branch that skips the
+  formatter looks fine in isolation and only shows up side by side.
 
 ### r565 · 2026-09-06 · LIGHT (r564 had the journey) · 1 bug fixed — the Landsec dashboard's portfolio unit board counted the Tenancy Schedule but opened the ARCHIVED Leasing Schedule, which holds a different, smaller set · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

@@ -13,6 +13,45 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+231. 2026-09-06 · Landsec client / desktop 1440px (QA r566) · Mark clicked the
+    dashboard's "Expiring (6m) · 7 · leases expiring soon · click to list"
+    tile, saw "Nando's Chickenland Limited · Bluewater · 28 Sept 26" in the
+    popover, and clicked it to read the tenancy · The row links to
+    /tenancy-schedule/<propertyId> — the whole 200-row sheet, opened at the
+    top, with no filter, highlight or scroll to the tenant he clicked. He
+    then has to type the name into the schedule's own search to get back to
+    the row the popover already had. Suggestion: carry the unit through
+    (/tenancy-schedule/:propId?unit=<unit_number> or ?q=<tenant>), seed the
+    schedule's existing search box from it and scroll that row into view —
+    the same deep-link-filter pattern the tracker status pills and the
+    r564 ?noFee=1 deals link already use.
+
+232. 2026-09-06 · Landsec client / desktop 1440px (QA r566) · Mark read the
+    Occupational Costs and Covenant bands across a Bluewater row · Adjacent
+    money columns disagree about being money: Service Charge and Insurance
+    render "£90,552" / "£3,575", while Rates Payable, Rateable Value, Capex,
+    Topped Up NOI, NOI (pa), Deposit Held and Arrears render "128,760" /
+    "-26,176" with no £ at all — same row, same units, same sheet. The cause
+    is that the number formatter decides currency from the FIELD NAME
+    (rent/income/charge/insurance/erv/shortfall) rather than from the
+    column's own declared type: those columns are all type "currency" in the
+    column table and simply don't match the name test. Affects staff and
+    client identically. Suggestion: format from the declared column type, so
+    every column the schedule calls currency prints a £.
+
+233. 2026-09-06 · Landsec client / desktop 1440px (QA r566) · Mark worked the
+    expiring-leases list: Nando's SVL02 expires 28 Sept 2026, three weeks
+    out — is BGP marketing it? · The Tenancy Schedule can't tell him. Staff
+    rows carry an "LT" badge on the unit cell when the unit is on the
+    Letting Tracker (and a "+ Tracker" button when it isn't), but the
+    read-only branch drops both, so the client's row shows the expiry and
+    nothing about what is being done with it. He has to open the Letting
+    Tracker separately and search 78 listings to learn that SVL02 is not on
+    it at all. Suggestion: keep the read-only "LT" badge (link only, no
+    "+ Tracker" write control) and show a muted "not marketed" hint on
+    occupied rows expiring within 6 months — the landlord's whole reason for
+    reading the expiry column is to find the ones nobody has picked up.
+
 229. 2026-09-06 · Landsec client / desktop 1440px (QA r565) · Mark opened his
     portfolio dashboard to see how full Bluewater is · The unit-schedule board
     states "199 units · 124 occ · 7 exp" per property, but the two numbers a
