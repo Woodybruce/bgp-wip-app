@@ -88,6 +88,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r564 · 2026-09-06 · FULL (rotation #1 BGP staff desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written at
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke; browser work +
+  two-bot via qa/with-server.sh). Regression: smoke GREEN 42/0.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (all POST /rocketreach/discover, listed keyless noise)
+  / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, twenty-fourth
+  clean hand-off. 0 app bugs from the scripted regression.
+- Journey pending: staff desktop 1440px as victoria@.
+
 ### r563 · 2026-09-06 · LIGHT (r562 had the journey) · 1 bug fixed — the client Letting Tracker flagged a "Compliance gap: Fee agreement" on every instructed deal, driven by a field clients are never sent · r562's other carry-forward CLOSED as not-a-bug · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
