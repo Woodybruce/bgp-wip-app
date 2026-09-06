@@ -18,6 +18,7 @@ import { pool } from "./db";
 import * as path from "path";
 import * as fs from "fs";
 import { sendSharedMailboxEmail } from "./shared-mailbox";
+import { legacyToCode, CLOSED_STATUSES, DEAL_STATUS_LABELS } from "@shared/deal-status";
 
 const router = Router();
 const BGP_GREEN = "#6E0C25";
@@ -103,7 +104,14 @@ async function renderWeeklyReportPdf(contact: any, activity: any): Promise<Buffe
   y = doc.y + 10;
 
   // Headline summary
-  const activeCount = activity.deals.filter((d: any) => d.status !== "completed" && d.status !== "lost").length;
+  // `crm_deals.status` holds the canonical 3-letter codes (COM/WIT/INV/…),
+  // never the words "completed"/"lost" — comparing against those counted
+  // every closed deal as active. Same predicate as the company profile's
+  // active_deals counter (crm.ts) and ai-intelligence.
+  const activeCount = activity.deals.filter((d: any) => {
+    const code = legacyToCode(d.status);
+    return code !== null && !CLOSED_STATUSES.includes(code);
+  }).length;
   const eventsThisWeek = activity.recentEvents.length;
   doc.rect(leftM, y, pageW, 50).fill("#F9F4F0");
   doc.font("Helvetica-Bold").fontSize(7).fillColor("#888").text("ACTIVE DEALS", leftM + 10, y + 10);
@@ -138,7 +146,7 @@ async function renderWeeklyReportPdf(contact: any, activity: any): Promise<Buffe
   // Active deals list
   if (activity.deals.length) {
     if (y > 700) { doc.addPage(); y = 60; }
-    doc.font("Helvetica-Bold").fontSize(10).fillColor(BGP_GREEN).text("ACTIVE DEALS", leftM, y);
+    doc.font("Helvetica-Bold").fontSize(10).fillColor(BGP_GREEN).text("YOUR DEALS", leftM, y);
     y = doc.y + 6;
     for (const d of activity.deals) {
       if (y > 770) { doc.addPage(); y = 60; }
@@ -146,11 +154,18 @@ async function renderWeeklyReportPdf(contact: any, activity: any): Promise<Buffe
       y = doc.y + 1;
       const meta: string[] = [];
       if (d.property_name) meta.push(d.property_name);
-      if (d.stage) meta.push(`Stage: ${d.stage.replace(/_/g, " ")}`);
+      // `stage` is the optional pathway field and is unset on most deals;
+      // `status` is the column the rest of the app reads. Show the status
+      // label so a closed deal reads as closed in the client's own report.
+      const code = legacyToCode(d.status);
+      if (code) meta.push(DEAL_STATUS_LABELS[code]);
+      else if (d.stage) meta.push(`Stage: ${d.stage.replace(/_/g, " ")}`);
       if (d.rent_pa) meta.push(`£${Number(d.rent_pa).toLocaleString()} pa`);
       else if (d.pricing) meta.push(`£${Number(d.pricing).toLocaleString()}`);
+      if (d.landlord_name) meta.push(`Landlord: ${d.landlord_name}`);
       if (d.tenant_name) meta.push(`Tenant: ${d.tenant_name}`);
-      if (d.vendor_name || d.purchaser_name) meta.push(`Purchaser: ${d.purchaser_name || "—"}`);
+      if (d.vendor_name) meta.push(`Vendor: ${d.vendor_name}`);
+      if (d.purchaser_name) meta.push(`Purchaser: ${d.purchaser_name}`);
       doc.font("Helvetica").fontSize(8.5).fillColor("#666").text(meta.join("  ·  "), leftM, y, { width: pageW });
       y = doc.y + 6;
     }
