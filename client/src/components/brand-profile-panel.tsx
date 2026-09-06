@@ -279,6 +279,35 @@ const ROLLOUT_OPTIONS = [
   { value: "rumoured",     label: "Rumoured entry" },
 ];
 
+// Brand-expansion narratives arrive as light markdown with research
+// citation markers ("**bold**", " - **" bullet joints, "[1][3]") — render
+// them styled instead of as a raw asterisk wall (Woody, 2026-09-06).
+function boldSpans(s: string) {
+  return s.split(/\*\*([^*]+)\*\*/g).map((part, i) =>
+    i % 2 ? <strong key={i} className="font-semibold">{part}</strong> : part
+  );
+}
+
+function BrandNarrative({ text }: { text: string }) {
+  const cleaned = String(text)
+    .replace(/\[\d+\](?:\[\d+\])*/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+  const blocks = cleaned
+    .split(/\n+|\s+-\s+(?=\*\*)/g)
+    .map(b => b.trim().replace(/^-\s+/, ""))
+    .filter(Boolean);
+  if (blocks.length <= 1) return <p className="text-xs leading-snug text-foreground/90">{boldSpans(cleaned)}</p>;
+  return (
+    <div className="text-xs leading-snug text-foreground/90 space-y-1.5">
+      <p>{boldSpans(blocks[0])}</p>
+      <ul className="space-y-1 pl-3.5 list-disc marker:text-muted-foreground/50">
+        {blocks.slice(1).map((b, i) => <li key={i}>{boldSpans(b)}</li>)}
+      </ul>
+    </div>
+  );
+}
+
 function RolloutBadge({ status }: { status: string | null }) {
   if (!status) return null;
   const map: Record<string, { label: string; cls: string; icon: any }> = {
@@ -529,7 +558,17 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   useEffect(() => {
     if (!data || isClientViewer || autoStoresRan.current) return;
     autoStoresRan.current = true;
-    if ((data.stores?.length || 0) === 0 && !researchStoresMutation.isPending) {
+    const found = data.stores?.length || 0;
+    // Stale undercount: the old strict name matcher left big chains with a
+    // stray row or two (Greggs: 1 row for 2,600 shops), and one non-zero
+    // row blocked the zero-only auto-scan forever. Re-scan when the stored
+    // set is tiny against the brand's known store count — but only if the
+    // last scan is old, so genuinely small footprints don't re-burn Places
+    // quota on every open.
+    const claimed = data.company?.store_count ?? 0;
+    const freshest = Math.max(0, ...(data.stores || []).map((s: any) => (s.researched_at ? new Date(s.researched_at).getTime() : 0)));
+    const staleScan = Date.now() - freshest > 7 * 24 * 3600 * 1000;
+    if ((found === 0 || (found <= 3 && claimed >= 25 && staleScan)) && !researchStoresMutation.isPending) {
       researchStoresMutation.mutate({ scope: "uk", auto: true });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2433,14 +2472,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                         </span>
                       )}
                     </div>
-                    <p className="text-xs leading-snug text-foreground/90">
-                      {/* The generator ends with BGP-internal pitch guidance
-                          ("Recommendation: do not pitch until…") — strip it
-                          for client viewers (UX #40). */}
-                      {isClientViewer
+                    {/* The generator ends with BGP-internal pitch guidance
+                        ("Recommendation: do not pitch until…") — strip it
+                        for client viewers (UX #40). */}
+                    <BrandNarrative
+                      text={isClientViewer
                         ? String(c.brand_analysis).split(/\*{0,2}Recommendation\b/i)[0].replace(/[\s*—:-]+$/, "")
-                        : c.brand_analysis}
-                    </p>
+                        : String(c.brand_analysis)}
+                    />
                   </div>
                 ) : (
                   <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-center">
