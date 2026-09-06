@@ -88,19 +88,85 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r572 · 2026-09-06 · FULL (rotation #1 BGP staff · desktop 1440px) · ROUND IN PROGRESS
+### r572 · 2026-09-06 · FULL (rotation #1 BGP staff · desktop 1440px) · 1 bug fixed — the Landlord Intelligence board's "Biggest portfolios" leaderboard read "0 properties" for every landlord because it counted a supplementary link table instead of the ownership columns the profile it links to reads · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; dev server via qa/with-server.sh). Regression: smoke
-  GREEN 42 checks / 0 failures.
+  qa/apply-sql.mjs; dev server via qa/with-server.sh; .env written). Smoke
+  GREEN 42 checks / 0 failures BEFORE the fix and GREEN 42/0 after it.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
   Tally victoria 4x400 (POST /rocketreach/discover x3 + the deliberate
-  invalid POST /api/investment-tracker probe) / mark 9x403 + 1x503 /
-  woody,nick,sam 0 — BASELINE CONFIRMED, thirty-second consecutive clean
-  hand-off. 0 app bugs from the regression.
-- Flake: the woody/nick/sam chunk died once on the login rate limiter
-  (POST /api/auth/login after the victoria+mark chunks); a straight re-run
-  of the same chunk was 0 issues. Known 429 class, not an app bug.
-- Journey in progress — staff desktop 1440px.
+  invalid POST /api/investment-tracker probe — both listed keyless classes) /
+  mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, thirty-second
+  consecutive clean hand-off. 0 app bugs from the regression.
+- Flake (new, add to the list): the woody/nick/sam chunk died once at
+  `login()` right after the victoria and mark chunks — the login rate
+  limiter, already listed as environment noise but not previously seen
+  KILLING a chunk. A straight re-run of the same chunk was 0 issues. If a
+  chunk dies at two-bot-round.mjs:105, re-run it before triaging.
+- JOURNEY (staff desktop 1440px, Victoria): "monthly Landsec update — pull
+  the portfolio's headline numbers off my dashboard, follow every link that
+  promises detail, check each figure where it appears twice". Dashboard KPI
+  tiles -> letting-tracker widget -> tracker deeplink -> /instructions ->
+  /landlords -> Landsec company profile -> Westgate property page ->
+  /leasing-schedule. Checked and CLEAN: the dashboard's four KPI totals
+  (7 deals / £707k / 4 properties / 14 contacts) match /api/crm/deals,
+  /properties and /contacts exactly, and feesPerMonth sums to totalFees;
+  the widget's "79 Available" chip matches the tracker's own MARKETING 79
+  pill and its deeplink lands filtered; /instructions is honestly empty on
+  this fixture; the leasing board's per-landlord roll-up (Landsec 168 =
+  165 + 3) adds up.
+- BUG FIXED (server/crm.ts, /api/crm/landlords). Landlord Intelligence's
+  `property_count` came from `crm_company_properties` ALONE. That table is
+  a SUPPLEMENTARY link table — every other portfolio resolution in the app
+  ORs it with the ownership columns on crm_properties (company-scope.ts,
+  /company-by-name, property-summary, client-teams, leasing-schedule) — and
+  it holds 0 rows on this fixture. So the board headed "Biggest portfolios"
+  ranked five landlords by a constant zero, the sortable Props column read
+  "—" on every row, and the client-base "Properties" tile read 0. The same
+  query's own WHERE clause already reads freeholder_id/long_leaseholder_id
+  to decide who counts as a landlord, so it knew the live source and
+  counted a different, empty one. Proof one click apart: the board said
+  "Landsec 0 properties"; the profile that row links to says "Properties 2
+  in CRM — Bluewater 165 units · 88 occ, Westgate 3 units · 0 occ". Fix:
+  count the UNION of landlord_id, freeholder_id, long_leaseholder_id and
+  the link table — byte-for-byte the predicate
+  /api/crm/companies/:id/property-summary?role=landlord uses, so the board
+  and its click-through agree by construction. Also fixed the pluraliser in
+  the same surface: pg returns the count as a STRING, so `=== 1` was never
+  true and the leaderboard printed "1 properties" the moment a count went
+  non-zero.
+- VERIFIED LIVE at 1440px (shots qa/smoke-shots/r572-01-landlords-final.png,
+  r572-02-landlords-fixed-table.png): "Biggest portfolios — 1 Landsec 2
+  properties, 2 British Land Rival 1 property, 3 Hammerson 1 property",
+  Properties tile 0 -> 4, Props column 2/1/1/0/0. Landsec's 2 matches its
+  profile's "2 in CRM"; British Land Rival 1 = Broadgate; Hammerson 1 =
+  Brent Cross. tsc clean.
+- New two-bot scenario: victoria ·
+  staff-landlord-board-counts-the-portfolio-it-links-to — walks every row
+  of /api/crm/landlords and fails if its property_count differs from the
+  length of that company's own property-summary list, plus a guard that
+  fails if no landlord in the fixture owns anything (which would make the
+  assertion vacuous against an all-zero board). [ok] post-fix. NOT added on
+  the client side: `client-staff-boards-403` already asserts /api/crm/
+  landlords 403s for Mark, so mark's baseline stays 9x403.
+- CHECKED, NOT BUGS: `property_count` in server/client-teams.ts looked like
+  the same family but already unions landlord_id with the link table.
+  /api/crm/companies/:id/property-summary returns `units_occupied: null`
+  for role=landlord while the profile card prints "165 units · 88 occ" —
+  the card gets those from the leasing-schedule feed, which the r565
+  correction already established as internally consistent.
+- Westgate Test Centre carries THREE different unit counts on one visit
+  (scorecard "3 of 3 units", tenancy board "4 units / OCCUPIED 0 VACANT 4",
+  Landsec's profile card "3 units") — the two synthetic tracker vacants,
+  i.e. the r556/UX #242 basis question, not a new defect. Filed under #245
+  only for the part that IS wrong on the page: the stored commentary.
+- Suggestions added: UX #244 (the Landsec profile's "Open leasing board"
+  button links to the bare all-landlords board, so from a client's own
+  record it shows Hammerson's Brent Cross), UX #245 (Westgate's stored BGP
+  Commentary argues "0.0% vacancy, a strong position" directly under a
+  scorecard reading "VACANCY 100.0%" — generated prose is never invalidated
+  when its inputs move), UX #246 (every dashboard KPI tile labels a
+  month-on-month badge "6mo trend"; PROPERTIES shows a red ▼100% for a
+  portfolio that lost nothing).
 
 ### r571 · 2026-09-06 · LIGHT (r570 had the journey) · 2 bugs fixed — the client-facing asset-brief scorecard's WAULT read a column null on 100% of rows so it printed "—" on a scheme with 66 live leases, and its occupancy counted the tracker's own AVA code as OCCUPIED · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

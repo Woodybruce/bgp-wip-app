@@ -3754,6 +3754,39 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r572: the Landlord Intelligence board's portfolio size came from
+  // crm_company_properties ALONE — a supplementary link table the rest of
+  // the app always ORs with the ownership columns on crm_properties. It was
+  // empty, so "Biggest portfolios" read "0 properties" for every landlord,
+  // including one whose own profile (the page that row links to) lists two.
+  // The board's count must equal the list the click-through renders.
+  await step(page, p, 'staff-landlord-board-counts-the-portfolio-it-links-to', async () => {
+    const r = await page.evaluate(async (landsecId) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const b = await fetch('/api/crm/landlords', { headers: auth });
+      if (!b.ok) return { status: b.status };
+      const { landlords } = await b.json();
+      const out = [];
+      for (const l of landlords) {
+        const ps = await fetch(`/api/crm/companies/${l.id}/property-summary?role=landlord`, { headers: auth });
+        out.push({ name: l.name, board: Number(l.property_count) || 0, profile: ps.ok ? (await ps.json()).length : -1 });
+      }
+      return { rows: out };
+    }, LANDSEC);
+    if (r.status) throw new Error(`staff lost the landlords board (${r.status})`);
+    if (!r.rows.length) throw new Error('landlords board came back empty for staff');
+    // The fixture must still have at least one landlord holding property,
+    // otherwise the whole assertion goes vacuous against an all-zero board.
+    const withProps = r.rows.filter((x) => x.profile > 0);
+    if (!withProps.length) throw new Error('no landlord in the fixture owns a property — assertion would be vacuous');
+    for (const x of r.rows) {
+      if (x.profile < 0) throw new Error(`${x.name}: property-summary unreadable for staff`);
+      if (x.board !== x.profile) {
+        throw new Error(`${x.name}: board says ${x.board} properties, its own profile lists ${x.profile}`);
+      }
+    }
+  });
+
   await step(page, p, 'staff-leasing-board-stays-its-own-trimmed-set', async () => {
     // Staff half of client-portfolio-board-opens-the-schedule-it-counted
     // (r565). The archived /leasing-schedule board is deliberately kept for

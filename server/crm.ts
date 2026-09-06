@@ -1486,9 +1486,24 @@ export function setupCrmRoutes(app: Express) {
            WHERE landlord_id IS NOT NULL
            GROUP BY landlord_id
         ) deal_stats ON deal_stats.landlord_id = c.id
+        -- Portfolio size must be counted the same way the company profile
+        -- resolves it (/api/crm/companies/:id/property-summary role=landlord),
+        -- because clicking a row on this board opens exactly that list.
+        -- crm_company_properties is a SUPPLEMENTARY link table — the app
+        -- always ORs it with the ownership columns on crm_properties — so
+        -- counting it alone printed "0 properties" for every landlord,
+        -- including one whose profile lists two (r572).
         LEFT JOIN (
           SELECT company_id, COUNT(DISTINCT property_id) AS property_count
-            FROM crm_company_properties
+            FROM (
+              SELECT landlord_id AS company_id, id AS property_id FROM crm_properties WHERE landlord_id IS NOT NULL
+              UNION
+              SELECT freeholder_id, id FROM crm_properties WHERE freeholder_id IS NOT NULL
+              UNION
+              SELECT long_leaseholder_id, id FROM crm_properties WHERE long_leaseholder_id IS NOT NULL
+              UNION
+              SELECT company_id, property_id FROM crm_company_properties
+            ) owned
            GROUP BY company_id
         ) prop_stats ON prop_stats.company_id = c.id
         LEFT JOIN (

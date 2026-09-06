@@ -13,6 +13,48 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+246. 2026-09-06 · BGP staff / desktop 1440px (QA r572) · Victoria reads the
+    four KPI tiles at the top of her dashboard before a client update · Each
+    tile pairs its headline with a coloured percentage badge and the words
+    "6mo trend" — but the badge is not a six-month trend. It is
+    `calcChange()`, LAST MONTH vs THE MONTH BEFORE (kpi-trends in
+    server/routes.ts); only the sparkline beside it spans six months. On the
+    fixture that reads "PROPERTIES 4 · ▼100% · 6mo trend" because two
+    properties were added in July, two in August and none yet in September —
+    a tile that looks like the portfolio halved over half a year when
+    nothing was lost at all. The headline is also all-time while the badge
+    is month-on-month, so the two halves of one tile measure different
+    windows. · Either label the badge for what it measures ("vs last month")
+    and leave "6mo" on the sparkline, or make the badge the six-month change
+    the label promises. Cheap either way; the current pairing is the only
+    thing on the dashboard that can read as a loss that never happened.
+
+245. 2026-09-06 · BGP staff / desktop 1440px (QA r572) · Victoria opens
+    Westgate Test Centre to see where the asset stands · The PIPELINE &
+    PERFORMANCE scorecard says "VACANCY 100.0% · 3 of 3 units". Immediately
+    below it, the stored BGP Commentary says "the asset is running at 0.0%
+    vacancy, which is a strong position and means there are no immediate
+    income risks to flag". The commentary is generated prose, dated 3 Aug,
+    and nothing invalidates it when the figures it quotes move — r571
+    changed how the scorecard counts occupancy, and the paragraph beneath it
+    still argues the opposite case in full sentences. A landlord-facing
+    narrative that contradicts the tile above it is worse than no narrative.
+    · Stamp each commentary with the figures it was generated from and show
+    a "written when vacancy was X% — refresh" chip once the live scorecard
+    disagrees, or regenerate on read when the inputs have changed.
+
+244. 2026-09-06 · BGP staff / desktop 1440px (QA r572) · Victoria works down
+    Landsec's company profile to prep the monthly update · The Properties
+    card lists Landsec's two assets and ends with an "Open leasing board"
+    button — but it links to a bare `/leasing-schedule`, the all-landlords
+    board, which opens on Landsec's 168 units AND Hammerson's Brent Cross.
+    Every other link on that card is property-scoped; this one silently
+    widens to the whole firm, and from a client's own record it is the one
+    control that shows another landlord's scheme. · Point it at the
+    landlord-scoped board (the page already groups by landlord, so a
+    `?landlordId=` or an anchor to that group is enough), or relabel it
+    "Open the leasing board (all clients)" so the destination is honest.
+
 242. 2026-09-06 · Landsec client / property page desktop (QA r571) · Mark
     reads the Vacancy tile on his own Bluewater asset brief · The tile now
     says "46.7% — 77 of 165 units" (r571 made it agree with the leasing
