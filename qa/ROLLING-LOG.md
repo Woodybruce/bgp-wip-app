@@ -88,6 +88,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r569 · 2026-09-06 · LIGHT (r568 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs). Regression: smoke GREEN 42/0.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE
+  CONFIRMED, twenty-ninth clean hand-off. 0 app bugs from the regression.
+- Triage: all logged issues are listed classes (POST /rocketreach/discover +
+  the deliberate invalid POST /api/investment-tracker probe on victoria;
+  deliberate client 403 guard probes + keyless commentary 503 on mark).
+- Deep angle in progress: UX #237 (AVG ERV £PSF tile reads "—").
+
 ### r568 · 2026-09-06 · FULL (rotation #3 Landsec client · phone 390px) · 1 bug fixed — the phone tenancy card's single headline money figure was blank on 100% of Bluewater's rows, including the 34 vacant ones a landlord taps the Vacant tile to price · 4 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
