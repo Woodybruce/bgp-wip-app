@@ -1244,7 +1244,12 @@ export function setupHrRoutes(app: Express) {
           SELECT COALESCE(SUM(fee), 0)::numeric AS pounds,
                  COUNT(*) AS n
             FROM crm_deals
-           WHERE status IN ('REP','AVA','NEG','SOL','EXC','COM')
+           -- WIP_STATUSES minus INV (invoiced is the CTE above). Was
+           -- ('REP','AVA','NEG','SOL','EXC','COM'): it predated HOT, so
+           -- every deal at heads of terms dropped out of the firm's WIP
+           -- and its forecast, while REP — deleted from WIP 2026-08-31 —
+           -- was still inflating both.
+           WHERE status IN ('AVA','NEG','HOT','SOL','EXC','COM')
              AND fee IS NOT NULL AND fee > 0
         )
         SELECT

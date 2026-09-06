@@ -92,23 +92,75 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r575 · 2026-09-06 · LIGHT (no journey — r574 had one) · ROUND IN PROGRESS
+### r575 · 2026-09-06 · LIGHT (no journey — r574 had one) · 1 bug fixed — the firm's ski-target WIP and forecast counted no deal at HOTs and still counted REP, deleted from WIP a week earlier · 4 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; .env written). Smoke GREEN 42 checks / 0 failures.
-- New durable asset: qa/r575-status-literal-sweep.mjs — censuses every
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures.
+- Two-bot victoria chunk (QA_CROSS_FILE): every scenario [ok], tally
+  victoria 4x400, all POST /brand/:id/rocketreach/discover — the listed
+  keyless class. BASELINE CONFIRMED. mark/woody/nick/sam chunks not run this
+  round (time went on the sweep); r574's mark 9x403 + 1x503 stands as the
+  last measured baseline.
+- NEW DURABLE ASSET: qa/r575-status-literal-sweep.mjs — censuses every
   hardcoded deal-status literal list in client/ + server/ + shared/ and
-  diffs each against the canonical sets in shared/deal-status.ts. 86 lists
-  found, 38 match a canonical set exactly, 48 diverge.
-- TRIAGE from the sweep (the r573/r574 "vocabulary that has moved on" class):
-  (a) client/src/lib/crm-options.ts:141 `dealStatus` is the pre-HOT 10-code
-      list under a comment calling it "the canonical set" — so the Deals
-      board's inline Status cell and the deal create/edit dialog cannot set
-      HOTs at all, while the SAME table in WIP mode (WIP_STATUSES) can.
-  (b) client/src/components/deals-summary.tsx:27 LIVE_CODES is
-      ["REP","AVA","NEG","SOL","EXC"] — missing HOT (so the card says
-      "Nothing live on the Deals board" above its own "1 HOTs" chip) and
-      still carrying REP, dropped from WIP on 2026-08-31.
-  Both being fixed this round; verification and the final entry to follow.
+  diffs each against the canonical sets in shared/deal-status.ts, naming the
+  nearest set and what is missing/extra. 86 lists, 38 exact matches, 48
+  divergent. Run it early; `--all` shows the matching ones too. It found
+  every item below in one pass.
+- BUG FIXED (server/hr-routes.ts, /api/dashboard/firm-summary). The WIP CTE
+  behind the /hr ski-target hero matched
+  `status IN ('REP','AVA','NEG','SOL','EXC','COM')` — a list written before
+  HOT joined DEAL_STATUS_CODES on 2026-08-12. So every deal at heads of
+  terms, fee and all, contributed NOTHING to the firm's WIP, its forecast
+  bar, or the "to go (incl. WIP)" figure — while REP, which Woody deleted
+  from WIP on 2026-08-31 ("delete reporting"), was still inflating all
+  three. Correct predicate is WIP_STATUSES minus INV (invoiced is the
+  sibling CTE): ('AVA','NEG','HOT','SOL','EXC','COM'). Nothing else changed.
+- PROVEN before/after in the browser as Victoria, one Bluewater deal parked
+  at HOTs with a £50,000 fee (fixture restored). BEFORE: "+ £250k WIP",
+  "£3.75m to go (incl. WIP)", dealCount 1. AFTER: "+ £300k WIP", "£3.70m to
+  go", dealCount 2. Shots qa/smoke-shots/r575-ski-before.png and
+  r575-ski-after.png. tsc clean.
+- New two-bot scenario: victoria · staff-hots-deal-counts-in-firm-wip —
+  posts a £12,345 deal at HOT, asserts firm-summary's wipPence moves by
+  exactly £12,345, deletes it. Passes on the fixed build; NOT fire-tested
+  against the pre-fix build (the before/after measurement above is the
+  proof instead).
+- Fixture restored and verified (qa/r575-hot-restore.mjs — deal 302 back to
+  SOL, fee back to NULL; qa/r575-probe-restore.mjs for the earlier
+  two-deal probe).
+- DEFERRED (found by the sweep, logged as UX #252-#255): the deal
+  create/edit dialog's status picker still reads the pre-HOT
+  CRM_OPTIONS.dealStatus while the WIP Report reads DEAL_PAGE_STATUSES
+  (#252 — started the fix, then REVERTED it unverified: the dialog would
+  not open from /deals/list in the probe and this round's own rule is to
+  re-verify visually); the MCP "WIP pipeline report" tool drops AVA, HOT and
+  every COM/INV deal (#253); staff-review fee totals bucket only INV/SOL/NEG
+  so HOT, EXC and COM allocations vanish (#254); DealsSummary's AVA/NEG/HOT
+  chips are structurally always 0 because its own feed excludes them by
+  design (#255).
+- CHECKED AND CLEAN (do not re-report): the Deals board's INLINE status cell
+  already offers HOTs — it reads WIP_STATUSES, not CRM_OPTIONS. The auto-
+  migrate status canonicaliser in server/index.ts:1464 lacks HOT in its
+  whitelist but its ELSE branch passes canonical 'HOT' through untouched, so
+  it does not corrupt data (it does map the legacy text 'hots' to NEG where
+  shared/deal-status.ts's LEGACY_MAP says HOT — prod-data-only, no fixture
+  rows). /api/crm/deals?excludeTrackerDeals=true returns 0 of 5 fixture
+  deals with anything pre-SOL staged: that is the 2026-08-25 "Deals CRM is
+  SOL+ ONLY" rule, not a bug.
+- FOR r576 (rotation #3 LANDSEC CLIENT MOBILE 390px): run the sweep first
+  and take the CLIENT-facing half of its output — this round only worked the
+  staff side. Then chase the phone shell: mobile-home.tsx already knows HOT
+  (["NEG","HOT","SOL","EXC"] = under offer) but available-units.tsx's
+  UNIT_STATUSES/LIVE_PILL_STATUSES/UNIT_STAGE_EDITABLE and the phone tracker
+  cards are the obvious next place a new code went unlearned. Also still
+  open from r573/r574: the weekly PDF's blank second page (#247),
+  /api/hunters/letting's landlord_id-only portfolio, #250, #251, and #235
+  ("Area —" on an overview whose own board totals 623,653 sq ft).
+- New flakes: none. Note for probes: InlineLabelSelect ignores the
+  `data-testid` prop passed to it (no such prop on the component), so
+  `inline-deal-status-<id>` does not exist in the DOM — target
+  `[data-testid="inline-label-display"]` filtered by its label text instead.
 
 ### r574 · 2026-09-06 · FULL (rotation #2 Landsec client · desktop 1440px) · 1 bug fixed — a letting or deal sitting at HOTs (heads of terms) was dropped from every "live lettings / live deals" summary, including the client dashboard's Properties & Deals board · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

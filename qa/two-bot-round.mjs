@@ -3915,6 +3915,32 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r575: the same 2026-08-12 HOTs omission on the firm's money tile. The
+  // ski-target hero's WIP bucket (/api/dashboard/firm-summary) matched
+  // ('REP','AVA','NEG','SOL','EXC','COM') — written before HOT existed — so
+  // a deal at heads of terms contributed nothing to the firm's WIP or its
+  // forecast, while REP (deleted from WIP 2026-08-31) still inflated both.
+  await step(page, p, 'staff-hots-deal-counts-in-firm-wip', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const summary = async () => (await (await fetch('/api/dashboard/firm-summary', { headers: auth })).json());
+      const before = await summary();
+      const FEE = 12345;
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-HOTS WIP R${round}`, status: 'HOT', fee: FEE, dealType: 'New Letting' }) });
+      if (!res.ok) return { ok: false, why: `HOTs deal POST ${res.status}` };
+      const deal = await res.json();
+      const after = await summary();
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, fee: FEE, beforeWip: before.wipPence, afterWip: after.wipPence };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a HOTs deal (${r.why})`);
+    const delta = r.afterWip - r.beforeWip;
+    if (delta !== r.fee * 100) {
+      throw new Error(`firm WIP moved by ${delta}p when a \u00a3${r.fee} deal was parked at HOTs (expected ${r.fee * 100}p) — heads of terms is missing from the ski-target WIP bucket`);
+    }
+  });
+
   // r564: the notification centre's "N deals with no fee set" alert was the
   // one row in the bell with no destination — it carried no dealId, so the
   // click handler did nothing at all. It now carries an explicit link, and

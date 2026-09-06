@@ -13,6 +13,54 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+252. 2026-09-06 · BGP staff / Deals board + deal dialog (QA r575) · Alex
+    moves a deal back from Solicitors to heads of terms · `CRM_OPTIONS.dealStatus`
+    (client/src/lib/crm-options.ts) is still the pre-HOT ten codes under a
+    comment calling it "the canonical 10-code set — see shared/deal-status.ts",
+    while shared/ has exported DEAL_PAGE_STATUSES (all twelve, HOT and OPP
+    included) for exactly this purpose since 2026-08-12. The WIP Report's
+    inline status select reads DEAL_PAGE_STATUSES and offers HOTs; the deal
+    create/edit dialog (deals.tsx ~2646) reads CRM_OPTIONS.dealStatus and does
+    not. Not confirmed in the browser this round — the dialog wouldn't open
+    from /deals/list in the probe, so the visible symptom is unproven.
+    Suggestion: `dealStatus: [...DEAL_PAGE_STATUSES]` and add "OPP","HOT" to
+    the dialog's PRE_SOL list so both stay disabled at CREATE time (the
+    existing "use Letting Tracker" rule) but selectable when editing.
+
+253. 2026-09-06 · BGP staff / ChatBGP + MCP clients (QA r575) · Someone asks
+    for the WIP pipeline · server/mcp-server.ts:447 backs the tool described
+    as "the WIP (Work In Progress) pipeline report showing active deals with
+    fee allocations" with `inArray(status, ["NEG","SOL","EXC","Active",
+    "Under Offer","Exchanged"])` — against WIP_STATUSES (AVA, NEG, HOT, SOL,
+    EXC, COM, INV) that drops AVA, HOT, and every COMPLETED and INVOICED
+    deal, i.e. most of what WIP means. Suggestion: `inArray(status, [
+    ...WIP_STATUSES, ...legacy strings])`, or route the rows through
+    legacyToCode() and filter on WIP_STATUSES.
+
+254. 2026-09-06 · BGP staff / staff reviews (QA r575) ·
+    server/review-wip-sync.ts:79 and :93 total an agent's fee allocations
+    with `WHERE d.status IN ('INV','SOL','NEG')` into a fixed three-bucket
+    {inv, sol, neg} shape. A deal at HOTs sits between NEG and SOL and lands
+    in neither bucket; EXC and COM allocations are dropped too, so an
+    agent's review understates work that is exchanged but not yet invoiced.
+    Deferred rather than fixed because the fix needs a decision about the
+    bucket shape, not just the vocabulary. Suggestion (Woody's call): fold
+    HOT into the sol bucket and EXC/COM into inv, or widen the shape.
+
+255. 2026-09-06 · BGP staff / property pages + dashboard (QA r575) ·
+    DealsSummary renders a chip per WIP_STATUS, each deep-linking to
+    /deals/list?status=<code>, but its feed is
+    /api/crm/deals?excludeTrackerDeals=true — which by design (Woody
+    2026-08-25, "the Deals CRM is SOL+ ONLY") excludes OPP/REP/SPEC/LIVE/AVA/
+    NEG/HOT. So the Available, Negotiating and HOTs chips are structurally
+    always 0 on every property, in both the strip and card variants, and
+    click through to a board that can never show them. Its LIVE_CODES
+    constant has the same shape problem in reverse: it lists REP (excluded
+    server-side) and omits HOT (also excluded), so both halves are dead.
+    No visible wrong number — left alone deliberately this round.
+    Suggestion: render only the codes the feed can contain (SOL, EXC, COM,
+    INV) and derive LIVE_CODES from the shared sets rather than retyping.
+
 250. 2026-09-06 · Landsec client / dashboard desktop 1440px (QA r574) ·
     Mark reads "ACTIVE DEALS 4" and looks for the four · The tile counts
     every deal on a property he owns (landlord_id OR the property's
