@@ -88,6 +88,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r562 · 2026-09-06 · FULL (rotation #4 BGP staff MOBILE 390px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
+  two-bot in three chunks via qa/with-server.sh with QA_CROSS_FILE set).
+  Regression: smoke GREEN 42/0.
+- Two-bot three-chunk pass: every scenario [ok]. Tally victoria 4x400 (all
+  POST /rocketreach/discover, listed keyless noise) / mark 9x403 + 1x503 /
+  woody,nick,sam 0 — baseline CONFIRMED, twenty-second clean hand-off.
+  0 app bugs from the scripted regression.
+- Journey pending: Victoria @ 390px iPhone UA, phone shell, real task.
+- Picking up r561's deferred bug (client tracker compliance-gap dot reading
+  a fee field the client is deliberately never sent).
+
 ### r561 · 2026-09-06 · LIGHT (r560 had the journey) · 1 bug fixed (two leaks, one scrubber) — every deal payload a client login could read carried BGP's MLRO working file, incl. SAR filed + NCA reference, and the property sub-read shipped the fee agreement's signed-document URL · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
