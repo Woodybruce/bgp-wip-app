@@ -3260,6 +3260,46 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r567: the schedule's currency formatter tested the FIELD NAME, not the
+  // declared column type, so Rates Payable / Rateable Value / Capex / NOI /
+  // Topped Up NOI / Deposit Held / Arrears printed bare ("190,088") beside
+  // Service Charge's "£252,312" in the same Outgoings band on the same row —
+  // for staff and client alike. Client half:
+  // client-schedule-money-columns-carry-the-pound.
+  await step(page, p, 'staff-schedule-money-columns-carry-the-pound', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(3000);
+    const seen = await page.evaluate(async (pid) => {
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+      const headRow = document.querySelectorAll('thead tr')[1];
+      if (!headRow) return { noHead: true };
+      const heads = Array.from(headRow.querySelectorAll('th'))
+        .map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const pick = units.find((u) => Number(u.rates_payable) > 999 && Number(u.service_charge) > 999);
+      if (!pick) return { noRow: true };
+      const tr = Array.from(document.querySelectorAll('tbody tr'))
+        .find((r) => ((r.querySelector('td') || {}).textContent || '').includes(pick.unit_number));
+      if (!tr) return { missing: pick.unit_number };
+      const tds = Array.from(tr.querySelectorAll('td')).map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const at = (label) => tds[heads.indexOf(label)];
+      return { unit: pick.unit_number, rates: at('Rates Payable'), sc: at('Service Charge') };
+    }, BLUEWATER);
+    if (seen.status) throw new Error(`staff tenancy payload returned ${seen.status}`);
+    if (seen.noHead) throw new Error('staff tenancy schedule rendered no column header row');
+    if (seen.noRow) throw new Error('fixture has no rated, charged unit to check');
+    if (seen.missing) throw new Error(`unit ${seen.missing} is in the payload but not in the table`);
+    if (!/^£[\d,]+$/.test(seen.sc || '')) throw new Error(`staff service charge "${seen.sc}" on ${seen.unit} is not formatted money`);
+    if (!/^£[\d,]+$/.test(seen.rates || '')) {
+      throw new Error(`staff rates payable "${seen.rates}" on ${seen.unit} prints without a currency mark, beside service charge "${seen.sc}"`);
+    }
+  });
+
   await step(page, p, 'staff-reload-shows-the-saved-value', async () => {
     // r557: the persisted react-query cache (localStorage) restored with the
     // dataUpdatedAt of the fetch it captured, so a snapshot written seconds
@@ -8126,6 +8166,49 @@ async function markRound(page, cross) {
     }
     if (!/,/.test(seen.nia || '')) {
       throw new Error(`client NIA "${seen.nia}" on ${seen.unit} has no thousands separator`);
+    }
+  });
+
+  // r567 client half — every column DECLARED as currency must print as
+  // money on the landlord's own schedule. Pre-fix Rates Payable, Deposit
+  // Held and Arrears all rendered as bare numbers, so the landlord could not
+  // tell a rates bill from a floor area.
+  await step(page, p, 'client-schedule-money-columns-carry-the-pound', async () => {
+    const href = await page.evaluate(() => {
+      const a = document.querySelector('a[href^="/tenancy-schedule/"]');
+      return a ? a.getAttribute('href') : null;
+    });
+    const target = href || (cross.clientSchedulePath || null);
+    if (target) { await visit(page, p, target, 'client tenancy schedule'); await page.waitForTimeout(6000); }
+    const seen = await page.evaluate(async () => {
+      const pid = location.pathname.split('/').pop();
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+      const headRow = document.querySelectorAll('thead tr')[1];
+      if (!headRow) return { noHead: true };
+      const heads = Array.from(headRow.querySelectorAll('th'))
+        .map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const pick = units.find((u) => Number(u.rates_payable) > 999 && Number(u.arrears_balance) > 999);
+      if (!pick) return { noRow: true };
+      const tr = Array.from(document.querySelectorAll('tbody tr'))
+        .find((r) => ((r.querySelector('td') || {}).textContent || '').includes(pick.unit_number));
+      if (!tr) return { missing: pick.unit_number };
+      const tds = Array.from(tr.querySelectorAll('td')).map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const at = (label) => tds[heads.indexOf(label)];
+      return { unit: pick.unit_number, rates: at('Rates Payable'), arrears: at('Arrears') };
+    });
+    if (seen.status) throw new Error(`client tenancy payload returned ${seen.status}`);
+    if (seen.noHead) throw new Error('client tenancy schedule rendered no column header row');
+    if (seen.noRow) throw new Error('fixture has no rated, in-arrears unit to check');
+    if (seen.missing) throw new Error(`unit ${seen.missing} is in the payload but not in the table`);
+    for (const [label, val] of [['rates payable', seen.rates], ['arrears', seen.arrears]]) {
+      if (!/^£[\d,]+$/.test(val || '')) {
+        throw new Error(`client ${label} "${val}" on ${seen.unit} prints without a currency mark`);
+      }
     }
   });
 

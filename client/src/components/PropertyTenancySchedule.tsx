@@ -161,18 +161,29 @@ function fmtNum(v: number | string | null | undefined, dp = 0) {
   return n.toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 }
 
-// Read-only (client) cells go through the same formatting the staff cells
-// get from InlineEdit — same field-name rules, so a landlord and the agent
-// looking at the same row read the same string. Without it the client's
-// schedule rendered raw column values ("90551.805", "2026-09-28") beside
-// the staff view's "£90,552 · 28 Sept 2026" (r566).
+// A money column is one DECLARED as money in COLUMNS. The field-name test
+// below is only a fallback for columns typed "num" that happen to hold
+// money: on its own it missed Rates Payable, Rateable Value, Capex, NOI,
+// Topped Up NOI, Deposit Held and Arrears, so half the Outgoings band
+// printed "34965" beside Service Charge's "£27,746" on the same row —
+// for staff and client alike (UX #232).
+const MONEY_FIELD_WORDS = ["rent", "income", "charge", "insurance", "occ_costs", "erv", "shortfall"];
+function isMoneyColumn(field: string, type: string | undefined): boolean {
+  if (type === "currency" || type === "currency_psf") return true;
+  return MONEY_FIELD_WORDS.some(w => field.includes(w));
+}
+
+// The single authority for how a schedule cell reads. Both branches of the
+// table use it — the staff cell through InlineEdit, the read-only (client)
+// cell directly — so a landlord and the agent looking at the same row read
+// the same string. Without it the client's schedule rendered raw column
+// values ("90551.805", "2026-09-28") beside the staff view's
+// "£90,552 · 28 Sept 2026" (r566).
 function fmtCellForDisplay(field: string, type: string | undefined, raw: any): string {
   if (raw === null || raw === undefined || raw === "") return "";
   if (type === "date") return fmtDate(String(raw));
   if (type === "num" || type === "currency" || type === "currency_psf") {
-    if (field.includes("rent") || field.includes("income") || field.includes("charge") || field.includes("insurance") || field.includes("occ_costs") || field.includes("erv") || field.includes("shortfall")) {
-      return fmtCurrency(raw);
-    }
+    if (isMoneyColumn(field, type)) return fmtCurrency(raw);
     return fmtNum(raw, field.includes("psf") || field.includes("percent") || field.includes("term") ? 2 : 0);
   }
   return String(raw);
@@ -481,9 +492,9 @@ function BreakTypeChip({ value, onChange }: { value: string; onChange: (v: strin
   );
 }
 
-function InlineEdit({ value, field, unitId, onSave, type = "text", options, className = "" }: {
+function InlineEdit({ value, field, unitId, onSave, type = "text", colType, options, className = "" }: {
   value: string; field: string; unitId: string | number; onSave: (id: string | number, field: string, val: string) => void;
-  type?: string; options?: string[]; className?: string;
+  type?: string; colType?: string; options?: string[]; className?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(value || "");
@@ -502,11 +513,10 @@ function InlineEdit({ value, field, unitId, onSave, type = "text", options, clas
     if (isDate) {
       display = value ? fmtDate(value) : "—";
     } else if (isNumber) {
-      if (field.includes("rent") || field.includes("income") || field.includes("charge") || field.includes("insurance") || field.includes("occ_costs") || field.includes("erv") || field.includes("shortfall")) {
-        display = fmtCurrency(value);
-      } else {
-        display = fmtNum(value, field.includes("psf") || field.includes("percent") || field.includes("term") ? 2 : 0);
-      }
+      // Same authority as the read-only cell, and it needs the DECLARED
+      // column type — "number" here is the input type, which flattens
+      // currency and plain-number columns into one (UX #232).
+      display = fmtCellForDisplay(field, colType || "num", value) || "—";
     } else {
       display = value || "—";
     }
@@ -1924,6 +1934,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                     unitId={unit.id}
                     onSave={onUpdate}
                     type={editType}
+                    colType={c.type}
                     className="opacity-0 group-hover:opacity-60 text-[10px]"
                   />
                 </div>
@@ -1971,6 +1982,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                   unitId={unit.id}
                   onSave={onUpdate}
                   type={editType}
+                  colType={c.type}
                   className="inline-block align-middle truncate max-w-[34vw] sm:max-w-none"
                 />
                 {!letting && !unit.is_vacant && onSendToTracker && (
@@ -2002,6 +2014,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               unitId={unit.id}
               onSave={onUpdate}
               type={editType}
+              colType={c.type}
             />
             )}
           </td>
