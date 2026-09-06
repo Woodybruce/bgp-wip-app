@@ -88,6 +88,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r570 · 2026-09-06 · ROUND IN PROGRESS · FULL (rotation #4 BGP staff, mobile 390px)
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; dev server via qa/with-server.sh). Regression: smoke
+  GREEN 42 checks / 0 failures.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): EVERY scenario [ok].
+  Tally victoria 4x400 (POST /rocketreach/discover + the deliberate invalid
+  POST /api/investment-tracker probe — listed keyless noise) / mark 9x403 +
+  1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, thirtieth consecutive clean
+  hand-off. 0 app bugs from the regression.
+- Journey in progress: Victoria on the phone shell (iPhone UA + touch, 390px).
+
 ### r569 · 2026-09-06 · LIGHT (r568 had the journey) · 1 bug fixed — the tenancy board's only headline RATE ("Avg ERV £psf") averaged a per-annum column that is null on every row of the Landsec feed, so it read "—" on a board whose own ERV figures total £22.3m · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs). Regression: smoke GREEN 42/0 before the fix and GREEN
