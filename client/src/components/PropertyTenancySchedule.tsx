@@ -161,6 +161,23 @@ function fmtNum(v: number | string | null | undefined, dp = 0) {
   return n.toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 }
 
+// Read-only (client) cells go through the same formatting the staff cells
+// get from InlineEdit — same field-name rules, so a landlord and the agent
+// looking at the same row read the same string. Without it the client's
+// schedule rendered raw column values ("90551.805", "2026-09-28") beside
+// the staff view's "£90,552 · 28 Sept 2026" (r566).
+function fmtCellForDisplay(field: string, type: string | undefined, raw: any): string {
+  if (raw === null || raw === undefined || raw === "") return "";
+  if (type === "date") return fmtDate(String(raw));
+  if (type === "num" || type === "currency" || type === "currency_psf") {
+    if (field.includes("rent") || field.includes("income") || field.includes("charge") || field.includes("insurance") || field.includes("occ_costs") || field.includes("erv") || field.includes("shortfall")) {
+      return fmtCurrency(raw);
+    }
+    return fmtNum(raw, field.includes("psf") || field.includes("percent") || field.includes("term") ? 2 : 0);
+  }
+  return String(raw);
+}
+
 function fmtDate(v: string) {
   if (!v) return "—";
   try {
@@ -1758,9 +1775,13 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               </td>
             );
           }
+          // Unexp columns are server-computed whole months and render raw
+          // for staff too — keep them identical rather than re-decimalising.
+          const isUnexp = c.field === "unexpired_term" || c.field === "unexpired_term_break" || (c.field as string) === "unexpired_term_review";
+          const readVal = isUnexp ? displayVal : fmtCellForDisplay(c.field as string, c.type, raw);
           return (
-            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
-              {displayVal || <span className="text-muted-foreground">—</span>}
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}${isUnexp ? " text-muted-foreground" : ""}`}>
+              {readVal && readVal !== "—" ? readVal : <span className="text-muted-foreground">—</span>}
             </td>
           );
         }

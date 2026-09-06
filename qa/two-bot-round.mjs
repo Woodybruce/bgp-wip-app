@@ -8073,6 +8073,62 @@ async function markRound(page, cross) {
     }
   });
 
+  // r566: the tenancy table's read-only (client) branch rendered every cell
+  // as String(raw) — the landlord read "90551.805" where the agent on the
+  // same row read "£90,552", and "2026-09-28" where staff read
+  // "28 Sept 2026". One board, one row, two readings of the client's own
+  // money. Formatting must not depend on which persona opened it.
+  await step(page, p, 'client-schedule-cells-read-like-the-staff-view', async () => {
+    await visit(page, p, '/', 'client dashboard');
+    await page.waitForTimeout(3000);
+    const href = await page.evaluate(() => {
+      const a = document.querySelector('a[href^="/tenancy-schedule/"]');
+      return a ? a.getAttribute('href') : null;
+    });
+    if (!href) throw new Error('client dashboard offers no tenancy-schedule link');
+    await visit(page, p, href, 'client tenancy schedule');
+    await page.waitForTimeout(6000);
+    const seen = await page.evaluate(async (h) => {
+      const pid = h.split('/').pop();
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+      // Column labels live in the SECOND header row; the first carries the
+      // band names ("Lease Details", "Occupational Costs", …).
+      const headRow = document.querySelectorAll('thead tr')[1];
+      if (!headRow) return { noHead: true };
+      const heads = Array.from(headRow.querySelectorAll('th'))
+        .map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const pick = units.find((u) => u.lease_expiry && Number(u.service_charge) > 999 && Number(u.nia_sqft) > 999);
+      if (!pick) return { noRow: true };
+      const tr = Array.from(document.querySelectorAll('tbody tr'))
+        .find((r) => ((r.querySelector('td') || {}).textContent || '').includes(pick.unit_number));
+      if (!tr) return { missing: pick.unit_number };
+      const tds = Array.from(tr.querySelectorAll('td')).map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const at = (label) => tds[heads.indexOf(label)];
+      return { unit: pick.unit_number, expiry: at('Expiry'), sc: at('Service Charge'), nia: at('NIA') };
+    }, href);
+    if (seen.status) throw new Error(`client tenancy payload returned ${seen.status}`);
+    if (seen.noHead) throw new Error('client tenancy schedule rendered no column header row');
+    if (seen.noRow) throw new Error('fixture has no dated, charged, measured unit to check');
+    if (seen.missing) throw new Error(`unit ${seen.missing} is in the payload but not in the table`);
+    if (/^\d{4}-\d{2}-\d{2}/.test(seen.expiry || '')) {
+      throw new Error(`client reads a raw ISO expiry "${seen.expiry}" on ${seen.unit}`);
+    }
+    if (!/\d{1,2} \S+ \d{4}/.test(seen.expiry || '')) {
+      throw new Error(`client expiry "${seen.expiry}" on ${seen.unit} is not a formatted date`);
+    }
+    if (!/^£[\d,]+$/.test(seen.sc || '')) {
+      throw new Error(`client service charge "${seen.sc}" on ${seen.unit} is not formatted money`);
+    }
+    if (!/,/.test(seen.nia || '')) {
+      throw new Error(`client NIA "${seen.nia}" on ${seen.unit} has no thousands separator`);
+    }
+  });
+
   // r561: every deal payload a client login can read carried BGP's MLRO
   // working file — the compliance/PEP/EDD notes, the risk rating, the MLR
   // scope reason and whether a SAR had been filed with its NCA reference —
