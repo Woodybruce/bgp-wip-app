@@ -366,15 +366,47 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     // 6. Performance scorecard — light first cut, derived from the
     //    leasing schedule (top + bottom MAT psqft, vacancy rate,
     //    weighted-average unexpired lease term).
+    // Occupancy counts the leasing board the same way the board's own
+    // stat pills do (status === 'Occupied' exactly, leasing-schedule.tsx).
+    // The old test was a negative regex on 'vacant|available', which
+    // counted the tracker's 'AVA' code and any NULL status as OCCUPIED —
+    // so the brief told the client 90 occupied of 165 while the board it
+    // reads from said 88 (r571).
     const perfQ = await pool.query<any>(
       `SELECT
-         COUNT(*) FILTER (WHERE COALESCE(LOWER(status), '') !~ 'vacant|available') AS occupied_units,
-         COUNT(*) AS total_units,
-         AVG(EXTRACT(EPOCH FROM (lease_expiry - NOW())) / 31557600.0) FILTER (WHERE lease_expiry > NOW()) AS wault_years
+         COUNT(*) FILTER (WHERE status = 'Occupied') AS occupied_units,
+         COUNT(*) AS total_units
          FROM leasing_schedule_units WHERE property_id = $1`,
       [propertyId]
     ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
     const perfRow = perfQ.rows[0] || {};
+    // WAULT comes off the tenancy master, not the leasing board:
+    // leasing_schedule_units.lease_expiry is never populated (0 of 165
+    // Bluewater rows), so the brief's one lease-term headline read "—"
+    // for every client on every property while tenancy_schedule_units
+    // carried 69 live expiries and the property's own tenancy board
+    // printed a WAULT from them. Same rule as that board
+    // (PropertyTenancySchedule): terms over 60 years are placeholder
+    // expiry dates and are excluded; rent-weighted by passing rent when
+    // any row carries one, otherwise a simple mean — so the two agree by
+    // construction rather than by luck (r571).
+    const waultQ = await pool.query<any>(
+      `WITH t AS (
+         SELECT EXTRACT(EPOCH FROM (lease_expiry - NOW())) / 31557600.0 AS yrs,
+                COALESCE(passing_rent_pa, 0) AS rent
+           FROM tenancy_schedule_units
+          WHERE property_id = $1 AND lease_expiry IS NOT NULL
+       ), inrange AS (
+         SELECT yrs, rent FROM t WHERE yrs > 0 AND yrs <= 60
+       )
+       SELECT CASE WHEN COALESCE(SUM(rent), 0) > 0
+                   THEN SUM(yrs * rent) / SUM(rent)
+                   ELSE AVG(yrs) END AS wault_years,
+              COUNT(*)::int AS wault_units
+         FROM inrange`,
+      [propertyId]
+    ).catch((e: any) => { console.error("[asset-brief] wault sub-query failed:", e?.message); return { rows: [] as any[] }; });
+    const waultRow = waultQ.rows[0] || {};
     const topPsqftQ = await pool.query<any>(
       `SELECT unit_name, tenant_name, mat_psqft, lfl_percent
          FROM leasing_schedule_units
@@ -393,7 +425,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       total_units: Number(perfRow.total_units || 0),
       occupied_units: Number(perfRow.occupied_units || 0),
       vacancy_rate: perfRow.total_units ? 1 - Number(perfRow.occupied_units || 0) / Number(perfRow.total_units) : 0,
-      wault_years: perfRow.wault_years ? Number(perfRow.wault_years) : null,
+      wault_years: waultRow.wault_years != null ? Number(waultRow.wault_years) : null,
       top_psqft: topPsqftQ.rows,
       bottom_psqft: bottomPsqftQ.rows,
     };

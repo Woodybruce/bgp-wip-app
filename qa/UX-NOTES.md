@@ -13,6 +13,33 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+242. 2026-09-06 · Landsec client / property page desktop (QA r571) · Mark
+    reads the Vacancy tile on his own Bluewater asset brief · The tile now
+    says "46.7% — 77 of 165 units" (r571 made it agree with the leasing
+    board it counts). One tab across, the property's tenancy board — the
+    master rent roll, and the board his own dashboard card counts — says
+    75 vacant of 199. Both figures are correct for the set they count, but
+    neither says which set that is, so the landlord's property page offers
+    him two vacancy rates nine points apart with no way to tell them
+    apart. · Put the basis on the tile the way the r569 ERV tile now does:
+    sub-line "of the 165 units on the leasing board" (and make it tap
+    through to that board), or move the tile onto the tenancy master so the
+    property page has one vacancy figure. The scorecard's WAULT already
+    reads the master, so the card currently mixes the two sources.
+
+243. 2026-09-06 · both personas / letting tracker + asset brief (QA r571) ·
+    Reading how recently a marketed unit was actually shown · The unit
+    payload carries `lastViewingDate` and the asset brief carries
+    `last_viewing_date`, and `available_units.last_viewing_date` has three
+    readers and NO writer anywhere in the app — the exact sibling of the
+    `viewings_count` column r570 fixed, in the same two queries. It is null
+    on every unit, so nothing renders it and no screen shows viewing
+    RECENCY: the tracker card says "Viewing (2)" and never says when. ·
+    Either drop the dead column and the three selects, or make it live —
+    MAX(viewing_date) FROM unit_viewings, the same substitution r570 made
+    for the count — and show it under the viewing chip ("last shown 12
+    Aug"), which is the figure an agent chasing a void actually wants.
+
 241. 2026-09-06 · BGP staff / phone home 390px (QA r570) · Victoria opens
     her phone and reads her billing position off the home screen · The first
     card is "MY BILLING — 2026/27" and every figure in it is £0 (Billed,

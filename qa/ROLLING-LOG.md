@@ -88,15 +88,79 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r571 · 2026-09-06 · LIGHT (r570 had the journey) · ROUND IN PROGRESS
+### r571 · 2026-09-06 · LIGHT (r570 had the journey) · 2 bugs fixed — the client-facing asset-brief scorecard's WAULT read a column null on 100% of rows so it printed "—" on a scheme with 66 live leases, and its occupancy counted the tracker's own AVA code as OCCUPIED · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs). Regression: smoke GREEN 42 checks / 0 failures.
+  qa/apply-sql.mjs; dev server via qa/with-server.sh). Regression: smoke
+  GREEN 42 checks / 0 failures BEFORE the fix and GREEN 42/0 after it.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
-  Tally victoria 4x400 (POST /rocketreach/discover + the deliberate invalid
-  POST /api/investment-tracker probe — both listed keyless noise) / mark
-  9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, thirty-first
-  consecutive clean hand-off. 0 app bugs from the regression.
-- Triage: nothing outside the noise list. Deep angle in progress.
+  Tally victoria 4x400 (POST /rocketreach/discover x3 + the deliberate
+  invalid POST /api/investment-tracker probe — both listed keyless classes;
+  read the class, not the count) / mark 9x403 + 1x503 / woody,nick,sam 0 —
+  BASELINE CONFIRMED, thirty-first consecutive clean hand-off. 0 app bugs
+  from the regression. Both new scenarios [ok] on the post-fix re-run.
+- No journey (LIGHT). Deep angle: r570's class swept — denormalised columns
+  the app READS but nothing WRITES, and figures the UI gets from two
+  endpoints where only one is live. That sweep landed on the property
+  asset brief, which is SERVED TO THE CLIENT on his own property page.
+- BUG 1 FIXED (server/property-asset-brief.ts). The brief's PERFORMANCE
+  scorecard has three tiles; its one lease-term tile, "WAULT / average
+  unexpired", read
+  `AVG(...lease_expiry...) FROM leasing_schedule_units` — and
+  leasing_schedule_units.lease_expiry is populated on 0 of Bluewater's 165
+  rows, so the tile printed "—" for every user on every property. The same
+  property's tenancy master carries 69 lease expiries (66 inside the
+  board's 60-year placeholder cut-off) and its OWN tenancy board prints a
+  WAULT from them. Exactly r570's shape: a headline computed from a field
+  empty everywhere while the live data sits in a table the app already
+  queries. Fix: WAULT now comes off tenancy_schedule_units under the
+  board's exact rule (PropertyTenancySchedule) — terms over 60 years
+  excluded as placeholder expiry dates, rent-weighted by passing rent when
+  any row carries one, otherwise a simple mean — so the brief and the board
+  agree by construction, not by luck.
+- BUG 2 FIXED (same block). Occupancy tested
+  `COALESCE(LOWER(status),'') !~ 'vacant|available'` — a negative regex
+  that counts the letting tracker's 'AVA' code and any NULL status as
+  OCCUPIED. The brief therefore told the landlord 90 occupied of 165 while
+  the leasing board it reads from (leasing-schedule.tsx stat pills,
+  status === 'Occupied') said 88. Now counted the same way as those pills.
+- VERIFIED LIVE for BOTH personas at 1440px (shots
+  qa/smoke-shots/r571-{mark,victoria}-asset-brief-scorecard.png): the
+  scorecard reads "WAULT 4.6 yrs" where it read "—", and
+  "VACANCY 46.7% · 77 of 165 units" where it read 45.5% · 75 of 165.
+  4.6 yrs matches an independent JS recompute of the board's rule over the
+  same 66 rows; 88/165 matches the leasing board's own pill. Identical
+  strings for Victoria and Mark. tsc clean.
+- New two-bot scenarios (one per persona):
+  victoria · staff-asset-brief-scorecard-agrees-with-its-boards and
+  mark · client-asset-brief-scorecard-agrees-with-its-boards — each fails
+  if the brief's WAULT is null while the tenancy payload carries live
+  expiries, if it differs from the board rule recomputed from that payload
+  by more than 0.1 yr, or if occupied_units differs from the leasing
+  board's own 'Occupied' count. Both [ok] post-fix.
+- CHECKED, NOT BUGS: `chatbgp_message_count` and `last_chatbgp_at` are
+  selected by /api/admin/user-activity and written by nothing — but the
+  admin table renders the LIVE subquery (total_ai_messages off
+  chat_messages) instead, so the dead pair never reaches a screen. Dead
+  select, no symptom; left alone. `marketing_start_date` looked like the
+  same family but is genuinely user-entered (tracker form + inline edit).
+- DEFERRED, FLAG ONLY: `available_units.last_viewing_date` is the exact
+  sibling of the `viewings_count` column r570 fixed — three readers (both
+  routes.ts selects r570 touched, plus the asset brief), zero writers,
+  null on every unit. Nothing renders it, so there is no visible symptom
+  to fix against; filed as UX #243 with the two options (drop it, or make
+  it MAX(viewing_date) and show viewing recency under the chip).
+- Suggestions added: UX #242 (the property page now offers two vacancy
+  rates nine points apart — 46.7% of the 165-row leasing board on the
+  scorecard, 75 of 199 on the tenancy master — with neither stating its
+  basis; the scorecard now mixes sources, WAULT off the master and vacancy
+  off the leasing board), UX #243 (the dead last_viewing_date column / no
+  screen shows viewing recency). #235 left UNBUILT: "Area —" is an honest
+  dash on a genuinely null crm_properties.sqft, and the property-detail
+  component does not load the tenancy schedule, so filling it is a feature
+  needing Woody's numbered confirmation, not a defect fix.
+- New flakes: none. Fixture untouched (read-only round, no probe rows).
+- Next journey: r571 was LIGHT -> r572 FULL, rotation #1 BGP staff desktop
+  1440px.
 
 ### r570 · 2026-09-06 · FULL (rotation #4 BGP staff, mobile 390px) · 1 bug fixed — the unit payload's `viewingsCount` came from a denormalised column nothing has ever written, so it read 0 viewings on all 81 tracker units while the tracker's own live count read 2 on one of them · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

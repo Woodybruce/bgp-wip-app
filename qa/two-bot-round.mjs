@@ -237,6 +237,51 @@ async function ervPsfTile(pg, propertyId) {
   }, propertyId);
 }
 
+// r571 — the asset-brief scorecard is served to the client landlord on his
+// own property page. Both its lease-term and its occupancy must agree with
+// the boards they are drawn from: WAULT with the tenancy master under the
+// board's own rule (>60yr terms are placeholder expiry dates and excluded;
+// rent-weighted when any row carries a passing rent, else a simple mean),
+// and occupied_units with the leasing board's stat pill (status 'Occupied').
+async function assetBriefScorecard(page, pid) {
+  return page.evaluate(async (id) => {
+    const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+    const b = await fetch(`/api/properties/${id}/asset-brief`, { headers: auth });
+    if (!b.ok) return { status: b.status };
+    const brief = await b.json();
+    const t = await fetch(`/api/tenancy-schedule/property/${id}`, { headers: auth });
+    if (!t.ok) return { tStatus: t.status };
+    const tj = await t.json();
+    const rows = Array.isArray(tj) ? tj : (tj.units || tj.rows || []);
+    const now = Date.now();
+    const inRange = rows
+      .map((r) => ({
+        y: r.lease_expiry ? (new Date(r.lease_expiry).getTime() - now) / 31557600000 : 0,
+        rent: Number(r.passing_rent_pa) || 0,
+      }))
+      .filter((r) => r.y > 0 && r.y <= 60);
+    const rentTotal = inRange.reduce((s, r) => s + r.rent, 0);
+    const expectWault = inRange.length
+      ? (rentTotal > 0
+          ? inRange.reduce((s, r) => s + r.y * r.rent, 0) / rentTotal
+          : inRange.reduce((s, r) => s + r.y, 0) / inRange.length)
+      : null;
+    const l = await fetch(`/api/leasing-schedule/property/${id}`, { headers: auth });
+    let expectOcc = null, leasingTotal = null;
+    if (l.ok) {
+      const lj = await l.json();
+      const lr = Array.isArray(lj) ? lj : (lj.units || lj.rows || []);
+      leasingTotal = lr.length;
+      expectOcc = lr.filter((u) => u.status === 'Occupied').length;
+    }
+    const perf = brief.performance || {};
+    return {
+      wault: perf.wault_years, expectWault, waultUnits: inRange.length,
+      occ: perf.occupied_units, expectOcc, total: perf.total_units, leasingTotal,
+    };
+  }, pid);
+}
+
 async function step(page, persona, scenario, fn) {
   currentScenario[persona] = scenario;
   if (process.env.QA_DEBUG) console.log(`  [dbg ${new Date().toISOString()}] step ${scenario}`);
@@ -3690,6 +3735,23 @@ async function victoriaRound(page, cross) {
     cross.mlroDealId = r.id;
     cross.mlroPropertyId = r.propertyId;
     cross.mlroStamp = stamp;
+  });
+
+
+  await step(page, p, 'staff-asset-brief-scorecard-agrees-with-its-boards', async () => {
+    const r = await assetBriefScorecard(page, BLUEWATER);
+    if (r.status) throw new Error(`staff asset brief returned ${r.status}`);
+    if (r.tStatus) throw new Error(`staff tenancy schedule returned ${r.tStatus}`);
+    if (r.expectWault == null) throw new Error('fixture has no live lease expiry to weight a WAULT from');
+    if (r.wault == null) {
+      throw new Error(`asset brief WAULT reads "—" while the tenancy master carries ${r.waultUnits} live expiries worth ${r.expectWault.toFixed(1)} yrs`);
+    }
+    if (Math.abs(Number(r.wault) - r.expectWault) > 0.1) {
+      throw new Error(`asset brief WAULT ${Number(r.wault).toFixed(1)} yrs but its own tenancy rows work out at ${r.expectWault.toFixed(1)} yrs`);
+    }
+    if (r.expectOcc != null && r.occ !== r.expectOcc) {
+      throw new Error(`asset brief says ${r.occ} occupied of ${r.total} but the leasing board it counts says ${r.expectOcc} of ${r.leasingTotal}`);
+    }
   });
 
   await step(page, p, 'staff-leasing-board-stays-its-own-trimmed-set', async () => {
@@ -8326,6 +8388,24 @@ async function markRound(page, cross) {
 
   // r569 client half of staff-tenancy-erv-psf-tile-reads-a-rate — the tile
   // is the landlord's only headline rate on his own rent roll.
+  await step(page, p, 'client-asset-brief-scorecard-agrees-with-its-boards', async () => {
+    // The landlord reads Vacancy + WAULT off his own property page. Both
+    // came from tables that could not supply them (r571).
+    const r = await assetBriefScorecard(page, BLUEWATER);
+    if (r.status) throw new Error(`client asset brief returned ${r.status}`);
+    if (r.tStatus) throw new Error(`client tenancy schedule returned ${r.tStatus}`);
+    if (r.expectWault == null) throw new Error('fixture has no live lease expiry to weight a WAULT from');
+    if (r.wault == null) {
+      throw new Error(`client asset brief WAULT reads "—" while his tenancy board carries ${r.waultUnits} live expiries worth ${r.expectWault.toFixed(1)} yrs`);
+    }
+    if (Math.abs(Number(r.wault) - r.expectWault) > 0.1) {
+      throw new Error(`client asset brief WAULT ${Number(r.wault).toFixed(1)} yrs but his own tenancy rows work out at ${r.expectWault.toFixed(1)} yrs`);
+    }
+    if (r.expectOcc != null && r.occ !== r.expectOcc) {
+      throw new Error(`client asset brief says ${r.occ} occupied of ${r.total} but the leasing board it counts says ${r.expectOcc} of ${r.leasingTotal}`);
+    }
+  });
+
   await step(page, p, 'client-tenancy-erv-psf-tile-reads-a-rate', async () => {
     await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
     await page.waitForLoadState('networkidle').catch(() => {});
