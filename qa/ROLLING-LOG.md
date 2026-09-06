@@ -88,16 +88,99 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r567 · 2026-09-06 · LIGHT (r566 had the journey) · ROUND IN PROGRESS
+### r567 · 2026-09-06 · LIGHT (r566 had the journey) · 1 bug fixed — half the tenancy schedule's money columns printed with no £, so Rates Payable read "190,088" beside Service Charge's "£252,312" on the same row, for staff and client alike · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke).
-  Regression: smoke GREEN 42/0.
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
+  browser work + two-bot via qa/with-server.sh). Regression: smoke GREEN 42/0
+  before and GREEN 42/0 after the fix.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
   Tally victoria 4x400 (POST /rocketreach/discover + the deliberate invalid
-  POST /api/investment-tracker probe — listed keyless noise) / mark 9x403 +
-  1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, twenty-seventh clean
-  hand-off. 0 app bugs from the scripted regression.
-- Triage: nothing outside listed environment noise. Deep angle in progress.
+  POST /api/investment-tracker probe — listed keyless noise, read the class
+  not the count) / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE
+  CONFIRMED, twenty-seventh clean hand-off. 0 app bugs from the scripted
+  regression.
+- No journey (LIGHT). Deep angle: picked up r566's deferred UX #232 after
+  confirming it is a live consistency defect, not a preference.
+- BUG FIXED (client/src/components/PropertyTenancySchedule.tsx). The
+  schedule decided "is this money?" from the FIELD NAME
+  (rent/income/charge/insurance/occ_costs/erv/shortfall), not from the
+  column's own declared type — so 7 of the 16 columns declared type
+  "currency" printed as bare numbers: Rates Payable, Rateable Value, Capex,
+  NOI (pa), Topped Up NOI, Deposit Held, Arrears. On SVL08 Bluewater the
+  Outgoings band read Service Charge "£252,312" next to Rates Payable
+  "190,088", Deposit Held "72,000" and Arrears "164,147" — no currency mark,
+  so on the landlord's own sheet a rates bill was typographically
+  indistinguishable from a floor area, and an arrears figure gave no clue
+  whether it was pounds. Live on the fixture: rates_payable populated on
+  159 of 199 Bluewater rows, arrears on 57, deposit on 17. Both personas
+  identically affected (this one was never a client-only branch — the staff
+  InlineEdit cell repeated the same rule verbatim). Fix: isMoneyColumn()
+  answers from the declared type first and keeps the field-name test only as
+  a fallback for money columns typed "num" (nothing currently relies on it —
+  the only two name-matching non-currency columns, erv_profile and
+  shortfall_liability, are type "text" and never reach that branch); and
+  InlineEdit's display now calls fmtCellForDisplay with the DECLARED column
+  type passed down as colType, instead of re-implementing the rule against
+  the flattened input type "number". One authority, both branches.
+  Verified LIVE both personas back to back (qa/r567-verify.mjs, shots
+  r567-victoria.png / r567-mark.warne.png): post-fix Rates Payable
+  "£190,088", Deposit Held "£72,000", Arrears "£164,147", Service Charge
+  "£252,312", ERV "£405,273" — identical strings for Victoria and Mark;
+  pre-fix (same script over a stashed component) the three read "190,088" /
+  "72,000" / "164,147". tsc clean, smoke re-green.
+- CHECKED, NOT BUGS: the three Unexp (Expiry/Break/Review) columns and T/O %
+  now read identically for both personas ("72"/"72"/"12"/"10.00") — r566
+  left them raw deliberately and there is no residue. The mobile card list
+  was already using fmtCurrency/fmtNum, so it never had the raw-cell
+  problem. Tenancy KPI tiles reconcile with the board: Occupied 124 +
+  Vacant 76 = 200 = rows rendered = payload length, and Total NIA 623,653 /
+  Service Charge £11.37m equal the sums over the payload for BOTH personas
+  (the earlier tile-vs-filter work at r556 still holds).
+- CODE-HEALTH OBSERVATION (deferred, no user impact found): the
+  PropertyTenancySchedule `readOnly` prop is dead — neither caller
+  (PropertyUnifiedSchedule, tenancy-schedule-full) passes it, so three
+  guards keyed on it are permanently inert: the "read-only viewers don't
+  see synthetic Letting-Tracker rows" filter (lines ~1257/1553, both card
+  and table branches, so clients DO see the one synthetic vacant row —
+  arguably what a landlord wants) and the links-query `enabled` guard whose
+  comment claims it is skipping "a guaranteed 403". Probed live: the client
+  gets 200, not 403 — /api/tenancy-schedule/property/:id/links came off the
+  client-blocked list deliberately (server/index.ts:3737) and scope-checks
+  the property, so the comment is stale, not the code. Payload content
+  checked for the client seam: it ships id/name/status/tenant_id/rent_pa for
+  deals at the client's OWN property plus their available_units — the
+  client's own rent and their own marketing statuses, nothing of BGP's.
+  Fetched-and-unused for clients (the read-only row branch drops the LT and
+  deal badges — that is UX #233), so it is waste rather than a leak. Left
+  alone: switching those guards to the real viewer state would take a row
+  off the client's board that the tiles still count, i.e. it would create a
+  r556-class mismatch to tidy an inert prop.
+- HARNESS GROWTH (qa/two-bot-round.mjs), the staff/client pair:
+  victoria · staff-schedule-money-columns-carry-the-pound and
+  mark · client-schedule-money-columns-carry-the-pound — each picks a unit
+  from its OWN payload (rates_payable > 999 plus, respectively, a service
+  charge or an arrears balance > 999), finds the row by unit number and
+  asserts each money cell matches /^£[\d,]+$/. Non-vacuous: the client one
+  fails on the pre-fix build with `client rates payable "87,690" on U049
+  Bluewater - Upper Level prints without a currency mark`.
+- UX-NOTES: #232 moved to Confirmed/done (fixed as a defect, not built as a
+  suggestion). New #234 — the phone card list leads with Passing Rent as its
+  one headline money figure, and passing_rent_pa is null on all 199
+  Bluewater rows, so every card is headed by "—" while the same row carries
+  a populated ERV / Service Charge / Rates Payable; the vacant-card branch
+  right beside it already falls back to "£405,273 asking". One for the 390px
+  round to confirm on the real phone shell.
+- Still open and unbuilt: UX #150, #157, #162, #170, #171, #172, #174-#231,
+  #233, #234.
+- Carry-forward from r566: nothing left open. New flakes: none.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r567 was LIGHT -> r568 FULL. Rotation is due #3 Landsec client ·
+  mobile 390px (use a real mobile context — iPhone UA + touch, container
+  gotcha (c)). Chase there: UX #234 on the actual card list, and #233/#231
+  are both phone-relevant. Method worth reusing: when a formatter decides
+  from a NAME rather than from the declared type, enumerate the whole column
+  table and print which entries the two disagree about — the mismatch list
+  is the bug report, and it took one script to write.
 
 ### r566 · 2026-09-06 · FULL (rotation #2 Landsec client · desktop 1440px) · 1 bug fixed — the client's Tenancy Schedule rendered every money, area and date cell RAW, so the landlord and the agent read different strings off the same row · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

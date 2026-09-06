@@ -4,7 +4,7 @@ import { chromium } from '/home/user/bgp-wip-app/node_modules/playwright/index.m
 const BASE='http://127.0.0.1:5000';
 const PROP='cccccccc-0000-0000-0000-000000000001';
 const UNIT='SVL08 Bluewater - Upper Level';
-const WANT=['Service Charge','Rates Payable','Rateable Value','Deposit Held','Arrears','Capex','NOI (pa)','Topped Up NOI','Passing Rent','ERV (pa)'];
+const WANT=['Service Charge','Rates Payable','Rateable Value','Deposit Held','Arrears','Capex','NOI (pa)','Topped Up NOI','Passing Rent','ERV (pa)','Unexp (Expiry) mths','Unexp (Break) mths','Unexp (Review) mths','T/O %','NIA','Expiry'];
 const browser = await chromium.launch({executablePath:'/opt/pw-browsers/chromium', args:['--no-sandbox']});
 for(const who of ['victoria@brucegillinghampollard.com','mark.warne@landsec.com']){
   const ctx = await browser.newContext({viewport:{width:1440,height:1000}});

@@ -13,6 +13,21 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+234. 2026-09-06 · Landsec client / desktop + phone card list (QA r567) · Mark
+    reads a Bluewater unit on the tenancy card list · The phone card leads
+    with Passing Rent as its one headline money figure (top-right, bold,
+    tabular) — and passing_rent_pa is null on all 199 Bluewater rows, so
+    every card's headline reads "—" while the same rows carry a populated
+    ERV (£405,273), Service Charge (142 of 199) and Rates Payable (159 of
+    199). The desktop sheet at least shows the neighbouring columns; the
+    phone card shows the one empty field and nothing else numeric. The
+    dashboard already handles this case ("no passing rent recorded yet",
+    note #4). Suggestion: fall back on the card headline — passing rent if
+    set, else ERV labelled "ERV" (the vacant-card branch already does
+    exactly this with "£405,273 asking"), so a phone card is never headed
+    by a dash when the row has money on it. Worth confirming on the phone
+    shell in the next 390px round.
+
 231. 2026-09-06 · Landsec client / desktop 1440px (QA r566) · Mark clicked the
     dashboard's "Expiring (6m) · 7 · leases expiring soon · click to list"
     tile, saw "Nando's Chickenland Limited · Bluewater · 28 Sept 26" in the
@@ -25,19 +40,6 @@ what happened · concrete suggested improvement.
     schedule's existing search box from it and scroll that row into view —
     the same deep-link-filter pattern the tracker status pills and the
     r564 ?noFee=1 deals link already use.
-
-232. 2026-09-06 · Landsec client / desktop 1440px (QA r566) · Mark read the
-    Occupational Costs and Covenant bands across a Bluewater row · Adjacent
-    money columns disagree about being money: Service Charge and Insurance
-    render "£90,552" / "£3,575", while Rates Payable, Rateable Value, Capex,
-    Topped Up NOI, NOI (pa), Deposit Held and Arrears render "128,760" /
-    "-26,176" with no £ at all — same row, same units, same sheet. The cause
-    is that the number formatter decides currency from the FIELD NAME
-    (rent/income/charge/insurance/erv/shortfall) rather than from the
-    column's own declared type: those columns are all type "currency" in the
-    column table and simply don't match the name test. Affects staff and
-    client identically. Suggestion: format from the declared column type, so
-    every column the schedule calls currency prints a £.
 
 233. 2026-09-06 · Landsec client / desktop 1440px (QA r566) · Mark worked the
     expiring-leases list: Nando's SVL02 expires 28 Sept 2026, three weeks
@@ -1343,6 +1345,25 @@ below stay parked, not built. Rounds shouldn't re-log them.)
     so the fix should cover /companies/:id for both personas.)
 
 ## Confirmed / done
+
+232. 2026-09-06 · Landsec client / desktop 1440px (QA r566) · Mark read the
+    Occupational Costs and Covenant bands across a Bluewater row · Adjacent
+    money columns disagree about being money: Service Charge and Insurance
+    render "£90,552" / "£3,575", while Rates Payable, Rateable Value, Capex,
+    Topped Up NOI, NOI (pa), Deposit Held and Arrears render "128,760" /
+    "-26,176" with no £ at all — same row, same units, same sheet. The cause
+    is that the number formatter decides currency from the FIELD NAME
+    (rent/income/charge/insurance/erv/shortfall) rather than from the
+    column's own declared type: those columns are all type "currency" in the
+    column table and simply don't match the name test. Affects staff and
+    client identically. Suggestion: format from the declared column type, so
+    every column the schedule calls currency prints a £.
+   → FIXED as a defect, not built as a suggestion — QA r567. The
+    currency decision now comes from the declared column type (with the
+    field-name test kept only as a fallback for money columns typed "num"),
+    and the staff cell shares that one authority instead of repeating the
+    rule, so Rates Payable / Deposit Held / Arrears read "£190,088" /
+    "£72,000" / "£164,147" for both personas.
 
 103. 2026-08-27 · BGP staff / desktop 1440px (QA r392) · "check a unit's
     rateable value" · The Business Rates entry-detail sheet slides up as a
