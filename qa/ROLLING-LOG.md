@@ -63,6 +63,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - tsx does not hot-reload server/*.ts — restart the server after server fixes
 - (r262) first smoke pass right after FRESH_BUILD can time out the client
   UI-login check (cold first page load); re-run before triaging as real
+- (r572) a two-bot CHUNK can die outright at `login()`
+  (two-bot-round.mjs:105) when it follows two other chunks — the login rate
+  limiter, the same 429 class already listed as noise. Re-run the same
+  chunk before triaging; the re-run was clean.
 
 ## Fresh-container setup (learned r205)
 - Repo may not be pre-cloned; clone to /workspace/bgp-wip-app.
