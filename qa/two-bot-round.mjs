@@ -3353,6 +3353,56 @@ async function victoriaRound(page, cross) {
     await trackerStatusDeepLink(page, 'staff');
   });
 
+  await step(page, p, 'staff-tracker-compliance-dot-reads-the-fee', async () => {
+    // r563: the tracker's Ref-cell compliance dot flags a SOL+ deal missing
+    // AML or a fee agreement. Drives both halves on the real board and puts
+    // the deal back exactly as it found it (mark's chunk needs it at NEG).
+    const pick = await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const u = await (await fetch('/api/available-units', { headers: h })).json();
+      const d = await (await fetch('/api/crm/deals', { headers: h })).json();
+      const units = Array.isArray(u) ? u : (u.data || []);
+      const deals = Array.isArray(d) ? d : (d.data || []);
+      const dm = new Map(deals.map(x => [x.id, x]));
+      const unit = units.find(x => x.dealId && dm.get(x.dealId)?.dealRef);
+      if (!unit) return null;
+      const deal = dm.get(unit.dealId);
+      return { unitId: unit.id, dealId: deal.id, unitStatus: unit.marketingStatus,
+               status: deal.status, fee: deal.feeAgreement, aml: deal.amlCheckCompleted };
+    });
+    if (!pick) throw new Error('no tracker unit with a linked, referenced deal');
+    const put = async (body) => page.evaluate(async ([id, b]) => {
+      const r = await fetch(`/api/crm/deals/${id}`, { method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        body: JSON.stringify(b) });
+      return r.status;
+    }, [pick.dealId, body]);
+    const dotTitle = async () => {
+      await page.goto(`${BASE}/available?status=SOL`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(3000);
+      return page.evaluate((id) => {
+        const el = document.querySelector(`[data-testid="compliance-flag-${id}"]`);
+        return el ? el.getAttribute('title') : null;
+      }, pick.unitId);
+    };
+    try {
+      if (await put({ status: 'SOL', feeAgreement: 'NO', amlCheckCompleted: 'YES' }) !== 200) throw new Error('staff could not promote the deal to SOL');
+      const gap = await dotTitle();
+      if (!/Fee agreement/.test(gap || '')) throw new Error(`SOL deal with no fee agreement showed dot ${JSON.stringify(gap)}`);
+      if (await put({ feeAgreement: 'YES' }) !== 200) throw new Error('staff could not sign off the fee agreement');
+      const clear = await dotTitle();
+      if (clear) throw new Error(`fee agreement signed but the dot still reads ${JSON.stringify(clear)}`);
+    } finally {
+      await put({ status: pick.status, feeAgreement: pick.fee, amlCheckCompleted: pick.aml });
+      await page.evaluate(async ([id, st]) => {
+        await fetch(`/api/available-units/${id}`, { method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+          body: JSON.stringify({ marketingStatus: st }) });
+      }, [pick.unitId, pick.unitStatus]);
+    }
+  });
+
   await step(page, p, 'staff-brand-add-to-deal-lands-on-deals', async () => {
     // r559: the brand profile's "Add to deal" button navigated to
     // /deals?search=<brand>, but /deals is the WIP REPORT — only the Deals
@@ -7706,6 +7756,28 @@ async function markRound(page, cross) {
       if (bad.echo) throw new Error(`phone tracker card title repeats the property name: "${bad.echo}"`);
       if (bad.dash) throw new Error(`phone tracker card keeps an empty Area/Rent row (UX #135): ${bad.dash}`);
     } finally { await mobCtx.close(); }
+  });
+
+  await step(page, p, 'client-tracker-dot-never-driven-by-the-fee', async () => {
+    // r563: the dot's client half computed feeOk = deal.feeAgreement === 'YES'
+    // on a field stripDealFees deliberately nulls for clients, so EVERY
+    // instructed deal on the client board carried a red "Compliance gap:
+    // Fee agreement" that staff, on the same row, saw clear. The client may
+    // only ever be flagged on AML — the one compliance field they are sent.
+    const deals = await page.evaluate(async () => {
+      const r = await fetch('/api/crm/deals', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      const j = await r.json();
+      return Array.isArray(j) ? j : (j.data || []);
+    });
+    if (!deals.length) throw new Error('client sees no deals at all');
+    const leaked = deals.filter(d => d.feeAgreement != null).map(d => d.dealRef);
+    if (leaked.length) throw new Error(`client payload still carries feeAgreement on deal(s) ${leaked.join(',')}`);
+    await page.goto(`${BASE}/available?status=SOL`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(3000);
+    const fee = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="compliance-flag-"]')]
+      .map(e => e.getAttribute('title') || '').filter(t => /Fee agreement/.test(t)));
+    if (fee.length) throw new Error(`client board flags a fee-agreement gap it cannot see: ${fee.join(' | ')}`);
   });
 
   await step(page, p, 'client-tracker-no-inline-company-create', async () => {

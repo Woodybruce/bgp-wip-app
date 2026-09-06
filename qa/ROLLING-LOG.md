@@ -88,17 +88,72 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r563 · 2026-09-06 · LIGHT (r562 had the journey) · ROUND IN PROGRESS
+### r563 · 2026-09-06 · LIGHT (r562 had the journey) · 1 bug fixed — the client Letting Tracker flagged a "Compliance gap: Fee agreement" on every instructed deal, driven by a field clients are never sent · r562's other carry-forward CLOSED as not-a-bug · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke).
-  Regression: smoke GREEN 42/0.
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
+  browser work + two-bot via qa/with-server.sh). Regression: smoke GREEN 42/0
+  before and GREEN 42/0 after the fix.
 - Two-bot three-chunk pass: every scenario [ok]. Tally victoria 4x400 (all
   POST /rocketreach/discover, listed keyless noise) / mark 9x403 + 1x503 /
-  woody,nick,sam 0 — baseline CONFIRMED, twenty-third clean hand-off.
-- Triage: 0 app bugs from the scripted regression. Focus for the rest of the
-  round: r562's re-deferred pair — the desktop tracker table's deal lookup on
-  a SOL row (Ref cell printed "—") and the per-unit compliance dot's
-  client-side feeOk test on a field clients are never sent.
+  woody,nick,sam 0 — baseline CONFIRMED before and after, twenty-third clean
+  hand-off. 0 app bugs from the scripted regression.
+- CARRY-FORWARD (a) CLOSED, NOT A BUG — r562's "the tracker's Ref cell prints
+  '—' on a SOL row for both personas". It does not. The desktop pill row's
+  testids are stat-card-<code>, NOT stat-chip-<code> (the chip ids exist only
+  on mobile/compact), so r562's SOL click silently no-opped and it read the
+  UNFILTERED default board, where the SOL unit is absent by design. Clicking
+  stat-card-sol at 1600px: both personas get the row, "#1002" linked in Ref,
+  SOLICITORS 1 on the pill. Also probed at API level — 0 units whose dealId
+  fails to resolve in /api/crm/deals, for staff and client alike
+  (qa/r563-tracker-deal-resolve.mjs). Nothing to fix.
+- BUG FIXED (client/src/pages/available-units.tsx, client-facing false alarm):
+  carry-forward (b), now reproducible. The Ref-cell compliance dot computes
+  feeOk = deal.feeAgreement === "YES" — a field stripDealFees deliberately
+  nulls for clients (r561). So on the CLIENT board every deal at SOL or past
+  it carried a red "Compliance gap: Fee agreement" that could never clear,
+  while staff on the same row, the same second, saw it clear. PROVEN live:
+  deal #1002 to SOL with feeAgreement YES + amlCheckCompleted YES, /available
+  at 1600px as both personas — Victoria: no dot; Mark: "Compliance gap: Fee
+  agreement". A landlord being told by their agent's own portal that the fee
+  agreement isn't in place when it is signed, on every instructed deal, with
+  no way to act on it. Fix: feeOk = isClientTracker || deal.feeAgreement ===
+  "YES" — the client's dot is the AML flag only, which is exactly the one
+  compliance field r561 deliberately kept on their payload. Verified after:
+  fee YES + aml YES -> no dot for either persona; aml NO -> BOTH read
+  "Compliance gap: AML". tsc clean, smoke re-green.
+- PRIORITY ANGLE DONE (r561's four "cleared only because they return []"):
+  now proven, not assumed. /api/activity-feed, /api/notifications and
+  /api/daily-digest each hard-return [] for a client login at the top of the
+  handler (isClientRequestUser) — empty by CODE, not by fixture. /api/insights
+  is the one that really serves clients, so it was SEEDED and probed
+  (qa/r563-insights-probe.mjs + r563-insights-read.mjs): a staff-audience row
+  with BGP's unbilled-WIP figure in it, a rival client's private portfolio
+  row, and a public 'all' row. Victoria saw all three; Mark saw ONLY the
+  public one. Gate holds. Seed rows deleted after. Do not re-do this set.
+- HARNESS GROWTH (qa/two-bot-round.mjs), one per persona, both [ok]:
+  victoria · staff-tracker-compliance-dot-reads-the-fee drives the whole dot
+  on the real board — promotes a linked deal to SOL with no fee agreement,
+  asserts the dot reads "Fee agreement", signs the fee off, asserts the dot
+  clears, then restores the deal AND the unit row exactly as found (this
+  matters: leaving the deal at SOL breaks client-unit-form-no-bgp-fee and
+  client-tracker-status-deeplink-filters — verified, it is the mutation not
+  the app). mark · client-tracker-dot-never-driven-by-the-fee asserts
+  feeAgreement is null on every deal in the client payload (non-vacuous
+  today) and that no rendered dot on their board names a fee-agreement gap
+  (the regression guard; it only bites while a SOL+ deal is on their board,
+  which the fixture does not ship — noted deliberately).
+- Suggestion added: UX-NOTES #226 (the client tracker's compliance dot is a
+  6px hover-only tooltip with no legend and no phone-card equivalent).
+- Still open and unbuilt: UX #150, #157, #162, #170, #171, #172, #174-#226.
+- New flakes: none. Setup note worth keeping: the tracker's status pills are
+  stat-card-<code> on desktop and stat-chip-<code> on mobile/compact — a
+  script using the wrong family gets no error, just the unfiltered board.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r563 was LIGHT -> r564 FULL. Rotation is due #1 BGP staff · desktop.
+  Method worth reusing: take a field the server deliberately strips for one
+  persona, then find the CLIENT-SIDE code that still tests it — a stripped
+  field does not read as "unknown", it reads as "no", and the UI states it as
+  fact to the person who cannot correct it.
 
 ### r562 · 2026-09-06 · FULL (rotation #4 BGP staff MOBILE 390px) · 1 bug fixed — saving a note on the Letting Tracker's Edit Unit dialog silently regressed the live deal from Negotiating back to Marketing · 1 re-deferred · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

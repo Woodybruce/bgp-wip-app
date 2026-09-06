@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+226. 2026-09-06 · Landsec client / desktop (QA r563) · Reading the Letting
+    Tracker's Ref column · The red compliance dot beside a deal ref is the
+    only compliance signal a client gets on that board, and its tooltip is
+    the only place the reason lives — you have to hover a 6px dot to learn
+    that AML is outstanding on your own instruction. There is no dot legend,
+    no column header hint, and nothing on the phone card at all. Suggested:
+    give the client tracker a one-line legend under the chip row ("● AML
+    outstanding on this deal — your BGP contact is chasing it") and carry the
+    same flag onto the phone card, so the signal is readable without a mouse.
+    Needs Woody's numbered confirmation — not built.
+
 225. 2026-09-06 · BGP staff / mobile 390px (QA r562) · Journey "log a viewing
     on the tracker" · The Add Viewing dialog's Contact picker lists EVERY
     contact in the CRM even after a Company has been chosen — 15 names on a

@@ -2115,7 +2115,12 @@ export default function AvailableUnitsPage() {
                             </a>
                             {(() => {
                               const amlOk = deal.amlCheckCompleted === "YES" || deal.amlCheckCompleted === "N-A";
-                              const feeOk = deal.feeAgreement === "YES";
+                              // Clients are never sent feeAgreement (stripDealFees nulls
+                              // the whole fee family), so testing it here flagged EVERY
+                              // instructed deal on their board as a fee-agreement gap
+                              // while staff, on the same row, saw it clear. Their dot is
+                              // the AML flag only — the one compliance field they do get.
+                              const feeOk = isClientTracker || deal.feeAgreement === "YES";
                               const code = legacyToCode(deal.status);
                               // Only flag for deals on/past SOL — pre-SOL the fields don't matter yet.
                               const promoted = code === "SOL" || code === "EXC" || code === "COM" || code === "INV";
