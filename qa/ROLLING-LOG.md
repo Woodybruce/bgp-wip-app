@@ -88,6 +88,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r568 · 2026-09-06 · FULL (rotation #3 Landsec client · mobile 390px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke).
+  Regression: smoke GREEN 42/0.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (all POST /rocketreach/discover — listed keyless
+  noise) / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED,
+  twenty-eighth clean hand-off. 0 app bugs from the scripted regression.
+- Journey in progress: Mark on the phone shell (iPhone UA + touch, 390px),
+  carrying forward UX #234 (phone tenancy card headlines Passing Rent, null
+  on all 199 Bluewater rows) to confirm live.
+
 ### r567 · 2026-09-06 · LIGHT (r566 had the journey) · 1 bug fixed — half the tenancy schedule's money columns printed with no £, so Rates Payable read "190,088" beside Service Charge's "£252,312" on the same row, for staff and client alike · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
