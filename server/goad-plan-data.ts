@@ -224,6 +224,73 @@ interface PlaceMatch {
 }
 
 /**
+ * Bbox-wide Nearby Search — fetches every operational business inside
+ * the subject's bbox, paginated. Used as a *discovery* source (vs the
+ * existing per-unit `googlePlacesAtCoord` which only reads what's at a
+ * known coordinate). This is what gives us comprehensive retail
+ * coverage where VOA + brand_stores leave gaps.
+ *
+ * Costs: ~3 API calls per render (up to 60 places). Each call is ~$0.032.
+ * We don't cache yet — fresh data on every render is fine for the
+ * volume we'll do, and Places is what users complain about being stale.
+ */
+interface NearbyPlace {
+  placeId: string;
+  name: string;
+  lat: number;
+  lng: number;
+  types: string[];
+  businessStatus: string;
+}
+
+async function nearbyPlacesInBbox(
+  centre: { lat: number; lng: number },
+  halfMeters: number,
+): Promise<NearbyPlace[]> {
+  const key = process.env.GOOGLE_API_KEY;
+  if (!key) return [];
+  // Smallest circle that fully contains the square bbox.
+  const radius = Math.min(50_000, Math.ceil(halfMeters * Math.SQRT2));
+  const results: NearbyPlace[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < 3; page++) {
+    const params = new URLSearchParams({
+      location: `${centre.lat},${centre.lng}`,
+      radius: String(radius),
+      key,
+    });
+    if (pageToken) params.set("pagetoken", pageToken);
+    const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?${params}`;
+    try {
+      // Google requires a ~2s delay before next_page_token activates.
+      if (pageToken) await new Promise((r) => setTimeout(r, 2200));
+      const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) break;
+      const data: any = await r.json();
+      for (const res of data.results || []) {
+        if (res.business_status === "CLOSED_PERMANENTLY") continue;
+        const loc = res.geometry?.location;
+        if (typeof loc?.lat !== "number" || typeof loc?.lng !== "number") continue;
+        results.push({
+          placeId: res.place_id,
+          name: res.name,
+          lat: loc.lat,
+          lng: loc.lng,
+          types: res.types || [],
+          businessStatus: res.business_status || "OPERATIONAL",
+        });
+      }
+      pageToken = data.next_page_token;
+      if (!pageToken) break;
+    } catch (err: any) {
+      console.warn("[goad-plan-data/places] nearby search failed:", err?.message);
+      break;
+    }
+  }
+  return results;
+}
+
+/**
  * Nearby search at a specific coord (25m radius). Picks the top result
  * and reads its status. We could also use Place Details but the search
  * response already has business_status so no second call needed.
@@ -379,8 +446,195 @@ export async function buildMappedUnits(args: PlanDataArgs & {
     }
   }
 
-  // 6. CRM overrides.
+  // 5b. Bbox-wide Places discovery — pull EVERY operational business in
+  // the bbox via Nearby Search. For each: snap to existing unit if
+  // within 15m and unnamed, otherwise create a synthetic unit so the
+  // renderer shows it. Closes the "Google has it but VOA doesn't" gap
+  // (luxury brands, new lettings, food trucks, etc).
+  const nearbyPlaces = await nearbyPlacesInBbox(args.subject, halfMeters);
+  let placesAdded = 0;
+  let placesAttached = 0;
+  for (const place of nearbyPlaces) {
+    let bestUnit: MappedUnit | null = null;
+    let bestDist = Infinity;
+    for (const u of unitsByBaRef.values()) {
+      const d = distMeters({ lat: u.lat, lng: u.lng }, { lat: place.lat, lng: place.lng });
+      if (d < bestDist && d <= 15) { bestDist = d; bestUnit = u; }
+    }
+    if (bestUnit) {
+      if (!bestUnit.tenantName) {
+        bestUnit.tenantName = place.name;
+        bestUnit.placeId = place.placeId;
+        bestUnit.tradingStatus = "trading";
+        if (!bestUnit.sourceLayers.includes("google_places_nearby")) {
+          bestUnit.sourceLayers.push("google_places_nearby");
+        }
+        placesAttached++;
+      }
+    } else {
+      // Synthetic key — Places place_ids are stable so we use them directly.
+      const synthKey = `places:${place.placeId}`;
+      if (!unitsByBaRef.has(synthKey)) {
+        unitsByBaRef.set(synthKey, {
+          placeId: place.placeId,
+          lat: place.lat,
+          lng: place.lng,
+          address: place.name,
+          tenantName: place.name,
+          tradingStatus: "trading",
+          category: resolveUnitCategory({
+            brand: place.name,
+            voaDescription: null,
+            placeTypes: place.types,
+            isConfirmedVacant: false,
+            isLikelyVacant: false,
+          }),
+          sourceLayers: ["google_places_nearby"],
+          confidence: 0.6,
+        } as MappedUnit);
+        placesAdded++;
+      }
+    }
+  }
+  console.log(`[goad-plan-data] Places nearby: ${nearbyPlaces.length} found → ${placesAttached} attached to VOA units, ${placesAdded} new units added`);
+
+  // 6. CRM enrichment — three flavours, all best-effort:
+  //    a) brand_stores: every brand store we've researched for a brand
+  //       profile is geocoded with lat/lng. Match by spatial proximity
+  //       to fill in named tenants where Places didn't (especially
+  //       luxury brands that aren't well-indexed in Places)
+  //    b) crm_property_tenants: explicit tenant attribution from the
+  //       CRM (we know who's actually in this building)
+  //    c) available_units: marketed-as-available signals confirmed
+  //       vacancy, overrides any "trading" guess
   let crmOverrides = 0;
+  // a) brand_stores within the bbox — cheap spatial filter
+  try {
+    const { rows: stores } = await pool.query(
+      `SELECT bs.name, bs.lat, bs.lng, bs.status, bs.store_type, c.name AS brand_name
+         FROM brand_stores bs
+    LEFT JOIN crm_companies c ON c.id = bs.brand_company_id
+        WHERE bs.lat IS NOT NULL AND bs.lng IS NOT NULL
+          AND bs.lat BETWEEN $1 AND $2
+          AND bs.lng BETWEEN $3 AND $4
+          AND COALESCE(bs.status, 'open') <> 'closed'`,
+      [bbox.south, bbox.north, bbox.west, bbox.east],
+    );
+    for (const s of stores) {
+      // Snap each brand store to the nearest unit within ~25m. If we
+      // find one and it doesn't already have a tenant name, assign the
+      // brand. Don't overwrite Places matches (which already had a
+      // confirmed name).
+      let bestUnit: MappedUnit | null = null;
+      let bestDist = Infinity;
+      for (const u of unitsByBaRef.values()) {
+        const d = distMeters({ lat: u.lat, lng: u.lng }, { lat: s.lat, lng: s.lng });
+        if (d < bestDist && d <= 25) { bestDist = d; bestUnit = u; }
+      }
+      if (bestUnit && (!bestUnit.tenantName || bestUnit.sourceLayers.indexOf("google_places") === -1)) {
+        bestUnit.tenantName = s.brand_name || s.name;
+        bestUnit.tradingStatus = "trading";
+        if (!bestUnit.sourceLayers.includes("brand_stores")) bestUnit.sourceLayers.push("brand_stores");
+        crmOverrides++;
+      }
+    }
+  } catch (err: any) {
+    console.warn("[goad-plan-data] brand_stores enrichment failed:", err?.message);
+  }
+
+  // b) crm_property_tenants — explicit tenant attribution per property.
+  // Joins through crm_properties to get the address/postcode, then
+  // matches units by postcode + name fuzzy match.
+  try {
+    const { rows: tenants } = await pool.query(
+      `SELECT cp.postcode AS postcode, cp.name AS property_name,
+              c.name AS tenant_name, t.unit_label, t.start_date, t.end_date
+         FROM crm_property_tenants t
+         JOIN crm_properties cp ON cp.id = t.property_id
+         JOIN crm_companies c ON c.id = t.tenant_company_id
+        WHERE cp.postcode IS NOT NULL
+          AND UPPER(REPLACE(cp.postcode, ' ', '')) IN (
+            SELECT DISTINCT UPPER(REPLACE(postcode, ' ', '')) FROM voa_geocode_cache WHERE ba_ref = ANY($1::text[])
+          )
+          AND (t.end_date IS NULL OR t.end_date > CURRENT_DATE)`,
+      [inBboxRefs],
+    );
+    for (const t of tenants) {
+      const tPostcode = String(t.postcode || "").toUpperCase().replace(/\s+/g, "");
+      const propName = String(t.property_name || "").toLowerCase();
+      for (const u of unitsByBaRef.values()) {
+        const uPostcode = String(u.postcode || "").toUpperCase().replace(/\s+/g, "");
+        if (uPostcode !== tPostcode) continue;
+        // Match by address overlap with the CRM property's name.
+        const uAddr = String(u.address || "").toLowerCase();
+        if (uAddr && propName && (uAddr.includes(propName) || propName.includes(uAddr.split(",")[0] || ""))) {
+          if (!u.tenantName || u.sourceLayers.indexOf("google_places") === -1) {
+            u.tenantName = t.tenant_name;
+            u.tradingStatus = "trading";
+            if (!u.sourceLayers.includes("crm_tenants")) u.sourceLayers.push("crm_tenants");
+            crmOverrides++;
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("[goad-plan-data] crm_property_tenants enrichment failed:", err?.message);
+  }
+
+  // c2) shopping_centre_tenants — hand-curated tenant directory for
+  //     multi-tenant schemes (Cardinal Place, Westfield, etc.) where
+  //     VOA can't reach. Each row has lat/lng so we snap-to-unit or
+  //     create a synthetic unit, same pattern as brand_stores.
+  try {
+    const { rows: sctenants } = await pool.query(
+      `SELECT t.tenant_name, t.unit_label, t.category, t.lat, t.lng,
+              t.area_sqft, t.use_class
+         FROM shopping_centre_tenants t
+        WHERE t.lat IS NOT NULL AND t.lng IS NOT NULL
+          AND t.lat BETWEEN $1 AND $2
+          AND t.lng BETWEEN $3 AND $4`,
+      [bbox.south, bbox.north, bbox.west, bbox.east],
+    );
+    for (const t of sctenants) {
+      let bestUnit: MappedUnit | null = null;
+      let bestDist = Infinity;
+      for (const u of unitsByBaRef.values()) {
+        const d = distMeters({ lat: u.lat, lng: u.lng }, { lat: t.lat, lng: t.lng });
+        if (d < bestDist && d <= 12) { bestDist = d; bestUnit = u; }
+      }
+      if (bestUnit) {
+        if (!bestUnit.tenantName) {
+          bestUnit.tenantName = t.tenant_name;
+          if (t.category) bestUnit.category = t.category;
+          if (!bestUnit.sourceLayers.includes("shopping_centre")) {
+            bestUnit.sourceLayers.push("shopping_centre");
+          }
+          bestUnit.tradingStatus = "trading";
+          crmOverrides++;
+        }
+      } else {
+        const key = `centre-tenant:${t.tenant_name}:${t.unit_label || ""}:${t.lat.toFixed(5)}`;
+        if (!unitsByBaRef.has(key)) {
+          unitsByBaRef.set(key, {
+            lat: t.lat,
+            lng: t.lng,
+            address: [t.unit_label, t.tenant_name].filter(Boolean).join(" "),
+            tenantName: t.tenant_name,
+            voaDescription: t.use_class || undefined,
+            tradingStatus: "trading",
+            category: (t.category as any) || "other",
+            sourceLayers: ["shopping_centre"],
+            confidence: 0.75,
+          } as MappedUnit);
+          crmOverrides++;
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("[goad-plan-data] shopping_centre_tenants enrichment failed:", err?.message);
+  }
+
+  // c) available_units → vacancy override (existing behaviour, unchanged)
   try {
     const { rows: crm } = await pool.query(
       `SELECT cp.id, cp.name, cp.address, cp.postcode, au.marketing_status

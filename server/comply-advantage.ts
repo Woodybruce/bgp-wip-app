@@ -15,6 +15,12 @@ const BASE_URL = "https://api.mesh.complyadvantage.com";
 let cachedToken: string | null = null;
 let tokenExpiresAt = 0;
 
+// Circuit breaker — if the API responds with a hard error (405/404/401/403)
+// during a batch, skip the remaining names rather than spamming the logs with
+// one error per contact. Resets on next process restart, or after 10 min.
+let circuitOpenUntil = 0;
+let circuitReason = "";
+
 function getCredentials() {
   const username = process.env.COMPLY_ADVANTAGE_USERNAME?.trim();
   const password = process.env.COMPLY_ADVANTAGE_PASSWORD?.trim();
@@ -32,6 +38,9 @@ export function isComplyAdvantageConfigured(): boolean {
  */
 export async function getToken(): Promise<string> {
   if (cachedToken && Date.now() < tokenExpiresAt) return cachedToken;
+  if (Date.now() < circuitOpenUntil) {
+    throw new Error(`ComplyAdvantage auth cooling down — ${circuitReason}`);
+  }
 
   const { username, password, realm } = getCredentials();
   if (!username || !password || !realm) {
@@ -46,6 +55,16 @@ export async function getToken(): Promise<string> {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    // A failed LOGIN must not retry once per screen: their 429 is a
+    // brute-force lockout ("account blocked after multiple consecutive
+    // login attempts") and every retry keeps the account locked — seen
+    // live 2026-09-06 when the KYC re-screen loop held the lock closed.
+    // Bad credentials (401/403) get the same treatment, shorter.
+    if ([401, 403, 429].includes(res.status)) {
+      circuitReason = `${res.status} on /v2/token`;
+      circuitOpenUntil = Date.now() + (res.status === 429 ? 60 : 15) * 60_000;
+      console.error(`[ComplyAdvantage] Auth failed (${res.status}) — pausing login attempts for ${res.status === 429 ? 60 : 15} minutes so the account can unlock. Check COMPLY_ADVANTAGE_USERNAME/PASSWORD/REALM on Railway.`);
+    }
     throw new Error(`ComplyAdvantage auth failed: ${res.status} ${body.slice(0, 200)}`);
   }
 
@@ -77,6 +96,52 @@ export async function pingComplyAdvantage(): Promise<{ ok: boolean; status?: num
   }
 }
 
+/**
+ * Diagnostic — tries each candidate search-endpoint URL and reports what
+ * comes back. Lets us pinpoint which URL the API expects without guessing.
+ * Hit /api/comply-advantage/probe to see results.
+ */
+export async function probeComplyAdvantage(testName = "John Smith"): Promise<Array<{ label: string; url: string; method: string; status: number | null; body: string; ms: number }>> {
+  const probes = [
+    { label: "Mesh: POST /v2/searches", url: `${BASE_URL}/v2/searches`, method: "POST" },
+    { label: "Mesh: POST /v2/screening/searches", url: `${BASE_URL}/v2/screening/searches`, method: "POST" },
+    { label: "Mesh: POST /v2/screen", url: `${BASE_URL}/v2/screen`, method: "POST" },
+    { label: "Mesh: POST /v2/search", url: `${BASE_URL}/v2/search`, method: "POST" },
+    { label: "Mesh: POST /searches", url: `${BASE_URL}/searches`, method: "POST" },
+    { label: "Legacy: POST /searches", url: `https://api.complyadvantage.com/searches`, method: "POST" },
+    { label: "Legacy v1: POST /searches", url: `https://api.complyadvantage.com/v1/searches`, method: "POST" },
+  ];
+
+  let token: string | null = null;
+  try { token = await getToken(); } catch (e: any) {
+    return [{ label: "TOKEN AUTH", url: `${BASE_URL}/v2/token`, method: "POST", status: null, body: `Auth failed: ${e?.message}`, ms: 0 }];
+  }
+
+  const body = JSON.stringify({
+    search_term: testName,
+    fuzziness: 0.6,
+    filters: { types: ["sanction", "pep", "adverse-media", "warning"] },
+  });
+
+  const results = await Promise.all(probes.map(async (p) => {
+    const t0 = Date.now();
+    try {
+      const r = await fetch(p.url, {
+        method: p.method,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body,
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await r.text().catch(() => "");
+      return { label: p.label, url: p.url, method: p.method, status: r.status, body: text.slice(0, 200), ms: Date.now() - t0 };
+    } catch (e: any) {
+      return { label: p.label, url: p.url, method: p.method, status: null, body: `Error: ${e?.message}`, ms: Date.now() - t0 };
+    }
+  }));
+
+  return results;
+}
+
 export interface ScreeningMatch {
   name: string;
   matchType: string; // "sanctions" | "pep" | "adverse_media" | "warning"
@@ -100,10 +165,15 @@ export async function screenNames(
   names: Array<{ name: string; role?: string }>,
 ): Promise<ScreeningResult[]> {
   if (!isComplyAdvantageConfigured()) return [];
+  if (Date.now() < circuitOpenUntil) {
+    console.warn(`[ComplyAdvantage] Skipping ${names.length} screens — circuit open: ${circuitReason}`);
+    return names.map(({ name, role }) => ({ name, role, status: "clear", matches: [] }));
+  }
   const token = await getToken();
   const results: ScreeningResult[] = [];
 
-  for (const { name, role } of names) {
+  for (let i = 0; i < names.length; i++) {
+    const { name, role } = names[i];
     try {
       const res = await fetch(`${BASE_URL}/v2/searches`, {
         method: "POST",
@@ -122,6 +192,17 @@ export async function screenNames(
 
       if (!res.ok) {
         const body = await res.text().catch(() => "");
+        // 401/403/404/405 are config/endpoint problems — open the circuit so
+        // we don't spam an error per name. Reset after 10 minutes.
+        if ([401, 403, 404, 405].includes(res.status)) {
+          circuitReason = `${res.status} on /v2/searches`;
+          circuitOpenUntil = Date.now() + 10 * 60_000;
+          console.error(`[ComplyAdvantage] Opening circuit for 10min — ${circuitReason}. Body: ${body.slice(0, 200)}`);
+          for (let j = i; j < names.length; j++) {
+            results.push({ name: names[j].name, role: names[j].role, status: "clear", matches: [] });
+          }
+          break;
+        }
         console.error(`[ComplyAdvantage] Screen failed for "${name}": ${res.status} ${body.slice(0, 200)}`);
         results.push({ name, role, status: "clear", matches: [] });
         continue;

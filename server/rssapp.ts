@@ -40,17 +40,24 @@ export async function rssappHealth(): Promise<{ ok: boolean; error?: string; fee
 export async function createRssAppFeed(sourceUrl: string): Promise<RssAppFeed> {
   const auth = authHeader();
   if (!auth) throw new Error("RSS.app not configured (RSSAPP_API_KEY + RSSAPP_API_SECRET)");
-  const res = await fetch(`${RSSAPP_BASE}/feeds`, {
-    method: "POST",
-    headers: { Authorization: auth, "Content-Type": "application/json" },
-    body: JSON.stringify({ url: sourceUrl }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) {
+  // Bulk runs trip RSS.app's rate limiter (429) — the same create succeeds
+  // seconds later, so back off and retry instead of burning the slot.
+  // Content errors (400 "wasn't able to find any posts") are real; no retry.
+  let lastErr = "";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const res = await fetch(`${RSSAPP_BASE}/feeds`, {
+      method: "POST",
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ url: sourceUrl }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (res.ok) return (await res.json()) as RssAppFeed;
     const body = await res.text();
-    throw new Error(`RSS.app create feed failed (${res.status}): ${body.slice(0, 300)}`);
+    lastErr = `RSS.app create feed failed (${res.status}): ${body.slice(0, 300)}`;
+    if (res.status !== 429) break;
+    await new Promise(r => setTimeout(r, 5000 * attempt));
   }
-  return (await res.json()) as RssAppFeed;
+  throw new Error(lastErr);
 }
 
 export async function listRssAppFeeds(): Promise<RssAppFeed[]> {

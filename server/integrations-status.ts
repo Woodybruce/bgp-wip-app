@@ -40,8 +40,21 @@ const KEYS: KeyDef[] = [
   { name: "PIXABAY_API_KEY", label: "Pixabay", group: "Images" },
 
   // CRM enrichment
+  { name: "ROCKETREACH_API_KEY", label: "RocketReach", group: "CRM" },
   { name: "APOLLO_API_KEY", label: "Apollo.io", group: "CRM" },
   { name: "COMPANIES_HOUSE_API_KEY", label: "Companies House", group: "CRM" },
+
+  // Commercial credit / KYB
+  { name: "EXPERIAN_CLIENT_ID", label: "Experian Client ID", group: "KYC" },
+  { name: "EXPERIAN_CLIENT_SECRET", label: "Experian Client Secret", group: "KYC" },
+  { name: "EXPERIAN_USERNAME", label: "Experian Username", group: "KYC" },
+  { name: "EXPERIAN_PASSWORD", label: "Experian Password", group: "KYC" },
+  { name: "EXPERIAN_ENV", label: "Experian environment — MUST be 'production' for real credit data (defaults to sandbox)", group: "KYC" },
+
+  // Scraping / proxy
+  { name: "WEBSHARE_PROXY_USERNAME", label: "Webshare proxy username", group: "Scraping" },
+  { name: "WEBSHARE_PROXY_PASSWORD", label: "Webshare proxy password", group: "Scraping" },
+  { name: "SCRAPERAPI_KEY", label: "ScraperAPI (fallback)", group: "Scraping" },
 
   // Accounting
   { name: "XERO_CLIENT_ID", label: "Xero Client ID", group: "Accounting" },
@@ -61,8 +74,14 @@ const KEYS: KeyDef[] = [
   // Web search / research
   { name: "PERPLEXITY_API_KEY", label: "Perplexity", group: "Research", fallbacks: ["PERPLEXITY_API", "PERPLEXITY API", "PERPLEXITY"] },
   { name: "EXA_API_KEY", label: "Exa.ai", group: "Research" },
+  // Green Street has no news API — coverage comes from the greenstreetnews.com
+  // RSS source plus the subscriber cookie set in News → Sources → Paywall logins
+  // (stored in the DB; this env var is the fallback).
+  { name: "GREENSTREET_AUTH_COOKIE", label: "Green Street News subscriber cookie (set via News → Sources → Paywall logins)", group: "Research" },
 
   // Geospatial
+  { name: "EPC_API_EMAIL", label: "EPC register email (free key — epc.opendatacommunities.org)", group: "Geospatial" },
+  { name: "EPC_API_KEY", label: "EPC register API key (MEES flags on Lease Events)", group: "Geospatial" },
   { name: "OS_PLACES_API_KEY", label: "OS Places / OS Data Hub", group: "Geospatial", fallbacks: ["OS_API_KEY"] },
   { name: "OS_PLACES_API_SECRET", label: "OS Places Secret (optional)", group: "Geospatial" },
 
@@ -82,8 +101,7 @@ const KEYS: KeyDef[] = [
   // Comms / collab
   { name: "AGENTMAIL_API_KEY", label: "AgentMail", group: "Comms" },
 
-  // Payments
-  { name: "STRIPE_SECRET_KEY", label: "Stripe", group: "Payments" },
+  // Payments — Stripe retired (Revolut Business is the live card path).
 
   // Storage
   { name: "DROPBOX_APP_KEY", label: "Dropbox App Key", group: "Storage" },

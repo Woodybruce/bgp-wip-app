@@ -15,13 +15,11 @@ const TEAM_MEMBERS = [
   { name: "Nick Goodman", username: "nickgoodman@brucegillinghampollard.com", email: "nickgoodman@brucegillinghampollard.com", phone: "+44 (0)7818 012 432", role: "Consultant", department: "Investment", team: "Investment" },
   { name: "Jack Barratt", username: "jack@brucegillinghampollard.com", email: "jack@brucegillinghampollard.com", phone: "+44 (0)7788 215 044", role: "Equity Director, Head of Investment", department: "Investment", team: "Investment" },
   { name: "Nick Halley", username: "nick@brucegillinghampollard.com", email: "nick@brucegillinghampollard.com", phone: "+44 (0)7766 042 736", role: "Director", department: "Investment", team: "Investment" },
-  { name: "Ollie Wilkinson", username: "ollie@brucegillinghampollard.com", email: "ollie@brucegillinghampollard.com", phone: "+44 (0)7736 869 317", role: "Associate Director", department: "Investment", team: "Investment" },
   { name: "Jonny Palmer", username: "jonny@brucegillinghampollard.com", email: "jonny@brucegillinghampollard.com", phone: "+44 (0)7506 439 429", role: "Graduate", department: "Investment", team: "Investment" },
   { name: "Peter Wood", username: "peter@brucegillinghampollard.com", email: "peter@brucegillinghampollard.com", phone: "+44 (0)7872 602 336", role: "Head of Lease Consultancy", department: "Lease Advisory", team: "Lease Advisory" },
   { name: "Tom Cater", username: "tom@brucegillinghampollard.com", email: "tom@brucegillinghampollard.com", phone: "+44 (0)7947 484 902", role: "Associate Director", department: "Lease Advisory", team: "Lease Advisory" },
   { name: "Victoria Broadhead", username: "victoria@brucegillinghampollard.com", email: "victoria@brucegillinghampollard.com", phone: "+44 (0)7793 158 133", role: "Head of National", department: "National Leasing", team: "National Leasing" },
   { name: "Lucy Gardiner", username: "lucyg@brucegillinghampollard.com", email: "lucyg@brucegillinghampollard.com", phone: "+44 (0)7741 877 452", role: "Director", department: "National Leasing", team: "National Leasing" },
-  { name: "Rob Barnes", username: "rob@brucegillinghampollard.com", email: "rob@brucegillinghampollard.com", phone: "+44 (0)7494 751 653", role: "Surveyor", department: "National Leasing", team: "National Leasing" },
   { name: "Luke Donohoe", username: "luke@brucegillinghampollard.com", email: "luke@brucegillinghampollard.com", phone: "+44(0)7983 855 926", role: "Graduate Surveyor", department: "National Leasing", team: "National Leasing" },
   { name: "Tracey Pollard", username: "tracey@brucegillinghampollard.com", email: "tracey@brucegillinghampollard.com", phone: "+44 (0)7779 323 306", role: "Head of Development", department: "Development", team: "Development" },
   { name: "Alex Todd", username: "alext@brucegillinghampollard.com", email: "alext@brucegillinghampollard.com", phone: "+44 (0)7526 504 806", role: "Senior Surveyor", department: "Development", team: "Development" },
@@ -29,12 +27,12 @@ const TEAM_MEMBERS = [
   { name: "Harry Elliott", username: "harrye@brucegillinghampollard.com", email: "harrye@brucegillinghampollard.com", phone: "+44 (0)7568 367 777", role: "Director", department: "Tenant Rep", team: "Tenant Rep" },
   { name: "Emily Dumbell", username: "emily@brucegillinghampollard.com", email: "emily@brucegillinghampollard.com", phone: "+44 (0)7805 259 793", role: "Director", department: "Tenant Rep", team: "Tenant Rep" },
   { name: "Evie North", username: "evie@brucegillinghampollard.com", email: "evie@brucegillinghampollard.com", phone: "+44 (0)7595 349 057", role: "Associate Director", department: "Tenant Rep", team: "Tenant Rep" },
-  { name: "Charlotte Roberts", username: "charlotte@brucegillinghampollard.com", email: "charlotte@brucegillinghampollard.com", phone: "+44 (0)7738 448 338", role: "Equity Director, Co-Head London Estates", department: "London Leasing", team: "London Leasing" },
-  { name: "Rupert Bentley-Smith", username: "rupert@brucegillinghampollard.com", email: "rupert@brucegillinghampollard.com", phone: "+44 (0)7876 354 160", role: "Equity Director, Co-Head London Estates", department: "London Leasing", team: "London Leasing" },
-  { name: "Lizzie Knights", username: "lizzie@brucegillinghampollard.com", email: "lizzie@brucegillinghampollard.com", phone: "+44 (0)7511 902 073", role: "Director", department: "London Leasing", team: "London Leasing" },
-  { name: "Lucy Cope", username: "lucy@brucegillinghampollard.com", email: "lucy@brucegillinghampollard.com", phone: "+44 (0)7595 267 866", role: "Associate Director", department: "London Leasing", team: "London Leasing" },
-  { name: "Emily Cann", username: "emilyc@brucegillinghampollard.com", email: "emilyc@brucegillinghampollard.com", phone: "+44 (0)7516 660 791", role: "Graduate Surveyor", department: "London Leasing", team: "London Leasing" },
-  { name: "Will Penfold", username: "willp@brucegillinghampollard.com", email: "willp@brucegillinghampollard.com", phone: "+44 (0)7760 881 270", role: "Graduate Surveyor", department: "London Leasing", team: "London Leasing" },
+  { name: "Charlotte Roberts", username: "charlotte@brucegillinghampollard.com", email: "charlotte@brucegillinghampollard.com", phone: "+44 (0)7738 448 338", role: "Equity Director, Co-Head London Estates", department: "London Retail", team: "London Retail" },
+  { name: "Rupert Bentley-Smith", username: "rupert@brucegillinghampollard.com", email: "rupert@brucegillinghampollard.com", phone: "+44 (0)7876 354 160", role: "Equity Director, Co-Head London Estates", department: "London Retail", team: "London Retail" },
+  { name: "Lizzie Knights", username: "lizzie@brucegillinghampollard.com", email: "lizzie@brucegillinghampollard.com", phone: "+44 (0)7511 902 073", role: "Director", department: "London F&B", team: "London F&B" },
+  { name: "Lucy Cope", username: "lucy@brucegillinghampollard.com", email: "lucy@brucegillinghampollard.com", phone: "+44 (0)7595 267 866", role: "Associate Director", department: "London F&B", team: "London F&B" },
+  { name: "Emily Cann", username: "emilyc@brucegillinghampollard.com", email: "emilyc@brucegillinghampollard.com", phone: "+44 (0)7516 660 791", role: "Graduate Surveyor", department: "London Retail", team: "London Retail" },
+  { name: "Will Penfold", username: "willp@brucegillinghampollard.com", email: "willp@brucegillinghampollard.com", phone: "+44 (0)7760 881 270", role: "Graduate Surveyor", department: "London Retail", team: "London Retail" },
   { name: "Johnny", username: "johnny@brucegillinghampollard.com", email: "johnny@brucegillinghampollard.com", phone: "", role: "", department: "", team: "" },
   { name: "Mark Warne", username: "mark.warne@landsec.com", email: "mark.warne@landsec.com", phone: "", role: "Client", department: "Landsec", team: "Landsec" },
 ];
@@ -84,10 +82,9 @@ export async function seedDatabase() {
 
   const existingProjects = await db.select().from(projects);
   if (existingProjects.length > 0) {
-    const existingUsers = await db.select().from(users);
-    if (existingUsers.length === 0) {
-      await seedUsers();
-    }
+    // Always run — idempotent: inserts seed-listed users that are missing and
+    // heals drifted titles/phones/departments on the ones that exist.
+    await seedUsers();
     await seedFromFile();
     await seedInvestmentTracker();
     await seedLettingTracker();
@@ -206,6 +203,21 @@ async function seedUsers() {
         department: member.department,
         team: (member as any).team || null,
       });
+    } else {
+      // Heal drifted profile fields for seed-listed users. Titles and phones
+      // only ever change in this file (there's no in-app editor for them), so
+      // the seed is authoritative — without this, editing a title here never
+      // reaches a database that already has the user (e.g. Alex Todd's
+      // Surveyor → Senior Surveyor promotion). Team is deliberately NOT
+      // healed: it IS editable in-app and must not be overwritten on boot.
+      const u: any = existing[0];
+      const newRole = member.role || null;
+      const newPhone = member.phone || null;
+      if ((u.role ?? null) !== newRole || (u.phone ?? null) !== newPhone || (u.department ?? null) !== member.department) {
+        await db.update(users)
+          .set({ role: newRole, phone: newPhone, department: member.department })
+          .where(sql`${users.id} = ${u.id}`);
+      }
     }
   }
 
@@ -313,13 +325,14 @@ async function seedInvestmentTracker() {
 
     const compressed = readFileSync(seedPath);
     const sqlContent = gunzipSync(compressed).toString("utf-8");
-    const expectedCount = (sqlContent.match(/^INSERT /gm) || []).length;
 
-    if (existingCount >= expectedCount) {
+    // Only seed a completely empty table — a partial count means users have
+    // deleted rows deliberately, and re-importing would wipe their edits.
+    if (existingCount > 0) {
       return;
     }
 
-    console.log(`[seed] Investment tracker has ${existingCount}/${expectedCount} records — importing...`);
+    console.log(`[seed] Investment tracker empty — importing seed...`);
     const client = await pool.connect();
     try {
       await client.query("DELETE FROM investment_tracker");
@@ -361,11 +374,12 @@ async function seedLettingTracker() {
 
     const compressed = readFileSync(seedPath);
     const sqlContent = gunzipSync(compressed).toString("utf-8");
-    const expectedCount = (sqlContent.match(/INSERT INTO public\.available_units/g) || []).length;
 
-    if (existingCount >= expectedCount) return;
+    // Only seed a completely empty table — a partial count means users have
+    // deleted rows deliberately, and re-importing would wipe their edits.
+    if (existingCount > 0) return;
 
-    console.log(`[seed] Letting tracker has ${existingCount}/${expectedCount} records — importing...`);
+    console.log(`[seed] Letting tracker empty — importing seed...`);
     const client = await pool.connect();
     try {
       await client.query("DELETE FROM unit_marketing_files");

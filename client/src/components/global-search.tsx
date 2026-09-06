@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { Search, Building2, BarChart3, Users, Briefcase, Newspaper, Scale, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { getAuthHeaders } from "@/lib/queryClient";
 import {
   CommandDialog,
   CommandEmpty,
@@ -34,7 +35,7 @@ const typeConfig: Record<string, { icon: typeof Building2; label: string; href: 
   news: { icon: Newspaper, label: "News", href: () => "/news" },
 };
 
-export function GlobalSearch() {
+export function GlobalSearch({ compact }: { compact?: boolean } = {}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -52,28 +53,29 @@ export function GlobalSearch() {
     return () => document.removeEventListener("keydown", down);
   }, []);
 
-  const doSearch = useCallback(async (q: string) => {
+  const doSearch = useCallback(async (q: string, signal: AbortSignal) => {
     if (q.length < 2) {
       setResults([]);
       return;
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { credentials: "include" });
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { credentials: "include", headers: getAuthHeaders(), signal });
       if (res.ok) {
         const data: SearchResponse = await res.json();
-        setResults(data.results);
+        if (!signal.aborted) setResults(data.results);
       }
-    } catch {
-      setResults([]);
+    } catch (err: any) {
+      if (err?.name !== "AbortError") setResults([]);
     } finally {
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => doSearch(query), 300);
-    return () => clearTimeout(timer);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => doSearch(query, ctrl.signal), 300);
+    return () => { clearTimeout(timer); ctrl.abort(); };
   }, [query, doSearch]);
 
   const handleSelect = (result: SearchResult) => {
@@ -94,6 +96,18 @@ export function GlobalSearch() {
 
   return (
     <>
+      {compact ? (
+        /* Phone-shell header (UX #156) — icon-only trigger for the same
+           palette; the w-48 desktop button doesn't fit the header row. */
+        <button
+          onClick={() => setOpen(true)}
+          className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+          title="Search"
+          data-testid="button-global-search"
+        >
+          <Search className="h-4 w-4" />
+        </button>
+      ) : (
       <Button
         variant="outline"
         size="sm"
@@ -107,6 +121,7 @@ export function GlobalSearch() {
           <span className="text-xs">⌘</span>K
         </kbd>
       </Button>
+      )}
 
       <CommandDialog open={open} onOpenChange={setOpen}>
         <CommandInput

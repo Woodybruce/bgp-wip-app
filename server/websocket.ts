@@ -16,7 +16,19 @@ export function setupWebSocket(httpServer: HTTPServer) {
   io = new SocketIOServer(httpServer, {
     cors: { origin: process.env.REPLIT_DEV_DOMAIN ? [`https://${process.env.REPLIT_DEV_DOMAIN}`, `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`] : "*", methods: ["GET", "POST"] },
     path: "/ws",
-    transports: ["websocket", "polling"],
+    // WebSocket-only — see client comment in client/src/lib/socket.ts.
+    // Dropping HTTP long-polling removes the sticky-session requirement
+    // that was causing reconnect churn behind Railway's edge.
+    transports: ["websocket"],
+    // Keep-alive tuning: ping every 25s, allow 60s before declaring the
+    // connection dead. The generous pingTimeout tolerates brief proxy
+    // latency / GC pauses without dropping an otherwise-healthy socket.
+    pingInterval: 25000,
+    pingTimeout: 60000,
+    // Bigger buffer so large payloads (e.g. pathway progress with
+    // embedded previews) don't trip the default 1MB limit and kill the
+    // connection mid-stream.
+    maxHttpBufferSize: 1e7,
   });
 
   io.use(async (socket, next) => {

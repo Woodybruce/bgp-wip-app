@@ -1,4 +1,5 @@
-import { Route, Switch } from "wouter";
+import { useEffect } from "react";
+import { Route, Switch, useLocation } from "wouter";
 import Nav from "./components/Nav";
 import Footer from "./components/Footer";
 import Home from "./pages/Home";
@@ -13,9 +14,21 @@ import News from "./pages/News";
 import ArticlePage from "./pages/Article";
 import CaseStudyPage from "./pages/CaseStudyPage";
 
+// SPA navigation keeps the previous scroll position — every page change
+// should land at the top. Plain #hash anchors don't change the route, so
+// in-page jumps (services, contact) are unaffected.
+function ScrollToTop() {
+  const [location] = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [location]);
+  return null;
+}
+
 export default function App() {
   return (
     <div className="min-h-screen flex flex-col">
+      <ScrollToTop />
       <Nav />
       <main className="flex-1">
         <Switch>

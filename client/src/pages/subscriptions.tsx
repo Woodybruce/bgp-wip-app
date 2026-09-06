@@ -2,10 +2,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { ExternalLink, Search, Building2, FileText, MapPin, Newspaper, ShieldCheck, Mail, HardDrive, Rocket, Presentation, LineChart, Palette, Globe, ChevronDown, ChevronUp, KeyRound, CheckCircle2, XCircle, RefreshCw, Zap, Loader2 } from "lucide-react";
+import { ExternalLink, Search, Building2, FileText, MapPin, Newspaper, ShieldCheck, Mail, HardDrive, Rocket, LineChart, Palette, Globe, ChevronDown, ChevronUp, KeyRound, CheckCircle2, XCircle, RefreshCw, Zap, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { Pill } from "@/components/ui/pill";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 type IntegrationItem = {
   key: string;
@@ -97,11 +99,22 @@ const subscriptions: Subscription[] = [
   {
     name: "PIPNET",
     category: "Property Data",
-    description: "Property Industry Protocol Network — property listing and matching platform.",
-    url: "https://www.pipnet.com",
+    description: "Property Industry Protocol Network — UK property listing and matching platform (v1.pipnet.co.uk).",
+    url: "https://v1.pipnet.co.uk/login.jsp",
     icon: Globe,
     color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
-    hasApi: false,
+    hasApi: true,
+    apiNote: "Scrape-based integration — credentials configured below (admins only).",
+  },
+  {
+    name: "logo.dev",
+    category: "Brand Data",
+    description: "Company logos (publishable pk_ token, env-configured) and the Brand API — descriptions, socials, brand colours — used by CRM enrichment (~1p per lookup).",
+    url: "https://logo.dev",
+    icon: Palette,
+    color: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+    hasApi: true,
+    apiNote: "Brand API secret key (sk_...) configured below (admins only) — takes effect within a minute, no restart.",
   },
   {
     name: "Requirement List",
@@ -162,15 +175,6 @@ const subscriptions: Subscription[] = [
     apiNote: "REST API for contact lookups and enrichment",
   },
   {
-    name: "Gamma",
-    category: "Presentations",
-    description: "AI-powered presentation and document creation tool.",
-    url: "https://gamma.app",
-    icon: Presentation,
-    color: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
-    hasApi: false,
-  },
-  {
     name: "Real Capital Analytics",
     category: "Property Data",
     description: "Global commercial real estate transaction data, analytics, and market trends.",
@@ -208,6 +212,91 @@ export default function Subscriptions() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [keysExpanded, setKeysExpanded] = useState(false);
+  const [chartIniting, setChartIniting] = useState(false);
+  const { toast } = useToast();
+
+  const { data: currentUser } = useQuery<{ isAdmin?: boolean } | null>({
+    queryKey: ["/api/auth/me"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/auth/me");
+      return res.json();
+    },
+  });
+  const isAdmin = !!currentUser?.isAdmin;
+
+  const { data: pipnetStatus, refetch: refetchPipnet } = useQuery<{ configured: boolean; source: "db" | "env" | "none"; usernameMasked: string; emailMasked: string }>({
+    queryKey: ["/api/admin/integrations/pipnet"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/integrations/pipnet");
+      return res.json();
+    },
+    enabled: isAdmin,
+  });
+  const [pipnetForm, setPipnetForm] = useState({ username: "helliott", email: "harrye@brucegillinghampollard.com", password: "" });
+  const [pipnetSaving, setPipnetSaving] = useState(false);
+  const [pipnetTesting, setPipnetTesting] = useState(false);
+  const savePipnetCreds = async () => {
+    if (!pipnetForm.username || !pipnetForm.email || !pipnetForm.password) {
+      toast({ title: "Missing fields", description: "Username, email and password are all required.", variant: "destructive" });
+      return;
+    }
+    setPipnetSaving(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/integrations/pipnet", pipnetForm);
+      if (!res.ok) throw new Error((await res.json()).message || "Save failed");
+      toast({ title: "PIPnet credentials saved", description: "The next search/import will use these credentials." });
+      setPipnetForm(f => ({ ...f, password: "" }));
+      await refetchPipnet();
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSaving(false);
+    }
+  };
+  const { data: logoDevStatus, refetch: refetchLogoDev } = useQuery<{ configured: boolean; source: "db" | "env" | "none"; keyMasked: string }>({
+    queryKey: ["/api/admin/integrations/logo-dev"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/integrations/logo-dev");
+      return res.json();
+    },
+    enabled: isAdmin,
+  });
+  const [logoDevKey, setLogoDevKey] = useState("");
+  const [logoDevSaving, setLogoDevSaving] = useState(false);
+  const saveLogoDevKey = async () => {
+    if (!logoDevKey.trim().startsWith("sk_")) {
+      toast({ title: "Wrong key", description: "The Brand API secret key starts sk_ — the pk_ one is the image token, already configured.", variant: "destructive" });
+      return;
+    }
+    setLogoDevSaving(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/integrations/logo-dev", { secretKey: logoDevKey.trim() });
+      if (!res.ok) throw new Error((await res.json()).message || "Save failed");
+      toast({ title: "logo.dev secret key saved", description: "Live within a minute — ask ChatBGP to run the enrichment backfill." });
+      setLogoDevKey("");
+      await refetchLogoDev();
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
+    } finally {
+      setLogoDevSaving(false);
+    }
+  };
+  const testPipnetLogin = async () => {
+    setPipnetTesting(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/integrations/pipnet/test");
+      const data = await res.json();
+      if (data.ok) {
+        toast({ title: "PIPnet login successful", description: data.message });
+      } else {
+        toast({ title: "PIPnet login failed", description: data.message, variant: "destructive" });
+      }
+    } catch (err: any) {
+      toast({ title: "Test failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetTesting(false);
+    }
+  };
 
   const { data: keyStatus, isLoading: keysLoading, refetch: refetchKeys, isFetching: keysFetching } = useQuery<IntegrationsStatus>({
     queryKey: ["/api/integrations/status"],
@@ -348,22 +437,46 @@ export default function Subscriptions() {
                       {result.status ? <span className="text-muted-foreground font-normal ml-1">({result.status})</span> : null}
                     </p>
                     <p className="text-muted-foreground leading-snug">{result.message}</p>
-                    {label === "Xero" && !result.ok && result.message.toLowerCase().includes("session") && (
+                    {label === "Xero" && !result.ok && (
+                      <a
+                        href="/api/xero/connect"
+                        className="inline-flex items-center h-6 text-[11px] mt-1.5 px-2 border border-input rounded-md hover-elevate"
+                        data-testid="button-connect-xero"
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" />
+                        Connect / Reconnect Xero
+                      </a>
+                    )}
+                    {label === "Xero" && result.ok && (
                       <Button
                         variant="outline"
                         size="sm"
                         className="h-6 text-[11px] mt-1.5"
+                        disabled={chartIniting}
                         onClick={async () => {
+                          setChartIniting(true);
                           try {
-                            const r = await apiRequest("GET", "/api/xero/auth");
+                            const r = await apiRequest("POST", "/api/xero/initialise-chart");
                             const data = await r.json();
-                            if (data?.url) window.location.href = data.url;
-                          } catch {}
+                            if (data.success) {
+                              toast({
+                                title: "Xero chart set up",
+                                description: `${data.accounts.created} accounts created, ${data.accounts.skipped} already existed. ${data.trackingCategories.created} tracking categories created.`,
+                                duration: 6000,
+                              });
+                            } else {
+                              toast({ title: "Setup failed", description: data.error, variant: "destructive", duration: 6000 });
+                            }
+                          } catch (e: any) {
+                            toast({ title: "Setup failed", description: e?.message || "Unknown error", variant: "destructive", duration: 6000 });
+                          } finally {
+                            setChartIniting(false);
+                          }
                         }}
-                        data-testid="button-connect-xero"
+                        data-testid="button-init-xero-chart"
                       >
-                        <ExternalLink className="w-3 h-3 mr-1" />
-                        Connect Xero
+                        {chartIniting ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+                        Initialise Chart of Accounts
                       </Button>
                     )}
                   </div>
@@ -426,26 +539,22 @@ export default function Subscriptions() {
           />
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
-          <Button
-            variant={!selectedCategory ? "default" : "outline"}
-            size="sm"
-            className="h-8 text-xs"
+          <Pill
+            active={!selectedCategory}
             onClick={() => setSelectedCategory(null)}
             data-testid="filter-category-all"
           >
             All
-          </Button>
+          </Pill>
           {categories.map((cat) => (
-            <Button
+            <Pill
               key={cat}
-              variant={selectedCategory === cat ? "default" : "outline"}
-              size="sm"
-              className="h-8 text-xs"
+              active={selectedCategory === cat}
               onClick={() => setSelectedCategory(cat)}
               data-testid={`filter-category-${cat.toLowerCase().replace(/\s+/g, "-")}`}
             >
               {cat}
-            </Button>
+            </Pill>
           ))}
         </div>
       </div>
@@ -469,17 +578,117 @@ export default function Subscriptions() {
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-semibold truncate">{sub.name}</h3>
                       {sub.hasApi && (
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 shrink-0">
+                        <Badge variant="secondary" className="rounded-full text-[10px] px-1.5 py-0 h-4 shrink-0">
                           API
                         </Badge>
                       )}
                     </div>
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 mt-1">
+                    <Badge variant="secondary" className="rounded-full text-[10px] px-1.5 py-0 h-4 mt-1">
                       {sub.category}
                     </Badge>
                     <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{sub.description}</p>
                     {sub.apiNote && isExpanded && (
                       <p className="text-xs text-primary/80 mt-1.5 italic">{sub.apiNote}</p>
+                    )}
+                    {sub.name === "PIPNET" && isExpanded && isAdmin && (
+                      <div className="mt-3 p-3 rounded-md border bg-muted/30 space-y-2" data-testid="pipnet-config">
+                        <div className="flex items-center gap-2 text-xs">
+                          {pipnetStatus?.configured ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Connected — {pipnetStatus.usernameMasked} / {pipnetStatus.emailMasked} ({pipnetStatus.source})</span>
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="w-3.5 h-3.5 text-amber-600" />
+                              <span>Not configured — enter credentials below</span>
+                            </>
+                          )}
+                        </div>
+                        <Input
+                          placeholder="Username (e.g. helliott)"
+                          value={pipnetForm.username}
+                          onChange={(e) => setPipnetForm(f => ({ ...f, username: e.target.value }))}
+                          className="h-7 text-xs"
+                          data-testid="input-pipnet-username"
+                        />
+                        <Input
+                          placeholder="Email"
+                          type="email"
+                          value={pipnetForm.email}
+                          onChange={(e) => setPipnetForm(f => ({ ...f, email: e.target.value }))}
+                          className="h-7 text-xs"
+                          data-testid="input-pipnet-email"
+                        />
+                        <Input
+                          placeholder="Password"
+                          type="password"
+                          value={pipnetForm.password}
+                          onChange={(e) => setPipnetForm(f => ({ ...f, password: e.target.value }))}
+                          className="h-7 text-xs"
+                          data-testid="input-pipnet-password"
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            className="h-7 text-xs flex-1"
+                            onClick={savePipnetCreds}
+                            disabled={pipnetSaving}
+                            data-testid="button-save-pipnet"
+                          >
+                            {pipnetSaving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <KeyRound className="w-3 h-3 mr-1" />}
+                            Save
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={testPipnetLogin}
+                            disabled={pipnetTesting || !pipnetStatus?.configured}
+                            data-testid="button-test-pipnet"
+                          >
+                            {pipnetTesting ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+                            Test login
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                    {sub.name === "logo.dev" && isExpanded && isAdmin && (
+                      <div className="mt-3 p-3 rounded-md border bg-muted/30 space-y-2" data-testid="logo-dev-config">
+                        <div className="flex items-center gap-2 text-xs">
+                          {logoDevStatus?.configured ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Brand API key set — {logoDevStatus.keyMasked} ({logoDevStatus.source})</span>
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="w-3.5 h-3.5 text-amber-500" />
+                              <span>Brand API secret key not set — logo images work, enrichment doesn't</span>
+                            </>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <Input
+                            type="password"
+                            className="h-7 text-xs"
+                            placeholder="sk_… secret key from the logo.dev dashboard"
+                            value={logoDevKey}
+                            onChange={(e) => setLogoDevKey(e.target.value)}
+                            data-testid="input-logo-dev-key"
+                          />
+                          <Button
+                            size="sm"
+                            className="h-7 text-xs shrink-0"
+                            onClick={saveLogoDevKey}
+                            disabled={logoDevSaving || !logoDevKey.trim()}
+                            data-testid="button-save-logo-dev"
+                          >
+                            {logoDevSaving ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <KeyRound className="w-3 h-3 mr-1" />}
+                            Save
+                          </Button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>

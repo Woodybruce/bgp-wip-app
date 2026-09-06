@@ -54,7 +54,7 @@ const PRIORITY_COLOR: Record<string, string> = {
   urgent: "text-red-500",
   high: "text-orange-500",
   medium: "text-amber-500",
-  low: "text-[#A8A29E]",
+  low: "text-muted-foreground/70",
 };
 
 export default function TodayPage() {
@@ -76,7 +76,7 @@ export default function TodayPage() {
     queryKey: ["/api/crm/deals?limit=5&sort=updated"],
   });
 
-  const { data: stats } = useQuery<{ totalDeals: number; activeDeals: number; totalContacts: number; totalProperties: number }>({
+  const { data: stats } = useQuery<{ deals: number; activeDeals: number; contacts: number; properties: number }>({
     queryKey: ["/api/crm/stats"],
   });
 
@@ -107,16 +107,16 @@ export default function TodayPage() {
   const firstName = user?.name?.split(" ")[0] || "";
 
   return (
-    <div className="min-h-screen bg-[#FAF9F7] dark:bg-background pb-24">
+    <div className="min-h-screen bg-muted/30 dark:bg-background pb-24">
       {/* Header */}
       <div className="px-5 pt-6 pb-4">
         <div className="flex items-center gap-2 mb-1">
           <Sun className="w-5 h-5 text-amber-400" />
-          <span className="text-[13px] font-medium text-[#78716C] tracking-wide uppercase">
+          <span className="text-[13px] font-medium text-muted-foreground tracking-wide uppercase">
             {formatDate(today)}
           </span>
         </div>
-        <h1 className="text-[28px] font-bold text-[#1C1917] dark:text-white tracking-tight leading-tight">
+        <h1 className="text-[28px] font-bold text-foreground tracking-tight leading-tight">
           {getGreeting()}{firstName ? `, ${firstName}` : ""}
         </h1>
       </div>
@@ -126,33 +126,33 @@ export default function TodayPage() {
         <div className="grid grid-cols-3 gap-3">
           <button
             onClick={() => navigate("/deals")}
-            className="bg-white dark:bg-card border border-[#E7E5E4]/60 rounded-2xl p-3.5 text-left active:bg-[#F5F5F4]"
+            className="bg-card border border-border/60 rounded-2xl p-3.5 text-left active:bg-muted"
           >
-            <BarChart3 className="w-5 h-5 text-[#78716C] mb-2" />
-            <div className="text-[22px] font-bold text-[#1C1917] dark:text-white tracking-tight">
-              {stats?.activeDeals ?? "—"}
+            <BarChart3 className="w-5 h-5 text-muted-foreground mb-2" />
+            <div className="text-[22px] font-bold text-foreground tracking-tight">
+              {stats?.activeDeals ?? 0}
             </div>
-            <div className="text-[11px] font-medium text-[#A8A29E] uppercase tracking-wide">Active Deals</div>
+            <div className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wide">Active Deals</div>
           </button>
           <button
             onClick={() => setShowAddTask(true)}
-            className="bg-white dark:bg-card border border-[#E7E5E4]/60 rounded-2xl p-3.5 text-left active:bg-[#F5F5F4]"
+            className="bg-card border border-border/60 rounded-2xl p-3.5 text-left active:bg-muted"
           >
-            <ListTodo className="w-5 h-5 text-[#78716C] mb-2" />
-            <div className="text-[22px] font-bold text-[#1C1917] dark:text-white tracking-tight">
+            <ListTodo className="w-5 h-5 text-muted-foreground mb-2" />
+            <div className="text-[22px] font-bold text-foreground tracking-tight">
               {pendingTasks.length}
             </div>
-            <div className="text-[11px] font-medium text-[#A8A29E] uppercase tracking-wide">Open Tasks</div>
+            <div className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wide">Open Tasks</div>
           </button>
           <button
             onClick={() => navigate("/chatbgp")}
-            className="bg-white dark:bg-card border border-[#E7E5E4]/60 rounded-2xl p-3.5 text-left active:bg-[#F5F5F4]"
+            className="bg-card border border-border/60 rounded-2xl p-3.5 text-left active:bg-muted"
           >
-            <Sparkles className="w-5 h-5 text-[#78716C] mb-2" />
-            <div className="text-[22px] font-bold text-[#1C1917] dark:text-white tracking-tight">
+            <Sparkles className="w-5 h-5 text-muted-foreground mb-2" />
+            <div className="text-[22px] font-bold text-foreground tracking-tight">
               {completedToday.length}
             </div>
-            <div className="text-[11px] font-medium text-[#A8A29E] uppercase tracking-wide">Done Today</div>
+            <div className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wide">Done Today</div>
           </button>
         </div>
       </div>
@@ -178,16 +178,16 @@ export default function TodayPage() {
       <div className="px-5 pb-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <CalendarDays className="w-4 h-4 text-[#78716C]" />
-            <h2 className="text-[15px] font-semibold text-[#1C1917] dark:text-white">
+            <CalendarDays className="w-4 h-4 text-muted-foreground" />
+            <h2 className="text-[15px] font-semibold text-foreground">
               Today's Tasks
             </h2>
           </div>
           <button
             onClick={() => setShowAddTask(!showAddTask)}
-            className="w-8 h-8 rounded-full bg-[#1C1917] dark:bg-white flex items-center justify-center active:opacity-80"
+            className="w-8 h-8 rounded-full bg-primary flex items-center justify-center active:opacity-80"
           >
-            <Plus className="w-4 h-4 text-white dark:text-[#1C1917]" />
+            <Plus className="w-4 h-4 text-primary-foreground" />
           </button>
         </div>
 
@@ -200,12 +200,12 @@ export default function TodayPage() {
               onChange={e => setNewTaskTitle(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && newTaskTitle.trim()) addTaskMutation.mutate(newTaskTitle.trim()); }}
               placeholder="Add a task..."
-              className="flex-1 h-11 px-4 text-[15px] rounded-xl bg-white dark:bg-card border border-[#E7E5E4] placeholder:text-[#A8A29E] focus:outline-none focus:ring-2 focus:ring-[#1C1917]/20"
+              className="flex-1 h-11 px-4 text-[15px] rounded-xl bg-card border border-input placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/30"
             />
             <button
               onClick={() => newTaskTitle.trim() && addTaskMutation.mutate(newTaskTitle.trim())}
               disabled={!newTaskTitle.trim() || addTaskMutation.isPending}
-              className="h-11 px-4 rounded-xl bg-[#1C1917] dark:bg-white text-white dark:text-[#1C1917] text-[14px] font-semibold disabled:opacity-40 active:opacity-80"
+              className="h-11 px-4 rounded-xl bg-primary text-primary-foreground text-[14px] font-semibold disabled:opacity-40 active:opacity-80"
             >
               Add
             </button>
@@ -214,13 +214,13 @@ export default function TodayPage() {
 
         {tasksLoading ? (
           <div className="flex items-center justify-center py-12">
-            <div className="w-6 h-6 border-2 border-[#E7E5E4] border-t-[#1C1917] rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-muted border-t-foreground rounded-full animate-spin" />
           </div>
         ) : todayTasks.length === 0 && overdueTasks.length === 0 && upcomingTasks.length === 0 ? (
           <div className="text-center py-12">
-            <CheckCircle2 className="w-10 h-10 text-[#D6D3D1] mx-auto mb-3" />
-            <p className="text-[15px] text-[#A8A29E] font-medium">No tasks yet</p>
-            <p className="text-[13px] text-[#D6D3D1] mt-1">Tap + to add your first task</p>
+            <CheckCircle2 className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
+            <p className="text-[15px] text-muted-foreground/70 font-medium">No tasks yet</p>
+            <p className="text-[13px] text-muted-foreground/40 mt-1">Add your first task</p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -228,7 +228,7 @@ export default function TodayPage() {
               <TaskCard key={task.id} task={task} onComplete={() => completeMutation.mutate(task.id)} />
             )) : overdueTasks.length === 0 && (
               <div className="text-center py-6">
-                <p className="text-[13px] text-[#A8A29E]">Nothing due today</p>
+                <p className="text-[13px] text-muted-foreground/70">Nothing due today</p>
               </div>
             )}
           </div>
@@ -239,8 +239,8 @@ export default function TodayPage() {
       {upcomingTasks.length > 0 && (
         <div className="px-5 pb-4">
           <div className="flex items-center gap-2 mb-3">
-            <Clock className="w-4 h-4 text-[#78716C]" />
-            <h2 className="text-[15px] font-semibold text-[#1C1917] dark:text-white">
+            <Clock className="w-4 h-4 text-muted-foreground" />
+            <h2 className="text-[15px] font-semibold text-foreground">
               Upcoming ({upcomingTasks.length})
             </h2>
           </div>
@@ -251,9 +251,9 @@ export default function TodayPage() {
             {upcomingTasks.length > 5 && (
               <button
                 onClick={() => navigate("/tasks")}
-                className="w-full py-2.5 text-[13px] font-medium text-[#78716C] active:text-[#1C1917]"
+                className="w-full py-2.5 text-[13px] font-medium text-muted-foreground active:text-foreground"
               >
-                View all {upcomingTasks.length} tasks
+                Show all {upcomingTasks.length} tasks
               </button>
             )}
           </div>
@@ -265,14 +265,14 @@ export default function TodayPage() {
         <div className="px-5 pb-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-[#78716C]" />
-              <h2 className="text-[15px] font-semibold text-[#1C1917] dark:text-white">Recent Deals</h2>
+              <BarChart3 className="w-4 h-4 text-muted-foreground" />
+              <h2 className="text-[15px] font-semibold text-foreground">Recent Deals</h2>
             </div>
             <button
               onClick={() => navigate("/deals")}
-              className="text-[13px] font-medium text-[#78716C] active:text-[#1C1917]"
+              className="text-[13px] font-medium text-muted-foreground active:text-foreground"
             >
-              See all
+              Show all
             </button>
           </div>
           <div className="space-y-2">
@@ -280,24 +280,30 @@ export default function TodayPage() {
               <button
                 key={deal.id}
                 onClick={() => navigate(`/deals/${deal.id}`)}
-                className="w-full flex items-center gap-3 p-3.5 bg-white dark:bg-card border border-[#E7E5E4]/60 rounded-2xl text-left active:bg-[#F5F5F4]"
+                className="w-full flex items-center gap-3 p-3.5 bg-card border border-border/60 rounded-2xl text-left active:bg-muted"
               >
                 <div className="flex-1 min-w-0">
-                  <div className="text-[14px] font-semibold text-[#1C1917] dark:text-white truncate tracking-tight">
+                  <div className="text-[14px] font-semibold text-foreground truncate tracking-tight">
                     {deal.name}
                   </div>
-                  <div className="text-[12px] text-[#A8A29E] truncate mt-0.5">
-                    {deal.property_name || deal.propertyName || deal.status || ""}
-                  </div>
+                  {(deal.property_name || deal.propertyName) && (
+                    <div className="text-[12px] text-muted-foreground/70 truncate mt-0.5">
+                      {deal.property_name || deal.propertyName}
+                    </div>
+                  )}
                 </div>
+                {/* UX #145 — no status used to render a blank grey pill,
+                    which read as a glitch; hide the chip instead. */}
+                {deal.status && (
                 <span className={`text-[11px] font-medium px-2.5 py-1 rounded-full shrink-0 ${
-                  deal.status === "Active" || deal.status === "active" ? "bg-emerald-50 text-emerald-600" :
-                  deal.status === "Under Offer" ? "bg-amber-50 text-amber-600" :
-                  "bg-[#F5F5F4] text-[#78716C]"
+                  deal.status === "Active" || deal.status === "active" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400" :
+                  deal.status === "Under Offer" ? "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400" :
+                  "bg-muted text-muted-foreground"
                 }`}>
                   {deal.status}
                 </span>
-                <ChevronRight className="w-4 h-4 text-[#D6D3D1] shrink-0" />
+                )}
+                <ChevronRight className="w-4 h-4 text-muted-foreground/40 shrink-0" />
               </button>
             ))}
           </div>
@@ -309,18 +315,18 @@ export default function TodayPage() {
 
 function TaskCard({ task, onComplete }: { task: Task; onComplete: () => void }) {
   const PriorityIcon = PRIORITY_ICON[task.priority] || Circle;
-  const priorityColor = PRIORITY_COLOR[task.priority] || "text-[#A8A29E]";
+  const priorityColor = PRIORITY_COLOR[task.priority] || "text-muted-foreground/70";
 
   return (
-    <div className="flex items-start gap-3 p-3.5 bg-white dark:bg-card border border-[#E7E5E4]/60 rounded-2xl">
+    <div className="flex items-start gap-3 p-3.5 bg-card border border-border/60 rounded-2xl">
       <button
         onClick={onComplete}
-        className="mt-0.5 w-6 h-6 rounded-full border-2 border-[#D6D3D1] flex items-center justify-center shrink-0 active:bg-emerald-50 active:border-emerald-400"
+        className="mt-0.5 w-6 h-6 rounded-full border-2 border-muted-foreground/40 flex items-center justify-center shrink-0 active:bg-emerald-50 active:border-emerald-400 dark:active:bg-emerald-950/40"
       >
         <Check className="w-3.5 h-3.5 text-transparent" />
       </button>
       <div className="flex-1 min-w-0">
-        <div className="text-[14px] font-medium text-[#1C1917] dark:text-white leading-snug tracking-tight">
+        <div className="text-[14px] font-medium text-foreground leading-snug tracking-tight">
           {task.title}
         </div>
         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
@@ -329,12 +335,12 @@ function TaskCard({ task, onComplete }: { task: Task; onComplete: () => void }) 
             {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}
           </span>
           {task.due_date && (
-            <span className="text-[11px] text-[#A8A29E]">
+            <span className="text-[11px] text-muted-foreground/70">
               {new Date(task.due_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
             </span>
           )}
           {(task.deal_name || task.property_name) && (
-            <span className="text-[11px] text-[#A8A29E] truncate max-w-[150px]">
+            <span className="text-[11px] text-muted-foreground/70 truncate max-w-[150px]">
               {task.deal_name || task.property_name}
             </span>
           )}

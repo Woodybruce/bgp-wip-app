@@ -10,6 +10,60 @@ import { users as usersTable } from "@shared/schema";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
+// Background-job state for the interactions sync (see POST /api/interactions/sync).
+// Module-level so the status endpoint can report progress across requests.
+const interactionSyncState: {
+  running: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  lastResult: any;
+  error: string | null;
+} = { running: false, startedAt: null, finishedAt: null, lastResult: null, error: null };
+
+// Top BGP team members by interaction count — used by the InteractionsBoard
+// banner. Returns 90-day count visible, all-time count for hover tooltip.
+// Scope = "contact" → ranks by interactions touching that contactId.
+// Scope = "company" → ranks by interactions touching any contact at companyId.
+async function computeTopBgpContacts(opts: {
+  scope: "contact" | "company";
+  id: string;
+  since90d: Date;
+}): Promise<Array<{ email: string; name: string; count90d: number; countAll: number }>> {
+  try {
+    const column = opts.scope === "contact" ? "contact_id" : "company_id";
+    const { rows } = await pool.query<{ bgp_user: string; count_90d: string; count_all: string; user_name: string | null }>(
+      `SELECT
+         i.bgp_user,
+         COUNT(*) FILTER (WHERE i.interaction_date >= $2)::text AS count_90d,
+         COUNT(*)::text AS count_all,
+         u.name AS user_name
+       FROM crm_interactions i
+       LEFT JOIN users u ON lower(u.email) = lower(i.bgp_user) OR lower(u.username) = lower(i.bgp_user)
+       WHERE i.${column} = $1
+         AND i.bgp_user IS NOT NULL
+         AND i.bgp_user <> ''
+       GROUP BY i.bgp_user, u.name
+       ORDER BY count_90d DESC, count_all DESC
+       LIMIT 4`,
+      [opts.id, opts.since90d]
+    );
+    return rows.map(r => ({
+      email: r.bgp_user,
+      name: r.user_name || prettifyBgpEmail(r.bgp_user),
+      count90d: Number(r.count_90d || 0),
+      countAll: Number(r.count_all || 0),
+    }));
+  } catch (e: any) {
+    console.warn(`[interactions] computeTopBgpContacts(${opts.scope}/${opts.id}) failed: ${e?.message}`);
+    return [];
+  }
+}
+
+function prettifyBgpEmail(email: string): string {
+  const local = email.includes("@") ? email.split("@")[0] : email;
+  return local.replace(/\b\w/g, c => c.toUpperCase());
+}
+
 async function getBgpEmails(): Promise<string[]> {
   try {
     const result = await db
@@ -49,11 +103,20 @@ async function graphGet(token: string, url: string): Promise<any> {
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
+  const body = await res.text();
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Graph API error ${res.status}: ${text}`);
+    throw new Error(`Graph API error ${res.status}: ${body}`);
   }
-  return res.json();
+  // Graph occasionally returns a truncated / malformed body under load
+  // (manifests as "Expected ',' or ']' after array element in JSON at
+  // position …"). Surface it as a clear, swallowable error instead of a
+  // raw SyntaxError so the per-user catch in the sync loop records it and
+  // moves on rather than aborting the whole run.
+  try {
+    return JSON.parse(body);
+  } catch (e: any) {
+    throw new Error(`Graph API returned malformed JSON (${body.length} bytes): ${e?.message}`);
+  }
 }
 
 async function getAllContacts(): Promise<ContactMatch[]> {
@@ -91,23 +154,18 @@ function matchEmailToContact(
 function matchKeywordsToContacts(
   text: string,
   contacts: ContactMatch[],
-  companies: { id: string; name: string }[]
+  _companies: { id: string; name: string }[]
 ): { contact: ContactMatch; method: string }[] {
   const matches: { contact: ContactMatch; method: string }[] = [];
   const lower = text.toLowerCase();
   const seenContactIds = new Set<string>();
 
-  for (const company of companies) {
-    if (company.name.length >= 3 && lower.includes(company.name.toLowerCase())) {
-      const companyContacts = contacts.filter((c) => c.companyId === company.id);
-      for (const c of companyContacts) {
-        if (!seenContactIds.has(c.id)) {
-          seenContactIds.add(c.id);
-          matches.push({ contact: c, method: "keyword_company" });
-        }
-      }
-    }
-  }
+  // Company-name keyword matching removed (Woody, 2026-08-03): any email
+  // whose text contained a brand named after an everyday word ("Bills",
+  // "Next", "Boots") fanned an interaction out to EVERY contact at that
+  // company, every sweep — Bills contacts all showed an identical, inflated
+  // "254 · today". A contact interaction now requires the person to actually
+  // be on the email (address match) or named in it (below).
 
   for (const c of contacts) {
     if (seenContactIds.has(c.id)) continue;
@@ -151,8 +209,28 @@ async function syncEmailsForUser(
   let count = 0;
 
   try {
-    const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$select=id,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime&$top=100&$orderby=receivedDateTime desc`;
+    const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$select=id,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime&$top=100&$orderby=receivedDateTime desc`;
     const messages = await graphGetPaged(token, url, 5);
+
+    // Email → offers check: offer-looking emails anchored to a tracker unit
+    // from a known external contact become unconfirmed unit_offers rows
+    // (one per thread; skipped when the offer is already logged).
+    try {
+      const { syncOfferEmails } = await import("./viewing-sync");
+      await syncOfferEmails(messages, userEmail);
+    } catch (e: any) {
+      console.error(`[offer-check] ${userEmail}:`, e?.message);
+    }
+
+    // Email → interest check: the pre-offer signal ("keen on", "send
+    // particulars") becomes a unit_interest row — the tracker's third
+    // activity chip alongside viewings and offers.
+    try {
+      const { syncInterestEmails } = await import("./viewing-sync");
+      await syncInterestEmails(messages, userEmail);
+    } catch (e: any) {
+      console.error(`[interest-check] ${userEmail}:`, e?.message);
+    }
 
     for (const msg of messages) {
       const msId = `email_${msg.id}`;
@@ -217,7 +295,10 @@ async function syncEmailsForUser(
       }
     }
   } catch (e: any) {
-    console.log(`Sync emails for ${userEmail}: ${e.message}`);
+    // Surface per-mailbox failures to the caller — swallowing them here made
+    // every diagnostic read "0 synced, 0 errors" even when Graph was
+    // refusing a mailbox (Woody, 2026-08-03).
+    throw new Error(`emails: ${e.message}`);
   }
 
   return count;
@@ -244,8 +325,22 @@ async function syncCalendarForUser(
   let count = 0;
 
   try {
-    const url = `${GRAPH_BASE}/users/${userEmail}/calendarView?startDateTime=${start}&endDateTime=${end}&$select=id,subject,start,end,attendees,organizer,bodyPreview&$top=100&$orderby=start/dateTime&Prefer=outlook.timezone="UTC"`;
+    const url = `${GRAPH_BASE}/users/${userEmail}/calendarView?startDateTime=${start}&endDateTime=${end}&$select=id,iCalUId,subject,start,end,attendees,organizer,bodyPreview,location,categories,isCancelled&$top=100&$orderby=start/dateTime&Prefer=outlook.timezone="UTC"`;
     const events = await graphGetPaged(token, url, 3);
+
+    // Diary → Letting Tracker viewings: events that look like a viewing and
+    // anchor to a tracker unit become unit_viewings rows. Runs on every
+    // sweep (its own iCalUId dedupe, independent of the interaction dedupe
+    // below, so date changes to an existing booking still update).
+    try {
+      const { syncDiaryViewings, syncDiaryInterest } = await import("./viewing-sync");
+      await syncDiaryViewings(events, userEmail);
+      // Non-viewing calls/meetings that anchor to a tracker unit register
+      // as Interest (UX #71 — automated from diaries as well as inboxes).
+      await syncDiaryInterest(events, userEmail);
+    } catch (e: any) {
+      console.error(`[viewing-sync] ${userEmail}:`, e?.message);
+    }
 
     for (const event of events) {
       const msId = `cal_${event.id}`;
@@ -306,7 +401,7 @@ async function syncCalendarForUser(
       }
     }
   } catch (e: any) {
-    console.log(`Sync calendar for ${userEmail}: ${e.message}`);
+    throw new Error(`calendar: ${e.message}`);
   }
 
   return count;
@@ -830,21 +925,127 @@ async function requireAdminCheck(req: Request): Promise<boolean> {
 export function registerInteractionRoutes(app: Express) {
   startAutoSync();
 
+  // Interaction sync fans out across every BGP mailbox (emails + calendar),
+  // which routinely takes 2-3 minutes — well past Railway's gateway timeout
+  // (the old synchronous version 504'd at 180s). So we run it in the
+  // background: POST kicks it and returns 202 immediately, the client polls
+  // /sync-status and refetches when it finishes.
   app.post("/api/interactions/sync", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const daysBack = Number(req.query.daysBack) || 30;
-      const daysForward = Number(req.query.daysForward) || 60;
-      const result = await runInteractionSync(daysBack, daysForward);
-      res.json(result);
-    } catch (e: any) {
-      console.error("Interaction sync error:", e);
-      res.status(500).json({ error: e.message });
+    const daysBack = Number(req.query.daysBack) || 30;
+    const daysForward = Number(req.query.daysForward) || 60;
+    if (interactionSyncState.running) {
+      return res.status(202).json({ started: false, alreadyRunning: true, startedAt: interactionSyncState.startedAt });
     }
+    interactionSyncState.running = true;
+    interactionSyncState.startedAt = new Date().toISOString();
+    interactionSyncState.error = null;
+    // Fire-and-forget — don't await. Result lands on interactionSyncState.
+    runInteractionSync(daysBack, daysForward)
+      .then((result) => {
+        interactionSyncState.lastResult = result;
+        interactionSyncState.finishedAt = new Date().toISOString();
+      })
+      .catch((e: any) => {
+        console.error("Interaction sync error:", e);
+        interactionSyncState.error = e?.message || "Sync failed";
+        interactionSyncState.finishedAt = new Date().toISOString();
+      })
+      .finally(() => {
+        interactionSyncState.running = false;
+      });
+    res.status(202).json({ started: true, startedAt: interactionSyncState.startedAt });
+  });
+
+  // Manual capture from the Outlook add-in: file the open email as an
+  // interaction against a matched contact/company/deal. The Graph sync
+  // covers passive capture; this is the in-the-moment path. microsoft_id
+  // (the Outlook item id) dedupes repeat clicks and overlap with the sync.
+  app.post("/api/interactions/log", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { contactId, companyId, dealId, subject, preview, senderEmail, senderName, microsoftId, interactionDate, direction, type } = req.body || {};
+      // Manual "Log activity" entries (UX #34) pass type call/meeting/note;
+      // the Outlook add-in omits it and keeps the original email path.
+      const entryType = ["call", "meeting", "note", "email"].includes(String(type || "")) ? String(type) : "email";
+      const matchMethod = type ? "manual" : "outlook-addin";
+      if (!contactId && !companyId && !dealId) {
+        return res.status(400).json({ error: "link the interaction to a contact, company, or deal" });
+      }
+      if (microsoftId) {
+        const dupe = await pool.query(
+          `SELECT id FROM crm_interactions WHERE microsoft_id = $1 LIMIT 1`, [String(microsoftId)]
+        );
+        if (dupe.rows[0]) return res.json({ logged: false, alreadyLogged: true, id: dupe.rows[0].id });
+      }
+
+      // crm_interactions.contact_id is NOT NULL — resolve the sender to a
+      // contact: the picked one, else an email match, else a new contact row
+      // on the matched company (mirrors what the Graph sync does for
+      // unknown-but-relevant senders).
+      let resolvedContactId = contactId || null;
+      if (!resolvedContactId && senderEmail) {
+        const byEmail = await pool.query(
+          `SELECT id FROM crm_contacts WHERE lower(email) = lower($1) LIMIT 1`, [String(senderEmail)]
+        );
+        resolvedContactId = byEmail.rows[0]?.id || null;
+      }
+      let contactCreated = false;
+      if (!resolvedContactId) {
+        if (!senderEmail) return res.status(400).json({ error: "no contact match and no sender email to create one from" });
+        let companyName: string | null = null;
+        if (companyId) {
+          const co = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId]);
+          companyName = co.rows[0]?.name || null;
+        }
+        const created = await pool.query(
+          `INSERT INTO crm_contacts (name, email, company_id, company_name, notes)
+           VALUES ($1, $2, $3, $4, 'Added from the Outlook add-in')
+           RETURNING id`,
+          [String(senderName || senderEmail).slice(0, 200), String(senderEmail).slice(0, 200), companyId || null, companyName]
+        );
+        resolvedContactId = created.rows[0].id;
+        contactCreated = true;
+      }
+
+      const ins = await pool.query(
+        `INSERT INTO crm_interactions
+           (contact_id, company_id, deal_id, type, direction, subject, preview, participants, microsoft_id, match_method, interaction_date, bgp_user)
+         VALUES ($1, $2, $3, $11, $4, $5, $6, $7, $8, $12, $9, $10)
+         RETURNING id`,
+        [
+          resolvedContactId,
+          companyId || null,
+          dealId || null,
+          direction === "outbound" ? "outbound" : "inbound",
+          String(subject || "").slice(0, 500) || "(no subject)",
+          String(preview || "").slice(0, 1000) || null,
+          JSON.stringify(senderEmail ? [String(senderEmail)] : []),
+          microsoftId ? String(microsoftId) : null,
+          interactionDate ? new Date(interactionDate) : new Date(),
+          (req as any).user?.name || (req as any).user?.username || null,
+          entryType,
+          matchMethod,
+        ]
+      );
+      res.json({ logged: true, id: ins.rows[0].id, contactId: resolvedContactId, contactCreated });
+    } catch (err: any) {
+      console.error("[interactions/log]", err?.message);
+      res.status(500).json({ error: err?.message || "failed to log interaction" });
+    }
+  });
+
+  app.get("/api/interactions/sync-status", requireAuth, async (_req: Request, res: Response) => {
+    res.json({
+      running: interactionSyncState.running,
+      startedAt: interactionSyncState.startedAt,
+      finishedAt: interactionSyncState.finishedAt,
+      lastResult: interactionSyncState.lastResult,
+      error: interactionSyncState.error,
+    });
   });
 
   app.get("/api/interactions/contact/:contactId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { contactId } = req.params;
+      const { contactId } = req.params as { contactId: string };
       const limit = Number(req.query.limit) || 50;
       const type = req.query.type as string | undefined;
 
@@ -889,10 +1090,17 @@ export function registerInteractionRoutes(app: Express) {
         .orderBy(desc(crmInteractions.interactionDate))
         .limit(1);
 
+      // Top BGP contacts — who's been most active with this person.
+      // 90-day count visible, all-time on hover (returned together).
+      const ninetyDaysAgo = new Date(now.getTime() - 90 * 86400000);
+      const topBgpContacts = await computeTopBgpContacts({ scope: "contact", id: contactId, since90d: ninetyDaysAgo });
+
       res.json({
         interactions,
         nextMeeting: nextMeeting[0] || null,
         lastInteraction: lastInteraction[0] || null,
+        nextInteraction: nextMeeting[0] || null,        // alias for InteractionsBoard
+        topBgpContacts,
         total: totalCount[0]?.count || 0,
       });
     } catch (e: any) {
@@ -903,8 +1111,17 @@ export function registerInteractionRoutes(app: Express) {
 
   app.get("/api/interactions/company/:companyId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { companyId } = req.params;
+      const { companyId } = req.params as { companyId: string };
       const limit = Number(req.query.limit) || 50;
+      // Client logins may read correspondence for their OWN company and for
+      // brands in their slice (the All-correspondence drawer is now client-
+      // visible — Woody, 2026-08-04) — never other landlords' companies.
+      const { isClientRequestUser, resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+      if (await isClientRequestUser(req)) {
+        const scope = await resolveCompanyScope(req);
+        const allowed = scope === companyId || (await isClientVisibleBrand(companyId, scope));
+        if (!allowed) return res.status(403).json({ error: "Not available for client accounts" });
+      }
 
       const interactions = await db
         .select()
@@ -913,7 +1130,30 @@ export function registerInteractionRoutes(app: Express) {
         .orderBy(desc(crmInteractions.interactionDate))
         .limit(limit);
 
-      res.json({ interactions, total: interactions.length });
+      const now = new Date();
+      const ninetyDaysAgo = new Date(now.getTime() - 90 * 86400000);
+
+      const nextMeeting = await db
+        .select()
+        .from(crmInteractions)
+        .where(
+          and(
+            eq(crmInteractions.companyId, companyId),
+            eq(crmInteractions.type, "meeting"),
+            gte(crmInteractions.interactionDate, now)
+          )
+        )
+        .orderBy(crmInteractions.interactionDate)
+        .limit(1);
+
+      const topBgpContacts = await computeTopBgpContacts({ scope: "company", id: companyId, since90d: ninetyDaysAgo });
+
+      res.json({
+        interactions,
+        nextInteraction: nextMeeting[0] || null,
+        topBgpContacts,
+        total: interactions.length,
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

@@ -25,11 +25,20 @@
  * section, site plan, decision notice, statement etc) so the UI can group
  * them and the auto-download path can prioritise what's worth pulling into
  * the SharePoint pathway folder.
+ *
+ * RBKC (Kensington & Chelsea) is NOT Idox — it runs an in-house planning
+ * search at www.rbkc.gov.uk/planning/searches/details.aspx (refs like
+ * PP/25/06454) and 403s non-browser fetches, so its tier goes via the same
+ * proxy chain and gets its own parser (parseRbkcDocsHtml). The details page
+ * may render only the active tab server-side, so if the first fetch has no
+ * document links we sweep the page's other tab ids (bounded) and any
+ * anchor labelled "documents".
  */
 
 const SCRAPERAPI_ENDPOINT = "https://api.scraperapi.com/";
 
 import { webshareF, isProxyConfigured, isConnectionError } from "./proxy-fetch";
+import { scraperApiExhausted, noteScraperApiResponse } from "./utils/scraperapi";
 
 const BROWSER_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -85,14 +94,15 @@ function classifyDoc(desc: string, type: string, drawingNumber?: string): { cate
     if (intent === "proposed") return { category: "floor_plan_proposed", label: "Floor Plan (Proposed)" };
     return { category: "floor_plan", label: "Floor Plan" };
   }
+  const wordIntent = /\bexisting\b/.test(s) ? "existing" : /\bproposed\b/.test(s) ? "proposed" : null;
   if (isElevation) {
-    const intent = drawingNumberIntent(drawingNumber);
+    const intent = wordIntent || drawingNumberIntent(drawingNumber);
     if (intent === "existing") return { category: "elevation_existing", label: "Elevation (Existing)" };
     if (intent === "proposed") return { category: "elevation_proposed", label: "Elevation (Proposed)" };
     return { category: "elevation", label: "Elevation" };
   }
   if (isSection) {
-    const intent = drawingNumberIntent(drawingNumber);
+    const intent = wordIntent || drawingNumberIntent(drawingNumber);
     if (intent === "existing") return { category: "section_existing", label: "Section (Existing)" };
     if (intent === "proposed") return { category: "section_proposed", label: "Section (Proposed)" };
     return { category: "section", label: "Section" };
@@ -239,6 +249,100 @@ function parseIdoxDocsHtml(html: string, baseUrl: string): PlanningDoc[] {
   return dedupeAndFilter(docs);
 }
 
+// ── RBKC tier ───────────────────────────────────────────────────────────────
+
+export function isRbkcUrl(u: string | null | undefined): boolean {
+  if (!u) return false;
+  try { return /(?:^|\.)rbkc\.gov\.uk$/i.test(new URL(u).hostname); } catch { return false; }
+}
+
+// Hrefs that count as a document on RBKC's in-house pages: direct PDFs plus
+// their scanned-document endpoints (/planning/scanning/*, acsplitdocs,
+// applicationfiles). Deliberately loose — RBKC has re-skinned before.
+const RBKC_DOC_HREF = /\.pdf(\?|$)|\/planning\/scanning\/|acsplitdocs|applicationfiles|showmedia|streamdoc|getdocument/i;
+
+export function parseRbkcDocsHtml(html: string, baseUrl: string): PlanningDoc[] {
+  const docs: PlanningDoc[] = [];
+  const seen = new Set<string>();
+
+  const pushDoc = (href: string, description: string, dateRaw: string) => {
+    let url: string;
+    try { url = new URL(href.replace(/&amp;/g, "&"), baseUrl).toString(); } catch { return; }
+    if (seen.has(url)) return;
+    seen.add(url);
+    const desc = description.trim();
+    if (!desc || /^(view|open|download|back|search|home|help)$/i.test(desc)) return;
+    const { category, label } = classifyDoc(desc, "");
+    docs.push({ url, date: parseDate(dateRaw), description: desc, type: "", category, label });
+  };
+
+  // Pass 1: table rows — date/description cells with the document link.
+  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = rowRe.exec(html)) !== null) {
+    const row = m[1];
+    const anchors = [...row.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
+    const hit = anchors.find((a) => RBKC_DOC_HREF.test(a[1]));
+    if (!hit) continue;
+    const cells = [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) => stripHtml(c[1]));
+    const pickDate = cells.find((c) => /^\d{1,2}[\s\/-][A-Za-z0-9]{2,10}[\s\/-]\d{2,4}$|^\d{4}-\d{2}-\d{2}$/.test(c.trim()));
+    const anchorText = stripHtml(hit[2]);
+    const description = cells
+      .filter((c) => c && c !== pickDate && !/^(view|open|download)$/i.test(c))
+      .sort((a, b) => b.length - a.length)[0] || anchorText;
+    pushDoc(hit[1], description, pickDate || "");
+  }
+  if (docs.length) return dedupeAndFilter(docs);
+
+  // Pass 2: bare anchor sweep for non-tabular layouts.
+  const aRe = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  while ((m = aRe.exec(html)) !== null) {
+    if (!RBKC_DOC_HREF.test(m[1])) continue;
+    pushDoc(m[1], stripHtml(m[2]), "");
+  }
+  return dedupeAndFilter(docs);
+}
+
+// RBKC details.aspx addresses a tab via ?tab=tabs-planning-N and may render
+// only the active tab server-side. Fetch the given URL first; if it has no
+// document links, retry the page's other tab ids and any anchor labelled
+// "documents" — bounded to 4 extra fetches, all through the same tier chain.
+async function fetchRbkcDocs(detailUrl: string): Promise<PlanningDoc[]> {
+  const first = await fetchDocsHtml(detailUrl);
+  if (!first) return [];
+  let docs = parseRbkcDocsHtml(first, detailUrl);
+  if (docs.length) return docs;
+
+  const tried = new Set([detailUrl]);
+  const candidates: string[] = [];
+  try {
+    const u = new URL(detailUrl);
+    const tabIds = [...new Set([...first.matchAll(/tabs-planning-\d+/g)].map((x) => x[0]))];
+    for (const t of tabIds) {
+      const v = new URL(u.toString());
+      v.searchParams.set("tab", t);
+      candidates.push(v.toString());
+    }
+  } catch {}
+  const docLink = first.match(/<a[^>]+href="([^"]+)"[^>]*>[^<]*documents?[^<]*<\/a>/i);
+  if (docLink) {
+    try { candidates.push(new URL(docLink[1].replace(/&amp;/g, "&"), detailUrl).toString()); } catch {}
+  }
+
+  let fetches = 0;
+  for (const c of candidates) {
+    if (tried.has(c)) continue;
+    if (fetches >= 4) break;
+    tried.add(c);
+    fetches++;
+    const html = await fetchDocsHtml(c);
+    if (!html) continue;
+    docs = parseRbkcDocsHtml(html, c);
+    if (docs.length) return docs;
+  }
+  return [];
+}
+
 // The planning apps list gives us a URL pointing at the summary tab (activeTab=summary
 // or no activeTab). The documents tab lives at the same endpoint with
 // activeTab=documents. Normalise whatever we have into the docs-tab URL.
@@ -271,7 +375,9 @@ async function fetchDocsHtml(docsUrl: string): Promise<string | null> {
       signal: AbortSignal.timeout(isProxyConfigured() ? 8000 : 15000),
     });
     if (res.ok) return await res.text();
-    if (res.status >= 400 && res.status < 500) return null; // auth/not-found — proxy won't help
+    // 403/429 are bot-protection (RBKC 403s all server traffic) — a
+    // residential IP fixes those, so keep escalating. Other 4xx won't improve.
+    if (res.status >= 400 && res.status < 500 && res.status !== 403 && res.status !== 429) return null;
     console.warn(`[planning-docs] direct ${res.status} for ${docsUrl}`);
   } catch (err: unknown) {
     if (!isConnectionError(err)) {
@@ -298,12 +404,13 @@ async function fetchDocsHtml(docsUrl: string): Promise<string | null> {
     }
   }
 
-  // Tier 3: ScraperAPI (if key configured)
+  // Tier 3: ScraperAPI (if key configured and not credit-exhausted)
   const apiKey = process.env.SCRAPERAPI_KEY;
-  if (!apiKey) return null;
+  if (!apiKey || scraperApiExhausted()) return null;
   try {
-    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(docsUrl)}&country_code=uk&render=false`;
+    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(docsUrl)}&render=false`;
     const res = await fetch(proxied, { signal: AbortSignal.timeout(45000) });
+    noteScraperApiResponse(res.status);
     if (res.ok) {
       console.log(`[planning-docs] via ScraperAPI: ${docsUrl.replace(/^https?:\/\//, "").split("?")[0]}`);
       return await res.text();
@@ -333,9 +440,14 @@ export async function fetchPlanningDocs(rawUrl: string): Promise<PlanningDoc[]> 
   }
 
   try {
-    const html = await fetchDocsHtml(docsUrl);
-    if (!html) return [];
-    const docs = parseIdoxDocsHtml(html, docsUrl);
+    let docs: PlanningDoc[];
+    if (isRbkcUrl(docsUrl)) {
+      docs = await fetchRbkcDocs(docsUrl);
+    } else {
+      const html = await fetchDocsHtml(docsUrl);
+      if (!html) return [];
+      docs = parseIdoxDocsHtml(html, docsUrl);
+    }
     docCache.set(docsUrl, { fetchedAt: Date.now(), docs });
     console.log(`[planning-docs] ${docsUrl.replace(/^https?:\/\//, "").split("?")[0]} → ${docs.length} docs`);
     return docs;
@@ -385,17 +497,129 @@ export function sortDocsByPriority(docs: PlanningDoc[]): PlanningDoc[] {
 let lastDownloadError = "";
 export function getPlanningDownloadLastError(): string { return lastDownloadError; }
 
-export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
-  const apiKey = process.env.SCRAPERAPI_KEY;
-  if (!apiKey) { lastDownloadError = "SCRAPERAPI_KEY not configured"; return null; }
+export async function downloadPlanningPdf(url: string, refererUrl?: string): Promise<Buffer | null> {
   lastDownloadError = "";
+  const apiKey = process.env.SCRAPERAPI_KEY;
 
   const isPdfBuffer = (buf: Buffer): boolean =>
     buf.length >= 1024 && buf.slice(0, 4).toString("latin1") === "%PDF";
 
+  // Strategy 0: Webshare two-step session — establish JSESSIONID by browsing
+  // the app documents tab first, then fetch the PDF with that cookie.
+  // This mirrors what a human browser does and is required by Westminster Idox.
+  if (isProxyConfigured() && refererUrl) {
+    try {
+      // Step 1: GET the documents tab page via Webshare — Idox sets JSESSIONID
+      const sessionRes = await webshareF(refererUrl, {
+        headers: {
+          "User-Agent": BROWSER_UA,
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-GB,en;q=0.9",
+        },
+        signal: AbortSignal.timeout(20000),
+        redirect: "follow",
+      });
+      // undici uses getSetCookie() for multiple Set-Cookie headers (not .get())
+      const rawHeaders = (sessionRes as any).headers;
+      let sessionCookie = "";
+      if (typeof rawHeaders?.getSetCookie === "function") {
+        sessionCookie = rawHeaders.getSetCookie()
+          .map((h: string) => h.split(";")[0].trim()).filter(Boolean).join("; ");
+      } else {
+        const combined = rawHeaders?.get?.("set-cookie") || "";
+        sessionCookie = combined.split(/,(?=\s*[A-Za-z0-9_-]+=)/)
+          .map((p: string) => p.split(";")[0].trim()).filter(Boolean).join("; ");
+      }
+
+      if (sessionCookie) {
+        // Step 2: GET the PDF with the session cookie + Referer
+        const pdfRes = await webshareF(url, {
+          headers: {
+            "User-Agent": BROWSER_UA,
+            Accept: "application/pdf,*/*;q=0.8",
+            "Accept-Language": "en-GB,en;q=0.9",
+            Referer: refererUrl,
+            Cookie: sessionCookie,
+          },
+          signal: AbortSignal.timeout(30000),
+          redirect: "follow",
+        });
+        if (pdfRes.ok) {
+          const buf = Buffer.from(await pdfRes.arrayBuffer());
+          if (isPdfBuffer(buf)) {
+            console.log(`[planning-docs] Webshare session download OK: ${url}`);
+            return buf;
+          }
+          console.warn(`[planning-docs] Webshare session got non-PDF (${buf.length}B)`);
+        } else {
+          console.warn(`[planning-docs] Webshare session PDF fetch ${pdfRes.status}`);
+        }
+      } else {
+        console.warn(`[planning-docs] Webshare session: no JSESSIONID in Set-Cookie`);
+      }
+    } catch (err: any) {
+      console.warn(`[planning-docs] Webshare session strategy failed: ${err?.message}`);
+    }
+  }
+
+  // Strategy 0b: ScraperAPI sticky-session two-step.
+  // Uses session_number to pin both requests to the same egress IP, avoiding
+  // the rotating-proxy problem that breaks Webshare for Idox JSESSIONID flows.
+  if (apiKey && refererUrl && !scraperApiExhausted()) {
+    try {
+      const sessionNum = Math.floor(Math.random() * 999999);
+      const step1 = await fetch(
+        `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(refererUrl)}&session_number=${sessionNum}&render=false`,
+        { signal: AbortSignal.timeout(20000), redirect: "follow" },
+      );
+      noteScraperApiResponse(step1.status);
+      const h1 = (step1 as any).headers;
+      let cookies = "";
+      if (typeof h1?.getSetCookie === "function") {
+        cookies = h1.getSetCookie().map((c: string) => c.split(";")[0].trim()).filter(Boolean).join("; ");
+      } else {
+        const raw = h1?.get?.("set-cookie") || "";
+        cookies = raw.split(/,(?=\s*[A-Za-z0-9_-]+=)/).map((c: string) => c.split(";")[0].trim()).filter(Boolean).join("; ");
+      }
+      console.log(`[planning-docs] ScraperAPI session ${sessionNum}: referer cookies="${cookies}"`);
+      if (cookies) {
+        const step2 = await fetch(
+          `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&session_number=${sessionNum}&keep_headers=true&render=false`,
+          {
+            headers: { Cookie: cookies, Referer: refererUrl, "User-Agent": BROWSER_UA },
+            signal: AbortSignal.timeout(30000),
+            redirect: "follow",
+          },
+        );
+        if (step2.ok) {
+          const buf = Buffer.from(await step2.arrayBuffer());
+          if (isPdfBuffer(buf)) {
+            console.log(`[planning-docs] ScraperAPI session download OK: ${url}`);
+            return buf;
+          }
+          console.warn(`[planning-docs] ScraperAPI session got non-PDF (${buf.length}B)`);
+        } else {
+          console.warn(`[planning-docs] ScraperAPI session PDF fetch ${step2.status}`);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[planning-docs] ScraperAPI session strategy failed: ${err?.message}`);
+    }
+  }
+
+  if (!apiKey) {
+    lastDownloadError = "SCRAPERAPI_KEY not configured and Webshare session failed";
+    return null;
+  }
+
   const tryFetch = async (label: string, scraperUrl: string, timeoutMs: number): Promise<Buffer | null> => {
+    if (scraperApiExhausted()) {
+      lastDownloadError = "ScraperAPI paused — account out of credits (circuit breaker)";
+      return null;
+    }
     try {
       const res = await fetch(scraperUrl, { signal: AbortSignal.timeout(timeoutMs), redirect: "follow" });
+      noteScraperApiResponse(res.status);
       if (!res.ok) {
         lastDownloadError = `${label} returned HTTP ${res.status}`;
         console.warn(`[planning-docs] ${label} ${res.status} for ${url}`);
@@ -409,7 +633,7 @@ export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
       const embedded = extractEmbeddedPdfUrl(head, url);
       if (embedded && embedded !== url) {
         console.log(`[planning-docs] ${label} returned HTML — retrying embedded URL ${embedded}`);
-        const retryUrl = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(embedded)}&country_code=uk&render=false`;
+        const retryUrl = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(embedded)}&render=false`;
         const retryRes = await fetch(retryUrl, { signal: AbortSignal.timeout(25000), redirect: "follow" });
         if (retryRes.ok) {
           const retryBuf = Buffer.from(await retryRes.arrayBuffer());
@@ -427,22 +651,19 @@ export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
   };
 
   // Strategy 1: cheapest — no JS rendering. Works for direct .pdf URLs.
-  const s1 = await tryFetch("no-render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=false`, 25000);
+  const s1 = await tryFetch("no-render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&render=false`, 25000);
   if (s1) return s1;
 
-  // Strategy 2: premium proxy (residential IPs) — often enough on its own
-  // to get past Idox IP-block lists without needing JS render.
-  const s2 = await tryFetch("premium", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=false`, 30000);
+  // Strategy 2: premium proxy (residential IPs).
+  const s2 = await tryFetch("premium", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&premium=true&render=false`, 30000);
   if (s2) return s2;
 
-  // Strategy 3: enable JS rendering. Some Idox endpoints fire a JS
-  // redirect from the viewer page to the actual PDF stream.
-  const s3 = await tryFetch("render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=true`, 45000);
+  // Strategy 3: JS rendering for viewer-page redirects.
+  const s3 = await tryFetch("render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&render=true`, 45000);
   if (s3) return s3;
 
-  // Strategy 4: premium + render. Last resort — slow but handles
-  // JS-gated + IP-gated Idox the same way a human browser does.
-  const s4 = await tryFetch("premium+render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=true`, 60000);
+  // Strategy 4: premium + render. Slow but handles JS-gated + IP-gated Idox.
+  const s4 = await tryFetch("premium+render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&premium=true&render=true`, 60000);
   if (s4) return s4;
 
   return null;

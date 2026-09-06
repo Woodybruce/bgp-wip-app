@@ -82,14 +82,16 @@ export default function MarketingFilesPage() {
 
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-3xl mx-auto" data-testid="marketing-files-page">
+      {/* Phone shell nav already shows back-arrow + "Marketing Files" — hide
+          the desktop back/title there so the header appears once per view. */}
       <div className="flex items-center gap-3">
-        <Link href="/available">
+        <Link href="/available" className="hidden md:block">
           <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" data-testid="button-back-available">
             <ArrowLeft className="w-4 h-4" />
           </Button>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Marketing Files</h1>
+          <h1 className="hidden md:block text-2xl font-bold tracking-tight">Marketing Files</h1>
           <p className="text-sm text-muted-foreground">{allFiles.length} file{allFiles.length !== 1 ? "s" : ""} across all units</p>
         </div>
       </div>

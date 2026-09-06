@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import {
 import {
   Upload, FileText, Trash2, CheckCircle2, AlertCircle, Loader2,
   ShieldCheck, ShieldAlert, Clock, Download, Scan, ExternalLink,
+  Sparkles, RefreshCw,
 } from "lucide-react";
 
 interface KycDocument {
@@ -105,7 +106,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   const { data: veriffStatus } = useQuery<{ configured: boolean }>({
     queryKey: ["/api/veriff/status"],
     queryFn: async () => {
-      const res = await fetch("/api/veriff/status", { credentials: "include" });
+      const res = await fetch("/api/veriff/status", { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) return { configured: false };
       return res.json();
     },
@@ -114,7 +115,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   const { data: veriffSessions = [] } = useQuery<any[]>({
     queryKey: ["/api/veriff/sessions", { companyId }],
     queryFn: async () => {
-      const res = await fetch(`/api/veriff/sessions?companyId=${companyId}`, { credentials: "include" });
+      const res = await fetch(`/api/veriff/sessions?companyId=${companyId}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) return [];
       return res.json();
     },
@@ -155,7 +156,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   const { data, isLoading } = useQuery<{ company: CompanyAmlState; documents: KycDocument[] }>({
     queryKey: ["/api/kyc/company", companyId],
     queryFn: async () => {
-      const res = await fetch(`/api/kyc/company/${companyId}`, { credentials: "include" });
+      const res = await fetch(`/api/kyc/company/${companyId}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
@@ -184,7 +185,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/kyc/company", companyId] });
       if (dealId) queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
-      toast({ title: "KYC approved", description: "6-month re-check reminder created automatically." });
+      toast({ title: "KYC approved", description: "Re-check reminder created automatically on the firm's configured cycle." });
     },
     onError: (e: any) => toast({ title: "Approve failed", description: e?.message, variant: "destructive" }),
   });
@@ -223,6 +224,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
         method: "POST",
         body: form,
         credentials: "include",
+        headers: getAuthHeaders(),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -317,61 +319,73 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
-          {/* Risk + PEP */}
+          <KycCommentaryStrip companyId={companyId} />
+          {/* Risk + PEP — auto-derived from sweep (CH + sanctions + country risk + ComplyAdvantage) */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Customer risk rating</label>
-              <Select
-                value={company.aml_risk_level || ""}
-                onValueChange={(v) => checklistMutation.mutate({ riskLevel: v })}
-              >
-                <SelectTrigger data-testid="select-risk-level"><SelectValue placeholder="Set risk level" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="critical">Critical</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="h-9 flex items-center px-2.5 rounded-md border border-dashed border-input bg-muted/30">
+                {company.aml_risk_level ? (
+                  <Badge variant="outline" className={
+                    company.aml_risk_level === "critical" ? "border-red-400 text-red-700 bg-red-50" :
+                    company.aml_risk_level === "high" ? "border-orange-400 text-orange-700 bg-orange-50" :
+                    company.aml_risk_level === "medium" ? "border-amber-400 text-amber-700 bg-amber-50" :
+                    "border-green-400 text-green-700 bg-green-50"
+                  }>
+                    {company.aml_risk_level.charAt(0).toUpperCase() + company.aml_risk_level.slice(1)}
+                  </Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground italic">Awaiting AML sweep</span>
+                )}
+              </div>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">PEP status</label>
-              <Select
-                value={company.aml_pep_status || ""}
-                onValueChange={(v) => checklistMutation.mutate({ pepStatus: v })}
-              >
-                <SelectTrigger data-testid="select-pep-status"><SelectValue placeholder="Set PEP status" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="clear">Clear</SelectItem>
-                  <SelectItem value="pep_domestic">PEP — Domestic</SelectItem>
-                  <SelectItem value="pep_foreign">PEP — Foreign</SelectItem>
-                  <SelectItem value="pep_associate">PEP — Associate</SelectItem>
-                  <SelectItem value="pep_family">PEP — Family</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="h-9 flex items-center px-2.5 rounded-md border border-dashed border-input bg-muted/30">
+                {company.aml_pep_status ? (
+                  <Badge variant="outline" className={
+                    company.aml_pep_status === "clear"
+                      ? "border-green-400 text-green-700 bg-green-50"
+                      : "border-purple-400 text-purple-700 bg-purple-50"
+                  }>
+                    {company.aml_pep_status === "clear" ? "Clear" : company.aml_pep_status.replace(/^pep_/, "PEP — ").replace(/_/g, " ")}
+                  </Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground italic">Awaiting AML sweep</span>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Source of wealth */}
+          {/* Source of wealth — auto from SoF analyser when client uploads docs */}
           <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">Source of wealth</label>
-            <Select
-              value={company.aml_source_of_wealth || ""}
-              onValueChange={(v) => checklistMutation.mutate({ sourceOfWealth: v })}
-            >
-              <SelectTrigger data-testid="select-sow"><SelectValue placeholder="Select" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="employment">Employment income</SelectItem>
-                <SelectItem value="business">Business ownership / sale</SelectItem>
-                <SelectItem value="inheritance">Inheritance</SelectItem>
-                <SelectItem value="investment">Investments</SelectItem>
-                <SelectItem value="property">Property sale</SelectItem>
-                <SelectItem value="other">Other</SelectItem>
-              </SelectContent>
-            </Select>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block flex items-center gap-1.5">
+              <span>Source of wealth</span>
+              <span
+                className="text-[10px] text-muted-foreground/70 cursor-help"
+                title={
+                  "Source of WEALTH = how the customer accumulated their overall wealth over time " +
+                  "(e.g. 20+ years salary, inheritance, sold business 2018, property portfolio).\n\n" +
+                  "Different from Source of FUNDS (where the money for THIS specific transaction came from — " +
+                  "salary into a Lloyds account, retained earnings, loan from X Bank).\n\n" +
+                  "MLR 2017 standard CDD only requires SoF; high-risk EDD (Reg 35) requires both."
+                }
+              >
+                — what's this?
+              </span>
+            </label>
+            <div className="h-9 flex items-center px-2.5 rounded-md border border-dashed border-input bg-muted/30">
+              {company.aml_source_of_wealth ? (
+                <Badge variant="outline" className="capitalize">
+                  {company.aml_source_of_wealth.replace(/_/g, " ")}
+                </Badge>
+              ) : (
+                <span className="text-xs text-muted-foreground italic">Awaiting client docs / SoF analyser</span>
+              )}
+            </div>
             <Textarea
               className="mt-2 text-sm"
-              placeholder="Source of wealth notes / evidence summary"
+              placeholder="Source of wealth notes / evidence summary (auto-filled by analyser, editable)"
               value={sowNotes ?? (company.aml_source_of_wealth_notes || "")}
               onChange={(e) => setSowNotes(e.target.value)}
               onBlur={(e) => {
@@ -624,8 +638,8 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
                       <AlertDialogHeader>
                         <AlertDialogTitle>Approve KYC for {company.name}?</AlertDialogTitle>
                         <AlertDialogDescription>
-                          This will mark the company as KYC-approved for 6 months and create an automatic
-                          re-check reminder. Only do this if you've reviewed every checklist item and supporting
+                          This will mark the company as KYC-approved until the firm's configured re-check
+                          date and create an automatic reminder. Only do this if you've reviewed every checklist item and supporting
                           document. Your name and the timestamp will be recorded in the audit log.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
@@ -683,5 +697,60 @@ function RejectButton({ onReject }: { onReject: (reason: string) => void }) {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+function KycCommentaryStrip({ companyId }: { companyId: string }) {
+  const queryKey = ["/api/kyc/company", companyId, "commentary"];
+  const { data, isLoading, refetch, isRefetching } = useQuery<{
+    commentary: string | null; outstanding: string[]; completed: number; total: number;
+  }>({
+    queryKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/kyc/company/${companyId}/commentary`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to load commentary");
+      return res.json();
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const refresh = async () => {
+    await fetch(`/api/kyc/company/${companyId}/commentary?refresh=1`, { credentials: "include", headers: getAuthHeaders() });
+    refetch();
+  };
+
+  if (isLoading) return (
+    <div className="rounded-md border border-border bg-muted/40 p-2.5 text-xs text-muted-foreground italic">
+      Reading the KYC file…
+    </div>
+  );
+  if (!data) return null;
+
+  const topOutstanding = data.outstanding.slice(0, 5);
+  return (
+    <div className="rounded-md border border-border bg-muted/40 p-2.5" data-testid="kyc-commentary">
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+          <Sparkles className="w-3 h-3 text-primary" /> AI read — where this file stands ({data.completed}/{data.total} complete)
+        </div>
+        <Button size="sm" variant="ghost" className="h-5 w-5 p-0"
+          onClick={refresh} disabled={isRefetching} title="Refresh commentary">
+          <RefreshCw className={`w-3 h-3 ${isRefetching ? "animate-spin" : ""}`} />
+        </Button>
+      </div>
+      {data.commentary && (
+        <p className="text-xs leading-snug text-foreground/90 whitespace-pre-wrap mb-1.5">{data.commentary}</p>
+      )}
+      {topOutstanding.length > 0 && (
+        <div className="text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground/70">Still needed:</span>{" "}
+          {topOutstanding.join(" · ")}
+          {data.outstanding.length > topOutstanding.length && ` · +${data.outstanding.length - topOutstanding.length} more`}
+        </div>
+      )}
+      {data.outstanding.length === 0 && (
+        <div className="text-[11px] text-emerald-700 dark:text-emerald-400">Nothing outstanding — file is complete.</div>
+      )}
+    </div>
   );
 }

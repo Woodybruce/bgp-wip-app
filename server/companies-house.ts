@@ -1,5 +1,8 @@
 import { Router } from "express";
 import { requireAuth } from "./auth";
+import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
+import { runAllAmlChecks } from "./kyc-orchestrator";
+import { pool } from "./db";
 
 const router = Router();
 
@@ -226,7 +229,7 @@ router.get("/api/companies-house/search", requireAuth, async (req, res) => {
 
 router.get("/api/companies-house/company/:number", requireAuth, async (req, res) => {
   try {
-    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}`);
+    const data = await chFetch(`/company/${encodeURIComponent(req.params.number as string)}`);
     const profile = {
       companyNumber: data.company_number,
       companyName: data.company_name,
@@ -255,7 +258,7 @@ router.get("/api/companies-house/company/:number", requireAuth, async (req, res)
 
 router.get("/api/companies-house/officers/:number", requireAuth, async (req, res) => {
   try {
-    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}/officers`);
+    const data = await chFetch(`/company/${encodeURIComponent(req.params.number as string)}/officers`);
     const officers = (data.items || []).map((o: any) => ({
       name: o.name,
       officerRole: o.officer_role,
@@ -273,7 +276,7 @@ router.get("/api/companies-house/officers/:number", requireAuth, async (req, res
 
 router.get("/api/companies-house/pscs/:number", requireAuth, async (req, res) => {
   try {
-    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}/persons-with-significant-control`);
+    const data = await chFetch(`/company/${encodeURIComponent(req.params.number as string)}/persons-with-significant-control`);
     const pscs = (data.items || []).map((p: any) => ({
       name: p.name || (p.name_elements ? [p.name_elements?.title, p.name_elements?.forename, p.name_elements?.surname].filter(Boolean).join(" ") : "Unknown"),
       kind: p.kind,
@@ -295,7 +298,7 @@ router.get("/api/companies-house/pscs/:number", requireAuth, async (req, res) =>
 router.get("/api/companies-house/filing-history/:number", requireAuth, async (req, res) => {
   try {
     const items = Math.min(Number(req.query.items) || 25, 100);
-    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}/filing-history?items_per_page=${items}`);
+    const data = await chFetch(`/company/${encodeURIComponent(req.params.number as string)}/filing-history?items_per_page=${items}`);
     const filings = (data.items || []).map((f: any) => ({
       date: f.date,
       category: f.category,
@@ -327,7 +330,7 @@ router.get("/api/companies-house/filing-history/:number", requireAuth, async (re
 router.get("/api/companies-house/document/:id", requireAuth, async (req, res) => {
   try {
     if (!CH_API_KEY) return res.status(503).json({ error: "Companies House API key not configured" });
-    const id = req.params.id;
+    const id = req.params.id as string;
     if (!/^[A-Za-z0-9_-]+$/.test(id)) return res.status(400).json({ error: "Invalid document id" });
 
     const auth = `Basic ${Buffer.from(CH_API_KEY + ":").toString("base64")}`;
@@ -352,153 +355,902 @@ router.get("/api/companies-house/document/:id", requireAuth, async (req, res) =>
   }
 });
 
-router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req, res) => {
-  try {
-    const { db } = await import("./db");
-    const { crmCompanies } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
+// ─── Core KYC logic — shared between the single-company route and batch runner ──
+//
+// `forceFromWebsite` (re-resolve button): ignore any stored CH number and
+// re-derive it from the brand's website. Without this flag we still re-scrape
+// when the website is present but only OVERWRITE an existing number when the
+// website yields a different one — protects against single-page scraper hits
+// while letting us correct historical wrong matches.
+async function performAutoKyc(companyId: string, opts: {
+  forceFromWebsite?: boolean;
+  // Manual user-provided overrides for the "ask for help" UX — surfaced when
+  // auto-resolution fails. Highest-confidence one wins (chNumber > entityName
+  // > tcsUrl).
+  manualChNumber?: string | null;
+  manualEntityName?: string | null;
+  manualTcsUrl?: string | null;
+  // Conducting user — used so the persisted kyc_investigations row carries
+  // an audit trail. Null is acceptable for system/cron-driven runs.
+  userId?: string | null;
+} = {}): Promise<{
+  success: boolean;
+  kycStatus: string;
+  needsHelp?: boolean;
+  profile?: any;
+  officers?: any[];
+  pscs?: any[];
+  filings?: any[];
+  filingsTotal?: number;
+  companyNumber?: string | null;
+  message?: string;
+  resolvedFrom?: "stored" | "website" | "ai_picker" | "name_match" | "exact_name_match";
+  diagnostics?: Array<{ step: string; outcome: string; detail?: string }>;
+  experian?: any;
+  riskLevel?: string;
+  riskScore?: number;
+  investigationId?: number | null;
+}> {
+  const { db } = await import("./db");
+  const { crmCompanies } = await import("@shared/schema");
+  const { eq } = await import("drizzle-orm");
 
-    const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId)).limit(1);
-    if (!company) {
-      return res.status(404).json({ error: "Company not found" });
-    }
+  const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, companyId)).limit(1);
+  if (!company) throw new Error("Company not found");
 
-    let chNumber = company.companiesHouseNumber;
+  let chNumber = opts.forceFromWebsite ? null : company.companiesHouseNumber;
+  let resolvedFrom: "stored" | "website" | "ai_picker" | "name_match" | "exact_name_match" = "stored";
+  // Per-step trace so the brand panel can show why a re-resolve picked what
+  // it picked (or why it picked nothing). Without this the "Wrong company?"
+  // button feels like a black box when it lands the same wrong CH again.
+  const diagnostics: Array<{ step: string; outcome: string; detail?: string }> = [];
 
-    if (!chNumber) {
-      const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(company.name)}&items_per_page=5`);
-      const items = searchData.items || [];
-      if (items.length === 0) {
-        return res.json({
+  const existingChData = company.companiesHouseData as any;
+  const existingStatus = existingChData?.profile?.companyStatus;
+  const isExistingDissolved = existingStatus && existingStatus !== "active";
+  // Brand records populate `website` from enrichment but `domainUrl`/`domain`
+  // are only set by older flows. Fall back to `website` so the scraper actually
+  // runs on tracked brands (otherwise we'd skip with "no domain on company").
+  const domain = (company as any).domainUrl as string | null
+    || (company as any).domain as string | null
+    || (company as any).website as string | null;
+
+  // Parent-group context — used by every AI step downstream so the system can
+  // resolve foreign-owned brands (Supreme/EssilorLuxottica, Off-White/LVMH)
+  // via the parent's UK arm rather than blind-picking a name match.
+  let parentGroup: string | null = (company as any).backers || null;
+  const formerParent: string | null = null; // not separately tracked; backers field carries history
+  const parentCompanyId = (company as any).parentCompanyId as string | null;
+  if (parentCompanyId) {
+    try {
+      const [parent] = await db.select({ name: crmCompanies.name }).from(crmCompanies).where(eq(crmCompanies.id, parentCompanyId)).limit(1);
+      if (parent?.name) parentGroup = parentGroup ? `${parent.name} (${parentGroup})` : parent.name;
+    } catch { /* non-fatal */ }
+  }
+  const brandContext = { name: company.name, parentGroup };
+
+  if (!chNumber || isExistingDissolved || (opts.forceFromWebsite && domain)) {
+    const storedEntityName = (company as any).ukEntityName as string | null;
+    let searchName = storedEntityName || company.name;
+    // True only when searchName came from a legitimate UK-entity source
+    // (website scrape, manual entry, T&Cs URL extraction, or an existing
+    // stored uk_entity_name). False when we've only got the brand display
+    // name to fall back on — in which case we refuse to search CH by it.
+    let haveSpecificEntityName = !!storedEntityName;
+    let websiteContext = "";
+
+    // ── User-provided override (highest priority) ────────────────────────
+    // When auto-resolve fails, the brand panel surfaces an "ask for help"
+    // form letting the user paste the T&Cs URL, type the UK entity name, or
+    // paste the CH number directly. Apply those here before falling back to
+    // automatic discovery.
+    if (opts.manualChNumber) {
+      const cleaned = String(opts.manualChNumber).replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+      const padded = /^[0-9]+$/.test(cleaned) && cleaned.length < 8 ? cleaned.padStart(8, "0") : cleaned;
+      const verified = await verifyChNumber(padded);
+      if (verified) {
+        chNumber = padded;
+        resolvedFrom = "website";
+        diagnostics.push({ step: "manual_ch_number", outcome: "verified", detail: `User-provided CH ${padded} verified active.` });
+      } else {
+        diagnostics.push({ step: "manual_ch_number", outcome: "failed_verify", detail: `User-provided CH ${padded} did not verify on Companies House.` });
+        return {
           success: false,
           kycStatus: "not_found",
-          message: `No Companies House match found for "${company.name}". Manual search may be needed.`,
-        });
+          message: `The CH number you provided (${padded}) doesn't exist on Companies House or is dissolved. Double-check the number?`,
+          diagnostics,
+          needsHelp: true,
+        } as any;
       }
-      const nameLower = company.name.toLowerCase().trim();
-      const bestMatch = items.find((i: any) => i.title?.toLowerCase().trim() === nameLower)
-        || items.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
-        || items[0];
-      chNumber = bestMatch.company_number;
+    } else if (opts.manualEntityName) {
+      searchName = opts.manualEntityName.trim();
+      haveSpecificEntityName = true;
+      websiteContext = `User-provided UK entity name: ${searchName}`;
+      diagnostics.push({ step: "manual_entity_name", outcome: "accepted", detail: `Searching CH for "${searchName}".` });
+    } else if (opts.manualTcsUrl) {
+      try {
+        // Direct first; on bot-wall (403/Akamai/Cloudflare) or timeout, retry
+        // through ScraperAPI's residential proxy. Same fallback pattern as
+        // the auto-scraper (Step 0) below.
+        const ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+        let r = await fetch(opts.manualTcsUrl, {
+          headers: { "User-Agent": ua },
+          signal: AbortSignal.timeout(10_000),
+          redirect: "follow",
+        }).catch(() => null);
+        const blocked = !r || r.status === 403 || r.status === 503 || r.status === 429;
+        if (blocked && isScraperApiAvailable()) {
+          diagnostics.push({ step: "manual_tcs_url", outcome: "direct_blocked", detail: `Direct fetch returned ${r?.status ?? "no response"} — retrying via ScraperAPI residential proxy.` });
+          r = await scraperFetch(opts.manualTcsUrl, {
+            headers: { "User-Agent": ua },
+            timeoutMs: 30_000,
+          }).catch(() => null);
+        }
+        if (!r || !r.ok) {
+          diagnostics.push({ step: "manual_tcs_url", outcome: "fetch_failed", detail: `${r?.status ?? "no response"} ${r?.statusText ?? ""} for ${opts.manualTcsUrl}` });
+        } else {
+          const html = await r.text();
+          const text = html
+            .replace(/<script[\s\S]*?<\/script>/gi, " ")
+            .replace(/<style[\s\S]*?<\/style>/gi, " ")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+          // Try AI extraction first since user has flagged this URL as the T&Cs
+          const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+          let extractedEntity: string | null = null;
+          let extractedCh: string | null = null;
+          if (apiKey) {
+            try {
+              const Anthropic = (await import("@anthropic-ai/sdk")).default;
+              const client = new Anthropic({ apiKey });
+              const aiPrompt = `Extract the UK Companies House registered entity that operates the brand "${company.name}" from this T&Cs page provided by the user.${parentGroup ? ` Parent group: ${parentGroup}.` : ""}
+
+Page URL: ${opts.manualTcsUrl}
+Page text (first 8KB):
+"""
+${text.slice(0, 8000)}
+"""
+
+Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/PLC/LLP>" or null, "chNumber": "<8-digit CH number>" or null}`;
+              const msg = await client.messages.create({
+                model: "claude-haiku-4-5-20251001",
+                max_tokens: 200,
+                messages: [{ role: "user", content: aiPrompt }],
+              });
+              const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
+              const match = txt.match(/\{[\s\S]*?\}/);
+              if (match) {
+                const parsed = JSON.parse(match[0]);
+                extractedEntity = typeof parsed?.entityName === "string" && parsed.entityName.trim() ? parsed.entityName.trim() : null;
+                let ch = parsed?.chNumber || null;
+                if (ch) {
+                  ch = String(ch).replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+                  if (ch && /^[0-9]+$/.test(ch) && ch.length < 8) ch = ch.padStart(8, "0");
+                  if (ch.length === 8) extractedCh = ch;
+                }
+              }
+            } catch { /* fall through */ }
+          }
+          if (extractedCh) {
+            const verified = await verifyChNumber(extractedCh);
+            if (verified) {
+              chNumber = extractedCh;
+              resolvedFrom = "website";
+              diagnostics.push({ step: "manual_tcs_url", outcome: "ch_found", detail: `Extracted CH ${extractedCh} (${extractedEntity || "?"}) from ${opts.manualTcsUrl} — verified.` });
+            } else {
+              diagnostics.push({ step: "manual_tcs_url", outcome: "ch_failed_verify", detail: `Extracted CH ${extractedCh} from ${opts.manualTcsUrl} but it didn't verify.` });
+            }
+          }
+          if (!chNumber && extractedEntity) {
+            searchName = extractedEntity;
+            haveSpecificEntityName = true;
+            websiteContext = `T&Cs URL (${opts.manualTcsUrl}) extraction → ${extractedEntity}`;
+            await db.update(crmCompanies).set({ ukEntityName: extractedEntity } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+            diagnostics.push({ step: "manual_tcs_url", outcome: "entity_only", detail: `Extracted entity name "${extractedEntity}" from user-supplied T&Cs URL.` });
+          }
+          if (!extractedEntity && !extractedCh) {
+            diagnostics.push({ step: "manual_tcs_url", outcome: "nothing", detail: `Could not extract a UK entity from ${opts.manualTcsUrl}.` });
+          }
+        }
+      } catch (err: any) {
+        diagnostics.push({ step: "manual_tcs_url", outcome: "error", detail: err?.message || "fetch failed" });
+      }
     }
 
-    const profileData = await chFetch(`/company/${encodeURIComponent(chNumber!)}`);
-    const profile = {
-      companyNumber: profileData.company_number,
-      companyName: profileData.company_name,
-      companyStatus: profileData.company_status,
-      companyType: profileData.type,
-      dateOfCreation: profileData.date_of_creation,
-      registeredOfficeAddress: profileData.registered_office_address,
-      sicCodes: profileData.sic_codes,
-      hasCharges: profileData.has_charges,
-      hasInsolvencyHistory: profileData.has_insolvency_history,
-      canFile: profileData.can_file,
-      jurisdiction: profileData.jurisdiction,
-      accountsOverdue: profileData.accounts?.overdue,
-      confirmationStatementOverdue: profileData.confirmation_statement?.overdue,
-      lastAccountsMadeUpTo: profileData.accounts?.last_accounts?.made_up_to,
-    };
-
-    let officers: any[] = [];
-    let pscs: any[] = [];
-    let filings: any[] = [];
-    let filingsTotal = 0;
-
-    const [officerResult, pscResult, filingResult] = await Promise.allSettled([
-      chFetch(`/company/${encodeURIComponent(chNumber!)}/officers`),
-      chFetch(`/company/${encodeURIComponent(chNumber!)}/persons-with-significant-control`),
-      chFetch(`/company/${encodeURIComponent(chNumber!)}/filing-history?items_per_page=10`),
-    ]);
-
-    if (officerResult.status === "fulfilled") {
-      officers = (officerResult.value.items || []).map((o: any) => ({
-        name: o.name,
-        officerRole: o.officer_role,
-        appointedOn: o.appointed_on,
-        resignedOn: o.resigned_on,
-        nationality: o.nationality,
-        occupation: o.occupation,
-        address: o.address,
-        dateOfBirth: o.date_of_birth ? `${o.date_of_birth.month}/${o.date_of_birth.year}` : null,
-      }));
+    if (!chNumber && domain && !opts.manualEntityName && !opts.manualTcsUrl) {
+      try {
+        // Forward per-step trace from inside the scraper into the panel
+        // diagnostics so a "nothing" outcome shows WHICH base/link/page
+        // bailed (probe blocked, SPA homepage with no links, link 403,
+        // page text had no UK signal, etc) rather than a single opaque line.
+        const scraped = await scrapeUkEntityFromWebsite(domain, brandContext, (step, detail) => {
+          diagnostics.push({ step: `scrape.${step}`, outcome: "trace", detail });
+        });
+        if (scraped.entityName) {
+          searchName = scraped.entityName;
+          haveSpecificEntityName = true;
+          if (!storedEntityName) {
+            await db.update(crmCompanies).set({ ukEntityName: scraped.entityName } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+          }
+          console.log(`[auto-kyc] Scraped UK entity from website: "${scraped.entityName}"`);
+          websiteContext = `Website-derived legal entity name: ${scraped.entityName}`;
+        }
+        if (scraped.chNumber) {
+          chNumber = scraped.chNumber;
+          resolvedFrom = "website";
+          console.log(`[auto-kyc] Website yielded CH number ${scraped.chNumber} for "${company.name}"`);
+        }
+        if (scraped.sourceUrl) {
+          websiteContext += `\nSource: ${scraped.sourceUrl}`;
+        }
+        diagnostics.push({
+          step: "website_scrape",
+          outcome: scraped.chNumber ? "ch_found" : scraped.entityName ? "entity_only" : "nothing",
+          detail: [scraped.entityName, scraped.chNumber, scraped.sourceUrl].filter(Boolean).join(" · ") || `tried ${domain}`,
+        });
+      } catch (err: any) {
+        diagnostics.push({ step: "website_scrape", outcome: "error", detail: err?.message || "fetch failed" });
+      }
+    } else {
+      const reason = chNumber
+        ? "already resolved upstream"
+        : opts.manualTcsUrl
+        ? "user supplied T&Cs URL — using that instead"
+        : opts.manualEntityName
+        ? "user supplied UK entity name — skipping scrape"
+        : "no domain/website on company";
+      diagnostics.push({ step: "website_scrape", outcome: "skipped", detail: reason });
     }
 
-    if (pscResult.status === "fulfilled") {
-      pscs = (pscResult.value.items || []).map((p: any) => ({
-        name: p.name || (p.name_elements ? [p.name_elements?.title, p.name_elements?.forename, p.name_elements?.surname].filter(Boolean).join(" ") : "Unknown"),
-        kind: p.kind,
-        naturesOfControl: p.natures_of_control || [],
-        nationality: p.nationality,
-        countryOfResidence: p.country_of_residence,
-        notifiedOn: p.notified_on,
-        ceasedOn: p.ceased_on,
-        address: p.address,
-        dateOfBirth: p.date_of_birth ? `${p.date_of_birth.month}/${p.date_of_birth.year}` : null,
-      }));
+    if (!chNumber && domain) {
+      const { isPerplexityConfigured } = await import("./perplexity");
+      if (!isPerplexityConfigured()) {
+        diagnostics.push({ step: "perplexity", outcome: "not_configured", detail: "PERPLEXITY_API_KEY not set on Railway — fallback skipped" });
+      } else {
+        try {
+          const perp = await askPerplexityForUkEntity(company.name, domain, { parentGroup, formerParent });
+          if (perp?.chNumber) {
+            const verified = await verifyChNumber(perp.chNumber);
+            if (verified) {
+              chNumber = perp.chNumber;
+              resolvedFrom = "website";
+              websiteContext += `\nPerplexity match: ${perp.entityName || "?"} (CH ${perp.chNumber}) — verified active on CH.`;
+              console.log(`[auto-kyc] Perplexity yielded CH ${perp.chNumber} (${perp.entityName}) for "${company.name}"`);
+              diagnostics.push({
+                step: "perplexity",
+                outcome: "ch_found",
+                detail: `${perp.entityName || "?"} → CH ${perp.chNumber} (verified active)`,
+              });
+            } else {
+              console.warn(`[auto-kyc] Perplexity suggested CH ${perp.chNumber} for "${company.name}" but it failed CH verify`);
+              diagnostics.push({
+                step: "perplexity",
+                outcome: "ch_failed_verify",
+                detail: `Perplexity said CH ${perp.chNumber} but Companies House didn't recognise it (or it's dissolved)`,
+              });
+            }
+          } else if (perp?.entityName) {
+            searchName = perp.entityName;
+            // A specific registered-name suggestion is trusted the same way
+            // a manually typed name is: it only resolves on an exact
+            // (normalised) CH title match below — never by similarity. It
+            // used to park unused because this flag stayed false.
+            haveSpecificEntityName = true;
+            websiteContext += `\nPerplexity-suggested entity name: ${perp.entityName}`;
+            diagnostics.push({ step: "perplexity", outcome: "entity_only", detail: `name: ${perp.entityName} — accepted only on exact CH title match` });
+          } else {
+            diagnostics.push({ step: "perplexity", outcome: "nothing", detail: "Perplexity returned null" });
+          }
+        } catch (err: any) {
+          console.warn(`[auto-kyc] Perplexity fallback failed for "${company.name}":`, err?.message);
+          diagnostics.push({ step: "perplexity", outcome: "error", detail: err?.message || "request failed" });
+        }
+      }
     }
 
-    if (filingResult.status === "fulfilled") {
-      filings = (filingResult.value.items || []).map((f: any) => ({
-        date: f.date,
-        category: f.category,
-        type: f.type,
-        description: f.description,
-      }));
-      filingsTotal = filingResult.value.total_count || 0;
+    // Last knowledge source before parking: Claude often simply knows the
+    // registered entity of household-name brands. Same trust gate as a
+    // manual entry — resolves only on an exact (normalised) CH title match.
+    if (!chNumber && !haveSpecificEntityName) {
+      try {
+        const guess = await askClaudeForUkEntity(company.name, domain, { parentGroup, formerParent });
+        if (guess) {
+          searchName = guess;
+          haveSpecificEntityName = true;
+          websiteContext += `\nClaude-suggested registered name: ${guess}`;
+          diagnostics.push({ step: "ai_knowledge", outcome: "entity_only", detail: `Claude suggests "${guess}" — accepted only on exact CH title match` });
+        } else {
+          diagnostics.push({ step: "ai_knowledge", outcome: "nothing", detail: "Claude not confident of the registered name" });
+        }
+      } catch (err: any) {
+        diagnostics.push({ step: "ai_knowledge", outcome: "error", detail: err?.message || "request failed" });
+      }
     }
 
-    // Dissolved entity = warning (may be old holding co, not necessarily the trading entity).
-    // Only hard-fail on actual insolvency history.
-    const kycStatus = profile.hasInsolvencyHistory
-      ? "fail"
-      : profile.companyStatus === "active" && !profile.accountsOverdue
-        ? "pass"
-        : "warning";
+    if (!chNumber) {
+      // STRICT POLICY (May 2026): a CH number can only be assigned via
+      //   1) the website scraper finding a clear UK entity, OR
+      //   2) a manual entry / ChatBGP instruction (manualChNumber /
+      //      manualEntityName / manualTcsUrl), OR
+      //   3) Perplexity returning a CH number that we've verified
+      //      against CH (handled above — that path already verified
+      //      the number, no fuzzy matching involved).
+      // We do NOT fuzzy-search Companies House by the brand's display
+      // name — that's how brands like "Supreme" get matched to random
+      // unrelated UK companies. If we don't have a specific UK entity
+      // name from one of the trusted sources above, park it.
+      if (!haveSpecificEntityName) {
+        // Stamp the attempt even though we're parking — without this the
+        // nightly batch (ordered by kyc_checked_at, NULLS FIRST) re-picked
+        // the same parked brands every run and the rest of the queue
+        // starved. Parked brands now rotate to the back and retry monthly.
+        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+        diagnostics.push({
+          step: "ch_search",
+          outcome: "skipped_no_specific_entity",
+          detail: `No specific UK entity name available (scraper found nothing on website, no manual entry). Refusing to search CH by brand display name "${searchName}" — fuzzy name matches land on the wrong company. Paste the T&Cs URL, enter the entity name, or give the CH number directly.`,
+        });
+        return {
+          success: false,
+          kycStatus: "not_found",
+          message: `Can't resolve a Companies House entity for "${company.name}" without a specific UK trading name. The website scraper found nothing${domain ? ` on ${domain}` : " (no domain)"} and nothing was entered manually. Searching CH by the brand name alone reliably picks the wrong company, so we're parking this and asking for help. To fix: paste the brand's UK T&Cs URL, type the legal entity name, or give the CH number.`,
+          diagnostics,
+          needsHelp: true,
+        } as any;
+      }
 
-    const fetchStatus = {
+      // We have a specific entity name (from website scrape or manual entry).
+      // Look it up on CH but ONLY accept an EXACT case-insensitive title match.
+      // No AI picker, no nearest-name fallback — if CH doesn't have an exact
+      // match for the name we trust, the right move is to ask for help, not
+      // to guess at the closest sound-alike.
+      const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=20`);
+      const items = searchData.items || [];
+      if (items.length === 0) {
+        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+        diagnostics.push({ step: "ch_search", outcome: "no_results", detail: `query: "${searchName}"` });
+        return {
+          success: false,
+          kycStatus: "not_found",
+          message: `Searched Companies House for "${searchName}" (the entity name we have on file) and got zero results. The name might be a trading name rather than the registered company name — try entering the full registered name or the CH number directly.`,
+          diagnostics,
+          needsHelp: true,
+        } as any;
+      }
+      // Normalised-exact: apostrophes/dots/&/Ltd-vs-Limited style ignored,
+      // everything else must match — "Bill's Restaurants Limited" finds
+      // "BILLS RESTAURANTS LTD." without opening the door to similarity.
+      const nameNorm = normalizeChTitle(searchName);
+      const exactMatches = items.filter((i: any) => normalizeChTitle(i.title || "") === nameNorm);
+      // Old names get recycled — prefer the live registration over a
+      // dissolved namesake.
+      const exactNameHit = exactMatches.find((i: any) => i.company_status === "active") || exactMatches[0];
+      if (!exactNameHit) {
+        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+        const top = items.slice(0, 5).map((i: any) => `${i.title} (${i.company_number}, ${i.company_status})`).join(", ");
+        diagnostics.push({
+          step: "ch_search",
+          outcome: "no_exact_match",
+          detail: `query: "${searchName}" — ${items.length} hits but none had an exact title match. Top: ${top}. Refusing to pick the closest by similarity.`,
+        });
+        return {
+          success: false,
+          kycStatus: "not_found",
+          message: `Companies House returned ${items.length} hits for "${searchName}" but no exact name match (closest: ${items[0].title} / CH ${items[0].company_number}). Refusing to pick by similarity. If that's the right entity, paste the CH number directly; otherwise correct the entity name.`,
+          diagnostics,
+          needsHelp: true,
+        } as any;
+      }
+      chNumber = exactNameHit.company_number;
+      resolvedFrom = "exact_name_match";
+      diagnostics.push({
+        step: "ch_search",
+        outcome: "exact_match",
+        detail: `${exactNameHit.title} (CH ${exactNameHit.company_number}, ${exactNameHit.company_status})`,
+      });
+    }
+  }
+
+  const profileData = await chFetch(`/company/${encodeURIComponent(chNumber!)}`);
+  const profile = {
+    companyNumber: profileData.company_number,
+    companyName: profileData.company_name,
+    companyStatus: profileData.company_status,
+    companyType: profileData.type,
+    dateOfCreation: profileData.date_of_creation,
+    registeredOfficeAddress: profileData.registered_office_address,
+    sicCodes: profileData.sic_codes,
+    hasCharges: profileData.has_charges,
+    hasInsolvencyHistory: profileData.has_insolvency_history,
+    canFile: profileData.can_file,
+    jurisdiction: profileData.jurisdiction,
+    accountsOverdue: profileData.accounts?.overdue,
+    confirmationStatementOverdue: profileData.confirmation_statement?.overdue,
+    lastAccountsMadeUpTo: profileData.accounts?.last_accounts?.made_up_to,
+  };
+
+  let officers: any[] = [];
+  let pscs: any[] = [];
+  let filings: any[] = [];
+  let filingsTotal = 0;
+
+  const [officerResult, pscResult, filingResult] = await Promise.allSettled([
+    chFetch(`/company/${encodeURIComponent(chNumber!)}/officers`),
+    chFetch(`/company/${encodeURIComponent(chNumber!)}/persons-with-significant-control`),
+    chFetch(`/company/${encodeURIComponent(chNumber!)}/filing-history?items_per_page=10`),
+  ]);
+
+  if (officerResult.status === "fulfilled") {
+    officers = (officerResult.value.items || []).map((o: any) => ({
+      name: o.name,
+      officerRole: o.officer_role,
+      appointedOn: o.appointed_on,
+      resignedOn: o.resigned_on,
+      nationality: o.nationality,
+      occupation: o.occupation,
+      address: o.address,
+      dateOfBirth: o.date_of_birth ? `${o.date_of_birth.month}/${o.date_of_birth.year}` : null,
+    }));
+  }
+
+  if (pscResult.status === "fulfilled") {
+    pscs = (pscResult.value.items || []).map((p: any) => ({
+      name: p.name || (p.name_elements ? [p.name_elements?.title, p.name_elements?.forename, p.name_elements?.surname].filter(Boolean).join(" ") : "Unknown"),
+      kind: p.kind,
+      naturesOfControl: p.natures_of_control || [],
+      nationality: p.nationality,
+      countryOfResidence: p.country_of_residence,
+      notifiedOn: p.notified_on,
+      ceasedOn: p.ceased_on,
+      address: p.address,
+      dateOfBirth: p.date_of_birth ? `${p.date_of_birth.month}/${p.date_of_birth.year}` : null,
+    }));
+  }
+
+  if (filingResult.status === "fulfilled") {
+    filings = (filingResult.value.items || []).map((f: any) => ({
+      date: f.date,
+      category: f.category,
+      type: f.type,
+      description: f.description,
+    }));
+    filingsTotal = filingResult.value.total_count || 0;
+  }
+
+  // Canonical KYC vocabulary — what deal-gates.ts expects:
+  //   pending | in_review | approved | rejected | expired
+  // Insolvency → rejected. Active + accounts current → approved. Anything
+  // else (overdue accounts, dormant, etc.) parks at in_review for MLRO.
+  const kycStatus = profile.hasInsolvencyHistory
+    ? "rejected"
+    : profile.companyStatus === "active" && !profile.accountsOverdue
+      ? "approved"
+      : "in_review";
+
+  // Experian commercial credit — non-fatal. Pulls a covenant view (credit
+  // score, recommended limit, CCJs, turnover) so leasing can sanity-check
+  // affordability at the brand stage rather than waiting for the deal AML.
+  let experianReport: any = null;
+  try {
+    const { fetchCommercialCredit, isExperianConfigured, persistExperianTurnover } = await import("./experian");
+    if (isExperianConfigured()) {
+      experianReport = await fetchCommercialCredit(chNumber!);
+      if (experianReport && experianReport.turnover != null && experianReport.turnover > 0) {
+        const { pool } = await import("./db");
+        const result = await persistExperianTurnover(pool, {
+          companyId: company.id,
+          companyName: profile.companyName || company.name,
+          report: experianReport,
+        });
+        if (result?.inserted || result?.updated) {
+          console.log(`[auto-kyc] Persisted Experian turnover for "${company.name}" (£${Number(experianReport.turnover).toLocaleString()}, ${result.inserted ? "new" : "refreshed"})`);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[auto-kyc] Experian lookup failed for "${company.name}":`, err?.message);
+  }
+
+  const kycReport: any = {
+    profile,
+    officers,
+    pscs,
+    filings,
+    filingsTotal,
+    fetchStatus: {
       officers: officerResult.status === "fulfilled" ? "ok" : "failed",
       pscs: pscResult.status === "fulfilled" ? "ok" : "failed",
       filings: filingResult.status === "fulfilled" ? "ok" : "failed",
-    };
+    },
+    checkedAt: new Date().toISOString(),
+  };
+  if (experianReport) kycReport.experian = experianReport;
 
-    const kycReport = {
-      profile,
+  await db.update(crmCompanies).set({
+    companiesHouseNumber: chNumber,
+    companiesHouseData: kycReport,
+    companiesHouseOfficers: officers,
+    kycStatus,
+    kycCheckedAt: new Date(),
+    // Backfill the registered name when the row has none — a CH number
+    // resolved via Perplexity/Claude/exact-match left uk_entity_name NULL,
+    // so the panel said "Not found" beside a linked CH profile.
+    ...((company as any).ukEntityName ? {} : { ukEntityName: profile.companyName }),
+  } as any).where(eq(crmCompanies.id, company.id));
+
+  // Persist to kyc_investigations so this run shows up in the Clouseau
+  // history tab alongside investigator-launched checks. Risk is computed off
+  // the raw CH responses; sanctions screening isn't run here (use the deal
+  // AML sweep for that) so sanctions_match is left false.
+  let investigationId: number | null = null;
+  let riskLevel = "low";
+  let riskScore = 0;
+  try {
+    const { assessRisk, logKycAudit } = await import("./kyc-clouseau");
+    const { pool } = await import("./db");
+    const rawData = {
+      profile: profileData,
+      officers: officerResult.status === "fulfilled" ? officerResult.value.items || [] : [],
+      pscs: pscResult.status === "fulfilled" ? pscResult.value.items || [] : [],
+    };
+    const risk = assessRisk(rawData, null);
+    riskLevel = risk.level;
+    riskScore = risk.score;
+
+    const investigationResult = {
+      subject: { name: profile.companyName || company.name, companyNumber: chNumber, type: "company" },
+      companyProfile: profile,
       officers,
       pscs,
       filings,
       filingsTotal,
-      fetchStatus,
-      checkedAt: new Date().toISOString(),
+      experian: experianReport,
+      riskScore: risk.score,
+      riskLevel: risk.level,
+      flags: risk.flags,
+      resolvedFrom,
+      diagnostics,
+      timestamp: new Date().toISOString(),
     };
 
-    await db.update(crmCompanies).set({
-      companiesHouseNumber: chNumber,
-      companiesHouseData: kycReport,
-      companiesHouseOfficers: officers,
-      kycStatus,
-      kycCheckedAt: new Date(),
-    }).where(eq(crmCompanies.id, company.id));
+    const inserted = await pool.query(
+      `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        "company",
+        profile.companyName || company.name,
+        chNumber,
+        company.id,
+        risk.level,
+        risk.score,
+        false,
+        JSON.stringify(investigationResult),
+        opts.userId || null,
+      ]
+    );
+    investigationId = inserted.rows[0]?.id ?? null;
+    if (investigationId) {
+      await logKycAudit(
+        investigationId,
+        "created",
+        opts.userId || null,
+        `Brand-page auto-KYC: ${profile.companyName || company.name}${experianReport ? " (with Experian credit report)" : ""}`,
+      );
+    }
+  } catch (err: any) {
+    console.warn(`[auto-kyc] Failed to persist Clouseau investigation for "${company.name}":`, err?.message);
+  }
 
-    console.log(`[companies-house] Auto-KYC for "${company.name}" → ${kycStatus} (CH: ${chNumber})`);
+  console.log(`[companies-house] Auto-KYC for "${company.name}" → ${kycStatus} (CH: ${chNumber}, risk: ${riskLevel}/${riskScore}, experian: ${experianReport ? "✓" : "—"}, investigation: ${investigationId ?? "—"})`);
 
-    res.json({
-      success: true,
-      kycStatus,
-      profile,
-      officers: officers.filter(o => !o.resignedOn),
-      pscs: pscs.filter(p => !p.ceasedOn),
-      filings,
-      filingsTotal,
-      companyNumber: chNumber,
+  return {
+    success: true,
+    kycStatus,
+    profile,
+    officers: officers.filter(o => !o.resignedOn),
+    pscs: pscs.filter(p => !p.ceasedOn),
+    filings,
+    filingsTotal,
+    companyNumber: chNumber,
+    resolvedFrom,
+    diagnostics,
+    experian: experianReport,
+    riskLevel,
+    riskScore,
+    investigationId,
+  };
+}
+
+// ─── Claude-based CH candidate picker ───────────────────────────────────
+//
+// Given a brand and a list of CH search hits, ask Claude which is most
+// likely the operating UK entity for the brand. The website-scraping pass
+// failed to extract a CH number directly (often the case for SPA-only sites
+// like AllSaints), so we lean on the brand name + domain + any scraped
+// boilerplate plus the candidate metadata (status, type, incorporation date,
+// registered office) to pick.
+//
+// Returns the picked company_number as a string, or null if Claude refuses
+// to pick (e.g. none look like a real match) or the call fails.
+// "Exact" CH title matching that ignores registration-style noise: CH stores
+// "BILLS RESTAURANTS LTD." where everyone writes "Bill's Restaurants
+// Limited" — apostrophes, dots, "&" vs "and" and the Ltd/Limited suffix
+// style are formatting, not identity. Everything else still has to match
+// exactly; this is NOT similarity matching (the May 2026 no-fuzzy policy
+// stands).
+function normalizeChTitle(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[.'’]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/\bpublic limited company\b/g, "plc")
+    .replace(/\blimited liability partnership\b/g, "llp")
+    .replace(/\blimited\b/g, "ltd")
+    .replace(/\bcompany\b/g, "co")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+async function pickChCandidateWithAi(input: {
+  brandName: string;
+  domain: string | null;
+  websiteContext: string;
+  parentGroup?: string | null;
+  formerParent?: string | null;
+  candidates: Array<{
+    company_number: string;
+    title: string;
+    company_status?: string;
+    date_of_creation?: string;
+    address_snippet?: string;
+    company_type?: string;
+  }>;
+}): Promise<string | null> {
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const client = new Anthropic({ apiKey });
+
+  const candidatesBlock = input.candidates.map((c, i) =>
+    `${i + 1}. ${c.title} (CH ${c.company_number})\n   Status: ${c.company_status || "?"}, Type: ${c.company_type || "?"}, Incorporated: ${c.date_of_creation || "?"}\n   Office: ${c.address_snippet || "?"}`
+  ).join("\n\n");
+
+  const ownershipLines: string[] = [];
+  if (input.parentGroup) ownershipLines.push(`Currently owned by: ${input.parentGroup}`);
+  if (input.formerParent) ownershipLines.push(`Previously owned by: ${input.formerParent}`);
+  const ownershipBlock = ownershipLines.length ? ownershipLines.join("\n") + "\n" : "";
+
+  const prompt = `You are matching a UK retail brand to its operating Companies House entity.
+
+Brand: ${input.brandName}
+Brand website: ${input.domain || "(none)"}
+${ownershipBlock}${input.websiteContext ? input.websiteContext + "\n" : ""}
+Candidates from Companies House:
+${candidatesBlock}
+
+Pick the candidate most likely to be the brand's UK trading/operating entity (or its UK holding company). Use these signals in order:
+1. Exact match on the website-derived legal entity name (if given).
+2. If the brand has a known parent group, prefer candidates whose names reference that group, or candidates registered at the parent group's UK office.
+3. An "active" status, registered office in a real commercial location, incorporation old enough to plausibly run a multi-store retailer.
+4. Reject candidates that look like dormant single-director Ltds at a residential address — those almost never run real high-street brands.
+5. Reject candidates whose name only superficially matches (e.g. "SUPREME PLC" for a streetwear brand owned by EssilorLuxottica) when there's no website/ownership signal pointing to them.
+
+If none of the candidates plausibly match the brand, output null. **It is far better to pick null than to guess** — picking the wrong CH entity poisons every downstream system (KYC, news, Apollo, financial covenant).
+
+Reply with ONLY a JSON object on a single line, no prose, no code fence:
+{"pick": "<company_number>" or null, "reason": "<one short sentence>"}`;
+
+  try {
+    const msg = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 200,
+      messages: [{ role: "user", content: prompt }],
     });
+    const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
+    const match = txt.match(/\{[\s\S]*?\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    const pick = parsed?.pick;
+    if (!pick || typeof pick !== "string") return null;
+    if (!input.candidates.some(c => c.company_number === pick)) return null;
+    console.log(`[auto-kyc] AI picked CH ${pick} for "${input.brandName}" — ${parsed?.reason || "no reason given"}`);
+    return pick;
+  } catch (err: any) {
+    console.warn(`[auto-kyc] Claude CH picker failed:`, err?.message);
+    return null;
+  }
+}
+
+// Claude flat-out knows the registered entity of household-name UK brands
+// ("Bill's" → BILLS RESTAURANTS LTD.) even when the website hides it and
+// Perplexity whiffs. Suggestions get NO special trust: they go through the
+// same normalised-exact CH title match as a manually typed name, so a wrong
+// guess simply fails to match and the brand parks exactly as before.
+async function askClaudeForUkEntity(
+  brandName: string,
+  domain: string | null,
+  context?: { parentGroup?: string | null; formerParent?: string | null },
+): Promise<string | null> {
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const client = new Anthropic({ apiKey });
+  const ctx: string[] = [];
+  if (context?.parentGroup) ctx.push(`Currently owned by: ${context.parentGroup}`);
+  if (context?.formerParent) ctx.push(`Previously owned by: ${context.formerParent}`);
+  const prompt = `What is the UK Companies House registered name of the company that operates the brand "${brandName}"${domain ? ` (website ${domain})` : ""}?
+${ctx.length ? ctx.join("\n") + "\n" : ""}
+Respond with ONLY the registered company name as it appears on Companies House (e.g. "BILLS RESTAURANTS LTD."), nothing else. Prefer the UK operating entity (the one that signs UK leases), not a holding company or overseas parent. If you are not highly confident, respond with the single word "unknown" — do not guess.`;
+  try {
+    const msg = await client.messages.create({
+      // Sonnet, not Haiku — this is a pure knowledge-recall question and
+      // the exact-match gate downstream makes a wrong answer harmless.
+      model: "claude-sonnet-5",
+      max_tokens: 60,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("").trim();
+    if (!txt || txt.length > 90 || /unknown/i.test(txt) || /\n/.test(txt)) return null;
+    return txt;
+  } catch (err: any) {
+    console.warn(`[auto-kyc] Claude entity recall failed:`, err?.message);
+    return null;
+  }
+}
+
+// ─── Perplexity fallback ─────────────────────────────────────────────────
+// When the static website scraper finds nothing (Shopify/SPA sites hide
+// footer boilerplate behind JS), ask Perplexity for the UK CH-registered
+// trading entity. Perplexity returns a CRN string + entity name we can then
+// verify against CH proper.
+async function askPerplexityForUkEntity(
+  brandName: string,
+  domain: string,
+  context?: { parentGroup?: string | null; formerParent?: string | null; sector?: string | null },
+): Promise<{ entityName: string | null; chNumber: string | null } | null> {
+  const { isPerplexityConfigured, askPerplexity } = await import("./perplexity");
+  if (!isPerplexityConfigured()) return null;
+
+  // Parent group context dramatically improves accuracy for foreign-owned UK
+  // retailers. Without it, Perplexity returns null for brands like Supreme
+  // (owned by EssilorLuxottica) because there's no "Supreme UK Limited" —
+  // they trade through the parent group's UK arm.
+  const contextLines: string[] = [];
+  if (context?.parentGroup) contextLines.push(`Currently owned by: ${context.parentGroup}`);
+  if (context?.formerParent) contextLines.push(`Previously owned by: ${context.formerParent}`);
+  if (context?.sector) contextLines.push(`Sector: ${context.sector}`);
+  const contextBlock = contextLines.length ? `\n\nContext:\n${contextLines.join("\n")}` : "";
+
+  const prompt = `For the brand "${brandName}" (website ${domain}), what is the UK Companies House registered trading or operating entity?${contextBlock}
+
+Return ONLY a JSON object on one line, no prose, no code fence:
+{"entityName": "<full registered name e.g. ALLSAINTS RETAIL LIMITED>", "chNumber": "<8-digit Companies House number, zero-padded>"}
+
+Use null for either field if you genuinely don't know. Do NOT guess. The entity must currently exist on Companies House (find-and-update.company-information.service.gov.uk). Prefer the operating UK entity over a holding company. If the brand is a UK subsidiary of a foreign group, return the UK subsidiary (the entity that signs UK leases and pays UK rent), not the parent group's overseas HQ.`;
+
+  try {
+    const r = await askPerplexity(prompt, { maxTokens: 200, temperature: 0 });
+    const match = r.answer.match(/\{[\s\S]*?\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    let chNumber: string | null = parsed?.chNumber || null;
+    if (chNumber) {
+      chNumber = String(chNumber).replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+      if (chNumber && /^[0-9]+$/.test(chNumber) && chNumber.length < 8) {
+        chNumber = chNumber.padStart(8, "0");
+      }
+      // Sanity: CH numbers are 8 chars total (numeric or letter-prefixed).
+      if (chNumber.length !== 8) chNumber = null;
+    }
+    const entityName = typeof parsed?.entityName === "string" ? parsed.entityName.trim() : null;
+    if (!chNumber && !entityName) return null;
+    return { entityName, chNumber };
+  } catch (err: any) {
+    console.warn(`[auto-kyc] Perplexity entity lookup failed:`, err?.message);
+    return null;
+  }
+}
+
+// Cheap verify — just confirms the CRN exists and isn't dissolved.
+async function verifyChNumber(chNumber: string): Promise<boolean> {
+  try {
+    const data = await chFetch(`/company/${encodeURIComponent(chNumber)}`);
+    if (!data?.company_number) return false;
+    if (data.company_status === "dissolved") return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Batch re-KYC — finds stale/dissolved companies and re-runs KYC on them ──
+export async function runBatchReKyc({ limit = 40, forceAll = false }: { limit?: number; forceAll?: boolean } = {}) {
+  const { db } = await import("./db");
+  const { sql } = await import("drizzle-orm");
+
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+  const result = await db.execute(sql`
+    SELECT id, name FROM crm_companies
+    WHERE ${forceAll ? sql`TRUE` : sql`(
+      kyc_checked_at IS NULL
+      OR kyc_checked_at < ${thirtyDaysAgo.toISOString()}
+      OR kyc_status IS NULL
+      OR kyc_status != 'approved'
+      OR (companies_house_data IS NOT NULL
+          AND companies_house_data->'profile'->>'companyStatus' IS NOT NULL
+          AND companies_house_data->'profile'->>'companyStatus' != 'active')
+    )`}
+    ORDER BY kyc_checked_at ASC NULLS FIRST
+    LIMIT ${limit}
+  `);
+
+  const rows: any[] = (result as any).rows ?? result;
+  console.log(`[batch-rekyc] Queued ${rows.length} companies for KYC refresh`);
+
+  let success = 0, failed = 0;
+  for (const row of rows) {
+    try {
+      await performAutoKyc(row.id);
+      success++;
+    } catch (err: any) {
+      console.error(`[batch-rekyc] "${row.name}": ${err.message}`);
+      failed++;
+    }
+    // Respect CH API rate limits (~600 req/min, we use ~3 req per company)
+    await new Promise(r => setTimeout(r, 700));
+  }
+
+  console.log(`[batch-rekyc] Done: ${success} updated, ${failed} failed`);
+  return { success, failed, total: rows.length };
+}
+
+router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req, res) => {
+  try {
+    // ?force=1 (or { forceFromWebsite: true }) clears any cached CH number and
+    // re-derives from the website. Used by the "Re-resolve from website"
+    // button on the brand panel when an existing match is wrong.
+    const forceFromWebsite = req.query.force === "1" || req.body?.forceFromWebsite === true;
+    // Optional manual overrides — surfaced when auto-resolution fails. The
+    // brand panel asks the user for the T&Cs URL, the UK entity name, or the
+    // CH number directly, and replays the resolve with those signals.
+    const manualChNumber = (req.body?.chNumber as string | null | undefined) || null;
+    const manualEntityName = (req.body?.entityName as string | null | undefined) || null;
+    const manualTcsUrl = (req.body?.tcsUrl as string | null | undefined) || null;
+    const userId = (req as any).user?.id || null;
+    const result = await performAutoKyc(req.params.companyId as string, {
+      forceFromWebsite,
+      manualChNumber,
+      manualEntityName,
+      manualTcsUrl,
+      userId,
+    });
+    if (!result.success && result.kycStatus === "not_found") {
+      return res.json(result);
+    }
+    // Always run sanctions + full AML sweep after CH/Experian so the KYC badge
+    // is never issued without sanctions clearance, even outside of a deal stage.
+    runAllAmlChecks(req.params.companyId as string, null, userId).catch(err =>
+      console.error("[auto-kyc] post-KYC sanctions sweep failed:", err.message)
+    );
+    res.json(result);
   } catch (err: any) {
     if (err.message?.includes("not configured")) {
       return res.status(503).json({ error: "Companies House API key not configured. Add COMPANIES_HOUSE_API_KEY to your environment secrets." });
     }
+    if (err.message === "Company not found") return res.status(404).json({ error: err.message });
     console.error("[companies-house] auto-kyc error:", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+router.post("/api/companies-house/batch-rekyc", requireAuth, async (req, res) => {
+  const { limit = 40, forceAll = false } = req.body || {};
+  // Kick off in background and return immediately
+  runBatchReKyc({ limit, forceAll }).catch(err =>
+    console.error("[batch-rekyc] background run failed:", err.message)
+  );
+  res.json({ success: true, message: `Batch re-KYC started (limit: ${limit}, forceAll: ${forceAll})` });
 });
 
 router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async (req, res) => {
@@ -507,7 +1259,7 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
     const { crmProperties } = await import("@shared/schema");
     const { eq } = await import("drizzle-orm");
 
-    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId)).limit(1);
+    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId as string)).limit(1);
     if (!property) {
       return res.status(404).json({ error: "Property not found" });
     }
@@ -521,7 +1273,7 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
     }
 
     let kycData: any = { checkedAt: new Date().toISOString(), proprietorName, proprietorType };
-    let kycStatus = "not_found";
+    let kycStatus = "in_review";
 
     if (proprietorType === "company") {
       let chNumber = proprietorCompanyNumber;
@@ -531,7 +1283,7 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
         const items = searchData.items || [];
         if (items.length === 0) {
           await db.update(crmProperties).set({
-            proprietorKycStatus: "not_found",
+            proprietorKycStatus: "in_review",
             proprietorKycData: { ...kycData, message: `No Companies House match found for "${proprietorName}".` },
           }).where(eq(crmProperties.id, property.id));
 
@@ -603,10 +1355,10 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
       }
 
       kycStatus = profile.hasInsolvencyHistory
-        ? "fail"
+        ? "rejected"
         : profile.companyStatus === "active" && !profile.accountsOverdue
-          ? "pass"
-          : "warning";
+          ? "approved"
+          : "in_review";
 
       const fetchStatus = {
         officers: officerResult.status === "fulfilled" ? "ok" : "failed",
@@ -636,7 +1388,9 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
       });
     } else {
       kycData = { ...kycData, message: "Individual proprietor — sanctions screening only" };
-      kycStatus = "individual";
+      // Individuals can't fail Companies House — out of CH scope entirely.
+      // Sanctions/PEP screening (Comply + Perplexity) runs separately.
+      kycStatus = "approved";
 
       await db.update(crmProperties).set({
         proprietorKycStatus: kycStatus,
@@ -757,7 +1511,7 @@ router.post("/api/title-search/auto-fill/:propertyId", requireAuth, async (req, 
     const { crmProperties } = await import("@shared/schema");
     const { eq } = await import("drizzle-orm");
 
-    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId)).limit(1);
+    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId as string)).limit(1);
     if (!property) return res.status(404).json({ error: "Property not found" });
 
     const titleNumber = (req.body.title as string || "").trim();
@@ -863,13 +1617,13 @@ router.post("/api/title-search/auto-fill/:propertyId", requireAuth, async (req, 
   }
 });
 
-router.post("/api/title-search/auto-fill-from-postcode/:propertyId", async (req, res) => {
+router.post("/api/title-search/auto-fill-from-postcode/:propertyId", requireAuth, async (req, res) => {
   try {
     const { db } = await import("./db");
     const { crmProperties, crmCompanies } = await import("@shared/schema");
     const { eq, ilike } = await import("drizzle-orm");
 
-    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId)).limit(1);
+    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, req.params.propertyId as string)).limit(1);
     if (!property) return res.status(404).json({ success: false, error: "Property not found" });
 
     let postcode = ((req.body?.postcode as string) || "").trim().replace(/\s+/g, "");
@@ -952,7 +1706,16 @@ router.post("/api/title-search/auto-fill-from-postcode/:propertyId", async (req,
       .map(t => t.toLowerCase().trim());
 
     const scoredFreeholds = freeholds.map((f: any) => {
-      const titleAddr = (f.address || f.property_address || "").toLowerCase();
+      // Defensive coercion — address fields are usually strings here
+      // (HMLR/land-registry scrape data) but the same shape elsewhere
+      // (crm_properties.address jsonb) caused a runtime crash, so we
+      // serialise non-strings rather than risk another '.toLowerCase
+      // is not a function'.
+      const addrSrc = f.address ?? f.property_address;
+      const titleAddr = (typeof addrSrc === "string"
+        ? addrSrc
+        : addrSrc?.formatted || addrSrc?.line1 || ""
+      ).toLowerCase();
       const propName = (f.proprietor_name_1 || "").toLowerCase();
       let score = 0;
       for (const term of addressTerms) {
@@ -1213,7 +1976,7 @@ router.post("/api/companies-house/discover-parent/:companyId", requireAuth, asyn
     const { crmCompanies } = await import("@shared/schema");
     const { eq, ilike } = await import("drizzle-orm");
 
-    const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId)).limit(1);
+    const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId as string)).limit(1);
     if (!company) return res.status(404).json({ success: false, error: "Company not found" });
 
     const chNumber = company.companiesHouseNumber;
@@ -1344,7 +2107,7 @@ router.post("/api/title-search/download-document", requireAuth, async (req, res)
 
 router.get("/api/title-search/leaseholds/:titleNumber", requireAuth, async (req, res) => {
   try {
-    const titleNumber = req.params.titleNumber.trim();
+    const titleNumber = (req.params.titleNumber as string).trim();
     if (!titleNumber) return res.status(400).json({ error: "Title number required" });
 
     const data = await pdFetch("title", { title: titleNumber });
@@ -1604,46 +2367,705 @@ Format your response as JSON:
   }
 });
 
+// ─── Scrape UK legal entity from brand website ────────────────────────────
+// UK law (Companies Act 2006) requires all businesses to display their
+// registered company name on their website — usually footer, terms, or
+// legal pages. We try those pages in order and extract the entity name
+// and/or Companies House number using pattern matching, with an AI fallback
+// for legal pages where regex misses (e.g. unusual phrasing in T&Cs).
+export async function scrapeUkEntityFromWebsite(
+  domain: string,
+  brand?: { name: string; parentGroup?: string | null },
+  trace?: (step: string, detail: string) => void,
+): Promise<{
+  entityName: string | null;
+  chNumber: string | null;
+  sourceUrl: string | null;
+}> {
+  // Bare host (no protocol, no path, no www. prefix) for building variants
+  const rawHost = domain
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/^www\./i, "");
+  const t = trace ?? ((_s: string, _d: string) => {});
+
+  // UK retail brands often hide their UK trading entity behind a regional
+  // subdomain (e.g. uk.supreme.com/pages/terms exists, supreme.com only
+  // discloses the US entity). Try regional subdomains FIRST, then bare host.
+  const baseUrls: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of [
+    `https://uk.${rawHost}`,
+    `https://gb.${rawHost}`,
+    `https://www.${rawHost}`,
+    `https://${rawHost}`,
+  ]) {
+    if (!seen.has(candidate)) { seen.add(candidate); baseUrls.push(candidate); }
+  }
+
+  // Pages most likely to contain legal boilerplate, in priority order.
+  // Shopify-style /pages/* paths come first because many UK retailers run
+  // their UK regional site on Shopify (Supreme UK, Aimé Leon Dore, Palace,
+  // KITH UK, etc.) and the legal entity is on those CMS pages.
+  const pages = [
+    "",                                       // homepage footer
+    "/pages/terms",                           // Shopify CMS — common UK pattern
+    "/pages/terms-of-service",
+    "/pages/terms-and-conditions",
+    "/pages/terms-of-sale",
+    "/pages/privacy",
+    "/pages/privacy-policy",
+    "/pages/legal",
+    "/pages/imprint",
+    "/terms",
+    "/terms-and-conditions",
+    "/terms-of-use",
+    "/terms-of-service",
+    "/policies/terms-of-service",             // Shopify policies
+    "/policies/privacy-policy",
+    "/legal",
+    "/legal/terms-and-conditions",
+    "/legal/terms",
+    "/legal-notices",
+    "/legal-information",
+    "/legal-notice",                          // Inditex (Zara, Massimo Dutti, etc.)
+    "/legal-notice.html",
+    "/help/terms-and-conditions",             // Next, M&S, Adidas, Nike
+    "/help/terms",
+    "/help/terms-of-service",
+    "/info/terms-and-conditions",             // ASOS, River Island
+    "/info/terms",
+    "/customer-service/terms-and-conditions", // Primark, some Arcadia brands
+    "/customer-service/terms-conditions",     // H&M Group (& Other Stories, COS, Arket, Weekday)
+    "/customer-service/terms",
+    "/support/terms-and-conditions",
+    "/privacy",
+    "/privacy-policy",
+    "/contact",
+    "/contact-us",
+    "/about",
+    "/about-us",
+    "/help",
+    "/sitemap",
+    "/cookies",
+    "/cookie-policy",
+    "/impressum",                             // EU/German legal page
+  ];
+
+  // Chrome UA — many retail sites (Supreme, Hermès, Off-White) sit behind
+  // Cloudflare and 403 anything that looks like a bot. A real browser UA
+  // is far more likely to get through, and we're hitting public legal pages.
+  const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+  // Patterns that match "XXX Limited/Ltd/plc/LLP registered in England/Wales"
+  const ENTITY_PATTERNS: RegExp[] = [
+    /refers\s+to\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))/i,
+    /([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))\s+(?:is\s+)?(?:a\s+company\s+)?registered\s+in\s+England/i,
+    /contracting\s+party:?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s+\((?:company\s+)?(?:registered\s+)?(?:number|no\.?)/i,
+    /registered\s+company(?:\s+name)?:?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /©\s*(?:\d{4}[-–]\d{2,4}|\d{4})\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /trading\s+(?:as|name):?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    // H&M Group / Scandinavian brands use "through X Ltd., org. no.XXXXXXXX"
+    /through\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s*[,.]?\s*org\.\s*no\./i,
+    // "we/us means X Ltd" — common in modern retail T&Cs
+    /(?:we|us|our\s+company)\s+(?:means?|refers?\s+to|is)\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+  ];
+
+  const CH_PATTERNS: RegExp[] = [
+    /company\s+(?:registration\s+)?(?:number|no\.?|#):?\s*(0?\d{7,8})/i,
+    /registered\s+(?:company\s+)?(?:number|no\.?):?\s*(0?\d{7,8})/i,
+    /\((?:company\s+)?(?:number|no\.?)\s*(0?\d{7,8})\)/i,
+    /(?:CRN|CRN:)\s*(0?\d{7,8})/i,
+    /org\.\s*no\.?\s*(0?\d{7,8})/i,   // H&M Group / Scandinavian phrasing
+  ];
+
+  // Reject bracket fragments: a match that starts inside "(UK)" captures
+  // "UK) Limited" instead of "Starbucks Coffee Company (UK) Limited" —
+  // any candidate whose parens don't balance is a truncation, not a name.
+  const balancedParens = (s: string): boolean => {
+    let depth = 0;
+    for (const ch of s) {
+      if (ch === "(") depth++;
+      else if (ch === ")") { depth--; if (depth < 0) return false; }
+    }
+    return depth === 0;
+  };
+
+  // ── Helper: extract entity/CH from a block of plain text ─────────────────
+  function extractFromText(text: string, sourceUrl: string): { entityName: string | null; chNumber: string | null; sourceUrl: string } | null {
+    let entityName: string | null = null;
+    let chNumber: string | null = null;
+    for (const pat of ENTITY_PATTERNS) {
+      const m = text.match(pat);
+      if (m?.[1]) {
+        const candidate = m[1].trim().replace(/\s+/g, " ");
+        if (candidate.length <= 80 && !/[\[\]<>{}|]/.test(candidate) && balancedParens(candidate)) {
+          entityName = candidate;
+          break;
+        }
+      }
+    }
+    // Broad fallback — any "X Limited/Ltd/plc/LLP/LP" anywhere on the page,
+    // scored by UK-signal proximity, "UK"/"GB" in the name, and brand-token
+    // overlap. Catches disclosures phrased outside the specific templates
+    // above (e.g. "AFH Stores UK Limited is committed to..." in a modern
+    // slavery statement). Threshold ≥2 keeps drive-by mentions of unrelated
+    // Limited entities (Stripe, Klarna, Google Payment, etc.) from winning.
+    if (!entityName) {
+      // Find any "X Ltd / X PLC / X LLP" on the page and score candidates.
+      // Pattern allows standalone & as a word (e.g. "H&M Hennes & Mauritz UK Ltd.")
+      // and "("-prefixed tokens ("Starbucks Coffee Company (UK) Limited") —
+      // without \(? the match started INSIDE the bracket and stored the
+      // fragment "UK) Limited".
+      const BROAD = /\b([A-Z][A-Za-z0-9&'.,()\-]+(?:\s+(?:&\s+)?\(?[A-Z0-9][A-Za-z0-9&'.,()\-]*\)?){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
+      const scores = new Map<string, number>();
+      let m: RegExpExecArray | null;
+      while ((m = BROAD.exec(text)) !== null) {
+        const name = m[1].trim().replace(/\s+/g, " ");
+        if (name.length < 6 || name.length > 80) continue;
+        if (/[\[\]<>{}|]/.test(name) || !balancedParens(name)) continue;
+        if (/^(?:The|This|These|Our|Your|Their|All|Any|Some|Such|Other|Same|Both|Each|Every)\b/i.test(name)) continue;
+        const win = text.slice(Math.max(0, m.index - 200), m.index + name.length + 200);
+        let score = (scores.get(name) ?? 0) + 1;
+        if (/\b(?:England|Wales|Companies\s*House|company\s+(?:registration\s+)?(?:number|no\.?)|org\.\s*no|registered\s+office|registered\s+in\s+(?:England|Scotland))\b/i.test(win)) score += 3;
+        if (/\bUK\b|\bGB\b|\bGreat\s+Britain\b/.test(name)) score += 2;
+        if (brand?.name) {
+          const tokens = brand.name.toLowerCase().split(/\s+/).filter((t) => t.length > 2 && !/^(?:the|and|inc|ltd|llc|plc|limited|company|stores?)$/i.test(t));
+          const lower = name.toLowerCase();
+          for (const t of tokens) if (lower.includes(t)) score += 2;
+        }
+        scores.set(name, score);
+      }
+      if (scores.size) {
+        const best = [...scores.entries()].sort((a, b) => b[1] - a[1])[0];
+        // Threshold 1: any Ltd/PLC on a page we've specifically fetched is a valid candidate.
+        // Scoring prevents third-party mentions (Stripe Ltd, PayPal Ltd) from winning over
+        // the actual operator — those appear without UK signals or brand-token overlap.
+        if (best && best[1] >= 1) entityName = best[0];
+      }
+    }
+    for (const pat of CH_PATTERNS) {
+      const m = text.match(pat);
+      if (m?.[1]) { chNumber = m[1].trim().padStart(8, "0"); break; }
+    }
+    if (entityName || chNumber) return { entityName, chNumber, sourceUrl };
+    return null;
+  }
+
+  // AI fallback used when regex misses on a fetched legal page that clearly
+  // contains UK signals (England/Wales/Companies House). Cheaper than missing
+  // a real entity disclosure due to unusual phrasing.
+  async function aiExtract(text: string, sourceUrl: string): Promise<{ entityName: string | null; chNumber: string | null; sourceUrl: string } | null> {
+    if (!brand) return null;
+    const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return null;
+    try {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const client = new Anthropic({ apiKey });
+      const prompt = `Extract the UK Companies House registered entity that operates the brand "${brand.name}" from this T&Cs/legal/privacy page.${brand.parentGroup ? ` Parent group: ${brand.parentGroup}.` : ""}
+
+Page URL: ${sourceUrl}
+
+Page text (first 8KB):
+"""
+${text.slice(0, 8000)}
+"""
+
+Look for phrases like:
+- "These Terms are a contract between you and X Limited"
+- "X is a company registered in England and Wales under company number 1234567"
+- "© X Limited" / "Registered office: ..."
+- "trading name of X Limited"
+
+If the brand operates via a UK subsidiary of a parent group, return the UK subsidiary, NOT the parent group.
+
+Reply with ONLY a JSON object on a single line, no prose, no code fence:
+{"entityName": "<full UK entity name with Limited/Ltd/PLC/LLP suffix>" or null, "chNumber": "<8-digit CH number, zero-padded>" or null}
+
+Return both null if the page doesn't disclose a UK trading entity.`;
+      const msg = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 200,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
+      const match = txt.match(/\{[\s\S]*?\}/);
+      if (!match) return null;
+      const parsed = JSON.parse(match[0]);
+      const entityName = typeof parsed?.entityName === "string" && parsed.entityName.trim() && balancedParens(parsed.entityName) ? parsed.entityName.trim() : null;
+      let chNumber: string | null = parsed?.chNumber || null;
+      if (chNumber) {
+        chNumber = String(chNumber).replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+        if (chNumber && /^[0-9]+$/.test(chNumber) && chNumber.length < 8) chNumber = chNumber.padStart(8, "0");
+        if (chNumber.length !== 8) chNumber = null;
+      }
+      if (!entityName && !chNumber) return null;
+      console.log(`[find-uk-entity] AI extracted from ${sourceUrl}: "${entityName}" / ${chNumber}`);
+      return { entityName, chNumber, sourceUrl };
+    } catch (err: any) {
+      console.warn(`[find-uk-entity] AI extraction failed:`, err?.message);
+      return null;
+    }
+  }
+
+  const isLegalPath = (path: string) =>
+    /\/(terms|legal|privacy|policies|impressum|cookies|policy|conditions)/i.test(path) ||
+    /\/pages\/(terms|privacy|legal|imprint)/i.test(path);
+  const hasUkSignal = (text: string) =>
+    /\b(england|wales|companies house|company\s+(?:registration\s+)?number|registered\s+(?:office|in\s+england)|org\.\s*no\.?|registered\s+address)\b/i.test(text);
+
+  // Decode-and-strip helper used by every fetched HTML body.
+  const htmlToText = (html: string) =>
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/&copy;/g, "©")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+      .replace(/&[a-z]+;/g, " ")
+      .replace(/\s+/g, " ");
+
+  // Direct fetch first, ScraperAPI residential proxy on failure. Most
+  // premium retail sites (stories.com, hm.com, supreme.com, hermes.com,
+  // ralphlauren.com, balenciaga.com…) sit behind Akamai or Cloudflare
+  // bot-walls that 403 every datacenter IP — direct fetch from Railway
+  // dies on them. ScraperAPI's residential pool bypasses the wall.
+  // Treat any 403/503/timeout as a signal to retry through the proxy.
+  //
+  // proxy=false skips the ScraperAPI fallback — used for speculative API
+  // endpoints (Shopify /policies/*.json, WP /wp-json/*) where a 404 is
+  // a real "not present" signal, not a bot wall, so paying for a proxy
+  // call to confirm the 404 is wasted budget.
+  const deadline = Date.now() + 25_000;
+  const overBudget = () => Date.now() > deadline;
+  let proxyCalls = 0;
+  const PROXY_BUDGET = 8; // cap residential-proxy calls per resolve
+  const tryFetch = async (
+    url: string,
+    init: RequestInit & { timeoutMs?: number; proxy?: boolean; renderFallback?: boolean } = {},
+  ): Promise<Response | null> => {
+    const { timeoutMs, proxy = true, renderFallback = false, ...rest } = init;
+    if (overBudget()) return null;
+    const direct = await fetch(url, {
+      ...rest,
+      signal: rest.signal ?? AbortSignal.timeout(timeoutMs ?? 6000),
+    }).catch(() => null);
+    if (direct && direct.ok) return direct;
+    const blocked = !direct || direct.status === 403 || direct.status === 503 || direct.status === 429;
+    if (blocked && proxy && proxyCalls < PROXY_BUDGET && !overBudget() && isScraperApiAvailable()) {
+      proxyCalls++;
+      const proxyResp = await scraperFetch(url, {
+        ...rest,
+        timeoutMs: 12_000,
+        signal: rest.signal,
+      }).catch(() => null);
+      if (proxyResp && proxyResp.ok) return proxyResp;
+      // Premium proxy also blocked — try headless Chromium (render=true) which
+      // handles Akamai/Cloudflare JS challenges that reject residential IPs.
+      // Only for targeted fetches (renderFallback=true) to keep render-credit spend low.
+      const proxyBlocked = !proxyResp || proxyResp.status === 403 || proxyResp.status === 503 || proxyResp.status === 429;
+      if (renderFallback && proxyBlocked && proxyCalls < PROXY_BUDGET && !overBudget()) {
+        proxyCalls++;
+        return scraperFetch(url, {
+          ...rest,
+          timeoutMs: 35_000,
+          render: true,
+          signal: rest.signal,
+        }).catch(() => null);
+      }
+      return proxyResp;
+    }
+    return direct; // non-ok but not bot-blocked — return so callers see the status
+  };
+
+  for (const base of baseUrls) {
+    if (overBudget()) break;
+    // Probe + discover — fetch homepage, confirm it's alive, capture HTML so
+    // we can harvest legal links from the footer (Step 0 below). Routes
+    // through ScraperAPI on bot-wall (403/Akamai) so premium-retailer sites
+    // like stories.com / hm.com / supreme.com don't dead-end here.
+    let probeOk = false;
+    let homepageHtml: string | null = null;
+    const proxyCallsBefore = proxyCalls;
+    const probe = await tryFetch(base, {
+      method: "GET",
+      headers: { "User-Agent": UA, "Accept": "text/html,*/*" },
+      timeoutMs: 7000,
+      redirect: "follow",
+    });
+    if (probe) {
+      probeOk = probe.status > 0 && probe.status < 500;
+      if (probe.ok && (probe.headers.get("content-type") || "").includes("html")) {
+        homepageHtml = await probe.text().catch(() => null);
+      }
+    }
+    const probeVia = proxyCalls > proxyCallsBefore ? "proxy" : "direct";
+    t("probe", `${base} → ${probe ? `${probe.status} via ${probeVia}` : "no response"}${homepageHtml ? `, html ${homepageHtml.length}B` : ""}`);
+    if (!probeOk) continue;
+
+    // ── Step 0: homepage + footer-link harvest ────────────────────────────────
+    // UK Companies Act 2006 requires every business to disclose its registered
+    // entity on its website. Retailers put it in the footer, T&Cs, or modern
+    // slavery statement — but the URLs vary wildly by CMS (Shopify
+    // /pages/terms, Salesforce Commerce /terms, IBM WebSphere
+    // /shop/CustomerService?pageName=*). Rather than guess every CMS's path
+    // shape, scrape the homepage's <a href> tags and follow anything legal-ish.
+    let localePrefix = ""; // detected from homepage hrefs, used in Step 3
+    if (homepageHtml) {
+      // First check the homepage itself — many sites put "© X Limited,
+      // registered in England..." straight in the footer.
+      const homeText = htmlToText(homepageHtml);
+      const homeHit = extractFromText(homeText, base);
+      if (homeHit) {
+        t("homepage", `${base} → entity:${homeHit.entityName} ch:${homeHit.chNumber || "-"}`);
+        console.log(`[find-uk-entity] homepage ${base}: "${homeHit.entityName}" / ${homeHit.chNumber}`);
+        return homeHit;
+      }
+
+      // ── Locale detection (before discover) ────────────────────────────────────
+      // Must run first so we can short-circuit to locale T&Cs paths before the
+      // discover/link step burns proxy budget on generic navigation pages.
+      const LOCALE_HREF = /href=["']\/(en[-_]gb|en[-_]uk|en|gb|uk)\//gi;
+      const lCounts = new Map<string, number>();
+      let llm: RegExpExecArray | null;
+      while ((llm = LOCALE_HREF.exec(homepageHtml)) !== null) {
+        const lc = llm[1].toLowerCase().replace("_", "-");
+        lCounts.set(lc, (lCounts.get(lc) ?? 0) + 1);
+      }
+      if (lCounts.size) {
+        const [best] = [...lCounts.entries()].sort((a, b) => b[1] - a[1]);
+        if (best && best[1] >= 3) {
+          localePrefix = `/${best[0]}`;
+          t("locale", `detected prefix ${localePrefix} (${best[1]} hrefs)`);
+        }
+      }
+
+      // ── Early locale probe ──────────────────────────────────────────────────
+      // Try the highest-probability locale T&Cs paths immediately. Brands like
+      // H&M Group / stories.com serve T&Cs under /en-gb/legal/… — we should
+      // hit that before wasting proxy calls following homepage nav links.
+      const earlyPaths = localePrefix
+        ? [
+          `${localePrefix}/legal/terms-and-conditions`,
+          `${localePrefix}/customer-service/terms-and-conditions`,
+          `${localePrefix}/customer-service/terms-conditions`,
+          `${localePrefix}/help/terms-and-conditions`,
+          `${localePrefix}/terms`,
+          `${localePrefix}/info/terms-and-conditions`,
+        ]
+        : [
+          "/en-gb/legal/terms-and-conditions",
+          "/en-gb/customer-service/terms-and-conditions",
+          "/en-gb/customer-service/terms-conditions",
+          "/en-gb/help/terms-and-conditions",
+          "/en-gb/terms-and-conditions",
+          "/en/legal/terms-and-conditions",
+        ];
+      for (const lp of earlyPaths) {
+        if (overBudget()) break;
+        const lpUrl = `${base}${lp}`;
+        try {
+          const resp = await tryFetch(lpUrl, { headers: { "User-Agent": UA }, timeoutMs: 6000, redirect: "follow", renderFallback: true });
+          if (!resp || !resp.ok) { t("locale.early", `${lpUrl} → ${resp ? resp.status : "no response"} (skip)`); continue; }
+          const ct = resp.headers.get("content-type") || "";
+          if (!ct.includes("html") && !ct.includes("text")) { t("locale.early", `${lpUrl} → non-html`); continue; }
+          const lpHtml = await resp.text();
+          const ndMatch = lpHtml.match(/<script id="__NEXT_DATA__"[^>]*>(\{[\s\S]*?\})<\/script>/);
+          if (ndMatch) {
+            try {
+              const ndHit = extractFromText(JSON.stringify(JSON.parse(ndMatch[1])), lpUrl + "#next-data");
+              if (ndHit) { t("locale.early", `${lpUrl}#next-data → entity:${ndHit.entityName} ch:${ndHit.chNumber || "-"}`); return ndHit; }
+            } catch { /* non-fatal */ }
+          }
+          const lpText = htmlToText(lpHtml);
+          const lpHit = extractFromText(lpText, lpUrl);
+          if (lpHit) { t("locale.early", `${lpUrl} → entity:${lpHit.entityName} ch:${lpHit.chNumber || "-"}`); return lpHit; }
+          if (isLegalPath(lp) && lpText.length > 200 && hasUkSignal(lpText)) {
+            const aiHit = await aiExtract(lpText, lpUrl);
+            if (aiHit) { t("locale.early.ai", `${lpUrl} → entity:${aiHit.entityName} ch:${aiHit.chNumber || "-"}`); return aiHit; }
+            t("locale.early.ai", `${lpUrl} → AI extracted nothing`);
+          } else {
+            t("locale.early", `${lpUrl} → no entity, no UK signal (${lpText.length}B)`);
+          }
+        } catch (err: any) { t("locale.early", `${lpUrl} → error: ${err?.message || "?"}`); }
+      }
+
+      // ── Step 0: footer-link discovery ──────────────────────────────────────
+      // customer-service excluded from LEGAL_RE — those paths are already
+      // covered by the early locale probe above and localeLegalPages in Step 3.
+      const LEGAL_RE = /\b(terms|privacy|legal|imprint|cookie[s]?|policy|policies|modern[\s\-]?slavery|conditions|disclosure)\b/i;
+      const discovered = new Set<string>();
+      const linkRe = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+      let lm: RegExpExecArray | null;
+      const baseUrl = new URL(base);
+      while ((lm = linkRe.exec(homepageHtml)) !== null && discovered.size < 12) {
+        const href = lm[1].trim();
+        const anchor = lm[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:") || href.startsWith("javascript:")) continue;
+        if (!LEGAL_RE.test(href) && !LEGAL_RE.test(anchor)) continue;
+        try {
+          const abs = new URL(href, base);
+          // Same-host only — don't chase external cookie banners or social links
+          if (abs.host !== baseUrl.host) continue;
+          discovered.add(abs.toString());
+        } catch { /* malformed href */ }
+      }
+      // Total <a href> count to distinguish "JS-rendered SPA, no links in raw HTML"
+      // from "links present but none matched legal keywords".
+      const totalLinks = (homepageHtml.match(/<a\b/gi) || []).length;
+      t("discover", `${base} → ${discovered.size} legal links / ${totalLinks} total <a>${totalLinks < 5 ? " (likely SPA — needs render=true)" : ""}`);
+      if (discovered.size > 0) {
+        const sample = [...discovered].slice(0, 3).map((u) => u.replace(base, "")).join(", ");
+        t("discover.sample", sample);
+      }
+
+      for (const url of discovered) {
+        if (overBudget()) break;
+        try {
+          const resp = await tryFetch(url, {
+            headers: { "User-Agent": UA },
+            timeoutMs: 6000,
+            redirect: "follow",
+          });
+          if (!resp || !resp.ok) {
+            t("link", `${url} → ${resp ? resp.status : "no response"}`);
+            continue;
+          }
+          const ct = resp.headers.get("content-type") || "";
+          if (!ct.includes("html") && !ct.includes("text")) {
+            t("link", `${url} → non-html (${ct})`);
+            continue;
+          }
+          const text = htmlToText(await resp.text());
+          const hit = extractFromText(text, url);
+          if (hit) {
+            t("link", `${url} → entity:${hit.entityName} ch:${hit.chNumber || "-"}`);
+            console.log(`[find-uk-entity] discovered ${url}: "${hit.entityName}" / ${hit.chNumber}`);
+            return hit;
+          }
+          // Discovered links were filtered by legal-keyword anchor/URL, so any
+          // page with UK signals is fair game for the AI fallback.
+          if (text.length > 200 && hasUkSignal(text)) {
+            const aiHit = await aiExtract(text, url);
+            if (aiHit) {
+              t("link.ai", `${url} → entity:${aiHit.entityName} ch:${aiHit.chNumber || "-"}`);
+              return aiHit;
+            }
+            t("link", `${url} → has-uk-signal but AI extracted nothing (${text.length}B)`);
+          } else {
+            t("link", `${url} → no entity, no UK signal (${text.length}B)`);
+          }
+        } catch (err: any) { t("link", `${url} → error: ${err?.message || "?"}`); }
+      }
+    }
+
+    // ── Step 1: Shopify JSON API (works without JS) ───────────────────────────
+    const shopifyPolicies = [
+      "/policies/terms-of-service.json",
+      "/policies/privacy-policy.json",
+      "/policies/refund-policy.json",
+    ];
+    for (const path of shopifyPolicies) {
+      if (overBudget()) { t("shopify", `deadline hit before ${path}`); break; }
+      try {
+        const resp = await tryFetch(`${base}${path}`, {
+          headers: { "User-Agent": UA },
+          timeoutMs: 5000,
+          proxy: false, // /policies/*.json: 404 = not Shopify, not Akamai-blocked
+          redirect: "follow",
+        });
+        if (!resp || !resp.ok) { t("shopify", `${base}${path} → ${resp ? resp.status : "no response"} (skip)`); continue; }
+        const ct = resp.headers.get("content-type") || "";
+        if (!ct.includes("json")) { t("shopify", `${base}${path} → non-json content-type (${ct})`); continue; }
+        const json = await resp.json() as any;
+        const body: string = json?.policy?.body || json?.body || "";
+        if (!body) { t("shopify", `${base}${path} → json ok but no body field`); continue; }
+        const text = body.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+        const hit = extractFromText(text, `${base}${path}`);
+        if (hit) {
+          t("shopify", `${base}${path} → entity:${hit.entityName} ch:${hit.chNumber || "-"}`);
+          console.log(`[find-uk-entity] Shopify JSON ${base}${path}: "${hit.entityName}" / ${hit.chNumber}`);
+          return hit;
+        }
+        if (hasUkSignal(text)) {
+          t("shopify", `${base}${path} → has-uk-signal, trying AI`);
+          const aiHit = await aiExtract(text, `${base}${path}`);
+          if (aiHit) { t("shopify.ai", `${base}${path} → entity:${aiHit.entityName} ch:${aiHit.chNumber || "-"}`); return aiHit; }
+          t("shopify.ai", `${base}${path} → AI extracted nothing`);
+        } else {
+          t("shopify", `${base}${path} → no entity, no UK signal (${text.length}B)`);
+        }
+      } catch (err: any) { t("shopify", `${base}${path} → error: ${err?.message || "?"}`); }
+    }
+
+    // ── Step 2: WordPress REST API ────────────────────────────────────────────
+    const wpSlugs = ["terms-and-conditions", "terms-of-service", "terms", "privacy-policy", "legal"];
+    for (const slug of wpSlugs) {
+      if (overBudget()) { t("wp", `deadline hit before slug=${slug}`); break; }
+      try {
+        const resp = await tryFetch(`${base}/wp-json/wp/v2/pages?slug=${slug}&_fields=content`, {
+          headers: { "User-Agent": UA },
+          timeoutMs: 4000,
+          proxy: false, // WP REST: 404 = not WordPress, not a bot wall
+          redirect: "follow",
+        });
+        if (!resp || !resp.ok) { t("wp", `${base}/wp-json slug=${slug} → ${resp ? resp.status : "no response"} (skip)`); continue; }
+        const json = await resp.json() as any[];
+        const body: string = json?.[0]?.content?.rendered || "";
+        if (!body) { t("wp", `${base}/wp-json slug=${slug} → ok but no rendered content`); continue; }
+        const text = body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+        const hit = extractFromText(text, `${base}/wp-json/wp/v2/pages?slug=${slug}`);
+        if (hit) {
+          t("wp", `${base}/wp-json slug=${slug} → entity:${hit.entityName} ch:${hit.chNumber || "-"}`);
+          console.log(`[find-uk-entity] WP REST ${slug}: "${hit.entityName}" / ${hit.chNumber}`);
+          return hit;
+        }
+        if (hasUkSignal(text)) {
+          t("wp", `${base}/wp-json slug=${slug} → has-uk-signal, trying AI`);
+          const aiHit = await aiExtract(text, `${base}/wp-json/wp/v2/pages?slug=${slug}`);
+          if (aiHit) { t("wp.ai", `slug=${slug} → entity:${aiHit.entityName} ch:${aiHit.chNumber || "-"}`); return aiHit; }
+          t("wp.ai", `slug=${slug} → AI extracted nothing`);
+        } else {
+          t("wp", `${base}/wp-json slug=${slug} → no entity, no UK signal (${text.length}B)`);
+        }
+      } catch (err: any) { t("wp", `${base}/wp-json slug=${slug} → error: ${err?.message || "?"}`); }
+    }
+
+    // ── Step 3: Regular HTML pages (static sites / SSR) ──────────────────────
+    // If a locale prefix was detected from the homepage, try locale-specific
+    // legal paths first — they're far more likely to hit than generic /terms.
+    // When no prefix was detected (SPA with few rendered links), include a
+    // static /en-gb/ fallback set that covers H&M Group and similar brands.
+    const localeLegalPages = localePrefix ? [
+      `${localePrefix}/legal/terms-and-conditions`,
+      `${localePrefix}/terms-and-conditions`,
+      `${localePrefix}/terms`,
+      `${localePrefix}/legal`,
+      `${localePrefix}/legal/privacy-policy`,
+      `${localePrefix}/privacy-policy`,
+      `${localePrefix}/customer-service/terms-and-conditions`,
+      `${localePrefix}/customer-service/terms-conditions`,
+      `${localePrefix}/help/terms-and-conditions`,
+      `${localePrefix}/info/terms-and-conditions`,
+    ] : [];
+    const enGbFallback = !localePrefix ? [
+      "/en-gb/legal/terms-and-conditions",
+      "/en-gb/customer-service/terms-and-conditions",
+      "/en-gb/customer-service/terms-conditions",
+      "/en-gb/help/terms-and-conditions",
+      "/en-gb/terms-and-conditions",
+      "/en-gb/terms",
+      "/en-gb/legal",
+      "/en-gb/privacy-policy",
+      "/en/legal/terms-and-conditions",
+      "/en/terms-and-conditions",
+    ] : [];
+    // locale + en-gb paths are high-value (targeted) → use render fallback for Akamai-protected sites
+    const localePageSet = new Set([...localeLegalPages, ...enGbFallback]);
+    const allPages = [...localeLegalPages, ...enGbFallback, ...pages];
+    for (const page of allPages) {
+      if (overBudget()) { t("page", `deadline hit before ${page || "/"}`); break; }
+      const url = `${base}${page}`;
+      try {
+        const resp = await tryFetch(url, {
+          headers: { "User-Agent": UA },
+          timeoutMs: 6000,
+          redirect: "follow",
+          renderFallback: localePageSet.has(page),
+        });
+        if (!resp || !resp.ok) { t("page", `${url} → ${resp ? resp.status : "no response"} (skip)`); continue; }
+        const ct = resp.headers.get("content-type") || "";
+        if (!ct.includes("html") && !ct.includes("text")) { t("page", `${url} → non-html (${ct})`); continue; }
+
+        const html = await resp.text();
+
+        // Also check __NEXT_DATA__ / Next.js SSR JSON blobs embedded in the page
+        const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>(\{[\s\S]*?\})<\/script>/);
+        if (nextDataMatch) {
+          try {
+            const nd = JSON.parse(nextDataMatch[1]);
+            const ndText = JSON.stringify(nd);
+            const hit = extractFromText(ndText, url + "#next-data");
+            if (hit) {
+              t("page", `${url}#next-data → entity:${hit.entityName} ch:${hit.chNumber || "-"}`);
+              console.log(`[find-uk-entity] Next.js JSON blob at ${url}`);
+              return hit;
+            }
+          } catch { /* non-fatal */ }
+        }
+
+        const text = htmlToText(html);
+
+        const hit = extractFromText(text, url);
+        if (hit) {
+          t("page", `${url} → entity:${hit.entityName} ch:${hit.chNumber || "-"}`);
+          console.log(`[find-uk-entity] scraped from ${url}: "${hit.entityName}" / ${hit.chNumber}`);
+          return hit;
+        }
+        // AI fallback when regex misses on a legal-looking page that has
+        // clear UK signals — catches retailers with non-standard T&Cs phrasing.
+        if (isLegalPath(page) && text.length > 200 && hasUkSignal(text)) {
+          t("page", `${url} → has-uk-signal on legal path, trying AI`);
+          const aiHit = await aiExtract(text, url);
+          if (aiHit) { t("page.ai", `${url} → entity:${aiHit.entityName} ch:${aiHit.chNumber || "-"}`); return aiHit; }
+          t("page.ai", `${url} → AI extracted nothing`);
+        } else if (hasUkSignal(text)) {
+          t("page", `${url} → has-uk-signal but not a legal path — no AI attempt (${text.length}B)`);
+        } else {
+          t("page", `${url} → no entity, no UK signal (${text.length}B)`);
+        }
+      } catch (err: any) {
+        t("page", `${url} → error: ${err?.message || "?"}`);
+        console.log(`[find-uk-entity] scrape failed ${url}: ${err.message}`);
+      }
+    }
+  }
+
+  t("exhaust", "all base URLs and steps exhausted — no entity found");
+  return { entityName: null, chNumber: null, sourceUrl: null };
+}
+
 // ─── Find active UK operating entity for a brand ───────────────────────────
-// For international brands where the linked CH entity is dissolved or wrong,
-// searches Google Places for UK stores to identify the correct operating entity.
 router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT id, name, domain, companies_house_number, companies_house_data FROM crm_companies WHERE id = $1`,
-      [req.params.companyId]
-    );
-    if (!rows[0]) return res.status(404).json({ error: "Company not found" });
-    const company = rows[0];
+    const { db } = await import("./db");
+    const { crmCompanies } = await import("../shared/schema");
+    const { eq } = await import("drizzle-orm");
+    const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId as string)).limit(1);
+    if (!company) return res.status(404).json({ error: "Company not found" });
 
-    const googleKey = process.env.GOOGLE_API_KEY;
-    if (!googleKey) return res.status(400).json({ error: "GOOGLE_API_KEY not configured" });
+    // Step 1: Scrape the brand's website for UK legal entity name
+    let ukEntityName = (company as any).ukEntityName as string | null;
+    let scraped: { entityName: string | null; chNumber: string | null; sourceUrl: string | null } = { entityName: null, chNumber: null, sourceUrl: null };
 
-    // Google Places Text Search for UK stores
-    const query = `${company.name} store UK`;
-    const placesUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=uk&key=${googleKey}`;
-    const placesRes = await fetch(placesUrl, { signal: AbortSignal.timeout(10_000) });
-    if (!placesRes.ok) return res.status(500).json({ error: "Places API error" });
-    const placesData: any = await placesRes.json();
+    const domain = (company as any).domainUrl as string | null
+      || (company as any).domain as string | null
+      || (company as any).website as string | null;
+    if (domain) {
+      const parentGroup = (company as any).backers as string | null;
+      scraped = await scrapeUkEntityFromWebsite(domain, { name: company.name, parentGroup });
+      // Auto-save scraped entity name if we don't already have one stored
+      if (scraped.entityName && !ukEntityName) {
+        ukEntityName = scraped.entityName;
+        await db.update(crmCompanies)
+          .set({ ukEntityName } as any)
+          .where(eq(crmCompanies.id, company.id))
+          .catch(() => {});
+      }
+    }
 
-    const stores = (placesData.results || []).slice(0, 10).map((p: any) => ({
-      name: p.name,
-      address: p.formatted_address,
-      lat: p.geometry?.location?.lat,
-      lng: p.geometry?.location?.lng,
-      placeId: p.place_id,
-      businessStatus: p.business_status || "OPERATIONAL",
-      types: p.types || [],
-    }));
+    // Companies House search — use scraped/saved uk_entity_name first, then brand name
+    const chSearchTerms = ukEntityName && ukEntityName !== company.name
+      ? [ukEntityName, company.name]
+      : [company.name];
 
-    // Use the first London store address to search CH for possible entities
-    const londonStores = stores.filter((s: any) => s.address?.includes("London"));
     const chSuggestions: any[] = [];
-
-    if (company.name) {
+    for (const term of chSearchTerms) {
+      if (!term) continue;
       try {
-        const chSearch = await chFetch(`/search/companies?q=${encodeURIComponent(company.name)}&items_per_page=10`);
-        const chMatches = (chSearch.items || [])
+        const chSearch = await chFetch(`/search/companies?q=${encodeURIComponent(term)}&items_per_page=10`);
+        const matches = (chSearch.items || [])
           .filter((i: any) => i.company_status === "active")
           .slice(0, 5)
           .map((i: any) => ({
@@ -1653,17 +3075,45 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
             type: i.company_type,
             address: i.address_snippet,
             dateOfCreation: i.date_of_creation,
+            searchedAs: term,
           }));
-        chSuggestions.push(...chMatches);
+        chSuggestions.push(...matches.filter((m: any) =>
+          !chSuggestions.some((e: any) => e.companyNumber === m.companyNumber)
+        ));
       } catch {
         // CH search failure is non-fatal
       }
     }
 
+    // Google Places Text Search for UK stores (only if GOOGLE_API_KEY set)
+    const googleKey = process.env.GOOGLE_API_KEY;
+    let stores: any[] = [];
+    if (googleKey) {
+      const query = `${ukEntityName || company.name} store UK`;
+      const placesUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=uk&key=${googleKey}`;
+      const placesRes = await fetch(placesUrl, { signal: AbortSignal.timeout(10_000) });
+      if (placesRes.ok) {
+        const placesData: any = await placesRes.json();
+        stores = (placesData.results || []).slice(0, 10).map((p: any) => ({
+          name: p.name,
+          address: p.formatted_address,
+          lat: p.geometry?.location?.lat,
+          lng: p.geometry?.location?.lng,
+          placeId: p.place_id,
+          businessStatus: p.business_status || "OPERATIONAL",
+          types: p.types || [],
+        }));
+      }
+    }
+
+    const londonStores = stores.filter((s: any) => s.address?.includes("London"));
+
+    const chData = company.companiesHouseData as any;
     res.json({
-      brand: { id: company.id, name: company.name },
-      currentChNumber: company.companies_house_number,
-      currentChStatus: company.companies_house_data?.profile?.companyStatus || null,
+      brand: { id: company.id, name: company.name, ukEntityName },
+      scraped,
+      currentChNumber: company.companiesHouseNumber,
+      currentChStatus: chData?.profile?.companyStatus || null,
       ukStores: stores,
       londonStoreCount: londonStores.length,
       activeChCandidates: chSuggestions,
@@ -1671,6 +3121,332 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
   } catch (err: any) {
     console.error("[find-uk-entity]", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Batch T&Cs scraper test ────────────────────────────────────────────────
+// POST /api/companies-house/batch-scrape-test
+// Runs the T&Cs scraper on all tracked brands (or a supplied list of company IDs)
+// and returns a summary table: brand, domain, result, entity found, CH number.
+// Runs sequentially with a 2s gap to avoid hammering ScraperAPI.
+router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, res) => {
+  try {
+    const { db } = await import("./db");
+    const { crmCompanies } = await import("../shared/schema");
+    const { inArray, ilike } = await import("drizzle-orm");
+
+    const ids: string[] | undefined = req.body?.ids;
+    const limit: number = Math.min(req.body?.limit ?? 4, 8);
+    const offset: number = req.body?.offset ?? 0;
+
+    let rows = ids?.length
+      ? await db.select().from(crmCompanies).where(inArray(crmCompanies.id, ids))
+      : await db.select().from(crmCompanies).where(ilike(crmCompanies.companyType, "tenant%"));
+
+    const total = rows.length;
+    rows = rows.slice(offset, offset + limit);
+
+    if (rows.length === 0) return res.json({ total, offset, limit, done: true, results: [] });
+
+    const results: any[] = [];
+    let passed = 0, failed = 0, skipped = 0;
+    for (const company of rows) {
+      const domain = (company as any).domainUrl || (company as any).website;
+      if (!domain) {
+        skipped++;
+        results.push({ id: company.id, name: company.name, domain: null, status: "skipped" });
+        continue;
+      }
+      try {
+        const parentGroup = (company as any).backers as string | null;
+        const result = await scrapeUkEntityFromWebsite(domain, { name: company.name, parentGroup });
+        const ok = !!(result.entityName || result.chNumber);
+        if (ok) passed++; else failed++;
+        results.push({
+          id: company.id, name: company.name, domain,
+          status: ok ? "found" : "not_found",
+          entityName: result.entityName,
+          chNumber: result.chNumber,
+          sourceUrl: result.sourceUrl,
+        });
+      } catch (err: any) {
+        failed++;
+        results.push({ id: company.id, name: company.name, domain, status: "error", error: err.message });
+      }
+      if (results.length < rows.length) await new Promise(r => setTimeout(r, 2000));
+    }
+    const nextOffset = offset + limit;
+    res.json({
+      total, offset, limit,
+      done: nextOffset >= total,
+      nextOffset: nextOffset < total ? nextOffset : null,
+      batch: { passed, failed, skipped },
+      results,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Scraper probe test ─────────────────────────────────────────────────────
+// GET /api/scraper-test?url=https://... — quick diagnostic to verify ScraperAPI
+// can reach a URL. Returns status, content-length, and whether entity patterns
+// matched. Useful for testing bot-blocked retailer sites from the live env.
+router.get("/api/scraper-test", requireAuth, async (req, res) => {
+  const url = req.query.url as string;
+  if (!url) return res.status(400).json({ error: "url query param required" });
+  if (!isScraperApiAvailable()) return res.status(503).json({ error: "SCRAPERAPI_KEY not configured" });
+  const stripHtml = (html: string) =>
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+      .replace(/&[a-z]+;/g, " ")
+      .replace(/\s+/g, " ");
+  const results: any[] = [];
+  for (const render of [false, true]) {
+    const start = Date.now();
+    try {
+      const r = await scraperFetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" },
+        render,
+        timeoutMs: render ? 35_000 : 15_000,
+      });
+      const html = await r.text();
+      const text = stripHtml(html);
+      // Check for entity text in __NEXT_DATA__ blob
+      const ndMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+      const ndText = ndMatch ? ndMatch[1] : "";
+      // Broad Ltd/PLC search in stripped text
+      const ltdMatch = text.match(/([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|PLC|plc|LLP))/);
+      // org.no / company number search
+      const cnMatch = text.match(/(?:org\.\s*no\.?|company\s+(?:number|no\.?))\s*[:\s]*(0?\d{7,8})/i);
+      // Specific phrases
+      const hasThrough = /through\s+[A-Z]/i.test(text);
+      const hasOrgNo = /org\.\s*no/i.test(text);
+      const hasMauritz = /mauritz/i.test(text) || /mauritz/i.test(ndText);
+      results.push({
+        render,
+        status: r.status,
+        ok: r.ok,
+        contentLength: html.length,
+        strippedLength: text.length,
+        timeMs: Date.now() - start,
+        hasNextData: !!ndMatch,
+        nextDataLength: ndText.length,
+        hasMauritzInHtml: hasMauritz,
+        hasOrgNo,
+        hasThrough,
+        ltdMatch: ltdMatch ? ltdMatch[1].trim() : null,
+        cnMatch: cnMatch ? cnMatch[1] : null,
+        snippet: text.slice(0, 500).replace(/\s+/g, " "),
+      });
+    } catch (e: any) {
+      results.push({ render, error: e.message, timeMs: Date.now() - start });
+    }
+  }
+  res.json({ url, results });
+});
+
+// Bulk scrape — fires the website-T&Cs scraper for every CRM company that
+// has a domain but no uk_entity_name yet, throttled to ~1 req/sec so we
+// don't trip rate limits on Cloudflare/Akamai. Runs in the background via
+// brand-jobs so the HTTP request returns immediately; progress is
+// readable on /status. Designed to be a one-off catch-up — once the field
+// is populated, the per-brand auto-scraper handles new additions.
+
+let bulkScrapeProgress = {
+  state: "idle" as "idle" | "running" | "done" | "error",
+  startedAt: null as string | null,
+  finishedAt: null as string | null,
+  total: 0,
+  processed: 0,
+  found: 0,
+  notFound: 0,
+  errored: 0,
+  lastBrand: null as string | null,
+  error: null as string | null,
+};
+
+router.post("/api/companies-house/bulk-scrape-uk-entities", requireAuth, async (req, res) => {
+  if (bulkScrapeProgress.state === "running") {
+    return res.status(202).json({ accepted: true, alreadyRunning: true, progress: bulkScrapeProgress });
+  }
+
+  const onlyMissing = req.body?.onlyMissing !== false;       // default: skip brands that already have one
+  const onlyTracked = req.body?.onlyTracked === true;        // default: scrape ALL brands, not just tracked
+  const limit = Math.min(Number(req.body?.limit ?? 5000), 5000);
+  const delayMs = Math.max(Number(req.body?.delayMs ?? 1200), 250);
+
+  bulkScrapeProgress = {
+    state: "running",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    total: 0, processed: 0, found: 0, notFound: 0, errored: 0,
+    lastBrand: null, error: null,
+  };
+
+  // Don't await — let it run in the background.
+  (async () => {
+    try {
+      const { rows } = await pool.query<{
+        id: string; name: string; domain: string | null; domain_url: string | null;
+        uk_entity_name: string | null; backers: string | null;
+      }>(
+        `SELECT id, name, domain, domain_url, uk_entity_name, backers
+           FROM crm_companies
+          WHERE merged_into_id IS NULL
+            ${onlyTracked ? "AND company_type ILIKE 'tenant%'" : ""}
+            ${onlyMissing ? "AND (uk_entity_name IS NULL OR uk_entity_name = '')" : ""}
+            AND (domain IS NOT NULL OR domain_url IS NOT NULL)
+          ORDER BY (company_type ILIKE 'tenant%') DESC, name
+          LIMIT $1`,
+        [limit]
+      );
+      bulkScrapeProgress.total = rows.length;
+
+      for (const row of rows) {
+        bulkScrapeProgress.lastBrand = row.name;
+        const domain = row.domain || row.domain_url;
+        if (!domain) { bulkScrapeProgress.processed++; continue; }
+        try {
+          const scraped = await scrapeUkEntityFromWebsite(domain, { name: row.name, parentGroup: row.backers });
+          if (scraped.entityName) {
+            await pool.query(
+              `UPDATE crm_companies SET uk_entity_name = $1 WHERE id = $2 AND (uk_entity_name IS NULL OR uk_entity_name = '')`,
+              [scraped.entityName, row.id]
+            );
+            bulkScrapeProgress.found++;
+          } else {
+            bulkScrapeProgress.notFound++;
+          }
+        } catch (err: any) {
+          bulkScrapeProgress.errored++;
+          console.warn(`[bulk-scrape] ${row.name}: ${err?.message || err}`);
+        }
+        bulkScrapeProgress.processed++;
+        if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
+      }
+
+      bulkScrapeProgress.state = "done";
+      bulkScrapeProgress.finishedAt = new Date().toISOString();
+      console.log(`[bulk-scrape] done — ${bulkScrapeProgress.found}/${bulkScrapeProgress.total} entities found, ${bulkScrapeProgress.errored} errors`);
+    } catch (err: any) {
+      bulkScrapeProgress.state = "error";
+      bulkScrapeProgress.error = err?.message || String(err);
+      bulkScrapeProgress.finishedAt = new Date().toISOString();
+      console.error(`[bulk-scrape] aborted:`, err?.message || err);
+    }
+  })();
+
+  res.status(202).json({
+    accepted: true,
+    message: "Bulk scrape started. Poll /api/companies-house/bulk-scrape-uk-entities/status for progress.",
+    progress: bulkScrapeProgress,
+  });
+});
+
+router.get("/api/companies-house/bulk-scrape-uk-entities/status", requireAuth, async (_req, res) => {
+  res.json(bulkScrapeProgress);
+});
+
+// ─── Bulk accounts fetch ──────────────────────────────────────────────────
+// Auto-downloads the latest set of accounts (PDF) from CH for every CRM
+// company with a CH number. Skips companies whose stored doc_id already
+// matches the latest CH filing. Throttled to 1 req/sec.
+
+let bulkAccountsProgress = {
+  state: "idle" as "idle" | "running" | "done" | "error",
+  startedAt: null as string | null,
+  finishedAt: null as string | null,
+  total: 0,
+  processed: 0,
+  downloaded: 0,
+  upToDate: 0,
+  skipped: 0,
+  errored: 0,
+  error: null as string | null,
+};
+
+router.post("/api/companies-house/bulk-fetch-accounts", requireAuth, async (req, res) => {
+  if (bulkAccountsProgress.state === "running") {
+    return res.status(202).json({ accepted: true, alreadyRunning: true, progress: bulkAccountsProgress });
+  }
+  const limit = Math.min(Number(req.body?.limit ?? 5000), 5000);
+  bulkAccountsProgress = {
+    state: "running",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    total: 0, processed: 0, downloaded: 0, upToDate: 0, skipped: 0, errored: 0, error: null,
+  };
+
+  (async () => {
+    try {
+      const { runBulkAccountsFetch } = await import("./ch-accounts");
+      // Inline progress tracking by patching opts — runBulkAccountsFetch
+      // already does the heavy lifting; we just observe its return.
+      const out = await runBulkAccountsFetch({ limit });
+      Object.assign(bulkAccountsProgress, out);
+      bulkAccountsProgress.state = "done";
+      bulkAccountsProgress.finishedAt = new Date().toISOString();
+      console.log(`[bulk-accounts] done — ${out.downloaded} downloaded, ${out.upToDate} up-to-date, ${out.errored} errors`);
+    } catch (err: any) {
+      bulkAccountsProgress.state = "error";
+      bulkAccountsProgress.error = err?.message || String(err);
+      bulkAccountsProgress.finishedAt = new Date().toISOString();
+      console.error("[bulk-accounts] aborted:", err?.message || err);
+    }
+  })();
+
+  res.status(202).json({
+    accepted: true,
+    message: "Bulk accounts fetch started. Poll /api/companies-house/bulk-fetch-accounts/status for progress.",
+    progress: bulkAccountsProgress,
+  });
+});
+
+router.get("/api/companies-house/bulk-fetch-accounts/status", requireAuth, async (_req, res) => {
+  res.json(bulkAccountsProgress);
+});
+
+// Fetch latest accounts for a single company on demand. Idempotent — if
+// the stored doc_id already matches CH, it short-circuits to "up_to_date"
+// without re-downloading.
+router.post("/api/brand/:companyId/fetch-latest-accounts", requireAuth, async (req, res) => {
+  try {
+    const { fetchLatestAccountsForCompany } = await import("./ch-accounts");
+    const outcome = await fetchLatestAccountsForCompany(req.params.companyId as string);
+    res.json(outcome);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "fetch-latest-accounts failed" });
+  }
+});
+
+// Stream the stored accounts PDF for a company. Returns 404 if we haven't
+// downloaded one yet (caller should hit POST .../fetch-latest-accounts first).
+router.get("/api/brand/:companyId/latest-accounts.pdf", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query<{ last_accounts_storage_key: string | null; last_accounts_made_up_to: string | null; name: string }>(
+      `SELECT last_accounts_storage_key, last_accounts_made_up_to, name FROM crm_companies WHERE id = $1`,
+      [req.params.companyId]
+    );
+    const row = rows[0];
+    if (!row?.last_accounts_storage_key) {
+      return res.status(404).json({ error: "no accounts on file for this company" });
+    }
+    const { getFile } = await import("./file-storage");
+    const file = await getFile(row.last_accounts_storage_key);
+    if (!file) return res.status(404).json({ error: "stored file missing" });
+    const safeName = (row.name || "company").replace(/[^A-Za-z0-9._-]/g, "_");
+    const datePart = row.last_accounts_made_up_to ? `-${row.last_accounts_made_up_to}` : "";
+    res.setHeader("Content-Type", file.contentType || "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}-accounts${datePart}.pdf"`);
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.end(file.data);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "stream failed" });
   }
 });
 

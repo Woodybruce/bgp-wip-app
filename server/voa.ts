@@ -358,7 +358,9 @@ export function registerVoaRoutes(app: Express) {
           postcode: typeof postcode === "string" ? postcode : undefined,
           minRv: minRv ? Number(minRv) : undefined,
           maxRv: maxRv ? Number(maxRv) : undefined,
-          sortBy: (typeof sortBy === "string" ? sortBy : "rateable_value") as any,
+          // client sends camelCase column keys; the sqlite helper expects
+          // snake_case and silently fell back to RV for anything unknown
+          sortBy: (({ rateableValue: "rateable_value", firmName: "firm_name", street: "street", postcode: "postcode" } as Record<string, string>)[String(sortBy)] || "rateable_value") as any,
           sortDir: sortDir === "asc" ? "asc" : "desc",
           page: pageNum,
           limit,
@@ -394,9 +396,14 @@ export function registerVoaRoutes(app: Express) {
         : sortBy === "street" ? voaRatings.street
         : voaRatings.firmName;
       const orderFn = sortDir === "desc" ? desc : asc;
+      // RV-less rows (deleted/altered assessments) sink to the bottom in
+      // either direction — Postgres DESC puts NULLs first by default.
+      const orderBy = sortBy === "rateableValue"
+        ? [sql`${voaRatings.rateableValue} IS NULL`, orderFn(sortColumn)]
+        : [orderFn(sortColumn)];
 
       const [items, countResult] = await Promise.all([
-        db.select().from(voaRatings).where(where).orderBy(orderFn(sortColumn)).limit(limit).offset(offset),
+        db.select().from(voaRatings).where(where).orderBy(...orderBy).limit(limit).offset(offset),
         db.select({ count: sql<number>`count(*)` }).from(voaRatings).where(where),
       ]);
 

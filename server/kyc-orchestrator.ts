@@ -28,6 +28,8 @@ import { discoverUltimateParent } from "./companies-house";
 import { createVeriffSession } from "./veriff";
 import { adverseMediaSearch, isPerplexityConfigured } from "./perplexity";
 import { screenNames as complyAdvantageScreen, isComplyAdvantageConfigured } from "./comply-advantage";
+import { findHistoricalKycMatches, hasFreshHistoricalPack, type HistoricalKycMatch } from "./aml-historical";
+import { fetchAmlMarketData, hasMarketSignals } from "./aml-market";
 
 const router = Router();
 
@@ -38,6 +40,9 @@ type TickSource =
   | "companies_house"
   | "perplexity"
   | "comply_advantage"
+  | "sharepoint_history"
+  | "yahoo_finance"
+  | "creditsafe"
   | "manual"
   | "system";
 
@@ -271,6 +276,8 @@ export async function runAllAmlChecks(
     summary?: string;
     findingCount?: number;
   };
+  historicalKyc: HistoricalKycMatch[];
+  marketData: Awaited<ReturnType<typeof fetchAmlMarketData>> | null;
   checklistTicked: string[];
   warnings: string[];
 }> {
@@ -314,6 +321,35 @@ export async function runAllAmlChecks(
         (s: any) => s.status === "strong_match" || s.status === "potential_match",
       );
 
+      // Experian commercial credit — non-fatal, augments the investigation
+      let experianReport: any = null;
+      try {
+        const { fetchCommercialCredit, isExperianConfigured, persistExperianTurnover } = await import("./experian");
+        if (isExperianConfigured()) {
+          experianReport = await fetchCommercialCredit(company.companies_house_number);
+          if (experianReport && experianReport.turnover != null && experianReport.turnover > 0) {
+            await persistExperianTurnover(pool, {
+              companyId: company.id,
+              companyName: companyData.profile?.company_name || company.name,
+              report: experianReport,
+            });
+          }
+        }
+      } catch (e: any) {
+        warnings.push(`Experian credit lookup failed: ${e?.message || "unknown"}`);
+      }
+
+      // House covenant score (free data: CH + Gazette + accounts) — non-fatal.
+      // Every KYC'd counterparty is also added to the nightly covenant watch.
+      let covenantReport: any = null;
+      try {
+        const { getCovenantReport, addToWatchlist } = await import("./covenant-engine");
+        covenantReport = await getCovenantReport(company.companies_house_number);
+        await addToWatchlist(company.companies_house_number, companyData.profile?.company_name || company.name);
+      } catch (e: any) {
+        warnings.push(`Covenant check failed: ${e?.message || "unknown"}`);
+      }
+
       investigationResult = {
         subject: {
           name: companyData.profile?.company_name || company.name,
@@ -327,6 +363,8 @@ export async function runAllAmlChecks(
         filingHistory: (companyData.filings || []).slice(0, 20),
         insolvencyHistory: companyData.insolvency,
         sanctionsScreening: sanctionsResult,
+        experian: experianReport,
+        covenant: covenantReport,
         riskScore: assessed.score,
         riskLevel: assessed.level,
         flags: assessed.flags,
@@ -411,11 +449,19 @@ export async function runAllAmlChecks(
             `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2`,
             ["pep_domestic", companyId],
           );
-        } else if (complyAdvantageResult.length > 0 && complyAdvantageResult.every(r => r.status === "clear")) {
-          // All clear — auto-set PEP status to clear
+        } else if (complyAdvantageResult.length > 0) {
+          // A screening that RAN must always record an outcome. Previously
+          // only an all-clear wrote a status, so one potential_match (a
+          // false positive on a common director name) left aml_pep_status
+          // empty forever — indistinguishable from "never screened", the
+          // checklist never completed, and the auto-kicks refired for
+          // nothing (Bill's, 2026-08-19).
+          const anyHits = complyAdvantageResult.some(
+            r => r.status === "strong_match" || r.status === "potential_match",
+          );
           await pool.query(
             `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2 AND (aml_pep_status IS NULL OR aml_pep_status = '')`,
-            ["clear", companyId],
+            [anyHits ? "review_required" : "clear", companyId],
           );
         }
 
@@ -579,6 +625,60 @@ export async function runAllAmlChecks(
     }
   }
 
+  // 4a. Historical KYC pack on file — check the BGP SharePoint KYC folder for
+  // a prior pass on this entity. If one exists in the last 12 months, mark
+  // company_cert ticked from sharepoint_history and stash the matches so the
+  // panel can deep-link to the file.
+  let historicalKyc: HistoricalKycMatch[] = [];
+  try {
+    historicalKyc = await findHistoricalKycMatches(company.name || "");
+    if (hasFreshHistoricalPack(historicalKyc)) {
+      const newest = historicalKyc[0];
+      const updates = await tickChecklistItems(companyId, {
+        company_cert: {
+          source: "sharepoint_history",
+          evidence: {
+            file: newest.name,
+            webUrl: newest.webUrl,
+            ageDays: newest.ageDays,
+            totalMatches: historicalKyc.length,
+          },
+          notes: `Prior KYC pack on file (${newest.ageDays} days old) — ${newest.name}`,
+        },
+      });
+      checklistTicked = [...checklistTicked, ...updates];
+    }
+  } catch (e: any) {
+    warnings.push(`Historical KYC lookup failed: ${e?.message || "unknown"}`);
+  }
+
+  // 4b. Market data overlay — Yahoo Finance for listed counterparties,
+  // Creditsafe/RFA when a key is configured. Cheap signals that confirm
+  // financial health or flag concerns to look at.
+  let marketData: Awaited<ReturnType<typeof fetchAmlMarketData>> | null = null;
+  try {
+    marketData = await fetchAmlMarketData(company.name || "", company.companies_house_number || null);
+    if (marketData && hasMarketSignals(marketData)) {
+      // Stash on the deal for the AmlAiPanel to display
+      if (dealId) {
+        await pool.query(
+          `UPDATE crm_deals SET aml_market_data = $1 WHERE id = $2`,
+          [marketData, dealId],
+        ).catch(() => {});
+      }
+      // Sharp drop / halts are signals to flag, not to auto-tick anything off.
+      if (marketData.signals.sharpDrop || marketData.signals.halted) {
+        warnings.push(
+          marketData.signals.halted
+            ? `Listed share appears halted — verify before completion`
+            : `Share price down 30%+ over 52 weeks — sense-check covenant`
+        );
+      }
+    }
+  } catch (e: any) {
+    warnings.push(`Market data lookup failed: ${e?.message || "unknown"}`);
+  }
+
   // 5. Deal event trail — so the audit log carries the whole sweep
   if (dealId) {
     await pool.query(
@@ -594,6 +694,8 @@ export async function runAllAmlChecks(
           veriffLaunched,
           veriffSkipped,
           adverseMedia,
+          historicalKyc: historicalKyc.slice(0, 5),
+          marketData,
           checklistTicked,
           warnings,
         }),
@@ -601,6 +703,23 @@ export async function runAllAmlChecks(
       ],
     ).catch(() => {});
   }
+
+  // Outcome stamp (2026-08-19): the compliance panel's "AML PEP / adverse
+  // media" row keys off aml_pep_status, which previously ONLY the
+  // ComplyAdvantage leg wrote — and that leg warns/fails on some runs. A
+  // completed UK OFSI + OFAC sanctions/PEP screen is a real screening
+  // outcome and must record one too, or the row never ticks.
+  try {
+    const ofsiScreen: any[] = (investigationResult as any)?.sanctionsScreening || [];
+    const ofsiRan = Array.isArray(ofsiScreen) && ofsiScreen.length > 0;
+    const ofsiHit = ofsiRan && ofsiScreen.some((s: any) => s.status === "strong_match" || s.status === "potential_match");
+    if (ofsiRan || sanctionsMatch) {
+      await pool.query(
+        `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2 AND (aml_pep_status IS NULL OR aml_pep_status = '')`,
+        [ofsiHit || sanctionsMatch ? "review_required" : "clear", companyId],
+      );
+    }
+  } catch { /* best-effort stamp — never fails the sweep */ }
 
   return {
     companyId,
@@ -611,6 +730,8 @@ export async function runAllAmlChecks(
     veriffLaunched,
     veriffSkipped,
     adverseMedia,
+    historicalKyc,
+    marketData,
     checklistTicked,
     warnings,
   };
@@ -651,6 +772,11 @@ export async function runPeriodicAmlReScreening(options: { maxCompanies?: number
           c.kyc_checked_at IS NULL
           OR c.kyc_checked_at < NOW() - ($1 || ' days')::interval
           OR (r.due_date IS NOT NULL AND r.due_date <= NOW())
+          -- Never screened at all: a freshly-resolved CH entity has a fresh
+          -- kyc_checked_at, so the staleness test above skipped it and its
+          -- PEP / adverse-media pass never ran (Bill's, 2026-08-18). An
+          -- empty aml_pep_status means ComplyAdvantage has never seen it.
+          OR COALESCE(c.aml_pep_status, '') = ''
         )
       ORDER BY c.kyc_checked_at NULLS FIRST
       LIMIT $2`,
@@ -687,7 +813,10 @@ export async function runPeriodicAmlReScreening(options: { maxCompanies?: number
 
       console.log(
         `[kyc-orch] Periodic re-screen ${row.name}: risk=${summary.risk?.level || "n/a"} ` +
-        `ticked=[${summary.checklistTicked.join(",")}] warnings=${summary.warnings.length}`,
+        `ticked=[${summary.checklistTicked.join(",")}] warnings=${summary.warnings.length}` +
+        // Every run has carried warnings=1 for days with no visibility into
+        // what it is — print it so failures are diagnosable from the log.
+        (summary.warnings.length ? ` | ${summary.warnings.slice(0, 2).map((w: string) => w.slice(0, 120)).join(" · ")}` : ""),
       );
 
       // Short pause so we don't hammer Companies House / Perplexity back-to-back
@@ -724,12 +853,15 @@ router.post("/api/kyc/run-all-checks", requireAuth, async (req: Request, res: Re
       targets.push(companyId);
     } else if (dealId && bothSides) {
       const d = await pool.query(
-        `SELECT tenant_id, landlord_id FROM crm_deals WHERE id = $1`,
+        `SELECT tenant_id, landlord_id, vendor_id, purchaser_id FROM crm_deals WHERE id = $1`,
         [dealId],
       );
       if (!d.rows[0]) return res.status(404).json({ error: "Deal not found" });
-      if (d.rows[0].tenant_id) targets.push(d.rows[0].tenant_id);
-      if (d.rows[0].landlord_id) targets.push(d.rows[0].landlord_id);
+      // Dedupe — same company can sit in multiple roles.
+      const seen = new Set<string>();
+      for (const id of [d.rows[0].tenant_id, d.rows[0].landlord_id, d.rows[0].vendor_id, d.rows[0].purchaser_id]) {
+        if (id && !seen.has(id)) { seen.add(id); targets.push(id); }
+      }
     } else {
       return res.status(400).json({ error: "Provide companyId, or dealId with bothSides=true" });
     }
@@ -750,6 +882,94 @@ router.post("/api/kyc/run-all-checks", requireAuth, async (req: Request, res: Re
 });
 
 /**
+ * POST /api/kyc/backfill-deals
+ * One-click backfill: walks every active deal that has at least one
+ * counterparty linked, and fires runAllAmlChecks for each landlord/tenant/
+ * vendor/purchaser whose company hasn't been screened in the last 30 days.
+ * Idempotent (the orchestrator already preserves existing checklist items)
+ * and budget-aware (cooldown skip).
+ *
+ * Returns a streaming-style summary so the admin can see what got picked up.
+ */
+router.post("/api/kyc/backfill-deals", requireAuth, async (req: any, res: Response) => {
+  try {
+    const userId = req.session?.userId || req.tokenUserId || null;
+    const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+    if (adminCheck.rows[0]?.is_admin !== true) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+
+    // Pull every active deal that's got at least one counterparty company.
+    const { rows: deals } = await pool.query(
+      `SELECT id, name, landlord_id, tenant_id, vendor_id, purchaser_id
+       FROM crm_deals
+       WHERE COALESCE(status, '') NOT IN ('ARCH','WIT','LOST','DEAD')
+         AND (landlord_id IS NOT NULL OR tenant_id IS NOT NULL OR vendor_id IS NOT NULL OR purchaser_id IS NOT NULL)`,
+    );
+
+    // Build a unique set of (companyId, anyDealId) tuples — sweep each
+    // company once even if it sits across multiple deals.
+    const companyToDeal = new Map<string, string>();
+    for (const d of deals) {
+      for (const cid of [d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id]) {
+        if (cid && !companyToDeal.has(cid)) companyToDeal.set(cid, d.id);
+      }
+    }
+
+    // 30-day cooldown — pull last update timestamps so we skip anything
+    // recently swept.
+    const recentlySwept = new Set<string>();
+    if (companyToDeal.size > 0) {
+      const ids = Array.from(companyToDeal.keys());
+      const { rows: recent } = await pool.query(
+        `SELECT id FROM crm_companies
+         WHERE id = ANY($1::varchar[])
+           AND aml_checklist IS NOT NULL
+           AND updated_at > NOW() - INTERVAL '30 days'`,
+        [ids],
+      );
+      for (const r of recent) recentlySwept.add(r.id);
+    }
+
+    const toSweep = Array.from(companyToDeal.entries()).filter(([cid]) => !recentlySwept.has(cid));
+    const swept: Array<{ companyId: string; dealId: string; risk?: string; warnings?: number }> = [];
+    const failed: Array<{ companyId: string; reason: string }> = [];
+
+    // Concurrency cap of 3 — don't blast Companies House / Comply Advantage
+    // / Perplexity all at once.
+    const concurrency = 3;
+    const queue = [...toSweep];
+    async function worker() {
+      while (queue.length) {
+        const next = queue.shift();
+        if (!next) break;
+        const [cid, did] = next;
+        try {
+          const r = await runAllAmlChecks(cid, did, userId);
+          swept.push({ companyId: cid, dealId: did, risk: r.risk?.level, warnings: r.warnings?.length || 0 });
+        } catch (e: any) {
+          failed.push({ companyId: cid, reason: e?.message?.slice(0, 200) || "unknown" });
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+    res.json({
+      dealsScanned: deals.length,
+      companiesFound: companyToDeal.size,
+      skippedRecent: recentlySwept.size,
+      swept: swept.length,
+      failed: failed.length,
+      sweptDetail: swept.slice(0, 50),
+      failures: failed.slice(0, 10),
+    });
+  } catch (err: any) {
+    console.error("[kyc-orch] backfill-deals error:", err?.message);
+    res.status(500).json({ error: err?.message || "Backfill failed" });
+  }
+});
+
+/**
  * POST /api/kyc/run-periodic-rescreen
  * Admin-triggered run of the same sweep the nightly cron does.
  * Body: { maxCompanies?: number }
@@ -764,6 +984,89 @@ router.post("/api/kyc/run-periodic-rescreen", requireAuth, async (req: Request, 
   } catch (err: any) {
     console.error("[kyc-orch] manual periodic re-screen error:", err?.message);
     res.status(500).json({ error: err?.message || "Re-screening failed" });
+  }
+});
+
+// ── AI commentary + outstanding items for the KYC panel ─────────────────────
+// The outstanding list is computed deterministically in code (never by the
+// model); Claude only writes the plain-English read of where the file stands.
+const KYC_CHECKLIST_LABELS: Record<string, string> = {
+  id_verified: "Identity verification (passport / driving licence)",
+  address_verified: "Address verification (utility / bank statement)",
+  ubo_identified: "Ultimate beneficial owner(s) identification",
+  company_cert: "Cert of incorporation / Companies House check",
+  sof_evidenced: "Source of funds evidence",
+  sow_evidenced: "Source of wealth evidence",
+  sanctions_clear: "Sanctions screening",
+  pep_checked: "PEP screening",
+  adverse_media: "Adverse media check",
+  edd_complete: "Enhanced due diligence (if required)",
+  risk_assessed: "Customer risk rating",
+  mlro_review: "MLRO file review",
+};
+
+const kycCommentaryCache = new Map<string, { data: any; expiresAt: number }>();
+
+router.get("/api/kyc/company/:companyId/commentary", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const companyId = String(req.params.companyId);
+    const refresh = req.query.refresh === "1";
+    const cached = kycCommentaryCache.get(companyId);
+    if (!refresh && cached && Date.now() < cached.expiresAt) return res.json(cached.data);
+
+    const { rows } = await pool.query(
+      `SELECT name, company_type, companies_house_number, uk_entity_name, aml_checklist,
+              kyc_status, kyc_expires_at, companies_house_data
+         FROM crm_companies WHERE id = $1`,
+      [companyId],
+    );
+    const co = rows[0];
+    if (!co) return res.status(404).json({ error: "Company not found" });
+
+    const checklist: Record<string, { ticked?: boolean; source?: string }> = co.aml_checklist || {};
+    const chData: any = co.companies_house_data || {};
+
+    // Deterministic outstanding list: data-level gaps first, then unticked
+    // checklist items grouped as-is.
+    const outstanding: string[] = [];
+    if (!co.companies_house_number) outstanding.push("Companies House number not confirmed — resolve the UK trading entity first");
+    if (!co.uk_entity_name) outstanding.push("UK trading entity name not set");
+    if (co.companies_house_number && !(Array.isArray(chData.officers) && chData.officers.length)) outstanding.push("Officers not yet pulled from Companies House");
+    if (co.companies_house_number && !(Array.isArray(chData.pscs) && chData.pscs.length)) outstanding.push("PSCs not yet pulled from Companies House");
+    if (co.companies_house_number && !chData.latestAccountsExtracted) outstanding.push("Latest filed accounts not yet extracted");
+    for (const [id, label] of Object.entries(KYC_CHECKLIST_LABELS)) {
+      if (!checklist[id]?.ticked) outstanding.push(label);
+    }
+    const ticked = Object.entries(KYC_CHECKLIST_LABELS).filter(([id]) => checklist[id]?.ticked).map(([, label]) => label);
+    const autoTicked = Object.entries(KYC_CHECKLIST_LABELS).filter(([id]) => checklist[id]?.ticked && (checklist[id] as any)?.source && (checklist[id] as any).source !== "manual").length;
+
+    let commentary: string | null = null;
+    try {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+      if (apiKey) {
+        const opts: any = { apiKey };
+        if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) opts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+        const client = new Anthropic(opts);
+        const msg = await client.messages.create({
+          model: "claude-haiku-4-5-20251001", max_tokens: 250,
+          messages: [{ role: "user", content: `You are an MLRO's assistant summarising a KYC/AML file. 2-3 plain-English sentences: where the file stands, what's done, and the most important thing still needed. Never invent checks — only reference what's listed. Plain prose only — no markdown, no bold, no headings, no bullet points.\nCompany: ${co.name} (${co.company_type || "type unknown"}) · CH ${co.companies_house_number || "not confirmed"} · KYC status: ${co.kyc_status || "not started"}${co.kyc_expires_at ? ` · expires ${String(co.kyc_expires_at).slice(0, 10)}` : ""}\nCompleted (${ticked.length}/${Object.keys(KYC_CHECKLIST_LABELS).length}, ${autoTicked} auto-evidenced): ${ticked.join("; ") || "nothing yet"}\nOutstanding: ${outstanding.join("; ") || "nothing — file complete"}` }],
+        });
+        commentary = (msg.content[0] as any)?.text?.trim() || null;
+      }
+    } catch { /* commentary is best-effort */ }
+
+    const payload = {
+      commentary,
+      outstanding,
+      completed: ticked.length,
+      total: Object.keys(KYC_CHECKLIST_LABELS).length,
+      generatedAt: new Date().toISOString(),
+    };
+    kycCommentaryCache.set(companyId, { data: payload, expiresAt: Date.now() + 10 * 60 * 1000 });
+    res.json(payload);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Commentary failed" });
   }
 });
 

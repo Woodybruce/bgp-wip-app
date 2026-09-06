@@ -1,0 +1,112 @@
+# Push-to-deploy for the working branch, gated by the smoke suite.
+#
+# smoke: restores qa/smoke-fixture.sql.gz into a throwaway Postgres, starts a
+# production build with NO AI / Microsoft keys, and runs qa/smoke.mjs (staff +
+# client critical paths, hard assertions). A red smoke blocks the deploy.
+#
+# deploy: calls the app's own deploy endpoint (server/auto-deploy.ts), which
+# syncs the server checkout with GitHub, rebuilds and restarts. Requires two
+# repo secrets:
+#   DEPLOY_URL             e.g. https://app.yourdomain.com  (no trailing slash)
+#   DEPLOY_WEBHOOK_SECRET  same value as the Railway env var of that name
+name: Auto deploy
+
+on:
+  push:
+    branches:
+      - claude/terminal-coding-interface-JOGQK
+
+concurrency:
+  group: auto-deploy
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: bgpsmoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Playwright is deliberately not in package.json (kept out of the app's
+      # dependency tree); the QA harnesses expect it in node_modules.
+      - name: Install Playwright
+        run: |
+          npm i --no-save playwright@1.62.1
+          npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      - name: Restore smoke fixture
+        run: gunzip -c qa/smoke-fixture.sql.gz | psql "postgresql://postgres@localhost:5432/bgpsmoke" -q -v ON_ERROR_STOP=1
+
+      - name: Start app (no AI keys — degraded panels are on the ignore list)
+        run: |
+          DATABASE_URL="postgresql://postgres@localhost:5432/bgpsmoke" \
+          PGSSLMODE=disable \
+          PORT=5000 NODE_ENV=production SESSION_SECRET=smoke-ci HOST=0.0.0.0 \
+            node dist/index.cjs > /tmp/smoke-app.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -s -o /dev/null --max-time 2 http://localhost:5000/ && exit 0
+            sleep 1
+          done
+          echo "app did not come up"; tail -50 /tmp/smoke-app.log; exit 1
+
+      - name: Run smoke suite
+        run: SMOKE_BASE=http://localhost:5000 DATABASE_URL="postgresql://postgres@localhost:5432/bgpsmoke" node qa/smoke.mjs
+
+      - name: App log on failure
+        if: failure()
+        run: tail -200 /tmp/smoke-app.log || true
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-shots
+          path: qa/smoke-shots/
+          if-no-files-found: ignore
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: smoke
+    steps:
+      - name: Trigger in-app deploy
+        env:
+          DEPLOY_URL: ${{ secrets.DEPLOY_URL }}
+          DEPLOY_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "$DEPLOY_URL" ] || [ -z "$DEPLOY_SECRET" ]; then
+            echo "DEPLOY_URL / DEPLOY_WEBHOOK_SECRET repo secrets not set — skipping."
+            exit 0
+          fi
+          code=$(curl -sS -o response.json -w "%{http_code}" --max-time 120 \
+            -X POST "$DEPLOY_URL/api/admin/deploy" \
+            -H "x-deploy-secret: $DEPLOY_SECRET")
+          echo "HTTP $code"
+          cat response.json || true
+          # 200 = deploying/up-to-date, 409 = a deploy is already running
+          # (this push will be picked up by that deploy's git sync) — both fine.
+          if [ "$code" = "200" ] || [ "$code" = "409" ]; then exit 0; fi
+          exit 1

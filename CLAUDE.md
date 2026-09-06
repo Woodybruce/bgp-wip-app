@@ -61,6 +61,61 @@ explicit permission.
   (`shared/schema.ts`, migrations).
 - For UI changes, say explicitly when you haven't verified in a browser.
 
+## Landsec client brand access (DECIDED — do not re-litigate in merges)
+
+Client logins see the **hospitality / leisure / fitness category slice**
+(`CLIENT_CRM_CATEGORIES` in `shared/tenant-categories.ts`) **plus any brand
+they self-add** from the global directory (`crm_extra_brand_ids` on their
+company row; add/remove via `/api/client/crm/add-brand`). Woody decided this
+on 2026-08-01 ("landsec only want CRM on the hospitality fitness restaurants
+leisure cafes", confirmed as category slice + self-adds) — it **supersedes**
+the earlier "open up all brands for the Landsec account" note. When merging,
+keep the slice: the canonical gates are `isClientVisibleBrand` and
+`clientBrandSliceSql` in `server/company-scope.ts` — don't reintroduce the
+`/^tenant -/i` all-brands regexes. Also decided 2026-08-01: the Compliance &
+KYC panel STAYS visible on client brand profiles (landlords need tenant
+AML/financial standing); staff-only action buttons are hidden for clients.
+
+## Document design preferences (the "house style" pattern)
+
+For Claude-driven document generation (Why Buy decks initially, Document
+Briefs / KYC Clouseau / PLA briefs over time), team preferences live in
+`document_design_preferences` (free-text rows, scope + preference).
+Active rows are prepended to the generation prompt as "House preferences"
+so Claude designs each doc fresh but follows accumulated direction.
+
+**Don't add rigid override fields.** When Nick (or anyone) says "always
+do X on the Why Buy deck", insert one row into
+`document_design_preferences` with scope='why_buy'. ChatBGP can do this
+via `sql_write` directly — no dedicated tool needed. The pattern
+generalises: pick a new scope string for a new doc type, fetch active
+prefs in the generation path, prepend to prompt.
+
+Helper: `server/document-preferences.ts` (`preferencesPromptFor(scope)`).
+UI: inline `HouseStylePanel` on Pathway → Why Buy section.
+
+## Design guidelines (Woody, 2026-08-23) — docs/DESIGN.md
+
+The app-wide design standard lives in `docs/DESIGN.md` (v2, signed off by
+Woody 2026-08-26): token-only colours, typography scale, the pill standard
+(`client/src/components/ui/pill.tsx`), pill-row tabs, page header anatomy,
+desktop-table/phone-card-list, phone shell rules, and the deviation
+hit-list. **Convert on touch**: any commit touching a screen brings its
+chips, tabs, header and colours to that standard in the same commit. Don't
+invent new chip/tab styles. `rounded-full` buttons are exempt from the
+mobile 44px tap-target rule — that rule was the cause of the historic
+"massive pills".
+
+## ChatBGP's app map (KEEP CURRENT)
+
+`server/chatbgp-app-map.ts` is ChatBGP's description of the app itself —
+every screen and how to reach it on desktop vs the phone shell. ChatBGP
+gives users in-app directions from this file, so **whenever you change
+navigation, add/remove a page, or move a control, update the relevant
+lines there in the same commit**. Stale lines become confident wrong
+answers to the team (that's how this file came to exist — ChatBGP sent
+Woody to a Settings page the phone app can't reach, 2026-08-23).
+
 ## Key files
 
 | Area | Path |

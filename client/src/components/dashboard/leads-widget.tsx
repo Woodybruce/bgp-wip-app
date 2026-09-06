@@ -103,7 +103,7 @@ export function MyLeadsWidget() {
       <Card data-testid="card-my-leads" className="h-full flex flex-col">
         <CardHeader className="pb-2">
           <div className="flex items-center gap-2">
-            <Target className="w-4 h-4 text-blue-500" />
+            <Target className="w-4 h-4 text-muted-foreground" />
             <CardTitle className="text-sm font-semibold">My Leads</CardTitle>
           </div>
         </CardHeader>
@@ -122,7 +122,7 @@ export function MyLeadsWidget() {
       <Card data-testid="card-my-leads-setup" className="h-full flex flex-col">
         <CardHeader className="pb-2">
           <div className="flex items-center gap-2">
-            <Target className="w-4 h-4 text-blue-500" />
+            <Target className="w-4 h-4 text-muted-foreground" />
             <CardTitle className="text-sm font-semibold">My Leads</CardTitle>
           </div>
           <p className="text-[10px] text-muted-foreground mt-0.5 ml-6">{profile?.setupComplete ? "Update your brief" : "Set up your personalised AI lead generation"}</p>
@@ -130,8 +130,8 @@ export function MyLeadsWidget() {
         <CardContent>
           <div className="space-y-3">
             <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0 mt-0.5">
-                <Wand2 className="w-4 h-4 text-blue-500" />
+              <div className="w-8 h-8 rounded-full bg-muted/40 flex items-center justify-center shrink-0 mt-0.5">
+                <Wand2 className="w-4 h-4 text-primary" />
               </div>
               <div className="flex-1">
                 <p className="text-xs text-muted-foreground mb-2">
@@ -163,7 +163,7 @@ export function MyLeadsWidget() {
                 ) : (
                   <Sparkles className="w-3.5 h-3.5 mr-1.5" />
                 )}
-                {profile?.setupComplete ? "Update & Generate" : "Generate My Leads"}
+                {profile?.setupComplete ? "Update & generate" : "Generate my leads"}
               </Button>
             </div>
           </div>
@@ -177,10 +177,10 @@ export function MyLeadsWidget() {
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-1">
         <div>
           <div className="flex items-center gap-2">
-            <Target className="w-4 h-4 text-blue-500" />
+            <Target className="w-4 h-4 text-muted-foreground" />
             <CardTitle className="text-sm font-semibold">My Leads</CardTitle>
             {(stats.new || 0) > 0 && (
-              <span className="text-[10px] font-medium text-blue-600 bg-blue-500/10 rounded-full px-1.5 py-0.5">{stats.new} new</span>
+              <span className="text-[10px] font-medium text-primary bg-primary/10 rounded-full px-1.5 py-0.5">{stats.new} new</span>
             )}
           </div>
           <p className="text-[10px] text-muted-foreground mt-0.5 ml-6">AI-generated opportunities from your news, deals, and market data</p>
@@ -220,14 +220,14 @@ export function MyLeadsWidget() {
         <div className="flex gap-2 mb-3">
           <button
             onClick={() => setActiveTab("new")}
-            className={`text-xs px-2.5 py-1 rounded-md transition-colors cursor-pointer ${activeTab === "new" ? "bg-blue-500 text-white" : "bg-muted text-muted-foreground hover:text-foreground"}`}
+            className={`text-xs px-2.5 py-1 rounded-md transition-colors cursor-pointer ${activeTab === "new" ? "bg-foreground text-background" : "bg-muted text-muted-foreground hover:text-foreground"}`}
             data-testid="tab-leads-new"
           >
             New {(stats.new || 0) > 0 && `(${stats.new})`}
           </button>
           <button
             onClick={() => setActiveTab("saved")}
-            className={`text-xs px-2.5 py-1 rounded-md transition-colors cursor-pointer ${activeTab === "saved" ? "bg-blue-500 text-white" : "bg-muted text-muted-foreground hover:text-foreground"}`}
+            className={`text-xs px-2.5 py-1 rounded-md transition-colors cursor-pointer ${activeTab === "saved" ? "bg-foreground text-background" : "bg-muted text-muted-foreground hover:text-foreground"}`}
             data-testid="tab-leads-saved"
           >
             Saved {(stats.saved || 0) > 0 && `(${stats.saved})`}
@@ -283,7 +283,7 @@ export function MyLeadsWidget() {
                       <div className="flex items-start justify-between gap-2">
                         <button
                           onClick={() => setExpandedLead(isExpanded ? null : lead.id)}
-                          className="text-xs font-medium text-left hover:text-blue-600 transition-colors cursor-pointer"
+                          className="text-xs font-medium text-left hover:text-primary transition-colors cursor-pointer"
                         >
                           {lead.title}
                         </button>
@@ -312,19 +312,19 @@ export function MyLeadsWidget() {
                         <div className="mt-2.5 space-y-2 border-t pt-2">
                           {lead.suggestedAction && (
                             <div className="flex items-start gap-1.5">
-                              <ArrowRightCircle className="w-3 h-3 text-blue-500 mt-0.5 shrink-0" />
+                              <ArrowRightCircle className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
                               <p className="text-[11px]"><span className="font-medium">Suggested action:</span> {lead.suggestedAction}</p>
                             </div>
                           )}
                           {lead.aiReasoning && (
                             <div className="flex items-start gap-1.5">
-                              <Brain className="w-3 h-3 text-violet-500 mt-0.5 shrink-0" />
+                              <Brain className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
                               <p className="text-[11px] text-muted-foreground"><span className="font-medium text-foreground">Why this lead:</span> {lead.aiReasoning}</p>
                             </div>
                           )}
                           {lead.sourceContext && (
                             <div className="flex items-start gap-1.5">
-                              <MessageSquare className="w-3 h-3 text-amber-500 mt-0.5 shrink-0" />
+                              <MessageSquare className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
                               <p className="text-[11px] text-muted-foreground"><span className="font-medium text-foreground">Source:</span> {lead.sourceContext}</p>
                             </div>
                           )}

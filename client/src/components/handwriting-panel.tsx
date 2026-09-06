@@ -5,6 +5,24 @@ import { PenTool, X, Undo2, Redo2, Trash2, Copy, GripHorizontal, Minimize2, Maxi
 const APP_KEY = import.meta.env.VITE_MYSCRIPT_APP_KEY || "";
 const HMAC_KEY = import.meta.env.VITE_MYSCRIPT_HMAC_KEY || "";
 
+const OPEN_EVENT = "bgp:open-handwriting";
+
+// Small header icon that opens the handwriting panel — replaces the old
+// floating pen bubble that sat over page content.
+export function HandwritingToggle() {
+  if (!APP_KEY) return null;
+  return (
+    <button
+      onClick={() => window.dispatchEvent(new CustomEvent(OPEN_EVENT))}
+      className="hidden md:inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+      title="Handwriting input"
+      data-testid="button-open-handwriting"
+    >
+      <PenTool className="h-4 w-4" />
+    </button>
+  );
+}
+
 export function HandwritingPanel() {
   const [open, setOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
@@ -27,6 +45,13 @@ export function HandwritingPanel() {
     };
     document.addEventListener("focusin", handler);
     return () => document.removeEventListener("focusin", handler);
+  }, []);
+
+  // Opened from the header HandwritingToggle.
+  useEffect(() => {
+    const openHandler = () => setOpen(true);
+    window.addEventListener(OPEN_EVENT, openHandler);
+    return () => window.removeEventListener(OPEN_EVENT, openHandler);
   }, []);
 
   const initEditor = useCallback(async () => {
@@ -123,25 +148,14 @@ export function HandwritingPanel() {
 
   return (
     <>
-      {/* Floating toggle button */}
-      {!open && (
-        <button
-          onClick={() => setOpen(true)}
-          className="fixed bottom-20 right-4 z-50 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:scale-105 transition-transform"
-          title="Open handwriting panel"
-          data-testid="button-open-handwriting"
-        >
-          <PenTool className="w-5 h-5" />
-        </button>
-      )}
-
-      {/* Panel */}
+      {/* Panel — opened from the header toggle; iPad and up only
+          (handwriting input is impractical on a phone-sized screen). */}
       {open && (
         <div
-          className={`fixed z-50 bg-background border rounded-xl shadow-2xl transition-all ${
+          className={`hidden md:flex fixed z-50 bg-background border rounded-xl shadow-2xl transition-all ${
             minimized
               ? "bottom-20 right-4 w-48 h-10"
-              : "bottom-4 right-4 w-[400px] h-[380px] flex flex-col"
+              : "bottom-4 right-4 w-[400px] h-[380px] flex-col"
           }`}
           data-testid="handwriting-panel"
         >

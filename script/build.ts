@@ -3,6 +3,7 @@ import { build as viteBuild } from "vite";
 import { rm, readFile, writeFile, copyFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import pg from "pg";
+import sharp from "sharp";
 
 async function runPreMigrations() {
   const dbUrl = process.env.DATABASE_URL;
@@ -200,6 +201,18 @@ async function buildAll() {
   console.log("building client...");
   await viteBuild();
 
+  // Generate PNG icons for the Excel add-in manifest. Office requires PNG
+  // (not SVG). We derive them from the canonical icon-512.png — the
+  // largest brand asset we ship and the source-of-truth for the black-
+  // block BGP brand. The previous source (icon.svg) was the legacy green
+  // placeholder, deleted in favour of the proper PNG mark.
+  const iconSrc = await readFile("client/public/icon-512.png");
+  for (const size of [16, 32, 64, 80, 128, 192]) {
+    const dest = `dist/public/icon-${size}.png`;
+    await sharp(iconSrc).resize(size, size).png().toFile(dest);
+  }
+  console.log("generated PNG icons for Excel add-in manifest");
+
   // Bump the Service Worker cache name to the build timestamp so old caches
   // (and the stale HTML/asset map they hold) get evicted on next deploy.
   const swPath = "dist/public/sw.js";
@@ -224,6 +237,10 @@ async function buildAll() {
     ...Object.keys(pkg.devDependencies || {}),
   ];
   const externals = allDeps.filter((dep) => !allowlist.includes(dep));
+  // unzipper is a transitive dep dynamically imported by server/voa.ts;
+  // bundling it drags in its optional @aws-sdk/client-s3 require and breaks
+  // the build. Resolve both at runtime instead.
+  externals.push("unzipper", "@aws-sdk/client-s3");
 
   await esbuild({
     entryPoints: ["server/index.ts"],
@@ -282,7 +299,7 @@ async function buildAll() {
   // Copy brand assets used by server-side Excel/PDF builders
   if (existsSync("server/assets")) {
     await mkdir("dist/server/assets", { recursive: true });
-    for (const f of ["BGP_BlackHolder.png", "BGP_WhiteHolder.png"]) {
+    for (const f of ["BGP_BlackHolder.png", "BGP_WhiteHolder.png", "historical-invoiced-wip.json"]) {
       if (existsSync(`server/assets/${f}`)) {
         await copyFile(`server/assets/${f}`, `dist/server/assets/${f}`);
         console.log(`copied server/assets/${f} to dist/server/assets/`);

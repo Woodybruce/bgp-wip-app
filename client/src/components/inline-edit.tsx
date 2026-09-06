@@ -97,7 +97,7 @@ export function InlineText({ value, onSave, placeholder = "—", className = "",
 
   return (
     <span
-      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!value ? "text-muted-foreground italic" : ""} ${className}`}
+      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block max-w-full align-bottom min-w-[2rem] transition-colors ${!value ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="inline-edit-display"
     >
       <span
@@ -112,7 +112,7 @@ export function InlineText({ value, onSave, placeholder = "—", className = "",
       {maxLines && value && value.length > 60 && !expanded && (
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
-          className="text-[10px] text-blue-500 hover:underline ml-1"
+          className="text-[10px] text-primary hover:underline ml-1"
           data-testid="inline-edit-expand"
         >
           more
@@ -121,7 +121,7 @@ export function InlineText({ value, onSave, placeholder = "—", className = "",
       {maxLines && expanded && (
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
-          className="text-[10px] text-blue-500 hover:underline ml-1"
+          className="text-[10px] text-primary hover:underline ml-1"
           data-testid="inline-edit-collapse"
         >
           less
@@ -170,6 +170,17 @@ export function InlineNumber({ value, onSave, placeholder = "—", className = "
     }
     setEditing(false);
   };
+
+  // Commit a pending edit if the input is unmounted mid-edit. Inside a
+  // popover (e.g. the deals list Fee cell) clicking outside closes the
+  // popover and removes the input before blur can fire, so the typed value
+  // was silently lost. Escape/Enter set editing=false first, so cancelled
+  // or already-saved edits don't re-commit here.
+  const unmountCommitRef = useRef<{ editing: boolean; save: () => void }>({ editing: false, save: () => {} });
+  unmountCommitRef.current = { editing, save };
+  useEffect(() => () => {
+    if (unmountCommitRef.current.editing) unmountCommitRef.current.save();
+  }, []);
 
   const cancel = () => {
     setDraft(value?.toString() || "");
@@ -263,7 +274,7 @@ export function InlineSelect({ value, options, onSave, placeholder = "—", clas
   return (
     <span
       onClick={() => setEditing(true)}
-      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!value ? "text-muted-foreground italic" : ""} ${className}`}
+      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block max-w-full align-bottom min-w-[2rem] transition-colors ${!value ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="inline-edit-display"
     >
       {value || placeholder}
@@ -275,13 +286,14 @@ interface InlineLabelSelectProps {
   value: string | null | undefined;
   options: readonly string[] | string[];
   colorMap?: Record<string, string>;
+  labelMap?: Record<string, string>;
   onSave: (value: string) => void;
   placeholder?: string;
   allowClear?: boolean;
   compact?: boolean;
 }
 
-export function InlineLabelSelect({ value, options, colorMap, onSave, placeholder = "Set label", allowClear = true, compact = false }: InlineLabelSelectProps) {
+export function InlineLabelSelect({ value, options, colorMap, labelMap, onSave, placeholder = "Set label", allowClear = true, compact = false }: InlineLabelSelectProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -327,15 +339,16 @@ export function InlineLabelSelect({ value, options, colorMap, onSave, placeholde
   const bg = value && colorMap?.[value] ? colorMap[value] : value ? "bg-gray-500" : "";
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0 max-w-full">
       {value ? (
         <button
           ref={triggerRef}
           onClick={openDropdown}
-          className={`${bg} text-white font-medium rounded-full cursor-pointer hover:opacity-90 transition-opacity whitespace-nowrap ${compact ? "text-[10px] px-2 py-0.5" : "text-[11px] px-2.5 py-1"}`}
+          className={`${bg} text-white font-medium rounded-full cursor-pointer hover:opacity-90 transition-opacity whitespace-nowrap overflow-hidden text-ellipsis max-w-full inline-block align-middle ${compact ? "text-[10px] px-2 py-0.5" : "text-[11px] px-2.5 py-1"}`}
           data-testid="inline-label-display"
+          title={(value && labelMap?.[value]) || value}
         >
-          {value}
+          {(value && labelMap?.[value]) || value}
         </button>
       ) : (
         <button
@@ -369,7 +382,7 @@ export function InlineLabelSelect({ value, options, colorMap, onSave, placeholde
                 data-testid={`label-option-${opt}`}
               >
                 <span className={`${optBg} text-white text-[11px] font-medium px-3 py-1 rounded-full w-full text-center`}>
-                  {opt}
+                  {labelMap?.[opt] ?? opt}
                 </span>
               </button>
             );
@@ -523,6 +536,7 @@ interface InlineDateProps {
 
 export function InlineDate({ value, onSave, placeholder = "—", className = "" }: InlineDateProps) {
   const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -531,24 +545,31 @@ export function InlineDate({ value, onSave, placeholder = "—", className = "" 
     }
   }, [editing]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newVal = e.target.value || null;
-    if (newVal !== (value || null)) {
+  const dateStr = value ? value.split("T")[0] : "";
+
+  // Commit on blur / Enter, not on change — a native date input fires
+  // change per segment while typing, so saving there wrote half-formed
+  // dates and closed the editor out from under the user.
+  const commit = () => {
+    setEditing(false);
+    const newVal = draft || null;
+    if (newVal !== (dateStr || null)) {
       onSave(newVal);
     }
-    setEditing(false);
   };
-
-  const dateStr = value ? value.split("T")[0] : "";
 
   if (editing) {
     return (
       <input
         ref={inputRef}
         type="date"
-        value={dateStr}
-        onChange={handleChange}
-        onBlur={() => setEditing(false)}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") { setDraft(dateStr); setEditing(false); }
+        }}
         className={"px-1 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 " + className}
         data-testid="inline-edit-date"
       />
@@ -559,7 +580,7 @@ export function InlineDate({ value, onSave, placeholder = "—", className = "" 
 
   return (
     <span
-      onClick={() => setEditing(true)}
+      onClick={() => { setDraft(dateStr); setEditing(true); }}
       className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="inline-edit-display"
     >
@@ -609,7 +630,7 @@ export function InlineMultiSelect({ value, options, colorMap, placeholder = "—
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="w-56 max-h-64 overflow-y-auto z-[9999]">
         {options.map(opt => (
-          <DropdownMenuItem key={opt.value} onClick={() => toggle(opt.value)}>
+          <DropdownMenuItem key={opt.value} onSelect={e => { e.preventDefault(); toggle(opt.value); }}>
             <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${selected.includes(opt.value) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
               {selected.includes(opt.value) && <Check className="h-2 w-2 text-primary-foreground" />}
             </div>
@@ -627,11 +648,14 @@ interface InlineLinkSelectProps {
   options: { id: string; name: string }[];
   href?: string;
   onSave: (val: string | null) => void;
+  // If provided, an extra "Create new: <text>" row appears when the typed text
+  // doesn't match an existing option. The popover closes after onCreate runs.
+  onCreate?: (newName: string) => void;
   placeholder?: string;
   compact?: boolean;
 }
 
-export function InlineLinkSelect({ value, options, href, onSave, placeholder = "Link...", compact = false }: InlineLinkSelectProps) {
+export function InlineLinkSelect({ value, options, href, onSave, onCreate, placeholder = "Link...", compact = false }: InlineLinkSelectProps) {
   const [open, setOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
 
@@ -642,10 +666,10 @@ export function InlineLinkSelect({ value, options, href, onSave, placeholder = "
   const selectedName = value ? options.find(o => o.id === value)?.name : null;
 
   return (
-    <div className="flex items-center gap-1 shrink-0">
+    <div className="flex items-center gap-1 min-w-0 max-w-full">
       {!compact && selectedName && href ? (
-        <Link href={href}>
-          <span className="text-xs text-primary hover:underline cursor-pointer truncate max-w-[120px] block">
+        <Link href={href} className="min-w-0 flex-1">
+          <span className="text-xs text-primary hover:underline cursor-pointer truncate block" title={selectedName}>
             {selectedName}
           </span>
         </Link>
@@ -706,8 +730,18 @@ export function InlineLinkSelect({ value, options, href, onSave, placeholder = "
                   {o.name}
                 </button>
               ))}
-              {filtered.length === 0 && (
+              {filtered.length === 0 && !onCreate && (
                 <p className="text-xs text-muted-foreground text-center py-2">No matches</p>
+              )}
+              {onCreate && filterText.trim() && !filtered.some(o => o.name.toLowerCase() === filterText.trim().toLowerCase()) && (
+                <button
+                  type="button"
+                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-accent rounded-sm flex items-center gap-1 text-primary border-t mt-1 pt-2"
+                  onClick={() => { onCreate(filterText.trim()); setOpen(false); setFilterText(""); }}
+                  data-testid="inline-link-create"
+                >
+                  <Plus className="w-3 h-3" /> Create "{filterText.trim()}"
+                </button>
               )}
             </div>
           </ScrollArea>

@@ -7,8 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import {
-  LayoutDashboard, Briefcase, Building2, TrendingUp,
+  Briefcase, Building2, TrendingUp,
   FileText, ExternalLink, Users, BarChart3
 } from "lucide-react";
 import { AddinHeader } from "@/components/addin-header";
@@ -20,8 +21,8 @@ function StatCard({ label, value, icon: Icon }: { label: string; value: string |
         <div className="flex items-center gap-2">
           <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground">{label}</p>
-            <p className="text-lg font-semibold">{value}</p>
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</p>
+            <p className="text-lg font-semibold font-mono tabular-nums">{value}</p>
           </div>
         </div>
       </CardContent>
@@ -58,22 +59,22 @@ function AddinTeams() {
           data-testid="link-open-dashboard"
         >
           <Button variant="outline" size="sm" className="h-6 text-[10px]">
-            Full Dashboard <ExternalLink className="h-3 w-3 ml-1" />
+            Open dashboard <ExternalLink className="h-3 w-3 ml-1" />
           </Button>
         </a>
       </AddinHeader>
       <div className="p-4">
 
       <Tabs defaultValue="overview">
-        <TabsList className="w-full h-8">
-          <TabsTrigger value="overview" className="text-xs flex-1" data-testid="tab-overview">
-            <LayoutDashboard className="h-3 w-3 mr-1" /> Overview
+        <TabsList className={pillTabsList}>
+          <TabsTrigger value="overview" className={pillTabsTrigger} data-testid="tab-overview">
+            Overview
           </TabsTrigger>
-          <TabsTrigger value="deals" className="text-xs flex-1" data-testid="tab-deals">
-            <Briefcase className="h-3 w-3 mr-1" /> Deals
+          <TabsTrigger value="deals" className={pillTabsTrigger} data-testid="tab-deals">
+            Deals
           </TabsTrigger>
-          <TabsTrigger value="news" className="text-xs flex-1" data-testid="tab-news">
-            <FileText className="h-3 w-3 mr-1" /> News
+          <TabsTrigger value="news" className={pillTabsTrigger} data-testid="tab-news">
+            News
           </TabsTrigger>
         </TabsList>
 
@@ -88,7 +89,7 @@ function AddinTeams() {
           ) : (
             <div className="grid grid-cols-2 gap-2">
               <StatCard
-                label="Active Deals"
+                label="Active deals"
                 value={stats?.activeDeals || activeDeals.length || 0}
                 icon={Briefcase}
               />
@@ -111,7 +112,7 @@ function AddinTeams() {
           )}
 
           <div className="mt-4">
-            <h2 className="text-sm font-semibold mb-2">Quick Links</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Quick links</h2>
             <div className="grid grid-cols-2 gap-2">
               {[
                 { label: "WIP Report", path: "/wip-report", icon: BarChart3 },
@@ -198,7 +199,11 @@ function AddinTeams() {
                           {n.source && <span className="text-[10px] text-muted-foreground">{n.source}</span>}
                           {n.publishedAt && (
                             <span className="text-[10px] text-muted-foreground">
-                              {new Date(n.publishedAt).toLocaleDateString()}
+                              {new Date(n.publishedAt).toLocaleDateString("en-GB", {
+                                day: "numeric",
+                                month: "short",
+                                ...(new Date(n.publishedAt).getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}),
+                              })}
                             </span>
                           )}
                         </div>

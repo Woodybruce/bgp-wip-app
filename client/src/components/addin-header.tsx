@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
-import { Palette, Moon, Sun, Check, Plus, Settings2 } from "lucide-react";
+import { Check, Plus, Settings2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { pillMetrics } from "@/components/ui/pill";
+import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
+import bgpLogoLight from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 
 interface AddinHeaderProps {
   title: string;
@@ -17,9 +21,15 @@ export function AddinHeader({ title, subtitle, children, onNewChat }: AddinHeade
   return (
     <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/50 bg-card/80 backdrop-blur-sm shrink-0" data-testid="addin-header">
       <div className="flex-1 min-w-0 flex items-center gap-2">
+        <img
+          src={theme === "dark" ? bgpLogoLight : bgpLogoDark}
+          alt="BGP"
+          className="h-5 w-auto shrink-0"
+          data-testid="addin-header-logo"
+        />
         <h1 className="text-[15px] font-semibold tracking-tight leading-none">{title}</h1>
         {subtitle && (
-          <span className="text-[10px] text-muted-foreground/70 font-medium bg-muted/60 px-1.5 py-0.5 rounded-full leading-none">{subtitle}</span>
+          <span className={cn(pillMetrics, "border border-border text-muted-foreground max-w-full overflow-hidden text-ellipsis")}>{subtitle}</span>
         )}
       </div>
       {onNewChat && (
@@ -50,7 +60,7 @@ export function AddinHeader({ title, subtitle, children, onNewChat }: AddinHeade
           <>
             <div className="fixed inset-0 z-40" onClick={() => setSettingsOpen(false)} />
             <div className="absolute right-0 top-full mt-1.5 z-50 bg-card border border-border/50 rounded-xl shadow-xl p-2 min-w-[160px]">
-              <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider px-2 py-1">Colour</p>
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-2 py-1">Colour</p>
               {COLOR_SCHEMES.map((s) => (
                 <button
                   key={s.id}

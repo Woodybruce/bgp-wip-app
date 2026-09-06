@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { PortfolioTasksBoard } from "@/pages/client-tasks";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { TaskNotesCanvas } from "@/components/task-notes-canvas";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import {
-  ListTodo, Plus, Check, Circle, Clock, AlertTriangle, Flame, ArrowRight,
+  Plus, Check, Circle, Clock, AlertTriangle, Flame, ArrowRight,
   Trash2, Pencil, Calendar as CalendarIcon, Building2, BarChart3, User,
   Sparkles, Brain, ChevronDown, ChevronRight, GripVertical, X, RefreshCw,
   CheckCircle2, CircleDot, Filter, SlidersHorizontal, Loader2, Star,
@@ -16,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Pill } from "@/components/ui/pill";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -27,6 +29,8 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+
+const SHOW_NOTE_PICKER = false;
 
 interface Task {
   id: string;
@@ -53,6 +57,10 @@ interface Task {
   deal_name?: string;
   property_name?: string;
   contact_name?: string;
+  assigned_by_user_id?: string | null;
+  assigned_by_name?: string | null;
+  assignee_name?: string | null;
+  source?: string | null;
 }
 
 interface BriefingData {
@@ -125,9 +133,9 @@ function formatDueDate(dateStr: string | null) {
   return { text: date.toLocaleDateString("en-GB", { day: "numeric", month: "short" }), className: "text-muted-foreground" };
 }
 
-function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubtask, onToggleSubtask }: {
+function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubtask, onToggleSubtask, showAssignee }: {
   task: Task; subtasks: Task[]; onToggle: () => void; onEdit: () => void; onDelete: () => void;
-  onPin: () => void; onAddSubtask: () => void; onToggleSubtask: (id: string) => void;
+  onPin: () => void; onAddSubtask: () => void; onToggleSubtask: (id: string) => void; showAssignee?: boolean;
 }) {
   const isDone = task.status === "done";
   const dueInfo = formatDueDate(task.due_date);
@@ -147,7 +155,7 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
             ? "bg-emerald-500 border-emerald-500 text-white"
             : isOverdue
               ? "border-red-400 hover:border-red-500 hover:bg-red-50"
-              : "border-gray-300 hover:border-primary hover:bg-primary/5"
+              : "border-border hover:border-primary hover:bg-primary/5"
         }`}
         data-testid={`task-toggle-${task.id}`}
       >
@@ -162,6 +170,23 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
           </span>
           <PriorityBadge priority={task.priority} />
           {task.category && <CategoryBadge category={task.category} />}
+          {task.source === "ai_suggested" && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950 dark:border-violet-800 dark:text-violet-300" title="Suggested by ChatBGP from letting-tracker activity — mark done when handled, or done to dismiss">
+              <Sparkles className="w-2.5 h-2.5" />
+              AI suggested
+            </span>
+          )}
+          {showAssignee && task.assignee_name ? (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:border-indigo-800 dark:text-indigo-300">
+              <User className="w-2.5 h-2.5" />
+              {task.assignee_name}
+            </span>
+          ) : task.assigned_by_name ? (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:border-indigo-800 dark:text-indigo-300">
+              <User className="w-2.5 h-2.5" />
+              from {task.assigned_by_name}
+            </span>
+          ) : null}
           {task.tags && task.tags.split(",").map(t => t.trim()).filter(Boolean).map(tag => (
             <span key={tag} className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-medium bg-primary/10 text-primary border border-primary/20">
               <Hash className="w-2 h-2" />{tag}
@@ -175,13 +200,24 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
           )}
         </div>
         {task.description && (
-          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2" dangerouslySetInnerHTML={{
-            __html: task.description
-              .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-              .replace(/\*(.*?)\*/g, "<em>$1</em>")
-              .replace(/\n/g, " · ")
-              .slice(0, 200)
-          }} />
+          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+            {(() => {
+              const truncated = task.description.replace(/\n/g, " · ").slice(0, 200);
+              const parts: React.ReactNode[] = [];
+              const regex = /(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
+              let last = 0;
+              let match: RegExpExecArray | null;
+              let key = 0;
+              while ((match = regex.exec(truncated)) !== null) {
+                if (match.index > last) parts.push(truncated.slice(last, match.index));
+                if (match[1]) parts.push(<strong key={key++}>{match[1].slice(2, -2)}</strong>);
+                else if (match[2]) parts.push(<em key={key++}>{match[2].slice(1, -1)}</em>);
+                last = match.index + match[0].length;
+              }
+              if (last < truncated.length) parts.push(truncated.slice(last));
+              return parts;
+            })()}
+          </p>
         )}
         <div className="flex items-center gap-3 mt-1 flex-wrap">
           {dueInfo && (
@@ -231,7 +267,7 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
         </div>
       </div>
 
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+      <div className="flex items-center gap-1 opacity-60 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex-shrink-0">
         <Button variant="ghost" size="sm" className={`h-7 w-7 p-0 ${task.is_pinned ? "text-amber-500 opacity-100" : ""}`} onClick={onPin} title={task.is_pinned ? "Unpin" : "Pin to top"} data-testid={`task-pin-${task.id}`}>
           <Pin className="w-3.5 h-3.5" />
         </Button>
@@ -255,7 +291,7 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
             <button
               onClick={() => onToggleSubtask(sub.id)}
               className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-all ${
-                sub.status === "done" ? "bg-emerald-500 border-emerald-500 text-white" : "border-gray-300 hover:border-primary"
+                sub.status === "done" ? "bg-emerald-500 border-emerald-500 text-white" : "border-border hover:border-primary"
               }`}
             >
               {sub.status === "done" && <Check className="w-2.5 h-2.5" />}
@@ -361,21 +397,35 @@ function AddTaskInline({ onAdd }: { onAdd: (title: string) => void }) {
 
 export default function TasksPage() {
   const { toast } = useToast();
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const [filter, setFilter] = useState<"all" | "todo" | "in_progress" | "done">("all");
+  const [viewAssigned, setViewAssigned] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [showEditDialog, setShowEditDialog] = useState(false);
-  const [briefingExpanded, setBriefingExpanded] = useState(true);
+  // UX #148 — on phones the briefing card filled the whole first viewport
+  // before any tasks; start collapsed there, remembered per device.
+  const [briefingExpanded, setBriefingExpandedRaw] = useState(() => {
+    try {
+      const v = localStorage.getItem("bgp_tasks_briefing_open");
+      if (v !== null) return v === "1";
+    } catch {}
+    return typeof window === "undefined" || window.innerWidth >= 768;
+  });
+  const setBriefingExpanded = (v: boolean) => {
+    setBriefingExpandedRaw(v);
+    try { localStorage.setItem("bgp_tasks_briefing_open", v ? "1" : "0"); } catch {}
+  };
   const [showCompletedSection, setShowCompletedSection] = useState(false);
   const [addingSubtaskFor, setAddingSubtaskFor] = useState<string | null>(null);
   const [subtaskTitle, setSubtaskTitle] = useState("");
 
   const [editForm, setEditForm] = useState({
     title: "", description: "", priority: "medium", category: "", dueDate: "",
-    linkedDealId: "", linkedPropertyId: "", linkedContactId: "",
+    linkedDealId: "", linkedPropertyId: "",
     linkedOnenotePageId: "", linkedOnenotePageUrl: "",
     linkedEvernoteNoteId: "", linkedEvernoteNoteUrl: "",
-    tags: "",
+    tags: "", assigneeUserId: "",
   });
 
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -410,7 +460,20 @@ export default function TasksPage() {
   const [exporting, setExporting] = useState(false);
 
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
-    queryKey: ["/api/tasks"],
+    // Prefix invalidations on ["/api/tasks"] still hit both variants.
+    queryKey: ["/api/tasks", viewAssigned ? "assigned" : "mine"],
+    queryFn: async () => {
+      const res = await fetch(`/api/tasks${viewAssigned ? "?view=assigned" : ""}`, {
+        credentials: "include", headers: getAuthHeaders(),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    },
+  });
+
+  const { data: assignableUsers = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/users"],
+    staleTime: 10 * 60 * 1000,
   });
 
   const { data: briefingData, isLoading: briefingLoading, refetch: refetchBriefing } = useQuery<BriefingData>({
@@ -555,12 +618,12 @@ export default function TasksPage() {
       dueDate: task.due_date ? new Date(task.due_date).toISOString().slice(0, 16) : "",
       linkedDealId: task.linked_deal_id || "",
       linkedPropertyId: task.linked_property_id || "",
-      linkedContactId: task.linked_contact_id || "",
       linkedOnenotePageId: task.linked_onenote_page_id || "",
       linkedOnenotePageUrl: task.linked_onenote_page_url || "",
       linkedEvernoteNoteId: task.linked_evernote_note_id || "",
       linkedEvernoteNoteUrl: task.linked_evernote_note_url || "",
       tags: task.tags || "",
+      assigneeUserId: "",
     });
     setShowEditDialog(true);
   };
@@ -576,7 +639,6 @@ export default function TasksPage() {
       dueDate: editForm.dueDate || null,
       linkedDealId: editForm.linkedDealId || null,
       linkedPropertyId: editForm.linkedPropertyId || null,
-      linkedContactId: editForm.linkedContactId || null,
       linkedOnenotePageId: editForm.linkedOnenotePageId || null,
       linkedOnenotePageUrl: editForm.linkedOnenotePageUrl || null,
       linkedEvernoteNoteId: editForm.linkedEvernoteNoteId || null,
@@ -618,26 +680,22 @@ export default function TasksPage() {
       (subtaskMap[t.id] || []).some(s => s.title.toLowerCase().includes(q))
     );
   }
-  const displayActive = filteredTasks.filter(t => t.status !== "done");
+  const overdueIds = new Set(overdueTasks.map(t => t.id));
+  const displayActive = filteredTasks.filter(t => t.status !== "done" && !overdueIds.has(t.id));
   const displayCompleted = filteredTasks.filter(t => t.status === "done");
 
   return (
     <>
       <div className="flex flex-col h-full overflow-hidden" data-testid="tasks-page">
         <div className="flex-1 overflow-y-auto">
-          <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+          <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                  <ListTodo className="w-5 h-5 text-primary" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold tracking-tight">My Tasks</h1>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    {activeTasks.length} open{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
-                  </p>
-                </div>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">My Tasks</h1>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  {activeTasks.length} open{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -656,12 +714,15 @@ export default function TasksPage() {
                   className="gap-1.5"
                   onClick={() => { setShowEditDialog(true); setEditTask(null); setEditForm({
                     title: "", description: "", priority: "medium", category: "", dueDate: "",
-                    linkedDealId: "", linkedPropertyId: "", linkedContactId: "",
+                    linkedDealId: "", linkedPropertyId: "",
+                    linkedOnenotePageId: "", linkedOnenotePageUrl: "",
+                    linkedEvernoteNoteId: "", linkedEvernoteNoteUrl: "",
+                    tags: "", assigneeUserId: "",
                   }); }}
                   data-testid="button-new-task"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  New Task
+                  Add task
                 </Button>
               </div>
             </div>
@@ -764,6 +825,7 @@ export default function TasksPage() {
                       onEdit={() => openEdit(task)}
                       onDelete={() => deleteMutation.mutate(task.id)}
                       onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
+                      showAssignee={viewAssigned}
                       onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
                       onToggleSubtask={(id) => {
                         const sub = tasks.find(t => t.id === id);
@@ -777,23 +839,29 @@ export default function TasksPage() {
 
             <Card>
               <CardHeader className="pb-0 pt-4 px-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-y-1">
                   <CardTitle className="text-base font-semibold flex items-center gap-2">
                     <CircleDot className="w-4 h-4 text-primary" />
                     Tasks
                   </CardTitle>
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap gap-1.5">
+                    <Pill
+                      active={viewAssigned}
+                      onClick={() => setViewAssigned(v => !v)}
+                      title="Tasks you assigned to other people"
+                      data-testid="filter-assigned-by-me"
+                    >
+                      Assigned by me
+                    </Pill>
                     {(["all", "todo", "in_progress", "done"] as const).map(f => (
-                      <Button
+                      <Pill
                         key={f}
-                        variant={filter === f ? "default" : "ghost"}
-                        size="sm"
-                        className="h-7 text-xs px-2"
+                        active={filter === f}
                         onClick={() => setFilter(f)}
                         data-testid={`filter-${f}`}
                       >
                         {f === "all" ? "All" : f === "todo" ? "To Do" : f === "in_progress" ? "In Progress" : "Done"}
-                      </Button>
+                      </Pill>
                     ))}
                   </div>
                 </div>
@@ -841,6 +909,7 @@ export default function TasksPage() {
                         onEdit={() => openEdit(task)}
                         onDelete={() => deleteMutation.mutate(task.id)}
                         onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
+                      showAssignee={viewAssigned}
                         onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
                         onToggleSubtask={(id) => {
                           const sub = tasks.find(t => t.id === id);
@@ -897,6 +966,7 @@ export default function TasksPage() {
                             onEdit={() => openEdit(task)}
                             onDelete={() => deleteMutation.mutate(task.id)}
                             onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
+                      showAssignee={viewAssigned}
                             onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
                             onToggleSubtask={(id) => {
                               const sub = tasks.find(t => t.id === id);
@@ -911,35 +981,14 @@ export default function TasksPage() {
               </CardContent>
             </Card>
 
-            {urgentHighTasks.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <Card className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-6 h-6 rounded bg-red-100 dark:bg-red-900 flex items-center justify-center">
-                      <Flame className="w-3.5 h-3.5 text-red-500" />
-                    </div>
-                    <span className="text-xs font-semibold text-muted-foreground">Urgent</span>
-                  </div>
-                  <p className="text-2xl font-bold">{activeTasks.filter(t => t.priority === "urgent").length}</p>
-                </Card>
-                <Card className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-6 h-6 rounded bg-orange-100 dark:bg-orange-900 flex items-center justify-center">
-                      <ArrowUp className="w-3.5 h-3.5 text-orange-500" />
-                    </div>
-                    <span className="text-xs font-semibold text-muted-foreground">High Priority</span>
-                  </div>
-                  <p className="text-2xl font-bold">{activeTasks.filter(t => t.priority === "high").length}</p>
-                </Card>
-                <Card className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-6 h-6 rounded bg-emerald-100 dark:bg-emerald-900 flex items-center justify-center">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                    </div>
-                    <span className="text-xs font-semibold text-muted-foreground">Done Today</span>
-                  </div>
-                  <p className="text-2xl font-bold">{completedTasks.filter(t => t.completed_at && new Date(t.completed_at).toDateString() === new Date().toDateString()).length}</p>
-                </Card>
+            {/* Clients keep their full personal task list above AND the
+                portfolio monitoring board below (Woody, 2026-08-05: "we need
+                the original my tasks to come back... but we need to keep the
+                monitoring of tasks too"). Staff preview with /tasks?client=1. */}
+            {(me?.role === "Client" || !!(me as any)?.companyScopeId ||
+              new URLSearchParams(window.location.search).get("client") === "1") && (
+              <div className="mt-6">
+                <PortfolioTasksBoard />
               </div>
             )}
 
@@ -1011,6 +1060,23 @@ export default function TasksPage() {
                   data-testid="input-task-due-date"
                 />
               </div>
+              {!editTask && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Assign to</label>
+                  <Select value={editForm.assigneeUserId || "me"} onValueChange={(v) => setEditForm({ ...editForm, assigneeUserId: v === "me" ? "" : v })}>
+                    <SelectTrigger data-testid="select-task-assignee">
+                      <SelectValue placeholder="Myself" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="me">Myself</SelectItem>
+                      {(Array.isArray(assignableUsers) ? assignableUsers : []).map((u) => (
+                        <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] text-muted-foreground mt-1">Assigned tasks land on their list — they get a notification, and you can track them under "Assigned by me".</p>
+                </div>
+              )}
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Link to Deal</label>
                 <Select value={editForm.linkedDealId || "none"} onValueChange={(v) => setEditForm({ ...editForm, linkedDealId: v === "none" ? "" : v })}>
@@ -1051,6 +1117,7 @@ export default function TasksPage() {
               </div>
 
               {/* Linked Notes */}
+              {SHOW_NOTE_PICKER && (
               <div className="border rounded-lg p-3 space-y-2 bg-muted/20">
                 <label className="text-xs font-semibold text-muted-foreground block">Linked Notes</label>
                 <div className="space-y-1.5">
@@ -1156,9 +1223,10 @@ export default function TasksPage() {
                   </div>
                 )}
               </div>
+              )}
 
               {/* Note picker sub-dialog */}
-              {showNotePicker && (
+              {SHOW_NOTE_PICKER && showNotePicker && (
                 <div className="border rounded-lg p-3 bg-background space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold">
@@ -1239,7 +1307,7 @@ export default function TasksPage() {
               )}
 
               {/* Export picker sub-dialog */}
-              {showExportPicker && editTask && (
+              {SHOW_NOTE_PICKER && showExportPicker && editTask && (
                 <div className="border rounded-lg p-3 bg-background space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold">
@@ -1338,7 +1406,8 @@ export default function TasksPage() {
                     dueDate: editForm.dueDate || null,
                     linkedDealId: editForm.linkedDealId || null,
                     linkedPropertyId: editForm.linkedPropertyId || null,
-                    linkedContactId: editForm.linkedContactId || null,
+                    tags: editForm.tags || null,
+                    assigneeUserId: editForm.assigneeUserId || null,
                   });
                   setShowEditDialog(false);
                 }}

@@ -105,14 +105,16 @@ function formatMonth(month: string): string {
 
 // --- KPI Card ---
 
+// Stat tile per docs/DESIGN.md §8 — uppercase micro-label, mono value, no
+// icon square (icon prop kept so callers stay untouched; it no longer renders).
+// Delta tone follows direction: up = emerald, down = red, flat = muted.
 function KpiCard({
-  icon: Icon,
   label,
   value,
   subtitle,
   change,
 }: {
-  icon: any;
+  icon?: any;
   label: string;
   value: string;
   subtitle?: string;
@@ -121,18 +123,13 @@ function KpiCard({
   return (
     <Card>
       <CardContent className="p-5">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Icon className="w-4.5 h-4.5 text-primary" />
-          </div>
-          <span className="text-sm font-medium text-muted-foreground">{label}</span>
-        </div>
-        <div className="text-2xl font-bold tracking-tight">{value}</div>
+        <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-2">{label}</p>
+        <div className="text-2xl font-bold font-mono tabular-nums tracking-tight">{value}</div>
         {(subtitle || change !== undefined) && (
           <div className="flex items-center gap-2 mt-1">
             {subtitle && <span className="text-xs text-muted-foreground">{subtitle}</span>}
-            {change !== undefined && change !== 0 && (
-              <span className={`text-xs font-medium ${change > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+            {change !== undefined && (
+              <span className={`text-xs font-medium font-mono tabular-nums ${change > 0 ? "text-emerald-600 dark:text-emerald-400" : change < 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>
                 {change > 0 ? "+" : ""}{change}%
               </span>
             )}
@@ -238,7 +235,7 @@ export default function Reporting() {
             <KpiCard
               icon={Clock}
               label="Avg Time to Close"
-              value={boardReport?.performance.avgTimeToClose ? `${boardReport.performance.avgTimeToClose} days` : "--"}
+              value={boardReport?.performance.avgTimeToClose ? `${boardReport.performance.avgTimeToClose} days` : "—"}
               subtitle="HOTs to completion"
             />
           </>
@@ -475,7 +472,20 @@ export default function Reporting() {
             {boardLoading ? (
               <Skeleton className="h-64" />
             ) : (boardReport?.topDeals || []).length > 0 ? (
-              <div className="overflow-auto max-h-[280px]">
+              <>
+              {/* Phone: one row per deal (docs/DESIGN.md §7) — the table below is desktop-only. */}
+              <div className="md:hidden divide-y divide-border max-h-[280px] overflow-y-auto">
+                {(boardReport?.topDeals || []).slice(0, 10).map((deal, i) => (
+                  <div key={i} className="py-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 text-sm font-medium truncate" title={deal.name}>{deal.name}</span>
+                      <span className="shrink-0 text-sm font-mono tabular-nums font-medium">{formatCurrency(deal.fee)}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{deal.team}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block overflow-auto max-h-[280px]">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-muted-foreground">
@@ -495,6 +505,7 @@ export default function Reporting() {
                   </tbody>
                 </table>
               </div>
+              </>
             ) : (
               <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">No deals data available</div>
             )}

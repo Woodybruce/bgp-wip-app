@@ -2,6 +2,7 @@
 // panels, and navigation into separate components. The bottom nav system provides an
 // alternative mobile navigation path. Be careful: this is deeply coupled and risky to refactor.
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getQueryFn, apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -10,8 +11,11 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
+import * as voiceRecovery from "@/lib/voice-recovery";
+import { AuthDownloadLink } from "@/components/chatbgp-markdown";
 import { useLocation } from "wouter";
 import { useTeam } from "@/lib/team-context";
+import { TagChip, TAG_TOKEN_SOURCE, TAG_META, buildTagToken, type TagType } from "@/components/chat-tags";
 import type { User as UserType } from "@shared/schema";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -19,7 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Sparkles, Send, Bot, User, X, Trash2,
-  ArrowLeft, Users, Check, Building2,
+  ArrowLeft, Users, Check, Building2, Archive,
   Link as LinkIcon, Search, Pencil, MoreVertical,
   MessageCircle, CheckCheck, Plus, BarChart3,
   Copy, ChevronDown, ChevronUp,
@@ -27,8 +31,13 @@ import {
   Menu, MessageSquare, FileText, Handshake,
   Newspaper, Mail, Phone, Download, Eye, Star, Upload,
   Mic, Square, Building, Link2,
-  Palette, ChevronRight, Sun, CalendarDays,
+  Palette, ChevronRight, Sun, CalendarDays, Bell,
 } from "lucide-react";
+import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { useKeyboardOpen } from "@/hooks/use-mobile";
+import { ThreadMediaDialog } from "@/components/chat-panel";
+import { usePushNotifications } from "@/hooks/use-push-notifications";
+import { legacyToCode } from "@shared/deal-status";
 import TodayPage from "@/pages/today";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
 import {
@@ -37,6 +46,50 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+
+// Breadcrumbs for the group-photo flow land in the server log so we can see
+// how far a phone gets (picker opened → photo received → cropper → upload).
+function clog(tag: string, info?: Record<string, unknown>) {
+  try {
+    fetch("/api/client-log", {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ tag, ...info }),
+    }).catch(() => {});
+  } catch {}
+}
+
+// The group-photo file input lives OUTSIDE React. iOS backgrounds the PWA
+// while the photo picker is up; if the app re-renders or remounts in that
+// window, a React-owned <input> is destroyed and the picked file is
+// delivered to a detached element — silently lost (why Woody's uploads
+// never even reached the network, 2026-08-29). A module-owned input with a
+// native listener survives any remount; if the chat view remounted while
+// picking, the file is stashed and consumed on the next mount.
+let stashedGroupPic: File | null = null;
+let groupPicPoke: (() => void) | null = null;
+function openGroupPicPicker() {
+  clog("group-pic:open");
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = "image/*";
+  inp.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;";
+  inp.addEventListener("change", () => {
+    const f = inp.files?.[0] || null;
+    clog("group-pic:change", { n: inp.files?.length ?? 0, size: f?.size, type: f?.type });
+    inp.remove();
+    if (!f) return;
+    // The stash holds the photo until the cropper is actually on screen —
+    // it stays put through any view rebuild and is cleared only when the
+    // user acts on the cropper (save / cancel / fallback).
+    stashedGroupPic = f;
+    if (groupPicPoke) groupPicPoke();
+  });
+  document.body.appendChild(inp);
+  inp.click();
+}
 
 type ChatAction = {
   type: "model_run";
@@ -125,7 +178,7 @@ function ActionCard({ action }: { action: ChatAction }) {
 
   const cardBg = "bg-white";
   const textPrimary = "text-black";
-  const textMuted = "text-gray-500";
+  const textMuted = "text-muted-foreground";
   const btnClass = "";
 
   if (action.type === "model_run") {
@@ -243,14 +296,25 @@ function renderInlineImages(text: string) {
 }
 
 function renderFormattedText(text: string, isUserBubble?: boolean): (string | JSX.Element)[] {
-  const tokenRegex = /!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\((https?:\/\/[^)]+)\)|\*\*(.+?)\*\*|(https?:\/\/[^\s<>)\]]+)/g;
+  // Mirror chat-panel.tsx: the third alternation matches relative
+  // /api/chat-media/<file> markdown links so PDFs/Excel/Word/PPTX
+  // generated by ChatBGP render as a proper download button on mobile.
+  // Without this branch the relative link doesn't match the http(s)
+  // alternation and falls through as plain text — what you're seeing
+  // when downloads aren't tappable on the phone.
+  const tokenRegex = new RegExp(
+    `!\\[([^\\]]*)\\]\\(([^)]+)\\)|\\[([^\\]]+)\\]\\((https?:\\/\\/[^)]+)\\)|\\[([^\\]]+)\\]\\((\\/api\\/chat-media\\/[^)]+)\\)|\\*\\*(.+?)\\*\\*|(https?:\\/\\/[^\\s<>)\\]]+)|${TAG_TOKEN_SOURCE}`,
+    "g"
+  );
   const result: (string | JSX.Element)[] = [];
   let lastIndex = 0;
   let match;
   let key = 0;
   while ((match = tokenRegex.exec(text)) !== null) {
     if (match.index > lastIndex) result.push(text.slice(lastIndex, match.index));
-    if (match[1] !== undefined && match[2]) {
+    if (match[9] && match[10] && match[11]) {
+      result.push(<TagChip key={key++} type={match[10] as TagType} id={match[11]} name={match[9]} />);
+    } else if (match[1] !== undefined && match[2]) {
       if (isSafeUrl(match[2])) {
         result.push(
           <a key={key++} href={match[2]} target="_blank" rel="noopener noreferrer" className="block my-1">
@@ -261,18 +325,23 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
         result.push(match[0]);
       }
     } else if (match[3] && match[4]) {
-      const linkColor = isUserBubble ? "text-blue-300" : "text-blue-600";
+      const linkColor = isUserBubble ? "text-[#9A3412]" : "text-primary";
       result.push(
         <a key={key++} href={match[4]} target="_blank" rel="noopener noreferrer"
           className={`underline ${linkColor}`}
         >{match[3]}</a>
       );
-    } else if (match[5]) {
-      result.push(<strong key={key++}>{match[5]}</strong>);
-    } else if (match[6]) {
-      const url = match[6].replace(/[.,;:!?]+$/, "");
-      const trailing = match[6].slice(url.length);
-      const linkColor = isUserBubble ? "text-blue-300" : "text-blue-600";
+    } else if (match[5] && match[6]) {
+      // Shared AuthDownloadLink — fetch + blob + click, the only download
+      // pattern that works inside an iOS PWA WebView without causing the
+      // white-screen-forcing-quit symptom on authenticated binary URLs.
+      result.push(<AuthDownloadLink key={key++} href={match[6]}>{match[5]}</AuthDownloadLink>);
+    } else if (match[7]) {
+      result.push(<strong key={key++}>{match[7]}</strong>);
+    } else if (match[8]) {
+      const url = match[8].replace(/[.,;:!?]+$/, "");
+      const trailing = match[8].slice(url.length);
+      const linkColor = isUserBubble ? "text-[#9A3412]" : "text-primary";
       result.push(
         <a key={key++} href={url} target="_blank" rel="noopener noreferrer"
           className={`underline break-all ${linkColor}`}
@@ -350,7 +419,7 @@ function RenderMessageContent({ content, onCheckboxClick, isUserBubble, selected
             <button
               key={i}
               onClick={handleTap}
-              className={`flex items-center gap-2 w-full text-left py-2.5 px-3 my-1 rounded-xl shadow-sm active:scale-[0.98] transition-all cursor-pointer touch-manipulation ${isSelected ? "bg-black/5 border-2 border-black" : "bg-white/80 border border-gray-200"}`}
+              className={`flex items-center gap-2 w-full text-left py-2.5 px-3 my-1 rounded-xl shadow-sm active:scale-[0.98] transition-all cursor-pointer touch-manipulation ${isSelected ? "bg-black/5 border-2 border-black" : "bg-white/80 border border-border"}`}
               style={{ WebkitTapHighlightColor: "transparent", WebkitTouchCallout: "none", userSelect: "none" }}
               data-testid={`checkbox-action-${i}`}
             >
@@ -381,7 +450,7 @@ function formatMsgTime(dateStr?: string) {
   return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${time}`;
 }
 
-function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, selectedCheckboxes, isAiThread }: {
+function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, selectedCheckboxes, isAiThread, othersAllSeen }: {
   message: LocalChatMessage;
   currentUserId?: string;
   threadId?: string | null;
@@ -391,6 +460,8 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
   onCheckboxClick?: (text: string) => void;
   selectedCheckboxes?: string[];
   isAiThread?: boolean;
+  /** Thread-level read state: every other member has seen the thread. */
+  othersAllSeen?: boolean;
 }) {
   const isUser = message.role === "user";
   const isOwn = isUser && currentUserId && message.userId === currentUserId;
@@ -409,12 +480,62 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
   };
 
   const handleLongPress = useRef<NodeJS.Timeout | null>(null);
-  const handleTouchStart = () => {
-    handleLongPress.current = setTimeout(() => setShowActions(true), 400);
+  // Copy is the OS's job (Woody, 2026-08-28: "use the normal Apple version
+  // of copy and paste rather than our own") — ChatBGP replies and other
+  // people's messages carry NO touch handlers, so press-and-hold gives the
+  // native iOS/Android selection menu. Only your OWN messages keep this
+  // long-press menu, because Edit/Delete need a home; it still stands down
+  // if a text selection has started.
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const LONG_PRESS_MS = 600;
+  const MOVE_TOLERANCE_PX = 10;
+
+  // In an AI thread every user bubble is your own (1:1 with ChatBGP), even
+  // when the message row carries no userId.
+  const ownEditable = isOwn || (isUser && isAiThread);
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (!ownEditable) return;
+    const t = e.touches[0];
+    touchStart.current = t ? { x: t.clientX, y: t.clientY } : null;
+    handleLongPress.current = setTimeout(() => {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) return;
+      setShowActions(true);
+    }, LONG_PRESS_MS);
+  };
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!touchStart.current || !handleLongPress.current) return;
+    const t = e.touches[0];
+    if (!t) return;
+    const dx = t.clientX - touchStart.current.x;
+    const dy = t.clientY - touchStart.current.y;
+    if (dx * dx + dy * dy > MOVE_TOLERANCE_PX * MOVE_TOLERANCE_PX) {
+      clearTimeout(handleLongPress.current);
+      handleLongPress.current = null;
+    }
   };
   const handleTouchEnd = () => {
     if (handleLongPress.current) clearTimeout(handleLongPress.current);
+    handleLongPress.current = null;
+    touchStart.current = null;
   };
+
+  // Native context menus dismiss on any outside touch; without this the
+  // pill floats until its X is found (r405).
+  const bubbleRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!showActions) return;
+    const dismiss = (e: Event) => {
+      if (bubbleRef.current && e.target instanceof Node && bubbleRef.current.contains(e.target)) return;
+      setShowActions(false);
+    };
+    document.addEventListener("touchstart", dismiss, true);
+    document.addEventListener("mousedown", dismiss, true);
+    return () => {
+      document.removeEventListener("touchstart", dismiss, true);
+      document.removeEventListener("mousedown", dismiss, true);
+    };
+  }, [showActions]);
 
   const renderAttachments = () => {
     if (!message.attachments || message.attachments.length === 0) return null;
@@ -425,7 +546,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
           if (parsed && parsed.url) {
             if (isAudioFile(parsed.type || parsed.name || "")) {
               return (
-                <div key={i} className="flex items-center gap-2.5 px-3.5 py-2.5 bg-gray-100 rounded-2xl">
+                <div key={i} className="flex items-center gap-2.5 px-3.5 py-2.5 bg-muted rounded-2xl">
                   <Mic className="w-4 h-4 text-primary shrink-0" />
                   <audio controls preload="none" className="h-8 max-w-[220px]">
                     <source src={parsed.url} />
@@ -441,13 +562,13 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               );
             }
             return (
-              <a key={i} href={parsed.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 rounded-2xl px-4 py-3 bg-white border border-gray-100 shadow-sm">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-gray-50">
-                  <FileIcon className="w-5 h-5 text-gray-400" />
+              <a key={i} href={parsed.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 rounded-2xl px-4 py-3 bg-white border border-border shadow-sm">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-muted/50">
+                  <FileIcon className="w-5 h-5 text-muted-foreground/70" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[14px] font-medium truncate text-gray-900">{parsed.name}</div>
-                  {parsed.size && <div className="text-[12px] text-gray-400">{formatFileSize(parsed.size)}</div>}
+                  <div className="text-[14px] font-medium truncate text-foreground">{parsed.name}</div>
+                  {parsed.size && <div className="text-[12px] text-muted-foreground/70">{formatFileSize(parsed.size)}</div>}
                 </div>
               </a>
             );
@@ -460,8 +581,8 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
             );
           }
           return (
-            <span key={i} className="inline-flex items-center gap-2 text-[13px] rounded-xl px-3 py-1.5 bg-gray-100">
-              <FileIcon className="w-4 h-4 text-gray-400" /> {att}
+            <span key={i} className="inline-flex items-center gap-2 text-[13px] rounded-xl px-3 py-1.5 bg-muted">
+              <FileIcon className="w-4 h-4 text-muted-foreground/70" /> {att}
             </span>
           );
         })}
@@ -482,35 +603,25 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               <Textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} className="min-h-[44px] text-[15px] resize-none rounded-xl" rows={2} autoFocus />
               <div className="flex gap-2 justify-end">
                 <Button size="sm" variant="ghost" className="h-8 text-sm px-3 rounded-xl" onClick={() => setEditing(false)}>Cancel</Button>
-                <Button size="sm" className="h-8 text-sm px-3 rounded-xl bg-[#1C1917] text-white hover:bg-gray-800" onClick={() => { if (message.id && onEdit && editContent.trim()) { onEdit(message.id, editContent.trim()); setEditing(false); } }}>Save</Button>
+                <Button size="sm" className="h-8 text-sm px-3 rounded-xl bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800" onClick={() => { if (message.id && onEdit && editContent.trim()) { onEdit(message.id, editContent.trim()); setEditing(false); } }}>Save</Button>
               </div>
             </div>
           ) : (
             <div
               className="relative"
               onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
               onTouchCancel={handleTouchEnd}
             >
-              <div className="text-[15px] leading-[1.7] text-gray-900 whitespace-pre-wrap break-words">
+              <div className="text-[15px] leading-[1.7] text-foreground whitespace-pre-wrap break-words select-text">
                 <RenderMessageContent content={message.content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} />
               </div>
-              {showActions && (
-                <div className="absolute -top-8 left-0 flex items-center gap-1 bg-white rounded-xl shadow-lg border border-gray-200 px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150">
-                  <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-gray-700 active:bg-gray-100" data-testid="button-copy-message">
-                    <Copy className="w-3.5 h-3.5" /> Copy
-                  </button>
-                  <div className="w-px h-4 bg-gray-200" />
-                  <button onClick={() => setShowActions(false)} className="px-2 py-1.5 rounded-lg active:bg-gray-100">
-                    <X className="w-3.5 h-3.5 text-gray-400" />
-                  </button>
-                </div>
-              )}
             </div>
           )}
           {message.action && <ActionCard action={message.action} />}
           {message.createdAt && (
-            <div className="text-[11px] text-gray-400 mt-1.5">{formatMsgTime(message.createdAt)}</div>
+            <div className="text-[11px] text-muted-foreground/70 mt-1.5">{formatMsgTime(message.createdAt)}</div>
           )}
         </div>
       </div>
@@ -529,52 +640,61 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
             <Textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} className="min-h-[44px] text-[15px] resize-none rounded-xl" rows={2} autoFocus />
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="ghost" className="h-8 text-sm px-3 rounded-xl" onClick={() => setEditing(false)}>Cancel</Button>
-              <Button size="sm" className="h-8 text-sm px-3 rounded-xl bg-[#1C1917] text-white hover:bg-gray-800" onClick={() => { if (message.id && onEdit && editContent.trim()) { onEdit(message.id, editContent.trim()); setEditing(false); } }}>Save</Button>
+              <Button size="sm" className="h-8 text-sm px-3 rounded-xl bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800" onClick={() => { if (message.id && onEdit && editContent.trim()) { onEdit(message.id, editContent.trim()); setEditing(false); } }}>Save</Button>
             </div>
           </div>
         ) : (
           <div
+            ref={bubbleRef}
             className="relative"
             onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
             onTouchCancel={handleTouchEnd}
           >
-            <div className={`rounded-2xl px-4 py-2.5 text-[15px] leading-[1.6] whitespace-pre-wrap break-words ${
+            {/* WhatsApp anatomy (Woody, 2026-08-22): mine = soft green with
+                time + ticks INSIDE the bubble, theirs = white. */}
+            <div className={`rounded-2xl px-3.5 py-2 text-[15px] leading-[1.55] whitespace-pre-wrap break-words shadow-sm ${
               isOwn
-                ? "bg-[#292524] text-white rounded-br-md"
-                : "bg-white text-[#1C1917] rounded-bl-md border border-[#E7E5E4]"
+                ? "bg-[#F6E3DA] text-[#292524] rounded-br-md"
+                : "bg-white text-[#292524] rounded-bl-md"
             }`}>
-              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={isOwn ? true : false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} />
+              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} />
+              {message.createdAt && (
+                <span className="float-right flex items-center gap-0.5 ml-2 mt-2 -mb-0.5 translate-y-1">
+                  <span className="text-[10.5px] text-[#8A8177] leading-none">{formatMsgTime(message.createdAt)}</span>
+                  {isOwn && (
+                    <CheckCheck className="w-[15px] h-[15px]" style={{ color: othersAllSeen ? "#C2410C" : "#A8A29E" }} />
+                  )}
+                </span>
+              )}
             </div>
             {showActions && (
-              <div className={`absolute -top-8 ${isOwn ? "right-0" : "left-0"} flex items-center gap-1 bg-white rounded-xl shadow-lg border border-gray-200 px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150`}>
-                <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-gray-700 active:bg-gray-100" data-testid="button-copy-message">
+              <div className={`absolute -top-11 ${isOwn ? "right-0" : "left-0"} flex items-center gap-1 bg-white rounded-xl shadow-lg border border-border px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150`}>
+                <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted" data-testid="button-copy-message">
                   <Copy className="w-3.5 h-3.5" /> Copy
                 </button>
-                {isOwn && message.id && (
+                {ownEditable && message.id && (
                   <>
-                    <div className="w-px h-4 bg-gray-200" />
-                    <button onClick={() => { setEditContent(message.content); setEditing(true); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-gray-700 active:bg-gray-100">
+                    <div className="w-px h-4 bg-border" />
+                    <button onClick={() => { setEditContent(message.content); setEditing(true); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted">
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </button>
-                    <div className="w-px h-4 bg-gray-200" />
+                    <div className="w-px h-4 bg-border" />
                     <button onClick={() => { onDelete?.(message.id!); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-red-500 active:bg-red-50">
                       <Trash2 className="w-3.5 h-3.5" /> Delete
                     </button>
                   </>
                 )}
-                <div className="w-px h-4 bg-gray-200" />
-                <button onClick={() => setShowActions(false)} className="px-2 py-1.5 rounded-lg active:bg-gray-100">
-                  <X className="w-3.5 h-3.5 text-gray-400" />
+                <div className="w-px h-4 bg-border" />
+                <button onClick={() => setShowActions(false)} className="px-2 py-1.5 rounded-lg active:bg-muted">
+                  <X className="w-3.5 h-3.5 text-muted-foreground/70" />
                 </button>
               </div>
             )}
           </div>
         )}
         {message.action && <ActionCard action={message.action} />}
-        {message.createdAt && (
-          <div className={`text-[11px] text-gray-400 mt-1 px-1 ${isOwn ? "text-right" : ""}`}>{formatMsgTime(message.createdAt)}</div>
-        )}
       </div>
     </div>
   );
@@ -618,9 +738,9 @@ function PullToRefresh({ onRefresh, children }: { onRefresh: () => Promise<void>
       {(pullY > 0 || refreshing) && (
         <div className="flex items-center justify-center py-3 transition-all" style={{ height: pullY || (refreshing ? 50 : 0) }}>
           {refreshing ? (
-            <div className="w-5 h-5 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-border border-t-black rounded-full animate-spin" />
           ) : (
-            <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${pullY > 50 ? "rotate-180" : ""}`} />
+            <ChevronDown className={`w-5 h-5 text-muted-foreground/70 transition-transform ${pullY > 50 ? "rotate-180" : ""}`} />
           )}
         </div>
       )}
@@ -630,7 +750,7 @@ function PullToRefresh({ onRefresh, children }: { onRefresh: () => Promise<void>
 }
 
 function ProjectItemRow({ project, isExpanded, singleThread, onToggle, openThread, currentUserId, onDelete, userPics }: {
-  project: { type: string; id: string; name: string; threads: any[]; dealChildren: any[] };
+  project: { type: string; id: string; name: string; threads: any[]; dealChildren?: any[] };
   isExpanded: boolean;
   singleThread: any | null;
   onToggle: () => void;
@@ -653,7 +773,7 @@ function ProjectItemRow({ project, isExpanded, singleThread, onToggle, openThrea
         data-testid={`mobile-project-${project.id}`}
       >
         <Building2 className="w-4 h-4 text-[#78716C] shrink-0" />
-        <span className="flex-1 text-[15px] font-semibold text-[#1C1917] text-left truncate tracking-tight">{project.name}</span>
+        <span className="flex-1 text-[15px] font-semibold text-[hsl(var(--mobile-chrome))] text-left truncate tracking-tight">{project.name}</span>
         {project.threads.length > 1 && (
           <span className="text-[11px] font-medium text-[#A8A29E] shrink-0">
             {project.threads.length} chats
@@ -674,18 +794,36 @@ function ProjectItemRow({ project, isExpanded, singleThread, onToggle, openThrea
   );
 }
 
-function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }: { thread: ThreadData; onClick: () => void; currentUserId?: string; onDelete?: (id: string) => void; userPics?: Record<string, string> }) {
+function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive, archived, userPics }: { thread: ThreadData; onClick: () => void; currentUserId?: string; onDelete?: (id: string) => void; onArchive?: (id: string) => void; archived?: boolean; userPics?: Record<string, string> }) {
   const [swipeX, setSwipeX] = useState(0);
   const [showDelete, setShowDelete] = useState(false);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
-  const hasUnseen = thread.members.some(m => !m.seen);
+  // Unread = *I* haven't seen it. It used to flag when ANY member hadn't,
+  // so a thread someone else never opened stayed dotted for everyone
+  // forever (Woody, 2026-08-29: "I've read this but it doesn't go away").
+  const hasUnseen = thread.members.some(m => m.id === currentUserId && !m.seen);
   const isAi = thread.isAiChat;
   const otherMembers = thread.members.filter(m => m.id !== currentUserId);
   const isDm = !isAi && otherMembers.length === 1;
   const dmName = isDm ? otherMembers[0].name : null;
   const dmInitials = dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
-  const displayTitle = isDm ? dmName : (thread.title || "New conversation");
+  // A 1:1 auto-titled at creation carries the CREATOR'S pick of name — for
+  // the other member that's their own name. Treat member-name titles,
+  // first-name titles (old desktop create stored first names only) and the
+  // old "Group Chat" default as auto-names and show the other person.
+  const autoNamed = !thread.title || thread.title === "Group Chat" || thread.members.some(m => m.name === thread.title || m.name.split(" ")[0] === thread.title);
+  const displayTitle = (isDm && autoNamed ? dmName : thread.title) || dmName || "New conversation";
   const dmPic = isDm && otherMembers[0] ? userPics?.[otherMembers[0].id] : null;
+  // WhatsApp anatomy: ✓✓ on your own last message (coloured once everyone
+  // has seen it) and a green "Draft:" preview for unsent input.
+  const myName = thread.members.find(m => m.id === currentUserId)?.name;
+  const lastFromMe = !isAi && !!thread.lastMessage && !!myName && thread.lastMessage.senderName === myName;
+  const allOthersSeen = otherMembers.length > 0 && otherMembers.every(m => m.seen);
+  const draft = (() => {
+    if (isAi) return null;
+    try { return localStorage.getItem(`chat-draft-${thread.id}`); } catch { return null; }
+  })();
+  const swipeWidth = onArchive ? 176 : 96;
 
   const timeStr = (() => {
     const d = new Date(thread.updatedAt);
@@ -708,7 +846,7 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
     if (dx < 0) setSwipeX(Math.max(dx, -100));
   };
   const handleTouchEnd = () => {
-    if (swipeX < -60) { setSwipeX(-96); setShowDelete(true); }
+    if (swipeX < -60) { setSwipeX(-swipeWidth); setShowDelete(true); }
     else { setSwipeX(0); setShowDelete(false); }
     touchStartRef.current = null;
   };
@@ -742,7 +880,7 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
     }
     return (
       <div className="w-[52px] h-[52px] rounded-full bg-gradient-to-br from-gray-200 to-gray-300 flex items-center justify-center shrink-0">
-        <Users className="w-6 h-6 text-gray-500" />
+        <Users className="w-6 h-6 text-muted-foreground" />
       </div>
     );
   };
@@ -758,13 +896,25 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
 
   return (
     <div className="relative overflow-hidden">
-      <button
-        className="absolute right-0 top-0 bottom-0 w-24 bg-red-500 flex items-center justify-center"
-        onClick={() => { if (onDelete) onDelete(thread.id); setSwipeX(0); setShowDelete(false); }}
-        data-testid={`button-swipe-delete-${thread.id}`}
-      >
-        <Trash2 className="w-5 h-5 text-white" />
-      </button>
+      <div className="absolute right-0 top-0 bottom-0 flex">
+        {onArchive && (
+          <button
+            className="w-20 bg-stone-500 flex flex-col items-center justify-center gap-0.5"
+            onClick={() => { onArchive(thread.id); setSwipeX(0); setShowDelete(false); }}
+            data-testid={`button-swipe-archive-${thread.id}`}
+          >
+            <Archive className="w-5 h-5 text-white" />
+            <span className="text-[10px] text-white font-medium">{archived ? "Unarchive" : "Archive"}</span>
+          </button>
+        )}
+        <button
+          className="w-24 bg-red-500 flex items-center justify-center"
+          onClick={() => { if (onDelete) onDelete(thread.id); setSwipeX(0); setShowDelete(false); }}
+          data-testid={`button-swipe-delete-${thread.id}`}
+        >
+          <Trash2 className="w-5 h-5 text-white" />
+        </button>
+      </div>
       <button
         onClick={() => { if (showDelete) { setSwipeX(0); setShowDelete(false); } else onClick(); }}
         onTouchStart={handleTouchStart}
@@ -785,23 +935,35 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
         )}
         <div className="flex-1 min-w-0 text-left">
           <div className="flex items-center justify-between gap-2">
-            <span className={`text-[15px] tracking-tight truncate ${hasUnseen ? "font-semibold text-[#1C1917]" : "font-medium text-[#1C1917]"}`}>{displayTitle}</span>
+            <span className={`text-[15px] tracking-tight truncate ${hasUnseen ? "font-semibold text-[hsl(var(--mobile-chrome))]" : "font-medium text-[hsl(var(--mobile-chrome))]"}`}>{displayTitle}</span>
             <span className="text-[11px] shrink-0" style={hasUnseen ? { color: "hsl(var(--primary))", fontWeight: 500 } : { color: "#A8A29E" }}>
               {timeStr}
             </span>
           </div>
           <div className="flex items-center justify-between mt-0.5 gap-2">
-            <p className={`text-[13px] truncate leading-snug ${hasUnseen ? "text-[#44403C]" : "text-[#78716C]"}`}>
-              {thread.lastMessage ? (
+            <p className={`text-[13px] truncate leading-snug flex items-center gap-1 ${hasUnseen ? "text-[#44403C]" : "text-[#78716C]"}`}>
+              {draft ? (
+                <><span className="font-medium text-emerald-600 shrink-0">Draft: </span><span className="truncate">{draft}</span></>
+              ) : thread.lastMessage ? (
                 isAi
-                  ? thread.lastMessage.content
-                  : <><span className="font-medium">{thread.lastMessage.senderName.split(" ")[0]}: </span>{thread.lastMessage.content}</>
+                  ? <span className="truncate">{thread.lastMessage.content}</span>
+                  : <>
+                      {lastFromMe && (
+                        <CheckCheck className="w-3.5 h-3.5 shrink-0" style={{ color: allOthersSeen ? "hsl(var(--primary))" : "#A8A29E" }} />
+                      )}
+                      <span className="truncate">
+                        {!lastFromMe && <span className="font-medium">{thread.lastMessage.senderName.split(" ")[0]}: </span>}
+                        {thread.lastMessage.content}
+                      </span>
+                    </>
               ) : (
                 <span className="italic text-[#A8A29E]">No messages yet</span>
               )}
             </p>
             {hasUnseen && (
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} />
+              <span className="min-w-[18px] h-[18px] px-1 rounded-full shrink-0 flex items-center justify-center" style={{ backgroundColor: "hsl(var(--primary))" }}>
+                <span className="text-[10px] font-bold text-white leading-none">●</span>
+              </span>
             )}
           </div>
           {!isAi && (thread.propertyName || thread.linkedName) && (
@@ -833,7 +995,7 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
   const [groupName, setGroupName] = useState("");
   const [search, setSearch] = useState("");
 
-  const TEAMS = ["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office/Corporate", "Landsec"];
+  const TEAMS = CRM_OPTIONS.dealTeam;
 
   const toggleUser = (id: string) => {
     setSelectedIds(prev => {
@@ -863,7 +1025,7 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
 
   return (
     <div className="flex flex-col w-screen bg-white overflow-x-hidden fixed inset-0">
-      <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
+      <div className="bg-[hsl(var(--mobile-chrome))] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="p-1" data-testid="button-mobile-back-newgroup"><ArrowLeft className="w-6 h-6" /></button>
           <span className="font-semibold text-lg">New Group</span>
@@ -871,10 +1033,10 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
       </div>
 
       <div className="px-4 py-4 border-b">
-        <Input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group name" className="h-12 text-base mb-3 rounded-xl border-gray-200" data-testid="input-mobile-group-name" />
+        <Input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group name" className="h-12 text-base mb-3 rounded-xl border-border" data-testid="input-mobile-group-name" />
         <div className="flex flex-wrap gap-2">
           {TEAMS.map(t => (
-            <button key={t} onClick={() => selectTeam(t)} className="px-3 py-1.5 text-sm rounded-full border border-gray-300 bg-white active:bg-gray-100 font-medium" data-testid={`button-mobile-team-${t}`}>
+            <button key={t} onClick={() => selectTeam(t)} className="px-3 py-1.5 text-sm rounded-full border border-border bg-white active:bg-muted font-medium" data-testid={`button-mobile-team-${t}`}>
               {t}
             </button>
           ))}
@@ -883,40 +1045,138 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
 
       <div className="px-4 py-3 border-b">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search people..." className="h-11 pl-10 text-base rounded-xl border-gray-200" data-testid="input-mobile-search-members" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground/70" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search people..." className="h-11 pl-10 text-base rounded-xl border-border" data-testid="input-mobile-search-members" />
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {(!search.trim() || "chatbgp".includes(search.toLowerCase())) && (
-          <button onClick={() => toggleUser("__chatbgp__")} className="w-full flex items-center gap-4 px-5 py-3.5 active:bg-gray-50 border-b border-gray-100" data-testid="button-mobile-select-chatbgp">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${selectedIds.has("__chatbgp__") ? "bg-[#1C1917] text-white" : "bg-gradient-to-br from-gray-800 to-black text-white"}`}>
+          <button onClick={() => toggleUser("__chatbgp__")} className="w-full flex items-center gap-4 px-5 py-3.5 active:bg-muted border-b border-border" data-testid="button-mobile-select-chatbgp">
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${selectedIds.has("__chatbgp__") ? "bg-[hsl(var(--mobile-chrome))] text-white" : "bg-gradient-to-br from-gray-800 to-black text-white"}`}>
               {selectedIds.has("__chatbgp__") ? <Check className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
             </div>
             <div className="text-left">
               <div className="text-[16px] font-medium">ChatBGP</div>
-              <div className="text-sm text-gray-400">AI Assistant</div>
+              <div className="text-sm text-muted-foreground/70">AI Assistant</div>
             </div>
           </button>
         )}
         {filteredUsers.map(user => (
-          <button key={user.id} onClick={() => toggleUser(user.id)} className="w-full flex items-center gap-4 px-5 py-3.5 active:bg-gray-50 border-b border-gray-100" data-testid={`button-mobile-select-user-${user.id}`}>
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${selectedIds.has(user.id) ? "bg-[#1C1917] text-white" : "bg-gray-200"}`}>
-              {selectedIds.has(user.id) ? <Check className="w-5 h-5" /> : <span className="text-sm font-semibold text-gray-600">{user.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>}
+          <button key={user.id} onClick={() => toggleUser(user.id)} className="w-full flex items-center gap-4 px-5 py-3.5 active:bg-muted border-b border-border" data-testid={`button-mobile-select-user-${user.id}`}>
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${selectedIds.has(user.id) ? "bg-[hsl(var(--mobile-chrome))] text-white" : "bg-muted"}`}>
+              {selectedIds.has(user.id) ? <Check className="w-5 h-5" /> : <span className="text-sm font-semibold text-muted-foreground">{user.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>}
             </div>
             <div className="text-left">
               <div className="text-[16px] font-medium">{user.name}</div>
-              {user.team && <div className="text-sm text-gray-400">{user.team}</div>}
+              {user.team && <div className="text-sm text-muted-foreground/70">{user.team}</div>}
             </div>
           </button>
         ))}
       </div>
 
       <div className="p-4 border-t pb-[calc(1rem+env(safe-area-inset-bottom))] shrink-0">
-        <Button className="w-full h-12 text-base font-semibold bg-[#1C1917] text-white hover:bg-gray-800 rounded-xl" disabled={selectedIds.size === 0} onClick={() => onCreate(groupName || "Group Chat", Array.from(selectedIds))} data-testid="button-mobile-create-group">
-          Create Group ({selectedIds.size})
+        <Button className="w-full h-12 text-base font-semibold bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800 rounded-xl" disabled={selectedIds.size === 0} onClick={() => {
+          // One person and no typed name = a one-to-one, so title it with
+          // their name — not "Group Chat" (Woody, 2026-08-29).
+          const ids = Array.from(selectedIds);
+          let title = groupName.trim();
+          if (!title && ids.length === 1) {
+            title = ids[0] === "__chatbgp__" ? "ChatBGP" : (allUsers.find(u => u.id === ids[0])?.name || "Chat");
+          }
+          onCreate(title || "Group Chat", ids);
+        }} data-testid="button-mobile-create-group">
+          {selectedIds.size === 1 ? "Start Chat" : `Create Group (${selectedIds.size})`}
         </Button>
+      </div>
+    </div>
+  );
+}
+
+// WhatsApp-style position/zoom step for the group photo — the upload used
+// to take the raw file and centre-crop it with no say over the framing
+// (Woody, 2026-08-29: "photo upload doesn't allow positioning in group
+// chats"). Drag pans, the slider zooms, Save uploads exactly the circle.
+function GroupPicCropper({ file, onCancel, onSave, onFallback }: { file: File; onCancel: () => void; onSave: (blob: Blob) => void; onFallback: (file: File) => void }) {
+  const V = Math.min(300, typeof window !== "undefined" ? window.innerWidth - 64 : 300);
+  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [off, setOff] = useState({ x: 0, y: 0 });
+  const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const url = useMemo(() => URL.createObjectURL(file), [file]);
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  useEffect(() => {
+    clog("group-pic:cropper-open", { size: file.size });
+    const i = new window.Image(); // lucide's Image icon shadows the global
+    i.onload = () => {
+      clog("group-pic:decoded", { w: i.naturalWidth, h: i.naturalHeight });
+      const s = V / Math.min(i.naturalWidth, i.naturalHeight);
+      setImg(i);
+      setZoom(1);
+      setOff({ x: (V - i.naturalWidth * s) / 2, y: (V - i.naturalHeight * s) / 2 });
+    };
+    // Some formats (HEIC on older webviews) won't decode in the browser —
+    // don't die silently: hand the original file back for a direct upload.
+    i.onerror = () => { clog("group-pic:decode-error"); onFallback(file); };
+    i.src = url;
+    const t = setTimeout(() => { if (!i.complete || !i.naturalWidth) onFallback(file); }, 8000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, V]);
+  if (!img) {
+    return (
+      <div className="fixed inset-0 z-[200] bg-black/90 flex flex-col items-center justify-center gap-4 p-6" data-testid="group-pic-cropper">
+        <p className="text-white text-sm">Loading photo…</p>
+        <Button variant="outline" className="h-11 px-6 rounded-xl bg-transparent text-white border-white/40" onClick={onCancel}>Cancel</Button>
+      </div>
+    );
+  }
+  const s0 = V / Math.min(img.naturalWidth, img.naturalHeight);
+  const s = s0 * zoom;
+  const clamp = (o: { x: number; y: number }, sc: number) => ({
+    x: Math.min(0, Math.max(V - img.naturalWidth * sc, o.x)),
+    y: Math.min(0, Math.max(V - img.naturalHeight * sc, o.y)),
+  });
+  const startDrag = (cx: number, cy: number) => { drag.current = { x: cx, y: cy, ox: off.x, oy: off.y }; };
+  const moveDrag = (cx: number, cy: number) => {
+    if (!drag.current) return;
+    setOff(clamp({ x: drag.current.ox + cx - drag.current.x, y: drag.current.oy + cy - drag.current.y }, s));
+  };
+  const setZoomKeepCentre = (z: number) => {
+    const sNew = s0 * z;
+    const cx = (V / 2 - off.x) / s;
+    const cy = (V / 2 - off.y) / s;
+    setZoom(z);
+    setOff(clamp({ x: V / 2 - cx * sNew, y: V / 2 - cy * sNew }, sNew));
+  };
+  const save = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return onCancel();
+    ctx.drawImage(img, -off.x / s, -off.y / s, V / s, V / s, 0, 0, 512, 512);
+    canvas.toBlob(b => { if (b) onSave(b); }, "image/jpeg", 0.9);
+  };
+  return (
+    <div className="fixed inset-0 z-[200] bg-black/90 flex flex-col items-center justify-center gap-5 p-6" data-testid="group-pic-cropper">
+      <p className="text-white text-sm font-medium">Drag to position · slide to zoom</p>
+      <div
+        className="rounded-full overflow-hidden relative touch-none select-none ring-2 ring-white/40 shrink-0"
+        style={{ width: V, height: V }}
+        onTouchStart={e => startDrag(e.touches[0].clientX, e.touches[0].clientY)}
+        onTouchMove={e => moveDrag(e.touches[0].clientX, e.touches[0].clientY)}
+        onTouchEnd={() => { drag.current = null; }}
+        onMouseDown={e => { e.preventDefault(); startDrag(e.clientX, e.clientY); }}
+        onMouseMove={e => { if (e.buttons === 1) moveDrag(e.clientX, e.clientY); }}
+        onMouseUp={() => { drag.current = null; }}
+      >
+        <img src={url} alt="" draggable={false}
+          style={{ position: "absolute", left: off.x, top: off.y, width: img.naturalWidth * s, height: img.naturalHeight * s, maxWidth: "none" }} />
+      </div>
+      <input type="range" min={1} max={3} step={0.01} value={zoom} onChange={e => setZoomKeepCentre(Number(e.target.value))} className="w-64" data-testid="group-pic-zoom" />
+      <div className="flex gap-3">
+        <Button variant="outline" className="h-11 px-6 rounded-xl bg-transparent text-white border-white/40 hover:bg-white/10" onClick={onCancel} data-testid="group-pic-cancel">Cancel</Button>
+        <Button className="h-11 px-6 rounded-xl bg-white text-black hover:bg-white/90" onClick={save} data-testid="group-pic-save">Save</Button>
       </div>
     </div>
   );
@@ -989,7 +1249,7 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
 
   return (
     <div className="flex flex-col w-screen bg-white overflow-x-hidden fixed inset-0">
-      <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
+      <div className="bg-[hsl(var(--mobile-chrome))] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="p-1" data-testid="button-mobile-back-groupedit"><ArrowLeft className="w-6 h-6" /></button>
           <span className="font-semibold text-lg">{isAiThread ? "Chat Settings" : "Group Settings"}</span>
@@ -997,19 +1257,19 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="px-5 pt-5 pb-4 border-b border-gray-100">
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{isAiThread ? "Chat Name" : "Group Name"}</label>
+        <div className="px-5 pt-5 pb-4 border-b border-border">
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{isAiThread ? "Chat Name" : "Group Name"}</label>
           <div className="flex items-center gap-2 mt-2">
             <Input
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
               placeholder={isAiThread ? "Chat name" : "Group name"}
-              className="h-11 text-base rounded-xl border-gray-200 flex-1"
+              className="h-11 text-base rounded-xl border-border flex-1"
               data-testid="input-mobile-edit-group-name"
             />
             <Button
               size="sm"
-              className="h-11 px-4 rounded-xl bg-[#1C1917] text-white hover:bg-gray-800"
+              className="h-11 px-4 rounded-xl bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800"
               disabled={!groupName.trim() || groupName === thread.title || renameMutation.isPending}
               onClick={() => renameMutation.mutate(groupName.trim())}
               data-testid="button-mobile-save-group-name"
@@ -1019,14 +1279,14 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
           </div>
           {isAiThread && thread.linkedName && (
             <div className="flex items-center gap-1.5 mt-2">
-              <Link2 className="w-3 h-3 text-gray-400" />
-              <span className="text-xs text-gray-400">Linked to {thread.linkedName}</span>
+              <Link2 className="w-3 h-3 text-muted-foreground/70" />
+              <span className="text-xs text-muted-foreground/70">Linked to {thread.linkedName}</span>
             </div>
           )}
         </div>
 
         {!isAiThread && (
-          <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+          <div className="px-5 pt-4 pb-3 border-b border-border">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full text-white flex items-center justify-center" style={{ backgroundColor: "hsl(var(--primary))" }}>
@@ -1034,7 +1294,7 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
                 </div>
                 <div>
                   <div className="text-[15px] font-medium">ChatBGP</div>
-                  <div className="text-xs text-gray-400">AI Assistant</div>
+                  <div className="text-xs text-muted-foreground/70">AI Assistant</div>
                 </div>
               </div>
               <button
@@ -1050,22 +1310,22 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
         )}
 
         <div className="px-5 pt-4">
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Members ({thread.members.length})</label>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Members ({thread.members.length})</label>
         </div>
 
         {thread.members.map(m => {
           const isCreator = m.id === thread.createdBy;
           const isSelf = m.id === currentUser?.id;
           return (
-            <div key={m.id} className="flex items-center gap-4 px-5 py-3 border-b border-gray-100">
-              <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
-                <span className="text-sm font-semibold text-gray-600">{m.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
+            <div key={m.id} className="flex items-center gap-4 px-5 py-3 border-b border-border">
+              <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                <span className="text-sm font-semibold text-muted-foreground">{m.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-[15px] font-medium truncate">
                   {m.name}{isSelf ? " (You)" : ""}{isCreator ? " (Admin)" : ""}
                 </div>
-                <div className="text-xs text-gray-400">{allUsers.find(u => u.id === m.id)?.team || ""}</div>
+                <div className="text-xs text-muted-foreground/70">{allUsers.find(u => u.id === m.id)?.team || ""}</div>
               </div>
               {!isSelf && !isCreator && (
                 <button
@@ -1082,9 +1342,9 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
         })}
 
         <div className="px-5 pt-5 pb-3">
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Add Members</label>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Add Members</label>
           <div className="relative mt-2">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -1100,17 +1360,17 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
             key={user.id}
             onClick={() => addMemberMutation.mutate(user.id)}
             disabled={addMemberMutation.isPending}
-            className="w-full flex items-center gap-4 px-5 py-3 active:bg-gray-50 border-b border-gray-100"
+            className="w-full flex items-center gap-4 px-5 py-3 active:bg-muted border-b border-border"
             data-testid={`button-add-member-${user.id}`}
           >
-            <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
-              <UserPlus className="w-4 h-4 text-gray-500" />
+            <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+              <UserPlus className="w-4 h-4 text-muted-foreground" />
             </div>
             <div className="text-left flex-1">
               <div className="text-[15px] font-medium">{user.name}</div>
-              {user.team && <div className="text-xs text-gray-400">{user.team}</div>}
+              {user.team && <div className="text-xs text-muted-foreground/70">{user.team}</div>}
             </div>
-            <Plus className="w-5 h-5 text-gray-400" />
+            <Plus className="w-5 h-5 text-muted-foreground/70" />
           </button>
         ))}
       </div>
@@ -1118,11 +1378,12 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
   );
 }
 
-function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, currentUser }: {
+function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, onTeamChats, currentUser }: {
   threadId: string | null;
   isAiChat: boolean;
   onBack: () => void;
   onNewChat?: () => void;
+  onTeamChats?: () => void;
   currentUser: UserType | null;
 }) {
   const [localThreadId, setLocalThreadId] = useState<string | null>(null);
@@ -1135,18 +1396,38 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  // Persist unsent input per team thread so the chat list can show a
+  // WhatsApp-style green "Draft:" preview. Cleared automatically on send
+  // (send resets input, which removes the stored draft).
+  const draftKey = threadIdProp && !isAiChat ? `chat-draft-${threadIdProp}` : null;
+  useEffect(() => {
+    if (!draftKey) return;
+    try { setInput(localStorage.getItem(draftKey) || ""); } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+  useEffect(() => {
+    if (!draftKey) return;
+    try {
+      if (input.trim()) localStorage.setItem(draftKey, input);
+      else localStorage.removeItem(draftKey);
+    } catch {}
+  }, [input, draftKey]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wakeLockRef = useRef<any>(null);
   const canRecord = typeof window !== "undefined"
     && typeof navigator !== "undefined"
     && !!navigator.mediaDevices?.getUserMedia
     && typeof window.MediaRecorder !== "undefined";
   const unmountedRef = useRef(false);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
+  // WhatsApp-style Media/Links/Docs sheet for the open conversation.
+  const [showThreadMedia, setShowThreadMedia] = useState(false);
   const [showLinkMenu, setShowLinkMenu] = useState(false);
+  const [linkMenuPos, setLinkMenuPos] = useState({ left: 8, bottom: 96 });
   const [showLinkSearch, setShowLinkSearch] = useState<"property" | "deal" | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -1159,12 +1440,68 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
   const [, navigate] = useLocation();
 
   const { typingUsers, sendTyping, stopTyping } = useTypingIndicator(threadId);
+  // Keyboard up → the fixed bottom nav hides itself, so drop the padding
+  // that clears it or the composer floats above a dead band (Woody, 2026-08-22).
+  const keyboardOpen = useKeyboardOpen();
+  // iOS scrolls the layout viewport when the keyboard opens, dragging the
+  // fixed shell up so the header slides under the status bar and message
+  // text collides with the clock (Woody's screenshot, 2026-08-22). Snap the
+  // window back to the top whenever that happens while the keyboard is up.
+  useEffect(() => {
+    if (!keyboardOpen) return;
+    const snap = () => {
+      if (window.scrollY !== 0) window.scrollTo(0, 0);
+    };
+    snap();
+    window.visualViewport?.addEventListener("scroll", snap);
+    window.addEventListener("scroll", snap, { passive: true });
+    return () => {
+      window.visualViewport?.removeEventListener("scroll", snap);
+      window.removeEventListener("scroll", snap);
+    };
+  }, [keyboardOpen]);
+
+  // The shell is fixed inset-0, sized to the LAYOUT viewport — which iOS
+  // does NOT shrink for the keyboard, and the snap above cancels iOS's own
+  // scroll-the-input-into-view compensation. Net effect: on the first
+  // keyboard opening the composer hid behind the keys until you tapped out
+  // and back in (Woody, 2026-08-28). While the keyboard is up, pin the
+  // shell's height to the VISUAL viewport so the composer sits right above
+  // the keys, tracking height changes (QuickType bar, rotation).
+  const [kbShellHeight, setKbShellHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!keyboardOpen || !vv) { setKbShellHeight(null); return; }
+    const apply = () => setKbShellHeight(Math.round(vv.height));
+    apply();
+    vv.addEventListener("resize", apply);
+    return () => { vv.removeEventListener("resize", apply); setKbShellHeight(null); };
+  }, [keyboardOpen]);
 
   const { data: activeThread } = useQuery<ThreadData>({
     queryKey: ["/api/chat/threads", threadId],
     queryFn: getQueryFn({ on401: "throw" }),
     enabled: !!threadId,
     refetchInterval: 8000,
+  });
+
+  // Claude-style re-attach: leaving the chat (or backgrounding the app)
+  // drops the SSE, but the server keeps composing and saves the reply to
+  // the thread. This poll notices a run still in flight when the user
+  // returns, so the typing indicator + progress show instead of a blank;
+  // the finished reply then arrives via the thread poll above.
+  const { data: activeRun } = useQuery<{ active: boolean; progress?: string; partial?: string }>({
+    queryKey: ["/api/chatbgp/threads", threadId, "active-run"],
+    queryFn: async () => {
+      const r = await fetch(`/api/chatbgp/threads/${threadId}/active-run`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) return { active: false };
+      return r.json();
+    },
+    enabled: !!threadId && (activeThread?.isAiChat ?? isAiChat),
+    refetchInterval: 3000,
   });
 
   const { data: allUsers } = useQuery<Array<{ id: string; name: string; username: string; team?: string | null }>>({
@@ -1214,10 +1551,21 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
   });
 
   const [streamingProgress, setStreamingProgress] = useState<string | null>(null);
+  // Live text as it's composed — SSE deltas append here so the reply writes
+  // itself into the bubble Claude-style instead of appearing all at once.
+  const [streamingText, setStreamingText] = useState("");
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [searchInChat, setSearchInChat] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
   const initialMsgCountRef = useRef<number | null>(null);
+  // "New chat" epoch — bumped when the user starts a fresh conversation from
+  // inside the chat view. An in-flight ChatBGP send stamped with an older
+  // epoch must not write its reply/error into the new conversation's UI
+  // (the reply still lands in the old thread server-side).
+  const [chatEpoch, setChatEpoch] = useState(0);
+  const chatEpochRef = useRef(0);
+  const inFlightEpochRef = useRef(0);
+  const sendAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (threadId) emitMarkSeen(threadId);
@@ -1280,9 +1628,11 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
   });
 
   const [pendingDeleteMsgId, setPendingDeleteMsgId] = useState<string | null>(null);
+  const [confirmUnlink, setConfirmUnlink] = useState(false);
 
   const aiSendMutation = useMutation({
     mutationFn: async ({ newMessages, files, tid }: { newMessages: LocalChatMessage[]; files: File[]; tid: string | null }) => {
+      inFlightEpochRef.current = chatEpochRef.current;
       const plainMessages = newMessages.map(m => {
         let content = m.content;
         if (m.attachments && m.attachments.length > 0) {
@@ -1301,6 +1651,13 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
         const res = await apiRequest("POST", "/api/chat/threads", { title, isAiChat: true });
         const thread = await res.json();
         currentThreadId = thread.id;
+        // CRITICAL: persist the thread id to local state right now, NOT
+        // in onSuccess. If the chat call subsequently fails (timeout,
+        // server crash) the thread still exists in the DB — and the
+        // user typing a follow-up should land in the SAME thread, not
+        // spawn yet another one. Previously this was only set on
+        // success, so every retry after an error created a new thread.
+        if (!threadIdProp) setLocalThreadId(currentThreadId);
         queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
       }
 
@@ -1321,7 +1678,40 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
         if (token) headers["Authorization"] = `Bearer ${token}`;
         const res = await fetch("/api/chatbgp/chat-with-files", { method: "POST", body: formData, credentials: "include", headers });
         if (!res.ok) throw new Error("Request failed");
-        const data = await res.json();
+        // chat-with-files streams SSE now (progress + deltas + final reply) —
+        // parse it like the /chat path instead of expecting one JSON body.
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("No response stream");
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let lastData = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const parsed = JSON.parse(line.slice(6));
+                if (parsed.progress) { setStreamingProgress(parsed.progress); setStreamingText(""); }
+                if (parsed.delta) setStreamingText(prev => prev + parsed.delta);
+                if (parsed.reply !== undefined || parsed.error !== undefined) lastData = line.slice(6);
+              } catch {}
+            }
+          }
+        }
+        if (buffer.startsWith("data: ")) {
+          try {
+            const parsed = JSON.parse(buffer.slice(6));
+            if (parsed.reply !== undefined || parsed.error !== undefined) lastData = buffer.slice(6);
+          } catch {}
+        }
+        setStreamingProgress(null); setStreamingText("");
+        if (!lastData) throw new Error("Server closed the stream before sending a reply.");
+        const data = JSON.parse(lastData);
+        if (data.error !== undefined) throw new Error(String(data.error));
         return { ...data, threadId: currentThreadId };
       } else {
         const attemptChat = async (attempt: number): Promise<any> => {
@@ -1329,7 +1719,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
           const headers: Record<string, string> = { "Content-Type": "application/json" };
           if (token) headers["Authorization"] = `Bearer ${token}`;
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 300000);
+          sendAbortRef.current = controller;
+          const timeoutId = setTimeout(() => controller.abort(), 600000)  // 10 min — Why Buy / Pathway turns routinely take 4-5 min so 5 min was clipping legitimate responses;
           try {
             const res = await fetch("/api/chatbgp/chat", {
               method: "POST",
@@ -1344,13 +1735,26 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 await new Promise(r => setTimeout(r, 2000 * attempt));
                 return attemptChat(attempt + 1);
               }
-              throw new Error("Request failed");
+              // Surface the server's actual error body when present
+              // (e.g. {message: "AI API key not configured"} on 503,
+              // validation errors on 400). Avoids the generic "Sorry"
+              // when the server explicitly told us what's wrong.
+              let serverMsg = "";
+              try {
+                const body = await res.json();
+                serverMsg = body?.message || body?.error || "";
+              } catch {}
+              const err: any = new Error(serverMsg || `HTTP ${res.status}`);
+              err.status = res.status;
+              err.serverMessage = serverMsg;
+              throw err;
             }
             const reader = res.body?.getReader();
             if (!reader) throw new Error("No response stream");
             const decoder = new TextDecoder();
             let buffer = "";
             let lastData = "";
+            let sawProgress = false;
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
@@ -1362,7 +1766,10 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                   try {
                     const parsed = JSON.parse(line.slice(6));
                     if (parsed.reply) lastData = line.slice(6);
-                    if (parsed.progress) setStreamingProgress(parsed.progress);
+                    // A new progress phase = a new composition pass — reset
+                    // the live text (mirrors the server's active-run partial).
+                    if (parsed.progress) { setStreamingProgress(parsed.progress); sawProgress = true; setStreamingText(""); }
+                    if (parsed.delta) setStreamingText(prev => prev + parsed.delta);
                   } catch {}
                 }
               }
@@ -1373,7 +1780,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 if (parsed.reply) lastData = buffer.slice(6);
               } catch {}
             }
-            setStreamingProgress(null);
+            setStreamingProgress(null); setStreamingText("");
             if (!lastData) {
               if (currentThreadId) {
                 const checkRes = await fetch(`/api/chat/threads/${currentThreadId}`, { credentials: "include", headers: getAuthHeaders() });
@@ -1386,12 +1793,23 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                   }
                 }
               }
-              throw new Error("No response received");
+              // We got SSE progress events but the stream closed
+              // before a final `reply` event — server most likely
+              // crashed mid-tool-call. Server logs (Railway) will
+              // have the stack from the process-level
+              // unhandledRejection handler in server/index.ts.
+              const err: any = new Error(
+                sawProgress
+                  ? "Server crashed mid-response — check Railway logs for the stack trace."
+                  : "Server closed the stream before sending a reply.",
+              );
+              err.midStream = true;
+              throw err;
             }
             return { ...JSON.parse(lastData), threadId: currentThreadId };
           } catch (err: any) {
             clearTimeout(timeoutId);
-            setStreamingProgress(null);
+            setStreamingProgress(null); setStreamingText("");
             if (err.name === "AbortError") throw err;
             const isNetworkError = err.message === "Failed to fetch" || err.message === "Load failed" || err.message?.includes("network");
             if (isNetworkError && attempt < 2) {
@@ -1405,13 +1823,19 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
       }
     },
     onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean }) => {
-      const msg: LocalChatMessage = { role: "assistant", content: data.reply };
-      if (data.action) msg.action = data.action;
-      setMessages(prev => [...prev, msg]);
+      // Stale send (user started a new chat while this was in flight):
+      // still persist the reply to its own thread, but keep it out of the
+      // fresh conversation's UI.
+      const stale = inFlightEpochRef.current !== chatEpochRef.current;
+      if (!stale) {
+        const msg: LocalChatMessage = { role: "assistant", content: data.reply };
+        if (data.action) msg.action = data.action;
+        setMessages(prev => [...prev, msg]);
+      }
       if (!data.savedToThread) {
         await saveMessageMutation.mutateAsync({ threadId: data.threadId, role: "assistant", content: data.reply, actionData: data.action ? JSON.stringify(data.action) : undefined });
       }
-      if (!threadIdProp && data.threadId) {
+      if (!stale && !threadIdProp && data.threadId) {
         setLocalThreadId(data.threadId);
       }
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", data.threadId] });
@@ -1422,8 +1846,21 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
         .catch(() => {});
     },
     onError: async (err: any) => {
-      if (threadId) {
-        const delays = [3000, 8000, 15000, 30000, 60000];
+      // Send belonged to a conversation the user has already left via
+      // "new chat" — don't recover into or apologise in the fresh one.
+      if (inFlightEpochRef.current !== chatEpochRef.current) return;
+      // err.status set = the server answered with an HTTP error (503 no
+      // key, 400 validation, …) before composing anything — there is no
+      // late reply to recover, so fall through to the message right away
+      // instead of leaving the user on "Thinking..." for the whole poll.
+      if (threadId && !err?.status) {
+        // Late-response recovery: ChatBGP turns that touch search +
+        // KB + doc-gen routinely take 4-5 minutes. The fetch may have
+        // aborted client-side but the server keeps going and writes
+        // the assistant message when it's done. We poll for it for
+        // up to ~6 min so the user sees their answer arrive instead
+        // of being told to retry. Delays widen so we stop hammering.
+        const delays = [3000, 8000, 15000, 30000, 60000, 60000, 60000, 60000, 60000];
         for (const delay of delays) {
           try {
             await new Promise(r => setTimeout(r, delay));
@@ -1442,7 +1879,10 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                     try { recovered.action = JSON.parse(lastMsg.actionData); } catch {}
                   }
                   setMessages(prev => {
-                    const filtered = prev.filter(m => m.content !== "Sorry, I couldn't respond right now. Please try again." && m.content !== "Sorry, the request timed out. Please try again.");
+                    // Any "Sorry, ..." placeholder from a transient
+                    // failure gets replaced once the server-saved
+                    // assistant reply arrives via the thread fetch.
+                    const filtered = prev.filter(m => m.role !== "assistant" || !m.content.startsWith("Sorry,"));
                     return [...filtered, recovered];
                   });
                   queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
@@ -1454,9 +1894,24 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
           } catch {}
         }
       }
-      const msg = err?.message === "The operation was aborted" || err?.name === "AbortError"
-        ? "Sorry, the request timed out. Please try again."
-        : "Sorry, I couldn't respond right now. Please try again.";
+      // Log to console for diagnosis — the underlying error often has
+      // a stack / status that wasn't surfaced.
+      console.error("[chatbgp] mutation failed:", err);
+      const isAbort = err?.message === "The operation was aborted" || err?.name === "AbortError";
+      let msg: string;
+      if (isAbort) {
+        msg = "Sorry, the request timed out. Please try again.";
+      } else if (err?.serverMessage) {
+        // Server explicitly told us what's wrong (e.g. validation,
+        // missing API key) — show it instead of the generic Sorry.
+        msg = `Sorry, the server rejected this: ${err.serverMessage}`;
+      } else if (err?.midStream) {
+        msg = `Sorry, ${err.message}`;
+      } else if (err?.status) {
+        msg = `Sorry, the server returned ${err.status}${err.message && err.message !== `HTTP ${err.status}` ? ` — ${err.message}` : ""}.`;
+      } else {
+        msg = "Sorry, I couldn't respond right now. Please try again.";
+      }
       setMessages(prev => [...prev, { role: "assistant", content: msg }]);
     },
   });
@@ -1472,107 +1927,30 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
     },
   });
 
-  const chatbgpMentionMutation = useMutation({
-    mutationFn: async ({ content, tid }: { content: string; tid: string }) => {
-      await saveMessageMutation.mutateAsync({ threadId: tid, role: "user", content });
-      const threadMessages = activeThread?.messages || [];
-      const recentMessages = threadMessages.slice(-10).map(m => ({ role: m.role, content: m.content }));
-      recentMessages.push({ role: "user", content });
-      const token = localStorage.getItem("bgp_auth_token");
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      const mentionController = new AbortController();
-      const mentionTimeout = setTimeout(() => mentionController.abort(), 300000);
-      const res = await fetch("/api/chatbgp/chat", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ messages: recentMessages, threadId: tid }),
-        credentials: "include",
-        signal: mentionController.signal,
-      });
-      clearTimeout(mentionTimeout);
-      if (!res.ok) throw new Error("Request failed");
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No stream");
-      const decoder = new TextDecoder();
-      let buf = "", last = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() || "";
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try { const p = JSON.parse(line.slice(6)); if (p.reply) last = line.slice(6); } catch {}
-          }
-        }
-      }
-      if (buf.startsWith("data: ")) {
-        try { const p = JSON.parse(buf.slice(6)); if (p.reply) last = buf.slice(6); } catch {}
-      }
-      if (!last) throw new Error("No response");
-      return { ...JSON.parse(last), threadId: tid };
-    },
-    onSuccess: (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean }) => {
-      const msg: LocalChatMessage = { role: "assistant", content: data.reply };
-      if (data.action) msg.action = data.action;
-      setMessages(prev => [...prev, msg]);
-      if (!data.savedToThread) {
-        saveMessageMutation.mutate({ threadId: data.threadId, role: "assistant", content: data.reply, actionData: data.action ? JSON.stringify(data.action) : undefined });
-      }
-      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", data.threadId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
-    },
-    onError: async (_err: any) => {
-      if (threadId) {
-        const delays = [3000, 8000, 15000, 30000, 60000];
-        for (const delay of delays) {
-          try {
-            await new Promise(r => setTimeout(r, delay));
-            const token = localStorage.getItem("bgp_auth_token");
-            const headers: Record<string, string> = {};
-            if (token) headers["Authorization"] = `Bearer ${token}`;
-            const res = await fetch(`/api/chat/threads/${threadId}`, { credentials: "include", headers });
-            if (res.ok) {
-              const thread = await res.json();
-              const msgs = thread.messages || [];
-              if (msgs.length > 0) {
-                const lastMsg = msgs[msgs.length - 1];
-                if (lastMsg.role === "assistant") {
-                  const recovered: LocalChatMessage = { role: "assistant", content: lastMsg.content };
-                  if (lastMsg.actionData) {
-                    try { recovered.action = JSON.parse(lastMsg.actionData); } catch {}
-                  }
-                  setMessages(prev => {
-                    const filtered = prev.filter(m => m.content !== "Sorry, ChatBGP couldn't respond right now.");
-                    return [...filtered, recovered];
-                  });
-                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
-                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
-                  return;
-                }
-              }
-            }
-          } catch {}
-        }
-      }
-      setMessages(prev => [...prev, { role: "assistant", content: "Sorry, ChatBGP couldn't respond right now." }]);
-    },
-  });
-
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, aiSendMutation.isPending, chatbgpMentionMutation.isPending]);
+  }, [messages, aiSendMutation.isPending]);
+
+  // Keep the streaming reply in view as it writes itself — but only when the
+  // user is already near the bottom, so scrolling up to re-read isn't hijacked.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distFromBottom < 200) el.scrollTop = el.scrollHeight;
+  }, [streamingText, activeRun?.partial]);
 
   useEffect(() => {
-    if (!aiSendMutation.isPending && queuedMessageRef.current && threadId) {
-      const queued = queuedMessageRef.current;
-      setQueuedMessage(null);
-      const userMessage: LocalChatMessage = { role: "user", content: queued.text || "Shared files", userName: currentUser?.name, userId: currentUser?.id };
+    // Drain one queued message when the current send finishes. Array-based
+    // so the user can stack multiple messages while a long ChatBGP response
+    // is still streaming back. Same pattern the desktop chat-panel uses.
+    if (!aiSendMutation.isPending && queuedMessagesRef.current.length > 0) {
+      const next = queuedMessagesRef.current[0];
+      setQueuedMessages(prev => prev.slice(1));
+      const userMessage: LocalChatMessage = { role: "user", content: next.text || "Shared files", userName: currentUser?.name, userId: currentUser?.id };
       setMessages(prev => [...prev, userMessage]);
       const newMessages = [...messagesRef.current, userMessage];
-      aiSendMutation.mutate({ newMessages, files: queued.files, tid: threadId });
+      aiSendMutation.mutate({ newMessages, files: next.files, tid: threadId });
     }
   }, [aiSendMutation.isPending]);
 
@@ -1582,8 +1960,51 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
     return allUsers.filter(u => {
       if (u.id === currentUser?.id) return false;
       return u.name.toLowerCase().includes(q);
-    }).slice(0, 6);
+    }).slice(0, 4);
   }, [mentionQuery, allUsers, currentUser?.id]);
+
+  // Smart tags on mobile — same grammar as the desktop panel: the @ menu
+  // searches brands, properties, deals and letting-tracker units alongside
+  // people; selections insert readable "@Name" text and swap to durable
+  // @[Name](tag:type/id) tokens at send time.
+  const [tagEntities, setTagEntities] = useState<Array<{ type: TagType; id: string; name: string; subtitle?: string }>>([]);
+  const pendingTagsRef = useRef<Map<string, { type: TagType; id: string; name: string }>>(new Map());
+
+  useEffect(() => {
+    if (mentionQuery === null || mentionQuery.length < 2) {
+      setTagEntities([]);
+      return;
+    }
+    const q = mentionQuery;
+    const timer = setTimeout(async () => {
+      try {
+        const token = localStorage.getItem("bgp_auth_token");
+        const headers: Record<string, string> = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`/api/chat/tag-search?q=${encodeURIComponent(q)}`, { credentials: "include", headers });
+        if (!res.ok) return;
+        const data = await res.json();
+        setTagEntities((data.results || []).filter((r: any) => r.type !== "user"));
+      } catch {}
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [mentionQuery]);
+
+  type MobileMentionOption =
+    | { kind: "chatbgp" }
+    | { kind: "user"; id: string; name: string }
+    | { kind: "entity"; type: TagType; id: string; name: string; subtitle?: string };
+
+  const mentionOptions = useMemo<MobileMentionOption[]>(() => {
+    if (mentionQuery === null) return [];
+    const q = mentionQuery.toLowerCase();
+    const opts: MobileMentionOption[] = [];
+    const aiMatches = q === "" || "chatbgp".startsWith(q) || "chat".startsWith(q) || q === "ai";
+    if (aiMatches && !isActiveThreadAi && threadId) opts.push({ kind: "chatbgp" });
+    for (const u of mentionUsers) opts.push({ kind: "user", id: u.id, name: u.name });
+    for (const e of tagEntities) opts.push({ kind: "entity", type: e.type, id: e.id, name: e.name, subtitle: e.subtitle });
+    return opts;
+  }, [mentionQuery, mentionUsers, tagEntities, isActiveThreadAi, threadId]);
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -1608,15 +2029,32 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
     setMentionStart(-1);
   }, [sendTyping]);
 
-  const handleMentionSelect = useCallback((user: { id: string; name: string }) => {
+  const handleOptionSelect = useCallback((opt: MobileMentionOption) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     const before = input.slice(0, mentionStart);
     const after = input.slice(textarea.selectionStart);
-    const newInput = `${before}@${user.name.split(" ")[0]} ${after}`;
-    setInput(newInput);
+    let inserted: string;
+    if (opt.kind === "chatbgp") {
+      inserted = "@ChatBGP";
+    } else if (opt.kind === "user") {
+      inserted = `@${opt.name.split(" ")[0]}`;
+    } else {
+      const clean = opt.name.replace(/[\[\]()]/g, "").trim();
+      inserted = `@${clean}`;
+      pendingTagsRef.current.set(inserted, { type: opt.type, id: opt.id, name: clean });
+    }
+    setInput(`${before}${inserted} ${after}`);
     setMentionQuery(null);
     setMentionStart(-1);
+    // Put the caret straight after the inserted tag — without this the next
+    // keystrokes land wherever the browser parked the caret after re-render.
+    setTimeout(() => {
+      const pos = before.length + inserted.length + 1;
+      textarea.selectionStart = pos;
+      textarea.selectionEnd = pos;
+      textarea.focus();
+    }, 0);
   }, [input, mentionStart]);
 
   const [uploading, setUploading] = useState(false);
@@ -1658,7 +2096,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
       const res = await fetch("/api/chat/upload", { method: "POST", body: formData, headers: { ...getAuthHeaders() }, credentials: "include" });
       const data = await res.json();
       if (!res.ok || !data.files?.[0]) {
-        toast({ title: "Voice note failed", description: "Could not upload recording", variant: "destructive" });
+        toast({ title: "Voice note upload failed", description: "Saved — we'll recover it next time you open the app.", variant: "destructive" });
         return;
       }
       if (unmountedRef.current) return;
@@ -1674,16 +2112,34 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
         setMessages(prev => [...prev, userMessage]);
         teamSendMutation.mutate({ content, tid: threadId, attachments: [attachmentJson] });
       }
+      // Sent successfully — drop the crash-recovery copy.
+      voiceRecovery.clearPending().catch(() => {});
     } catch {
-      toast({ title: "Voice note failed", description: "Network error", variant: "destructive" });
+      toast({ title: "Voice note upload failed", description: "Network error — saved, we'll recover it next time you open the app.", variant: "destructive" });
     } finally { setUploading(false); }
   }, [threadId, isActiveThreadAi, currentUser, messages, toast, aiSendMutation, teamSendMutation]);
 
   const sendVoiceNoteRef = useRef(sendVoiceNote);
   useEffect(() => { sendVoiceNoteRef.current = sendVoiceNote; }, [sendVoiceNote]);
 
+  // On open, recover any voice note that was interrupted (lock / crash /
+  // reload) or whose upload failed last time — so a long dictation is never
+  // silently lost. Runs once; clears itself on a successful send.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const pending = await voiceRecovery.loadPending();
+      if (cancelled || !pending) return;
+      toast({ title: "Recovered a voice note", description: "An unfinished recording was saved — transcribing it now." });
+      sendVoiceNoteRef.current(pending.blob);
+    })().catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   const stopRecording = useCallback(() => {
     if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+    try { wakeLockRef.current?.release?.(); } catch {}
+    wakeLockRef.current = null;
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
@@ -1718,9 +2174,11 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
       }
       const actualMime = recorder.mimeType || mimeType || "audio/mp4";
       audioChunksRef.current = [];
-      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) { audioChunksRef.current.push(e.data); voiceRecovery.appendChunk(e.data).catch(() => {}); } };
       recorder.onstop = () => {
         try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        try { wakeLockRef.current?.release?.(); } catch {}
+        wakeLockRef.current = null;
         setIsRecording(false);
         setRecordingDuration(0);
         if (audioChunksRef.current.length === 0) {
@@ -1737,15 +2195,28 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
       recorder.onerror = (ev: any) => {
         console.error("[voice] MediaRecorder error:", ev?.error?.name, ev?.error?.message);
         try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        try { wakeLockRef.current?.release?.(); } catch {}
+        wakeLockRef.current = null;
         setIsRecording(false);
         setRecordingDuration(0);
         toast({ title: "Recording failed", description: "Could not record audio", variant: "destructive" });
       };
+      // Persist each chunk to IndexedDB as we record, so an interrupted note
+      // (lock / crash / reload / failed upload) can be recovered on next open.
+      await voiceRecovery.beginRecording(actualMime).catch(() => {});
       recorder.start(1000);
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
       setRecordingDuration(0);
       recordingTimerRef.current = setInterval(() => setRecordingDuration(d => d + 1), 1000);
+      // Hold a screen wake lock so iOS auto-lock can't suspend the WebView and
+      // kill the recording mid-dictation (the main cause of lost voice notes).
+      // Re-acquired on visibilitychange below, since iOS drops it when hidden.
+      try {
+        if ((navigator as any).wakeLock?.request) {
+          wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
+        }
+      } catch { /* unsupported / denied — best effort */ }
     } catch (err: any) {
       console.error("[voice] getUserMedia error:", err?.name, err?.message);
       toast({ title: "Microphone access denied", description: "Please allow microphone access to record voice notes", variant: "destructive" });
@@ -1764,10 +2235,32 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
     };
   }, []);
 
-  const isSending = aiSendMutation.isPending || teamSendMutation.isPending || chatbgpMentionMutation.isPending || uploading;
-  const [queuedMessage, setQueuedMessage] = useState<{ text: string; files: File[] } | null>(null);
-  const queuedMessageRef = useRef<{ text: string; files: File[] } | null>(null);
-  queuedMessageRef.current = queuedMessage;
+  // iOS releases the screen wake lock whenever the page is hidden, so re-acquire
+  // it when the user comes back to the app while a recording is still running.
+  useEffect(() => {
+    const onVis = async () => {
+      if (document.visibilityState === "visible" && isRecording && !wakeLockRef.current) {
+        try {
+          if ((navigator as any).wakeLock?.request) {
+            wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
+          }
+        } catch { /* best effort */ }
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [isRecording]);
+
+  const isSending = aiSendMutation.isPending || teamSendMutation.isPending || uploading;
+  // An AI send left over from a conversation the user abandoned via "new
+  // chat" — don't show its "Thinking..." indicator in the fresh one.
+  const staleAiSend = aiSendMutation.isPending && inFlightEpochRef.current !== chatEpoch;
+  // Array-based queue so the user can stack multiple ChatBGP requests while
+  // a long response is still streaming. Drained one-at-a-time by the effect
+  // above. Mirrors the desktop chat-panel behaviour.
+  const [queuedMessages, setQueuedMessages] = useState<{ text: string; files: File[] }[]>([]);
+  const queuedMessagesRef = useRef<{ text: string; files: File[] }[]>([]);
+  queuedMessagesRef.current = queuedMessages;
 
   const handleSend = async () => {
     const text = input.trim();
@@ -1775,7 +2268,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
     if (!text && !hasFiles) return;
 
     if (isSending && isActiveThreadAi) {
-      setQueuedMessage({ text, files: hasFiles ? [...attachedFiles] : [] });
+      setQueuedMessages(prev => [...prev, { text, files: hasFiles ? [...attachedFiles] : [] }]);
       setInput("");
       setAttachedFiles([]);
       if (textareaRef.current) textareaRef.current.style.height = "auto";
@@ -1808,19 +2301,56 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
       setInput("");
       aiSendMutation.mutate({ newMessages, files: originalFiles, tid: threadId });
     } else {
-      const content = text || (uploadedAttachments.length > 0 ? "Shared files" : "");
-      const hasChatBGPMention = text.toLowerCase().includes("@chatbgp");
+      let content = text || (uploadedAttachments.length > 0 ? "Shared files" : "");
+      // Swap readable "@Name" inserts for durable tag tokens (longest first).
+      if (pendingTagsRef.current.size > 0) {
+        const entries = [...pendingTagsRef.current.entries()].sort((a, b) => b[0].length - a[0].length);
+        for (const [key, tag] of entries) {
+          if (content.includes(key)) content = content.split(key).join(buildTagToken(tag.type, tag.id, tag.name));
+        }
+        pendingTagsRef.current.clear();
+      }
       const userMessage: LocalChatMessage = { role: "user", content, userName: currentUser?.name, userId: currentUser?.id, attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined };
       setMessages(prev => [...prev, userMessage]);
       setInput("");
-      if (hasChatBGPMention && threadId) {
-        chatbgpMentionMutation.mutate({ content, tid: threadId });
-      } else if (threadId) {
+      // The server owns AI replies in team threads (auto-join on @mention) —
+      // the old client-side mention path double-replied once auto-join landed.
+      if (threadId) {
         teamSendMutation.mutate({ content, tid: threadId, attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined });
       }
     }
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   };
+
+  // Fresh conversation from inside the chat view. Previously the + button
+  // only nulled the parent's activeThreadId — which did nothing when the
+  // thread lived in localThreadId, and never cleared the on-screen messages.
+  const startNewChat = () => {
+    chatEpochRef.current += 1;
+    setChatEpoch(chatEpochRef.current);
+    sendAbortRef.current?.abort();
+    setMessages([]);
+    setLocalThreadId(null);
+    setInput("");
+    setAttachedFiles([]);
+    setQueuedMessages([]);
+    setStreamingProgress(null); setStreamingText("");
+    setSearchInChat(false);
+    setChatSearchQuery("");
+    initialMsgCountRef.current = null;
+    if (onNewChat) onNewChat(); else onBack();
+  };
+
+  // Bottom-nav sparkle tapped while this chat is already open — the parent's
+  // handler can't clear localThreadId or the on-screen messages, so the view
+  // resets itself through the same path as the + button.
+  const startNewChatRef = useRef(startNewChat);
+  startNewChatRef.current = startNewChat;
+  useEffect(() => {
+    const h = () => startNewChatRef.current();
+    window.addEventListener("chatbgp-new-chat", h);
+    return () => window.removeEventListener("chatbgp-new-chat", h);
+  }, []);
 
   const [selectedCheckboxes, setSelectedCheckboxes] = useState<string[]>([]);
   const selectedCheckboxesRef = useRef<string[]>([]);
@@ -1862,12 +2392,49 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
   const isDm = !isActiveThreadAi && otherMembers.length === 1;
   const dmName = isDm ? otherMembers[0].name : null;
   const threadTitle = isDm ? dmName : (activeThread?.title || activeThread?.linkedName || (isActiveThreadAi ? "ChatBGP" : "Chat"));
-  const headerInitials = isDm ? dmName!.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
+  const headerInitials = isDm && dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
   const isGroup = !isActiveThreadAi && !isDm;
-  const groupPicFileRef = useRef<HTMLInputElement>(null);
+  const [pendingGroupPic, setPendingGroupPic] = useState<File | null>(null);
+  const pendingGroupPicRef = useRef(false);
+  useEffect(() => { pendingGroupPicRef.current = !!pendingGroupPic; }, [pendingGroupPic]);
+  useEffect(() => {
+    if (!isGroup) return;
+    // Keep checking the stash until the cropper is actually up — a picked
+    // photo must survive this view being rebuilt while backgrounded.
+    const check = () => {
+      const f = stashedGroupPic;
+      if (f && !pendingGroupPicRef.current) {
+        clog("group-pic:consume", { size: f.size });
+        setPendingGroupPic(f);
+      }
+    };
+    groupPicPoke = check;
+    check();
+    document.addEventListener("visibilitychange", check);
+    const id = setInterval(check, 1500);
+    return () => {
+      if (groupPicPoke === check) groupPicPoke = null;
+      document.removeEventListener("visibilitychange", check);
+      clearInterval(id);
+    };
+  }, [isGroup]);
+  useEffect(() => {
+    // Holds off the auto-update reload (index.html) while the cropper is up.
+    if (pendingGroupPic) {
+      (window as any).__bgpBusy = true;
+      return () => { (window as any).__bgpBusy = false; };
+    }
+  }, [pendingGroupPic]);
+  // NOTE: the "Search the web" photo chooser (ImageSourceSheet + the
+  // /api/image-search + *-from-url endpoints) is PARKED — Google kept
+  // refusing the project Custom Search access despite the API, key and
+  // billing all being enabled (Woody, 2026-08-23: "rewind and try again in
+  // 3 months"). To revive, re-wire per commit 0cb332b7.
 
   const handleGroupPicUpload = async (file: File) => {
     if (!threadId) return;
+    clog("group-pic:upload-start", { size: file.size });
+    (window as any).__bgpBusy = true;
     const formData = new FormData();
     formData.append("file", file);
     try {
@@ -1880,9 +2447,15 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
       if (res.ok) {
         queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
         queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+      } else {
+        const j = await res.json().catch(() => ({} as any));
+        toast({ title: "Photo didn't upload", description: j?.message || `Server said ${res.status}`, variant: "destructive" });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("[handleGroupPicUpload] Failed:", err);
+      toast({ title: "Photo didn't upload", description: err?.message || "Network error", variant: "destructive" });
+    } finally {
+      (window as any).__bgpBusy = false;
     }
   };
 
@@ -1909,74 +2482,106 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
     }
     if (activeThread?.groupPicUrl) {
       return (
-        <label className="relative cursor-pointer">
+        <button type="button" className="relative" onClick={(e) => { e.stopPropagation(); e.preventDefault(); openGroupPicPicker(); }} data-testid="button-group-pic">
           <img src={activeThread.groupPicUrl} alt="" className="w-10 h-10 rounded-full object-cover" />
           <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white/90 flex items-center justify-center">
             <Camera className="w-2.5 h-2.5 text-black" />
           </div>
-          <input type="file" accept="image/*" className="hidden" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
-        </label>
+        </button>
       );
     }
     return (
-      <label className="relative cursor-pointer">
+      <button type="button" className="relative" onClick={(e) => { e.stopPropagation(); e.preventDefault(); openGroupPicPicker(); }} data-testid="button-group-pic">
         <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
           <Users className="w-5 h-5" />
         </div>
         <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white/90 flex items-center justify-center">
           <Camera className="w-2.5 h-2.5 text-black" />
         </div>
-        <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
-      </label>
+      </button>
     );
   };
 
   if (showGroupEdit && activeThread && allUsers) {
     return (
-      <MobileGroupEdit
-        thread={activeThread}
-        currentUser={currentUser}
-        allUsers={allUsers}
-        onBack={() => setShowGroupEdit(false)}
-      />
+      <>
+        {pendingGroupPic && (
+          <GroupPicCropper
+            file={pendingGroupPic}
+            onCancel={() => { stashedGroupPic = null; setPendingGroupPic(null); }}
+            onSave={(blob) => { stashedGroupPic = null; setPendingGroupPic(null); handleGroupPicUpload(new File([blob], "group.jpg", { type: "image/jpeg" })); }}
+            onFallback={(f) => { stashedGroupPic = null; setPendingGroupPic(null); toast({ title: "Couldn't preview that photo", description: "Uploading it as-is instead." }); handleGroupPicUpload(f); }}
+          />
+        )}
+        <MobileGroupEdit
+          thread={activeThread}
+          currentUser={currentUser}
+          allUsers={allUsers}
+          onBack={() => setShowGroupEdit(false)}
+        />
+      </>
     );
   }
 
   return (
-    <div className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-gray-50`}>
+    // The AI chat keeps the bottom tab bar visible (Woody, 2026-08-18: no
+    // menu on the greeting felt like a dead end) — padding clears the fixed
+    // nav so the composer sits above it. Team chats stay full-screen.
+    <div
+      className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-muted/50`}
+      style={
+        keyboardOpen && kbShellHeight
+          ? { height: kbShellHeight, bottom: "auto" }
+          : isActiveThreadAi && !keyboardOpen
+            ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" }
+            : undefined
+      }
+    >
+      {pendingGroupPic && (
+        <GroupPicCropper
+          file={pendingGroupPic}
+          onCancel={() => { stashedGroupPic = null; setPendingGroupPic(null); }}
+          onSave={(blob) => { stashedGroupPic = null; setPendingGroupPic(null); handleGroupPicUpload(new File([blob], "group.jpg", { type: "image/jpeg" })); }}
+          onFallback={(f) => { stashedGroupPic = null; setPendingGroupPic(null); toast({ title: "Couldn't preview that photo", description: "Uploading it as-is instead." }); handleGroupPicUpload(f); }}
+        />
+      )}
+      {isActiveThreadAi && <MobileBottomNav />}
       {isActiveThreadAi ? (
-        <div className="bg-white text-gray-900 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2.5 px-4 shrink-0 border-b border-gray-100">
+        <div className="bg-white text-foreground pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2.5 px-4 shrink-0 border-b border-border">
           <div className="flex items-center justify-between">
-            <button onClick={onBack} className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100" data-testid="button-mobile-chat-back">
-              <ArrowLeft className="w-5 h-5 text-gray-600" />
+            <button onClick={onBack} className="w-9 h-9 rounded-full flex items-center justify-center active:bg-muted" data-testid="button-mobile-chat-back">
+              <ArrowLeft className="w-5 h-5 text-muted-foreground" />
             </button>
             <button onClick={() => setShowGroupEdit(true)} className="flex items-center gap-2.5" data-testid="button-mobile-group-settings">
               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: "hsl(var(--primary))" }}>
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
               <div className="text-left">
-                <span className="text-[15px] font-semibold text-gray-900 block leading-tight">ChatBGP</span>
-                <span className="text-[11px] text-gray-400 leading-tight">AI Assistant</span>
+                <span className="text-[15px] font-semibold text-foreground block leading-tight">ChatBGP</span>
+                <span className="text-[11px] text-muted-foreground/70 leading-tight">AI Assistant</span>
               </div>
             </button>
             <div className="flex items-center gap-0.5">
+              {onTeamChats && (
+                <button
+                  onClick={onTeamChats}
+                  className="w-9 h-9 rounded-full flex items-center justify-center active:bg-muted"
+                  data-testid="button-mobile-team-chats"
+                  aria-label="Internal team chats"
+                >
+                  <Users className="w-[18px] h-[18px] text-muted-foreground/70" />
+                </button>
+              )}
               <button
                 onClick={() => setSearchInChat(!searchInChat)}
-                className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
+                className="w-9 h-9 rounded-full flex items-center justify-center active:bg-muted"
                 data-testid="button-search-in-chat"
               >
-                <Search className="w-[18px] h-[18px] text-gray-400" />
+                <Search className="w-[18px] h-[18px] text-muted-foreground/70" />
               </button>
               <button
-                onClick={() => {
-                  if (onNewChat) {
-                    onNewChat();
-                  } else {
-                    setMessages([]);
-                    onBack();
-                  }
-                }}
-                className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
+                onClick={startNewChat}
+                className="w-9 h-9 rounded-full flex items-center justify-center active:bg-muted"
                 data-testid="button-mobile-new-chat"
               >
                 <Plus className="w-5 h-5" style={{ color: "hsl(var(--primary))" }} />
@@ -1985,9 +2590,19 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
           </div>
         </div>
       ) : (
-        <div className="bg-[#1C1917] text-white pt-[calc(0.5rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
+        <div className="bg-[hsl(var(--mobile-chrome))] text-white pt-[calc(0.5rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
           <div className="flex items-center gap-3">
             <button onClick={onBack} className="p-1" data-testid="button-mobile-chat-back"><ArrowLeft className="w-6 h-6" /></button>
+            {threadId && (
+              <button
+                onClick={() => setShowThreadMedia(true)}
+                className="order-last p-1.5 rounded-full active:bg-white/10"
+                title="Shared media, links & docs"
+                data-testid="button-mobile-thread-media"
+              >
+                <Image className="w-5 h-5 text-white/80" />
+              </button>
+            )}
             <div className="flex-1 min-w-0">
               {isGroup ? (
                 <button onClick={() => setShowGroupEdit(true)} className="flex items-center gap-3 w-full min-w-0 text-left" data-testid="button-mobile-group-settings">
@@ -2017,22 +2632,32 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 </div>
               )}
               {activeThread?.linkedName && activeThread?.linkedType && activeThread?.linkedId && (
-                <button
-                  onClick={() => {
-                    const t = activeThread.linkedType;
-                    const id = activeThread.linkedId;
-                    if (t === "property") navigate(`/properties/${id}`);
-                    else if (t === "deal") navigate(`/deals/${id}`);
-                    else if (t === "company") navigate(`/companies/${id}`);
-                  }}
-                  className="flex items-center gap-1 mt-1 px-2 py-0.5 -ml-0.5 rounded-full bg-white/5 hover:bg-white/10 active:bg-white/15 transition-colors max-w-full"
-                  data-testid="button-mobile-chat-linked"
-                >
-                  <Link2 className="w-3 h-3 text-gray-300 shrink-0" />
-                  <span className="text-[11px] text-gray-200 truncate">
-                    Open {activeThread.linkedType === "property" ? "property" : activeThread.linkedType === "deal" ? "deal" : activeThread.linkedType}: {activeThread.linkedName}
-                  </span>
-                </button>
+                <div className="flex items-center gap-1 mt-1 max-w-full">
+                  <button
+                    onClick={() => {
+                      const t = activeThread.linkedType;
+                      const id = activeThread.linkedId;
+                      if (t === "property") navigate(`/properties/${id}`);
+                      else if (t === "deal") navigate(`/deals/${id}`);
+                      else if (t === "company") navigate(`/companies/${id}`);
+                    }}
+                    className="flex items-center gap-1 px-2 py-0.5 -ml-0.5 rounded-full bg-white/5 hover:bg-white/10 active:bg-white/15 transition-colors min-w-0"
+                    data-testid="button-mobile-chat-linked"
+                  >
+                    <Link2 className="w-3 h-3 text-gray-300 shrink-0" />
+                    <span className="text-[11px] text-gray-200 truncate">
+                      Open {activeThread.linkedType === "property" ? "property" : activeThread.linkedType === "deal" ? "deal" : activeThread.linkedType}: {activeThread.linkedName}
+                    </span>
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setConfirmUnlink(true); }}
+                    className="w-5 h-5 rounded-full bg-white/5 hover:bg-white/10 active:bg-white/15 flex items-center justify-center shrink-0"
+                    data-testid="button-mobile-chat-unlink"
+                    aria-label="Remove link from chat"
+                  >
+                    <X className="w-3 h-3 text-gray-300" />
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -2041,22 +2666,22 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
 
       {searchInChat && (
         <div className="px-3 py-2 border-b bg-white flex items-center gap-2">
-          <Search className="w-4 h-4 text-gray-400 shrink-0" />
+          <Search className="w-4 h-4 text-muted-foreground/70 shrink-0" />
           <Input
             value={chatSearchQuery}
             onChange={(e) => setChatSearchQuery(e.target.value)}
             placeholder="Search in conversation..."
-            className="h-8 text-sm border-0 bg-gray-100 rounded-lg flex-1"
+            className="h-8 text-sm border-0 bg-muted rounded-lg flex-1"
             autoFocus
             data-testid="input-search-in-chat"
           />
           <button onClick={() => { setSearchInChat(false); setChatSearchQuery(""); }} className="p-1" data-testid="button-close-chat-search">
-            <X className="w-4 h-4 text-gray-400" />
+            <X className="w-4 h-4 text-muted-foreground/70" />
           </button>
         </div>
       )}
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 relative" onScroll={(e) => {
+      <div ref={scrollRef} className={`flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 relative ${!isActiveThreadAi ? "bg-[#F4F1EA]" : ""}`} onScroll={(e) => {
         const el = e.currentTarget;
         const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         setShowScrollBottom(distFromBottom > 200);
@@ -2068,7 +2693,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
               <Sparkles className="w-6 h-6 text-white" />
             </div>
             <div className="text-center space-y-1.5">
-              <h3 className="text-[30px] text-[#1C1917] tracking-tight leading-none" style={{ fontFamily: "var(--font-serif)" }}>
+              <h3 className="text-[30px] text-[hsl(var(--mobile-chrome))] tracking-tight leading-none" style={{ fontFamily: "var(--font-serif)" }}>
                 {(() => {
                   const hour = new Date().getHours();
                   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -2105,13 +2730,30 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
           const matchesSearch = !chatSearchQuery || msg.content.toLowerCase().includes(chatSearchQuery.toLowerCase());
           if (searchInChat && chatSearchQuery && !matchesSearch) return null;
           const showNewDivider = initialMsgCountRef.current !== null && i === initialMsgCountRef.current && i > 0 && i < messages.length;
+          // WhatsApp-style date chips between days (team chats only).
+          const dayLabel = (() => {
+            if (isActiveThreadAi || !msg.createdAt) return null;
+            const d = new Date(msg.createdAt);
+            const prev = i > 0 ? messages[i - 1]?.createdAt : null;
+            if (prev && new Date(prev).toDateString() === d.toDateString()) return null;
+            const today = new Date();
+            const yesterday = new Date(Date.now() - 86400000);
+            if (d.toDateString() === today.toDateString()) return "Today";
+            if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+            return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+          })();
           return (
             <div key={msg.id || i}>
+              {dayLabel && (
+                <div className="flex justify-center my-3">
+                  <span className="text-[12px] font-medium text-[#6B6259] bg-white/90 rounded-lg px-3 py-1 shadow-sm">{dayLabel}</span>
+                </div>
+              )}
               {showNewDivider && (
                 <div className="flex items-center gap-3 my-3 px-2" data-testid="new-messages-divider">
-                  <div className="flex-1 h-px bg-blue-400" />
-                  <span className="text-xs font-semibold text-blue-500 whitespace-nowrap">New Messages</span>
-                  <div className="flex-1 h-px bg-blue-400" />
+                  <div className="flex-1 h-px bg-primary/50" />
+                  <span className="text-xs font-semibold text-primary whitespace-nowrap">New Messages</span>
+                  <div className="flex-1 h-px bg-primary/50" />
                 </div>
               )}
               <MobileMessageBubble
@@ -2124,29 +2766,42 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 onCheckboxClick={handleCheckboxClick}
                 selectedCheckboxes={selectedCheckboxes}
                 isAiThread={isActiveThreadAi}
+                othersAllSeen={threadMembers.filter(m => m.id !== currentUser?.id).length > 0 && threadMembers.filter(m => m.id !== currentUser?.id).every(m => m.seen)}
               />
             </div>
           );
         })}
 
-        {isSending && (
+        {((isSending && !staleAiSend) || (!isSending && isActiveThreadAi && activeRun?.active)) && (
           isActiveThreadAi ? (
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }}>
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <div className="flex items-center gap-2.5 pt-2">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+              {/* Bubble like every other message — flat text read as a
+                  detached strip above the composer (Woody, 2026-08-22). */}
+              <div className="flex-1 min-w-0 max-w-[85%] bg-white border border-border shadow-sm rounded-2xl rounded-tl-md px-4 py-3 space-y-1.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </div>
+                  <span className="text-[14px] text-muted-foreground/70 italic">{streamingProgress || activeRun?.progress || "Thinking..."}</span>
                 </div>
-                <span className="text-[14px] text-gray-400 italic">{streamingProgress || "Thinking..."}</span>
+                {/* Reply writes itself in live — deltas while connected, the
+                    server's partial when re-attaching mid-composition. The
+                    saved message re-renders it with full markdown at the end. */}
+                {(isSending ? streamingText : activeRun?.partial) && (
+                  <p className="text-[15px] text-foreground whitespace-pre-wrap leading-relaxed">
+                    {isSending ? streamingText : activeRun?.partial}
+                  </p>
+                )}
               </div>
             </div>
           ) : (
             <div className="flex justify-start">
-              <div className="bg-white border border-gray-100 shadow-sm rounded-2xl rounded-bl-md px-5 py-4">
+              <div className="bg-white border border-border shadow-sm rounded-2xl rounded-bl-md px-5 py-4">
                 <div className="flex gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: "0ms" }} />
                   <span className="w-2 h-2 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: "150ms" }} />
@@ -2157,18 +2812,22 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
           )
         )}
 
-        {queuedMessage && (
-          <div className="flex justify-end">
-            <div className={`rounded-2xl px-4 py-3 text-[15px] leading-relaxed max-w-[80%] opacity-60 bg-[#1C1917] text-white rounded-br-md`}>
-              <div className="whitespace-pre-wrap break-words">{queuedMessage.text}</div>
-              <div className="text-[11px] mt-1 text-white/60">Queued — will send next</div>
+        {queuedMessages.map((q, i) => (
+          <div key={i} className="flex justify-end">
+            <div className="rounded-2xl px-4 py-3 text-[15px] leading-relaxed max-w-[80%] opacity-60 bg-[hsl(var(--mobile-chrome))] text-white rounded-br-md">
+              <div className="whitespace-pre-wrap break-words">{q.text}</div>
+              <div className="text-[11px] mt-1 text-white/60">
+                {i === 0 ? "Queued — will send next" : `Queued — position ${i + 1}`}
+              </div>
             </div>
           </div>
-        )}
+        ))}
 
         {typingUsers.length > 0 && !isSending && (
-          <div className="text-sm italic px-2 text-gray-400">
-            {typingUsers.length === 1 ? `${typingUsers[0]} is typing...` : `${typingUsers.length} people typing...`}
+          <div className="text-sm italic px-2 text-muted-foreground/70">
+            {typingUsers.length === 1
+              ? `${(typingUsers[0] as any)?.userId === "__chatbgp__" ? "ChatBGP" : allUsers?.find(u => u.id === (typingUsers[0] as any)?.userId)?.name?.split(" ")[0] || "Someone"} is typing...`
+              : `${typingUsers.length} people typing...`}
           </div>
         )}
         </div>
@@ -2176,35 +2835,74 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
         {showScrollBottom && (
           <button
             onClick={() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })}
-            className="absolute bottom-4 right-4 w-10 h-10 rounded-full bg-white border border-gray-200 shadow-lg flex items-center justify-center z-10 active:bg-gray-50"
+            className="absolute bottom-4 right-4 w-10 h-10 rounded-full bg-white border border-border shadow-lg flex items-center justify-center z-10 active:bg-muted"
             data-testid="button-scroll-to-bottom"
           >
-            <ChevronDown className="w-5 h-5 text-gray-600" />
+            <ChevronDown className="w-5 h-5 text-muted-foreground" />
           </button>
         )}
       </div>
 
-      {mentionQuery !== null && mentionUsers.length > 0 && (
-        <div className="border-t px-4 py-2 max-h-[200px] overflow-y-auto bg-white">
-          {mentionUsers.map((u, i) => (
-            <button
-              key={u.id}
-              onClick={() => handleMentionSelect(u)}
-              className={`w-full text-left px-4 py-3 rounded-lg text-[15px] ${i === mentionIndex ? "bg-gray-100" : ""}`}
-            >
-              {u.name}
-            </button>
-          ))}
+      {mentionQuery !== null && mentionOptions.length > 0 && (
+        <div className="border-t max-h-[240px] overflow-y-auto bg-white">
+          {mentionOptions.map((opt, i) => {
+            const groupOf = (o: typeof opt) =>
+              o.kind === "chatbgp" ? "AI" :
+              o.kind === "user" ? "People" :
+              o.type === "company" ? "Brands & companies" :
+              o.type === "property" ? "Properties" :
+              o.type === "deal" ? "Deals" :
+              o.type === "unit" ? "Letting tracker" :
+              o.type === "folder" ? "Folders" : "Contacts";
+            const group = groupOf(opt);
+            const showHeader = i === 0 || groupOf(mentionOptions[i - 1]) !== group;
+            const optKey = opt.kind === "chatbgp" ? "chatbgp" : `${opt.kind === "entity" ? opt.type : "user"}-${opt.id}`;
+            return (
+              <div key={optKey}>
+                {showHeader && (
+                  <p className="px-4 pt-2 pb-1 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-wider bg-muted/50">{group}</p>
+                )}
+                <button
+                  onClick={() => handleOptionSelect(opt)}
+                  className={`w-full flex items-center gap-2.5 text-left px-4 py-3 text-[15px] ${i === mentionIndex ? "bg-muted" : ""}`}
+                  data-testid={`mobile-mention-${optKey}`}
+                >
+                  {opt.kind === "chatbgp" ? (
+                    <span className="w-7 h-7 rounded-full bg-gradient-to-br from-gray-800 to-black flex items-center justify-center shrink-0">
+                      <Sparkles className="w-3.5 h-3.5 text-white" />
+                    </span>
+                  ) : opt.kind === "entity" ? (
+                    (() => {
+                      const Icon = TAG_META[opt.type]?.icon || Building2;
+                      return (
+                        <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${TAG_META[opt.type]?.chip || "bg-muted"}`}>
+                          <Icon className="w-3.5 h-3.5" />
+                        </span>
+                      );
+                    })()
+                  ) : (
+                    <span className="w-7 h-7 rounded-full bg-muted flex items-center justify-center shrink-0 text-[11px] font-semibold">
+                      {opt.name.split(" ").map(n => n[0]).join("").slice(0, 2)}
+                    </span>
+                  )}
+                  <span className="flex-1 min-w-0">
+                    <span className="block truncate">{opt.kind === "chatbgp" ? "ChatBGP" : opt.name}</span>
+                    {opt.kind === "entity" && opt.subtitle && <span className="block text-[12px] text-muted-foreground truncate">{opt.subtitle}</span>}
+                  </span>
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
       {selectedCheckboxes.length > 0 && (
         <div className="border-t px-4 py-2.5 flex items-center justify-between shrink-0 bg-white">
-          <span className="text-[14px] text-gray-600">{selectedCheckboxes.length} selected</span>
+          <span className="text-[14px] text-muted-foreground">{selectedCheckboxes.length} selected</span>
           <div className="flex gap-2">
             <button
               onClick={() => setSelectedCheckboxes([])}
-              className="px-4 py-2 text-[14px] rounded-xl border border-gray-200 text-gray-600 active:bg-gray-100"
+              className="px-4 py-2 text-[14px] rounded-xl border border-border text-muted-foreground active:bg-muted"
               data-testid="button-clear-checkboxes"
             >
               Clear
@@ -2212,7 +2910,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
             <button
               onClick={handleSendCheckboxes}
               disabled={isSending}
-              className="px-4 py-2 text-[14px] rounded-xl flex items-center gap-1.5 bg-[#1C1917] text-white active:bg-gray-800 disabled:bg-gray-300"
+              className="px-4 py-2 text-[14px] rounded-xl flex items-center gap-1.5 bg-[hsl(var(--mobile-chrome))] text-white active:bg-gray-800 disabled:bg-gray-300"
               data-testid="button-send-checkboxes"
             >
               <Send className="w-3.5 h-3.5" />
@@ -2230,18 +2928,18 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
               return preview ? (
                 <div key={i} className="relative shrink-0">
                   <img src={preview} alt={f.name} className="w-16 h-16 rounded-xl object-cover" />
-                  <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[#1C1917] text-white">
+                  <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(var(--mobile-chrome))] text-white">
                     <X className="w-3 h-3" />
                   </button>
                 </div>
               ) : (
-                <div key={i} className="relative shrink-0 flex items-center gap-1.5 rounded-xl px-3 py-2 h-16 bg-gray-100">
-                  <FileIcon className="w-4 h-4 text-gray-500" />
+                <div key={i} className="relative shrink-0 flex items-center gap-1.5 rounded-xl px-3 py-2 h-16 bg-muted">
+                  <FileIcon className="w-4 h-4 text-muted-foreground" />
                   <div className="max-w-[100px]">
                     <div className="text-xs font-medium truncate">{f.name}</div>
-                    <div className="text-[10px] text-gray-400">{formatFileSize(f.size)}</div>
+                    <div className="text-[10px] text-muted-foreground/70">{formatFileSize(f.size)}</div>
                   </div>
-                  <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[#1C1917] text-white">
+                  <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(var(--mobile-chrome))] text-white">
                     <X className="w-3 h-3" />
                   </button>
                 </div>
@@ -2250,19 +2948,19 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
           </div>
         )}
         {uploading && (
-          <div className="flex items-center gap-2 mb-2 px-2 text-sm text-gray-500">
-            <div className="w-4 h-4 border-2 rounded-full animate-spin border-gray-300 border-t-black" />
+          <div className="flex items-center gap-2 mb-2 px-2 text-sm text-muted-foreground">
+            <div className="w-4 h-4 border-2 rounded-full animate-spin border-border border-t-black" />
             Uploading...
           </div>
         )}
         {showLinkSearch && (
-          <div className="bg-white border-t border-gray-200 p-3">
+          <div className="bg-white border-t border-border p-3">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-gray-700">
+              <span className="text-sm font-semibold text-muted-foreground">
                 Link {showLinkSearch === "property" ? "Property" : "Deal"}
               </span>
               <button onClick={() => { setShowLinkSearch(null); setLinkSearchQuery(""); }} className="p-1">
-                <X className="w-4 h-4 text-gray-400" />
+                <X className="w-4 h-4 text-muted-foreground/70" />
               </button>
             </div>
             <Input
@@ -2284,23 +2982,23 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                       id: String(item.id),
                       name: displayName,
                     })}
-                    className="flex items-center gap-2 w-full px-3 py-2.5 text-left text-sm hover:bg-gray-50 active:bg-gray-100 rounded-lg"
+                    className="flex items-center gap-2 w-full px-3 py-2.5 text-left text-sm hover:bg-muted active:bg-muted rounded-lg"
                     data-testid={`link-result-${item.id}`}
                   >
                     {showLinkSearch === "property" ? (
-                      <Building className="w-4 h-4 text-gray-400 shrink-0" />
+                      <Building className="w-4 h-4 text-muted-foreground/70 shrink-0" />
                     ) : (
-                      <Handshake className="w-4 h-4 text-gray-400 shrink-0" />
+                      <Handshake className="w-4 h-4 text-muted-foreground/70 shrink-0" />
                     )}
                     <span className="truncate">{displayName}</span>
                   </button>
                 );
               })}
               {linkSearchQuery.length >= 1 && (!linkSearchResults || linkSearchResults.length === 0) && (
-                <div className="text-sm text-gray-400 text-center py-3">No results found</div>
+                <div className="text-sm text-muted-foreground/70 text-center py-3">No results found</div>
               )}
               {linkSearchQuery.length < 1 && (
-                <div className="text-sm text-gray-400 text-center py-3">Type to search</div>
+                <div className="text-sm text-muted-foreground/70 text-center py-3">Type to search</div>
               )}
             </div>
           </div>
@@ -2319,8 +3017,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
           </div>
         ) : isActiveThreadAi ? (
           <div className="flex items-end gap-2">
-            <div className="flex-1 flex items-end rounded-[22px] border border-gray-200/80 bg-white shadow-sm overflow-hidden">
-              <div className="p-2.5 text-gray-400 active:text-gray-600 cursor-pointer relative overflow-hidden shrink-0" data-testid="button-mobile-photo" style={{ minWidth: 36, minHeight: 36 }}>
+            <div className="flex-1 flex items-end rounded-[22px] border border-border/80 bg-white shadow-sm overflow-hidden">
+              <div className="p-2.5 text-muted-foreground/70 active:text-muted-foreground cursor-pointer relative overflow-hidden shrink-0" data-testid="button-mobile-photo" style={{ minWidth: 36, minHeight: 36 }}>
                 <Plus className="w-5 h-5 pointer-events-none" />
                 <input
                   ref={imageInputRef}
@@ -2342,7 +3040,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder="Reply to ChatBGP..."
-                className="flex-1 min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent text-[16px] py-3 pr-3 pl-0 text-gray-900 placeholder:text-gray-400 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none"
+                className="flex-1 min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent text-[16px] py-3 pr-3 pl-0 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none"
                 rows={1}
                 data-testid="input-mobile-chat"
               />
@@ -2354,15 +3052,15 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 </button>
               )
             ) : (
-              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} data-testid="button-mobile-send" aria-label="Send message">
+              <button onClick={handleSend} disabled={uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} data-testid="button-mobile-send" aria-label="Send message">
                 <Send className="w-[18px] h-[18px] text-white" />
               </button>
             )}
           </div>
         ) : (
           <div className="flex items-end gap-2">
-            <div className="flex-1 flex items-end rounded-[22px] border border-gray-200/80 bg-white shadow-sm overflow-hidden">
-              <div className="p-2.5 text-gray-400 active:text-gray-600 cursor-pointer relative overflow-hidden shrink-0" data-testid="button-mobile-photo" style={{ minWidth: 36, minHeight: 36 }}>
+            <div className="flex-1 flex items-end rounded-[22px] border border-border/80 bg-white shadow-sm overflow-hidden">
+              <div className="p-2.5 text-muted-foreground/70 active:text-muted-foreground cursor-pointer relative overflow-hidden shrink-0" data-testid="button-mobile-photo" style={{ minWidth: 36, minHeight: 36 }}>
                 <Image className="w-5 h-5 pointer-events-none" />
                 <input
                   ref={imageInputRef}
@@ -2378,10 +3076,17 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                   }}
                 />
               </div>
-              <div className="relative shrink-0">
+              <div className="shrink-0">
                 <button
-                  onClick={() => setShowLinkMenu(prev => !prev)}
-                  className="p-2.5 text-gray-400 active:text-gray-600 cursor-pointer"
+                  onClick={(e) => {
+                    // Menu must be fixed-positioned: the composer box is
+                    // overflow-hidden, which silently clipped an absolute
+                    // dropdown to nothing (Woody, 2026-08-29).
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setLinkMenuPos({ left: Math.max(8, r.left), bottom: window.innerHeight - r.top + 8 });
+                    setShowLinkMenu(prev => !prev);
+                  }}
+                  className="p-2.5 text-muted-foreground/70 active:text-muted-foreground cursor-pointer"
                   data-testid="button-mobile-attach"
                   style={{ minWidth: 36, minHeight: 36 }}
                 >
@@ -2390,26 +3095,26 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 {showLinkMenu && (
                   <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowLinkMenu(false)} />
-                  <div className="absolute bottom-12 left-0 bg-white rounded-xl shadow-lg border border-gray-200 py-1 w-52 z-50">
+                  <div className="fixed bg-white rounded-xl shadow-lg border border-border py-1 w-52 z-50" style={{ left: linkMenuPos.left, bottom: linkMenuPos.bottom }} data-testid="mobile-attach-menu">
                     <button
                       onClick={() => { setShowLinkSearch("property"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
-                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
+                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-muted active:bg-muted"
                       data-testid="button-link-property"
                     >
-                      <Building className="w-5 h-5 text-gray-600" />
+                      <Building className="w-5 h-5 text-muted-foreground" />
                       <span>Link Property</span>
                     </button>
                     <button
                       onClick={() => { setShowLinkSearch("deal"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
-                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
+                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-muted active:bg-muted"
                       data-testid="button-link-deal"
                     >
-                      <Handshake className="w-5 h-5 text-gray-600" />
+                      <Handshake className="w-5 h-5 text-muted-foreground" />
                       <span>Link Deal</span>
                     </button>
-                    <div className="border-t border-gray-100 my-1" />
-                    <label className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100 cursor-pointer">
-                      <FileIcon className="w-5 h-5 text-gray-600" />
+                    <div className="border-t border-border my-1" />
+                    <label className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-muted active:bg-muted cursor-pointer">
+                      <FileIcon className="w-5 h-5 text-muted-foreground" />
                       <span>Attach File</span>
                       <input
                         ref={fileInputRef}
@@ -2434,7 +3139,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder="Message..."
-                className="flex-1 min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent text-[16px] py-3 pr-3 pl-0 text-gray-900 placeholder:text-gray-400 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none"
+                className="flex-1 min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent text-[16px] py-3 pr-3 pl-0 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none"
                 rows={1}
                 data-testid="input-mobile-chat"
               />
@@ -2446,7 +3151,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 </button>
               )
             ) : (
-              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0 bg-[#1C1917]" data-testid="button-mobile-send" aria-label="Send message">
+              <button onClick={handleSend} disabled={uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0 bg-[hsl(var(--mobile-chrome))]" data-testid="button-mobile-send" aria-label="Send message">
                 <Send className="w-[18px] h-[18px] text-white" />
               </button>
             )}
@@ -2466,6 +3171,41 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AlertDialog open={confirmUnlink} onOpenChange={setConfirmUnlink}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove linked {activeThread?.linkedType || "record"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              This only removes {activeThread?.linkedName ? `"${activeThread.linkedName}"` : "the link"} from this chat's header — the {activeThread?.linkedType || "record"} itself stays in the CRM.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              onClick={async () => {
+                setConfirmUnlink(false);
+                try {
+                  await apiRequest("PUT", `/api/chat/threads/${threadId}`, {
+                    linkedType: null, linkedId: null, linkedName: null,
+                    propertyId: null, propertyName: null,
+                  });
+                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+                  toast({ title: "Link removed from chat" });
+                } catch (err: any) {
+                  toast({ title: "Couldn't remove the link", description: err?.message, variant: "destructive" });
+                }
+              }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {threadId && (
+        <ThreadMediaDialog threadId={threadId} open={showThreadMedia} onOpenChange={setShowThreadMedia} />
+      )}
     </div>
   );
 }
@@ -2513,12 +3253,12 @@ function MobileDocumentStudio() {
       backgroundColor: "#FFFCF5",
       elements: [
         { id: "bar", type: "shape", x: 0, y: 0, width: 595, height: 6, backgroundColor: accent, zIndex: 0 },
-        { id: "logo", type: "text", x: 40, y: 24, width: 200, height: 16, content: "BRUCE GILLINGHAM POLLARD", fontSize: 8, fontFamily: "Arial, sans-serif", fontWeight: "700", color: "#232323", zIndex: 1 },
-        { id: "line1", type: "shape", x: 40, y: 46, width: 515, height: 1, backgroundColor: "#E8E6DF", zIndex: 1 },
-        ...titleLines.map((t, i) => ({ id: `t${i}`, type: "text", x: 40, y: 70 + i * 32, width: 515, height: 30, content: t, fontSize: 22, fontFamily: "Arial, sans-serif", fontWeight: "700", color: "#232323", zIndex: 2 })),
+        { id: "logo", type: "text", x: 40, y: 24, width: 200, height: 16, content: "BRUCE GILLINGHAM POLLARD", fontSize: 8, fontFamily: "Arial, sans-serif", fontWeight: "700", color: "#6e0c25", zIndex: 1 },
+        { id: "line1", type: "shape", x: 40, y: 46, width: 515, height: 1, backgroundColor: "#e4d8d3", zIndex: 1 },
+        ...titleLines.map((t, i) => ({ id: `t${i}`, type: "text", x: 40, y: 70 + i * 32, width: 515, height: 30, content: t, fontSize: 22, fontFamily: "Arial, sans-serif", fontWeight: "700", color: "#6e0c25", zIndex: 2 })),
         { id: "accentbar", type: "shape", x: 40, y: 70 + titleLines.length * 32 + 8, width: 60, height: 3, backgroundColor: accent, zIndex: 2 },
         ...sections.map((s, i) => ({ id: `s${i}`, type: "text", x: 40, y: 70 + titleLines.length * 32 + 28 + i * 18, width: 515, height: 16, content: s, fontSize: 9, fontFamily: "Arial, sans-serif", color: "#666666", zIndex: 2 })),
-        { id: "footer", type: "shape", x: 0, y: 820, width: 595, height: 22, backgroundColor: "#232323", zIndex: 3 },
+        { id: "footer", type: "shape", x: 0, y: 820, width: 595, height: 22, backgroundColor: "#6e0c25", zIndex: 3 },
         { id: "ftext", type: "text", x: 40, y: 824, width: 300, height: 12, content: "Bruce Gillingham Pollard  |  London", fontSize: 7, fontFamily: "Arial, sans-serif", color: "#FFFFFF", zIndex: 4 },
       ]
     }]
@@ -2542,30 +3282,30 @@ function MobileDocumentStudio() {
   return (
     <div className="flex-1 overflow-y-auto px-4">
       <div className="flex items-center gap-3 mb-5">
-        <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center shrink-0">
-          <Sparkles className="w-5 h-5 text-blue-600" />
+        <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center shrink-0">
+          <Sparkles className="w-5 h-5 text-primary" />
         </div>
         <div>
-          <h2 className="text-[18px] font-semibold text-gray-900 tracking-tight">Document Studio</h2>
-          <p className="text-[13px] text-gray-500">Tap a template to generate on desktop</p>
+          <h2 className="text-[18px] font-semibold text-foreground tracking-tight">Document Studio</h2>
+          <p className="text-[13px] text-muted-foreground">Tap a template to generate on desktop</p>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         {docTypes.map((doc, i) => (
           <div
             key={i}
-            className="rounded-2xl border border-gray-100 shadow-sm overflow-hidden bg-white active:bg-gray-50 transition-colors"
+            className="rounded-2xl border border-border shadow-sm overflow-hidden bg-white active:bg-muted transition-colors"
             onClick={() => {
               navigate("/templates");
               toast({ title: "Opening Document Studio", description: `Open "${doc.label}" on desktop for full editing` });
             }}
             data-testid={`mobile-doc-${i}`}
           >
-            <div className="flex items-center justify-center py-3.5 bg-[#f8f7f4] border-b border-gray-100">
+            <div className="flex items-center justify-center py-3.5 bg-[#f8f7f4] border-b border-border">
               <MobileDocPreview design={doc.preview} scale={0.1} />
             </div>
             <div className="px-3.5 py-3">
-              <div className="text-[14px] font-semibold text-gray-900 leading-tight tracking-tight">{doc.label}</div>
+              <div className="text-[14px] font-semibold text-foreground leading-tight tracking-tight">{doc.label}</div>
             </div>
           </div>
         ))}
@@ -2576,11 +3316,37 @@ function MobileDocumentStudio() {
 
 export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" | "ai" | "today" | "menu" }) {
   const { theme, toggleTheme, colorScheme, setColorScheme } = useTheme();
-  const [tab, setTab] = useState<"chats" | "ai" | "today" | "menu">(initialTab);
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
-  const [activeThreadAi, setActiveThreadAi] = useState(initialTab === "ai");
+  // Restore the open thread across remounts — tapping out to a brand page
+  // and back to ChatBGP was landing on a fresh chat, losing the thread.
+  // sessionStorage (not local) so a new browser session starts clean.
+  const restored = (() => {
+    if (initialTab !== "ai") return null;
+    try { return sessionStorage.getItem("mobile-chat-thread"); } catch { return null; }
+  })();
+  // A BARE open of /chatbgp (cold start / iOS relaunch state-restore) lands
+  // on the Messages LIST, not inside a conversation (Woody, 2026-08-23:
+  // "the messages page rather than last message"). Deliberate entries still
+  // open the chat: the home "Ask ChatBGP…" button passes ?ask=1, push
+  // notifications pass ?thread=, and in-session restores carry the marker.
+  const bareAiOpen = (() => {
+    if (initialTab !== "ai" || restored) return false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("ask") !== "1" && !params.get("thread");
+    } catch { return true; }
+  })();
+  const [tab, setTab] = useState<"chats" | "ai" | "today" | "menu">(bareAiOpen ? "chats" : initialTab);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(restored);
+  const [activeThreadAi, setActiveThreadAi] = useState(() => {
+    if (restored) { try { return sessionStorage.getItem("mobile-chat-thread-ai") !== "0"; } catch { return true; } }
+    return initialTab === "ai";
+  });
   const [showNewGroup, setShowNewGroup] = useState(false);
-  const [showChat, setShowChat] = useState(initialTab === "ai");
+  const [showChat, setShowChat] = useState(initialTab === "ai" && !bareAiOpen);
+  // True only when the chat was opened from MobileApp's own conversation
+  // list. When entered directly (ChatBGP nav → chat), back leaves the old
+  // shell and returns to the new app instead of exposing the list.
+  const [chatFromList, setChatFromList] = useState(false);
   const [chatSearch, setChatSearch] = useState("");
   const [moreSubTab, setMoreSubTab] = useState<MoreSubTab>("tracker");
   const [peopleToggle, setPeopleToggle] = useState<"contacts" | "companies">("contacts");
@@ -2606,6 +3372,33 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+  // Client logins (Landsec) have no internal team chats — hide the
+  // switch-to-chats affordances, matching the desktop shell.
+  const isClientUser = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
+
+  // Strip ?ask=1 once consumed so an iOS relaunch of the saved URL doesn't
+  // re-open the chat after the user has backed out to the list.
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get("ask") === "1") {
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch {}
+  }, []);
+
+  // Keep the open-thread marker current so back-from-a-brand restores it.
+  // Backing out to the list (showChat false) is an explicit exit — clear.
+  useEffect(() => {
+    try {
+      if (showChat && activeThreadId) {
+        sessionStorage.setItem("mobile-chat-thread", activeThreadId);
+        sessionStorage.setItem("mobile-chat-thread-ai", activeThreadAi ? "1" : "0");
+      } else {
+        sessionStorage.removeItem("mobile-chat-thread");
+        sessionStorage.removeItem("mobile-chat-thread-ai");
+      }
+    } catch {}
+  }, [showChat, activeThreadId, activeThreadAi]);
 
   const { data: threads } = useQuery<ThreadData[]>({
     queryKey: ["/api/chat/threads"],
@@ -2617,6 +3410,71 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     queryFn: getQueryFn({ on401: "throw" }),
     refetchInterval: 15000,
   });
+
+  // Message push — the server already notifies thread members on every new
+  // message; this makes sure THIS device is actually subscribed. iOS only
+  // grants permission from a user gesture, hence the Enable banner.
+  const { subscribe: subscribePush, isSubscribed: pushSubscribed, isSupported: pushSupported, permission: pushPermission } = usePushNotifications();
+
+  // Bottom-nav sparkle tapped while the chat screen is already mounted —
+  // reset to a fresh greeting (the nav clears the session marker itself
+  // for the fresh-mount case).
+  useEffect(() => {
+    const onNewChat = () => {
+      returnTabRef.current = "chats";
+      setActiveThreadId(null);
+      setActiveThreadAi(true);
+      setChatFromList(false);
+      setShowChat(true);
+    };
+    window.addEventListener("chatbgp-new-chat", onNewChat);
+    return () => window.removeEventListener("chatbgp-new-chat", onNewChat);
+  }, []);
+
+  // Push-notification deep link (/chatbgp?thread=<id>) — open that thread
+  // once the list has loaded, then clean the URL.
+  const deepLinkedRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkedRef.current || !threads?.length) return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tid = params.get("thread");
+      if (!tid) { deepLinkedRef.current = true; return; }
+      deepLinkedRef.current = true;
+      const t = threads.find(x => x.id === tid);
+      if (t) {
+        returnTabRef.current = "chats";
+        setActiveThreadId(t.id);
+        setActiveThreadAi(t.isAiChat);
+        setChatFromList(true);
+        setShowChat(true);
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch {}
+  }, [threads]);
+
+  // Opening ChatBGP lands on the MAIN (most recent) conversation, not a
+  // fresh greeting (Woody, 2026-08-23). Runs once when the thread list
+  // arrives, and only if nothing else has picked a thread — a session
+  // restore, a push deep link (?thread=), or the user tapping "+" all win.
+  const adoptedLastAiRef = useRef(false);
+  useEffect(() => {
+    if (adoptedLastAiRef.current) return;
+    if (initialTab !== "ai" || restored || activeThreadId || !showChat) { adoptedLastAiRef.current = true; return; }
+    try {
+      if (new URLSearchParams(window.location.search).get("thread")) { adoptedLastAiRef.current = true; return; }
+    } catch {}
+    if (!threads?.length) return;
+    adoptedLastAiRef.current = true;
+    const lastAi = threads
+      .filter(t => t.isAiChat)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+    if (lastAi) {
+      setActiveThreadId(lastAi.id);
+      setActiveThreadAi(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threads]);
 
   const { data: allUsers } = useQuery<Array<{ id: string; name: string; username: string; team?: string | null }>>({
     queryKey: ["/api/users"],
@@ -2778,6 +3636,28 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     enabled: tab === "menu" && moreSubTab === "news",
   });
 
+  // Dismiss a news article so it disappears from the feed. Optimistic
+  // update + server delete; the source itself can be removed via the
+  // News Sources tab if a whole feed is noisy.
+  const dismissNewsMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/news-feed/articles/${id}`, { method: "DELETE", credentials: "include" });
+      if (!r.ok) throw new Error(`Couldn't dismiss (${r.status})`);
+    },
+    onMutate: async (id: string) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/news-feed/articles"] });
+      const prev = queryClient.getQueryData<any[]>(["/api/news-feed/articles"]);
+      queryClient.setQueryData<any[]>(["/api/news-feed/articles"], (cur) => (cur || []).filter((a) => a.id !== id));
+      return { prev };
+    },
+    onError: (_e, _id, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(["/api/news-feed/articles"], ctx.prev);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/news-feed/articles"] });
+    },
+  });
+
   const { data: reqsLeasing, isLoading: reqsLeasingLoading } = useQuery<Array<{
     id: string; name: string; status: string | null; groupName: string | null;
     use: string[] | null; size: string[] | null; requirementLocations: string[] | null;
@@ -2935,24 +3815,57 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     const other: ThreadData[] = [];
     for (const t of (threads || [])) {
       if (t.isAiChat) ai.push(t);
-      else if (t.members.length > 0) {
+      else {
+        // Show every conversation the user belongs to — the old "2+ other
+        // members" rule hid 1:1 threads from the mobile list entirely. Only
+        // your own empty, member-less drafts stay hidden.
         const otherMembers = t.members.filter(m => m.id !== currentUser?.id);
-        if (otherMembers.length > 1) team.push(t);
+        if (otherMembers.length === 0 && t.createdBy === currentUser?.id && !t.lastMessage) continue;
+        team.push(t);
       }
     }
     return { teamThreads: team, aiThreads: ai, otherThreads: other };
   }, [threads, currentUser?.id]);
 
+  // WhatsApp-style chips over the Messages list — All is the one inbox
+  // (team chats + saved ChatBGP threads by recency); Unread/Groups/AI slice it.
+  const [chatChip, setChatChip] = useState<"all" | "unread" | "groups" | "ai">("all");
+  // WhatsApp-style archive: ids live locally per device — archiving tidies
+  // your list without deleting anything for anyone else.
+  const [archivedIds, setArchivedIds] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("mobile-archived-threads") || "[]"); } catch { return []; }
+  });
+  const [showArchived, setShowArchived] = useState(false);
+  const toggleArchived = useCallback((id: string) => {
+    setArchivedIds(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      try { localStorage.setItem("mobile-archived-threads", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
   const filteredTeamThreads = useMemo(() => {
-    if (!chatSearch.trim()) return teamThreads;
+    let base: ThreadData[];
+    if (chatChip === "ai") base = aiThreads.filter(t => !!(t.title || t.lastMessage));
+    else if (chatChip === "groups") base = teamThreads.filter(t => t.members.filter(m => m.id !== currentUser?.id).length > 1);
+    else if (chatChip === "unread") base = teamThreads.filter(t => {
+      const me = t.members.find(m => m.id === currentUser?.id);
+      return me ? !me.seen : false;
+    });
+    // "All" = PEOPLE (Woody, 2026-08-20: "the AI chats are overtaking the
+    // main ones") — ChatBGP keeps its single pinned row; the full AI
+    // history lives under the AI chip.
+    else base = teamThreads;
+    base = [...base].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    if (!chatSearch.trim()) return base;
     const q = chatSearch.toLowerCase();
-    return teamThreads.filter(t =>
+    return base.filter(t =>
       t.title?.toLowerCase().includes(q) ||
       t.linkedName?.toLowerCase().includes(q) ||
       t.lastMessage?.content?.toLowerCase().includes(q) ||
       t.members.some(m => m.name?.toLowerCase().includes(q))
     );
-  }, [teamThreads, chatSearch]);
+  }, [teamThreads, aiThreads, chatSearch, chatChip, currentUser?.id]);
 
   const filteredOtherThreads = useMemo(() => {
     if (!chatSearch.trim()) return otherThreads;
@@ -3022,15 +3935,35 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     } catch {}
   };
 
+  // One WhatsApp-style Messages surface (Woody, 2026-08-05, "change it for
+  // everyone"): ChatBGP is the pinned top conversation of the unified list,
+  // and back from any conversation returns to the screen it was opened from.
+  const returnTabRef = useRef<"chats" | "ai">("chats");
+
   const openThread = (thread: ThreadData) => {
+    returnTabRef.current = tab === "ai" ? "ai" : "chats";
     setActiveThreadId(thread.id);
     setActiveThreadAi(thread.isAiChat);
+    setChatFromList(true);
     setShowChat(true);
   };
 
   const openNewAiChat = () => {
+    returnTabRef.current = tab === "ai" ? "ai" : "chats";
     setActiveThreadId(null);
     setActiveThreadAi(true);
+    setShowChat(true);
+    setShowMobileMarketingFiles(false);
+  };
+
+  // Pinned ChatBGP row — always opens a FRESH AI chat (Woody, 2026-08-18:
+  // resuming the latest conversation here surprised him — old threads are
+  // one tap away via the History button on the row).
+  const openChatBgpPinned = () => {
+    returnTabRef.current = "chats";
+    setActiveThreadId(null);
+    setActiveThreadAi(true);
+    setChatFromList(true);
     setShowChat(true);
     setShowMobileMarketingFiles(false);
   };
@@ -3072,8 +4005,25 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
       <MobileChatView
         threadId={activeThreadId}
         isAiChat={activeThreadAi}
-        onBack={() => { setShowChat(false); setActiveThreadId(null); queryClient.invalidateQueries({ queryKey: ["/api/chat/notifications"] }); }}
+        onBack={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/chat/notifications"] });
+          // Return to wherever the conversation was opened from — the
+          // unified Messages list normally, the ChatBGP history sub-screen
+          // when browsing old AI threads.
+          setActiveThreadId(null);
+          setShowChat(false);
+          setChatFromList(false);
+          setTab(returnTabRef.current);
+        }}
         onNewChat={openNewAiChat}
+        onTeamChats={() => {
+          // Jump from ChatBGP to the unified Messages list.
+          queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+          setActiveThreadId(null);
+          setShowChat(false);
+          setChatFromList(false);
+          setTab("chats");
+        }}
         currentUser={currentUser ?? null}
       />
     );
@@ -3092,12 +4042,45 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
   return (
     <div className="flex flex-col w-screen bg-[#FAF9F7] overflow-x-hidden fixed inset-0">
-      <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] shrink-0">
+      <div className="bg-[hsl(var(--mobile-chrome))] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] shrink-0">
         <div className="flex items-center justify-between px-5 pb-3">
-          <h1 className="text-[22px] font-semibold tracking-tight">
-            {tab === "chats" ? "Chats" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : tab === "today" ? "Today" : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : moreSubTab === "reqs" ? "Requirements" : moreSubTab === "news" ? "News" : "Docs"}
-          </h1>
+          <div className="flex items-center gap-2 min-w-0">
+            {tab === "ai" && (
+              <button
+                onClick={() => { setTab("chats"); setChatSearch(""); }}
+                className="w-9 h-9 -ml-2 rounded-full flex items-center justify-center active:bg-white/10 shrink-0"
+                data-testid="button-mobile-chats-back"
+                aria-label="Back to Messages"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
+            <h1 className="text-[22px] font-semibold tracking-tight truncate">
+              {tab === "chats" ? "Messages" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : tab === "today" ? "Today" : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : moreSubTab === "reqs" ? "Requirements" : moreSubTab === "news" ? "News" : "Docs"}
+            </h1>
+          </div>
           <div className="flex items-center gap-2">
+            {tab === "ai" && (
+              <button onClick={() => { setTab("chats"); setChatSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-switch-team-chats" aria-label="Messages">
+                <MessageCircle className="w-5 h-5" />
+              </button>
+            )}
+            {tab === "chats" && (
+              <button
+                onClick={() => navigate("/m/profile")}
+                className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:opacity-80 overflow-hidden"
+                data-testid="button-mobile-my-profile"
+                aria-label="My profile"
+              >
+                {(currentUser as any)?.profilePicUrl ? (
+                  <img src={(currentUser as any).profilePicUrl} alt="Me" className="w-10 h-10 rounded-full object-cover" />
+                ) : (
+                  <span className="text-[13px] font-semibold">
+                    {(currentUser?.name || "?").split(/\s+/).map(p => p[0]).slice(0, 2).join("").toUpperCase()}
+                  </span>
+                )}
+              </button>
+            )}
             {tab === "chats" && (
               <button onClick={() => setShowNewGroup(true)} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-mobile-new-group">
                 <Plus className="w-5 h-5" />
@@ -3126,14 +4109,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                     onClick={() => { setShowMobileNewProperty(true); setMobileNewPropSelectedId(""); setMobileNewPropSearch(""); setMobileNewPropLinkType("property"); }}
                     data-testid="menu-new-property-chat"
                   >
-                    <Building2 className="w-4 h-4 mr-2 text-gray-600" />
+                    <Building2 className="w-4 h-4 mr-2 text-muted-foreground" />
                     New chat about a property
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => { setShowMobileNewProperty(true); setMobileNewPropSelectedId(""); setMobileNewPropSearch(""); setMobileNewPropLinkType("deal"); }}
                     data-testid="menu-new-deal-chat"
                   >
-                    <Handshake className="w-4 h-4 mr-2 text-gray-600" />
+                    <Handshake className="w-4 h-4 mr-2 text-muted-foreground" />
                     New chat about a deal
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -3178,17 +4161,17 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
         {tab === "chats" && (
           <div className="px-4 pt-3 pb-2">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
               <Input
                 value={chatSearch}
                 onChange={(e) => setChatSearch(e.target.value)}
                 placeholder="Search chats..."
-                className="h-10 pl-9 pr-9 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-gray-400"
+                className="h-10 pl-9 pr-9 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-muted-foreground/70"
                 data-testid="input-mobile-chat-search"
               />
               {chatSearch && (
                 <button onClick={() => setChatSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <X className="w-4 h-4 text-gray-400" />
+                  <X className="w-4 h-4 text-muted-foreground/70" />
                 </button>
               )}
             </div>
@@ -3197,24 +4180,133 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
         {tab === "chats" && (
           <div>
-            {[...filteredTeamThreads, ...filteredOtherThreads].length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
-                  <MessageCircle className="w-10 h-10 text-gray-300" />
-                </div>
-                <p className="text-lg text-gray-400">{chatSearch ? "No chats found" : "No conversations yet"}</p>
-                {!chatSearch && (
-                  <Button variant="outline" size="lg" className="h-12 text-base rounded-xl border-gray-200" onClick={() => setShowNewGroup(true)} data-testid="button-mobile-empty-new-group">
-                    <Users className="w-5 h-5 mr-2" /> New Chat
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <div>
-                {filteredTeamThreads.map(t => <MobileThreadCard key={t.id} thread={t} onClick={() => openThread(t)} currentUserId={currentUser?.id} onDelete={handleDeleteThread} userPics={userPics} />)}
-                {filteredOtherThreads.map(t => <MobileThreadCard key={t.id} thread={t} onClick={() => openThread(t)} currentUserId={currentUser?.id} onDelete={handleDeleteThread} userPics={userPics} />)}
+            {/* One-tap notification opt-in — iOS only grants push from a
+                user gesture, so the automatic subscribe can't do it. */}
+            {pushSupported && !pushSubscribed && pushPermission !== "denied" && !chatSearch && (
+              <div className="mx-4 mb-2 flex items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2" data-testid="mobile-push-banner">
+                <Bell className="w-4 h-4 text-amber-600 shrink-0" />
+                <span className="text-[12px] text-amber-900 flex-1 leading-snug">Get notified when a message arrives</span>
+                <button
+                  onClick={() => subscribePush()}
+                  className="text-[12px] font-semibold text-amber-700 px-2.5 py-1 rounded-lg bg-amber-100 active:bg-amber-200 shrink-0"
+                  data-testid="button-enable-push"
+                >
+                  Enable
+                </button>
               </div>
             )}
+
+            {/* Filter chips — All / Unread / Groups / AI, WhatsApp-style. */}
+            <div className="flex items-center gap-1.5 px-4 pb-2">
+              {([
+                { key: "all", label: "All" },
+                { key: "unread", label: "Unread" },
+                { key: "groups", label: "Groups" },
+                { key: "ai", label: "AI" },
+              ] as const).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setChatChip(key)}
+                  data-no-min-touch
+                  className={`px-2.5 py-[5px] rounded-full text-[11px] leading-none font-semibold uppercase tracking-wide transition-colors border ${
+                    chatChip === key
+                      ? "bg-[hsl(var(--mobile-chrome))] text-white border-transparent"
+                      : "bg-white text-muted-foreground border-border"
+                  }`}
+                  data-testid={`chip-mobile-threads-${key}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* ChatBGP — the pinned top conversation of the unified list. */}
+            {!chatSearch && chatChip === "all" && (
+              <div
+                onClick={openChatBgpPinned}
+                className="flex items-center gap-3 px-4 py-3 active:bg-muted border-b border-border cursor-pointer"
+                data-testid="mobile-pinned-chatbgp"
+              >
+                <span className="w-12 h-12 rounded-full bg-[hsl(var(--mobile-chrome))] flex items-center justify-center shrink-0">
+                  <Sparkles className="w-5 h-5 text-white" />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-[15px] font-semibold">ChatBGP</p>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-semibold uppercase tracking-wide">Pinned</span>
+                  </div>
+                  <p className="text-[13px] text-muted-foreground truncate">Ask anything — deals, brands, your portfolio</p>
+                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setTab("ai"); setChatSearch(""); }}
+                  className="text-[11px] font-medium text-muted-foreground/70 px-2 py-1.5 rounded-lg active:bg-muted shrink-0"
+                  data-testid="button-chatbgp-history"
+                >
+                  History
+                </button>
+              </div>
+            )}
+
+            {(() => {
+              // WhatsApp-style archive split: archived chats collapse behind
+              // an "Archived" row; search looks across everything.
+              const combined = [...filteredTeamThreads, ...filteredOtherThreads];
+              const active = chatSearch ? combined : combined.filter(t => !archivedIds.includes(t.id));
+              const archivedList = combined.filter(t => archivedIds.includes(t.id));
+              const shown = showArchived && !chatSearch ? archivedList : active;
+              return (
+                <>
+                  {archivedList.length > 0 && !chatSearch && (
+                    <button
+                      onClick={() => setShowArchived(v => !v)}
+                      className={`w-full flex items-center gap-3 px-5 py-2.5 border-b border-border active:bg-muted ${showArchived ? "bg-muted" : ""}`}
+                      data-testid="button-mobile-archived-row"
+                    >
+                      <Archive className="w-4 h-4 text-muted-foreground/70 ml-1" />
+                      <span className="text-[14px] font-medium text-muted-foreground flex-1 text-left">Archived</span>
+                      <span className="text-[12px] text-muted-foreground/70">{showArchived ? "Back to chats" : archivedList.length}</span>
+                    </button>
+                  )}
+                  {shown.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 gap-4">
+                      <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
+                        <MessageCircle className="w-10 h-10 text-muted-foreground/70" />
+                      </div>
+                      <p className="text-lg text-muted-foreground/70">
+                        {chatSearch ? "No chats found"
+                          : showArchived ? "Nothing archived"
+                          : chatChip === "unread" ? "You're all caught up"
+                          : chatChip === "ai" ? "No saved ChatBGP threads yet"
+                          : chatChip === "groups" ? "No group chats yet"
+                          : "No conversations yet"}
+                      </p>
+                      {!chatSearch && !showArchived && chatChip === "all" && (
+                        <Button variant="outline" size="lg" className="h-12 text-base rounded-xl border-border" onClick={() => setShowNewGroup(true)} data-testid="button-mobile-empty-new-group">
+                          <Users className="w-5 h-5 mr-2" /> New Chat
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      {shown.map(t => (
+                        <MobileThreadCard
+                          key={t.id}
+                          thread={t}
+                          onClick={() => openThread(t)}
+                          currentUserId={currentUser?.id}
+                          onDelete={handleDeleteThread}
+                          onArchive={t.isAiChat ? undefined : toggleArchived}
+                          archived={archivedIds.includes(t.id)}
+                          userPics={userPics}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+            {/* Clear the fixed bottom nav so the last conversation is reachable. */}
+            <div className="h-20" />
           </div>
         )}
 
@@ -3222,17 +4314,17 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
           <div>
             <div className="px-4 pt-3 pb-2">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
                 <Input
                   value={chatSearch}
                   onChange={(e) => setChatSearch(e.target.value)}
                   placeholder="Search conversations..."
-                  className="h-10 pl-9 pr-9 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-gray-400"
+                  className="h-10 pl-9 pr-9 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-muted-foreground/70"
                   data-testid="input-mobile-ai-search"
                 />
                 {chatSearch && (
                   <button onClick={() => setChatSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2">
-                    <X className="w-4 h-4 text-gray-400" />
+                    <X className="w-4 h-4 text-muted-foreground/70" />
                   </button>
                 )}
               </div>
@@ -3240,8 +4332,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
             {filteredAiThreads.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-3">
-                <MessageSquare className="w-8 h-8 text-gray-300" />
-                <p className="text-[14px] text-gray-400">{chatSearch ? "No matching chats" : "No conversations yet"}</p>
+                <MessageSquare className="w-8 h-8 text-muted-foreground/70" />
+                <p className="text-[14px] text-muted-foreground/70">{chatSearch ? "No matching chats" : "No conversations yet"}</p>
               </div>
             ) : (
               <div>
@@ -3272,13 +4364,13 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         />
                       );
                     })}
-                    <div className="h-px bg-gray-200 mx-4 my-1" />
+                    <div className="h-px bg-border mx-4 my-1" />
                   </div>
                 )}
 
                 {aiDateGroups.map(group => (
                   <div key={group.label}>
-                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider px-4 pt-3 pb-1">{group.label}</p>
+                    <p className="text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wider px-4 pt-3 pb-1">{group.label}</p>
                     {group.threads.map(t => (
                       <MobileThreadCard key={t.id} thread={t} onClick={() => openThread(t)} currentUserId={currentUser?.id} onDelete={handleDeleteThread} userPics={userPics} />
                     ))}
@@ -3294,19 +4386,19 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             <div className="flex items-center gap-3 mb-3">
               <button
                 onClick={() => setShowMobileMarketingFiles(false)}
-                className="w-9 h-9 flex items-center justify-center rounded-xl active:bg-gray-100"
+                className="w-9 h-9 flex items-center justify-center rounded-xl active:bg-muted"
                 data-testid="button-mobile-back-marketing"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
               <div className="flex-1 min-w-0">
                 <h2 className="text-[17px] font-bold">Marketing Details</h2>
-                <p className="text-[12px] text-gray-400">{allMobileMarketingFiles.length} file{allMobileMarketingFiles.length !== 1 ? "s" : ""} across all properties</p>
+                <p className="text-[12px] text-muted-foreground/70">{allMobileMarketingFiles.length} file{allMobileMarketingFiles.length !== 1 ? "s" : ""} across all properties</p>
               </div>
             </div>
 
             <div className="relative mb-3">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
               <Input
                 placeholder="Search files, units, properties..."
                 value={marketingFileSearch}
@@ -3316,7 +4408,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               />
               {marketingFileSearch && (
                 <button onClick={() => setMarketingFileSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <X className="w-4 h-4 text-gray-400" />
+                  <X className="w-4 h-4 text-muted-foreground/70" />
                 </button>
               )}
             </div>
@@ -3324,19 +4416,19 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             {mobileMarketingLoading ? (
               <div className="grid grid-cols-2 gap-3">
                 {[1, 2, 3, 4].map(i => (
-                  <div key={i} className="h-36 rounded-xl bg-gray-100 animate-pulse" />
+                  <div key={i} className="h-36 rounded-xl bg-muted animate-pulse" />
                 ))}
               </div>
             ) : mobileMarketingError ? (
               <div className="text-center py-16">
-                <AlertCircle className="w-10 h-10 mx-auto mb-3 text-gray-300" />
-                <p className="text-[14px] font-medium text-gray-400 mb-3">Failed to load files</p>
+                <AlertCircle className="w-10 h-10 mx-auto mb-3 text-muted-foreground/70" />
+                <p className="text-[14px] font-medium text-muted-foreground/70 mb-3">Failed to load files</p>
                 <Button variant="outline" size="sm" onClick={() => refetchMobileMarketing()} className="rounded-lg" data-testid="button-mobile-retry-marketing">Try again</Button>
               </div>
             ) : filteredMobileMarketingFiles.length === 0 ? (
               <div className="text-center py-16">
-                <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                <p className="text-[14px] font-medium text-gray-400">
+                <FileText className="w-12 h-12 mx-auto mb-3 text-muted-foreground/70" />
+                <p className="text-[14px] font-medium text-muted-foreground/70">
                   {marketingFileSearch ? "No files match your search" : "No marketing files yet"}
                 </p>
               </div>
@@ -3345,8 +4437,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 {groupedMobileMarketingFiles.map(group => (
                   <div key={group.propertyName}>
                     <div className="flex items-center gap-2 mb-2">
-                      <Building2 className="w-3.5 h-3.5 text-gray-400" />
-                      <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{group.propertyName}</p>
+                      <Building2 className="w-3.5 h-3.5 text-muted-foreground/70" />
+                      <p className="text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wider">{group.propertyName}</p>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       {group.files.map(f => {
@@ -3355,11 +4447,11 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         return (
                           <div
                             key={f.id}
-                            className="rounded-xl border border-gray-200 bg-white overflow-hidden active:opacity-70"
+                            className="rounded-xl border border-border bg-white overflow-hidden active:opacity-70"
                             onClick={() => window.open(`${f.filePath}?view=1`, "_blank")}
                             data-testid={`mobile-marketing-tile-${f.id}`}
                           >
-                            <div className="relative w-full aspect-[4/3] bg-gray-50 overflow-hidden">
+                            <div className="relative w-full aspect-[4/3] bg-muted/50 overflow-hidden">
                               {isImage ? (
                                 <img src={`${f.filePath}?view=1`} alt={f.fileName} className="w-full h-full object-cover" loading="lazy" />
                               ) : isPdf ? (
@@ -3369,28 +4461,28 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                                 </div>
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center">
-                                  <FileIcon className="w-8 h-8 text-gray-400" />
-                                  <span className="text-[10px] font-medium text-gray-400 mt-1 uppercase">{f.fileName.split('.').pop()}</span>
+                                  <FileIcon className="w-8 h-8 text-muted-foreground/70" />
+                                  <span className="text-[10px] font-medium text-muted-foreground/70 mt-1 uppercase">{f.fileName.split('.').pop()}</span>
                                 </div>
                               )}
                             </div>
                             <div className="p-2.5">
                               <p className="text-[12px] font-medium leading-snug line-clamp-2 mb-1">{f.fileName}</p>
-                              <p className="text-[10px] text-gray-400">
+                              <p className="text-[10px] text-muted-foreground/70">
                                 {f.unitName && <span>{f.unitName} · </span>}
                                 {f.fileSize ? (f.fileSize < 1024 * 1024 ? `${(f.fileSize / 1024).toFixed(0)} KB` : `${(f.fileSize / (1024 * 1024)).toFixed(1)} MB`) : ""}
                               </p>
                               <div className="flex gap-1.5 mt-2">
                                 <button
                                   onClick={(e) => { e.stopPropagation(); handleMobileShareFile(f); }}
-                                  className="flex-1 h-7 flex items-center justify-center gap-1 rounded-lg bg-gray-100 active:bg-gray-200 text-[11px] font-medium"
+                                  className="flex-1 h-7 flex items-center justify-center gap-1 rounded-lg bg-muted active:bg-border text-[11px] font-medium"
                                   data-testid={`button-mobile-share-tile-${f.id}`}
                                 >
                                   <Mail className="w-3 h-3" /> Share
                                 </button>
                                 <button
                                   onClick={(e) => { e.stopPropagation(); window.open(f.filePath, "_blank"); }}
-                                  className="h-7 w-7 flex items-center justify-center rounded-lg bg-gray-100 active:bg-gray-200 shrink-0"
+                                  className="h-7 w-7 flex items-center justify-center rounded-lg bg-muted active:bg-border shrink-0"
                                   data-testid={`button-mobile-download-tile-${f.id}`}
                                 >
                                   <Download className="w-3 h-3" />
@@ -3416,7 +4508,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   <button
                     key={st}
                     onClick={() => { setMoreSubTab(st); if (st !== "tracker") { setTrackerStatusFilter(null); setTrackerSearch(""); setShowStatusDropdown(false); } }}
-                    className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${moreSubTab === st ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
+                    className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${moreSubTab === st ? "bg-white text-foreground shadow-sm" : "text-muted-foreground"}`}
                     data-testid={`more-tab-${st}`}
                   >
                     {st === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : st === "reqs" ? "Reqs" : st === "news" ? "News" : "Docs"}
@@ -3517,14 +4609,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                     <div className="flex bg-[#F5F5F4] rounded-xl p-1 mb-3">
                       <button
                         onClick={() => { setTrackerBoardType("Purchases"); setTrackerStatusFilter(null); }}
-                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Purchases" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Purchases" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground"}`}
                         data-testid="board-toggle-purchases"
                       >
                         Purchases ({investmentItems?.filter(i => (i.boardType || "Purchases") === "Purchases").length || 0})
                       </button>
                       <button
                         onClick={() => { setTrackerBoardType("Sales"); setTrackerStatusFilter(null); }}
-                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Sales" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Sales" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground"}`}
                         data-testid="board-toggle-sales"
                       >
                         Sales ({investmentItems?.filter(i => i.boardType === "Sales").length || 0})
@@ -3536,7 +4628,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                     <button
                       onClick={() => { setTrackerStatusFilter(null); }}
                       className={`shrink-0 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all ${
-                        !trackerStatusFilter ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600"
+                        !trackerStatusFilter ? "bg-gray-900 text-white" : "bg-muted text-muted-foreground"
                       }`}
                       data-testid="status-filter-all"
                     >
@@ -3549,7 +4641,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           key={status}
                           onClick={() => setTrackerStatusFilter(isActive ? null : status)}
                           className={`shrink-0 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all ${
-                            isActive ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-700"
+                            isActive ? "bg-gray-900 text-white" : "bg-muted text-muted-foreground"
                           }`}
                           data-testid={`status-filter-${status.toLowerCase().replace(/\s+/g, "-")}`}
                         >
@@ -3560,18 +4652,18 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   </div>
 
                   <div className="relative mt-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
                     <Input
                       value={trackerSearch}
                       onChange={(e) => setTrackerSearch(e.target.value)}
                       placeholder={isInvestmentTeam ? "Search investments..." : "Search units..."}
-                      className="h-10 pl-9 pr-20 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-gray-400"
+                      className="h-10 pl-9 pr-20 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-muted-foreground/70"
                       data-testid="input-tracker-search"
                     />
                     <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                       {trackerSearch && (
                         <button onClick={() => setTrackerSearch("")} className="p-1">
-                          <X className="w-4 h-4 text-gray-400" />
+                          <X className="w-4 h-4 text-muted-foreground/70" />
                         </button>
                       )}
                       <div className="relative">
@@ -3580,7 +4672,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${
                             trackerStatusFilter
                               ? "bg-gray-900 text-white"
-                              : "bg-gray-200 text-gray-600"
+                              : "bg-muted text-muted-foreground"
                           }`}
                           data-testid="button-status-dropdown"
                         >
@@ -3588,10 +4680,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           {trackerStatusFilter || "Status"}
                         </button>
                         {showStatusDropdown && (
-                          <div className="absolute right-0 top-full mt-1 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50 min-w-[140px]">
+                          <div className="absolute right-0 top-full mt-1 bg-white rounded-xl shadow-lg border border-border py-1 z-50 min-w-[140px]">
                             <button
                               onClick={() => { setTrackerStatusFilter(null); setShowStatusDropdown(false); }}
-                              className={`w-full text-left px-3 py-2 text-[13px] flex items-center gap-2 ${!trackerStatusFilter ? "bg-gray-50 font-semibold" : "hover:bg-gray-50"}`}
+                              className={`w-full text-left px-3 py-2 text-[13px] flex items-center gap-2 ${!trackerStatusFilter ? "bg-muted font-semibold" : "hover:bg-muted"}`}
                               data-testid="dropdown-status-all"
                             >
                               <span className="w-3 h-3 rounded-sm bg-gray-300" /> All
@@ -3603,7 +4695,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                                 <button
                                   key={status}
                                   onClick={() => { setTrackerStatusFilter(status); setShowStatusDropdown(false); }}
-                                  className={`w-full text-left px-3 py-2 text-[13px] flex items-center gap-2 ${trackerStatusFilter === status ? "bg-gray-50 font-semibold" : "hover:bg-gray-50"}`}
+                                  className={`w-full text-left px-3 py-2 text-[13px] flex items-center gap-2 ${trackerStatusFilter === status ? "bg-muted font-semibold" : "hover:bg-muted"}`}
                                   data-testid={`dropdown-status-${status.toLowerCase().replace(/\s+/g, "-")}`}
                                 >
                                   <span className={`w-3 h-3 rounded-sm ${color.bg}`} /> {status} ({trackerStatusCounts[status]})
@@ -3619,13 +4711,13 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 <div className="flex-1 overflow-y-auto px-4" onClick={() => showStatusDropdown && setShowStatusDropdown(false)}>
                   {(investmentLoading || lettingLoading) && (
                     <div className="flex items-center justify-center py-16">
-                      <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
+                      <div className="w-8 h-8 border-2 border-border border-t-black rounded-full animate-spin" />
                     </div>
                   )}
                   {isInvestmentTeam && !investmentLoading && (
                     <div className="space-y-2">
                       {(filteredTrackerItems as typeof investmentItems)?.length === 0 ? (
-                        <div className="text-center py-16 text-gray-400 text-[15px]">
+                        <div className="text-center py-16 text-muted-foreground/70 text-[15px]">
                           {trackerStatusFilter || trackerSearch ? "No matching investments" : "No investments found"}
                         </div>
                       ) : (filteredTrackerItems as NonNullable<typeof investmentItems>).map(item => {
@@ -3634,24 +4726,24 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           <button
                             key={item.id}
                             onClick={() => setSelectedDealId(item.id)}
-                            className={`w-full p-4 rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100`}
+                            className={`w-full p-4 rounded-2xl active:bg-muted text-left bg-white border border-border`}
                             data-testid={`inv-card-${item.id}`}
                           >
                             <div className="flex items-start justify-between gap-2 mb-1.5">
-                              <div className="text-[16px] font-semibold text-gray-900 truncate flex-1 tracking-tight">{item.assetName}</div>
+                              <div className="text-[16px] font-semibold text-foreground truncate flex-1 tracking-tight">{item.assetName}</div>
                               {item.status && (
                                 <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${statusColor.bg} ${statusColor.text}`}>
                                   {item.status}
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-3 text-[13px] text-gray-500 tabular-nums">
-                              {item.guidePrice && <span className="font-semibold text-gray-800">£{item.guidePrice.toLocaleString()}</span>}
+                            <div className="flex items-center gap-3 text-[13px] text-muted-foreground tabular-nums">
+                              {item.guidePrice && <span className="font-semibold text-foreground">£{item.guidePrice.toLocaleString()}</span>}
                               {item.niy && <span>{item.niy}% NIY</span>}
                               {item.tenure && <span>{item.tenure}</span>}
                               {item.boardType && <span className={item.boardType === "Sales" ? "text-blue-600" : "text-emerald-600"}>{item.boardType}</span>}
                             </div>
-                            {item.client && <div className="text-[12px] text-gray-400 mt-1.5 truncate">{item.client}</div>}
+                            {item.client && <div className="text-[12px] text-muted-foreground/70 mt-1.5 truncate">{item.client}</div>}
                           </button>
                         );
                       })}
@@ -3660,7 +4752,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   {!isInvestmentTeam && !lettingLoading && (
                     <div className="space-y-2">
                       {(filteredTrackerItems as typeof lettingItems)?.length === 0 ? (
-                        <div className="text-center py-16 text-gray-400 text-[15px]">
+                        <div className="text-center py-16 text-muted-foreground/70 text-[15px]">
                           {trackerStatusFilter || trackerSearch ? "No matching units" : "No units found"}
                         </div>
                       ) : (filteredTrackerItems as NonNullable<typeof lettingItems>).map(item => {
@@ -3669,14 +4761,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           <button
                             key={item.id}
                             onClick={() => setSelectedUnitId(item.id)}
-                            className={`w-full p-4 rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100`}
+                            className={`w-full p-4 rounded-2xl active:bg-muted text-left bg-white border border-border`}
                             data-testid={`let-card-${item.id}`}
                           >
                             <div className="flex items-start justify-between gap-2 mb-1.5">
                               <div className="flex-1 min-w-0">
-                                <div className="text-[16px] font-semibold text-gray-900 truncate tracking-tight">{item.unitName}</div>
+                                <div className="text-[16px] font-semibold text-foreground truncate tracking-tight">{item.unitName}</div>
                                 {item.propertyName && (
-                                  <div className="text-[12px] text-gray-400 truncate mt-0.5">{item.propertyName}</div>
+                                  <div className="text-[12px] text-muted-foreground/70 truncate mt-0.5">{item.propertyName}</div>
                                 )}
                               </div>
                               {item.marketingStatus && (
@@ -3685,14 +4777,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-3 text-[13px] text-gray-500 tabular-nums">
+                            <div className="flex items-center gap-3 text-[13px] text-muted-foreground tabular-nums">
                               {item.sqft && <span>{item.sqft.toLocaleString()} sq ft</span>}
-                              {item.askingRent && <span className="font-semibold text-gray-800">£{item.askingRent.toLocaleString()} pa</span>}
+                              {item.askingRent && <span className="font-semibold text-foreground">£{item.askingRent.toLocaleString()} pa</span>}
                               {item.floor && <span>{item.floor}</span>}
-                              {item.useClass && <span className="text-blue-600">{item.useClass}</span>}
+                              {item.useClass && <span className="text-muted-foreground">{item.useClass}</span>}
                             </div>
                             {(item.viewingsCount > 0 || item.condition) && (
-                              <div className="flex items-center gap-3 text-[12px] text-gray-400 mt-1.5">
+                              <div className="flex items-center gap-3 text-[12px] text-muted-foreground/70 mt-1.5">
                                 {item.viewingsCount > 0 && <span>{item.viewingsCount} viewing{item.viewingsCount > 1 ? "s" : ""}</span>}
                                 {item.condition && <span>{item.condition}</span>}
                               </div>
@@ -3711,54 +4803,72 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               <div className="flex-1 overflow-y-auto px-4">
                 {newsLoading && (
                   <div className="flex items-center justify-center py-16">
-                    <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
+                    <div className="w-8 h-8 border-2 border-border border-t-black rounded-full animate-spin" />
                   </div>
                 )}
                 {!newsLoading && (!newsArticles || newsArticles.length === 0) && (
                   <div className="flex flex-col items-center justify-center py-16 gap-3">
-                    <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
-                      <Newspaper className="w-8 h-8 text-gray-300" />
+                    <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+                      <Newspaper className="w-8 h-8 text-muted-foreground/70" />
                     </div>
-                    <p className="text-[15px] text-gray-400">No news articles yet</p>
+                    <p className="text-[15px] text-muted-foreground/70">No news articles yet</p>
                   </div>
                 )}
                 {!newsLoading && newsArticles && newsArticles.length > 0 && (
                   <div className="space-y-3">
                     {newsArticles.map(article => (
-                      <a
-                        key={article.id}
-                        href={article.url || "#"}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm active:bg-gray-50 transition-colors"
-                        data-testid={`news-card-${article.id}`}
-                      >
-                        {article.imageUrl && (
-                          <div className="aspect-[16/9] w-full overflow-hidden bg-gray-50">
-                            <img src={article.imageUrl} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                          </div>
-                        )}
-                        <div className="p-4">
-                          <div className="flex items-center gap-2 mb-2 flex-wrap">
-                            {article.sourceName && <span className="text-[11px] font-medium text-gray-500">{article.sourceName}</span>}
-                            {article.publishedAt && (
-                              <>
-                                <span className="text-gray-300">·</span>
-                                <span className="text-[11px] text-gray-400">
-                                  {new Date(article.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                                </span>
-                              </>
-                            )}
-                            {article.category && (
-                              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">{article.category}</span>
-                            )}
-                          </div>
-                          <div className="text-[16px] font-semibold text-gray-900 leading-snug mb-1.5 tracking-tight">{article.title}</div>
-                          {(article.aiSummary || article.summary) && (
-                            <div className="text-[13px] text-gray-500 leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
+                      <div key={article.id} className="relative">
+                        <a
+                          href={article.url || "#"}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block bg-white rounded-2xl overflow-hidden border border-border shadow-sm active:bg-muted transition-colors"
+                          data-testid={`news-card-${article.id}`}
+                        >
+                          {article.imageUrl && (
+                            <div className="aspect-[16/9] w-full overflow-hidden bg-muted/50">
+                              <img src={article.imageUrl} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                            </div>
                           )}
-                        </div>
-                      </a>
+                          <div className="p-4">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              {article.sourceName && <span className="text-[11px] font-medium text-muted-foreground">{article.sourceName}</span>}
+                              {article.publishedAt && (
+                                <>
+                                  <span className="text-muted-foreground/70">·</span>
+                                  <span className="text-[11px] text-muted-foreground/70">
+                                    {new Date(article.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                                  </span>
+                                </>
+                              )}
+                              {article.category && (
+                                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">{article.category}</span>
+                              )}
+                            </div>
+                            <div className="text-[16px] font-semibold text-foreground leading-snug mb-1.5 tracking-tight">{article.title}</div>
+                            {(article.aiSummary || article.summary) && (
+                              <div className="text-[13px] text-muted-foreground leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
+                            )}
+                          </div>
+                        </a>
+                        {/* Dismiss — kills off-topic articles individually. The
+                            click intentionally lives OUTSIDE the <a> so it
+                            doesn't open the article while you're trying to
+                            remove it. */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            dismissNewsMutation.mutate(article.id);
+                          }}
+                          className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/55 backdrop-blur-sm text-white inline-flex items-center justify-center active:bg-black/75"
+                          aria-label="Dismiss article"
+                          data-testid={`news-dismiss-${article.id}`}
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -3769,7 +4879,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               <div className="flex-1 flex flex-col min-h-0">
                 <div className="px-4 pb-2 shrink-0">
                   <div className="flex bg-[#F5F5F4] rounded-xl p-1 mb-3">
-                    <button className="flex-1 py-2 text-[13px] font-medium rounded-lg bg-white text-gray-900 shadow-sm">
+                    <button className="flex-1 py-2 text-[13px] font-medium rounded-lg bg-white text-foreground shadow-sm">
                       Leasing {reqsLeasing ? `(${reqsLeasing.length})` : ""}
                     </button>
                   </div>
@@ -3777,7 +4887,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 <div className="flex-1 overflow-y-auto px-4">
                   {(reqsLeasingLoading || reqsInvestmentLoading) && (
                     <div className="flex items-center justify-center py-16">
-                      <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
+                      <div className="w-8 h-8 border-2 border-border border-t-black rounded-full animate-spin" />
                     </div>
                   )}
                   {!reqsLeasingLoading && (
@@ -3791,7 +4901,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           className="w-full flex items-center gap-3 p-3.5 bg-white dark:bg-card border border-[#E7E5E4]/60 rounded-2xl text-left active:bg-[#F5F5F4]"
                         >
                           <div className="flex-1 min-w-0">
-                            <div className="text-[14px] font-semibold text-[#1C1917] dark:text-white truncate tracking-tight">{r.name}</div>
+                            <div className="text-[14px] font-semibold text-[hsl(var(--mobile-chrome))] dark:text-white truncate tracking-tight">{r.name}</div>
                             <div className="text-[12px] text-[#A8A29E] truncate mt-0.5">
                               {[r.groupName, r.use?.join(", "), r.size?.join(", ")].filter(Boolean).join(" · ") || "No details"}
                             </div>
@@ -3820,7 +4930,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                             className="w-full flex items-center gap-3 p-3.5 bg-white dark:bg-card border border-[#E7E5E4]/60 rounded-2xl text-left active:bg-[#F5F5F4]"
                           >
                             <div className="flex-1 min-w-0">
-                              <div className="text-[14px] font-semibold text-[#1C1917] dark:text-white truncate tracking-tight">{r.name}</div>
+                              <div className="text-[14px] font-semibold text-[hsl(var(--mobile-chrome))] dark:text-white truncate tracking-tight">{r.name}</div>
                               <div className="text-[12px] text-[#A8A29E] truncate mt-0.5">
                                 {[r.groupName, r.targetSectors?.join(", ")].filter(Boolean).join(" · ") || "No details"}
                               </div>
@@ -3851,6 +4961,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
         )}
       </PullToRefresh>
 
+      {/* Messages is the app's home screen — the bottom nav lives on the
+          unified list (conversations and sub-screens are full-bleed). */}
+      {tab === "chats" && <MobileBottomNav />}
+
       {showMobileNewProperty && (
         <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={() => setShowMobileNewProperty(false)}>
           <div className="absolute inset-0 bg-black/50" />
@@ -3858,27 +4972,27 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             className="relative bg-white rounded-t-2xl w-full max-h-[85dvh] flex flex-col animate-in slide-in-from-bottom duration-200"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 shrink-0">
+            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-border shrink-0">
               <div className="flex items-center gap-2">
                 <Building2 className="w-5 h-5" />
                 <h2 className="text-[18px] font-bold">New Property Chat</h2>
               </div>
-              <button onClick={() => setShowMobileNewProperty(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center" data-testid="button-close-new-property">
-                <X className="w-4 h-4 text-gray-600" />
+              <button onClick={() => setShowMobileNewProperty(false)} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center" data-testid="button-close-new-property">
+                <X className="w-4 h-4 text-muted-foreground" />
               </button>
             </div>
             <div className="px-5 py-3 shrink-0">
-              <p className="text-[13px] text-gray-500 mb-3">Create an AI conversation linked to a property or deal.</p>
+              <p className="text-[13px] text-muted-foreground mb-3">Create an AI conversation linked to a property or deal.</p>
               <div className="flex gap-2 mb-3">
                 <button
-                  className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${mobileNewPropLinkType === "property" ? "bg-[#1C1917] text-white" : "bg-gray-100 text-gray-600"}`}
+                  className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${mobileNewPropLinkType === "property" ? "bg-[hsl(var(--mobile-chrome))] text-white" : "bg-muted text-muted-foreground"}`}
                   onClick={() => { setMobileNewPropLinkType("property"); setMobileNewPropSelectedId(""); }}
                   data-testid="button-mobile-link-property"
                 >
                   <Building2 className="w-3.5 h-3.5 inline mr-1.5" /> Property
                 </button>
                 <button
-                  className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${mobileNewPropLinkType === "deal" ? "bg-[#1C1917] text-white" : "bg-gray-100 text-gray-600"}`}
+                  className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${mobileNewPropLinkType === "deal" ? "bg-[hsl(var(--mobile-chrome))] text-white" : "bg-muted text-muted-foreground"}`}
                   onClick={() => { setMobileNewPropLinkType("deal"); setMobileNewPropSelectedId(""); }}
                   data-testid="button-mobile-link-deal"
                 >
@@ -3886,7 +5000,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 </button>
               </div>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
                 <Input
                   placeholder={`Search ${mobileNewPropLinkType === "property" ? "properties" : "deals"}...`}
                   value={mobileNewPropSearch}
@@ -3901,7 +5015,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 const isLoading = mobileNewPropLinkType === "property" ? crmPropsLoading : crmDealsLoading;
                 if (isLoading) return (
                   <div className="space-y-2 py-3">
-                    {[1, 2, 3, 4, 5].map(i => <div key={i} className="h-12 rounded-xl bg-gray-100 animate-pulse" />)}
+                    {[1, 2, 3, 4, 5].map(i => <div key={i} className="h-12 rounded-xl bg-muted animate-pulse" />)}
                   </div>
                 );
                 const items = mobileNewPropLinkType === "property" ? crmProperties : crmDeals;
@@ -3909,29 +5023,29 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   ? items.filter((i: any) => i.name?.toLowerCase().includes(mobileNewPropSearch.toLowerCase()))
                   : items;
                 return filtered.length === 0 ? (
-                  <p className="text-center text-[13px] text-gray-400 py-8">No {mobileNewPropLinkType === "property" ? "properties" : "deals"} found</p>
+                  <p className="text-center text-[13px] text-muted-foreground/70 py-8">No {mobileNewPropLinkType === "property" ? "properties" : "deals"} found</p>
                 ) : (
                   <div className="space-y-1">
                     {filtered.slice(0, 50).map((item: any) => (
                       <button
                         key={item.id}
                         className={`w-full text-left px-3 py-2.5 rounded-xl text-[14px] transition-colors ${
-                          mobileNewPropSelectedId === item.id ? "bg-[#1C1917] text-white font-medium" : "active:bg-gray-50"
+                          mobileNewPropSelectedId === item.id ? "bg-[hsl(var(--mobile-chrome))] text-white font-medium" : "active:bg-muted"
                         }`}
                         onClick={() => setMobileNewPropSelectedId(item.id)}
                         data-testid={`mobile-link-item-${item.id}`}
                       >
                         <p className="truncate">{item.name || "Untitled"}</p>
-                        {item.status && <p className={`text-[12px] mt-0.5 ${mobileNewPropSelectedId === item.id ? "text-white/70" : "text-gray-400"}`}>{item.status}</p>}
+                        {item.status && <p className={`text-[12px] mt-0.5 ${mobileNewPropSelectedId === item.id ? "text-white/70" : "text-muted-foreground/70"}`}>{item.status}</p>}
                       </button>
                     ))}
                   </div>
                 );
               })()}
             </div>
-            <div className="px-5 py-4 border-t border-gray-100 shrink-0">
+            <div className="px-5 py-4 border-t border-border shrink-0">
               <Button
-                className="w-full h-12 text-[15px] font-semibold rounded-xl bg-[#1C1917] text-white"
+                className="w-full h-12 text-[15px] font-semibold rounded-xl bg-[hsl(var(--mobile-chrome))] text-white"
                 disabled={!mobileNewPropSelectedId}
                 onClick={() => {
                   const items = mobileNewPropLinkType === "property" ? crmProperties : crmDeals;
@@ -3960,9 +5074,9 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             className="relative bg-white rounded-t-2xl w-full max-h-[85dvh] flex flex-col animate-in slide-in-from-bottom duration-200"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 shrink-0">
+            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-border shrink-0">
               <div className="flex-1 min-w-0 pr-3">
-                <h2 className="text-[18px] font-bold text-gray-900 truncate">{selectedDeal.assetName}</h2>
+                <h2 className="text-[18px] font-bold text-foreground truncate">{selectedDeal.assetName}</h2>
                 <div className="flex items-center gap-2 mt-0.5">
                   {selectedDeal.status && (
                     <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${(investmentStatusColors[selectedDeal.status] || { bg: "bg-stone-100", text: "text-stone-600" }).bg} ${(investmentStatusColors[selectedDeal.status] || { bg: "bg-stone-100", text: "text-stone-600" }).text}`}>
@@ -3970,44 +5084,44 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                     </span>
                   )}
                   {selectedDeal.boardType && (
-                    <span className="text-[12px] text-gray-500">{selectedDeal.boardType}</span>
+                    <span className="text-[12px] text-muted-foreground">{selectedDeal.boardType}</span>
                   )}
                 </div>
               </div>
               <button
                 onClick={() => setSelectedDealId(null)}
-                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center shrink-0"
+                className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0"
                 data-testid="button-close-deal-popup"
               >
-                <X className="w-4 h-4 text-gray-600" />
+                <X className="w-4 h-4 text-muted-foreground" />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {selectedDeal.guidePrice && (
-                <div className="bg-gray-50 rounded-xl p-4 mb-3">
-                  <div className="text-[24px] font-bold text-gray-900">£{selectedDeal.guidePrice.toLocaleString()}</div>
-                  <div className="text-[12px] text-gray-500 uppercase tracking-wide font-medium">Guide Price</div>
+                <div className="bg-muted/50 rounded-xl p-4 mb-3">
+                  <div className="text-[24px] font-bold text-foreground">£{selectedDeal.guidePrice.toLocaleString()}</div>
+                  <div className="text-[12px] text-muted-foreground uppercase tracking-wide font-medium">Guide Price</div>
                 </div>
               )}
 
               <div className="grid grid-cols-2 gap-2 mb-4">
                 {selectedDeal.niy != null && (
-                  <div className="bg-blue-50 rounded-xl p-3 border border-blue-100">
-                    <div className="text-[16px] font-bold text-blue-700">{selectedDeal.niy}%</div>
-                    <div className="text-[11px] text-blue-500 font-medium">NIY</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">{selectedDeal.niy}%</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">NIY</div>
                   </div>
                 )}
                 {selectedDeal.eqy != null && (
-                  <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100">
-                    <div className="text-[16px] font-bold text-indigo-700">{selectedDeal.eqy}%</div>
-                    <div className="text-[11px] text-indigo-500 font-medium">EQY</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">{selectedDeal.eqy}%</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">EQY</div>
                   </div>
                 )}
                 {selectedDeal.sqft != null && (
-                  <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
-                    <div className="text-[16px] font-bold text-gray-800">{selectedDeal.sqft.toLocaleString()}</div>
-                    <div className="text-[11px] text-gray-500 font-medium">Sq Ft</div>
+                  <div className="bg-muted/50 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold text-foreground">{selectedDeal.sqft.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Sq Ft</div>
                   </div>
                 )}
                 {selectedDeal.currentRent != null && (
@@ -4017,15 +5131,15 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   </div>
                 )}
                 {selectedDeal.ervPa != null && (
-                  <div className="bg-teal-50 rounded-xl p-3 border border-teal-100">
-                    <div className="text-[16px] font-bold text-teal-700">£{selectedDeal.ervPa.toLocaleString()}</div>
-                    <div className="text-[11px] text-teal-500 font-medium">ERV pa</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">£{selectedDeal.ervPa.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">ERV pa</div>
                   </div>
                 )}
                 {selectedDeal.fee != null && (
-                  <div className="bg-purple-50 rounded-xl p-3 border border-purple-100">
-                    <div className="text-[16px] font-bold text-purple-700">£{selectedDeal.fee.toLocaleString()}</div>
-                    <div className="text-[11px] text-purple-500 font-medium">Fee{selectedDeal.feeType ? ` (${selectedDeal.feeType})` : ""}</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">£{selectedDeal.fee.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Fee{selectedDeal.feeType ? ` (${selectedDeal.feeType})` : ""}</div>
                   </div>
                 )}
               </div>
@@ -4042,32 +5156,32 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   { label: "Marketing Date", value: selectedDeal.marketingDate ? new Date(selectedDeal.marketingDate).toLocaleDateString("en-GB") : null },
                   { label: "Bid Deadline", value: selectedDeal.bidDeadline ? new Date(selectedDeal.bidDeadline).toLocaleDateString("en-GB") : null },
                 ].filter(r => r.value).map(r => (
-                  <div key={r.label} className="flex justify-between items-center py-2.5 border-b border-gray-100 last:border-0">
-                    <span className="text-[13px] text-gray-500">{r.label}</span>
-                    <span className="text-[14px] font-medium text-gray-900 text-right max-w-[60%] truncate">{r.value}</span>
+                  <div key={r.label} className="flex justify-between items-center py-2.5 border-b border-border last:border-0">
+                    <span className="text-[13px] text-muted-foreground">{r.label}</span>
+                    <span className="text-[14px] font-medium text-foreground text-right max-w-[60%] truncate">{r.value}</span>
                   </div>
                 ))}
               </div>
 
               {(selectedDeal.client || selectedDeal.clientContact || selectedDeal.vendor || selectedDeal.vendorAgent || selectedDeal.buyer || (selectedDeal.agentUserIds && selectedDeal.agentUserIds.length > 0)) && (
                 <div className="mb-4">
-                  <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">People & Companies</div>
+                  <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">People & Companies</div>
                   <div className="space-y-2">
                     {selectedDeal.agentUserIds && selectedDeal.agentUserIds.length > 0 && (() => {
                       const agents = selectedDeal.agentUserIds!.map(uid => allUsers?.find(u => u.id === uid)).filter(Boolean);
                       if (agents.length === 0) return null;
                       return (
-                        <div className="bg-gray-50 rounded-xl p-3">
-                          <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-2">BGP Agents</div>
+                        <div className="bg-muted/50 rounded-xl p-3">
+                          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">BGP Agents</div>
                           <div className="space-y-2">
                             {agents.map(agent => (
                               <div key={agent!.id} className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-[#1C1917] text-white flex items-center justify-center shrink-0">
+                                <div className="w-8 h-8 rounded-full bg-[hsl(var(--mobile-chrome))] text-white flex items-center justify-center shrink-0">
                                   <span className="text-[11px] font-bold">{agent!.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                  <div className="text-[14px] font-medium text-gray-900 truncate">{agent!.name}</div>
-                                  <div className="text-[12px] text-gray-400">{(agent as any)?.team || "BGP"}</div>
+                                  <div className="text-[14px] font-medium text-foreground truncate">{agent!.name}</div>
+                                  <div className="text-[12px] text-muted-foreground/70">{(agent as any)?.team || "BGP"}</div>
                                 </div>
                               </div>
                             ))}
@@ -4091,25 +5205,25 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       const bgColor = r.icon === "client" ? "bg-blue-100 text-blue-600" :
                                       r.icon === "vendor" ? "bg-orange-100 text-orange-600" :
                                       r.icon === "buyer" ? "bg-emerald-100 text-emerald-600" :
-                                      "bg-gray-100 text-gray-600";
+                                      "bg-muted text-muted-foreground";
                       return (
                         <button
                           key={r.label}
                           onClick={() => { if (linkPath) { setSelectedDealId(null); navigate(linkPath); } }}
-                          className={`w-full flex items-center gap-3 p-3 bg-gray-50 rounded-xl text-left ${hasLink ? "active:bg-gray-100" : "cursor-default"}`}
+                          className={`w-full flex items-center gap-3 p-3 bg-muted/50 rounded-xl text-left ${hasLink ? "active:bg-muted" : "cursor-default"}`}
                           data-testid={`deal-link-${r.label.toLowerCase().replace(/\s+/g, "-")}`}
                         >
                           <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${bgColor}`}>
                             {matchType === "company" ? <Building2 className="w-4 h-4" /> : <Users className="w-4 h-4" />}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{r.label}</div>
-                            <div className={`text-[14px] font-medium truncate ${hasLink ? "text-blue-600" : "text-gray-900"}`}>{r.name}</div>
+                            <div className="text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wide">{r.label}</div>
+                            <div className={`text-[14px] font-medium truncate ${hasLink ? "text-primary" : "text-foreground"}`}>{r.name}</div>
                             {matchType && (
-                              <div className="text-[11px] text-gray-400">{matchType === "company" ? "View company" : "View contact"} →</div>
+                              <div className="text-[11px] text-muted-foreground/70">{matchType === "company" ? "View company" : "View contact"} →</div>
                             )}
                           </div>
-                          {hasLink && <ChevronDown className="w-4 h-4 text-gray-300 -rotate-90 shrink-0" />}
+                          {hasLink && <ChevronDown className="w-4 h-4 text-muted-foreground/70 -rotate-90 shrink-0" />}
                         </button>
                       );
                     })}
@@ -4118,18 +5232,18 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               )}
 
               {selectedDeal.notes && (
-                <div className="bg-yellow-50 rounded-xl p-3.5 mb-4 border border-yellow-100">
-                  <div className="text-[11px] font-semibold text-yellow-600 uppercase tracking-wide mb-1">Notes</div>
-                  <div className="text-[14px] text-gray-800 leading-relaxed whitespace-pre-wrap">{selectedDeal.notes}</div>
+                <div className="bg-muted/40 rounded-xl p-3.5 mb-4 border border-border">
+                  <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Notes</div>
+                  <div className="text-[14px] text-foreground leading-relaxed whitespace-pre-wrap">{selectedDeal.notes}</div>
                 </div>
               )}
 
               <div className="mb-4">
-                <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Marketing Files</div>
+                <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">Marketing Files</div>
                 {(!dealMarketingFiles || dealMarketingFiles.length === 0) ? (
-                  <div className="bg-gray-50 rounded-xl p-4 text-center">
-                    <FileText className="w-6 h-6 text-gray-300 mx-auto mb-1" />
-                    <div className="text-[13px] text-gray-400">No marketing files uploaded</div>
+                  <div className="bg-muted/50 rounded-xl p-4 text-center">
+                    <FileText className="w-6 h-6 text-muted-foreground/70 mx-auto mb-1" />
+                    <div className="text-[13px] text-muted-foreground/70">No marketing files uploaded</div>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -4140,19 +5254,19 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         target="_blank"
                         rel="noopener noreferrer"
                         download
-                        className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl active:bg-gray-100"
+                        className="flex items-center gap-3 p-3 bg-muted/50 rounded-xl active:bg-muted"
                         data-testid={`marketing-file-${file.id}`}
                       >
-                        <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
-                          <FileText className="w-5 h-5 text-blue-600" />
+                        <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                          <FileText className="w-5 h-5 text-muted-foreground" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-[14px] font-medium text-gray-900 truncate">{file.fileName}</div>
-                          <div className="text-[12px] text-gray-400">
+                          <div className="text-[14px] font-medium text-foreground truncate">{file.fileName}</div>
+                          <div className="text-[12px] text-muted-foreground/70">
                             {file.fileSize ? formatFileSize(file.fileSize) : ""} · {new Date(file.uploadedAt).toLocaleDateString("en-GB")}
                           </div>
                         </div>
-                        <Download className="w-5 h-5 text-gray-400 shrink-0" />
+                        <Download className="w-5 h-5 text-muted-foreground/70 shrink-0" />
                       </a>
                     ))}
                   </div>
@@ -4160,10 +5274,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               </div>
             </div>
 
-            <div className="px-5 py-3 border-t border-gray-100 shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+            <div className="px-5 py-3 border-t border-border shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
               <button
                 onClick={() => { setSelectedDealId(null); navigate("/investment-tracker"); }}
-                className="w-full py-3 bg-[#1C1917] text-white text-[15px] font-semibold rounded-xl active:bg-gray-800"
+                className="w-full py-3 bg-[hsl(var(--mobile-chrome))] text-white text-[15px] font-semibold rounded-xl active:bg-gray-800"
                 data-testid="button-open-full-tracker"
               >
                 Open in Full Tracker
@@ -4182,11 +5296,11 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
           >
             <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
               <div className="flex-1 min-w-0">
-                <h3 className="text-[20px] font-bold text-gray-900 truncate">{selectedUnit.unitName}</h3>
+                <h3 className="text-[20px] font-bold text-foreground truncate">{selectedUnit.unitName}</h3>
                 {selectedUnit.propertyName && (
                   <button
                     onClick={() => { if (selectedUnit.propertyId) { setSelectedUnitId(null); navigate(`/properties/${selectedUnit.propertyId}`); } }}
-                    className="text-[14px] text-blue-600 truncate block"
+                    className="text-[14px] text-primary truncate block"
                     data-testid="unit-property-link"
                   >
                     {selectedUnit.propertyName} →
@@ -4195,10 +5309,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               </div>
               <button
                 onClick={() => setSelectedUnitId(null)}
-                className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 ml-3 shrink-0"
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-muted ml-3 shrink-0"
                 data-testid="button-close-unit-popup"
               >
-                <X className="w-4 h-4 text-gray-500" />
+                <X className="w-4 h-4 text-muted-foreground" />
               </button>
             </div>
 
@@ -4222,27 +5336,27 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   </div>
                 )}
                 {selectedUnit.sqft && (
-                  <div className="bg-blue-50 rounded-xl p-3 border border-blue-100">
-                    <div className="text-[16px] font-bold text-blue-700">{selectedUnit.sqft.toLocaleString()}</div>
-                    <div className="text-[11px] text-blue-500 font-medium">Sq Ft</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">{selectedUnit.sqft.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Sq Ft</div>
                   </div>
                 )}
                 {selectedUnit.ratesPa && (
-                  <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
-                    <div className="text-[16px] font-bold text-gray-700">£{selectedUnit.ratesPa.toLocaleString()}</div>
-                    <div className="text-[11px] text-gray-500 font-medium">Rates pa</div>
+                  <div className="bg-muted/50 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold text-muted-foreground">£{selectedUnit.ratesPa.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Rates pa</div>
                   </div>
                 )}
                 {selectedUnit.serviceChargePa && (
-                  <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
-                    <div className="text-[16px] font-bold text-gray-700">£{selectedUnit.serviceChargePa.toLocaleString()}</div>
-                    <div className="text-[11px] text-gray-500 font-medium">Service Charge pa</div>
+                  <div className="bg-muted/50 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold text-muted-foreground">£{selectedUnit.serviceChargePa.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Service Charge pa</div>
                   </div>
                 )}
                 {selectedUnit.fee && (
-                  <div className="bg-purple-50 rounded-xl p-3 border border-purple-100">
-                    <div className="text-[16px] font-bold text-purple-700">£{selectedUnit.fee.toLocaleString()}</div>
-                    <div className="text-[11px] text-purple-500 font-medium">Fee</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">£{selectedUnit.fee.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Fee</div>
                   </div>
                 )}
               </div>
@@ -4257,9 +5371,9 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   { label: "Marketing Start", value: selectedUnit.marketingStartDate ? new Date(selectedUnit.marketingStartDate).toLocaleDateString("en-GB") : null },
                   { label: "Restrictions", value: selectedUnit.restrictions },
                 ].filter(r => r.value).map(r => (
-                  <div key={r.label} className="flex justify-between items-center py-2.5 border-b border-gray-100 last:border-0">
-                    <span className="text-[13px] text-gray-500">{r.label}</span>
-                    <span className="text-[14px] font-medium text-gray-900 text-right max-w-[60%] truncate">{r.value}</span>
+                  <div key={r.label} className="flex justify-between items-center py-2.5 border-b border-border last:border-0">
+                    <span className="text-[13px] text-muted-foreground">{r.label}</span>
+                    <span className="text-[14px] font-medium text-foreground text-right max-w-[60%] truncate">{r.value}</span>
                   </div>
                 ))}
               </div>
@@ -4269,15 +5383,15 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 if (agents.length === 0) return null;
                 return (
                   <div className="mb-4">
-                    <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">BGP Agents</div>
-                    <div className="bg-gray-50 rounded-xl p-3 space-y-2">
+                    <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">BGP Agents</div>
+                    <div className="bg-muted/50 rounded-xl p-3 space-y-2">
                       {agents.map(agent => (
                         <div key={agent!.id} className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-[#1C1917] text-white flex items-center justify-center shrink-0">
+                          <div className="w-8 h-8 rounded-full bg-[hsl(var(--mobile-chrome))] text-white flex items-center justify-center shrink-0">
                             <span className="text-[11px] font-bold">{agent!.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="text-[14px] font-medium text-gray-900 truncate">{agent!.name}</div>
+                            <div className="text-[14px] font-medium text-foreground truncate">{agent!.name}</div>
                           </div>
                         </div>
                       ))}
@@ -4288,20 +5402,20 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
               {unitViewings && unitViewings.length > 0 && (
                 <div className="mb-4">
-                  <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">
+                  <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">
                     Viewings ({unitViewings.length})
                   </div>
                   <div className="space-y-2">
                     {unitViewings.map(v => (
-                      <div key={v.id} className="bg-gray-50 rounded-xl p-3">
+                      <div key={v.id} className="bg-muted/50 rounded-xl p-3">
                         <div className="flex items-center justify-between mb-1">
-                          <div className="text-[14px] font-medium text-gray-900">{v.companyName || "Unknown"}</div>
+                          <div className="text-[14px] font-medium text-foreground">{v.companyName || "Unknown"}</div>
                           {v.viewingDate && (
-                            <div className="text-[12px] text-gray-400">{new Date(v.viewingDate).toLocaleDateString("en-GB")}</div>
+                            <div className="text-[12px] text-muted-foreground/70">{new Date(v.viewingDate).toLocaleDateString("en-GB")}</div>
                           )}
                         </div>
-                        {v.outcome && <div className="text-[12px] text-blue-600 font-medium">{v.outcome}</div>}
-                        {v.notes && <div className="text-[12px] text-gray-500 mt-1">{v.notes}</div>}
+                        {v.outcome && <div className="text-[12px] text-foreground font-medium">{v.outcome}</div>}
+                        {v.notes && <div className="text-[12px] text-muted-foreground mt-1">{v.notes}</div>}
                       </div>
                     ))}
                   </div>
@@ -4310,26 +5424,26 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
               {unitOffers && unitOffers.length > 0 && (
                 <div className="mb-4">
-                  <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">
+                  <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">
                     Offers ({unitOffers.length})
                   </div>
                   <div className="space-y-2">
                     {unitOffers.map(o => (
                       <div key={o.id} className="bg-amber-50 rounded-xl p-3 border border-amber-100">
                         <div className="flex items-center justify-between mb-1">
-                          <div className="text-[14px] font-medium text-gray-900">{o.companyName || "Unknown"}</div>
+                          <div className="text-[14px] font-medium text-foreground">{o.companyName || "Unknown"}</div>
                           {o.status && (
                             <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${o.status === "Accepted" ? "bg-emerald-100 text-emerald-700" : o.status === "Rejected" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
                               {o.status}
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-3 text-[13px] text-gray-600">
+                        <div className="flex items-center gap-3 text-[13px] text-muted-foreground">
                           {o.rentPa && <span>£{o.rentPa.toLocaleString()} pa</span>}
                           {o.termYears && <span>{o.termYears} yrs</span>}
                           {o.rentFreeMonths && <span>{o.rentFreeMonths}m rent free</span>}
                         </div>
-                        {o.incentives && <div className="text-[12px] text-gray-500 mt-1">{o.incentives}</div>}
+                        {o.incentives && <div className="text-[12px] text-muted-foreground mt-1">{o.incentives}</div>}
                       </div>
                     ))}
                   </div>
@@ -4338,18 +5452,18 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
               {selectedUnit.notes && (
                 <div className="mb-4">
-                  <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Notes</div>
-                  <div className="bg-gray-50 rounded-xl p-3">
-                    <div className="text-[14px] text-gray-700 whitespace-pre-wrap">{selectedUnit.notes}</div>
+                  <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">Notes</div>
+                  <div className="bg-muted/50 rounded-xl p-3">
+                    <div className="text-[14px] text-muted-foreground whitespace-pre-wrap">{selectedUnit.notes}</div>
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="px-5 py-3 border-t border-gray-100 shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+            <div className="px-5 py-3 border-t border-border shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
               <button
                 onClick={() => { setSelectedUnitId(null); navigate("/available"); }}
-                className="w-full py-3 bg-[#1C1917] text-white text-[15px] font-semibold rounded-xl active:bg-gray-800"
+                className="w-full py-3 bg-[hsl(var(--mobile-chrome))] text-white text-[15px] font-semibold rounded-xl active:bg-gray-800"
                 data-testid="button-open-full-leasing"
               >
                 Open in Full Tracker
@@ -4359,33 +5473,6 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
         </div>
       )}
 
-      <div className="bg-[#FAF9F7]/90 backdrop-blur-xl pb-[env(safe-area-inset-bottom)] shrink-0" style={{ boxShadow: "0 -1px 0 rgba(0,0,0,0.04)" }}>
-        <div className="flex items-stretch justify-around px-1 pt-2 pb-1">
-          <button onClick={() => { setTab("chats"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "chats" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-chats">
-            <div className="relative">
-              <MessageSquare className="w-[22px] h-[22px]" strokeWidth={tab === "chats" ? 2.2 : 1.8} />
-              {unseenCount > 0 && (
-                <span className="absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-bold flex items-center justify-center" style={{ backgroundColor: "hsl(var(--primary))" }}>
-                  {unseenCount > 99 ? "99+" : unseenCount}
-                </span>
-              )}
-            </div>
-            <span className={`text-[10px] tracking-tight ${tab === "chats" ? "font-semibold" : "font-medium"}`}>Chats</span>
-          </button>
-          <button onClick={() => { setTab("ai"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "ai" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-ai">
-            <Sparkles className="w-[22px] h-[22px]" strokeWidth={tab === "ai" ? 2.2 : 1.8} fill={tab === "ai" ? "currentColor" : "none"} />
-            <span className={`text-[10px] tracking-tight ${tab === "ai" ? "font-semibold" : "font-medium"}`}>ChatBGP</span>
-          </button>
-          <button onClick={() => { setTab("today"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "today" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-today">
-            <Sun className="w-[22px] h-[22px]" strokeWidth={tab === "today" ? 2.2 : 1.8} />
-            <span className={`text-[10px] tracking-tight ${tab === "today" ? "font-semibold" : "font-medium"}`}>Today</span>
-          </button>
-          <button onClick={() => { setTab("menu"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "menu" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-menu">
-            <Menu className="w-[22px] h-[22px]" strokeWidth={tab === "menu" ? 2.2 : 1.8} />
-            <span className={`text-[10px] tracking-tight ${tab === "menu" ? "font-semibold" : "font-medium"}`}>More</span>
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

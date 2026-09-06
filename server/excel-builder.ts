@@ -32,10 +32,10 @@ function loadBGPLogo(): Buffer | null {
 
 // ─── BGP Brand Colors ───────────────────────────────────────────────────────
 
-const BGP_GREEN = 'FF2E5E3F';
-const BGP_DARK = 'FF1A3A28';
-const BGP_LIGHT = 'FFE8F0EB';
-const BGP_GOLD = 'FFC4A35A';
+const BGP_GREEN = 'FF6E0C25';
+const BGP_DARK = 'FF4A0819';
+const BGP_LIGHT = 'FFF6E9EC';
+const BGP_GOLD = 'FFFC9F8D';
 const INPUT_YELLOW = 'FFFFFDE7';
 const INPUT_BLUE = 'FF1565C0';
 const SECTION_GRAY = 'FFF5F5F5';
@@ -68,14 +68,14 @@ const NUMBER_FORMATS: Record<string, string> = {
 
 // ─── Style Presets ──────────────────────────────────────────────────────────
 
-const FONT_DEFAULT: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10 };
-const FONT_TITLE: Partial<ExcelJS.Font> = { name: 'Calibri', size: 16, bold: true, color: { argb: WHITE } };
-const FONT_SECTION: Partial<ExcelJS.Font> = { name: 'Calibri', size: 11, bold: true, color: { argb: WHITE } };
-const FONT_SUBSECTION: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10, bold: true, color: { argb: BGP_DARK } };
-const FONT_LABEL: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10, color: { argb: 'FF424242' } };
-const FONT_INPUT: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10, bold: true, color: { argb: INPUT_BLUE } };
-const FONT_FORMULA: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10, color: { argb: BLACK } };
-const FONT_TOTAL: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10, bold: true, color: { argb: BLACK } };
+const FONT_DEFAULT: Partial<ExcelJS.Font> = { name: 'Lato', size: 10 };
+const FONT_TITLE: Partial<ExcelJS.Font> = { name: 'Lato', size: 16, bold: true, color: { argb: WHITE } };
+const FONT_SECTION: Partial<ExcelJS.Font> = { name: 'Lato', size: 11, bold: true, color: { argb: WHITE } };
+const FONT_SUBSECTION: Partial<ExcelJS.Font> = { name: 'Lato', size: 10, bold: true, color: { argb: BGP_DARK } };
+const FONT_LABEL: Partial<ExcelJS.Font> = { name: 'Lato', size: 10, color: { argb: 'FF424242' } };
+const FONT_INPUT: Partial<ExcelJS.Font> = { name: 'Lato', size: 10, bold: true, color: { argb: INPUT_BLUE } };
+const FONT_FORMULA: Partial<ExcelJS.Font> = { name: 'Lato', size: 10, color: { argb: BLACK } };
+const FONT_TOTAL: Partial<ExcelJS.Font> = { name: 'Lato', size: 10, bold: true, color: { argb: BLACK } };
 
 const FILL_TITLE: ExcelJS.FillPattern = { type: 'pattern', pattern: 'solid', fgColor: { argb: BGP_DARK } };
 const FILL_SECTION: ExcelJS.FillPattern = { type: 'pattern', pattern: 'solid', fgColor: { argb: BGP_GREEN } };
@@ -1571,7 +1571,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, modelName: string): ExcelJS.Wor
   wsRef.mergeCells('B2:F2');
   const subCell = wsRef.getCell('B2');
   subCell.value = 'Bruce Gillingham Pollard — Investment Appraisal';
-  subCell.font = { name: 'Calibri', size: 11, italic: true, color: { argb: BGP_GREEN } };
+  subCell.font = { name: 'Lato', size: 11, italic: true, color: { argb: BGP_GREEN } };
   subCell.fill = FILL_SUBSECTION;
   wsRef.getRow(2).height = 24;
   for (let c = 1; c <= 6; c++) {

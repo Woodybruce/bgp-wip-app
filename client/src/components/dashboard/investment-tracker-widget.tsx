@@ -4,29 +4,52 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Link } from "wouter";
-import { useMemo } from "react";
-import { TrendingUp, ChevronRight } from "lucide-react";
+import { useMemo, useState } from "react";
+import { TrendingUp, ChevronRight, X } from "lucide-react";
 import type { InvestmentTracker as InvTracker } from "@shared/schema";
 
 export function InvestmentTrackerWidget() {
   const { data: items = [] } = useQuery<InvTracker[]>({ queryKey: ["/api/investment-tracker"] });
 
+  // Status pills are FILTERS, not a legend (Woody, 2026-08-05: "filters
+  // don't work on the investment tracker"). Group case-insensitively so
+  // "Live" and "LIVE" data variants land on one pill.
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const normStatus = (s: string | null | undefined) => (s || "Reporting").trim().toUpperCase();
+
   const statusCounts = useMemo(() => {
-    const c: Record<string, number> = { Reporting: 0, Speculative: 0, Live: 0, Available: 0, "Under Offer": 0, Completed: 0 };
-    for (const u of items) c[u.status || "Reporting"] = (c[u.status || "Reporting"] || 0) + 1;
-    return c;
+    const counts = new Map<string, { label: string; count: number }>();
+    for (const u of items) {
+      const key = normStatus(u.status);
+      const existing = counts.get(key);
+      if (existing) existing.count++;
+      else counts.set(key, { label: (u.status || "Reporting").trim(), count: 1 });
+    }
+    return [...counts.entries()].sort((a, b) => b[1].count - a[1].count);
   }, [items]);
 
-  const activeItems = useMemo(() => items.filter(u => u.status !== "Completed").slice(0, 12), [items]);
+  const activeItems = useMemo(() => {
+    if (statusFilter) return items.filter(u => normStatus(u.status) === statusFilter).slice(0, 30);
+    return items.filter(u => normStatus(u.status) !== "COMPLETED").slice(0, 12);
+  }, [items, statusFilter]);
 
   const statusColors: Record<string, string> = {
-    Reporting: "bg-slate-500",
-    Speculative: "bg-violet-500",
-    Live: "bg-blue-500",
-    Available: "bg-amber-500",
-    "Under Offer": "bg-orange-500",
-    Completed: "bg-green-500",
+    REPORTING: "bg-slate-500",
+    REP: "bg-slate-500",
+    SPECULATIVE: "bg-violet-500",
+    SPEC: "bg-violet-500",
+    LIVE: "bg-blue-500",
+    AVAILABLE: "bg-amber-500",
+    AVA: "bg-amber-500",
+    "UNDER OFFER": "bg-orange-500",
+    OPP: "bg-orange-500",
+    SOL: "bg-orange-500",
+    COMPLETED: "bg-green-500",
+    COM: "bg-green-500",
+    SOLD: "bg-green-500",
+    WIT: "bg-neutral-400",
   };
+  const dotFor = (s: string | null | undefined) => statusColors[normStatus(s)] || "bg-neutral-400";
 
   return (
     <Card className="h-full flex flex-col">
@@ -43,19 +66,30 @@ export function InvestmentTrackerWidget() {
         </Link>
       </CardHeader>
       <CardContent className="pt-0 flex-1 overflow-hidden flex flex-col gap-3">
-        <div className="flex gap-4 flex-wrap">
-          {Object.entries(statusCounts).filter(([, count]) => count > 0).map(([status, count]) => (
-            <div key={status} className="flex items-center gap-1.5">
-              <div className={`w-2 h-2 rounded-full ${statusColors[status] || "bg-neutral-400"}`} />
-              <span className="text-xs text-muted-foreground">{status}</span>
-              <span className="text-xs font-semibold">{count}</span>
-            </div>
-          ))}
+        <div className="flex gap-1.5 flex-wrap">
+          {statusCounts.map(([key, { label, count }]) => {
+            const active = statusFilter === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setStatusFilter(active ? null : key)}
+                className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-colors ${
+                  active ? "bg-foreground text-background border-foreground" : "bg-card hover:bg-muted border-border"
+                }`}
+                data-testid={`inv-widget-filter-${key.toLowerCase().replace(/\s/g, "-")}`}
+              >
+                <div className={`w-2 h-2 rounded-full ${statusColors[key] || "bg-neutral-400"}`} />
+                <span className={`text-xs ${active ? "" : "text-muted-foreground"}`}>{label}</span>
+                <span className="text-xs font-semibold tabular-nums">{count}</span>
+                {active && <X className="w-3 h-3" />}
+              </button>
+            );
+          })}
         </div>
         {activeItems.length === 0 ? (
           <div className="text-center py-6 text-muted-foreground">
             <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-30" />
-            <p className="text-xs">No active investment items</p>
+            <p className="text-xs">{statusFilter ? "Nothing with this status" : "No active investment items"}</p>
           </div>
         ) : (
           <ScrollArea className="flex-1">
@@ -63,7 +97,7 @@ export function InvestmentTrackerWidget() {
               {activeItems.map(u => (
                 <Link key={u.id} href="/investment-tracker">
                   <div className="flex items-center gap-2 py-1.5 px-2 rounded-md border hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`widget-inv-${u.id}`}>
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${statusColors[u.status || "Reporting"] || "bg-neutral-400"}`} />
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${dotFor(u.status)}`} />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-medium truncate">{u.assetName}</p>
                       <p className="text-[10px] text-muted-foreground truncate">{u.address || u.assetType || ""}</p>

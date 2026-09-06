@@ -5,6 +5,8 @@ import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
@@ -85,8 +87,8 @@ function generateInvestmentCompsPdf(comps: InvestmentComp[], tpl?: InvestmentPdf
   const pageW = 210;
   const margin = 15;
   const contentW = pageW - margin * 2;
-  const brandColor = (t.brandColor || [25, 25, 25]) as [number, number, number];
-  const accentColor = (t.accentColor || [0, 82, 136]) as [number, number, number];
+  const brandColor = (t.brandColor || [110, 12, 37]) as [number, number, number];
+  const accentColor = (t.accentColor || [252, 159, 141]) as [number, number, number];
   const lightGray: [number, number, number] = [245, 245, 245];
   const medGray: [number, number, number] = [140, 140, 140];
   let y = 0;
@@ -434,6 +436,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
   const isInvestment = currentUser?.team === "Investment";
 
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -493,6 +496,16 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
     companies.map(c => ({ id: c.id, name: c.name })).sort((a, b) => a.name.localeCompare(b.name)),
     [companies]
   );
+
+  // Inline "search and set up" — create the CRM company when the typed name
+  // matches nothing, then return it so the cell can link it.
+  const createCompany = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
 
   const uniqueCities = useMemo(() =>
     [...new Set(comps.map(c => c.city).filter(Boolean) as string[])].sort(),
@@ -666,6 +679,27 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
     updateMutation.mutate({ id, field, value });
   };
 
+  // Promote a comp into the CRM on demand — creates a crm_property from the
+  // comp's details and links it (sets propertyId). Comps otherwise stay purely
+  // in the investment-comps table, out of the CRM.
+  const addToCrm = async (comp: InvestmentComp) => {
+    try {
+      const res = await apiRequest("POST", "/api/crm/properties", {
+        name: comp.propertyName || (comp as any).address || "Investment property",
+        address: (comp as any).address ? { address: (comp as any).address } : null,
+        assetClass: (comp as any).type || null,
+        status: "BGP Targeting",
+      });
+      const created = await res.json();
+      await apiRequest("PUT", `/api/investment-comps/${comp.id}`, { propertyId: created.id });
+      queryClient.invalidateQueries({ queryKey: ["/api/investment-comps"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      toast({ title: "Added to CRM", description: `${created.name} created and linked to this comp.` });
+    } catch (e: any) {
+      toast({ title: "Couldn't add to CRM", description: e.message, variant: "destructive" });
+    }
+  };
+
   const renderCell = (comp: InvestmentComp, col: typeof ALL_COLUMNS[0]) => {
     const id = comp.id;
     const key = col.key as keyof InvestmentComp;
@@ -687,6 +721,14 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               onSave={(v) => handleUpdate(id, "propertyId", v)}
               compact
             />
+            {!comp.propertyId && (
+              <button
+                onClick={() => addToCrm(comp)}
+                title="Create a CRM property from this comp and link it"
+                className="text-[10px] px-1.5 py-0.5 rounded border border-amber-300 text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+                data-testid={`add-to-crm-${id}`}
+              >+ CRM</button>
+            )}
           </div>
         );
 
@@ -703,6 +745,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               options={companyOptions}
               href={comp.buyerCompanyId ? `/companies?highlight=${comp.buyerCompanyId}` : undefined}
               onSave={(v) => handleUpdate(id, "buyerCompanyId", v)}
+              onCreate={async (name) => { const c = await createCompany(name); handleUpdate(id, "buyerCompanyId", c.id); }}
               compact
             />
           </div>
@@ -721,6 +764,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               options={companyOptions}
               href={comp.sellerCompanyId ? `/companies?highlight=${comp.sellerCompanyId}` : undefined}
               onSave={(v) => handleUpdate(id, "sellerCompanyId", v)}
+              onCreate={async (name) => { const c = await createCompany(name); handleUpdate(id, "sellerCompanyId", c.id); }}
               compact
             />
           </div>
@@ -1006,6 +1050,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               onChange={handleFileUpload}
               data-testid="input-file-upload"
             />
+            {!isMobile && (<>
             <Button
               variant="outline"
               size="sm"
@@ -1061,6 +1106,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
                 ))}
               </PopoverContent>
             </Popover>
+            </>)}
 
             <Button
               size="sm"
@@ -1074,13 +1120,15 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          {!isMobile && (
           <div className="flex items-center gap-4 text-xs">
             <span className="flex items-center gap-1.5"><TrendingUp className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.total}</span> comps</span>
-            <span className="flex items-center gap-1.5"><DollarSign className="w-3.5 h-3.5 text-green-600" /> <span className="font-semibold">{formatCurrency(totalPrice)}</span> total</span>
-            {avgCapRate != null && <span className="flex items-center gap-1.5"><Percent className="w-3.5 h-3.5 text-blue-600" /> <span className="font-semibold">{formatPercent(avgCapRate)}</span> avg cap</span>}
+            <span className="flex items-center gap-1.5"><DollarSign className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{formatCurrency(totalPrice)}</span> total</span>
+            {avgCapRate != null && <span className="flex items-center gap-1.5"><Percent className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{formatPercent(avgCapRate)}</span> avg cap</span>}
             <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.cities}</span> cities</span>
             <span className="flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.sales}</span> completed</span>
           </div>
+          )}
           <div className="flex-1" />
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -1097,6 +1145,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               </button>
             )}
           </div>
+          {!isMobile && (<>
           <Select value={filterStatus || "all"} onValueChange={(v) => setFilterStatus(v === "all" ? "" : v)}>
             <SelectTrigger className="h-8 w-32 text-xs" data-testid="select-toolbar-status">
               <SelectValue placeholder="Status" />
@@ -1129,8 +1178,30 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               <FilterX className="w-3.5 h-3.5" /> Clear
             </Button>
           )}
+          </>)}
         </div>
 
+        {isMobile ? (
+          <div className="flex gap-2 mt-3">
+            <Select value={activeRegion} onValueChange={setActiveRegion}>
+              <SelectTrigger className="h-9 flex-1 text-sm" data-testid="select-region-filter">
+                <SelectValue placeholder="All Regions" />
+              </SelectTrigger>
+              <SelectContent>
+                {REGION_GROUPS.map(region => <SelectItem key={region} value={region}>{region}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={filterType || "all"} onValueChange={(v) => setFilterType(v === "all" ? "" : v)}>
+              <SelectTrigger className="h-9 flex-1 text-sm" data-testid="select-use-filter">
+                <SelectValue placeholder="All Uses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Uses</SelectItem>
+                {TYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : (
         <div className="flex items-center gap-1.5 mt-3 flex-wrap">
           {REGION_GROUPS.map(region => (
             <button
@@ -1147,6 +1218,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             </button>
           ))}
         </div>
+        )}
       </div>
 
       {selectedIds.size > 0 && (
@@ -1159,6 +1231,43 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
       )}
 
       <div className="flex-1 overflow-auto">
+        {isMobile ? (
+          <div className="grid grid-cols-1 gap-3 p-3">
+            {filtered.length === 0 ? (
+              <div className="text-center py-12 text-sm text-muted-foreground">No comps match your filters</div>
+            ) : filtered.map(c => {
+              const sub = [c.city, c.market].filter(Boolean).join(" · ") || undefined;
+              const rows = [
+                { label: "Price", value: c.price != null ? formatCurrency(c.price) : null },
+                { label: "Cap rate", value: c.capRate != null ? formatPercent(c.capRate) : null },
+                { label: "£/sf", value: c.pricePsf != null ? formatPsf(c.pricePsf) : null },
+                { label: "Buyer", value: c.buyer },
+                { label: "Seller", value: c.seller },
+              ].filter(r => r.value);
+              return (
+                <div key={c.id} className="rounded-xl border bg-card p-4 space-y-3 shadow-sm" data-testid={`invcomp-card-${c.id}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-sm font-semibold leading-tight block truncate">{c.propertyName || c.address || "Untitled"}</span>
+                      {sub && <p className="text-xs text-muted-foreground truncate mt-0.5">{sub}</p>}
+                    </div>
+                    {c.subtype && <Badge variant="outline" className="shrink-0 text-[10px] px-2 py-0.5">{c.subtype}</Badge>}
+                  </div>
+                  {rows.length > 0 && (
+                    <div className="space-y-1.5">
+                      {rows.map((r, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-muted-foreground shrink-0">{r.label}</span>
+                          <span className="font-medium truncate text-right">{String(r.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
         <table className="w-full" data-testid="table-comps">
           <thead className="sticky top-0 bg-background border-b z-10 text-sm">
             <tr>
@@ -1259,6 +1368,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             )}
           </tbody>
         </table>
+        )}
       </div>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

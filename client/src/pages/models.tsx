@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -177,7 +178,7 @@ function TemplateUpload() {
       <DialogTrigger asChild>
         <Button data-testid="button-upload-template">
           <Upload className="w-4 h-4 mr-2" />
-          Upload Template
+          Upload template
         </Button>
       </DialogTrigger>
       <DialogContent>
@@ -249,7 +250,7 @@ function TemplateUpload() {
             className="w-full"
             data-testid="button-submit-upload"
           >
-            {uploadMutation.isPending ? "Uploading..." : "Upload Template"}
+            {uploadMutation.isPending ? "Uploading..." : "Upload template"}
           </Button>
         </div>
       </DialogContent>
@@ -536,23 +537,21 @@ function RunDetails({ runId }: { runId: string }) {
         </Badge>
       </div>
 
-      <div className="flex border-b">
-        <button
+      <div className="flex flex-wrap gap-1.5">
+        <Pill
+          active={activeTab === "summary"}
           onClick={() => setActiveTab("summary")}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${activeTab === "summary" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-summary"
         >
-          <BarChart3 className="w-3.5 h-3.5 inline mr-1.5" />
           Summary
-        </button>
-        <button
+        </Pill>
+        <Pill
+          active={activeTab === "excel"}
           onClick={() => setActiveTab("excel")}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${activeTab === "excel" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-excel"
         >
-          <FileSpreadsheet className="w-3.5 h-3.5 inline mr-1.5" />
           Excel Model
-        </button>
+        </Pill>
       </div>
 
       {activeTab === "summary" && (
@@ -883,7 +882,7 @@ function SpreadsheetViewer({ endpoint, title, editable, outputs, outputMapping, 
     queryKey: [endpoint, activeSheet],
     queryFn: async () => {
       const url = activeSheet ? `${endpoint}?sheet=${encodeURIComponent(activeSheet)}` : endpoint;
-      const res = await fetch(url, { credentials: "include" });
+      const res = await fetch(url, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
@@ -2662,7 +2661,7 @@ function ClaudeModelStudio() {
     { label: "BGP Rent Review / Lease Analysis", desc: "A rent review analysis comparing passing rent to ERV with uplift calculations, lease terms, break options, and effective rent calculation" },
     { label: "BGP Portfolio Summary", desc: "A portfolio summary model tracking multiple properties with rental income, yields, void rates, WAULT, and total portfolio valuation" },
     { label: "BGP Acquisition Comparison", desc: "A side-by-side acquisition comparison for 3 properties comparing purchase price, net initial yield, reversionary yield, capital value per sq ft, and risk scoring" },
-    { label: "BGP Tenant Covenant Analysis", desc: "A tenant covenant analysis model with financials (revenue, profit, net assets), Dun & Bradstreet score, and covenant strength grading" },
+    { label: "BGP Tenant Covenant Analysis", desc: "A tenant covenant analysis model with financials (revenue, profit, net assets), house covenant grade (CH + Gazette), and covenant strength grading" },
   ];
 
   const isBusy = createMutation.isPending || askMutation.isPending;
@@ -2676,7 +2675,7 @@ function ClaudeModelStudio() {
               <Sparkles className="w-5 h-5 text-green-600" />
             </div>
             <div>
-              <CardTitle>Claude — Model Studio</CardTitle>
+              <CardTitle>Claude Studio</CardTitle>
               <CardDescription>Create new models, ask questions, edit formulas, and manage templates</CardDescription>
             </div>
           </div>
@@ -2915,9 +2914,9 @@ export default function ModelsPage() {
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold" data-testid="text-page-title">Model Generate</h1>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold" data-testid="text-page-title">Model Studio</h1>
           <p className="text-muted-foreground">Upload Excel models, run scenarios, and analyse results</p>
         </div>
         <TemplateUpload />
@@ -2939,7 +2938,7 @@ export default function ModelsPage() {
               data-testid="link-install-addin"
             >
               <FileSpreadsheet className="w-3 h-3" />
-              Go to Add-ins to install
+              Open in Add-ins
               <ArrowRight className="w-3 h-3" />
             </a>
           </div>
@@ -2954,16 +2953,15 @@ export default function ModelsPage() {
       )}
 
       <Tabs defaultValue="ask-claude">
-        <TabsList data-testid="tabs-models" className="flex-wrap h-auto gap-1">
-          <TabsTrigger value="ask-claude" data-testid="tab-ask-claude">
-            <Sparkles className="w-3.5 h-3.5 mr-1" />
+        <TabsList data-testid="tabs-models" className={pillTabsList}>
+          <TabsTrigger value="ask-claude" className={pillTabsTrigger} data-testid="tab-ask-claude">
             Claude Studio
           </TabsTrigger>
-          <TabsTrigger value="templates" data-testid="tab-templates">
-            Templates ({templates?.length || 0})
+          <TabsTrigger value="templates" className={pillTabsTrigger} data-testid="tab-templates">
+            Templates <span className="font-mono normal-case opacity-70">{templates?.length || 0}</span>
           </TabsTrigger>
-          <TabsTrigger value="runs" data-testid="tab-runs">
-            Runs ({runs?.length || 0})
+          <TabsTrigger value="runs" className={pillTabsTrigger} data-testid="tab-runs">
+            Runs <span className="font-mono normal-case opacity-70">{runs?.length || 0}</span>
           </TabsTrigger>
         </TabsList>
 

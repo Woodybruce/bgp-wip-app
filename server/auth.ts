@@ -7,20 +7,27 @@ import { pool } from "./db";
 import { storage } from "./storage";
 import { loginSchema } from "@shared/schema";
 import crypto from "crypto";
-import { resolveCompanyScope, getClientTeamInfo } from "./company-scope";
+import { resolveCompanyScope, getClientTeamInfo, getScopeCompanyName } from "./company-scope";
 
-const ADMIN_EMAILS = new Set([
+export const ADMIN_EMAILS = new Set([
   "woody@brucegillinghampollard.com",
   "rupert@brucegillinghampollard.com",
+  "layla@brucegillinghampollard.com",
+  "wendy@brucegillinghampollard.com",
+  "accounts@brucegillinghampollard.com",   // Wendy McKenzie's actual login
+  "charlotte@brucegillinghampollard.com",
+  "jack@brucegillinghampollard.com",
 ]);
 
 async function ensureAdminFlag(userId: string, email: string) {
   const normalised = email.toLowerCase().trim();
   try {
+    // ADMIN_EMAILS is the permanent baseline — the core team is always
+    // promoted and can't be accidentally locked out. For everyone else we
+    // leave is_admin untouched, so admin granted/revoked via the Team page
+    // (PATCH /api/hr/team/:id) survives login instead of being reset here.
     if (ADMIN_EMAILS.has(normalised)) {
       await pool.query("UPDATE users SET is_admin = true WHERE id = $1 AND (is_admin IS NULL OR is_admin = false)", [userId]);
-    } else {
-      await pool.query("UPDATE users SET is_admin = false WHERE id = $1 AND is_admin = true", [userId]);
     }
   } catch (err: any) {
     console.error("Failed to update admin flag:", err.message);
@@ -70,9 +77,20 @@ declare module "express" {
 
 const PgStore = connectPgSimple(session);
 
-async function createAuthToken(userId: string): Promise<string> {
+// Everyone lives in the app on their phones — an 8h lifetime forced a full
+// sign-in every morning, which the persisted-data cache then masked as a
+// dead-looking app (Woody, 2026-08-31: "Chat taking ages to load" — every
+// request in the prod log was a 401). Sessions/tokens last 30 rolling days
+// like any phone app — staff and Client (Landsec) logins alike (Woody,
+// 2026-08-31: "same for landsec").
+const AUTH_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+function authLifetimeMs(_role?: string | null): number {
+  return AUTH_LIFETIME_MS;
+}
+
+async function createAuthToken(userId: string, ttlMs: number = AUTH_LIFETIME_MS): Promise<string> {
   const token = crypto.randomBytes(48).toString("hex");
-  const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 hours
+  const expiresAt = new Date(Date.now() + ttlMs);
   await pool.query(
     "INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)",
     [token, userId, expiresAt]
@@ -136,6 +154,10 @@ export function setupAuth(app: Express) {
       expires_at TIMESTAMPTZ NOT NULL
     );
     ALTER TABLE users ADD COLUMN IF NOT EXISTS client_view_mode BOOLEAN DEFAULT false;
+    -- Team currently selected in the sidebar picker. Persisted (not just
+    -- localStorage) so the SERVER knows when a staff member has switched to a
+    -- client team and must be scoped to that client's view.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS active_team TEXT;
   `).catch((err: any) => console.error("[auth] Table bootstrap error:", err.message));
 
   app.set("trust proxy", 1);
@@ -164,7 +186,32 @@ export function setupAuth(app: Express) {
     })
   );
 
-  app.use(async (req: Request, _res: Response, next: NextFunction) => {
+  // Account-deactivation gate. requireAuth re-checks is_active, but most
+  // routes resolve the user themselves and never do — so a deactivated
+  // account with a live session could keep using chat, mail, pathway etc.
+  // (visible in prod logs as a user whose only failures were the
+  // requireAuth-gated endpoints). Any /api request from a deactivated
+  // account now gets 401 + session destroyed, which lands the client on
+  // the login screen. Result cached 60s per user so the app's polling
+  // endpoints don't add a users lookup on every request.
+  const activeCache = new Map<string, { active: boolean; at: number }>();
+  const ACTIVE_TTL_MS = 60_000;
+  async function isUserActive(userId: string): Promise<boolean> {
+    const hit = activeCache.get(userId);
+    if (hit && Date.now() - hit.at < ACTIVE_TTL_MS) return hit.active;
+    let active = true;
+    try {
+      const r = await pool.query("SELECT is_active FROM users WHERE id = $1", [userId]);
+      active = r.rows.length > 0 && r.rows[0].is_active !== false;
+    } catch {
+      // DB hiccup — fail open so a transient outage doesn't lock everyone out.
+      active = true;
+    }
+    activeCache.set(userId, { active, at: Date.now() });
+    return active;
+  }
+
+  app.use(async (req: Request, res: Response, next: NextFunction) => {
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.slice(7);
@@ -177,6 +224,17 @@ export function setupAuth(app: Express) {
           }
         }
       } catch (err: any) { console.error("[auth] token validation error:", err?.message); }
+    }
+
+    const userId = req.session.userId || req.tokenUserId;
+    // Logout stays reachable so a deactivated user can still clear their
+    // cookie cleanly; everything else under /api is gated.
+    if (userId && req.path.startsWith("/api") && req.path !== "/api/auth/logout") {
+      if (!(await isUserActive(userId))) {
+        console.warn(`[auth] blocked deactivated user: user=${userId} path=${req.path}`);
+        try { req.session.destroy(() => {}); } catch {}
+        return res.status(401).json({ message: "Your account has been deactivated. Please contact an administrator." });
+      }
     }
     next();
   });
@@ -225,7 +283,8 @@ export function setupAuth(app: Express) {
         req.session.regenerate((err) => err ? reject(err) : resolve());
       });
       req.session.userId = created.id;
-      const token = await createAuthToken(created.id);
+      req.session.cookie.maxAge = authLifetimeMs((created as any).role);
+      const token = await createAuthToken(created.id, authLifetimeMs((created as any).role));
       req.session.save(() => {
         const { password: _, ...safe } = created as any;
         res.json({ ...safe, token });
@@ -270,8 +329,9 @@ export function setupAuth(app: Express) {
       });
     });
     req.session.userId = user.id;
+    req.session.cookie.maxAge = authLifetimeMs((user as any).role);
 
-    const token = await createAuthToken(user.id);
+    const token = await createAuthToken(user.id, authLifetimeMs((user as any).role));
     trackLogin(user.id, 'password');
     ensureAdminFlag(user.id, user.email || user.username || "");
 
@@ -281,6 +341,11 @@ export function setupAuth(app: Express) {
     if (isBgpStaff && user.team) {
       clientTeamInfo = await getClientTeamInfo(user.id);
     }
+    // The company actually being viewed — not the viewer's own team. Resolved
+    // before session.save so the callback stays synchronous.
+    const scopeCompanyName = scopeCompanyId
+      ? (await getScopeCompanyName(scopeCompanyId)) || user.team
+      : null;
     req.session.save((err) => {
       if (err) {
         console.error("Session save error:", err);
@@ -289,7 +354,7 @@ export function setupAuth(app: Express) {
       const response: any = { ...safeUser, token };
       if (scopeCompanyId) {
         response.companyScopeId = scopeCompanyId;
-        response.companyScopeName = user.team;
+        response.companyScopeName = scopeCompanyName;
       }
       if (clientTeamInfo) {
         response.canViewAsClient = true;
@@ -316,6 +381,25 @@ export function setupAuth(app: Express) {
     });
   });
 
+  // Mint a fresh bearer token off a still-valid session, so a stale token
+  // in localStorage self-heals (WebSocket "Invalid token" loops, 401ing
+  // token-authed mobile downloads) instead of requiring a fresh sign-in.
+  // Also re-extends the session cookie to the role's full lifetime.
+  app.post("/api/auth/refresh-token", async (req: Request, res: Response) => {
+    const userId = req.session.userId;
+    if (!userId) return res.status(401).json({ message: "No active session" });
+    try {
+      const user = await storage.getUser(userId);
+      const ttl = authLifetimeMs((user as any)?.role);
+      req.session.cookie.maxAge = ttl;
+      const token = await createAuthToken(userId, ttl);
+      res.json({ token });
+    } catch (err: any) {
+      console.error("[auth] refresh-token error:", err?.message);
+      res.status(500).json({ message: "Could not refresh token" });
+    }
+  });
+
   app.get("/api/auth/me", async (req: Request, res: Response) => {
     const userId = req.session.userId || req.tokenUserId;
     if (!userId) {
@@ -333,10 +417,16 @@ export function setupAuth(app: Express) {
       user.isAdmin = true;
     }
     const { password: _, ...safeUser } = user;
+    // Team-expense oversight (read-only) — drives the "Team Expenses" nav +
+    // page for non-admin team leads like Victoria. Empty for everyone else.
+    try {
+      const { expenseOverseerTeams } = await import("./expense-access");
+      (safeUser as any).expenseOverseerTeams = expenseOverseerTeams(user as any);
+    } catch {}
     const scopeCompanyId = await resolveCompanyScope(req);
     if (scopeCompanyId) {
       (safeUser as any).companyScopeId = scopeCompanyId;
-      (safeUser as any).companyScopeName = user.team;
+      (safeUser as any).companyScopeName = (await getScopeCompanyName(scopeCompanyId)) || user.team;
     }
     const isBgpStaff = (user.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
     if (isBgpStaff && user.team) {
@@ -350,6 +440,22 @@ export function setupAuth(app: Express) {
       }
     }
     res.json(safeUser);
+  });
+
+  // Persist the sidebar team selection. The picker used to be localStorage-only,
+  // so switching to a client team (e.g. "Landsec") re-branded the UI but the
+  // server never knew — staff kept the full staff view and the switch looked
+  // like it did nothing. Storing it lets resolveCompanyScope put staff into
+  // that client's exact view.
+  app.post("/api/auth/active-team", requireAuth, async (req: Request, res: Response) => {
+    const userId = req.session.userId || req.tokenUserId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const raw = req.body?.team;
+    const team = typeof raw === "string" && raw.trim() && raw !== "all" ? raw.trim() : null;
+    await pool.query(`UPDATE users SET active_team = $1 WHERE id = $2`, [team, userId]);
+    const { getCompanyIdForClientTeam } = await import("./company-scope");
+    const scope = team ? await getCompanyIdForClientTeam(team) : null;
+    res.json({ activeTeam: team, viewingAsClient: !!scope, companyScopeId: scope });
   });
 
   app.post("/api/auth/client-view-mode", requireAuth, async (req: Request, res: Response) => {
@@ -428,14 +534,22 @@ export function setupAuth(app: Express) {
         return res.status(500).json({ message: "Microsoft SSO not configured" });
       }
       const useBasic = req.query.basic === "1";
+      const isAddin = req.query.addin === "1";
       const scopes = useBasic ? SSO_SCOPES_BASIC : SSO_SCOPES_FULL;
       const state = crypto.randomBytes(32).toString("hex");
       req.session.ssoState = state;
       if (useBasic) {
         (req.session as any).ssoBasicMode = true;
       }
+      // Office add-in task panes open this in a dialog window. The dialog can't
+      // read a JSON body, so it needs a real redirect to Microsoft; and the
+      // callback must bounce back to the add-in completion page (which posts
+      // the one-time code to the task pane) rather than the main app.
+      if (isAddin) {
+        (req.session as any).ssoAddin = true;
+      }
       const redirectUri = getSsoRedirectUri(req);
-      console.log("SSO: initiating login, redirect URI =", redirectUri, "basic:", useBasic);
+      console.log("SSO: initiating login, redirect URI =", redirectUri, "basic:", useBasic, "addin:", isAddin);
 
       const authUrl = await client.getAuthCodeUrl({
         scopes,
@@ -446,7 +560,8 @@ export function setupAuth(app: Express) {
       });
 
       req.session.save(() => {
-        res.json({ authUrl });
+        if (isAddin) res.redirect(authUrl);
+        else res.json({ authUrl });
       });
     } catch (err: any) {
       console.error("SSO auth error:", err.message);
@@ -510,6 +625,9 @@ export function setupAuth(app: Express) {
       const redirectUri = getSsoRedirectUri(req);
       const useBasicScopes = !!(req.session as any).ssoBasicMode;
       delete (req.session as any).ssoBasicMode;
+      // Capture the add-in flag now — req.session.regenerate() below wipes it.
+      const isAddinFlow = !!(req.session as any).ssoAddin;
+      delete (req.session as any).ssoAddin;
       const scopes = useBasicScopes ? SSO_SCOPES_BASIC : SSO_SCOPES_FULL;
       const result = await client.acquireTokenByCode({
         code: code as string,
@@ -612,8 +730,12 @@ export function setupAuth(app: Express) {
           trackLogin(user.id, 'sso', true);
           ensureAdminFlag(user.id, msEmail);
 
+          // Add-in dialog flow lands on a tiny completion page that posts the
+          // one-time code back to the task pane via Office.messageParent; the
+          // normal web flow drops the code on the main app for exchange.
+          // (isAddinFlow was captured above, before session.regenerate wiped it.)
           req.session.save(() => {
-            res.redirect("/?sso_code=" + exchangeCode);
+            res.redirect((isAddinFlow ? "/addin-sso-complete.html?sso_code=" : "/?sso_code=") + exchangeCode);
           });
         })();
       });
@@ -646,7 +768,8 @@ export function setupAuth(app: Express) {
       }
 
       req.session.userId = userId;
-      const token = await createAuthToken(userId);
+      req.session.cookie.maxAge = authLifetimeMs((user as any).role);
+      const token = await createAuthToken(userId, authLifetimeMs((user as any).role));
 
       req.session.save((err) => {
         if (err) console.error("SSO exchange session save error:", err);
@@ -711,6 +834,54 @@ export function setupAuth(app: Express) {
     );
     res.json({ success: true });
   });
+
+  // Promote another user's saved dashboard arrangement to the org template.
+  // The template button on the dashboard saves the CALLER's layout, and only
+  // admins can call it — so a layout staged on a client account (arrange the
+  // boards logged in as the client to see exactly what they see) had no path
+  // to becoming the default. Admin-only. Pass resetTeam to also clear the
+  // personal layouts of that team's users so the new standard actually shows
+  // for them (their own saved layout otherwise wins over the template).
+  app.put("/api/dashboard-template/from-user/:userId", requireAuth, async (req: Request, res: Response) => {
+    const callerId = req.session.userId || req.tokenUserId;
+    if (!callerId) return res.status(401).json({ message: "Not authenticated" });
+    const caller = await pool.query(`SELECT is_admin FROM users WHERE id = $1`, [callerId]);
+    if (!caller.rows[0]?.is_admin) {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const source = await pool.query(
+      `SELECT id, name, team, dashboard_layout FROM users WHERE id = $1`,
+      [String(req.params.userId)]
+    );
+    if (!source.rows[0]) return res.status(404).json({ message: "User not found" });
+    const layout = source.rows[0].dashboard_layout;
+    if (!layout || typeof layout !== "object") {
+      return res.status(400).json({ message: `${source.rows[0].name} has no saved dashboard layout` });
+    }
+    await pool.query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ('dashboard_template', $1, now())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`,
+      [JSON.stringify(layout)]
+    );
+    let layoutsCleared = 0;
+    const { resetTeam } = req.body || {};
+    if (resetTeam && typeof resetTeam === "string") {
+      const cleared = await pool.query(
+        `UPDATE users SET dashboard_layout = NULL
+          WHERE team = $1 AND id <> $2 AND dashboard_layout IS NOT NULL`,
+        [resetTeam, source.rows[0].id]
+      );
+      layoutsCleared = cleared.rowCount || 0;
+    }
+    res.json({
+      success: true,
+      sourceUser: source.rows[0].name,
+      version: (layout as any)?._version || null,
+      boards: Array.isArray((layout as any)?.combined?.lg) ? (layout as any).combined.lg.length : null,
+      hidden: (layout as any)?.hiddenPortfolio || null,
+      layoutsCleared,
+    });
+  });
 }
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
@@ -722,11 +893,64 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     req.session.userId = req.tokenUserId;
   }
   try {
-    const result = await pool.query("SELECT is_active FROM users WHERE id = $1", [userId]);
+    const result = await pool.query("SELECT is_active, email FROM users WHERE id = $1", [userId]);
     if (result.rows.length > 0 && result.rows[0].is_active === false) {
+      // Reaching here means the global deactivation gate didn't intercept —
+      // log enough to identify the user + path so we can see why.
+      console.warn(`[auth] deactivated user hit requireAuth (gate missed): user=${userId} email=${result.rows[0].email || "?"} path=${req.path}`);
       return res.status(403).json({ message: "Your account has been deactivated. Please contact an administrator." });
     }
   } catch (_e) {}
+  next();
+}
+
+// The equity directors — Woody's list (2026-08-22): Woody, Jack, Rupert,
+// Charlotte. Gates the company-finance views (Finance page + dashboard
+// widget); admins (Wendy) keep access for the commission statements.
+const EQUITY_EMAILS = new Set([
+  "woody@brucegillinghampollard.com",
+  "jack@brucegillinghampollard.com",
+  "rupert@brucegillinghampollard.com",
+  "charlotte@brucegillinghampollard.com",
+]);
+
+export async function requireEquityOrAdmin(req: Request, res: Response, next: NextFunction) {
+  const userId = req.session.userId || req.tokenUserId;
+  if (!userId) return res.status(401).json({ message: "Not authenticated" });
+  if (!req.session.userId && req.tokenUserId) req.session.userId = req.tokenUserId;
+  try {
+    const result = await pool.query("SELECT is_active, is_admin, email FROM users WHERE id = $1", [userId]);
+    if (result.rows.length === 0) return res.status(401).json({ message: "Not authenticated" });
+    const row = result.rows[0];
+    if (row.is_active === false) return res.status(403).json({ message: "Account deactivated" });
+    const email = String(row.email || "").toLowerCase().trim();
+    if (!row.is_admin && !ADMIN_EMAILS.has(email) && !EQUITY_EMAILS.has(email)) {
+      return res.status(403).json({ message: "Equity access required" });
+    }
+  } catch (e: any) {
+    console.error("[requireEquityOrAdmin] DB check failed:", e?.message);
+    return res.status(500).json({ message: "Auth check failed", detail: e?.message });
+  }
+  next();
+}
+
+export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const userId = req.session.userId || req.tokenUserId;
+  if (!userId) return res.status(401).json({ message: "Not authenticated" });
+  if (!req.session.userId && req.tokenUserId) req.session.userId = req.tokenUserId;
+  try {
+    const result = await pool.query("SELECT is_active, is_admin, email FROM users WHERE id = $1", [userId]);
+    if (result.rows.length === 0) return res.status(401).json({ message: "Not authenticated" });
+    const row = result.rows[0];
+    if (row.is_active === false) return res.status(403).json({ message: "Account deactivated" });
+    const emailMatches = ADMIN_EMAILS.has(String(row.email || "").toLowerCase().trim());
+    if (!row.is_admin && !emailMatches) {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+  } catch (e: any) {
+    console.error("[requireAdmin] DB check failed:", e?.message);
+    return res.status(500).json({ message: "Auth check failed", detail: e?.message });
+  }
   next();
 }
 

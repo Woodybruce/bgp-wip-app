@@ -2,7 +2,8 @@
 // Deal stage transitions + solicitor leg.
 //
 // Enforces an ordered pipeline, writes to deal_events for full audit, and
-// triggers secondary actions (e.g. hots_completed_at on entering 'hots',
+// triggers secondary actions (e.g. exchanged_at on entering 'agreed',
+// completed_at on entering 'completed', invoiced_at on entering 'invoiced',
 // comp seed-row on entering 'completed').
 //
 // Endpoints:
@@ -15,6 +16,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { runAllAmlChecks } from "./kyc-orchestrator";
+import { fanOutTenancyStatus } from "./unit-mirror";
 
 const router = Router();
 
@@ -35,29 +37,39 @@ function isValidStage(s: any): s is Stage {
  * auto-ticking. Every run writes a deal_events entry so the audit log
  * captures the outcome whether or not the orchestrator succeeded.
  */
-async function autoLaunchAmlForDeal(
+export async function autoLaunchAmlForDeal(
   dealId: string,
   actorId: string | null,
   actorName: string | null,
 ): Promise<void> {
+  // Pull all four counterparty ids — leasing deals carry tenant + landlord,
+  // investment deals carry vendor + purchaser. The form now requires both
+  // sides for every deal type, so both should fire AML.
   const dealQuery = await pool.query(
-    `SELECT id, tenant_id, landlord_id FROM crm_deals WHERE id = $1`,
+    `SELECT id, tenant_id, landlord_id, vendor_id, purchaser_id, deal_type
+       FROM crm_deals WHERE id = $1`,
     [dealId],
   );
   const deal = dealQuery.rows[0];
   if (!deal) return;
 
-  const companyIds = [deal.tenant_id, deal.landlord_id].filter(Boolean) as string[];
-  if (companyIds.length === 0) {
+  const companyIds = [deal.tenant_id, deal.landlord_id, deal.vendor_id, deal.purchaser_id]
+    .filter(Boolean) as string[];
+  // Dedupe — same company could conceivably appear twice (e.g. a landlord
+  // also flagged as vendor on a hybrid deal).
+  const uniqueIds = Array.from(new Set(companyIds));
+  if (uniqueIds.length === 0) {
     await pool.query(
       `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
        VALUES ($1, 'kyc_auto_skipped', $2, $3, $4)`,
-      [dealId, JSON.stringify({ reason: "No tenant or landlord linked to deal" }), actorId, actorName],
+      [dealId, JSON.stringify({ reason: "No counterparty linked to deal (tenant / landlord / vendor / purchaser)" }), actorId, actorName],
     ).catch(() => {});
     return;
   }
+  // Rename for the loop below — preserves the existing log shape.
+  const targetIds = uniqueIds;
 
-  for (const companyId of companyIds) {
+  for (const companyId of targetIds) {
     try {
       const summary = await runAllAmlChecks(companyId, dealId, actorId);
       console.log(
@@ -99,24 +111,68 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     const dealId = String(req.params.dealId);
     const toStage = req.body?.stage;
     const reason = req.body?.reason || null;
+    const learning: string | null = typeof req.body?.learning === "string"
+      ? req.body.learning.trim().slice(0, 2000) || null
+      : null;
     if (!isValidStage(toStage)) {
       return res.status(400).json({ error: `stage must be one of ${PIPELINE.join(", ")}` });
     }
 
     const current = await pool.query(
-      `SELECT id, stage, hots_completed_at, solicitor_instructed_at FROM crm_deals WHERE id = $1`,
+      `SELECT id, stage, exchanged_at, completed_at, invoiced_at, solicitor_instructed_at,
+              landlord_id, tenant_id, vendor_id, purchaser_id,
+              landlord_entity_id, tenant_entity_id, vendor_entity_id, purchaser_entity_id,
+              aml_check_completed
+         FROM crm_deals WHERE id = $1`,
       [dealId]
     );
     if (!current.rows[0]) return res.status(404).json({ error: "Deal not found" });
     const fromStage = current.rows[0].stage;
+    const c = current.rows[0];
+
+    // AML gate. Any move into sols / agreed / completed / invoiced requires
+    // every linked counterparty's parent brand to have kyc_status = 'approved'
+    // and not expired. MLRO override: deals with aml_check_completed = 'YES'
+    // bypass the gate (manual sign-off on the deal record).
+    const GATED_STAGES = new Set(["sols", "agreed", "completed", "invoiced"]);
+    let isRevert = false;
+    if (GATED_STAGES.has(toStage) && c.aml_check_completed !== "YES") {
+      // Revert allowance: an accidental drag OUT of a gated stage must not be
+      // irreversible. If the deal's most recent stage move was out of the very
+      // stage being re-entered (within 24h), let it back in — it held that
+      // stage moments ago under the same compliance state. The move is still
+      // audit-logged below with revert: true.
+      const lastMove = await pool.query(
+        `SELECT from_stage, to_stage, occurred_at FROM deal_events
+          WHERE deal_id = $1 AND event_type = 'stage_change'
+          ORDER BY occurred_at DESC LIMIT 1`,
+        [dealId]
+      );
+      const lm = lastMove.rows[0];
+      isRevert = !!lm && lm.from_stage === toStage && lm.to_stage === fromStage
+        && Date.now() - new Date(lm.occurred_at).getTime() < 24 * 60 * 60 * 1000;
+      if (!isRevert) {
+        const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
+        const amlResult = await checkCounterpartyAml({
+          landlordId:  c.landlord_id,
+          tenantId:    c.tenant_id,
+          vendorId:    c.vendor_id,
+          purchaserId: c.purchaser_id,
+        });
+        const warning = formatAmlWarning(amlResult);
+        if (warning) {
+          return res.status(409).json({
+            error: warning,
+            code: "AML_GATE_FAILED",
+            notReady: amlResult.notReady,
+            hint: "MLRO override: set aml_check_completed = 'YES' on the deal to bypass.",
+          });
+        }
+      }
+    }
 
     const updates: string[] = ["stage = $1", "stage_entered_at = now()", "updated_at = now()"];
     const values: any[] = [toStage];
-
-    // Side-effects triggered by transition
-    if (toStage === "hots" && !current.rows[0].hots_completed_at) {
-      updates.push(`hots_completed_at = now()`);
-    }
 
     // When we hit HoTs we need AML on the tenant (and best-effort the
     // landlord) — this kicks Veriff off automatically so the team doesn't
@@ -127,8 +183,15 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     if (toStage === "sols" && !current.rows[0].solicitor_instructed_at) {
       updates.push(`solicitor_instructed_at = now()`);
     }
-    if (toStage === "completed") {
-      updates.push(`completion_date = to_char(now(), 'YYYY-MM-DD')`);
+    // Stamp the canonical date journey on entering each stage.
+    if (toStage === "agreed" && !current.rows[0].exchanged_at) {
+      updates.push(`exchanged_at = now()`);
+    }
+    if (toStage === "completed" && !current.rows[0].completed_at) {
+      updates.push(`completed_at = now()`);
+    }
+    if (toStage === "invoiced" && !current.rows[0].invoiced_at) {
+      updates.push(`invoiced_at = now()`);
     }
 
     values.push(dealId);
@@ -140,8 +203,37 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     await pool.query(
       `INSERT INTO deal_events (deal_id, event_type, from_stage, to_stage, payload, actor_id, actor_name)
        VALUES ($1, 'stage_change', $2, $3, $4, $5, $6)`,
-      [dealId, fromStage, toStage, JSON.stringify({ reason }), req.user?.id || null, req.user?.name || null]
+      [dealId, fromStage, toStage, JSON.stringify({ reason, learning, ...(isRevert ? { revert: true } : {}) }), req.user?.id || null, req.user?.name || null]
     );
+
+    // Knowledge capture — on completion with a broker learning, persist as
+    // a brand_signals row against the tenant so it surfaces on the brand card.
+    if (toStage === "completed" && learning) {
+      try {
+        const tenant = await pool.query(
+          `SELECT d.tenant_id, d.name AS deal_name, tc.name AS tenant_name
+             FROM crm_deals d LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
+            WHERE d.id = $1`,
+          [dealId]
+        );
+        const tRow = tenant.rows[0];
+        if (tRow?.tenant_id) {
+          await pool.query(
+            `INSERT INTO brand_signals
+              (brand_company_id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated)
+              VALUES ($1, 'news', $2, $3, $4, now(), 'medium', 'positive', false)`,
+            [
+              tRow.tenant_id,
+              `Deal learning: ${tRow.deal_name || dealId}`.slice(0, 500),
+              learning,
+              `bgp-deal:${dealId}`,
+            ]
+          );
+        }
+      } catch (e: any) {
+        console.warn("[deal-stages] learning capture failed:", e?.message);
+      }
+    }
 
     // Auto-run the full AML sweep on entering HoTs — Clouseau (Companies
     // House + UBO + Sanctions + PEP), Veriff sessions for all contacts,
@@ -157,8 +249,10 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     if (toStage === "completed") {
       try {
         const d = await pool.query(
-          `SELECT d.name, d.property_id, d.rent_pa, d.pricing, d.lease_length, d.break_option, d.total_area_sqft,
-                  d.deal_type, lc.name AS landlord_name, tc.name AS tenant_name,
+          `SELECT d.name, d.property_id, d.tenancy_unit_id, d.rent_pa, d.pricing, d.lease_length,
+                  d.break_option, d.total_area_sqft, d.deal_type, d.completed_at,
+                  lc.id AS landlord_company_id, lc.name AS landlord_name,
+                  tc.id AS tenant_company_id, tc.name AS tenant_name,
                   p.postcode AS property_postcode
              FROM crm_deals d
              LEFT JOIN crm_properties p ON p.id = d.property_id
@@ -172,9 +266,10 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
           await pool.query(
             `INSERT INTO crm_comps (
                name, property_id, deal_id, deal_type, landlord, tenant,
+               landlord_company_id, tenant_company_id,
                passing_rent_pa, pricing, area_sqft, postcode, completion_date, created_by
              )
-             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
              WHERE NOT EXISTS (SELECT 1 FROM crm_comps WHERE deal_id = $3)`,
             [
               row.name,
@@ -183,6 +278,8 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
               row.deal_type || "lease",
               row.landlord_name || null,
               row.tenant_name || null,
+              row.landlord_company_id || null,
+              row.tenant_company_id || null,
               row.rent_pa ? String(row.rent_pa) : null,
               row.pricing ? String(row.pricing) : null,
               row.total_area_sqft ? String(row.total_area_sqft) : null,
@@ -192,9 +289,39 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
             ]
           );
         }
+
+        // Write the let back onto the tenancy spine + fan out. Once the
+        // tenancy row flips to Occupied, fanOutTenancyStatus archives
+        // the leasing_schedule_units projection so the unit comes off
+        // the client board automatically. The deal already vanishes
+        // from the Letting Tracker because its status is COM (filtered
+        // out by the tracker's AVA/NEG-only view).
+        if (row?.tenancy_unit_id) {
+          const completionDate = row.completed_at
+            ? new Date(row.completed_at).toISOString().slice(0, 10)
+            : new Date().toISOString().slice(0, 10);
+          await pool.query(
+            `UPDATE tenancy_schedule_units
+                SET status = 'Occupied',
+                    tenant_name = COALESCE(NULLIF(tenant_name, ''), $2),
+                    tenant_company_id = COALESCE(tenant_company_id, $3),
+                    passing_rent_pa = COALESCE(passing_rent_pa, $4),
+                    lease_start = COALESCE(lease_start, $5::date),
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [
+              row.tenancy_unit_id,
+              row.tenant_name || null,
+              row.tenant_company_id || null,
+              row.rent_pa ? Number(row.rent_pa) : null,
+              completionDate,
+            ]
+          );
+          await fanOutTenancyStatus(pool, row.tenancy_unit_id);
+        }
       } catch (e: any) {
-        // comp seeding is best-effort — log and continue
-        console.warn("[deal-stages] comp seed failed:", e?.message);
+        // comp seeding + tenancy writeback are best-effort — log and continue
+        console.warn("[deal-stages] completion writeback failed:", e?.message);
       }
     }
 
@@ -212,7 +339,7 @@ router.patch("/api/deal/:dealId/solicitor", requireAuth, async (req: Request & {
     const fields = [
       "solicitor_firm", "solicitor_contact", "solicitor_instructed_at",
       "draft_lease_received_at", "comments_returned_at", "engrossment_at",
-      "completion_target_date", "solicitor_notes",
+      "target_date", "exchanged_at", "completed_at", "invoiced_at", "solicitor_notes",
     ];
     const sets: string[] = [];
     const vals: any[] = [];

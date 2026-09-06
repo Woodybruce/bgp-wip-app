@@ -1,0 +1,321 @@
+// ─────────────────────────────────────────────────────────────────────────
+// CRM contact verification — "is this person really at this company?"
+//
+// Born from the Neville Maling case (Woody, 2026-08-04): CRM said Five Guys
+// (stale Apollo data), a second enrichment row said Wagamama (RocketReach
+// sweep stamped the searched brand), while the truth — Acquisitions @ Wasabi
+// — was sitting in the enrichment history all along.
+//
+// verifyContact() gathers four independent signals and lets Claude decide:
+//   1. Email-domain vs linked-company sanity check
+//   2. RocketReach person search (licensed LinkedIn-derived data)
+//   3. BGP's own Office 365 footprint — recent interactions with the contact
+//   4. Web news (Google News RSS) mentioning the person
+//
+// Verdicts are NEVER auto-applied. They land in contact_verifications as a
+// review queue (GET /api/crm/data-health) where staff Apply or Dismiss.
+// A weekly sweep (Mon ~06:30, production only) verifies the most suspect
+// contacts first: email domain disagrees with the company, or the notes
+// carry a past-tense "until <date>" for the linked employer.
+// ─────────────────────────────────────────────────────────────────────────
+import type { Express, Request, Response } from "express";
+import { pool } from "./db";
+import { requireAuth } from "./auth";
+
+const GENERIC_DOMAINS = new Set([
+  "gmail.com", "hotmail.com", "outlook.com", "yahoo.com", "icloud.com",
+  "aol.com", "live.com", "me.com", "btinternet.com", "protonmail.com",
+]);
+
+async function ensureTable(): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS contact_verifications (
+      id SERIAL PRIMARY KEY,
+      contact_id VARCHAR NOT NULL,
+      status TEXT NOT NULL,                -- confirmed | mismatch | inconclusive
+      confidence TEXT,                     -- high | medium | low
+      current_company_name TEXT,           -- what the CRM said at verify time
+      suggested_company_name TEXT,         -- Claude's read of the real employer
+      reasoning TEXT,
+      evidence JSONB,
+      resolution TEXT,                     -- applied | dismissed (null = pending)
+      resolved_by VARCHAR,
+      resolved_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT now()
+    )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_contact_verifications_contact ON contact_verifications (contact_id, created_at DESC)`);
+}
+
+function norm(s: string | null | undefined): string {
+  return (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// Does the email's domain plausibly belong to the linked company?
+function emailMatchesCompany(email: string | null, companyName: string | null): boolean | null {
+  if (!email || !email.includes("@") || !companyName) return null;
+  const domain = email.split("@")[1].toLowerCase();
+  if (GENERIC_DOMAINS.has(domain)) return null; // personal address — no signal
+  const domainCore = norm(domain.split(".")[0]);
+  const company = norm(companyName);
+  if (!domainCore || !company) return null;
+  return company.includes(domainCore) || domainCore.includes(company);
+}
+
+export async function verifyContact(contactId: string): Promise<any> {
+  await ensureTable();
+  const cRes = await pool.query(
+    `SELECT c.id, c.name, c.email, c.role, c.notes, c.linkedin_url, c.enrichment_source,
+            c.last_enriched_at, c.company_id, co.name AS company_name
+       FROM crm_contacts c LEFT JOIN crm_companies co ON co.id = c.company_id
+      WHERE c.id = $1`, [contactId]);
+  const contact = cRes.rows[0];
+  if (!contact) throw new Error("Contact not found");
+
+  const evidence: Record<string, any> = {};
+
+  // 1. Email-domain sanity
+  evidence.emailDomainMatch = emailMatchesCompany(contact.email, contact.company_name);
+  evidence.email = contact.email || null;
+
+  // 2. RocketReach person lookup (licensed LinkedIn-derived data)
+  try {
+    const { searchRocketReach, isRocketReachConfigured } = await import("./rocketreach-contacts");
+    if (isRocketReachConfigured() && contact.name) {
+      const people = await searchRocketReach({ personName: contact.name });
+      // Prefer the profile whose LinkedIn URL matches the one on file.
+      const ln = (contact.linkedin_url || "").toLowerCase().replace(/^https?:\/\/(www\.)?/, "");
+      const match = (ln && people.find(p => (p.linkedin_url || "").toLowerCase().includes(ln.split("/in/")[1] || "\u0000"))) || people[0];
+      if (match) {
+        evidence.rocketreach = {
+          currentEmployer: (match as any).current_employer || null,
+          title: (match as any).current_title || (match as any).title || null,
+          linkedin: match.linkedin_url || null,
+          matchedByLinkedin: !!(ln && match.linkedin_url && match.linkedin_url.toLowerCase().includes(ln.split("/in/")[1] || "\u0000")),
+        };
+      }
+    }
+  } catch (e: any) {
+    evidence.rocketreach = { error: e?.message?.slice(0, 120) };
+  }
+
+  // 3. BGP's own O365 footprint — recent logged interactions
+  try {
+    const ints = await pool.query(
+      `SELECT interaction_date, type, subject
+         FROM crm_interactions
+        WHERE contact_id = $1
+        ORDER BY interaction_date DESC NULLS LAST LIMIT 5`, [contactId]);
+    evidence.recentInteractions = ints.rows.map((r: any) => ({
+      date: r.interaction_date, type: r.type, subject: (r.subject || "").slice(0, 120),
+    }));
+  } catch { evidence.recentInteractions = []; }
+  if (contact.email) {
+    try {
+      const { graphRequest } = await import("./shared-mailbox");
+      const r = await graphRequest(
+        `/users/chatbgp@brucegillinghampollard.com/messages?$search="participants:${encodeURIComponent(contact.email)}"&$top=3&$select=subject,receivedDateTime,from`
+      ).catch(() => null);
+      evidence.mailboxThreads = (r?.value || []).map((m: any) => ({
+        subject: (m.subject || "").slice(0, 120), date: m.receivedDateTime,
+        from: m.from?.emailAddress?.address || null,
+      }));
+    } catch { /* mailbox unavailable — fine */ }
+  }
+
+  // 4. Web news on the person
+  try {
+    const { googleNewsRssUrl } = await import("./rssapp");
+    const Parser = (await import("rss-parser")).default;
+    const parser = new Parser({ timeout: 8000, headers: { "User-Agent": "BGP-Dashboard/1.0" } });
+    const feed = await parser.parseURL(googleNewsRssUrl(`"${contact.name}" ${contact.company_name || ""}`.trim()));
+    evidence.news = (feed.items || []).slice(0, 5).map((i: any) => ({ title: i.title, date: i.pubDate || null }));
+  } catch { evidence.news = []; }
+
+  // Claude weighs the signals. Strict JSON out.
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const prompt = `You are auditing a commercial-property CRM for data accuracy.
+
+CONTACT ON FILE
+Name: ${contact.name}
+Linked company: ${contact.company_name || "(none)"}
+Role: ${contact.role || "(none)"}
+Email: ${contact.email || "(none)"}
+Notes (may contain enrichment history): ${(contact.notes || "(none)").slice(0, 600)}
+Enrichment source: ${contact.enrichment_source || "manual"} (last: ${contact.last_enriched_at || "never"})
+
+INDEPENDENT SIGNALS
+${JSON.stringify(evidence, null, 1).slice(0, 3500)}
+
+Decide whether the linked company is this person's CURRENT employer.
+Weigh signals by reliability: a recent email FROM the contact's corporate
+address is strong; RocketReach current_employer is strong when matched by
+LinkedIn URL; an "until <past date>" in the notes for the linked company is
+strong evidence they LEFT; news headlines are weak unless explicit.
+
+Reply with ONLY this JSON:
+{"status": "confirmed"|"mismatch"|"inconclusive", "confidence": "high"|"medium"|"low", "suggestedCompanyName": string|null, "reasoning": "<one or two sentences>"}`;
+
+  const resp = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 300,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const text = resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+  let verdict: any;
+  try {
+    verdict = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
+  } catch {
+    verdict = { status: "inconclusive", confidence: "low", suggestedCompanyName: null, reasoning: "Model reply was not parseable." };
+  }
+
+  const ins = await pool.query(
+    `INSERT INTO contact_verifications (contact_id, status, confidence, current_company_name, suggested_company_name, reasoning, evidence)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [contactId, verdict.status, verdict.confidence, contact.company_name, verdict.suggestedCompanyName, verdict.reasoning, JSON.stringify(evidence)]);
+  return { ...ins.rows[0], contactName: contact.name };
+}
+
+// Weekly sweep — most-suspect first, capped so a run costs pennies.
+export async function sweepContactVerifications(limit = 25): Promise<{ checked: number; mismatches: number }> {
+  await ensureTable();
+  // Candidates: a real (non-generic) email whose domain disagrees with the
+  // linked company name, or notes carrying "until 20xx" (a past-tense
+  // employer), skipping anything verified in the last 60 days.
+  const cand = await pool.query(`
+    SELECT c.id, c.name, c.email, co.name AS company_name
+      FROM crm_contacts c
+      JOIN crm_companies co ON co.id = c.company_id
+     WHERE c.email LIKE '%@%'
+       AND split_part(c.email, '@', 2) NOT IN (${[...GENERIC_DOMAINS].map((_, i) => `$${i + 1}`).join(",")})
+       AND c.name NOT ILIKE '[duplicate%'
+       AND NOT EXISTS (SELECT 1 FROM contact_verifications v
+                        WHERE v.contact_id = c.id AND v.created_at > now() - interval '60 days')
+     ORDER BY (c.notes ~* 'until 20[0-9][0-9]') DESC, c.updated_at DESC
+     LIMIT 400`, [...GENERIC_DOMAINS]);
+
+  const suspects = cand.rows.filter((r: any) => emailMatchesCompany(r.email, r.company_name) === false
+    || /until 20\d\d/i.test(r.notes || ""));
+  const toCheck = (suspects.length ? suspects : cand.rows).slice(0, limit);
+
+  let mismatches = 0;
+  for (const row of toCheck) {
+    try {
+      const v = await verifyContact(row.id);
+      if (v.status === "mismatch") mismatches++;
+    } catch (e: any) {
+      console.warn(`[contact-verify] ${row.name} failed:`, e?.message);
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  console.log(`[contact-verify] sweep: ${toCheck.length} checked, ${mismatches} mismatches queued for review`);
+  return { checked: toCheck.length, mismatches };
+}
+
+export function setupContactVerifyRoutes(app: Express): void {
+  // All staff-only: verification burns RocketReach/Claude credits and the
+  // review queue exposes cross-company contacts.
+  const staffOnly = async (req: Request, res: Response): Promise<boolean> => {
+    const { isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req as any)) {
+      res.status(403).json({ error: "Not available for client accounts" });
+      return false;
+    }
+    return true;
+  };
+
+  app.post("/api/crm/contacts/:id/verify", requireAuth, async (req, res) => {
+    try {
+      if (!(await staffOnly(req, res))) return;
+      res.json(await verifyContact(String(req.params.id)));
+    } catch (e: any) {
+      if (/api ?key|authentication|authToken/i.test(e?.message || "")) {
+        return res.status(503).json({ error: "Contact verification unavailable — AI service is not configured" });
+      }
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/crm/data-health", requireAuth, async (req, res) => {
+    try {
+      if (!(await staffOnly(req, res))) return;
+      await ensureTable();
+      const pending = await pool.query(`
+        SELECT v.*, c.name AS contact_name, c.email AS contact_email, co.name AS live_company_name
+          FROM contact_verifications v
+          JOIN crm_contacts c ON c.id = v.contact_id
+          LEFT JOIN crm_companies co ON co.id = c.company_id
+         WHERE v.resolution IS NULL AND v.status = 'mismatch'
+         ORDER BY v.created_at DESC LIMIT 100`);
+      const stats = await pool.query(`
+        SELECT status, count(*)::int AS n FROM contact_verifications
+         WHERE created_at > now() - interval '30 days' GROUP BY status`);
+      res.json({ pending: pending.rows, stats: stats.rows });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/crm/data-health/:id/apply", requireAuth, async (req: any, res) => {
+    try {
+      if (!(await staffOnly(req, res))) return;
+      const v = (await pool.query(`SELECT * FROM contact_verifications WHERE id = $1`, [req.params.id])).rows[0];
+      if (!v) return res.status(404).json({ error: "Not found" });
+      if (!v.suggested_company_name) return res.status(400).json({ error: "No suggested company on this verdict" });
+      const co = (await pool.query(
+        `SELECT id, name FROM crm_companies WHERE merged_into_id IS NULL AND lower(name) = lower($1) LIMIT 1`,
+        [v.suggested_company_name])).rows[0];
+      if (co) {
+        await pool.query(
+          `UPDATE crm_contacts SET company_id = $1, company_name = $2,
+                  notes = COALESCE(notes, '') || ' · Employer corrected to ' || $2 || ' (verified ' || to_char(now(), 'DD Mon YYYY') || ': ' || $3 || ')',
+                  updated_at = now()
+            WHERE id = $4`,
+          [co.id, co.name, (v.reasoning || "").slice(0, 200), v.contact_id]);
+      } else {
+        // No matching company row — record the finding without guessing a link.
+        await pool.query(
+          `UPDATE crm_contacts SET notes = COALESCE(notes, '') || ' · ⚠ Verified ' || to_char(now(), 'DD Mon YYYY') || ': current employer is ' || $1 || ' (no CRM company row yet)', updated_at = now()
+            WHERE id = $2`,
+          [v.suggested_company_name, v.contact_id]);
+      }
+      const userId = req.session?.userId || req.tokenUserId || null;
+      await pool.query(`UPDATE contact_verifications SET resolution = 'applied', resolved_by = $1, resolved_at = now() WHERE id = $2`, [userId, req.params.id]);
+      res.json({ ok: true, linkedCompany: co?.name || null });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/crm/data-health/:id/dismiss", requireAuth, async (req: any, res) => {
+    try {
+      if (!(await staffOnly(req, res))) return;
+      const userId = req.session?.userId || req.tokenUserId || null;
+      await pool.query(`UPDATE contact_verifications SET resolution = 'dismissed', resolved_by = $1, resolved_at = now() WHERE id = $2`, [userId, req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/crm/data-health/sweep", requireAuth, async (req, res) => {
+    try {
+      if (!(await staffOnly(req, res))) return;
+      const limit = Math.min(50, parseInt(String(req.query.limit || "25")) || 25);
+      res.json(await sweepContactVerifications(limit));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+}
+
+// Boot: weekly sweep, Monday morning ~06:30 UK. Production only. The
+// last-run guard makes the hourly tick idempotent across restarts.
+export function startContactVerifySweep(): void {
+  if (process.env.NODE_ENV !== "production") return;
+  setInterval(async () => {
+    try {
+      const now = new Date();
+      if (now.getDay() !== 1 || now.getHours() !== 6) return;
+      await ensureTable();
+      const last = await pool.query(`SELECT max(created_at) AS t FROM contact_verifications`);
+      const t = last.rows[0]?.t ? new Date(last.rows[0].t) : null;
+      if (t && Date.now() - t.getTime() < 5 * 24 * 60 * 60 * 1000) return; // ran in the last 5 days
+      await sweepContactVerifications(25);
+    } catch (e: any) {
+      console.warn("[contact-verify] weekly sweep failed:", e?.message);
+    }
+  }, 60 * 60 * 1000);
+}

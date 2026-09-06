@@ -6,14 +6,14 @@ export const SERVICES = [
   {
     slug: "leasing",
     name: "Leasing",
-    image: "/images/portman-estate.jpg",
+    image: "/images/stills-preview-regent-street.jpg",
     intro:
       "Creating neighbourhoods that people love. Retail, restaurant and leisure leasing across London's leading estates and the UK's landmark destinations — acting for landlords including The Portman Estate, Grosvenor, The Crown Estate and Landsec.",
   },
   {
     slug: "investment",
     name: "Investment",
-    image: "/images/investment-main.jpg",
+    image: "/images/stills-preview-city-night.jpg",
     intro:
       "Acquisition and disposal advice across retail, leisure and mixed-use investments — from single assets to portfolios, acting for private clients, property companies and institutions including Aviva Investors, Legal & General and LondonMetric.",
   },
@@ -29,7 +29,7 @@ export const SERVICES = [
     name: "Lease Advisory",
     image: "/images/st-christophers-place.jpg",
     intro:
-      "Rent reviews, lease renewals and restructuring — protecting and enhancing value through the life of the lease, with instructions spanning Canary Wharf (20+ years) and Chinatown London (since 1998).",
+      "Lease Advisory is a core discipline within BGP's asset management offer, providing landlords and tenants with clear, evidence-led advice across rent reviews, re-gears and lease restructuring.",
   },
   {
     slug: "consultancy",
@@ -84,39 +84,36 @@ export interface Person {
   photo?: string;
 }
 
-const OFFICE_PHONE = "+44 (0)20 3551 5260";
+export const OFFICE_PHONE = "+44 (0)20 3551 5260";
 
 // Titles and contact details from the BGP team directory / public site.
 export const TEAM: Person[] = [
   { name: "Woody Bruce", title: "Managing Director", phone: "+44 (0)7980 313 675", email: "woody@brucegillinghampollard.com" },
-  { name: "Tracey Pollard", title: "Founding Director", phone: "+44 (0)7779 323 306", email: "tracey@brucegillinghampollard.com" },
-  { name: "Charlotte Roberts", title: "Equity Director, Co-Head London Estates", phone: "+44 (0)7738 448 338", email: "charlotte@brucegillinghampollard.com" },
-  { name: "Rupert Bentley-Smith", title: "Equity Director, Co-Head London Estates", phone: "+44 (0)7876 354 160", email: "rupert@brucegillinghampollard.com" },
+  { photo: "/images/team/tracey-pollard.jpg", name: "Tracey Pollard", title: "Founding Director", phone: "+44 (0)7779 323 306", email: "tracey@brucegillinghampollard.com" },
+  { photo: "/images/team/charlotte-roberts.jpg", name: "Charlotte Roberts", title: "Equity Director, Co-Head London Estates", phone: "+44 (0)7738 448 338", email: "charlotte@brucegillinghampollard.com" },
+  { photo: "/images/team/rupert-bentley-smith.jpg", name: "Rupert Bentley-Smith", title: "Equity Director, Co-Head London Estates", phone: "+44 (0)7876 354 160", email: "rupert@brucegillinghampollard.com" },
   { photo: "/images/team/jack-barratt.jpg", name: "Jack Barratt", title: "Equity Director, Head of Investment", phone: "+44 (0)7788 215 044", email: "jack@brucegillinghampollard.com" },
-  { name: "Victoria Broadhead", title: "Head of National", phone: "+44 (0)7793 158 133", email: "victoria@brucegillinghampollard.com" },
-  { name: "Peter Wood", title: "Head of Lease Consultancy", phone: "+44 (0)7872 602 336", email: "peter@brucegillinghampollard.com" },
+  { photo: "/images/team/victoria-broadhead.jpg", name: "Victoria Broadhead", title: "Head of National", phone: "+44 (0)7793 158 133", email: "victoria@brucegillinghampollard.com" },
+  { photo: "/images/team/peter-wood.jpg", name: "Peter Wood", title: "Head of Lease Consultancy and Asset Management", phone: "+44 (0)7872 602 336", email: "peter@brucegillinghampollard.com" },
   { photo: "/images/team/nick-halley.jpg", name: "Nick Halley", title: "Director, Investment", phone: "+44 (0)7766 042 736", email: "nick@brucegillinghampollard.com" },
   { name: "Lucy Gardiner", title: "Director, National Leasing", phone: "+44 (0)7741 877 452", email: "lucyg@brucegillinghampollard.com" },
-  { name: "Lizzie Knights", title: "Director, London Leasing", phone: "+44 (0)7511 902 073", email: "lizzie@brucegillinghampollard.com" },
-  { name: "Harry Elliott", title: "Director, Brand Representation", phone: "+44 (0)7568 367 777", email: "harrye@brucegillinghampollard.com" },
-  { name: "Emily Dumbell", title: "Director, Brand Representation", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
-  { name: "Nick Goodman", title: "Consultant, Investment", phone: "+44 (0)7818 012 432", email: "nickgoodman@brucegillinghampollard.com" },
-  { photo: "/images/team/ollie-wilkinson.jpg", name: "Ollie Wilkinson", title: "Associate Director, Investment", phone: "+44 (0)7736 869 317", email: "ollie@brucegillinghampollard.com" },
-  { name: "Tom Cater", title: "Associate Director, Lease Advisory", phone: "+44 (0)7947 484 902", email: "tom@brucegillinghampollard.com" },
-  { name: "Lucy Cope", title: "Associate Director, London Leasing", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
-  { name: "Evie North", title: "Associate Director, Brand Representation", phone: "+44 (0)7595 349 057", email: "evie@brucegillinghampollard.com" },
-  { name: "Alex Todd", title: "Senior Surveyor, Development", phone: "+44 (0)7526 504 806", email: "alext@brucegillinghampollard.com" },
-  { name: "Rob Barnes", title: "Surveyor, National Leasing", phone: "+44 (0)7494 751 653", email: "rob@brucegillinghampollard.com" },
+  { photo: "/images/team/lizzie-knights.jpg", name: "Lizzie Knights", title: "Director, London Leasing", phone: "+44 (0)7511 902 073", email: "lizzie@brucegillinghampollard.com" },
+  { photo: "/images/team/harry-elliott.jpg", name: "Harry Elliott", title: "Director, Brand Representation", phone: "+44 (0)7568 367 777", email: "harrye@brucegillinghampollard.com" },
+  { photo: "/images/team/emily-dumbell.jpg", name: "Emily Dumbell", title: "Director, National Leasing", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
+  { photo: "/images/team/nick-goodman.jpg", name: "Nick Goodman", title: "Consultant, Investment", phone: "+44 (0)7818 012 432", email: "nickgoodman@brucegillinghampollard.com" },
+  { photo: "/images/team/tom-cater.jpg", name: "Tom Cater", title: "Associate Director, Lease Advisory", phone: "+44 (0)7947 484 902", email: "tom@brucegillinghampollard.com" },
+  { photo: "/images/team/lucy-cope.jpg", name: "Lucy Cope", title: "Associate Director, London Leasing", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
+  { photo: "/images/team/evie-north.jpg", name: "Evie North", title: "Associate Director, Brand Representation", phone: "+44 (0)7595 349 057", email: "evie@brucegillinghampollard.com" },
+  { photo: "/images/team/alex-todd.jpg", name: "Alex Todd", title: "Senior Surveyor, Development", phone: "+44 (0)7526 504 806", email: "alext@brucegillinghampollard.com" },
   { name: "Millie Edwards", title: "Leasing", phone: OFFICE_PHONE, email: "TBC" },
-  { photo: "/images/team/danny-cardosi.jpg", name: "Danny Cardosi", title: "Title TBC", phone: OFFICE_PHONE, email: "TBC" },
-  { name: "Emily Cann", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
+  { photo: "/images/team/emily-cann.jpg", name: "Emily Cann", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
   { name: "Will Penfold", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
-  { name: "Luke Donohoe", title: "Graduate Surveyor, National Leasing", phone: "+44 (0)7983 855 926", email: "luke@brucegillinghampollard.com" },
-  { name: "Libby Evans", title: "Graduate Surveyor, Development", phone: "+44 (0)7931 462 768", email: "libbye@brucegillinghampollard.com" },
+  { photo: "/images/team/luke-donohoe.jpg", name: "Luke Donohoe", title: "Graduate Surveyor, National Leasing", phone: "+44 (0)7983 855 926", email: "luke@brucegillinghampollard.com" },
+  { photo: "/images/team/libby-evans.jpg", name: "Libby Evans", title: "Graduate Surveyor, Development", phone: "+44 (0)7931 462 768", email: "libbye@brucegillinghampollard.com" },
   { photo: "/images/team/jonny-palmer.jpg", name: "Jonny Palmer", title: "Graduate, Investment", phone: "+44 (0)7506 439 429", email: "jonny@brucegillinghampollard.com" },
   { name: "Harriette Walker-Clark", title: "PA & Office Manager", phone: OFFICE_PHONE, email: "harriette@brucegillinghampollard.com" },
-  { name: "Layla O'Driscoll", title: "PA & Office Manager", phone: OFFICE_PHONE, email: "layla@brucegillinghampollard.com" },
-  { name: "Cara Milligan", title: "PA — National", phone: OFFICE_PHONE, email: "cara@brucegillinghampollard.com" },
+  { photo: "/images/team/layla-odriscoll.jpg", name: "Layla O'Driscoll", title: "PA & Office Manager", phone: OFFICE_PHONE, email: "layla@brucegillinghampollard.com" },
+  { photo: "/images/team/cara-milligan.jpg", name: "Cara Milligan", title: "PA — National", phone: OFFICE_PHONE, email: "cara@brucegillinghampollard.com" },
 ];
 
 const byName = (...names: string[]) => TEAM.filter((p) => names.includes(p.name));
@@ -126,20 +123,19 @@ export const LEASING_CONTACTS = byName(
   "Rupert Bentley-Smith",
   "Victoria Broadhead",
   "Lizzie Knights",
+  "Emily Dumbell",
   "Lucy Cope",
 );
 
 export const INVESTMENT_CONTACTS = byName(
   "Jack Barratt",
   "Nick Halley",
-  "Ollie Wilkinson",
-  "Danny Cardosi",
   "Jonny Palmer",
 );
 
 export const LEASE_ADVISORY_CONTACTS = byName("Peter Wood", "Tom Cater");
 
-export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Emily Dumbell", "Evie North");
+export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Evie North");
 
 export const CONSULTANCY_CONTACTS = byName("Tracey Pollard", "Alex Todd", "Libby Evans");
 
@@ -156,6 +152,26 @@ export interface CaseStudy {
 // From the projects list on the current site; bodies marked [Sample] need
 // fuller copy from the relevant team.
 export const CASE_STUDIES: CaseStudy[] = [
+  {
+    slug: "lucent-piccadilly",
+    title: "Lucent, Piccadilly Lights",
+    service: "Leasing",
+    image: "/images/stills-preview-piccadilly.jpg",
+    blurb:
+      "Restaurant leasing for Landsec at Lucent W1 — the landmark development behind the world-famous Piccadilly Lights.",
+    facts: [
+      ["Service", "Leasing"],
+      ["Client", "Landsec"],
+      ["Scheme", "Lucent W1 — 144,000 sq ft"],
+      ["Sector", "Restaurant & leisure"],
+      ["Location", "Piccadilly Circus, W1"],
+    ],
+    body: [
+      "Lucent is Landsec's 144,000 sq ft development behind the Piccadilly Lights — office, retail and restaurant space on one of the most famous corners in the world, completed in 2023.",
+      "BGP advised Landsec on the food & beverage leasing of the scheme, shaping the restaurant strategy and securing occupiers for space that sits directly behind the Lights, with some of the highest footfall in the West End.",
+      "Photograph: Thomas Dahlstrøm Nielsen, CC BY-SA 4.0.",
+    ],
+  },
   {
     slug: "20-hanover-square",
     title: "20 Hanover Square",
@@ -232,11 +248,23 @@ export const CASE_STUDIES: CaseStudy[] = [
       "[Sample] Full case study copy to follow from the consultancy team.",
     ],
   },
+  ...(["Hammerson", "Land Securities", "Bloomberg", "The Royal Exchange"] as const).map((client) => ({
+    slug: client.toLowerCase().replace(/^the /, "").replace(/[^a-z0-9]+/g, "-") + "-lease-advisory",
+    title: client,
+    service: "Lease Advisory",
+    blurb: `Lease advisory instruction for ${client} — rent reviews, renewals and restructuring aligned to the asset strategy.`,
+    image: client === "The Royal Exchange" ? "/images/stills-preview-royal-exchange.jpg" : undefined,
+    facts: [["Service", "Lease Advisory"], ["Client", client]] as Array<[string, string]>,
+    body: [
+      `BGP's Lease Advisory team acts for ${client}, providing evidence-led advice across rent reviews, renewals and lease restructuring.`,
+      "[Sample] Full case study copy to follow from the Lease Advisory team.",
+    ],
+  })),
   {
     slug: "atis",
     title: "ATIS",
     service: "Brand Representation",
-    image: "/images/cafe.jpg",
+    image: "/images/stills-preview-central-cafe.jpg",
     blurb:
       "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building.",
     facts: [
@@ -270,7 +298,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "barrys-bootcamp",
     title: "Barry's Bootcamp",
     service: "Brand Representation",
-    image: "/images/gym.jpg",
+    image: "/images/stills-preview-gym.jpg",
     blurb:
       "Described as the 'hardest workout in the world' — acquisition strategy throughout London.",
     facts: [
@@ -304,6 +332,10 @@ export const CASE_STUDIES: CaseStudy[] = [
 ];
 
 export const BRAND_REP_CASE_STUDIES = CASE_STUDIES.filter((c) => c.service === "Brand Representation");
+export const LEASE_ADVISORY_CASE_STUDIES = CASE_STUDIES.filter((c) => c.service === "Lease Advisory");
+
+export const caseStudyBySlug = (slug: string): CaseStudy =>
+  CASE_STUDIES.find((c) => c.slug === slug) ?? CASE_STUDIES[0];
 
 // Real transactions from the current site's investment track record.
 export interface InvestmentDeal {
@@ -348,19 +380,21 @@ export const BRAND_REP_CLIENTS: Client[] = [
   { name: "Related", domain: "related.com" },
 ];
 
+// Per Pete Wood (2026-09-04) — his edit of the first draft list.
 export const LEASE_ADVISORY_CLIENTS: Client[] = [
-  { name: "Canary Wharf Group", domain: "canarywharf.com" },
-  { name: "Shaftesbury", domain: "shaftesburycapital.com" },
   { name: "Landsec", domain: "landsec.com" },
-  { name: "The Portman Estate", domain: "portmanestate.co.uk" },
-  { name: "The Crown Estate", domain: "thecrownestate.co.uk" },
-  { name: "Grosvenor", domain: "grosvenor.com" },
-  { name: "Columbia Threadneedle", domain: "columbiathreadneedle.com" },
+  { name: "Hammerson", domain: "hammerson.com" },
   { name: "Bloomberg", domain: "bloomberg.com" },
   { name: "Schroders", domain: "schroders.com" },
   { name: "Brookfield", domain: "brookfield.com" },
-  { name: "Qatari Diar", domain: "qataridiar.com" },
-  { name: "Legal & General", domain: "legalandgeneral.com" },
+  { name: "Columbia Threadneedle", domain: "columbiathreadneedle.com" },
+  { name: "Aberdeen", domain: "aberdeeninvestments.com" },
+  { name: "AXA", domain: "axa-im.com" },
+  { name: "Ardent", domain: "ardentcompanies.com" },
+  { name: "City of London", domain: "cityoflondon.gov.uk" },
+  { name: "Capital Real Estate Partners", domain: "capitalrealestatepartners.com" },
+  { name: "Din Tai Fung", domain: "dintaifung.co.uk" },
+  { name: "Barry's", domain: "barrys.com" },
 ];
 
 export const CONSULTANCY_CLIENTS: Client[] = [
@@ -384,21 +418,21 @@ export const LEASE_ADVISORY_SERVICES = [
   {
     name: "Lease renewals",
     detail:
-      "Negotiating renewals that balance security of income with flexibility, informed by the estate strategy behind each asset.",
+      "Negotiating renewals that enable landlords and occupiers to optimise value and manage risk, ensuring each agreement is structured around operational needs and supports the wider strategy for the asset.",
   },
   {
     name: "Lease restructuring",
     detail:
-      "Advice on regears, surrenders and re-lettings to align the lease structure with asset strategy — including re-gearing work such as the retail element of 55 Bishopsgate for Schroders.",
+      "Bespoke advice on re-gears, surrenders and re-lettings, to align the lease structure with asset or brand strategy.",
   },
   {
     name: "Portfolio & estate advisory",
     detail:
-      "Long-running estate-wide instructions including Canary Wharf (20+ years), Chinatown London (92 restaurants and 49 shops since 1998), Liverpool ONE and Trinity Leeds.",
+      "BGP provide portfolio and estate advisory across long-term instructions, bringing extensive experience in shaping strategy, managing lease events and ensuring assets perform in line with business objectives. We deliver coordinated advice across multi-asset holdings, identifying opportunities to enhance value, reduce risk and optimise performance throughout the ownership lifecycle.",
   },
   {
     name: "Expert advice",
-    detail: "[Sample] Expert witness and dispute resolution detail to be confirmed.",
+    detail: "Our team has extensive experience in dispute resolution, regularly acting as Expert Witness in rent review proceedings and providing representations to Arbitrators and Independent Experts, as well as preparing Expert Reports for Court.",
   },
 ];
 

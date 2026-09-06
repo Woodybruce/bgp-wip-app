@@ -35,6 +35,46 @@ const INVESTIGATOR_TOOLS: any[] = [
       required: ["query"],
     },
   },
+  // The three email tools were implemented in the executor (and demanded by
+  // the prompt) from day one but never declared here — so Claude could not
+  // call them and every email fallback path downstream was dead code.
+  {
+    name: "search_emails",
+    description: "Search ALL BGP mailboxes (every active user + the shared inbox) for emails mentioning a term. Use the property address, street name, postcode, owner or tenant name. Returns subject, sender, date, preview, and mailbox — pass msgId + mailboxEmail to read_email for the full body.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search term, e.g. 'Haymarket', 'SW1Y 4DG', 'Dover Street Market'" },
+        top: { type: "number", description: "Max results per mailbox (default 15, max 25)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "read_email",
+    description: "Read the full body of an email found via search_emails, including a list of its attachments.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mailboxEmail: { type: "string", description: "The mailbox the email lives in (from search_emails results)" },
+        msgId: { type: "string", description: "The message id (from search_emails results)" },
+      },
+      required: ["mailboxEmail", "msgId"],
+    },
+  },
+  {
+    name: "extract_attachment",
+    description: "Extract the text of an email attachment (PDF, Word, Excel) found via read_email. Use for brochures, heads of terms, leases, sales particulars.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mailboxEmail: { type: "string", description: "The mailbox the email lives in" },
+        msgId: { type: "string", description: "The message id" },
+        attachmentId: { type: "string", description: "The attachment id (from read_email)" },
+      },
+      required: ["mailboxEmail", "msgId", "attachmentId"],
+    },
+  },
   {
     name: "knowledge_base_search",
     description: "Search the BGP knowledge base (archivist-indexed SharePoint docs, Dropbox files, past email content). Returns document excerpts with source path.",
@@ -374,26 +414,42 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
       }
 
       case "land_registry_lookup": {
-        const { performPropertyLookup } = await import("./property-lookup");
-        const result = await performPropertyLookup({
+        // Use the shared building-title resolver (Google → OS Places → PD
+        // address-match-uprn → uprn-title) so we only return titles that
+        // belong to the queried building, not every title in the postcode.
+        const { resolveBuildingTitles } = await import("./land-registry");
+        const lr = await resolveBuildingTitles({
           address: input.address,
           postcode: input.postcode,
-          layers: ["core"],
+          skipPersist: true,
         });
-        const freeholds = result.propertyDataCoUk?.freeholds?.data || [];
-        const leaseholds = result.propertyDataCoUk?.leaseholds?.data || [];
+        if (!lr.ok) {
+          return { postcode: input.postcode, error: lr.error, freeholds: [], leaseholds: [] };
+        }
+        const matchedFh = lr.matched.freeholds || [];
+        const matchedLh = lr.matched.leaseholds || [];
+        const fallbackFh = lr.fallback.freeholds || [];
+        const ownershipPool = matchedFh.length > 0 ? matchedFh : fallbackFh;
         return {
-          postcode: input.postcode,
-          freeholds: freeholds.slice(0, 5).map((f: any) => ({
+          postcode: lr.resolvedPostcode || input.postcode,
+          source: lr.source,
+          freeholds: ownershipPool.slice(0, 5).map((f: any) => ({
             titleNumber: f.title_number || f.title,
             proprietor: f.proprietor_name_1,
             category: f.proprietor_category,
             pricePaid: f.price_paid ? Number(f.price_paid) : null,
             dateOfPurchase: f.date_proprietor_added,
           })),
-          leaseholds: leaseholds.slice(0, 5).map((l: any) => ({
+          leaseholds: matchedLh.slice(0, 5).map((l: any) => ({
             titleNumber: l.title_number || l.title,
             proprietor: l.proprietor_name_1,
+          })),
+          // Postcode neighbours — labelled clearly so the AI doesn't claim
+          // they belong to the queried building.
+          postcodeNeighbours: (lr.context.freeholds || []).slice(0, 10).map((f: any) => ({
+            titleNumber: f.title_number || f.title,
+            proprietor: f.proprietor_name_1,
+            address: Array.isArray(f.property) ? f.property.join(", ") : f.property,
           })),
         };
       }
@@ -738,13 +794,15 @@ ${hasCrm ? "✓ CRM already searched above" : "→ Call crm_lookup"}
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     let response: any;
     try {
+      // Per-call timeout — a hung connection here used to hang Stage 1 (and
+      // therefore the whole auto-chain) forever.
       response = await anthropic.messages.create({
         model: MODEL_PRIMARY,
         max_tokens: 16000,
         system: systemPrompt,
         tools: INVESTIGATOR_TOOLS,
         messages,
-      });
+      }, { signal: AbortSignal.timeout(180_000) });
     } catch (err: any) {
       console.warn(`[investigator] ${MODEL_PRIMARY} iter ${i} failed: ${err?.message} — falling back to ${MODEL_FALLBACK}`);
       response = await anthropic.messages.create({
@@ -753,7 +811,7 @@ ${hasCrm ? "✓ CRM already searched above" : "→ Call crm_lookup"}
         system: systemPrompt,
         tools: INVESTIGATOR_TOOLS,
         messages,
-      });
+      }, { signal: AbortSignal.timeout(120_000) });
     }
 
     const toolUses = (response.content || []).filter((b: any) => b.type === "tool_use");

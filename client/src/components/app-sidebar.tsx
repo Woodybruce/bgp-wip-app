@@ -1,6 +1,8 @@
 import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useState, useRef, useEffect } from "react";
 import bgpLogoWhite from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
+import landsecLogo from "@assets/landsec-logo.png";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
 import {
   LayoutDashboard,
@@ -10,6 +12,7 @@ import {
   BarChart3,
   Newspaper,
   Users,
+  Handshake,
   X,
 
   FileText,
@@ -26,8 +29,11 @@ import {
   Puzzle,
   Sparkles,
   Landmark,
+  Layers,
   UserPlus,
   ChevronsUpDown,
+  ChevronDown,
+  ChevronRight,
   Check,
   MapPin,
   Receipt,
@@ -42,6 +48,8 @@ import {
   GraduationCap,
   Store,
   Globe,
+  Target,
+  Eye,
 } from "lucide-react";
 import {
   Sidebar,
@@ -55,6 +63,7 @@ import {
   SidebarHeader,
   SidebarFooter,
   SidebarSeparator,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   DropdownMenu,
@@ -67,31 +76,42 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { clearPersistedQueries } from "@/lib/query-persist";
 import { useTeam, TEAMS } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
+import { isEquityUser } from "@/lib/utils";
 import type { User } from "@shared/schema";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
-import { History } from "lucide-react";
+import { History, ClipboardCheck } from "lucide-react";
 
 const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
-  { title: "Properties", url: "/properties", icon: Building2 },
+  // Properties is reachable as a tab inside Deals (alongside Letting
+  // Tracker / Investment / WIP Report), so the standalone sidebar entry
+  // was dropped — it duplicated the Deals view.
   { title: "Deals", url: "/deals", icon: BarChart3 },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
   { title: "Requirements", url: "/requirements", icon: FileText },
+  // Work-in-progress modules (AML, Tenant Rep, hunters, Landlord Intel,
+  // Leasing Schedule, Lease Advisory, London Restaurants) moved to the
+  // "Unfinished" group below so the everyday Core nav stays clean.
   { title: "Brand Intelligence", url: "/brands", icon: Store },
-  { title: "People Hub", url: "/contacts", icon: Users },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
-  { title: "Comps", url: "/comps", icon: Scale },
-  { title: "Lease Events", url: "/lease-events", icon: Calendar },
+  { title: "CRM", url: "/contacts", icon: Handshake },
+  { title: "People & HR", url: "/hr", icon: Users },
+  { title: "My Card", url: "/my-expenses", icon: CreditCard },
+  // Lease Advisory is Pete's toolset (Woody, 2026-09-02): jobs, evidence
+  // plans and leasing comps linked by pill row across the three pages.
+  // Comps has no standalone entry for staff — it's reached through here
+  // (clients still get a direct Comps entry below). Investment comps split
+  // out of the comps page for the investment team.
+  { title: "Lease Advisory", url: "/pla/matters", icon: Scale },
+  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
 ];
 
 const aiNav = [
-  { title: "Chat BGP", url: "/chatbgp", icon: Sparkles },
-  { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
-  { title: "Document Studio", url: "/templates", icon: FileTextIcon },
+  { title: "ChatBGP", url: "/chatbgp", icon: Sparkles },
+  // Full /image-studio for ALL staff, admin or not (Woody 2026-08-13, UX #43).
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
@@ -103,24 +123,59 @@ const microsoftNav = [
   { title: "Mail", url: "/mail", icon: Mail },
 ];
 
-const adminNavBase = [
+// Modules being polished — grouped together so they're easy for admins to
+// find without cluttering Core. Hidden from non-admins entirely. Order
+// matches the list Woody dictated (AML → Enrichment Hub).
+const unfinishedNav = [
+  { title: "Portfolios", url: "/portfolios", icon: Layers },
+  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
+  { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
+  { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
+  { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase },
+  // Leasing Schedule retired (archived) — Tenancy Schedule + Letting
+  // Tracker are the two boards now. Route stays live for old links.
+  // Lease Advisory (with Evidence Plans + Comps folded in) graduated to
+  // Core (Woody, 2026-09-02).
+  { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, badge: "BD" },
+  { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
+  // Document Studio v2 — the unified documents hub (library + previews +
+  // upload + SharePoint filing). The briefs cockpit (/document-briefs, with
+  // Templates + Decks folded in as tabs) stays as its own entry — the hub's
+  // "New document → AI briefs" also links into it.
+  { title: "Document Studio", url: "/document-studio", icon: FileTextIcon },
+  { title: "Document Briefs", url: "/document-briefs", icon: FileTextIcon, badge: "AI" },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
   { title: "Board Report", url: "/board-report", icon: Presentation },
-  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
-  { title: "News", url: "/news", icon: Newspaper, badge: "AI" },
   { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, badge: "AI" },
+];
+
+const adminNavBase = [
+  { title: "Finance", url: "/finance", icon: Landmark },
+  { title: "Expenses", url: "/expenses", icon: Receipt },
+  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
+  { title: "News", url: "/news", icon: Newspaper, badge: "AI" },
   { title: "Subscriptions & APIs", url: "/subscriptions", icon: CreditCard },
   { title: "Office Add-ins", url: "/addins", icon: Puzzle },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
-function NavSection({ label, items }: { label: string; items: Array<{ title: string; url: string; icon: any; badge?: string }> }) {
+function NavSection({
+  label,
+  items,
+  defaultOpen = true,
+  storageKey,
+}: {
+  label: string;
+  items: Array<{ title: string; url: string; icon: any; badge?: string }>;
+  defaultOpen?: boolean;
+  storageKey?: string;
+}) {
   const [location] = useLocation();
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
     if (url.startsWith("#")) return false;
-    // Strip query params for path-only matching
     const path = url.split("?")[0];
     if (path === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
     if (path === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
@@ -130,18 +185,43 @@ function NavSection({ label, items }: { label: string; items: Array<{ title: str
     return location.startsWith(path);
   };
 
+  // Always expand if a child is active so users never lose their bearings
+  const sectionHasActive = items.some(i => isActive(i.url));
+  const key = storageKey ? `bgp-nav-section-${storageKey}` : null;
+  const [open, setOpen] = useState<boolean>(() => {
+    if (sectionHasActive) return true;
+    if (key && typeof window !== "undefined") {
+      const stored = localStorage.getItem(key);
+      if (stored !== null) return stored === "1";
+    }
+    return defaultOpen;
+  });
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (key) localStorage.setItem(key, next ? "1" : "0");
+  };
+
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>{label}</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          {items.map((item) => {
-            return (
+      <SidebarGroupLabel
+        onClick={toggle}
+        className="cursor-pointer select-none flex items-center justify-between hover:text-sidebar-foreground transition-colors"
+      >
+        <span>{label}</span>
+        {open ? <ChevronDown className="w-3 h-3 opacity-60" /> : <ChevronRight className="w-3 h-3 opacity-60" />}
+      </SidebarGroupLabel>
+      {open && (
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {items.map((item) => (
               <SidebarMenuItem key={item.title}>
                 <SidebarMenuButton
                   asChild
                   data-active={isActive(item.url)}
                   data-testid={`nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                  tooltip={item.title}
                 >
                   <Link href={item.url}>
                     <item.icon className="w-4 h-4" />
@@ -152,19 +232,19 @@ function NavSection({ label, items }: { label: string; items: Array<{ title: str
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-            );
-          })}
-        </SidebarMenu>
-      </SidebarGroupContent>
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      )}
     </SidebarGroup>
   );
 }
 
 const TYPE_CONFIG: Record<RecentItem["type"], { icon: any; path: string; color: string }> = {
-  deal: { icon: BarChart3, path: "/deals", color: "text-blue-400" },
-  contact: { icon: Users, path: "/contacts", color: "text-green-400" },
-  company: { icon: Briefcase, path: "/companies", color: "text-amber-400" },
-  property: { icon: Building2, path: "/properties", color: "text-purple-400" },
+  deal: { icon: BarChart3, path: "/deals", color: "text-sidebar-primary opacity-80" },
+  contact: { icon: Users, path: "/contacts", color: "text-sidebar-foreground opacity-60" },
+  company: { icon: Briefcase, path: "/companies", color: "text-sidebar-primary opacity-70" },
+  property: { icon: Building2, path: "/properties", color: "text-sidebar-foreground opacity-50" },
 };
 
 function QuickAccessSection() {
@@ -189,6 +269,7 @@ function QuickAccessSection() {
                   asChild
                   className="h-7"
                   data-testid={`nav-recent-${item.type}-${item.id.substring(0, 8)}`}
+                  tooltip={item.name}
                 >
                   <Link href={`${config.path}/${item.id}`}>
                     <Icon className={`w-3.5 h-3.5 ${config.color}`} />
@@ -210,18 +291,98 @@ export function AppSidebar() {
   const { colorScheme, setColorScheme } = useTheme();
   const { brand, isLandsec } = useBrand();
 
-  // Reporting lives in Core for Landsec tenants, otherwise it's hidden in Admin.
-  const coreNav = isLandsec
-    ? [...coreNavBase, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
-    : coreNavBase;
-  const adminNav = isLandsec
-    ? adminNavBase.filter(i => i.url !== "/reporting")
-    : adminNavBase;
+  // Hover-to-peek: when the sidebar is collapsed to an icon rail, hovering
+  // expands it as a floating overlay over the main content (no layout
+  // shift). Click on a nav item or mouse-leave tucks it back.
+  const { open, isMobile, setPeeking } = useSidebar();
+  const peekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const schedulePeek = (next: boolean) => {
+    if (open || isMobile) {
+      setPeeking(false);
+      return;
+    }
+    if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
+    peekTimerRef.current = setTimeout(() => setPeeking(next), next ? 180 : 120);
+  };
+  useEffect(() => {
+    if (open || isMobile) setPeeking(false);
+    return () => {
+      if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
+    };
+  }, [open, isMobile, setPeeking]);
+  const collapsePeekNow = () => {
+    if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
+    setPeeking(false);
+  };
+
+  // Core hides anything still admin-gated for non-admins (none at present —
+  // Team now lives in the Admin group).
+  // Reporting is surfaced inside Core for Landsec tenants — for everyone else
+  // it lives in the Unfinished group along with the other modules being
+  // polished.
+  const coreNavFiltered = coreNavBase.filter((i: any) => !i.adminOnly || user?.isAdmin);
+  // Surface an "Approvals" entry (with a count badge) for anyone who actually
+  // has expenses assigned to them to approve — Wendy/Layla (Stage 1) and the
+  // directors (Stage 2). Without this there was no nav route to the approvals
+  // inbox, so approvers couldn't find their queue even though items were
+  // correctly assigned. /expenses/approvals is not admin-gated, so this works
+  // for Wendy's non-admin "Accounts" login too.
+  const { data: pendingApprovals } = useQuery<any[]>({
+    queryKey: ["/api/expenses/pending-approval"],
+    refetchInterval: 60_000,
+    enabled: user?.role !== "Client",
+  });
+  const approvalCount = Array.isArray(pendingApprovals) ? pendingApprovals.length : 0;
+  const coreWithApprovals = approvalCount > 0
+    ? [...coreNavFiltered, { title: "Approvals", url: "/expenses/approvals", icon: ClipboardCheck, badge: String(approvalCount) }]
+    : coreNavFiltered;
+  // Read-only "Team Expenses" for designated team overseers — non-admin team
+  // leads (e.g. Victoria → National Leasing). Admins use the full Expenses
+  // console instead, so this is only for non-admins. The overseer flag rides
+  // on /api/auth/me (server: expenseOverseerTeams).
+  const isExpenseOverseer =
+    Array.isArray((user as any)?.expenseOverseerTeams) && (user as any).expenseOverseerTeams.length > 0;
+  const coreWithTeamExpenses = isExpenseOverseer && !user?.isAdmin
+    ? [...coreWithApprovals, { title: "Team Expenses", url: "/team-expenses", icon: Receipt }]
+    : coreWithApprovals;
+  // Client logins (e.g. Landsec) get a trimmed nav: no People & HR, My Card,
+  // Reporting or WIP — those are BGP-internal. Staff nav is unchanged.
+  const isClientUser = user?.role === "Client" || !!(user as any)?.companyScopeId;
+  // A REAL external client login vs a BGP staff member who has switched the
+  // team picker to a client team. Both see the client nav (that's the point —
+  // "we see what they see"), but only a real client login is pinned to it.
+  // Staff must keep the switcher, or switching in traps them with no way back.
+  const isRealClientLogin = user?.role === "Client";
+  const isViewingAsClient = !isRealClientLogin && !!(user as any)?.companyScopeId;
+  const viewingAsName = (user as any)?.companyScopeName || activeTeam;
+  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment-comps", "/evidence-plans"];
+  const coreNavStaff = isClientUser
+    ? [
+        ...coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url)),
+        // Clients keep their scoped read-only Comps view — staff reach comps
+        // through the Lease Advisory toolset instead.
+        { title: "Comps", url: "/comps", icon: Scale },
+        // Clients get the read-only brand-signals feed (UX #35) — News
+        // otherwise lives in the staff/admin nav only.
+        { title: "News", url: "/news", icon: Newspaper },
+      ]
+    : coreWithTeamExpenses;
+  // Equity directors who aren't admins still get Finance (Woody, 2026-08-22:
+  // equity = Woody, Jack, Rupert, Charlotte). Admins already have it in the
+  // admin section below.
+  const coreNav = !isClientUser && !user?.isAdmin && isEquityUser(user as any)
+    ? [...coreNavStaff, { title: "Finance", url: "/finance", icon: Landmark }]
+    : coreNavStaff;
+  const unfinishedNavCleaned = isClientUser
+    ? unfinishedNav.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
+    : unfinishedNav;
+  const adminNav = adminNavBase;
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout");
     localStorage.removeItem("bgp_auth_token");
     localStorage.removeItem("bgp_active_team");
+    clearPersistedQueries();
     queryClient.clear();
     window.location.href = "/";
   };
@@ -230,18 +391,56 @@ export function AppSidebar() {
     ? user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
     : "?";
 
+  // The client logo renders as a white silhouette (brightness-0 invert) so a
+  // dark wordmark reads on the navy sidebar — but only when the sidebar
+  // surface actually IS dark. A client account without the navy scheme (or a
+  // light brand colour from logo.dev) keeps the logo's own colours; a white
+  // silhouette on a light sidebar is invisible. Measured from the rendered
+  // background rather than assumed, so it tracks scheme + injected brand vars.
+  const logoBoxRef = useRef<HTMLDivElement>(null);
+  const [darkSidebar, setDarkSidebar] = useState(true);
+  useEffect(() => {
+    const measure = () => {
+      let el: Element | null = logoBoxRef.current;
+      while (el) {
+        const bg = getComputedStyle(el).backgroundColor;
+        const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+        if (m && (m[4] === undefined || parseFloat(m[4]) > 0.1)) {
+          const lum = (0.2126 * +m[1] + 0.7152 * +m[2] + 0.0722 * +m[3]) / 255;
+          setDarkSidebar(lum < 0.5);
+          return;
+        }
+        el = el.parentElement;
+      }
+    };
+    // The scheme class and the injected brand CSS vars can land AFTER first
+    // paint (theme fetch, style effects), so a single measurement races them
+    // — re-measure a few times until the surface colour has settled.
+    const raf = requestAnimationFrame(measure);
+    const timers = [300, 1000, 2500].map((ms) => setTimeout(measure, ms));
+    return () => { cancelAnimationFrame(raf); timers.forEach(clearTimeout); };
+    // Depend on the brand OBJECT, not its fields: the fetched theme can echo
+    // the hardcoded fallback values exactly (Landsec navy, no logoUrl), in
+    // which case the fields never change while the injected CSS vars DO flip
+    // the sidebar dark after the timers above have already run.
+  }, [colorScheme, brand]);
+
   return (
-    <Sidebar>
+    // collapsible="none" pins the left nav permanently open (the hover-peek
+    // behaviour moved to the chat panel on the right edge — see App.tsx).
+    <Sidebar collapsible="none">
       <SidebarHeader className="p-3 pt-5 pb-5">
         <Link href="/">
           {isLandsec ? (
-            <div className="cursor-pointer flex flex-col items-center justify-center h-16 gap-1">
-              <span
-                className="text-lg font-bold tracking-tight text-sidebar-foreground"
-                style={{ color: brand.accentColor }}
-              >
-                {brand.headerText}
-              </span>
+            <div ref={logoBoxRef} className="cursor-pointer flex flex-col items-center justify-center h-16 gap-1">
+              {/* Real client logo from logo.dev when we have it; else the
+                  bundled Landsec mark. object-contain keeps any aspect ratio. */}
+              <img
+                src={brand.logoUrl || landsecLogo}
+                alt={brand.name || "Landsec"}
+                className={`h-11 w-auto max-w-[150px] object-contain ${darkSidebar ? "brightness-0 invert" : ""}`}
+                onError={(e) => { if (brand.logoUrl) (e.currentTarget as HTMLImageElement).src = landsecLogo; }}
+              />
               <span className="text-[10px] text-sidebar-foreground/50">Powered by BGP</span>
             </div>
           ) : (
@@ -255,26 +454,52 @@ export function AppSidebar() {
       <SidebarSeparator />
 
       <SidebarContent>
-        <NavSection label="Core" items={coreNav} />
+        <NavSection label="Core" items={coreNav} storageKey="core" />
         <QuickAccessSection />
         <SidebarSeparator />
-        <NavSection label="AI Tools" items={user?.isAdmin ? aiNav : aiNav.filter(i => i.url !== "/image-studio")} />
+        <NavSection
+          label="AI Tools"
+          items={aiNav
+            // CAD Measure stays staff-only. Property Intelligence is client-
+            // visible again — its layer endpoints (land-registry, VOA, map
+            // layers, OS data, Edozo) are on the client read allowlist now.
+            // Image Studio stays: the server scopes the gallery to the
+            // client's own buildings.
+            .filter(i => !(isClientUser && ["/cad-measure"].includes(i.url)))}
+          storageKey="ai"
+        />
         <SidebarSeparator />
-        <NavSection label="Microsoft 365" items={microsoftNav} />
+        <NavSection
+          label="Microsoft 365"
+          items={isClientUser ? microsoftNav.filter(i => i.url !== "/mail") : microsoftNav}
+          storageKey="ms"
+          defaultOpen={false}
+        />
         <SidebarSeparator />
-        <NavSection label="Admin" items={adminNav} />
+        {user?.isAdmin && (
+          <>
+            <NavSection
+              label="Unfinished"
+              items={unfinishedNavCleaned}
+              storageKey="unfinished"
+              defaultOpen={false}
+            />
+            <SidebarSeparator />
+            <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false} />
+          </>
+        )}
       </SidebarContent>
 
-      <SidebarFooter className="p-3 space-y-2">
-        <div className="flex items-center gap-1 px-1">
+      <SidebarFooter className="p-3 space-y-2 group-data-[collapsible=icon]:overflow-hidden group-data-[collapsible=icon]:p-2">
+        <div className="flex items-center gap-1 px-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs hover:bg-sidebar-accent transition-colors text-sidebar-foreground/70 hover:text-sidebar-foreground"
+                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs hover:bg-sidebar-accent transition-colors text-sidebar-foreground/70 hover:text-sidebar-foreground group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center"
                 data-testid="button-color-scheme"
               >
-                <Palette className="w-3.5 h-3.5" />
-                <span className="truncate">{COLOR_SCHEMES.find(s => s.id === colorScheme)?.label}</span>
+                <Palette className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate group-data-[collapsible=icon]:hidden">{COLOR_SCHEMES.find(s => s.id === colorScheme)?.label}</span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" side="top" className="w-48">
@@ -301,19 +526,60 @@ export function AppSidebar() {
           </DropdownMenu>
         </div>
 
+        {/* Staff who've switched to a client team are seeing exactly what that
+            client sees. Say so plainly, with a one-click way out — otherwise
+            missing staff data reads as the app being broken. */}
+        {isViewingAsClient && (
+          <button
+            type="button"
+            onClick={() => {
+              // Clear BOTH ways into client view: the team-picker switch
+              // (active_team) and the explicit client-view toggle (staff who
+              // sit ON a client team, like Victoria on Landsec, are scoped
+              // via client_view_mode — setActiveTeam alone didn't free them).
+              // Only staff on a client team can hold client_view_mode; for
+              // everyone else the disable would just 400 ("Not on a client
+              // team"), so skip it.
+              if ((user as any)?.canViewAsClient) {
+                apiRequest("POST", "/api/auth/client-view-mode", { enabled: false }).catch(() => {});
+              }
+              setActiveTeam("all");
+            }}
+            className="flex items-center justify-between gap-2 w-full px-2 py-1.5 mb-1 rounded-md text-[11px] font-medium bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent/80 transition-colors group-data-[collapsible=icon]:hidden"
+            title="You're seeing the client's view. Click to return to the full BGP view."
+            data-testid="button-exit-client-view"
+          >
+            <span className="flex items-center gap-1.5 min-w-0">
+              <Eye className="w-3 h-3 shrink-0" />
+              <span className="truncate">Viewing as {viewingAsName}</span>
+            </span>
+            <span className="shrink-0 opacity-70">Exit</span>
+          </button>
+        )}
+
+        {isRealClientLogin ? (
+          // Real client logins are pinned to their own team — no switching into
+          // BGP's internal team views. (Landsec audit.)
+          <div className="flex items-center gap-2 w-full px-2 py-1.5 text-xs font-medium" data-testid="client-team-label">
+            <div className="w-5 h-5 rounded bg-primary/20 flex items-center justify-center shrink-0">
+              <Users className="w-3 h-3 text-primary" />
+            </div>
+            <span className="truncate group-data-[collapsible=icon]:hidden">{userTeam || activeTeam}</span>
+          </div>
+        ) : (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              className="flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium hover:bg-sidebar-accent transition-colors"
+              className="flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium hover:bg-sidebar-accent transition-colors group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center"
               data-testid="button-team-switcher"
             >
               <div className="flex items-center gap-2 min-w-0">
                 <div className="w-5 h-5 rounded bg-primary/20 flex items-center justify-center shrink-0">
                   <Users className="w-3 h-3 text-primary" />
                 </div>
-                <span className="truncate">{activeTeam === "all" ? "All Teams" : activeTeam || "Select Team"}</span>
+                <span className="truncate group-data-[collapsible=icon]:hidden">{activeTeam === "all" ? "All Teams" : activeTeam || "Select Team"}</span>
               </div>
-              <ChevronsUpDown className="w-3.5 h-3.5 shrink-0 opacity-50" />
+              <ChevronsUpDown className="w-3.5 h-3.5 shrink-0 opacity-50 group-data-[collapsible=icon]:hidden" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="top" className="w-52">
@@ -342,19 +608,20 @@ export function AppSidebar() {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
 
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
+        <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+          <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
             <span className="text-xs font-medium text-primary">{initials}</span>
           </div>
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
             <p className="text-xs font-medium truncate" data-testid="text-current-user">{user?.name || "Loading..."}</p>
             <p className="text-[10px] text-muted-foreground truncate">{user?.role || "BGP Team"}</p>
           </div>
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 shrink-0"
+            className="h-7 w-7 shrink-0 group-data-[collapsible=icon]:hidden"
             onClick={handleLogout}
             data-testid="button-logout"
           >
@@ -371,40 +638,60 @@ export function AppSidebar() {
  * in the bottom nav bar. Shows all navigation items not present in the
  * bottom nav (Home, ChatBGP, Properties, Deals are in the bottom nav).
  */
-const mobileOverlayItems = [
+export const mobileOverlayItems = [
   { title: "Today", url: "/today", icon: Sun },
-  { title: "Properties", url: "/properties", icon: Building2 },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Requirements", url: "/requirements", icon: FileText },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
+  { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
+  { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
-  { title: "People Hub", url: "/contacts", icon: Users },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  { title: "CRM", url: "/contacts", icon: Handshake },
+  { title: "People & HR", url: "/hr", icon: Users },
+  { title: "My Card", url: "/my-expenses", icon: CreditCard },
+  { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
+  // Leasing Schedule retired (archived) — route stays live for old links.
   { title: "Comps", url: "/comps", icon: Scale },
-  { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
-  { title: "Document Studio", url: "/templates", icon: FileTextIcon },
-  { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
+  { title: "Lease Advisory", url: "/pla/matters", icon: Scale },
+  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
+  { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
+  // Studio tools admin-only on mobile too (parity with desktop Admin section) — WIP.
+  { title: "Model Studio", url: "/models", icon: FileSpreadsheet, adminOnly: true },
+  { title: "Document Studio", url: "/document-studio", icon: FileTextIcon, adminOnly: true },
+  { title: "Document Briefs", url: "/document-briefs", icon: FileTextIcon, badge: "AI", adminOnly: true },
+  // On mobile everyone uses the lightweight images page (works on auth; the
+  // full /image-studio power page is desktop-admin only).
+  { title: "Image Studio", url: "/m/images", icon: ImageIcon },
   { title: "SharePoint", url: "/sharepoint", icon: Cloud },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "Mail", url: "/mail", icon: Mail },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
-  { title: "Board Report", url: "/board-report", icon: Presentation },
-  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
-  { title: "News", url: "/news", icon: Newspaper },
-  { title: "Leads", url: "/leads", icon: UserPlus },
+  // Admin gating mirrors the desktop sidebar (Admin + Unfinished groups)
+  // so non-admins don't get mobile links into pages whose APIs will 403.
+  { title: "Board Report", url: "/board-report", icon: Presentation, adminOnly: true },
+  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle, adminOnly: true },
+  { title: "News", url: "/news", icon: Newspaper, adminOnly: true },
+  { title: "Leads", url: "/leads", icon: UserPlus, adminOnly: true },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
-  { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles },
-  { title: "Office Add-ins", url: "/addins", icon: FileSpreadsheet },
-  { title: "Settings", url: "/settings", icon: Settings },
+  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
+  { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, adminOnly: true },
+  { title: "Office Add-ins", url: "/addins", icon: Puzzle, adminOnly: true },
+  { title: "Settings", url: "/settings", icon: Settings, adminOnly: true },
 ];
 
 export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [location] = useLocation();
   const { isLandsec } = useBrand();
+  const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
 
-  // Hide Reporting in mobile overlay for non-Landsec tenants (parity with desktop).
-  const items = isLandsec ? mobileOverlayItems : mobileOverlayItems.filter(i => i.url !== "/reporting");
+  // Parity with desktop: Reporting hidden everywhere now, and client logins
+  // also lose the BGP-internal items (People & HR, My Card, WIP).
+  const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
+  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure"];
+  const items = (user?.role === "Client" || !!(user as any)?.companyScopeId)
+    ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
+    : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);
 
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
@@ -440,26 +727,42 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
           </button>
         </div>
         <div className="flex-1 overflow-y-auto py-2">
-          {items.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(item.url);
+          {(() => {
+            // Surface the field-relevant boards first; tuck tools/utilities
+            // under a "Tools & more" divider so the phone menu isn't a wall.
+            const PRIMARY = new Set(["/today", "/tasks", "/requirements", "/contacts", "/brands", "/comps", "/leads", "/calendar", "/mail", "/news", "/property-intelligence"]);
+            const primary = items.filter((i: any) => PRIMARY.has(i.url));
+            const more = items.filter((i: any) => !PRIMARY.has(i.url));
+            const renderRow = (item: any) => {
+              const Icon = item.icon;
+              const active = isActive(item.url);
+              return (
+                <Link key={item.url} href={item.url}>
+                  <div
+                    onClick={onClose}
+                    className={`flex items-center gap-3 px-4 py-3 mx-2 rounded-lg text-sm font-medium transition-colors min-h-[44px] ${
+                      active
+                        ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
+                        : "text-foreground hover:bg-muted"
+                    }`}
+                    data-testid={`mobile-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                  >
+                    <Icon className={`w-5 h-5 shrink-0 ${active ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
+                    <span>{item.title}</span>
+                  </div>
+                </Link>
+              );
+            };
             return (
-              <Link key={item.url} href={item.url}>
-                <div
-                  onClick={onClose}
-                  className={`flex items-center gap-3 px-4 py-3 mx-2 rounded-lg text-sm font-medium transition-colors min-h-[44px] ${
-                    active
-                      ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
-                      : "text-foreground hover:bg-muted"
-                  }`}
-                  data-testid={`mobile-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
-                >
-                  <Icon className={`w-5 h-5 shrink-0 ${active ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
-                  <span>{item.title}</span>
-                </div>
-              </Link>
+              <>
+                {primary.map(renderRow)}
+                {more.length > 0 && (
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-5 pt-3 pb-1">Tools &amp; more</p>
+                )}
+                {more.map(renderRow)}
+              </>
             );
-          })}
+          })()}
         </div>
       </div>
     </>

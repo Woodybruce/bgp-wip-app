@@ -1,17 +1,30 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { IntelligenceFooter } from "@/components/intelligence-footer";
+import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "wouter";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useTeam } from "@/lib/team-context";
+import { isEquityUser } from "@/lib/utils";
 import { useBrand } from "@/lib/brand-context";
 import { DraggableGrid } from "@/components/draggable-grid";
+import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
+import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
+import { PropertiesSummary } from "@/components/properties-summary";
+import { ActivitySummary } from "@/components/activity-summary";
+import { ClientPropertyFoldersPanel } from "@/pages/properties";
+import { BgpTakeStrip } from "@/components/bgp-take-strip";
+import { AIActivityCard } from "@/components/ai-activity-card";
 import {
   Building2,
   CalendarDays,
   Users,
+  Eye,
+  Phone,
   Sparkles,
   FileText,
   ArrowRight,
@@ -34,6 +47,7 @@ import {
   Landmark,
   Globe,
   MapPin,
+  Handshake,
   ShieldCheck,
   Pencil,
   Check,
@@ -65,11 +79,13 @@ import {
   MyLeadsWidget,
   WipDashboardCard,
   AvailableUnitsWidget,
+  DealsBoardWidget,
   InvestmentTrackerWidget,
   SharePointWidget,
   StudiosWidget,
   MyPortfolioWidget,
   KpiOverviewWidget,
+  EquityFinanceWidget,
   LandsecAnalyticsWidget,
   LandsecOverviewCard,
   LandsecAgentPerformanceCard,
@@ -77,8 +93,11 @@ import {
   LandsecRecentActivity,
   WidgetPickerDialog,
   WIDGET_REGISTRY,
+  BOARD_REGISTRY,
   DEFAULT_WIDGETS,
   DEFAULT_BOARDS,
+  CLIENT_BOARD_REGISTRY,
+  CLIENT_SAFE_WIDGET_IDS,
   boardsToWidgets,
   widgetsToBoards,
   timeAgo,
@@ -88,41 +107,95 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import type { CrmComp } from "@shared/schema";
 
 
-function SystemActivityWidget() {
+// Merged "Activity Feed" = Daily Digest alerts (proactive) + System Activity (automated background processes).
+function ActivityFeedWidget() {
+  const { data: alerts, isLoading: digestLoading } = useQuery<any[]>({ queryKey: ["/api/daily-digest"] });
   const { data: activities, isLoading: actLoading } = useQuery<any[]>({ queryKey: ["/api/activity-feed"] });
-  const sourceIcons: Record<string, { icon: React.ElementType; color: string }> = {
-    "email-processor": { icon: MailIcon, color: "text-blue-500" },
-    "auto-enrich": { icon: Sparkles, color: "text-purple-500" },
-    "news-feed": { icon: Newspaper, color: "text-orange-500" },
-    "comp-extract": { icon: BarChart3, color: "text-green-500" },
-    "archivist": { icon: FolderOpen, color: "text-amber-500" },
-    "interaction-sync": { icon: Users, color: "text-cyan-500" },
+
+  const severityConfig: Record<string, { color: string; bg: string }> = {
+    critical: { color: "text-red-600 dark:text-red-400", bg: "bg-red-100 dark:bg-red-900/30" },
+    warning: { color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-100 dark:bg-amber-900/30" },
+    info: { color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-100 dark:bg-blue-900/30" },
   };
+  const typeIcons: Record<string, React.ElementType> = {
+    stuck_deal: Clock,
+    unmatched_requirement: ListPlus,
+    kyc_gap: ShieldCheck,
+    cooling_contact: Users,
+  };
+  const sourceIcons: Record<string, { icon: React.ElementType; color: string }> = {
+    "email-processor": { icon: MailIcon, color: "text-muted-foreground" },
+    "auto-enrich": { icon: Sparkles, color: "text-muted-foreground" },
+    "news-feed": { icon: Newspaper, color: "text-muted-foreground" },
+    "comp-extract": { icon: BarChart3, color: "text-muted-foreground" },
+    "archivist": { icon: FolderOpen, color: "text-muted-foreground" },
+    "interaction-sync": { icon: Users, color: "text-muted-foreground" },
+  };
+
+  const digestHref = (alert: any): string | null =>
+    alert.entityType === "deal" ? `/deals/${alert.entityId}`
+    : alert.entityType === "contact" ? `/contacts/${alert.entityId}`
+    : alert.entityType === "requirement" ? `/requirements`
+    : null;
+
+  const isLoading = digestLoading || actLoading;
+  const hasAlerts = !!alerts?.length;
+  const hasActivity = !!activities?.length;
+
   return (
-    <Card key="system-activity" className="h-full flex flex-col" data-testid="widget-system-activity">
+    <Card key="system-activity" className="h-full flex flex-col" data-testid="widget-activity-feed">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2 pt-4 px-4">
         <div className="flex items-center gap-2">
           <Zap className="w-4 h-4 text-primary" />
-          <CardTitle className="text-sm font-semibold">System Activity</CardTitle>
+          <CardTitle className="text-sm font-semibold">Activity Feed</CardTitle>
+          {hasAlerts && <Badge variant="destructive" className="text-[10px]">{alerts!.length}</Badge>}
         </div>
         <Badge variant="secondary" className="text-[10px]">Live</Badge>
       </CardHeader>
       <CardContent className="flex-1 overflow-hidden px-4 pb-4">
         <ScrollArea className="h-full">
-          {actLoading ? (
+          {isLoading ? (
             <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-12 w-full" />)}</div>
-          ) : !activities?.length ? (
+          ) : !hasAlerts && !hasActivity ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
-              <Zap className="w-8 h-8 text-muted-foreground/30 mb-2" />
-              <p className="text-xs text-muted-foreground">No automated activity yet</p>
+              <Check className="w-8 h-8 text-green-500/30 mb-2" />
+              <p className="text-xs text-muted-foreground">All clear — nothing to report</p>
             </div>
           ) : (
             <div className="space-y-1">
-              {activities.map((a: any) => {
+              {hasAlerts && (
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1 pt-1">Alerts</p>
+              )}
+              {alerts?.map((alert: any, idx: number) => {
+                const sev = severityConfig[alert.severity] || severityConfig.info;
+                const Icon = typeIcons[alert.type] || AlertTriangle;
+                const href = digestHref(alert);
+                const row = (
+                  <div className="flex items-start gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors" data-testid={`digest-alert-${idx}`}>
+                    <div className={`w-6 h-6 rounded-full ${sev.bg} flex items-center justify-center shrink-0 mt-0.5`}>
+                      <Icon className={`w-3 h-3 ${sev.color}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium leading-tight">{alert.title}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{alert.detail}</p>
+                    </div>
+                    {href && <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0 mt-1" />}
+                  </div>
+                );
+                return href ? (
+                  <Link key={`alert-${idx}`} href={href} className="block cursor-pointer">{row}</Link>
+                ) : (
+                  <div key={`alert-${idx}`}>{row}</div>
+                );
+              })}
+              {hasActivity && (
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1 pt-2">System Activity</p>
+              )}
+              {activities?.map((a: any) => {
                 const config = sourceIcons[a.source] || { icon: Zap, color: "text-muted-foreground" };
                 const Icon = config.icon;
                 return (
-                  <div key={a.id} className="flex items-start gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors" data-testid={`activity-item-${a.id}`}>
+                  <div key={`act-${a.id}`} className="flex items-start gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors" data-testid={`activity-item-${a.id}`}>
                     <div className={`w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5`}>
                       <Icon className={`w-3 h-3 ${config.color}`} />
                     </div>
@@ -142,69 +215,9 @@ function SystemActivityWidget() {
   );
 }
 
-function DailyDigestWidget() {
-  const { data: alerts, isLoading: digestLoading } = useQuery<any[]>({ queryKey: ["/api/daily-digest"] });
-  const severityConfig: Record<string, { color: string; bg: string }> = {
-    critical: { color: "text-red-600 dark:text-red-400", bg: "bg-red-100 dark:bg-red-900/30" },
-    warning: { color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-100 dark:bg-amber-900/30" },
-    info: { color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-100 dark:bg-blue-900/30" },
-  };
-  const typeIcons: Record<string, React.ElementType> = {
-    stuck_deal: Clock,
-    unmatched_requirement: ListPlus,
-    kyc_gap: ShieldCheck,
-    cooling_contact: Users,
-  };
-  return (
-    <Card key="daily-digest" className="h-full flex flex-col" data-testid="widget-daily-digest">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2 pt-4 px-4">
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-500" />
-          <CardTitle className="text-sm font-semibold">Daily Digest</CardTitle>
-        </div>
-        {alerts && alerts.length > 0 && <Badge variant="destructive" className="text-[10px]">{alerts.length}</Badge>}
-      </CardHeader>
-      <CardContent className="flex-1 overflow-hidden px-4 pb-4">
-        <ScrollArea className="h-full">
-          {digestLoading ? (
-            <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-14 w-full" />)}</div>
-          ) : !alerts?.length ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <Check className="w-8 h-8 text-green-500/30 mb-2" />
-              <p className="text-xs text-muted-foreground">All clear — no alerts today</p>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {alerts.map((alert: any, idx: number) => {
-                const sev = severityConfig[alert.severity] || severityConfig.info;
-                const Icon = typeIcons[alert.type] || AlertTriangle;
-                const href = alert.entityType === "deal" ? `/deals/${alert.entityId}` : alert.entityType === "contact" ? `/contacts/${alert.entityId}` : alert.entityType === "requirement" ? `/requirements` : "#";
-                return (
-                  <Link key={idx} href={href}>
-                    <div className="flex items-start gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`digest-alert-${idx}`}>
-                      <div className={`w-6 h-6 rounded-full ${sev.bg} flex items-center justify-center shrink-0 mt-0.5`}>
-                        <Icon className={`w-3 h-3 ${sev.color}`} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium leading-tight">{alert.title}</p>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">{alert.detail}</p>
-                      </div>
-                      <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0 mt-1" />
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </ScrollArea>
-      </CardContent>
-    </Card>
-  );
-}
-
 function MyTasksWidget() {
   const { data: tasksData = [], isLoading: tasksLoading } = useQuery<any[]>({ queryKey: ["/api/tasks"] });
-  const { data: briefingData, isLoading: briefingLoading } = useQuery<any>({
+  const { data: briefingData, isLoading: briefingLoading, refetch: refetchBriefing } = useQuery<any>({
     queryKey: ["/api/ai-briefing"],
     staleTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -220,23 +233,36 @@ function MyTasksWidget() {
   });
   const [quickInput, setQuickInput] = useState("");
   const activeTasks = tasksData.filter((t: any) => t.status !== "done");
-  const overdueTasks = activeTasks.filter((t: any) => t.due_date && new Date(t.due_date) < new Date());
+  const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+  const overdueTasks = activeTasks.filter((t: any) => {
+    if (!t.due_date) return false;
+    const due = new Date(t.due_date); due.setHours(0, 0, 0, 0);
+    return due < startOfToday();
+  });
   const priorityIcon = (p: string) => p === "urgent" ? <Flame className="w-2.5 h-2.5 text-red-500" /> : p === "high" ? <AlertTriangle className="w-2.5 h-2.5 text-orange-500" /> : null;
   const dueLabel = (d: string | null) => {
     if (!d) return null;
-    const diff = Math.floor((new Date(d).getTime() - new Date().setHours(0,0,0,0)) / 86400000);
-    if (diff < 0) return <span className="text-[10px] text-red-600 font-medium">{Math.abs(diff)}d overdue</span>;
-    if (diff === 0) return <span className="text-[10px] text-orange-600 font-medium">Today</span>;
-    if (diff === 1) return <span className="text-[10px] text-blue-600">Tomorrow</span>;
-    return <span className="text-[10px] text-muted-foreground">{new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>;
+    const due = new Date(d); due.setHours(0, 0, 0, 0);
+    const diff = Math.floor((due.getTime() - startOfToday().getTime()) / 86400000);
+    if (diff < 0) return <span className="text-xs text-red-600 font-medium">{Math.abs(diff)}d overdue</span>;
+    if (diff === 0) return <span className="text-xs text-orange-600 font-medium">Today</span>;
+    if (diff === 1) return <span className="text-xs text-foreground">Tomorrow</span>;
+    return <span className="text-xs text-muted-foreground">{new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>;
   };
   const renderBriefingLine = (line: string, i: number) => {
-    if (line.startsWith("## ")) return <h3 key={i} className="text-xs font-semibold mt-2 mb-0.5">{line.slice(3)}</h3>;
-    if (line.startsWith("# ")) return <h2 key={i} className="text-xs font-bold mt-2 mb-0.5 first:mt-0">{line.slice(2)}</h2>;
-    if (line.startsWith("- ") || line.startsWith("• ")) return <li key={i} className="ml-3 text-[11px] list-disc marker:text-primary/40 leading-snug">{line.slice(2).replace(/\*\*/g, "")}</li>;
+    if (line.startsWith("## ")) return <h3 key={i} className="text-sm font-semibold mt-2 mb-0.5">{line.slice(3)}</h3>;
+    if (line.startsWith("# ")) return <h2 key={i} className="text-sm font-bold mt-2 mb-0.5 first:mt-0">{line.slice(2)}</h2>;
+    if (line.startsWith("- ") || line.startsWith("• ")) return <li key={i} className="ml-4 text-[13px] list-disc marker:text-primary/40 leading-snug">{line.slice(2).replace(/\*\*/g, "")}</li>;
     if (line.trim() === "") return <div key={i} className="h-1" />;
     if (line.startsWith("---")) return <hr key={i} className="my-1.5 border-border" />;
-    return <p key={i} className="text-[11px] leading-snug">{line.replace(/\*\*/g, "")}</p>;
+    // Markdown table rows used to leak as raw "| Metric | Figures |" text —
+    // render each data row as "label — value" and drop the separator rows.
+    if (line.trim().startsWith("|")) {
+      const cells = line.split("|").map(c => c.trim()).filter(Boolean);
+      if (cells.length === 0 || cells.every(c => /^[-: ]+$/.test(c))) return null;
+      return <p key={i} className="text-[13px] leading-snug"><span className="text-muted-foreground">{cells[0]}</span>{cells.length > 1 ? ` — ${cells.slice(1).join(" · ")}` : ""}</p>;
+    }
+    return <p key={i} className="text-[13px] leading-snug">{line.replace(/\*\*/g, "")}</p>;
   };
   return (
     <Card key="my-tasks" className="h-full flex flex-col" data-testid="widget-my-tasks">
@@ -256,7 +282,7 @@ function MyTasksWidget() {
         <div className="mb-2 rounded-lg border bg-muted/30 overflow-hidden">
           <button
             onClick={() => setBriefingOpen(!briefingOpen)}
-            className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium hover:bg-muted/50 transition-colors"
+            className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium hover:bg-muted/50 transition-colors"
             data-testid="widget-briefing-toggle"
           >
             <div className="flex items-center gap-1.5">
@@ -282,7 +308,23 @@ function MyTasksWidget() {
                   {briefingData.briefing.split("\n").map(renderBriefingLine)}
                 </div>
               ) : (
-                <p className="text-[11px] text-muted-foreground py-2">Briefing will appear shortly...</p>
+                /* AI unavailable or briefing not generated — show a static
+                   digest so the panel always earns its space, with a retry
+                   instead of an open-ended promise. */
+                <div className="py-2 space-y-1">
+                  <p className="text-[11px] leading-snug">
+                    {activeTasks.length === 0
+                      ? "No open tasks — all clear for today."
+                      : `${activeTasks.length} open task${activeTasks.length === 1 ? "" : "s"}${overdueTasks.length > 0 ? `, ${overdueTasks.length} overdue` : ""}.`}
+                  </p>
+                  <button
+                    onClick={() => refetchBriefing()}
+                    className="text-[10px] text-primary hover:underline flex items-center gap-1"
+                    data-testid="button-retry-briefing"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" /> Try AI briefing again
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -322,11 +364,11 @@ function MyTasksWidget() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       {priorityIcon(task.priority)}
-                      <span className="text-xs font-medium truncate">{task.title}</span>
+                      <span className="text-sm font-medium truncate">{task.title}</span>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
                       {dueLabel(task.due_date)}
-                      {task.deal_name && <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">{task.deal_name}</span>}
+                      {task.deal_name && <span className="text-xs text-muted-foreground truncate max-w-[140px]">{task.deal_name}</span>}
                     </div>
                   </div>
                 </div>
@@ -341,23 +383,6 @@ function MyTasksWidget() {
         </ScrollArea>
       </CardContent>
     </Card>
-  );
-}
-
-function QuickAction({ title, subtitle, icon: Icon, href }: { title: string; subtitle: string; icon: React.ElementType; href: string }) {
-  return (
-    <Link href={href}>
-      <div className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`quick-action-${title.toLowerCase().replace(/\s/g, "-")}`}>
-        <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-          <Icon className="w-4 h-4 text-primary" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium">{title}</p>
-          <p className="text-xs text-muted-foreground truncate">{subtitle}</p>
-        </div>
-        <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
-      </div>
-    </Link>
   );
 }
 
@@ -423,6 +448,384 @@ function LoadingSkeleton() {
 }
 
 
+
+
+// Week-grid team calendar for the client portfolio dashboard (Woody,
+// 2026-08-03: "same as [the staff National Leasing Diary]") — mini month,
+// event-type legend, today's schedule and the Mon–Fri hour grid, fed by the
+// synced team_events for the client's portfolio (no Microsoft token needed).
+// Types are Viewing / Meeting / Call / Deadline only: inspections count as
+// viewings and valuations aren't a BGP-client thing (Woody, 2026-08-03).
+function ClientTeamWeekCalendar({ events }: { events: any[] }) {
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const now = new Date();
+  const todayStr = now.toDateString();
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7) + weekOffset * 7);
+  const days: Date[] = Array.from({ length: 5 }, (_, i) => {
+    const d = new Date(monday); d.setDate(monday.getDate() + i); return d;
+  });
+  // 6–22 to match the staff diary grid — 19:00 cap hid evening events
+  // (Woody, 2026-08-04: "calendar scroll stops at 6pm").
+  const HOUR_START = 6, HOUR_END = 22, ROW_H = 30;
+  const [selectedEvent, setSelectedEvent] = useState<any | null>(null);
+  const hours = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => i + HOUR_START);
+  const wkLabel = `${days[0].getDate()} – ${days[4].getDate()} ${days[4].toLocaleDateString("en-GB", { month: "long", year: "numeric" })}`;
+
+  const classify = (ev: any): "viewing" | "meeting" | "call" | "deadline" => {
+    const t = (ev.event_type || "").toLowerCase();
+    if (t === "viewing" || t === "inspection") return "viewing";
+    if (t === "call") return "call";
+    if (t === "deadline") return "deadline";
+    if (t === "meeting") return "meeting";
+    const s = (ev.title || "").toLowerCase();
+    if (s.includes("viewing") || s.includes("inspection") || s.includes("walk around") || s.includes("walk-around") || s.includes("site tour") || s.includes("walk ")) return "viewing";
+    if (s.includes("call") || s.includes("phone")) return "call";
+    if (s.includes("deadline") || s.includes("expiry")) return "deadline";
+    return "meeting";
+  };
+  const chipColor: Record<string, string> = {
+    viewing: "bg-blue-100 dark:bg-blue-900/40 border-blue-300 text-blue-800 dark:text-blue-200",
+    meeting: "bg-amber-100 dark:bg-amber-900/40 border-amber-300 text-amber-800 dark:text-amber-200",
+    call: "bg-purple-100 dark:bg-purple-900/40 border-purple-300 text-purple-800 dark:text-purple-200",
+    deadline: "bg-red-100 dark:bg-red-900/40 border-red-300 text-red-800 dark:text-red-200",
+  };
+  const dotColor: Record<string, string> = { viewing: "bg-blue-500", meeting: "bg-amber-500", call: "bg-purple-500", deadline: "bg-red-500" };
+  const typeIcon: Record<string, typeof Eye> = { viewing: Eye, meeting: Users, call: Phone, deadline: AlertTriangle };
+  const TYPE_KEYS = ["viewing", "meeting", "call", "deadline"] as const;
+
+  const typed = (events || []).filter(e => e.start_time).map(e => ({ ...e, _type: classify(e) }));
+  const typeCounts: Record<string, number> = { viewing: 0, meeting: 0, call: 0, deadline: 0 };
+  for (const e of typed) typeCounts[e._type]++;
+
+  const todaysEvents = typed
+    .filter(e => new Date(e.start_time).toDateString() === todayStr)
+    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+  const next30 = typed.filter(e => { const t = new Date(e.start_time).getTime(); return t >= Date.now() && t <= Date.now() + 30 * 86400000; }).length;
+  const dayTotals = new Map<string, number>();
+  const eventDays = new Set<string>();
+  for (const e of typed) {
+    const d = new Date(e.start_time);
+    eventDays.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+    const t = d.getTime();
+    if (t >= Date.now() - 30 * 86400000 && t <= Date.now() + 30 * 86400000) {
+      const k = d.toDateString();
+      dayTotals.set(k, (dayTotals.get(k) || 0) + 1);
+    }
+  }
+  const busiest = Array.from(dayTotals.entries()).sort((a, b) => b[1] - a[1])[0] || null;
+
+  // Mini month — the month the visible week starts in; a dot marks days
+  // with synced events; clicking a day jumps the grid to that week.
+  const calMonth = new Date(days[0].getFullYear(), days[0].getMonth(), 1);
+  const startDow = (calMonth.getDay() + 6) % 7;
+  const daysInMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 0).getDate();
+  const miniCells: (number | null)[] = [];
+  for (let i = 0; i < startDow; i++) miniCells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) miniCells.push(d);
+  const jumpToDay = (dayNum: number) => {
+    const target = new Date(calMonth.getFullYear(), calMonth.getMonth(), dayNum);
+    target.setHours(0, 0, 0, 0);
+    const targetMonday = new Date(target);
+    targetMonday.setDate(target.getDate() - ((target.getDay() + 6) % 7));
+    const baseMonday = new Date(now);
+    baseMonday.setHours(0, 0, 0, 0);
+    baseMonday.setDate(baseMonday.getDate() - ((baseMonday.getDay() + 6) % 7));
+    setWeekOffset(Math.round((targetMonday.getTime() - baseMonday.getTime()) / (7 * 86400000)));
+  };
+  const inVisibleWeek = (dayNum: number) => {
+    const d = new Date(calMonth.getFullYear(), calMonth.getMonth(), dayNum);
+    return days.some(w => w.toDateString() === d.toDateString());
+  };
+
+  const eventsForDay = (day: Date) =>
+    typed
+      .filter(e => new Date(e.start_time).toDateString() === day.toDateString())
+      .filter(e => !typeFilter || e._type === typeFilter)
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+  return (
+    <Card className="h-full flex flex-col">
+      <CardContent className="p-0 flex-1 overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-primary" />
+            <h3 className="font-semibold text-xs">Team Calendar</h3>
+            <span className="text-[10px] text-muted-foreground">· {wkLabel}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => setWeekOffset(o => o - 1)} data-testid="btn-cal-prev">‹</Button>
+            <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => setWeekOffset(0)} data-testid="btn-cal-today">Today</Button>
+            <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => setWeekOffset(o => o + 1)} data-testid="btn-cal-next">›</Button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-hidden flex">
+          {/* Sidebar — mini month, event types, today's schedule (staff-diary layout) */}
+          <div className="w-44 shrink-0 border-r p-2.5 space-y-3 overflow-y-auto hidden md:block">
+            <div>
+              <div className="text-[10px] font-semibold mb-1">{calMonth.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</div>
+              <div className="grid grid-cols-7 gap-y-0.5 text-center text-[9px] text-muted-foreground">
+                {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => <div key={i}>{d}</div>)}
+                {miniCells.map((d, i) => {
+                  if (d == null) return <div key={i} />;
+                  const cellDate = new Date(calMonth.getFullYear(), calMonth.getMonth(), d);
+                  const isToday = cellDate.toDateString() === todayStr;
+                  const hasEvents = eventDays.has(`${cellDate.getFullYear()}-${cellDate.getMonth()}-${d}`);
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => jumpToDay(d)}
+                      className={`relative rounded-full w-5 h-5 mx-auto leading-5 hover:bg-muted ${isToday ? "bg-primary text-primary-foreground font-semibold" : inVisibleWeek(d) ? "bg-primary/10" : "text-foreground"}`}
+                      data-testid={`cal-mini-${d}`}
+                    >
+                      {d}
+                      {hasEvents && !isToday && <span className="absolute left-1/2 -translate-x-1/2 bottom-0 w-0.5 h-0.5 rounded-full bg-primary" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Event types</div>
+              <div className="space-y-0.5">
+                {TYPE_KEYS.map(t => {
+                  const Icon = typeIcon[t];
+                  return (
+                    <button
+                      key={t}
+                      onClick={() => setTypeFilter(f => f === t ? null : t)}
+                      className={`w-full flex items-center gap-1.5 px-1 py-0.5 rounded text-[10px] hover:bg-muted ${typeFilter === t ? "bg-primary/10 font-semibold" : typeFilter ? "opacity-40" : ""}`}
+                      data-testid={`cal-type-${t}`}
+                    >
+                      <Icon className="w-3 h-3 text-muted-foreground" />
+                      <span className="capitalize flex-1 text-left">{t}</span>
+                      <span className={`w-4 h-4 rounded-full text-[9px] leading-4 text-white text-center ${dotColor[t]}`}>{typeCounts[t]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Today's schedule <span className="text-primary">{todaysEvents.length}</span></div>
+              {todaysEvents.length === 0 ? (
+                <p className="text-[10px] text-muted-foreground">Nothing scheduled</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {todaysEvents.slice(0, 6).map((ev: any) => (
+                    <div key={ev.id} className="text-[10px] leading-snug">
+                      <span className="font-medium tabular-nums">{new Date(ev.start_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span>{" "}
+                      <span className="text-muted-foreground">{ev.title}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          {/* Week grid */}
+          <div className="flex-1 overflow-auto">
+            <div className="grid min-w-[560px]" style={{ gridTemplateColumns: "44px repeat(5, minmax(0, 1fr))" }}>
+              <div />
+              {days.map(d => (
+                <div key={d.toISOString()} className={`text-center py-1.5 border-b border-l text-xs ${d.toDateString() === todayStr ? "bg-primary/5 font-semibold" : ""}`}>
+                  <span className="text-[10px] text-muted-foreground uppercase mr-1">{d.toLocaleDateString("en-GB", { weekday: "short" })}</span>
+                  {d.getDate()}
+                </div>
+              ))}
+              <div className="relative border-r">
+                {hours.map(h => (
+                  <div key={h} className="text-[9px] text-muted-foreground text-right pr-1" style={{ height: ROW_H }}>{String(h).padStart(2, "0")}:00</div>
+                ))}
+              </div>
+              {days.map(d => {
+                const dayEvents = eventsForDay(d);
+                return (
+                  <div key={d.toISOString()} className={`relative border-l ${d.toDateString() === todayStr ? "bg-primary/5" : ""}`} style={{ height: hours.length * ROW_H }}>
+                    {hours.map(h => <div key={h} className="border-b border-border/40" style={{ height: ROW_H }} />)}
+                    {dayEvents.map((ev: any) => {
+                      const start = new Date(ev.start_time);
+                      const end = ev.end_time ? new Date(ev.end_time) : new Date(start.getTime() + 3600000);
+                      const startH = Math.max(start.getHours() + start.getMinutes() / 60, HOUR_START);
+                      const endH = Math.min(Math.max(end.getHours() + end.getMinutes() / 60, startH + 0.5), HOUR_END);
+                      if (startH >= HOUR_END) return null;
+                      const type = ev._type;
+                      return (
+                        <button
+                          type="button"
+                          key={ev.id}
+                          onClick={() => setSelectedEvent(ev)}
+                          className={`absolute left-0.5 right-0.5 rounded border px-1 py-0.5 text-[9px] leading-tight overflow-hidden text-left cursor-pointer hover:ring-1 hover:ring-primary/50 ${chipColor[type] || chipColor.meeting}`}
+                          style={{ top: (startH - HOUR_START) * ROW_H, height: Math.max((endH - startH) * ROW_H - 2, 16) }}
+                          title={`${ev.title}${ev.location ? ` · ${ev.location}` : ""}`}
+                          data-testid={`cal-event-${ev.id}`}
+                        >
+                          <span className="font-medium block truncate">{ev.title}</span>
+                          {(ev.property_name || ev.location) && <span className="truncate block opacity-80">{ev.property_name || ev.location}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+        {/* Event details — chips were inert divs; clicking anywhere on the
+            calendar did nothing (Woody, 2026-08-04). */}
+        {selectedEvent && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setSelectedEvent(null)}>
+            <div className="bg-card border rounded-xl shadow-lg w-[340px] max-w-[90vw] p-4 space-y-2" onClick={e => e.stopPropagation()} data-testid="cal-event-detail">
+              <div className="flex items-start justify-between gap-2">
+                <h4 className="text-sm font-semibold leading-snug">{selectedEvent.title}</h4>
+                <Badge variant="outline" className="text-[10px] capitalize shrink-0">{selectedEvent._type}</Badge>
+              </div>
+              <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                <Clock className="w-3 h-3" />
+                {new Date(selectedEvent.start_time).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                {selectedEvent.end_time && <> – {new Date(selectedEvent.end_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</>}
+              </div>
+              {(selectedEvent.location || selectedEvent.property_name) && (
+                <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <MapPin className="w-3 h-3" />
+                  {selectedEvent.property_name || selectedEvent.location}
+                </div>
+              )}
+              {selectedEvent.property_id && (
+                <Link href={`/properties/${selectedEvent.property_id}`} className="text-xs text-primary hover:underline inline-block">
+                  Open property →
+                </Link>
+              )}
+              {selectedEvent.description && <p className="text-xs leading-relaxed max-h-[140px] overflow-y-auto whitespace-pre-wrap">{selectedEvent.description}</p>}
+              <div className="pt-1 text-right">
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSelectedEvent(null)}>Close</Button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Intelligence strip — the shared footer board, living INSIDE the
+            calendar board rather than orphaned at the page bottom
+            (Woody, 2026-08-04). Local calendar reads lead; the CRM/diary
+            insights follow from the shared component. */}
+        <div data-testid="cal-intelligence" className="border-t">
+          <div className="flex items-center gap-4 px-3 py-1 bg-muted/30 text-[10px] flex-wrap">
+            <span className="inline-flex items-center gap-1 font-semibold uppercase tracking-wider text-muted-foreground">
+              <Sparkles className="w-3 h-3" /> Intelligence
+            </span>
+            <span><span className="font-semibold uppercase text-muted-foreground mr-1">Today</span>{todaysEvents.length} event{todaysEvents.length === 1 ? "" : "s"}</span>
+            {busiest && (
+              <span><span className="font-semibold uppercase text-muted-foreground mr-1">Busiest day</span>{new Date(busiest[0]).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} — {busiest[1]} event{busiest[1] === 1 ? "" : "s"}</span>
+            )}
+            <span><span className="font-semibold uppercase text-muted-foreground mr-1">Next 30 days</span>{next30} event{next30 === 1 ? "" : "s"}</span>
+          </div>
+          <IntelligenceFooter />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// Grouped account contacts for the client portfolio dashboard (Woody,
+// 2026-08-03: "include brands and agents"): the company's own people, one
+// contact per brand with a deal on the portfolio, and the agents working
+// those deals. Backed by /api/crm/companies/:id/contact-summary.
+function PortfolioContactsBoard({ companyId }: { companyId: string }) {
+  // Portfolio-wide Linked Contacts (Woody, 2026-08-05: "the Landsec board
+  // for Contacts should be linked contacts but across all of their
+  // properties combined") — the same groups as the per-property panel,
+  // unioned over every property, scheme attribution on the badges.
+  type Row = { id: string; name: string; role: string | null; email?: string | null; company_id?: string | null; company_name?: string | null; last_interaction?: string | null; via?: string; side?: string };
+  type Occ = { company_id: string; company_name: string; contact: { id: string; name: string; role: string | null; last_interaction: string | null } | null };
+  const { data } = useQuery<{ internal: Row[]; deals: Row[]; trackerUnlinked: Array<{ unit_name: string; status: string | null }>; tenants: Occ[]; consultants: Row[] }>({
+    queryKey: ["/api/company-portfolio", companyId, "linked-contacts"],
+    queryFn: async () => {
+      const r = await fetch(`/api/company-portfolio/${companyId}/linked-contacts`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return { internal: [], deals: [], trackerUnlinked: [], tenants: [], consultants: [] };
+      return r.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ internal: true, deals: true });
+  const groups: Array<{ key: string; title: string; tint: string; count: number; body: React.ReactNode }> = [];
+  const personRow = (c: Row) => (
+    <Link key={c.id} href={c.id.startsWith("u-") ? "/hr" : c.id.startsWith("co-") ? `/companies/${c.company_id}` : `/contacts/${c.id}`} className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-muted/50 min-w-0">
+      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-semibold shrink-0 ${c.side === "bgp" ? "bg-foreground text-background" : c.side === "client" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}>
+        {(c.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+      </span>
+      <div className="flex-1 min-w-0">
+        <span className="text-xs font-medium truncate block">{c.name}</span>
+        <span className="text-[10px] text-muted-foreground truncate block">{[c.role, c.side === "bgp" ? "BGP" : c.company_name !== c.name ? c.company_name : null].filter(Boolean).join(" · ")}</span>
+      </div>
+      {c.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-primary border-primary/30">Client</Badge>}
+      {c.via && c.side !== "client" && c.side !== "bgp" && <Badge variant="outline" className="text-[9px] shrink-0 max-w-[130px] truncate" title={c.via}>{c.via}</Badge>}
+    </Link>
+  );
+  const internal = data?.internal || [];
+  const dealsRows = data?.deals || [];
+  const unlinked = data?.trackerUnlinked || [];
+  const occupiers = data?.tenants || [];
+  const consultants = data?.consultants || [];
+  groups.push({ key: "internal", title: "Internal team", tint: "text-foreground", count: internal.length, body: internal.map(personRow) });
+  groups.push({
+    key: "deals", title: "On deals & tracker", tint: "text-foreground", count: dealsRows.length + unlinked.length,
+    body: (<>
+      {dealsRows.map(personRow)}
+      {unlinked.map(u => (
+        <Link key={u.unit_name} href="/available" className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-amber-50 min-w-0">
+          <span className="w-5 h-5 rounded bg-amber-100 text-amber-700 flex items-center justify-center text-[8px] font-semibold shrink-0">!</span>
+          <div className="flex-1 min-w-0">
+            <span className="text-xs font-medium truncate block">{u.unit_name}</span>
+            <span className="text-[10px] text-amber-700 truncate block">{u.status || "active"} — no brand linked yet</span>
+          </div>
+        </Link>
+      ))}
+    </>),
+  });
+  groups.push({
+    key: "tenants", title: "In occupation", tint: "text-muted-foreground", count: occupiers.length,
+    body: occupiers.map(o => (
+      <div key={o.company_id} className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-muted/50 min-w-0">
+        <div className="flex-1 min-w-0">
+          <Link href={`/companies/${o.company_id}`} className="text-xs font-semibold truncate block hover:underline">{o.company_name}</Link>
+          {o.contact
+            ? <Link href={`/contacts/${o.contact.id}`} className="text-[10px] text-muted-foreground truncate block hover:underline">{[o.contact.name, o.contact.role].filter(Boolean).join(" · ")}</Link>
+            : <span className="text-[10px] text-muted-foreground/60 italic block">no contact on file</span>}
+        </div>
+      </div>
+    )),
+  });
+  groups.push({ key: "consultants", title: "Consultants", tint: "text-foreground", count: consultants.length, body: consultants.map(personRow) });
+
+  return (
+    <Card className="h-full flex flex-col">
+      <CardContent className="p-3 flex-1 overflow-hidden flex flex-col">
+        <div className="flex items-center gap-2 mb-1.5">
+          <Users className="w-4 h-4" />
+          <h3 className="text-sm font-semibold">Contacts — whole portfolio</h3>
+        </div>
+        <div className="space-y-1 flex-1 overflow-y-auto pr-1">
+          {groups.filter(g => g.count > 0).map(g => {
+            const isOpen = openGroups[g.key] ?? false;
+            return (
+              <div key={g.key}>
+                <button
+                  onClick={() => setOpenGroups(prev => ({ ...prev, [g.key]: !isOpen }))}
+                  className={`w-full flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-semibold py-1 rounded hover:bg-muted/50 transition-colors ${g.tint}`}
+                  data-testid={`portfolio-contacts-group-${g.key}`}
+                >
+                  {isOpen ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+                  <span className="text-left flex-1">{g.title}</span>
+                  <Badge variant="outline" className="text-[9px] tabular-nums">{g.count}</Badge>
+                </button>
+                {isOpen && <div className="space-y-0.5 mt-0.5">{g.body}</div>}
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 
 export default function Dashboard() {
@@ -509,15 +912,20 @@ export default function Dashboard() {
   });
 
   const [dashboardViewMode, setDashboardViewMode] = useState<"team" | "individual">(() => {
-    return (localStorage.getItem("bgp_dashboard_view_mode") as "team" | "individual") || "team";
+    try { return (localStorage.getItem("bgp_dashboard_view_mode") as "team" | "individual") || "team"; }
+    catch { return "team"; }
   });
+  // Client logins AND staff in client-view mode — both are served the client
+  // dashboard, so the staff-only intelligence/stats calls would just 403.
+  const isClientViewer = user?.role === "Client" || !!(user as any)?.companyScopeId;
   const [diaryRange, setDiaryRange] = useState<"today" | "week">("week");
   const handleViewModeChange = useCallback((mode: "team" | "individual") => {
     setDashboardViewMode(mode);
-    localStorage.setItem("bgp_dashboard_view_mode", mode);
+    try { localStorage.setItem("bgp_dashboard_view_mode", mode); } catch { /* private browsing */ }
   }, []);
   const { isLoading: statsLoading } = useQuery<CrmStats>({
     queryKey: ["/api/crm/stats"],
+    enabled: !!user && !isClientViewer,
   });
   const { data: crmProperties } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
@@ -548,12 +956,15 @@ export default function Dashboard() {
       return res.json();
     },
     staleTime: 60_000,
+    enabled: !!user && !isClientViewer,
   });
   const { data: myCalEvents } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/microsoft/calendar"],
+    enabled: !!user && !isClientViewer, // clients (and client-view mode) have no M365 surface
   });
   const { data: msStatus } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/user-mail/status"],
+    enabled: user?.role !== "Client",
   });
   const diaryDays = 7;
   const { data: teamCalSchedules } = useQuery<any[]>({
@@ -585,10 +996,12 @@ export default function Dashboard() {
     queryKey: ["/api/microsoft/calendar/insights"],
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
+    enabled: user?.role !== "Client", // clients have no Microsoft 365 access
   });
   const calInsights = calInsightsData?.insights || [];
   const { data: invTrackerItems } = useQuery<InvTracker[]>({
     queryKey: ["/api/investment-tracker"],
+    enabled: user?.role !== "Client",
   });
   const { data: newsArticles } = useQuery<NewsArticle[]>({
     queryKey: ["/api/news-feed/articles", "dashboard", activeTeam],
@@ -606,7 +1019,6 @@ export default function Dashboard() {
 
   const [dashboardEditing, setDashboardEditing] = useState(false);
 
-  const [closeDialogCb, setCloseDialogCb] = useState<(() => void) | null>(null);
   const saveMutation = useMutation({
     mutationFn: async (widgets: string[]) => {
       await apiRequest("PATCH", "/api/auth/me/dashboard-widgets", { widgets });
@@ -614,10 +1026,6 @@ export default function Dashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       toast({ title: "Widgets updated", duration: 1500 });
-      if (closeDialogCb) {
-        closeDialogCb();
-        setCloseDialogCb(null);
-      }
     },
     onError: () => {
       toast({ title: "Failed to update widgets", variant: "destructive" });
@@ -639,7 +1047,9 @@ export default function Dashboard() {
     },
   });
 
-  const LAYOUT_VERSION = 13;
+  // v14: Landsec portfolio re-arranged (tracker + tasks top, calendar +
+  // files boards added, deal-movements board folded into Activity).
+  const LAYOUT_VERSION = 14;
   const rawSavedLayout = (user as any)?.dashboardLayout || null;
   const savedLayoutVersion = rawSavedLayout?._version || 1;
   const validSaved = savedLayoutVersion >= LAYOUT_VERSION ? rawSavedLayout : null;
@@ -650,9 +1060,54 @@ export default function Dashboard() {
   const rawTemplate = templateData?.template;
   const templateLayout = (rawTemplate?._version >= LAYOUT_VERSION) ? rawTemplate : null;
 
-  const portfolioSavedLayout = validSaved?.portfolio || templateLayout?.portfolio || null;
-  const widgetSavedLayout = validSaved?.widgets || templateLayout?.widgets || null;
-  const hiddenPortfolioBoards: string[] = validSaved?.hiddenPortfolio ?? templateLayout?.hiddenPortfolio ?? ["portfolio-properties"];
+  // The client-team dashboard is standardised: in Landsec view (client
+  // logins AND staff switched into the team) the org template — set from
+  // Mark Warne's arrangement — beats any personal layout, so everyone sees
+  // the same board (Woody, 2026-08-04: "should be the same"). Personal
+  // layouts still win on the staff dashboard.
+  const preferTemplate = isLandsecTeam || isClientViewer;
+  const firstLayout = preferTemplate ? (templateLayout || validSaved) : (validSaved || templateLayout);
+  const secondLayout = preferTemplate ? validSaved : templateLayout;
+
+  const widgetSavedLayoutRaw = firstLayout?.widgets || secondLayout?.widgets || null;
+  const hiddenPortfolioBoards: string[] = firstLayout?.hiddenPortfolio ?? secondLayout?.hiddenPortfolio ?? ["portfolio-properties"];
+
+  // Portfolio boards and widgets used to live in two separate grids stacked
+  // on the page, so a widget (e.g. My Tasks & Briefing) could never be
+  // dragged above the portfolio boards — drags "to the top" silently snapped
+  // back. When the portfolio section is present they now render as ONE grid,
+  // laid out from `combined` — seeded by stacking the two legacy layouts so
+  // existing arrangements carry over.
+  const combinedSavedLayoutRaw = firstLayout?.combined || secondLayout?.combined || (() => {
+    const p = (firstLayout?.portfolio || secondLayout?.portfolio)?.lg as any[] | undefined;
+    const w = (firstLayout?.widgets || secondLayout?.widgets)?.lg as any[] | undefined;
+    if (!p && !w) return null;
+    const maxY = (p || []).reduce((m: number, l: any) => Math.max(m, l.y + l.h), 0);
+    return { lg: [...(p || []), ...(w || []).map((l: any) => ({ ...l, y: l.y + maxY }))] };
+  })();
+
+  // Side-by-side board pairs stay the same height even in saved layouts
+  // where one was dragged/seeded taller (Woody, 2026-08-04): the Letting
+  // Tracker follows My Tasks & Briefing; Your BGP Team follows
+  // Properties & Deals.
+  const HEIGHT_PAIRS: Array<[follower: string, leader: string]> = [
+    ["available-units", "my-tasks"],
+    ["portfolio-team", "portfolio-deals"],
+  ];
+  const matchTrackerToTasks = (layout: any) => {
+    const lg = layout?.lg;
+    if (!Array.isArray(lg)) return layout;
+    let next = lg;
+    for (const [followerId, leaderId] of HEIGHT_PAIRS) {
+      const leader = next.find((l: any) => l.i === leaderId);
+      const follower = next.find((l: any) => l.i === followerId);
+      if (!leader || !follower || follower.h === leader.h) continue;
+      next = next.map((l: any) => (l.i === followerId ? { ...l, h: leader.h } : l));
+    }
+    return next === lg ? layout : { ...layout, lg: next };
+  };
+  const combinedSavedLayout = combinedSavedLayoutRaw ? matchTrackerToTasks(combinedSavedLayoutRaw) : combinedSavedLayoutRaw;
+  const widgetSavedLayout = widgetSavedLayoutRaw ? matchTrackerToTasks(widgetSavedLayoutRaw) : widgetSavedLayoutRaw;
 
   const isAdmin = (user as any)?.isAdmin || (user as any)?.is_admin;
 
@@ -670,9 +1125,9 @@ export default function Dashboard() {
     },
   });
 
-  const handlePortfolioLayoutSave = useCallback((layout: Record<string, any>) => {
+  const handleCombinedLayoutSave = useCallback((layout: Record<string, any>) => {
     const current = (user as any)?.dashboardLayout || {};
-    layoutSaveMutation.mutate({ ...current, portfolio: layout, _version: LAYOUT_VERSION });
+    layoutSaveMutation.mutate({ ...current, combined: layout, _version: LAYOUT_VERSION });
   }, [layoutSaveMutation, user]);
 
   const handleWidgetLayoutSave = useCallback((layout: Record<string, any>) => {
@@ -680,21 +1135,36 @@ export default function Dashboard() {
     layoutSaveMutation.mutate({ ...current, widgets: layout, _version: LAYOUT_VERSION });
   }, [layoutSaveMutation, user]);
 
+  // Hide/show must base the hidden list on hiddenPortfolioBoards (what the
+  // UI is actually showing, template fallback included) — basing it on the
+  // user's own (often absent) layout meant a chip click saved the wrong
+  // list: showing one board unhid everything, hiding one re-showed the
+  // template-hidden ones.
   const handleHidePortfolioBoard = useCallback((boardId: string) => {
     const current = (user as any)?.dashboardLayout || {};
-    const hidden = [...(current.hiddenPortfolio || []), boardId];
+    const hidden = Array.from(new Set([...hiddenPortfolioBoards, boardId]));
     layoutSaveMutation.mutate({ ...current, hiddenPortfolio: hidden, _version: LAYOUT_VERSION });
-  }, [layoutSaveMutation, user]);
+  }, [layoutSaveMutation, user, hiddenPortfolioBoards]);
 
   const handleShowPortfolioBoard = useCallback((boardId: string) => {
     const current = (user as any)?.dashboardLayout || {};
-    const hidden = (current.hiddenPortfolio || []).filter((id: string) => id !== boardId);
-    layoutSaveMutation.mutate({ ...current, hiddenPortfolio: hidden, _version: LAYOUT_VERSION });
-  }, [layoutSaveMutation, user]);
+    const hidden = hiddenPortfolioBoards.filter((id: string) => id !== boardId);
+    // Drop the restored board's stale rect so the grid appends it fresh at
+    // the bottom (full width, own row) instead of dumping it onto its old
+    // coordinates on top of whatever now lives there.
+    const portfolio = current.portfolio?.lg
+      ? { ...current.portfolio, lg: current.portfolio.lg.filter((l: any) => l.i !== boardId) }
+      : current.portfolio;
+    const combined = current.combined?.lg
+      ? { ...current.combined, lg: current.combined.lg.filter((l: any) => l.i !== boardId) }
+      : current.combined;
+    layoutSaveMutation.mutate({ ...current, portfolio, combined, hiddenPortfolio: hidden, _version: LAYOUT_VERSION });
+  }, [layoutSaveMutation, user, hiddenPortfolioBoards]);
 
   const handleResetLayout = useCallback(() => {
-    layoutSaveMutation.mutate(null as any);
-    window.location.reload();
+    layoutSaveMutation.mutate(null as any, {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/dashboard-template"] }),
+    });
   }, [layoutSaveMutation]);
 
   useEffect(() => {
@@ -709,13 +1179,15 @@ export default function Dashboard() {
   const allDeals = crmDeals || [];
 
   const TEAM_ALIASES: Record<string, string[]> = useMemo(() => ({
-    "London Leasing": ["London Leasing", "London"],
+    "London F&B": ["London F&B"],
+    "London Retail": ["London Retail"],
     "National Leasing": ["National Leasing", "National"],
     "Investment": ["Investment"],
     "Tenant Rep": ["Tenant Rep"],
     "Development": ["Development"],
     "Lease Advisory": ["Lease Advisory"],
     "Office / Corporate": ["Office / Corporate", "Office", "Corporate"],
+    "Landsec": ["Landsec"],
   }), []);
 
   const matchesTeam = useCallback((teamField: string | string[] | null | undefined) => {
@@ -797,33 +1269,70 @@ export default function Dashboard() {
   }, [crmReqInvestment, isAllTeams, reqMatchesTeam]);
 
   const knownIds = WIDGET_REGISTRY.map(w => w.id);
-  const rawWidgets = (user?.dashboardWidgets ?? DEFAULT_WIDGETS)
-    .map((id: string) => id === "recent-properties" ? "key-instructions" : id)
-    .filter((id: string) => id !== "latest-news" && id !== "stats" && id !== "quick-access");
-  const withNews = rawWidgets.includes("news-summary") ? rawWidgets : ["news-summary", ...rawWidgets];
-  const withLeads = withNews.includes("my-leads") ? withNews : ["my-leads", ...withNews];
-  const withKpi = withLeads.includes("kpi-overview") ? withLeads : [...withLeads, "kpi-overview"];
-  const topWidgets = ["my-leads", "news-summary", "kpi-overview"];
-  const reordered = withKpi.filter((id: string) => !topWidgets.includes(id));
-  reordered.unshift("kpi-overview");
-  reordered.unshift("my-leads", "news-summary");
-  const tripleIds = ["today-diary", "key-instructions", "active-contacts"];
-  const hasAll = tripleIds.every(id => reordered.includes(id));
-  if (hasAll) {
-    const without = reordered.filter((id: string) => !tripleIds.includes(id));
-    const insertAt = Math.min(...tripleIds.map(id => reordered.indexOf(id)));
-    const adjustedAt = Math.min(insertAt, without.length);
-    without.splice(adjustedAt, 0, ...tripleIds);
-    reordered.length = 0;
-    reordered.push(...without);
-  }
-  const activeWidgets = Array.from(new Set(reordered.filter((id: string) => knownIds.includes(id))));
+  // Preferred display order; any known widget not listed here falls to the end.
+  const WIDGET_ORDER = [
+    "equity-finance",
+    "my-leads", "news-summary", "kpi-overview",
+    "today-diary", "key-instructions", "active-contacts",
+  ];
+  const orderIndex = (id: string) => {
+    const i = WIDGET_ORDER.indexOf(id);
+    return i === -1 ? WIDGET_ORDER.length : i;
+  };
+  // Client logins (e.g. Landsec) get the portfolio section plus any widgets
+  // they've added from the vetted client-safe set. Every other standard
+  // widget is BGP-ops (inbox, WIP, SharePoint, KPI fees, org alerts) and is
+  // filtered out even if it somehow ends up saved.
+  const isClientUser = user?.role === "Client" || !!(user as any)?.companyScopeId;
+  // Equity directors get the Equity Finance widget (default-on for them);
+  // everyone else has it silently filtered out — the API behind it is
+  // server-gated anyway, this just avoids offering a dead card.
+  const isEquity = isEquityUser(user as any) && !isClientUser;
+  // Migrate one renamed legacy id, then ensure the three always-on widgets are
+  // present (staff only — clients fully control their own safe widget set).
+  // Clients DEFAULT to the Letting Tracker + Tasks widgets (Woody,
+  // 2026-08-03: "letting tracker and tasks should be near the top") — a
+  // saved widget list still wins, so removals stick.
+  const requested = (user?.dashboardWidgets ?? (isClientUser ? ["available-units", "my-tasks", "news-summary"] : DEFAULT_WIDGETS))
+    .map((id: string) => id === "recent-properties" ? "key-instructions" : id);
+  const withDefaults = isClientUser
+    ? requested
+    : Array.from(new Set([...requested, "my-leads", "news-summary", "kpi-overview"]));
+  const activeWidgets = withDefaults
+    .filter((id: string) => knownIds.includes(id)) // single filter: drop unknown ids
+    .filter((id: string) => !isClientUser || CLIENT_SAFE_WIDGET_IDS.includes(id)) // clients: safe set only
+    .filter((id: string) => id !== "equity-finance" || isEquity) // equity directors only
+    .sort((a: string, b: string) => orderIndex(a) - orderIndex(b)); // single sort
 
   const widgetLabelMap = useMemo(() => {
     const map: Record<string, string> = {};
     WIDGET_REGISTRY.forEach(w => { map[w.id] = w.name; });
     return map;
   }, []);
+
+  const widgetDescriptionMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    WIDGET_REGISTRY.forEach(w => { if (w.description) map[w.id] = w.description; });
+    return map;
+  }, []);
+
+  // Board blurbs for the client-portfolio grid — shown in the edit-mode
+  // handle so each board says what it does.
+  const PORTFOLIO_DESCRIPTIONS: Record<string, string> = {
+    "portfolio-company": "Your landlord entity and account summary",
+    "portfolio-events": "Upcoming diary events and recent emails / calls / meetings across your portfolio",
+    "portfolio-calendar": "The BGP account team's diary for your portfolio, day by day",
+    "portfolio-files": "Your document library — the account folder tree, browsable in place",
+    "portfolio-kpis": "Headline metrics across your portfolio",
+    "portfolio-team": "The BGP people working across your portfolio and their properties",
+    "portfolio-properties": "Every property linked to your account",
+    "portfolio-relationship": "Your account with BGP — coverage, contacts, last touch and live deals",
+    "portfolio-leasing": "Every unit — tenant, occupancy, rent and expiry",
+    "portfolio-contacts": "Your key contacts on the account",
+    "portfolio-deals": "Your portfolio on the map with active properties and live deals below",
+    "portfolio-lease-expiry": "Units with leases expiring over the next five years, by quarter",
+    "portfolio-vacancy-pipeline": "Vacant units per property vs the letting deals working to fill them",
+  };
 
   const handleHideWidget = useCallback((widgetId: string) => {
     const currentWidgets = activeWidgets.filter(id => id !== widgetId);
@@ -851,25 +1360,25 @@ export default function Dashboard() {
   }
   const topGroups = Object.entries(dealsByGroup).sort(([, a], [, b]) => b - a).slice(0, 5);
 
+  // Filled in by the portfolio section below (renders earlier in the JSX)
+  // and consumed by the single dashboard grid at the bottom — portfolio
+  // boards and widgets share one grid so any board can be dragged anywhere.
+  let portfolioBoardsForGrid: any[] = [];
+
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="dashboard-page">
       <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-            <Home className="w-5 h-5 text-primary" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-bold tracking-tight">
-              {isBrandLandsec ? "Landsec Portfolio Dashboard" : `Welcome back, ${user?.name?.split(" ")[0] || "there"}`}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              {isBrandLandsec ? (
-                <>{brand.footerText} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
-              ) : (
-                <>{currentTeam} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
-              )}
-            </p>
-          </div>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight">
+            {isBrandLandsec ? "Landsec Portfolio Dashboard" : `Welcome back, ${user?.name?.split(" ")[0] || "there"}`}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            {isBrandLandsec ? (
+              <>{brand.footerText}{!isClientUser && <> · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>}</>
+            ) : (
+              <>{currentTeam} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-1.5">
           {dashboardEditing && (
@@ -899,12 +1408,17 @@ export default function Dashboard() {
               <WidgetPickerDialog
                 activeWidgets={activeWidgets}
                 onSave={(widgets, onDone) => {
-                  setCloseDialogCb(() => onDone);
-                  saveMutation.mutate(widgets);
+                  // Close the dialog via the mutation's per-call onSuccess so
+                  // it fires with a fresh callback (routing it through state
+                  // left the dialog stuck open — widgets saved but nothing
+                  // appeared to happen).
+                  saveMutation.mutate(widgets, { onSuccess: () => onDone() });
                 }}
                 saving={saveMutation.isPending}
                 viewMode={dashboardViewMode}
                 onViewModeChange={handleViewModeChange}
+                boards={isClientUser ? CLIENT_BOARD_REGISTRY : (isEquity ? undefined : BOARD_REGISTRY.filter(b => b.id !== "equity-finance-board"))}
+                showViewMode={!isClientUser}
               />
             </>
           )}
@@ -955,8 +1469,11 @@ export default function Dashboard() {
           }
         }
 
+        // Vacancy is defined explicitly (Vacant / Void / Available) so tenancy
+        // statuses like "Not Vacant" and "Occupied"/"Let" all count as occupied.
+        const isVacantStatus = (s: string) => s === "Vacant" || s === "Void" || s === "Available";
         const totalLeasingUnits = portfolioData.leasingUnits?.length || 0;
-        const occupiedUnits = (portfolioData.leasingUnits || []).filter((u: any) => u.status === "Occupied" || u.status === "Let").length;
+        const occupiedUnits = (portfolioData.leasingUnits || []).filter((u: any) => !isVacantStatus(u.status)).length;
         const expiringUnits = (portfolioData.leasingUnits || []).filter((u: any) => isExpiringSoon(u.lease_expiry)).length;
 
         const companyInfo = portfolioData.company;
@@ -967,8 +1484,12 @@ export default function Dashboard() {
         ];
 
         const stats = portfolioData.stats || {};
-        const avgRentPerUnit = stats.totalUnits > 0 ? stats.totalPassingRent / stats.totalUnits : 0;
+        // Average over units that actually carry a rent — dividing by every
+        // unit understates it while rent coverage is partial.
+        const rentUnits = stats.rentRecordedUnits ?? 0;
+        const avgRentPerUnit = rentUnits > 0 ? stats.totalPassingRent / rentUnits : 0;
         const occupiedCount = stats.totalUnits - stats.vacantUnits;
+        const rentCoveragePct = occupiedCount > 0 ? Math.min(100, Math.round((rentUnits / occupiedCount) * 100)) : 0;
         const occupancyRate = stats.totalUnits > 0 ? ((occupiedCount / stats.totalUnits) * 100).toFixed(1) : "0";
 
         const portfolioGridItems = [
@@ -978,7 +1499,7 @@ export default function Dashboard() {
             defaultW: 6, defaultH: 12, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-4 flex-1 overflow-hidden">
+                <CardContent className="p-3 flex-1 overflow-hidden flex flex-col">
                   <div className="flex items-start gap-3 mb-3">
                     <div className="w-12 h-12 rounded-lg bg-teal-50 dark:bg-teal-900/30 border flex items-center justify-center flex-shrink-0">
                       <Landmark className="w-6 h-6 text-teal-600 dark:text-teal-400" />
@@ -988,6 +1509,26 @@ export default function Dashboard() {
                       {companyInfo.companyType && (
                         <Badge className="text-[10px] bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-800">{companyInfo.companyType}</Badge>
                       )}
+                    </div>
+                  </div>
+                  {/* Headline KPI strip — the first screen should carry the
+                      portfolio numbers, not just the company name. */}
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{(portfolioData.properties || []).length}</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Properties</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{occupancyRate}%</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Occupancy</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{stats.vacantUnits ?? 0}</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Vacant units</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{expiringUnits}</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Expiring soon</p>
                     </div>
                   </div>
                   <ScrollArea className="flex-1">
@@ -1010,13 +1551,16 @@ export default function Dashboard() {
                             </p>
                           </div>
                         )}
-                        {(companyInfo.kycStatus) && (
+                        {/* KYC/AML status + PSC ownership is BGP's own
+                            compliance record on the client — never show it
+                            back to the client themselves. */}
+                        {(companyInfo.kycStatus && !isClientUser) && (
                           <div>
                             <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-0.5">KYC & Ownership</p>
                             <div className="flex items-center gap-2">
-                              <Badge className={`text-[10px] ${companyInfo.kycStatus === "pass" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300"}`}>
+                              <Badge className={`text-[10px] ${companyInfo.kycStatus === "approved" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300"}`}>
                                 <ShieldCheck className="w-3 h-3 mr-0.5" />
-                                {companyInfo.kycStatus === "pass" ? "KYC Passed" : companyInfo.kycStatus}
+                                {companyInfo.kycStatus === "approved" ? "KYC Passed" : companyInfo.kycStatus}
                               </Badge>
                               {companyInfo.kycCheckedAt && (
                                 <span className="text-[10px] text-muted-foreground">
@@ -1065,37 +1609,22 @@ export default function Dashboard() {
           } : null,
           {
             id: "portfolio-events",
-            label: "Upcoming Events",
+            label: "Activity",
             defaultW: 6, defaultH: 12, minW: 3, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
-                    Upcoming Events ({portfolioData.events?.length || 0})
+                    Activity
                   </h3>
-                  {portfolioData.events?.length > 0 ? (
-                    <ScrollArea className="flex-1">
-                      <div className="space-y-0.5 pr-2">
-                        {portfolioData.events.map((ev: any, i: number) => (
-                          <div key={i} className="flex items-center justify-between px-2 py-1.5 text-xs">
-                            <div className="min-w-0 flex-1">
-                              <span className="text-sm font-medium truncate block">{ev.title}</span>
-                              <span className="text-muted-foreground">
-                                {new Date(ev.start_time).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
-                                {ev.location ? ` · ${ev.location}` : ""}
-                              </span>
-                            </div>
-                            {ev.event_type && (
-                              <Badge variant="outline" className="text-[10px] px-1.5 shrink-0">{ev.event_type}</Badge>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No upcoming events</p>
-                  )}
+                  <p className="text-[10px] text-muted-foreground -mt-1">Upcoming diary events and recent emails / calls / meetings across your portfolio.</p>
+                  {/* Canonical ActivitySummary (Woody, 2026-08-03) — replaces
+                      the bespoke Upcoming Events list; same board as the
+                      property page and staff dashboard. */}
+                  <div className="flex-1 overflow-hidden">
+                    <ActivitySummary companyId={resolvedCompanyId!} />
+                  </div>
                 </CardContent>
               </Card>
             ),
@@ -1107,35 +1636,86 @@ export default function Dashboard() {
             content: (
               <Card className="h-full">
                 <CardContent className="p-3 h-full">
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 h-full">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 h-full">
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800" data-testid="kpi-properties">
                       <p className="text-[10px] text-teal-600 dark:text-teal-400 font-medium uppercase tracking-wider">Properties</p>
-                      <p className="text-2xl font-bold text-teal-700 dark:text-teal-300">{stats.totalProperties}</p>
+                      <p className="text-2xl font-bold text-teal-700 dark:text-teal-300">{Number(stats.totalProperties || 0).toLocaleString("en-GB")}</p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800" data-testid="kpi-units">
                       <p className="text-[10px] text-blue-600 dark:text-blue-400 font-medium uppercase tracking-wider">Total Units</p>
-                      <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{stats.totalUnits}</p>
-                      <p className="text-[10px] text-muted-foreground">{occupiedCount} occupied · {stats.vacantUnits} vacant</p>
+                      <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{Number(stats.totalUnits || 0).toLocaleString("en-GB")}</p>
+                      <p className="text-[10px] text-muted-foreground">{occupiedCount.toLocaleString("en-GB")} occupied · {Number(stats.vacantUnits || 0).toLocaleString("en-GB")} vacant · full rent roll</p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800" data-testid="kpi-occupancy">
                       <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium uppercase tracking-wider">Occupancy</p>
                       <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300">{occupancyRate}%</p>
-                      <p className="text-[10px] text-muted-foreground">{stats.vacancyRate}% vacancy</p>
+                      <p className="text-[10px] text-muted-foreground">{stats.vacancyRate}% vacancy · of full rent roll</p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800" data-testid="kpi-rent">
                       <p className="text-[10px] text-purple-600 dark:text-purple-400 font-medium uppercase tracking-wider">Passing Rent</p>
-                      <p className="text-xl font-bold text-purple-700 dark:text-purple-300">£{(stats.totalPassingRent / 1000000).toFixed(1)}m</p>
-                      <p className="text-[10px] text-muted-foreground">£{avgRentPerUnit.toLocaleString("en-GB", { maximumFractionDigits: 0 })}/unit avg</p>
+                      {/* No rent data reads as a broken dashboard if we print £0.0m — show a dash instead. */}
+                      <p className="text-xl font-bold text-purple-700 dark:text-purple-300">{stats.totalPassingRent > 0 ? `£${(stats.totalPassingRent / 1000000).toFixed(1)}m` : "—"}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {stats.totalPassingRent > 0
+                          ? (rentUnits > 0 && rentCoveragePct < 95
+                              ? `across ${rentUnits.toLocaleString()} units with rent recorded (${rentCoveragePct}% of occupied)`
+                              : `£${avgRentPerUnit.toLocaleString("en-GB", { maximumFractionDigits: 0 })}/unit avg`)
+                          : "no passing rent recorded yet"}
+                      </p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800" data-testid="kpi-deals">
                       <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium uppercase tracking-wider">Active Deals</p>
                       <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{stats.activeDeals}</p>
                     </div>
-                    <div className="flex flex-col justify-center p-2 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800" data-testid="kpi-expiring">
-                      <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium uppercase tracking-wider">Expiring (6m)</p>
-                      <p className="text-2xl font-bold text-rose-700 dark:text-rose-300">{expiringUnits}</p>
-                      <p className="text-[10px] text-muted-foreground">leases expiring soon</p>
-                    </div>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button type="button" className="flex flex-col justify-center p-2 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-left hover:ring-2 hover:ring-rose-300 transition-shadow cursor-pointer" data-testid="kpi-expiring">
+                          <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium uppercase tracking-wider">Expiring (6m)</p>
+                          <p className="text-2xl font-bold text-rose-700 dark:text-rose-300">{expiringUnits}</p>
+                          <p className="text-[10px] text-muted-foreground">leases expiring soon · click to list</p>
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-[340px] p-2 max-h-[320px] overflow-y-auto">
+                        <p className="text-xs font-semibold px-1 pb-1.5">Leases expiring within 6 months</p>
+                        {(portfolioData.leasingUnits || [])
+                          .filter((u: any) => isExpiringSoon(u.lease_expiry))
+                          .sort((a: any, b: any) => new Date(a.lease_expiry).getTime() - new Date(b.lease_expiry).getTime())
+                          .map((u: any, i: number) => (
+                            <Link key={i} href={`/tenancy-schedule/${u.property_id}`}>
+                              <div className="flex items-center justify-between gap-2 px-1.5 py-1 rounded hover:bg-muted cursor-pointer text-xs" data-testid={`expiring-lease-${i}`}>
+                                <span className="truncate">{u.tenant_name || u.unit_number || "Unit"} <span className="text-muted-foreground">· {u.property_name}</span></span>
+                                <span className="tabular-nums text-rose-600 shrink-0">{new Date(u.lease_expiry).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" })}</span>
+                              </div>
+                            </Link>
+                          ))}
+                        {expiringUnits === 0 && <p className="text-xs text-muted-foreground px-1 py-2">Nothing expiring in the next 6 months.</p>}
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </CardContent>
+              </Card>
+            ),
+          },
+          {
+            id: "portfolio-team",
+            label: "Your BGP Team",
+            defaultW: 12, defaultH: 18, minW: 6, minH: 6,
+            content: (
+              <Card className="h-full flex flex-col">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
+                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-teal-500" />
+                    Your BGP Team
+                  </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">
+                    The BGP people working across your portfolio — account leads, asset management and leasing.
+                  </p>
+                  {/* Plain overflow container, not ScrollArea — the team
+                      columns overflow HORIZONTALLY and radix ScrollArea only
+                      scrolls vertically, clipping the extra columns with no
+                      way to reach them. */}
+                  <div className="flex-1 overflow-auto pr-1">
+                    <ClientTeamOrgChart clientCompanyId={resolvedCompanyId!} />
                   </div>
                 </CardContent>
               </Card>
@@ -1147,52 +1727,117 @@ export default function Dashboard() {
             defaultW: 12, defaultH: 11, minW: 6, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <Building2 className="w-3.5 h-3.5 text-teal-500" />
                     Linked Properties ({portfolioData.properties.length})
                   </h3>
-                  <ScrollArea className="flex-1">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 pr-2">
-                      {portfolioData.properties.map((property: any) => {
-                        const isLeasing = property.status === "Leasing Instruction";
-                        return (
-                        <Link key={property.id} href={`/properties/${property.id}`}>
-                          <div className={`flex flex-col p-2 rounded-md transition-colors cursor-pointer ${isLeasing ? "border border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-900/10 hover:bg-green-50 dark:hover:bg-green-900/20" : "border border-purple-300 dark:border-purple-700 bg-purple-50/50 dark:bg-purple-900/10 hover:bg-purple-50 dark:hover:bg-purple-900/20"}`} data-testid={`link-property-${property.id}`}>
-                            <div className="flex items-center gap-2 min-w-0">
-                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLeasing ? "bg-green-500" : "bg-purple-500"}`} />
-                              <p className="text-sm font-medium truncate text-zinc-800 dark:text-zinc-200">{property.name}</p>
-                            </div>
-                            {property.asset_class && (
-                              <div className="flex flex-wrap gap-0.5 mt-1 ml-4">
-                                <Badge className="text-[9px] px-1 py-0 bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300">{property.asset_class}</Badge>
-                              </div>
-                            )}
-                          </div>
-                        </Link>
-                        );
-                      })}
-                    </div>
-                  </ScrollArea>
+                  <div className="flex-1 overflow-hidden">
+                    <PropertiesSummary companyId={resolvedCompanyId!} role="landlord" />
+                  </div>
                 </CardContent>
               </Card>
             ),
           } : null,
+          // BGP Relationship — the client-facing half of the relationship zone
+          // on the landlord page: who covers the account, how many people and
+          // properties we're across, last touch and live deals.
+          {
+            id: "portfolio-relationship",
+            label: "BGP Relationship",
+            defaultW: 6, defaultH: 14, minW: 3, minH: 4,
+            content: (() => {
+              const evs = (portfolioData.events || []) as any[];
+              const past = evs
+                .map((e: any) => e.start_time)
+                .filter((t: any) => t && new Date(t).getTime() <= Date.now())
+                .sort()
+                .reverse();
+              const lastTouch = past[0] as string | undefined;
+              const daysSince = lastTouch
+                ? Math.floor((Date.now() - new Date(lastTouch).getTime()) / 864e5)
+                : null;
+              const bgpTeam: string[] = companyInfo?.bgpContacts || [];
+              return (
+                <Card className="h-full flex flex-col">
+                  <CardContent className="p-3 space-y-2 flex-1 overflow-auto">
+                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                      <Handshake className="w-3.5 h-3.5 text-teal-500" />
+                      BGP Relationship
+                    </h3>
+                    <p className="text-[10px] text-muted-foreground -mt-1">
+                      How the account is actually going — AI read of the live
+                      relationship, not a count.
+                    </p>
+                    {/* The AI relationship read, not a stats grid. Properties /
+                        live deals already sit in the tiles at the top of this
+                        dashboard, so repeating them here said nothing; the
+                        'activity' take is the "BGP take — relationship read". */}
+                    {clientCompanyId ? (
+                      <BgpTakeStrip companyId={clientCompanyId} tab="activity" />
+                    ) : (
+                      <p className="text-xs text-muted-foreground italic">Relationship read unavailable.</p>
+                    )}
+                    <div className="flex items-center gap-3 text-[10px] text-muted-foreground border-t pt-2">
+                      <span>Last touch{" "}
+                        <span className={
+                          daysSince == null ? "" 
+                          : daysSince < 30 ? "text-emerald-700 dark:text-emerald-400 font-medium"
+                          : daysSince < 90 ? "text-amber-600 dark:text-amber-400 font-medium"
+                          : "text-red-600 dark:text-red-400 font-medium"
+                        }>
+                          {daysSince == null ? "—" : daysSince === 0 ? "today" : `${daysSince}d ago`}
+                        </span>
+                      </span>
+                      <span>·</span>
+                      <span>{portfolioData.contacts?.length || 0} of your contacts</span>
+                    </div>
+                    {bgpTeam.length > 0 && (
+                      <div className="border-t pt-2">
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Your BGP contacts</div>
+                        <div className="flex flex-wrap gap-1">
+                          {bgpTeam.map((name: string, i: number) => (
+                            <Badge key={i} variant="outline" className="text-[10px] font-normal">{name}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* The full AI activity commentary — same card as the
+                        internal company page's BGP Relationship zone ("just
+                        mirror our page", Woody 2026-07-30). Read-only for
+                        clients; the middleware scopes it to their own
+                        company and the curate action stays staff-side. */}
+                    {clientCompanyId && (
+                      <AIActivityCard
+                        subjectType="landlord"
+                        subjectId={clientCompanyId}
+                        title={`${clientCompanyName || companyInfo?.name || "Account"} — Activity`}
+                        compact
+                      />
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })(),
+          },
+          // The standalone Portfolio Map board is folded into Properties &
+          // Deals below (Woody, 2026-08-03: "same as properties and deals
+          // but with map above").
           totalLeasingUnits > 0 ? {
             id: "portfolio-leasing",
             label: "Leasing Schedule",
             defaultW: 6, defaultH: 10, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden flex flex-col">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-sm flex items-center gap-2">
                       <Building2 className="w-4 h-4" />Leasing Schedule
                       <Badge variant="secondary" className="text-[10px]">{totalLeasingUnits} units across {leasingByProperty.size} properties</Badge>
                     </h3>
                     <div className="flex items-center gap-3 text-[10px]">
-                      <span className="text-emerald-600">{occupiedUnits} occupied</span>
-                      {expiringUnits > 0 && <span className="text-amber-600">{expiringUnits} expiring</span>}
+                      <span className="text-emerald-600 dark:text-emerald-400">{occupiedUnits} occupied</span>
+                      {expiringUnits > 0 && <span className="text-amber-600 dark:text-amber-400">{expiringUnits} expiring</span>}
                       <Link href="/leasing-schedule">
                         <span className="text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-leasing-board">
                           <ExternalLink className="w-3 h-3" />Open Board
@@ -1200,10 +1845,11 @@ export default function Dashboard() {
                       </Link>
                     </div>
                   </div>
+                  <p className="text-[10px] text-muted-foreground -mt-2">Every unit across the portfolio — tenant, occupied/vacant, rent and lease expiry.</p>
                   <ScrollArea className="flex-1">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-2">
                       {Array.from(leasingByProperty.entries()).map(([propId, { name, units: propUnits }]) => {
-                        const propOccupied = propUnits.filter((u: any) => u.status === "Occupied" || u.status === "Let").length;
+                        const propOccupied = propUnits.filter((u: any) => !isVacantStatus(u.status)).length;
                         const propExpiring = propUnits.filter((u: any) => isExpiringSoon(u.lease_expiry)).length;
                         return (
                           <div key={propId} className="border rounded-lg overflow-hidden">
@@ -1225,132 +1871,78 @@ export default function Dashboard() {
               </Card>
             ),
           } : null,
+          // The old "Recent Activity (deal movements)" board is retired —
+          // deal movements now flow into the canonical Activity board's
+          // Recent feed (Woody, 2026-08-03). Two boards replace it:
+          // the BGP team calendar and the account Files tree.
           {
-            id: "portfolio-activity",
-            label: "Recent Activity",
-            defaultW: 6, defaultH: 10, minW: 3, minH: 6,
-            content: (
-              <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
-                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-teal-500" />
-                    Recent Activity
-                  </h3>
-                  {portfolioData.activity?.length > 0 ? (
-                    <ScrollArea className="flex-1">
-                      <div className="space-y-0.5 pr-2">
-                        {portfolioData.activity.map((item: any, i: number) => (
-                          <div key={i} className="flex items-start gap-2 px-2 py-1.5 text-xs">
-                            <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${item.type === "deal" ? "bg-purple-500" : "bg-blue-500"}`} />
-                            <div>
-                              <p className="font-medium">{item.title}</p>
-                              <p className="text-muted-foreground">
-                                {item.property_name && <span>{item.property_name} · </span>}
-                                {item.status && <span className="capitalize">{item.status} · </span>}
-                                {new Date(item.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No recent activity</p>
-                  )}
-                </CardContent>
-              </Card>
-            ),
+            id: "portfolio-calendar",
+            label: "Team Calendar",
+            defaultW: 12, defaultH: 14, minW: 6, minH: 8,
+            content: <ClientTeamWeekCalendar events={(portfolioData.calendarEvents || []) as any[]} />,
           },
+          isClientUser ? {
+            id: "portfolio-files",
+            label: "Files",
+            defaultW: 6, defaultH: 12, minW: 3, minH: 6,
+            content: (
+              // Whole-account jailed SharePoint browser — empty propertyName
+              // starts at the client's root folder (per-property trees inside).
+              <div className="h-full overflow-y-auto">
+                <ClientPropertyFoldersPanel propertyName="" />
+              </div>
+            ),
+          } : null,
           {
             id: "portfolio-contacts",
             label: "Contacts",
             defaultW: 4, defaultH: 14, minW: 3, minH: 6,
-            content: (
-              <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
-                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-teal-500" />
-                    Contacts ({portfolioData.contacts?.length || 0})
-                  </h3>
-                  {portfolioData.contacts?.length > 0 ? (
-                    <ScrollArea className="flex-1 overflow-y-auto">
-                      <div className="space-y-0.5 pr-2">
-                        {portfolioData.contacts.map((contact: any) => (
-                          <Link key={contact.id} href={`/contacts/${contact.id}`}>
-                            <div className="flex items-center gap-2 px-2 py-1 rounded hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors cursor-pointer" data-testid={`link-contact-${contact.id}`}>
-                              {contact.avatar_url ? (
-                                <img src={contact.avatar_url} alt={contact.name} className="w-6 h-6 rounded-full flex-shrink-0 object-cover" />
-                              ) : (
-                                <div className="w-6 h-6 rounded-full flex-shrink-0 bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300">
-                                  {contact.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
-                                </div>
-                              )}
-                              <div>
-                                <p className="text-xs font-medium text-teal-700 dark:text-teal-300">{contact.name}</p>
-                                <p className="text-[10px] text-muted-foreground">{contact.role || contact.email}</p>
-                              </div>
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No contacts linked</p>
-                  )}
-                </CardContent>
-              </Card>
-            ),
+            content: <PortfolioContactsBoard companyId={resolvedCompanyId!} />,
           },
-          (dealsByProperty.size > 0 || unlinkedDeals.length > 0) ? {
+          {
             id: "portfolio-deals",
             label: "Properties & Deals",
-            defaultW: 8, defaultH: 14, minW: 4, minH: 6,
+            defaultW: 12, defaultH: 18, minW: 6, minH: 8,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                    <BarChart3 className="w-3.5 h-3.5 text-teal-500" />
-                    Properties & Deals ({portfolioData.deals?.length || 0} deal{(portfolioData.deals?.length || 0) !== 1 ? "s" : ""} across {dealsByProperty.size} propert{dealsByProperty.size !== 1 ? "ies" : "y"})
+                    <MapPin className="w-3.5 h-3.5 text-teal-500" />
+                    Properties & Deals
                   </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">Your portfolio on the map, with active properties and their live lettings and deals below — pins and chips open everything pre-filtered.</p>
+                  {(portfolioData.properties || []).some((p: any) => p.lat != null && p.lng != null) && (
+                    <div className="flex-none h-[42%] min-h-[180px] rounded-lg overflow-hidden border">
+                      <BrandPortfolioMap
+                        alwaysRender
+                        height="100%"
+                        stores={(portfolioData.properties || [])
+                          .filter((p: any) => p.lat != null && p.lng != null)
+                          .map((p: any) => ({
+                            id: `crm:${p.id}`,
+                            name: p.name,
+                            address: typeof p.address === "string" ? p.address : null,
+                            lat: Number(p.lat),
+                            lng: Number(p.lng),
+                            status: p.status ?? null,
+                            tone: "linked" as const,
+                            href: `/properties/${p.id}`,
+                          })) as any}
+                        onSelect={(s: any) => { if (s?.href) window.location.assign(s.href); }}
+                      />
+                    </div>
+                  )}
                   <ScrollArea className="flex-1">
                     <div className="pr-2">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {Array.from(dealsByProperty.values()).map(({ property, deals }) => (
-                      <div key={property.id} className="border rounded-lg overflow-hidden" data-testid={`property-group-${property.id}`}>
-                        <Link href={`/properties/${property.id}`}>
-                          <div className="flex items-center gap-2 p-2 bg-teal-50 dark:bg-teal-900/20 hover:bg-teal-100 dark:hover:bg-teal-900/30 transition-colors cursor-pointer border-b border-teal-100 dark:border-teal-800">
-                            <Building2 className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium truncate text-teal-700 dark:text-teal-300">{property.name}</p>
-                            </div>
-                            <Badge className="text-[9px] shrink-0 bg-teal-100 text-teal-700 dark:bg-teal-800 dark:text-teal-300 border-0">{deals.length} deal{deals.length !== 1 ? "s" : ""}</Badge>
-                          </div>
-                        </Link>
-                        <div className="divide-y max-h-[150px] overflow-y-auto">
-                          {deals.map((deal: any) => (
-                            <Link key={deal.id} href={`/deals/${deal.id}`}>
-                              <div className="flex items-center justify-between px-2 py-1.5 hover:bg-muted/30 transition-colors cursor-pointer" data-testid={`link-deal-${deal.id}`}>
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-xs truncate">{deal.name}</p>
-                                  <p className="text-[10px] text-muted-foreground">{deal.status}</p>
-                                </div>
-                                <div className="flex items-center gap-1 shrink-0">
-                                  {deal.dealType && (
-                                    <Badge variant="secondary" className={`text-[9px] ${deal.dealType === "Leasing" ? "bg-teal-100 text-teal-700 dark:bg-teal-800 dark:text-teal-300" : ""}`}>{deal.dealType}</Badge>
-                                  )}
-                                </div>
-                              </div>
-                            </Link>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                    </div>
+                    {/* Canonical PropertiesSummary (Woody, 2026-08-03) — the
+                        same board design as the staff dashboard and property
+                        pages; this was the last bespoke copy. */}
+                    <PropertiesSummary companyId={resolvedCompanyId!} role="landlord" onlyActive />
                     {unlinkedDeals.length > 0 && (
                       <div className="border rounded-lg overflow-hidden mt-2">
                         <div className="flex items-center gap-2 p-2 bg-muted/50">
                           <BarChart3 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <p className="text-xs font-medium">Other Deals (no property linked)</p>
+                          <p className="text-xs font-medium">Other Deals</p>
                           <Badge variant="outline" className="text-[10px] shrink-0 ml-auto">{unlinkedDeals.length}</Badge>
                         </div>
                         <div className="divide-y">
@@ -1372,7 +1964,7 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
             ),
-          } : null,
+          },
           // === Feature 1: Lease Expiry Waterfall Chart ===
           (() => {
             const WATERFALL_COLORS = [
@@ -1450,8 +2042,9 @@ export default function Dashboard() {
                     <h3 className="font-semibold text-xs flex items-center gap-1.5 mb-2">
                       <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
                       Lease Expiry Timeline
-                      <Badge variant="secondary" className="text-[10px]">{unitsWithExpiry.length} leases across {propertyNames.size} properties</Badge>
+                      <Badge variant="secondary" className="text-[10px]">{Array.from(quarterData.values()).reduce((s, q) => s + Object.values(q).reduce((a, v) => a + v.count, 0), 0)} expiring within 5 yrs across {propertyNames.size} properties</Badge>
                     </h3>
+                    <p className="text-[10px] text-muted-foreground -mt-1 mb-1">Units with leases expiring, grouped by quarter over the next five years.</p>
                     <div className="flex-1 min-h-0">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
@@ -1497,8 +2090,8 @@ export default function Dashboard() {
               if (!propMap.has(key)) propMap.set(key, { vacantUnits: 0, totalUnits: 0, activeDeals: 0, propName: u.property_name || "Unknown" });
               const entry = propMap.get(key)!;
               entry.totalUnits += 1;
-              const isOccupied = u.status === "Occupied" || u.status === "Let";
-              if (!isOccupied) entry.vacantUnits += 1;
+              const isVacant = u.status === "Vacant" || u.status === "Void" || u.status === "Available";
+              if (isVacant) entry.vacantUnits += 1;
             }
 
             // Count active deals per property (non-completed, non-withdrawn)
@@ -1507,6 +2100,10 @@ export default function Dashboard() {
               const st = (d.status || "").toLowerCase();
               const isActive = !st.includes("completed") && !st.includes("withdrawn") && !st.includes("closed") && !st.includes("fallen");
               if (!isActive) continue;
+              // Rent reviews / investment deals don't fill a void — only
+              // letting-type deals count towards vacancy coverage.
+              const dt = (d.deal_type || d.dealType || "").toLowerCase();
+              if (dt && !dt.includes("leas") && !dt.includes("lett")) continue;
               if (!propMap.has(d.property_id)) {
                 const prop = properties.find((p: any) => p.id === d.property_id);
                 propMap.set(d.property_id, { vacantUnits: 0, totalUnits: 0, activeDeals: 0, propName: prop?.name || d.property_name || "Unknown" });
@@ -1536,6 +2133,7 @@ export default function Dashboard() {
                       <TrendingUp className="w-3.5 h-3.5 text-teal-500" />
                       Vacancy Pipeline
                     </h3>
+                    <p className="text-[10px] text-muted-foreground -mt-1">Vacant units per property vs the active deals working to fill them.</p>
                     <ScrollArea className="flex-1">
                       <div className="space-y-2 pr-2">
                         {propStats.filter(p => p.vacantUnits > 0 || p.activeDeals > 0).map(({ propId, propName, vacantUnits, totalUnits, activeDeals }) => {
@@ -1580,7 +2178,7 @@ export default function Dashboard() {
                     </ScrollArea>
                     <div className="border-t pt-2 mt-auto">
                       <p className="text-[10px] text-muted-foreground text-center">
-                        {totalVacant} total vacant unit{totalVacant !== 1 ? "s" : ""} across {propertiesWithVacancy} propert{propertiesWithVacancy !== 1 ? "ies" : "y"} · {totalActiveDeals} active deal{totalActiveDeals !== 1 ? "s" : ""} in progress
+                        {totalVacant} total vacant unit{totalVacant !== 1 ? "s" : ""} across {propertiesWithVacancy} propert{propertiesWithVacancy !== 1 ? "ies" : "y"} · {totalActiveDeals} letting deal{totalActiveDeals !== 1 ? "s" : ""} working the voids
                       </p>
                     </div>
                   </CardContent>
@@ -1733,8 +2331,24 @@ export default function Dashboard() {
           } : null,
         ].filter(Boolean) as any[];
 
-        const visiblePortfolioItems = portfolioGridItems.filter((item: any) => !hiddenPortfolioBoards.includes(item.id));
-        const hiddenPortfolioItems = portfolioGridItems.filter((item: any) => hiddenPortfolioBoards.includes(item.id));
+        // For client logins hide the BGP-internal cards: comps stay blank for
+        // now, and the deal-analytics quartet is fee/agent-centric (WIP,
+        // invoiced, agent performance) which is BGP's side of the ledger.
+        const clientHiddenBoards = new Set([
+          "portfolio-market-comps",
+          "portfolio-landsec-overview",
+          "portfolio-landsec-agents",
+          "portfolio-landsec-pipeline",
+          "portfolio-landsec-activity",
+        ]);
+        const clientScopedItems = isClientUser
+          ? portfolioGridItems.filter((item: any) => !clientHiddenBoards.has(item.id))
+          : portfolioGridItems;
+
+        const visiblePortfolioItems = clientScopedItems.filter((item: any) => !hiddenPortfolioBoards.includes(item.id));
+        const hiddenPortfolioItems = clientScopedItems.filter((item: any) => hiddenPortfolioBoards.includes(item.id));
+
+        portfolioBoardsForGrid = visiblePortfolioItems.map((i: any) => ({ ...i, description: i.description || PORTFOLIO_DESCRIPTIONS[i.id] }));
 
         return (
           <div data-testid="portfolio-overview">
@@ -1757,14 +2371,6 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
-            <DraggableGrid
-              items={visiblePortfolioItems}
-              savedLayout={portfolioSavedLayout}
-              onLayoutSave={handlePortfolioLayoutSave}
-              onHideItem={handleHidePortfolioBoard}
-              editing={dashboardEditing}
-              rowHeight={30}
-            />
           </div>
         );
       })()}
@@ -1780,6 +2386,7 @@ export default function Dashboard() {
           "new-requirements": { w: 6, h: 8, minW: 4, minH: 5 },
           "activity-alerts": { w: 6, h: 8, minW: 4, minH: 5 },
           "available-units": { w: 6, h: 14, minW: 4, minH: 6 },
+          "deals-board": { w: 6, h: 14, minW: 4, minH: 6 },
           "agent-pipeline": { w: 12, h: 22, minW: 6, minH: 14 },
           "inbox": { w: 12, h: 20, minW: 6, minH: 10 },
           "sharepoint": { w: 6, h: 12, minW: 4, minH: 6 },
@@ -1791,6 +2398,7 @@ export default function Dashboard() {
           "my-portfolio": { w: 6, h: 10, minW: 4, minH: 6 },
           "landsec-analytics": { w: 12, h: 20, minW: 8, minH: 12 },
           "kpi-overview": { w: 12, h: 5, minW: 6, minH: 4 },
+          "equity-finance": { w: 12, h: 6, minW: 6, minH: 5 },
         };
 
         const renderWidget = (widgetId: string) => {
@@ -1833,31 +2441,23 @@ export default function Dashboard() {
           </Card>
         );
 
+        // Action-framed shortcuts (not nav duplicates): each kicks off a task rather than
+        // just opening the matching sidebar page.
         if (widgetId === "quick-actions") return (
           <div key="quick-actions" className="flex items-center gap-2 flex-wrap">
             <Link href="/models">
               <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="quick-action-models">
-                <FileSpreadsheet className="w-3.5 h-3.5" /> Models
+                <FileSpreadsheet className="w-3.5 h-3.5" /> Generate Model
               </Button>
             </Link>
             <Link href="/templates">
               <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="quick-action-docs">
-                <FileText className="w-3.5 h-3.5" /> Documents
-              </Button>
-            </Link>
-            <Link href="/news">
-              <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="quick-action-news">
-                <Zap className="w-3.5 h-3.5" /> News & Leads
-              </Button>
-            </Link>
-            <Link href="/deals">
-              <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="quick-action-deals">
-                <BarChart3 className="w-3.5 h-3.5" /> Deals
+                <FileText className="w-3.5 h-3.5" /> Generate Document
               </Button>
             </Link>
             <Link href="/chatbgp">
               <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="quick-action-chat">
-                <Sparkles className="w-3.5 h-3.5" /> ChatBGP
+                <Sparkles className="w-3.5 h-3.5" /> Ask ChatBGP
               </Button>
             </Link>
           </div>
@@ -2202,11 +2802,16 @@ export default function Dashboard() {
                   <Badge variant="secondary" className="text-[10px]">{filteredReqs.length}</Badge>
                 )}
               </div>
-              <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}`}><Button variant="ghost" size="sm" className="text-xs h-7">View all <ArrowRight className="w-3 h-3 ml-1" /></Button></Link>
+              <div className="flex items-center gap-1">
+                {!isClientUser && (
+                  <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}&new=1`}><Button variant="ghost" size="sm" className="text-xs h-7" data-testid="button-widget-add-requirement"><Plus className="w-3.5 h-3.5 mr-1" />Add</Button></Link>
+                )}
+                <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}`}><Button variant="ghost" size="sm" className="text-xs h-7">View all <ArrowRight className="w-3 h-3 ml-1" /></Button></Link>
+              </div>
             </CardHeader>
-            <CardContent className="pt-0">
+            <CardContent className="pt-0 flex-1 overflow-hidden flex flex-col">
               {filteredReqs.length > 0 ? (
-                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                <div className="space-y-1.5 flex-1 overflow-y-auto">
                   {filteredReqs.map(r => (
                     <div key={r.id} className="flex items-center gap-2.5 p-2 rounded-md border text-xs" data-testid={`new-req-${r.id}`}>
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${isInvestmentTeam ? "bg-amber-500/10" : "bg-blue-500/10"}`}>
@@ -2223,6 +2828,14 @@ export default function Dashboard() {
                 <div className="text-center py-4 text-muted-foreground">
                   <ListPlus className="w-6 h-6 mx-auto mb-1.5 opacity-30" />
                   <p className="text-xs">No {reqLabel.toLowerCase()} requirements found</p>
+                  {!isClientUser && (
+                    <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}&new=1`}>
+                      <Button variant="outline" size="sm" className="mt-2 text-xs h-7" data-testid="button-widget-add-requirement-empty">
+                        <Plus className="w-3.5 h-3.5 mr-1" />
+                        Add requirement
+                      </Button>
+                    </Link>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -2236,41 +2849,15 @@ export default function Dashboard() {
               <div>
                 <div className="flex items-center gap-2">
                   <Bell className="w-4 h-4 text-amber-500" />
-                  <CardTitle className="text-sm font-semibold">{dashboardViewMode === "team" ? "Team Activity" : "Activity Alerts"}</CardTitle>
-                  {dashIntel?.activityAlerts && dashIntel.activityAlerts.length > 0 && (
-                    <span className="text-[10px] font-medium text-amber-600 bg-amber-500/10 rounded-full px-1.5 py-0.5">{dashIntel.activityAlerts.length}</span>
-                  )}
+                  <CardTitle className="text-sm font-semibold">Activity</CardTitle>
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-0.5 ml-6">Recent emails and meetings between colleagues and your contacts</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5 ml-6">Upcoming diary events and recent emails / calls / meetings</p>
               </div>
             </CardHeader>
             <CardContent className="pt-0">
-              {dashIntel?.activityAlerts && dashIntel.activityAlerts.length > 0 ? (
-                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
-                  {dashIntel.activityAlerts.map((alert, i) => {
-                    const bgpName = alert.bgpUser.split("@")[0].replace(/([a-z])([A-Z])/g, "$1 $2");
-                    return (
-                      <Link key={i} href={`/contacts/${alert.contactId}`}>
-                        <div className="flex items-start gap-2.5 p-2 rounded-md border hover:bg-muted/50 transition-colors cursor-pointer text-xs" data-testid={`activity-alert-${i}`}>
-                          <div className="w-7 h-7 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0">
-                            {alert.type === "email" ? <MailIcon className="w-3.5 h-3.5 text-amber-500" /> : <Video className="w-3.5 h-3.5 text-amber-500" />}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="font-medium"><span className="capitalize">{bgpName}</span> · {alert.contactName}</p>
-                            <p className="text-muted-foreground truncate">{alert.type} {alert.subject ? `— ${alert.subject}` : ""}</p>
-                            <p className="text-muted-foreground">{new Date(alert.date).toLocaleDateString("en-GB")}</p>
-                          </div>
-                        </div>
-                      </Link>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="text-center py-4 text-muted-foreground">
-                  <Bell className="w-6 h-6 mx-auto mb-1.5 opacity-30" />
-                  <p className="text-xs">No colleague activity on your contacts this week</p>
-                </div>
-              )}
+              {/* Canonical ActivitySummary (Woody, 2026-08-03) — replaces the
+                  bespoke Team Activity / Activity Alerts list. */}
+              <ActivitySummary />
             </CardContent>
           </Card>
         );
@@ -2353,6 +2940,8 @@ export default function Dashboard() {
           return <AvailableUnitsWidget key="available-units" />;
         }
 
+        if (widgetId === "deals-board") return <DealsBoardWidget key="deals-board" />;
+
         if (widgetId === "agent-pipeline") return (
           <WipDashboardCard key="agent-pipeline" user={user} />
         );
@@ -2370,113 +2959,32 @@ export default function Dashboard() {
         );
 
         if (widgetId === "properties-deals") return (() => {
-          const scopedDeals = deals || [];
-          const scopedProps = properties || [];
-          const propMap = new Map(scopedProps.map(p => [p.id, p]));
-          const grouped = new Map<string, { property: CrmProperty; deals: CrmDeal[] }>();
-          const unlinked: CrmDeal[] = [];
-          for (const deal of scopedDeals) {
-            if (deal.propertyId && propMap.has(deal.propertyId)) {
-              if (!grouped.has(deal.propertyId)) {
-                grouped.set(deal.propertyId, { property: propMap.get(deal.propertyId)!, deals: [] });
-              }
-              grouped.get(deal.propertyId)!.deals.push(deal);
-            } else if (!deal.propertyId) {
-              unlinked.push(deal);
-            }
-          }
-          const propertiesWithNoDeals = scopedProps.filter(p => !grouped.has(p.id));
-          const totalDeals = scopedDeals.length;
-          const totalProperties = grouped.size + propertiesWithNoDeals.length;
+          // The Landsec portfolio board already shows properties grouped with their deals,
+          // so suppress this general widget for Landsec to avoid showing the same content twice.
+          if (isLandsecTeam && portfolioData) return null;
+          // Canonical PropertiesSummary (Woody, 2026-08-03) — active properties
+          // with live-letting / live-deal chips deep-linking into both boards.
           return (
             <Card key="properties-deals" className="h-full flex flex-col">
               <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5" data-testid="text-properties-deals-title">
                     <Building2 className="w-3.5 h-3.5 text-teal-500" />
-                    Properties & Deals ({totalDeals} deal{totalDeals !== 1 ? "s" : ""} across {totalProperties} propert{totalProperties !== 1 ? "ies" : "y"})
+                    Properties & Deals
                   </h3>
-                  <div className="flex items-center gap-2">
-                    <Link href="/deals">
-                      <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-all-deals">
-                        <ExternalLink className="w-3 h-3" />All Deals
-                      </span>
-                    </Link>
-                    <Link href="/properties">
-                      <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-all-properties">
-                        <ExternalLink className="w-3 h-3" />All Properties
-                      </span>
-                    </Link>
-                  </div>
                 </div>
-                <ScrollArea className="flex-1">
-                  <div className="pr-2">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                      {Array.from(grouped.values()).map(({ property, deals }) => (
-                        <div key={property.id} className="border rounded-lg overflow-hidden" data-testid={`widget-property-group-${property.id}`}>
-                          <Link href={`/properties/${property.id}`}>
-                            <div className="flex items-center gap-2 p-2 bg-teal-50 dark:bg-teal-900/20 hover:bg-teal-100 dark:hover:bg-teal-900/30 transition-colors cursor-pointer border-b border-teal-100 dark:border-teal-800">
-                              <Building2 className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-medium truncate text-teal-700 dark:text-teal-300">{property.name}</p>
-                              </div>
-                              <Badge className="text-[9px] shrink-0 bg-teal-100 text-teal-700 dark:bg-teal-800 dark:text-teal-300 border-0">{deals.length} deal{deals.length !== 1 ? "s" : ""}</Badge>
-                            </div>
-                          </Link>
-                          <div className="divide-y max-h-[150px] overflow-y-auto">
-                            {deals.map((deal) => (
-                              <Link key={deal.id} href={`/deals/${deal.id}`}>
-                                <div className="flex items-center justify-between px-2 py-1.5 hover:bg-muted/30 transition-colors cursor-pointer" data-testid={`link-widget-deal-${deal.id}`}>
-                                  <div className="min-w-0 flex-1">
-                                    <p className="text-xs truncate">{deal.name}</p>
-                                    <p className="text-[10px] text-muted-foreground">{deal.status}</p>
-                                  </div>
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    {deal.dealType && (
-                                      <Badge variant="secondary" className={`text-[9px] ${deal.dealType === "Leasing" ? "bg-teal-100 text-teal-700 dark:bg-teal-800 dark:text-teal-300" : deal.dealType === "Lease Advisory" ? "bg-blue-100 text-blue-700 dark:bg-blue-800 dark:text-blue-300" : deal.dealType === "Tenant Rep" ? "bg-purple-100 text-purple-700 dark:bg-purple-800 dark:text-purple-300" : ""}`}>{deal.dealType}</Badge>
-                                    )}
-                                  </div>
-                                </div>
-                              </Link>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {unlinked.length > 0 && (
-                      <div className="border rounded-lg overflow-hidden mt-2">
-                        <div className="flex items-center gap-2 p-2 bg-muted/50">
-                          <BarChart3 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <p className="text-xs font-medium">Other Deals (no property linked)</p>
-                          <Badge variant="outline" className="text-[10px] shrink-0 ml-auto">{unlinked.length}</Badge>
-                        </div>
-                        <div className="divide-y">
-                          {unlinked.map((deal) => (
-                            <Link key={deal.id} href={`/deals/${deal.id}`}>
-                              <div className="flex items-center justify-between px-2 py-1.5 pl-7 hover:bg-muted/30 transition-colors cursor-pointer" data-testid={`link-widget-deal-${deal.id}`}>
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-xs truncate">{deal.name}</p>
-                                  <p className="text-[10px] text-muted-foreground">{deal.status}</p>
-                                </div>
-                                {deal.dealType && (
-                                  <Badge variant="secondary" className="text-[9px]">{deal.dealType}</Badge>
-                                )}
-                              </div>
-                            </Link>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </ScrollArea>
+                <PropertiesSummary onlyActive />
               </CardContent>
             </Card>
           );
         })();
 
-        if (widgetId === "system-activity") return <SystemActivityWidget />;
+        // System Activity + Daily Digest merged into one "Activity Feed" widget.
+        if (widgetId === "system-activity") return <ActivityFeedWidget />;
 
-        if (widgetId === "daily-digest") return <DailyDigestWidget />;
+        // daily-digest is now folded into the Activity Feed; render nothing so it
+        // drops out of the grid (filtered by content !== null) without duplicating content.
+        if (widgetId === "daily-digest") return null;
 
         if (widgetId === "my-tasks") return <MyTasksWidget />;
 
@@ -2485,15 +2993,17 @@ export default function Dashboard() {
         if (widgetId === "landsec-analytics") return <LandsecAnalyticsWidget key="landsec-analytics" />;
 
         if (widgetId === "kpi-overview") return <KpiOverviewWidget key="kpi-overview" />;
+        if (widgetId === "equity-finance") return <EquityFinanceWidget key="equity-finance" />;
 
         return null;
         };
 
-        const gridItems = activeWidgets.map((wid) => {
+        const widgetGridItems = activeWidgets.map((wid) => {
           const sizes = WIDGET_GRID_SIZES[wid] || { w: 12, h: 8, minW: 4, minH: 4 };
           return {
             id: wid,
             label: widgetLabelMap[wid] || wid,
+            description: widgetDescriptionMap[wid],
             content: renderWidget(wid),
             defaultW: sizes.w,
             defaultH: sizes.h,
@@ -2502,19 +3012,46 @@ export default function Dashboard() {
           };
         }).filter(item => item.content !== null);
 
+        // One grid for everything. When portfolio boards are present they
+        // share the grid with the widgets (combined layout key); plain staff
+        // dashboards keep their existing widgets layout untouched.
+        const hasPortfolioBoards = portfolioBoardsForGrid.length > 0;
+        let gridItems = [...portfolioBoardsForGrid, ...widgetGridItems];
+        // Client-portfolio default order (Woody, 2026-08-03: "letting tracker
+        // and tasks should be near the top"): the grid packs sequentially, so
+        // this list IS the default layout. Users can still drag; unknown ids
+        // keep their relative order at the end.
+        if (hasPortfolioBoards) {
+          const DEFAULT_ORDER = [
+            "portfolio-kpis",
+            "available-units", "my-tasks",
+            "portfolio-events", "news-summary",
+            "portfolio-calendar",
+            "portfolio-deals",
+            "portfolio-vacancy-pipeline", "portfolio-files",
+            "portfolio-relationship",
+            "portfolio-leasing", "portfolio-lease-expiry",
+            "portfolio-team",
+            "portfolio-contacts", "portfolio-company",
+            "portfolio-properties",
+          ];
+          const rank = (id: string) => { const i = DEFAULT_ORDER.indexOf(id); return i === -1 ? DEFAULT_ORDER.length : i; };
+          gridItems = [...gridItems].sort((a: any, b: any) => rank(a.id) - rank(b.id));
+        }
+
         return (
           <DraggableGrid
             items={gridItems}
-            savedLayout={widgetSavedLayout}
-            onLayoutSave={handleWidgetLayoutSave}
-            onHideItem={handleHideWidget}
+            savedLayout={hasPortfolioBoards ? combinedSavedLayout : widgetSavedLayout}
+            onLayoutSave={hasPortfolioBoards ? handleCombinedLayoutSave : handleWidgetLayoutSave}
+            onHideItem={(id) => (id.startsWith("portfolio-") ? handleHidePortfolioBoard(id) : handleHideWidget(id))}
             editing={dashboardEditing}
             rowHeight={30}
           />
         );
       })()}
 
-      {activeWidgets.length === 0 && (
+      {activeWidgets.length === 0 && portfolioBoardsForGrid.length === 0 && (
         <Card>
           <CardContent className="py-16 text-center">
             <Settings2 className="w-10 h-10 mx-auto mb-3 text-muted-foreground opacity-30" />
@@ -2523,6 +3060,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       )}
+
     </div>
   );
 }

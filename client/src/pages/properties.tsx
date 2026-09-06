@@ -1,15 +1,21 @@
-import { guessDomain } from "@/lib/company-logos";
-import { logoKitEnabled, logoKitUrl } from "@/lib/logokit";
+import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
+import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
+import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
+import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
+import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useTeam } from "@/lib/team-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { PageLayout } from "@/components/page-layout";
+import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import {
   Table,
   TableBody,
@@ -59,8 +65,12 @@ import {
   Plus,
   Pencil,
   Trash2,
+  MoreVertical,
+  Share2,
+  FolderPlus,
   Save,
   MapPin,
+  Store,
   SlidersHorizontal,
   Eye,
   EyeOff,
@@ -89,21 +99,28 @@ import {
   Bookmark,
   BookmarkCheck,
   Link2,
+  Upload,
+  Mail,
+  Phone,
 } from "lucide-react";
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
 import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
+import { DealsSummary } from "@/components/deals-summary";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useRoute, Link } from "wouter";
-import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { useRoute, Link, useLocation } from "wouter";
+import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineSelect, InlineLabelSelect, InlineNumber, InlineMultiSelect } from "@/components/inline-edit";
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { AddressAutocomplete, InlineAddress, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
+import { useTableSort } from "@/hooks/use-table-sort";
+import { SortableTableHead } from "@/components/sortable-table-head";
 import { CRM_OPTIONS } from "@/lib/crm-options";
+import { countLabel } from "@/lib/utils";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { PropertyDetail } from "@/components/property-detail";
@@ -133,7 +150,18 @@ const GROUP_TABS = [
   { id: "Pipeline", label: "Pipeline" },
   { id: "Archived", label: "Archived" },
   { id: "Development", label: "Development" },
+  { id: "Investment Comps", label: "Investment Comps" },
 ];
+
+// Comp groups never belong on the main Properties board — they're reference
+// pricing data, not properties we're acting on. Mirrors the server-side
+// excludeComps definition (storage.getCrmProperties) so the board and the
+// API agree on what counts as a comp. Covers both investment + leasing comps,
+// singular and plural, since imports have stamped all four spellings.
+const HIDDEN_FROM_ALL = new Set([
+  "Investment Comps", "Investment Comp",
+  "Leasing Comps", "Leasing Comp",
+]);
 
 export const STATUS_OPTIONS = ["BGP Active", "BGP Targeting", "Leasing Instruction", "Lease Advisory Instruction", "Sales Instruction", "Archive"];
 
@@ -154,15 +182,11 @@ export function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | n
   const d = extractDomainForLogo(domain);
   const guessedDomain = guessDomain(name);
 
+  // Only source: /api/brand-logo/... — server redirects to logo.dev when no
+  // local image exists. Clearbit's DNS is dead (HubSpot killed it Mar 2025).
   const logoSources: string[] = [];
-  if (d) {
-    if (logoKitEnabled) logoSources.push(logoKitUrl(d, Math.min(size * 3, 512)));
-    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
-  }
-  if (guessedDomain && guessedDomain !== d) {
-    if (logoKitEnabled) logoSources.push(logoKitUrl(guessedDomain, Math.min(size * 3, 512)));
-    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${guessedDomain}&size=128`);
-  }
+  const local = localBrandLogoUrl(name, domain ?? guessedDomain ?? null);
+  if (local) logoSources.push(local);
 
   if (failCount >= logoSources.length) {
     const initials = (name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
@@ -181,6 +205,8 @@ export function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | n
     <img
       src={logoSources[failCount]}
       alt={name || "Company logo"}
+      loading="lazy"
+      decoding="async"
       className="rounded-lg shrink-0 object-contain bg-white border"
       style={{ width: size, height: size }}
       onError={() => setFailCount(c => c + 1)}
@@ -224,17 +250,18 @@ export const TENURE_COLORS: Record<string, string> = {
   "Leasehold": "bg-orange-500",
   "Virtual Freehold": "bg-cyan-500",
 };
-export const TEAM_OPTIONS = ["Investment", "London Leasing", "National Leasing", "Lease Advisory", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
+export const TEAM_OPTIONS: string[] = [...CRM_OPTIONS.dealTeam];
 
 export const TEAM_COLORS: Record<string, string> = {
   "Investment": "bg-sky-600",
-  "London Leasing": "bg-zinc-700",
+  "London F&B": "bg-rose-500",
+  "London Retail": "bg-teal-500",
   "National Leasing": "bg-violet-500",
   "Lease Advisory": "bg-indigo-500",
-  "Tenant Rep": "bg-rose-500",
+  "Tenant Rep": "bg-pink-500",
   "Development": "bg-orange-500",
   "Office / Corporate": "bg-slate-500",
-  "Landsec": "bg-rose-500",
+  "Landsec": "bg-amber-500",
 };
 
 export function InlineEngagement({
@@ -262,7 +289,7 @@ export function InlineEngagement({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="flex items-center gap-1 flex-wrap min-h-[20px]" data-testid="inline-engagement-trigger">
+        <button type="button" className="flex items-center gap-1 flex-wrap min-h-[20px] max-w-full" data-testid="inline-engagement-trigger">
           {current.length === 0 ? (
             <span className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
               <Plus className="w-3 h-3" />
@@ -270,7 +297,7 @@ export function InlineEngagement({
             </span>
           ) : (
             current.map(v => (
-              <Badge key={v} className={`text-[10px] px-1.5 py-0 text-white ${colorMap[v] || "bg-gray-500"}`}>
+              <Badge key={v} className={`text-[10px] px-1.5 py-0 text-white whitespace-nowrap max-w-full truncate ${colorMap[v] || "bg-gray-500"}`} title={v}>
                 {v}
               </Badge>
             ))
@@ -287,7 +314,7 @@ export function InlineEngagement({
             <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${current.includes(option) ? colorMap[option] || "bg-gray-500" : "border-muted-foreground/30"}`}>
               {current.includes(option) && <span className="text-white text-[8px]">✓</span>}
             </div>
-            <Badge className={`text-[10px] px-1.5 py-0 text-white ${colorMap[option] || "bg-gray-500"}`}>
+            <Badge variant="outline" className={`border-transparent text-[10px] px-1.5 py-0 text-white ${colorMap[option] || "bg-gray-500"}`}>
               {option}
             </Badge>
           </DropdownMenuItem>
@@ -325,9 +352,13 @@ function InlineFolderTree({
       });
       return res.json();
     },
-    onSuccess: (data, team) => {
+    onSuccess: async (data, team) => {
       const updated = [...current, team];
-      apiRequest("PUT", `/api/crm/properties/${propertyId}`, { folderTeams: updated });
+      try {
+        await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { folderTeams: updated });
+      } catch (e: any) {
+        toast({ title: "Folders created, but the badge didn't save", description: e?.message, variant: "destructive" });
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", propertyId] });
       toast({
@@ -440,31 +471,80 @@ function getInitials(name: string): string {
   return name.split(" ").map(p => p[0]).join("").toUpperCase().slice(0, 2);
 }
 
+// Roles BGP staff can hold on a single property. Sort priority follows this
+// list — Lead surfaces first, then Investment, Leasing, Letting Surveyor,
+// then anyone with no role at the end.
+const PROPERTY_AGENT_ROLES = ["Lead", "Investment", "Leasing", "Letting Surveyor"] as const;
+type PropertyAgentRole = typeof PROPERTY_AGENT_ROLES[number];
+function rolePriority(role: string | null | undefined): number {
+  const idx = PROPERTY_AGENT_ROLES.indexOf((role || "") as PropertyAgentRole);
+  return idx === -1 ? 99 : idx;
+}
+
 export function InlineAgents({
   propertyId,
   agentLinks,
   allUsers,
   colorMap,
+  landlordId,
+  readOnly,
 }: {
   propertyId: string;
-  agentLinks: { propertyId: string; userId: string }[];
+  agentLinks: Array<{ propertyId: string; userId: string; role?: string | null }>;
   allUsers: User[];
   colorMap?: Record<string, string>;
+  readOnly?: boolean;
+  // When set, the picker biases the unassigned list toward people already
+  // on the landlord's client team (see crm_client_team_members). Falls
+  // back to the full BGP staff list when omitted.
+  landlordId?: string | null;
 }) {
   const { toast } = useToast();
-  const assignedUserIds = agentLinks.filter(l => l.propertyId === propertyId).map(l => l.userId);
-  const assignedUsers = allUsers.filter(u => assignedUserIds.includes(String(u.id)));
+  const assignedLinks = agentLinks.filter(l => l.propertyId === propertyId);
+  const assignedUserIds = assignedLinks.map(l => l.userId);
+  const linksByUser = new Map(assignedLinks.map(l => [l.userId, l]));
+  const assignedUsers = allUsers
+    .filter(u => assignedUserIds.includes(String(u.id)))
+    .sort((a, b) => rolePriority(linksByUser.get(String(a.id))?.role) - rolePriority(linksByUser.get(String(b.id))?.role));
   const unassignedUsers = allUsers.filter(u => !assignedUserIds.includes(String(u.id)));
 
+  // Pull the landlord's client team so we can surface those names first in
+  // the picker. Skips the network call when there's no landlord set.
+  const { data: clientTeam = [] } = useQuery<Array<{ user_id: string }>>({
+    queryKey: ["/api/client-teams", landlordId, "for-picker"],
+    queryFn: async () => {
+      const r = await fetch(`/api/client-teams/${landlordId}`, { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!landlordId,
+    staleTime: 60_000,
+  });
+  const clientTeamUserIds = new Set(clientTeam.map(m => String(m.user_id)));
+  const onTeam = unassignedUsers.filter(u => clientTeamUserIds.has(String(u.id)));
+  const offTeam = unassignedUsers.filter(u => !clientTeamUserIds.has(String(u.id)));
+
   const addMutation = useMutation({
-    mutationFn: async (userId: string) => {
-      await apiRequest("POST", `/api/crm/properties/${propertyId}/agents`, { userId });
+    mutationFn: async (vars: { userId: string; role?: string | null }) => {
+      await apiRequest("POST", `/api/crm/properties/${propertyId}/agents`, vars);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-agents"] });
     },
     onError: (err: any) => {
       toast({ title: "Failed to assign agent", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const updateRoleMutation = useMutation({
+    mutationFn: async (vars: { userId: string; role: string | null }) => {
+      await apiRequest("PATCH", `/api/crm/properties/${propertyId}/agents/${vars.userId}`, { role: vars.role });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/property-agents"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to update role", description: err.message, variant: "destructive" });
     },
   });
 
@@ -484,24 +564,77 @@ export function InlineAgents({
     <div className="flex items-center gap-1 flex-wrap">
       {assignedUsers.map(user => {
         const bg = colorMap?.[user.name] || "bg-zinc-500";
+        const link = linksByUser.get(String(user.id));
+        const role = (link?.role || "").trim();
         return (
-        <span key={user.id} className="inline-flex items-center gap-0.5">
-          <Badge
-            className={`text-[10px] px-1.5 py-0 text-white ${bg}`}
-            data-testid={`agent-badge-${propertyId}-${user.id}`}
-          >
-            {user.name.split(" ")[0]}
-          </Badge>
-          <button
-            className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
-            onClick={() => removeMutation.mutate(String(user.id))}
-            data-testid={`remove-agent-${propertyId}-${user.id}`}
-          >
-            <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
-          </button>
-        </span>
+          <Popover key={user.id}>
+            <PopoverTrigger asChild>
+              <button
+                className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded text-white hover:opacity-90 ${bg}`}
+                data-testid={`agent-badge-${propertyId}-${user.id}`}
+                title={role ? `${user.name} — ${role}` : user.name}
+              >
+                <span className="font-semibold">{user.name.split(" ")[0]}</span>
+                {role && <span className="text-[11px] opacity-90 border-l border-white/40 pl-1.5">{role}</span>}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 p-3" align="start">
+              <div className="space-y-2">
+                <div>
+                  <div className="text-sm font-semibold">{user.name}</div>
+                  {(user as any).role && (
+                    <div className="text-xs text-muted-foreground">{(user as any).role}</div>
+                  )}
+                  {role && <div className="text-[10px] uppercase tracking-wide text-muted-foreground mt-1">On this property: <span className="font-medium text-foreground">{role}</span></div>}
+                </div>
+                <div className="space-y-1 text-xs">
+                  {user.email ? (
+                    <a href={`mailto:${user.email}`} className="flex items-center gap-1.5 text-primary hover:underline" data-testid={`agent-email-${user.id}`}>
+                      <Mail className="w-3 h-3" />{user.email}
+                    </a>
+                  ) : (
+                    <span className="text-muted-foreground italic">No email on file</span>
+                  )}
+                  {user.phone ? (
+                    <a href={`tel:${user.phone}`} className="flex items-center gap-1.5 text-primary hover:underline" data-testid={`agent-phone-${user.id}`}>
+                      <Phone className="w-3 h-3" />{user.phone}
+                    </a>
+                  ) : (
+                    <span className="text-muted-foreground italic block">No mobile on file</span>
+                  )}
+                </div>
+                <div className="border-t pt-2">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Role on this property</div>
+                  <div className="flex flex-wrap gap-1">
+                    {PROPERTY_AGENT_ROLES.map(r => (
+                      <button
+                        key={r}
+                        onClick={() => updateRoleMutation.mutate({ userId: String(user.id), role: r === role ? null : r })}
+                        className={`text-[10px] px-2 py-0.5 rounded border ${r === role ? "bg-foreground text-background border-foreground" : "border-border text-foreground hover:bg-muted"}`}
+                        data-testid={`agent-role-${r}-${user.id}`}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {!readOnly && (
+                <div className="border-t pt-2 flex justify-end">
+                  <button
+                    onClick={() => removeMutation.mutate(String(user.id))}
+                    className="text-[10px] text-destructive hover:underline flex items-center gap-1"
+                    data-testid={`remove-agent-${propertyId}-${user.id}`}
+                  >
+                    <X className="w-2.5 h-2.5" />Remove from property
+                  </button>
+                </div>
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
         );
       })}
+      {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -511,25 +644,53 @@ export function InlineAgents({
             <Plus className="w-3 h-3 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="max-h-60 overflow-y-auto">
+        <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
           {unassignedUsers.length === 0 ? (
             <DropdownMenuItem disabled>All team members assigned</DropdownMenuItem>
           ) : (
-            unassignedUsers.map(user => (
-              <DropdownMenuItem
-                key={user.id}
-                onClick={() => addMutation.mutate(String(user.id))}
-                data-testid={`assign-agent-${user.id}`}
-              >
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-medium text-white mr-2 ${colorMap?.[user.name] || "bg-primary/10 text-primary"}`}>
-                  {getInitials(user.name)}
-                </div>
-                {user.name}
-              </DropdownMenuItem>
-            ))
+            <>
+              {onTeam.length > 0 && (
+                <>
+                  <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">On this client</div>
+                  {onTeam.map(user => (
+                    <DropdownMenuItem
+                      key={user.id}
+                      onClick={() => addMutation.mutate({ userId: String(user.id) })}
+                      data-testid={`assign-agent-${user.id}`}
+                    >
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium text-white mr-2 ${colorMap?.[user.name] || "bg-primary/10 text-primary"}`}>
+                        {getInitials(user.name)}
+                      </div>
+                      {user.name}
+                    </DropdownMenuItem>
+                  ))}
+                  {offTeam.length > 0 && <div className="border-t my-1" />}
+                </>
+              )}
+              {offTeam.length > 0 && (
+                <>
+                  {onTeam.length > 0 && (
+                    <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">Other BGP staff</div>
+                  )}
+                  {offTeam.map(user => (
+                    <DropdownMenuItem
+                      key={user.id}
+                      onClick={() => addMutation.mutate({ userId: String(user.id) })}
+                      data-testid={`assign-agent-${user.id}`}
+                    >
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium text-white mr-2 ${colorMap?.[user.name] || "bg-primary/10 text-primary"}`}>
+                        {getInitials(user.name)}
+                      </div>
+                      {user.name}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
+            </>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   );
 }
@@ -546,9 +707,16 @@ export function InlineLandlord({
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
   const landlord = landlordId ? allCompanies.find(c => c.id === landlordId) : null;
+  // Only landlord-side company types in the dropdown. Currently-linked row
+  // stays selectable even if its type drifts, so we never strand a row.
+  const isLandlordType = (c: CrmCompany) => {
+    const t = (c.companyType || "").toLowerCase();
+    return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund") || t.includes("freeholder") || c.id === landlordId;
+  };
+  const landlordCompanies = allCompanies.filter(isLandlordType);
   const filteredCompanies = searchTerm
-    ? allCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
-    : allCompanies.slice(0, 20);
+    ? landlordCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
+    : landlordCompanies.slice(0, 20);
 
   const updateMutation = useMutation({
     mutationFn: async (companyId: string | null) => {
@@ -610,7 +778,7 @@ export function InlineLandlord({
         </div>
         {parentCompany ? (
           <div className="flex items-center gap-1 ml-3">
-            <span className="text-[9px] text-muted-foreground">Parent:</span>
+            <span className="text-[10px] text-muted-foreground">Parent:</span>
             <Link href={`/companies/${parentCompany.id}`}>
               <Badge
                 variant="secondary"
@@ -624,7 +792,7 @@ export function InlineLandlord({
           </div>
         ) : landlord.companiesHouseNumber && !landlord.parentCompanyId ? (
           <button
-            className="ml-3 text-[9px] text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 flex items-center gap-0.5 transition-colors"
+            className="ml-3 text-[10px] text-primary hover:underline flex items-center gap-0.5 transition-colors"
             onClick={() => discoverParentMutation.mutate()}
             disabled={discoverParentMutation.isPending}
             data-testid={`discover-parent-${propertyId}`}
@@ -678,6 +846,245 @@ export function InlineLandlord({
             ))
           )}
         </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// Generic ownership-stack link — reusable for freeholder, long leaseholder,
+// senior lender, junior lender fields.
+export function InlineOwnerLink({
+  propertyId,
+  companyId,
+  fieldName,
+  label,
+  allCompanies,
+  readOnly,
+}: {
+  propertyId: string;
+  companyId: string | null | undefined;
+  fieldName: string;
+  label: string;
+  allCompanies: CrmCompany[];
+  readOnly?: boolean;
+}) {
+  const { toast } = useToast();
+  const [searchTerm, setSearchTerm] = useState("");
+  const company = companyId ? allCompanies.find(c => c.id === companyId) : null;
+  const filtered = searchTerm
+    ? allCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
+    : allCompanies.slice(0, 20);
+
+  const updateMutation = useMutation({
+    mutationFn: async (val: string | null) => {
+      await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { [fieldName]: val });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      // Asset-brief drives the covering strip / pipeline / compliance
+      // cards — different key prefix, so invalidate it explicitly or the
+      // owner change doesn't show until a hard reload.
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linkage-audit"] });
+    },
+    onError: (err: any) => toast({ title: `Failed to update ${label}`, description: err.message, variant: "destructive" }),
+  });
+
+  if (company) {
+    return (
+      <div className="flex items-center gap-1 min-w-0 max-w-full">
+        <Link href={`/companies/${company.id}`} className="min-w-0 max-w-full">
+          {/* Role label on the chip — the same company often fills several
+              roles (Landsec as Landlord AND Freeholder), and unlabelled
+              chips read as duplicates. */}
+          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex items-center" title={`${label}: ${company.name}`}>
+            <Building2 className="w-3 h-3 mr-1 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground mr-1 shrink-0">{label} ·</span>
+            <span className="truncate">{company.name}</span>
+          </Badge>
+        </Link>
+        {!readOnly && (
+        <button
+          className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0"
+          onClick={() => updateMutation.mutate(null)}
+        >
+          <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
+        </button>
+        )}
+      </div>
+    );
+  }
+
+  if (readOnly) return null;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+          <Plus className="w-3 h-3" />
+          {label}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <div className="p-2">
+          <Input
+            placeholder="Search companies..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="h-7 text-xs"
+          />
+        </div>
+        <div className="max-h-48 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <DropdownMenuItem disabled>No companies found</DropdownMenuItem>
+          ) : (
+            filtered.map(co => (
+              <DropdownMenuItem
+                key={co.id}
+                onClick={() => { updateMutation.mutate(co.id); setSearchTerm(""); }}
+              >
+                <Building2 className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                <span className="truncate">{co.name}</span>
+              </DropdownMenuItem>
+            ))
+          )}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// Competitor Agent picker — like InlineOwnerLink but scoped to
+// crm_companies with company_type === 'Agent'. Has an inline 'Add
+// new agent' option that POSTs to /api/crm/companies and then
+// links the new row to the property in one go. Stores both the
+// FK (competitorAgentId) and the display name (competitorAgent,
+// legacy text column) so anything that reads the text keeps
+// working.
+export function InlineCompetitorAgent({
+  propertyId,
+  competitorAgentId,
+  competitorAgent,
+  allCompanies,
+}: {
+  propertyId: string;
+  competitorAgentId: string | null | undefined;
+  competitorAgent: string | null | undefined;
+  allCompanies: CrmCompany[];
+}) {
+  const { toast } = useToast();
+  const [searchTerm, setSearchTerm] = useState("");
+  const [creating, setCreating] = useState(false);
+  const linked = competitorAgentId ? allCompanies.find(c => c.id === competitorAgentId) : null;
+  // Display name fallback to the legacy text column for properties
+  // that were typed in pre-linkage.
+  const displayName = linked?.name || competitorAgent || null;
+
+  const agentCompanies = allCompanies.filter(c => (c.companyType || "") === "Agent");
+  const filtered = searchTerm
+    ? agentCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
+    : agentCompanies.slice(0, 20);
+
+  const setMutation = useMutation({
+    mutationFn: async (payload: { id: string | null; name: string | null }) => {
+      await apiRequest("PUT", `/api/crm/properties/${propertyId}`, {
+        competitorAgentId: payload.id,
+        competitorAgent: payload.name,
+      });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] }),
+    onError: (err: any) => toast({ title: "Couldn't link agent", description: err.message, variant: "destructive" }),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", "/api/crm/companies", { name: name.trim(), companyType: "Agent" });
+      return res.json();
+    },
+    onSuccess: async (newCompany: any) => {
+      await setMutation.mutateAsync({ id: newCompany.id, name: newCompany.name });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      setCreating(false);
+      setSearchTerm("");
+      toast({ title: `Added agent: ${newCompany.name}` });
+    },
+    onError: (err: any) => toast({ title: "Couldn't create agent", description: err.message, variant: "destructive" }),
+  });
+
+  if (displayName && !creating) {
+    return (
+      <div className="flex items-center gap-1">
+        {linked ? (
+          <Link href={`/companies/${linked.id}`}>
+            <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted">
+              <Building2 className="w-3 h-3 mr-1 text-muted-foreground" />
+              {displayName}
+            </Badge>
+          </Link>
+        ) : (
+          // Legacy text-only value with no FK — show as a chip but
+          // tag it to indicate it's not linked to a CRM row yet.
+          <Badge variant="outline" className="text-[11px] px-2 py-0.5 border-amber-300 text-amber-700" title="Free-text — link to a CRM agent row to enable agent profile">
+            {displayName}
+          </Badge>
+        )}
+        <button
+          className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
+          onClick={() => setMutation.mutate({ id: null, name: null })}
+          title="Remove competitor agent"
+        >
+          <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+          <Plus className="w-3 h-3" />
+          Competitor agent
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="w-72" align="start">
+        <div className="p-2">
+          <Input
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search agents…"
+            className="h-7 text-xs"
+            autoFocus
+          />
+        </div>
+        <div className="max-h-[260px] overflow-y-auto">
+          {filtered.map(c => (
+            <button
+              key={c.id}
+              onClick={() => setMutation.mutate({ id: c.id, name: c.name })}
+              className="w-full text-left px-3 py-1.5 hover:bg-muted text-xs flex items-center gap-2"
+              data-testid={`competitor-agent-option-${c.id}`}
+            >
+              <Building2 className="w-3 h-3 text-muted-foreground shrink-0" />
+              <span className="truncate">{c.name}</span>
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <div className="px-3 py-1.5 text-[11px] text-muted-foreground italic">
+              No matching agent companies.
+            </div>
+          )}
+        </div>
+        {searchTerm.trim() && !filtered.some(c => c.name.toLowerCase() === searchTerm.trim().toLowerCase()) && (
+          <button
+            onClick={() => createMutation.mutate(searchTerm.trim())}
+            disabled={createMutation.isPending}
+            className="w-full text-left px-3 py-2 border-t hover:bg-muted text-xs flex items-center gap-2 text-primary"
+          >
+            <Plus className="w-3 h-3" />
+            <span>Add "<span className="font-medium">{searchTerm.trim()}</span>" as a new agent</span>
+          </button>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -738,7 +1145,7 @@ export function InlineBillingEntity({
             <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
           </button>
         </div>
-        <span className="text-[9px] text-muted-foreground ml-1">Invoice to this entity</span>
+        <span className="text-[10px] text-muted-foreground ml-1">Invoice to this entity</span>
       </div>
     );
   }
@@ -747,7 +1154,7 @@ export function InlineBillingEntity({
     <div className="flex flex-col gap-0.5">
       {landlordIsBillingEntity && !billingEntityId && (
         <button
-          className="text-[9px] text-amber-600 hover:text-amber-800 dark:text-amber-400 flex items-center gap-0.5 mb-0.5"
+          className="text-[10px] text-amber-600 hover:text-amber-800 dark:text-amber-400 flex items-center gap-0.5 mb-0.5"
           onClick={() => updateMutation.mutate(landlordId)}
         >
           <FileText className="w-2.5 h-2.5" />
@@ -783,7 +1190,7 @@ export function InlineBillingEntity({
                   <FileText className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
                   <span className="truncate">{company.name}</span>
                   {company.companyType === "Billing Entity" && (
-                    <Badge variant="secondary" className="ml-auto text-[8px] px-1">SPV</Badge>
+                    <Badge variant="secondary" className="ml-auto text-[10px] px-1">SPV</Badge>
                   )}
                 </DropdownMenuItem>
               ))
@@ -801,10 +1208,12 @@ export function InlineDeals({
   propertyId,
   dealLinks,
   allDeals,
+  readOnly,
 }: {
   propertyId: string;
   dealLinks: DealLink[];
   allDeals: DealLink[];
+  readOnly?: boolean;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
@@ -820,7 +1229,7 @@ export function InlineDeals({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-deal-links"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
     onError: (err: any) => {
       toast({ title: "Failed to link deal", description: err.message, variant: "destructive" });
@@ -833,7 +1242,7 @@ export function InlineDeals({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-deal-links"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
     onError: (err: any) => {
       toast({ title: "Failed to unlink deal", description: err.message, variant: "destructive" });
@@ -841,35 +1250,41 @@ export function InlineDeals({
   });
 
   return (
-    <div className="flex items-center gap-1 flex-wrap">
-      {linkedDeals.map(deal => (
-        <div key={deal.id} className="flex items-center gap-0.5">
-          <Link href={`/deals/${deal.id}`}>
-            <Badge
-              variant="outline"
-              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted"
-              data-testid={`deal-badge-${deal.id}`}
+    <div className="flex flex-col gap-0.5 w-full min-w-0">
+      <div className={`flex flex-col gap-0.5 ${linkedDeals.length > 5 ? "max-h-[120px] overflow-y-auto pr-0.5" : ""}`}>
+        {linkedDeals.map(deal => (
+          <div key={deal.id} className="flex items-center gap-0.5 min-w-0 group/deal">
+            <Link href={`/deals/${deal.id}`} className="min-w-0 flex-1">
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted w-full justify-start"
+                data-testid={`deal-badge-${deal.id}`}
+              >
+                <Handshake className="w-2.5 h-2.5 mr-0.5 shrink-0 text-muted-foreground" />
+                <span className="truncate">{deal.name}</span>
+              </Badge>
+            </Link>
+            {!readOnly && (
+            <button
+              className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0 opacity-0 group-hover/deal:opacity-100 transition-opacity"
+              onClick={() => unlinkMutation.mutate(deal.id)}
+              data-testid={`remove-deal-${deal.id}`}
             >
-              <Handshake className="w-2.5 h-2.5 mr-0.5 text-muted-foreground" />
-              {deal.name}
-            </Badge>
-          </Link>
-          <button
-            className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
-            onClick={() => unlinkMutation.mutate(deal.id)}
-            data-testid={`remove-deal-${deal.id}`}
-          >
-            <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
-          </button>
-        </div>
-      ))}
+              <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
+            </button>
+            )}
+          </div>
+        ))}
+      </div>
+      {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
-            className="w-5 h-5 rounded-full border border-dashed border-muted-foreground/30 hover:border-foreground/50 flex items-center justify-center transition-colors"
+            className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 self-start"
             data-testid={`add-deal-${propertyId}`}
           >
-            <Plus className="w-3 h-3 text-muted-foreground" />
+            <Plus className="w-3 h-3" />
+            WIP
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-64">
@@ -900,6 +1315,7 @@ export function InlineDeals({
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   );
 }
@@ -908,16 +1324,23 @@ export function InlineTenants({
   propertyId,
   tenantLinks,
   allCompanies,
+  readOnly,
 }: {
   propertyId: string;
   tenantLinks: { propertyId: string; companyId: string }[];
   allCompanies: CrmCompany[];
+  readOnly?: boolean;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
   const assignedCompanyIds = tenantLinks.filter(l => l.propertyId === propertyId).map(l => l.companyId);
   const assignedCompanies = allCompanies.filter(c => assignedCompanyIds.includes(c.id));
-  const unassignedCompanies = allCompanies.filter(c => !assignedCompanyIds.includes(c.id));
+  // Only offer Tenant-typed companies in the picker — anything else (vendors,
+  // landlords, investors) is irrelevant here and clutters the dropdown.
+  // Already-assigned rows stay regardless so we can still detach them.
+  const unassignedCompanies = allCompanies.filter(c =>
+    !assignedCompanyIds.includes(c.id) && (c.companyType || "").startsWith("Tenant")
+  );
   const filteredUnassigned = searchTerm
     ? unassignedCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()))
     : unassignedCompanies.slice(0, 20);
@@ -946,9 +1369,13 @@ export function InlineTenants({
     },
   });
 
+  const MAX_VISIBLE = 3;
+  const visibleCompanies = assignedCompanies.slice(0, MAX_VISIBLE);
+  const hiddenCount = assignedCompanies.length - MAX_VISIBLE;
+
   return (
     <div className="flex items-center gap-1 flex-wrap">
-      {assignedCompanies.map(company => (
+      {visibleCompanies.map(company => (
         <span key={company.id} className="inline-flex items-center gap-0.5">
           <Link href={`/companies/${company.id}`}>
             <Badge
@@ -960,6 +1387,7 @@ export function InlineTenants({
               {company.name}
             </Badge>
           </Link>
+          {!readOnly && (
           <button
             className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
             onClick={() => removeMutation.mutate(company.id)}
@@ -967,8 +1395,13 @@ export function InlineTenants({
           >
             <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
           </button>
+          )}
         </span>
       ))}
+      {hiddenCount > 0 && (
+        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">+{hiddenCount} more</Badge>
+      )}
+      {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -1006,13 +1439,14 @@ export function InlineTenants({
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   );
 }
 
 // ColumnFilterPopover imported from shared component
 
-const TEAMS = ["Investment", "London Leasing", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
+const TEAMS = CRM_OPTIONS.dealTeam;
 
 interface FolderTemplate {
   team: string;
@@ -1061,12 +1495,19 @@ export function SetUpFoldersDialog({
   folderTeams,
   open,
   onOpenChange,
+  // entityType lets the same dialog drive a landlord folder set-up
+  // (defaults to property). When 'landlord', the post-create update
+  // hits PATCH /api/brand/:id instead of PUT /api/crm/properties/:id,
+  // and invalidates the brand-profile query so the new folders show
+  // up immediately in the sidebar.
+  entityType = "property",
 }: {
   propertyId: string;
   propertyName: string;
   folderTeams?: string[] | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  entityType?: "property" | "landlord";
 }) {
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
@@ -1106,9 +1547,14 @@ export function SetUpFoldersDialog({
       const currentTeams = folderTeams || [];
       if (!currentTeams.includes(data.team)) {
         const updated = [...currentTeams, data.team];
-        await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { folderTeams: updated });
-        queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", propertyId] });
+        if (entityType === "landlord") {
+          await apiRequest("PATCH", `/api/brand/${propertyId}`, { folder_teams: updated });
+          queryClient.invalidateQueries({ queryKey: ["/api/brand", propertyId, "profile"] });
+        } else {
+          await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { folderTeams: updated });
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", propertyId] });
+        }
       }
       toast({
         title: "Folders Created",
@@ -1253,18 +1699,38 @@ interface PropertyFolderItem {
   lastModified: string;
 }
 
-export function PropertyFoldersPanel({ propertyName, folderTeams }: { propertyName: string; folderTeams?: string[] | null }) {
+export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFolderUrl, entityType, entityId, entityName }: { propertyName: string; folderTeams?: string[] | null; sharepointFolderUrl?: string | null; entityType?: "property" | "company" | "landlord" | "deal" | "contact"; entityId?: string; entityName?: string }) {
+  const [, navigate] = useLocation();
+  const [shareFor, setShareFor] = useState<{ id: string; name: string } | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareScopeNote, setShareScopeNote] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const userTeam = currentUser?.team || "Investment";
   const teamsToCheck = folderTeams && folderTeams.length > 0 ? folderTeams : [userTeam];
   const [activeTeamName, setActiveTeamName] = useState<string | null>(null);
   const activeTeam = activeTeamName && teamsToCheck.includes(activeTeamName) ? activeTeamName : teamsToCheck[0] || userTeam;
   const activeTeamIdx = teamsToCheck.indexOf(activeTeam);
+  const [subPath, setSubPath] = useState<string>("");
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounter = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const { data: folderData, isLoading } = useQuery<{ exists: boolean; folders: PropertyFolderItem[]; path?: string }>({
-    queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName],
+  // If the CRM record has a stored SharePoint folder URL, prefer that — it
+  // resolves to the real folder regardless of name mismatches between CRM
+  // and SharePoint. The team-based path synthesis is only used as a fallback.
+  const folderUrl = (sharepointFolderUrl || "").trim();
+
+  const { data: folderData, isLoading } = useQuery<{ exists: boolean; folders: PropertyFolderItem[]; path?: string; webUrl?: string; source?: string; driveId?: string; currentItemId?: string | null }>({
+    queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath],
     queryFn: async () => {
-      const res = await fetch(`/api/microsoft/property-folders/${encodeURIComponent(activeTeam)}/${encodeURIComponent(propertyName)}`, { credentials: "include" });
+      const params = new URLSearchParams();
+      if (folderUrl) params.set("folderUrl", folderUrl);
+      if (subPath) params.set("path", subPath);
+      const qs = params.toString() ? `?${params.toString()}` : "";
+      const res = await fetch(`/api/microsoft/property-folders/${encodeURIComponent(activeTeam)}/${encodeURIComponent(propertyName)}${qs}`, { credentials: "include" });
       if (!res.ok) {
         if (res.status === 401) return { exists: false, folders: [] };
         throw new Error("Failed to load folders");
@@ -1273,6 +1739,133 @@ export function PropertyFoldersPanel({ propertyName, folderTeams }: { propertyNa
     },
     retry: false,
   });
+
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const folderPath = folderUrl
+        ? "" // when using URL-based browsing, upload routes to SharePoint root for now
+        : `BGP share drive/${activeTeam}/${propertyName}${subPath ? `/${subPath}` : ""}`;
+      formData.append("folderPath", folderPath);
+      const res = await fetch("/api/microsoft/files/upload", { method: "POST", credentials: "include", body: formData });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || "Upload failed");
+      }
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath] });
+      toast({ title: "File uploaded", description: data.name });
+    },
+    onError: (e: any) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+
+  const driveId = folderData?.driveId;
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath] });
+
+  const newFolderMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await fetch("/api/microsoft/folders", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, parentId: folderData?.currentItemId, driveId }) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "Could not create folder"); }
+      return res.json();
+    },
+    onSuccess: () => { refresh(); toast({ title: "Folder created" }); },
+    onError: (e: any) => toast({ title: "Create folder failed", description: e.message, variant: "destructive" }),
+  });
+
+  const renameMutation = useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      const res = await fetch("/api/microsoft/files/item", { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: id, name }) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || e.error || "Rename failed"); }
+      return res.json();
+    },
+    onSuccess: () => { refresh(); toast({ title: "Renamed" }); },
+    onError: (e: any) => toast({ title: "Rename failed", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch("/api/microsoft/files/item", { method: "DELETE", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: id }) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || e.error || "Delete failed"); }
+      return res.json();
+    },
+    onSuccess: () => { refresh(); toast({ title: "Deleted", description: "Moved to the SharePoint recycle bin." }); },
+    onError: (e: any) => toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
+  });
+
+  const openShare = async (item: { id: string; name: string }) => {
+    setShareFor(item); setShareUrl(null); setShareScopeNote(null); setInviteEmail("");
+    try {
+      const res = await fetch("/api/microsoft/files/share-link", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: item.id, type: "view", scope: "anonymous" }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not create link");
+      setShareUrl(data.webUrl || null);
+      if (data.fellBackToOrg) setShareScopeNote("Your tenant blocks anonymous links — this one only works for people inside the organisation.");
+    } catch (e: any) {
+      toast({ title: "Share failed", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const inviteMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/microsoft/files/invite", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: shareFor?.id, emails: inviteEmail.split(/[,\s]+/).filter(Boolean), role: "read" }) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Invite failed"); }
+      return res.json();
+    },
+    onSuccess: () => { toast({ title: "Invitation sent" }); setInviteEmail(""); },
+    onError: (e: any) => toast({ title: "Invite failed", description: e.message, variant: "destructive" }),
+  });
+
+  const startChat = async () => {
+    if (!entityType || !entityId) return;
+    try {
+      const res = await apiRequest("POST", "/api/chat/threads", { isAiChat: true, linkedType: entityType === "landlord" ? "company" : entityType, linkedId: entityId, linkedName: entityName || propertyName });
+      const thread = await res.json();
+      navigate(`/chatbgp?thread=${thread.id}`);
+    } catch (e: any) {
+      toast({ title: "Could not open chat", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const promptNewFolder = () => { const n = window.prompt("New folder name"); if (n && n.trim()) newFolderMutation.mutate(n.trim()); };
+  const promptRename = (item: { id: string; name: string }) => { const n = window.prompt("Rename to", item.name); if (n && n.trim() && n.trim() !== item.name) renameMutation.mutate({ id: item.id, name: n.trim() }); };
+  const confirmDelete = (item: { id: string; name: string }) => { if (window.confirm(`Delete "${item.name}"? It will go to the SharePoint recycle bin.`)) deleteMutation.mutate(item.id); };
+  // Delete the whole active team's folder tree (e.g. when "Set Up Folders"
+  // created the wrong one). Sends the team's root folder + everything in it
+  // to the SharePoint recycle bin — recoverable.
+  const confirmDeleteTree = () => {
+    if (!folderData?.currentItemId) return;
+    if (window.confirm(`Delete the entire "${activeTeam}" folder tree for ${propertyName}? Everything inside it goes to the SharePoint recycle bin (recoverable). Use this if the wrong folder tree was set up.`)) {
+      deleteMutation.mutate(folderData.currentItemId);
+      setSubPath("");
+    }
+  };
+
+  const rowMenu = (item: { id: string; name: string }) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted flex-shrink-0" data-testid={`row-menu-${item.id}`}>
+          <MoreVertical className="w-3.5 h-3.5 text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); promptRename(item); }}><Pencil className="w-3.5 h-3.5 mr-2" />Rename</DropdownMenuItem>
+        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openShare(item); }}><Share2 className="w-3.5 h-3.5 mr-2" />Share</DropdownMenuItem>
+        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); confirmDelete(item); }} className="text-destructive focus:text-destructive"><Trash2 className="w-3.5 h-3.5 mr-2" />Delete</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    setIsDragging(false); dragCounter.current = 0;
+    const files = Array.from(e.dataTransfer.files);
+    for (const f of files) uploadMutation.mutate(f);
+  };
+
+  const breadcrumbs = subPath ? subPath.split("/") : [];
 
   if (isLoading) {
     return (
@@ -1291,41 +1884,108 @@ export function PropertyFoldersPanel({ propertyName, folderTeams }: { propertyNa
   }
 
   return (
-    <Card data-testid="property-folders-panel">
+    <Card data-testid="property-folders-panel"
+      onDragEnter={(e) => { e.preventDefault(); dragCounter.current++; if (e.dataTransfer.types.includes("Files")) setIsDragging(true); }}
+      onDragLeave={(e) => { e.preventDefault(); dragCounter.current--; if (dragCounter.current === 0) setIsDragging(false); }}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={onDrop}
+      className={isDragging ? "ring-2 ring-primary border-primary" : undefined}
+    >
       <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="flex items-center gap-2 flex-wrap">
             <FolderOpen className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Folders</h3>
+            <h3 className="text-sm font-semibold">Documents</h3>
             {teamsToCheck.map((t, idx) => (
-              <Badge
+              <button
                 key={t}
-                variant={idx === activeTeamIdx ? "default" : "outline"}
-                className={`text-[10px] cursor-pointer ${idx === activeTeamIdx ? "" : "opacity-60"}`}
-                onClick={() => setActiveTeamName(t)}
+                type="button"
+                data-no-min-touch
+                className={`inline-flex items-center rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] whitespace-nowrap border transition-colors cursor-pointer ${idx === activeTeamIdx ? "bg-foreground text-background border-transparent" : "bg-transparent text-muted-foreground border-border hover:text-foreground"}`}
+                onClick={() => { setActiveTeamName(t); setSubPath(""); }}
                 data-testid={`folder-team-tab-${t}`}
               >
                 {t}
-              </Badge>
+              </button>
             ))}
+          </div>
+          <div className="flex items-center gap-1 flex-wrap justify-end shrink min-w-0">
+            {entityType && entityId && (
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={startChat} data-testid="btn-folder-chat">
+                <MessageSquare className="w-3 h-3 mr-1" />Chat
+              </Button>
+            )}
+            {folderData?.currentItemId && (
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={promptNewFolder} disabled={newFolderMutation.isPending} data-testid="btn-new-folder">
+                {newFolderMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <FolderPlus className="w-3 h-3 mr-1" />}New folder
+              </Button>
+            )}
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={uploadMutation.isPending} data-testid="btn-upload-property-file">
+              {uploadMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />}Upload
+            </Button>
+            {folderData?.webUrl && (
+              <a href={folderData.webUrl} target="_blank" rel="noopener noreferrer">
+                <Button size="sm" variant="ghost" className="h-7 text-xs" data-testid="btn-open-sharepoint">
+                  <ExternalLink className="w-3 h-3 mr-1" />SharePoint
+                </Button>
+              </a>
+            )}
+            {!subPath && folderData?.exists && folderData?.currentItemId && (
+              <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive" onClick={confirmDeleteTree} disabled={deleteMutation.isPending} data-testid="btn-delete-folder-tree" title={`Delete the whole ${activeTeam} folder tree`}>
+                <Trash2 className="w-3 h-3 mr-1" />Delete tree
+              </Button>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadMutation.mutate(f); e.target.value = ""; }}
+            />
           </div>
         </div>
 
-        {!folderData?.exists ? (
+        {/* Breadcrumb navigation when drilling into subfolders */}
+        {(subPath || folderData?.exists) && (
+          <div className="flex items-center gap-1 mb-2 text-[11px] flex-wrap">
+            <button onClick={() => setSubPath("")} className={`hover:text-primary ${subPath ? "text-primary cursor-pointer" : "text-foreground font-medium"}`} data-testid="breadcrumb-root">
+              {propertyName}
+            </button>
+            {breadcrumbs.map((seg, i) => (
+              <span key={i} className="flex items-center gap-1">
+                <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                <button
+                  onClick={() => setSubPath(breadcrumbs.slice(0, i + 1).join("/"))}
+                  className={`hover:text-primary ${i === breadcrumbs.length - 1 ? "text-foreground font-medium" : "text-primary cursor-pointer"}`}
+                  data-testid={`breadcrumb-${i}`}
+                >
+                  {seg}
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {isDragging && (
+          <div className="absolute inset-0 bg-primary/10 border-2 border-dashed border-primary rounded-md flex items-center justify-center pointer-events-none z-10">
+            <p className="text-sm font-medium text-primary">Drop file here to upload</p>
+          </div>
+        )}
+
+        {isLoading ? (
+          <div className="space-y-2">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+        ) : !folderData?.exists ? (
           <div className="text-center py-6">
             <FolderTree className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-xs text-muted-foreground">No folders set up yet</p>
-            <p className="text-[10px] text-muted-foreground mt-1">Use "Set Up Folders" to create a folder structure</p>
+            <p className="text-xs text-muted-foreground">No folder linked yet</p>
+            <p className="text-[10px] text-muted-foreground mt-1">Drop a file here or click Upload to start</p>
           </div>
         ) : (
           <div className="space-y-1">
             {folderData.folders.filter(f => f.isFolder).map((folder) => (
-              <a
+              <div
                 key={folder.id}
-                href={folder.webUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate transition-colors group"
+                onClick={() => setSubPath(subPath ? `${subPath}/${folder.name}` : folder.name)}
+                className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate transition-colors group cursor-pointer"
                 data-testid={`folder-item-${folder.id}`}
               >
                 <FolderOpen className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
@@ -1333,8 +1993,9 @@ export function PropertyFoldersPanel({ propertyName, folderTeams }: { propertyNa
                 {folder.childCount > 0 && (
                   <span className="text-[10px] text-muted-foreground">{folder.childCount}</span>
                 )}
-                <ExternalLink className="w-3 h-3 text-muted-foreground invisible group-hover:visible flex-shrink-0" />
-              </a>
+                {driveId && rowMenu(folder)}
+                <ChevronRight className="w-3 h-3 text-muted-foreground" />
+              </div>
             ))}
             {folderData.folders.filter(f => !f.isFolder).map((file) => (
               <a
@@ -1344,15 +2005,50 @@ export function PropertyFoldersPanel({ propertyName, folderTeams }: { propertyNa
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate transition-colors group"
                 data-testid={`file-item-${file.id}`}
+                title={file.size ? `${Math.round(file.size / 1024).toLocaleString()} KB` : undefined}
               >
-                <FileText className="w-3.5 h-3.5 text-muted-foreground/60 flex-shrink-0" />
+                <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                 <span className="text-xs flex-1 truncate">{file.name}</span>
+                {file.size > 0 && <span className="text-[10px] text-muted-foreground">{file.size < 1024 * 1024 ? `${Math.round(file.size / 1024)} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`}</span>}
+                {driveId && rowMenu(file)}
                 <ExternalLink className="w-3 h-3 text-muted-foreground invisible group-hover:visible flex-shrink-0" />
               </a>
             ))}
+            {folderData.folders.length === 0 && (
+              <p className="text-xs text-muted-foreground italic text-center py-4">This folder is empty. Drop a file or click Upload.</p>
+            )}
           </div>
         )}
       </CardContent>
+
+      <Dialog open={!!shareFor} onOpenChange={(o) => { if (!o) setShareFor(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="text-sm">Share "{shareFor?.name}"</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Anyone with the link</Label>
+              {shareUrl ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <Input readOnly value={shareUrl} className="text-xs h-8" data-testid="share-link-url" />
+                  <Button size="sm" className="h-8" onClick={() => { navigator.clipboard.writeText(shareUrl); toast({ title: "Link copied" }); }} data-testid="btn-copy-share-link"><Copy className="w-3 h-3" /></Button>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Generating link…</p>
+              )}
+              {shareScopeNote && <p className="text-[10px] text-amber-600 mt-1">{shareScopeNote}</p>}
+            </div>
+            <div className="border-t pt-3">
+              <Label className="text-xs">Or invite specific people by email</Label>
+              <div className="flex items-center gap-2 mt-1">
+                <Input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="name@example.com" className="text-xs h-8" data-testid="share-invite-email" />
+                <Button size="sm" className="h-8 text-xs" disabled={!inviteEmail.trim() || inviteMutation.isPending} onClick={() => inviteMutation.mutate()} data-testid="btn-send-invite">
+                  {inviteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Invite"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -1458,93 +2154,248 @@ export function PropertySharepointLink({
   );
 }
 
-export function LinkedDealsPanel({ propertyId }: { propertyId: string }) {
-  const { data: deals, isLoading } = useQuery<CrmDeal[]>({
-    queryKey: ["/api/crm/properties", propertyId, "deals"],
+// Conversations that @-tagged this record in chat — the flip side of smart
+// tags: from the entity page back to every discussion that mentioned it.
+// Member-scoped server-side, so it only ever lists threads you belong to.
+export function TaggedConversationsPanel({ entityType, entityId }: { entityType: string; entityId: string }) {
+  const [, navigate] = useLocation();
+  // Chat tagging is a staff feature (member-scoped BGP threads); a client
+  // viewer isn't in any of those threads, so firing this just 403s on every
+  // client property view. Skip it for client logins.
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"], staleTime: 5 * 60 * 1000 });
+  const isClientViewer = me?.role === "Client" || !!me?.companyScopeId;
+  const { data } = useQuery<{ threads: Array<{ id: string; title: string | null; updatedAt: string; hasAiMember?: boolean; lastMessage: string | null }> }>({
+    queryKey: ["/api/chat/threads-tagging", entityType, entityId],
+    enabled: !isClientViewer,
     queryFn: async () => {
-      const res = await fetch(`/api/crm/properties/${propertyId}/deals`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load linked deals");
+      const res = await fetch(`/api/chat/threads-tagging?type=${entityType}&id=${entityId}`, { credentials: "include" });
+      if (!res.ok) return { threads: [] };
       return res.json();
     },
   });
+  if (isClientViewer) return null;
+  const threads = data?.threads || [];
+  if (threads.length === 0) return null;
 
-  const dealsList = deals || [];
+  return (
+    <Card data-testid="tagged-conversations-panel">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <MessageSquare className="w-4 h-4" />
+          <h3 className="text-sm font-semibold">Conversations</h3>
+          <Badge variant="secondary" className="text-[10px]">{threads.length}</Badge>
+        </div>
+        <div className="space-y-2">
+          {threads.map((t) => (
+            <div
+              key={t.id}
+              className="block p-3 rounded-md border hover-elevate transition-colors cursor-pointer"
+              onClick={() => navigate(`/chatbgp?thread=${t.id}`)}
+              data-testid={`tagged-thread-${t.id}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium truncate">{t.title || "Conversation"}</span>
+                {t.hasAiMember && <Sparkles className="w-3 h-3 shrink-0 text-muted-foreground" />}
+              </div>
+              {t.lastMessage && (
+                <p className="text-xs text-muted-foreground truncate mt-1">{t.lastMessage}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
-  if (isLoading) {
+export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: string }) {
+  // The client login's Files board (Woody, 2026-08-03: "put back the files
+  // board but remove the name of the team that set up the folder tree").
+  // Browses the client's jailed SharePoint area (/api/client/sharepoint —
+  // read-only, server-verified to stay inside their own folder) and opens
+  // straight into this property's folder. Deliberately shows NO internal
+  // team names and no write actions.
+  const [trail, setTrail] = useState<Array<{ id: string; name: string }>>([]);
+  const [docQuery, setDocQuery] = useState("");
+  const [docSort, setDocSort] = useState<"name" | "size" | "modified">("name");
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  const { data: root, isLoading: rootLoading, error: rootError } = useQuery<{ id: string; name: string }>({
+    queryKey: ["/api/client/sharepoint/root"],
+    queryFn: async () => {
+      const r = await fetch("/api/client/sharepoint/root", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || "SharePoint unavailable");
+      return r.json();
+    },
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+
+  const { data: rootListing } = useQuery<{ items: any[] }>({
+    queryKey: ["/api/client/sharepoint/list", root?.id],
+    queryFn: async () => {
+      const r = await fetch(`/api/client/sharepoint/list?itemId=${encodeURIComponent(root!.id)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error("Couldn't list folder");
+      return r.json();
+    },
+    enabled: !!root?.id,
+    staleTime: 60_000,
+  });
+
+  // The property's own folder under the client root, matched loosely by name
+  // ("Bluewater" folder ↔ "Bluewater Shopping Centre" property).
+  const propFolder = useMemo(() => {
+    const items = rootListing?.items || [];
+    const p = norm(propertyName);
+    if (!p) return null;
+    return items.find((i: any) => i.isFolder && (p.includes(norm(i.name)) || norm(i.name).includes(p))) || null;
+  }, [rootListing, propertyName]);
+
+  const base = propFolder ? { id: propFolder.id, name: propFolder.name } : root ? { id: root.id, name: root.name } : null;
+  const currentId = trail.length > 0 ? trail[trail.length - 1].id : base?.id;
+
+  const { data: listing, isLoading: listLoading } = useQuery<{ items: any[] }>({
+    queryKey: ["/api/client/sharepoint/list", currentId],
+    queryFn: async () => {
+      const r = await fetch(`/api/client/sharepoint/list?itemId=${encodeURIComponent(currentId!)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error("Couldn't list folder");
+      return r.json();
+    },
+    enabled: !!currentId,
+    staleTime: 60_000,
+  });
+
+  const formatSize = (bytes: number | null) => {
+    if (bytes == null) return "";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  if (rootError) {
     return (
-      <Card data-testid="linked-deals-panel">
+      <Card data-testid="client-property-folders-panel">
         <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Handshake className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Linked Deals</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <FolderOpen className="w-4 h-4" />
+            <h3 className="text-sm font-semibold">Documents</h3>
           </div>
-          <div className="space-y-2">
-            {[1, 2].map((i) => <Skeleton key={i} className="h-14" />)}
-          </div>
+          <p className="text-xs text-muted-foreground">{(rootError as any)?.message || "No document folder is linked for your account yet — ask your BGP team."}</p>
         </CardContent>
       </Card>
     );
   }
 
+  const rawItems = listing?.items || [];
+  // Filter + sort (Woody, 2026-08-05: "documents board was meant to have a
+  // filter / sort solution"). Folders always sort above files; size sorting
+  // uses childCount for folders like the SharePoint browser does.
+  const q = docQuery.trim().toLowerCase();
+  const items = rawItems
+    .filter((i: any) => !q || (i.name || "").toLowerCase().includes(q))
+    .sort((a: any, b: any) => {
+      if (!!a.isFolder !== !!b.isFolder) return a.isFolder ? -1 : 1;
+      if (docSort === "size") return ((b.isFolder ? b.childCount : b.size) || 0) - ((a.isFolder ? a.childCount : a.size) || 0);
+      if (docSort === "modified") return new Date(b.lastModifiedDateTime || b.lastModified || 0).getTime() - new Date(a.lastModifiedDateTime || a.lastModified || 0).getTime();
+      return (a.name || "").localeCompare(b.name || "", undefined, { numeric: true });
+    });
   return (
-    <Card data-testid="linked-deals-panel">
+    <Card data-testid="client-property-folders-panel">
       <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Handshake className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Linked Deals</h3>
-            {dealsList.length > 0 && (
-              <Badge variant="secondary" className="text-[10px]">{dealsList.length}</Badge>
-            )}
+        <div className="flex items-center gap-2 mb-2">
+          <FolderOpen className="w-4 h-4" />
+          <h3 className="text-sm font-semibold">Documents</h3>
+          <div className="ml-auto flex items-center gap-1">
+            {([["name", "A–Z"], ["size", "Largest"], ["modified", "Newest"]] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setDocSort(key)}
+                data-no-min-touch
+                className={`text-[10px] px-1.5 py-0.5 rounded-full border ${docSort === key ? "bg-foreground text-background border-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
+                data-testid={`docs-sort-${key}`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
-
-        {dealsList.length === 0 ? (
-          <div className="text-center py-6">
-            <Handshake className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-xs text-muted-foreground">No deals linked to this property</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {dealsList.map((deal) => (
-              <Link
-                key={deal.id}
-                href={`/deals/${deal.id}`}
-              >
-                <div
-                  className="block p-3 rounded-md border hover-elevate transition-colors group cursor-pointer"
-                  data-testid={`deal-item-${deal.id}`}
+        <Input
+          value={docQuery}
+          onChange={(e) => setDocQuery(e.target.value)}
+          placeholder="Filter by name…"
+          className="h-7 text-xs mb-2"
+          data-testid="docs-filter-input"
+        />
+        {base && (
+          <div className="flex items-center gap-1 mb-2 text-[11px] flex-wrap">
+            <button onClick={() => setTrail([])} className={trail.length ? "text-primary hover:underline" : "text-foreground font-medium"} data-testid="client-folders-breadcrumb-root">
+              {propFolder ? propertyName : base.name}
+            </button>
+            {trail.map((t, i) => (
+              <span key={t.id} className="flex items-center gap-1">
+                <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                <button
+                  onClick={() => setTrail(trail.slice(0, i + 1))}
+                  className={i === trail.length - 1 ? "text-foreground font-medium" : "text-primary hover:underline"}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium truncate">{deal.name}</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    {deal.groupName && (
-                      <Badge variant="secondary" className="text-[10px]">
-                        {deal.groupName}
-                      </Badge>
-                    )}
-                    {deal.status && (
-                      <Badge variant="outline" className="text-[10px]">{deal.status}</Badge>
-                    )}
-                    {deal.team && (
-                      <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                        <Users className="w-3 h-3" />
-                        {deal.team}
-                      </span>
-                    )}
-                    {deal.updatedAt && (
-                      <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {new Date(deal.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </Link>
+                  {t.name}
+                </button>
+              </span>
             ))}
           </div>
         )}
+        {(rootLoading || listLoading) ? (
+          <div className="space-y-1">{[1, 2, 3].map(i => <Skeleton key={i} className="h-7" />)}</div>
+        ) : items.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-4">{q ? "No files or folders match." : "This folder is empty."}</p>
+        ) : (
+          <div className="space-y-0.5 max-h-[300px] overflow-y-auto pr-1">
+            {items.map((item: any) => item.isFolder ? (
+              <button
+                key={item.id}
+                onClick={() => setTrail([...trail, { id: item.id, name: item.name }])}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 text-left min-w-0"
+                data-testid={`client-folder-${item.id}`}
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <span className="text-xs truncate flex-1">{item.name}</span>
+                {item.childCount != null && <span className="text-[10px] text-muted-foreground shrink-0">{item.childCount}</span>}
+                <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
+              </button>
+            ) : (
+              <a
+                key={item.id}
+                href={`/api/client/sharepoint/content?itemId=${encodeURIComponent(item.id)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 min-w-0"
+                data-testid={`client-file-${item.id}`}
+              >
+                <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <span className="text-xs truncate flex-1">{item.name}</span>
+                <span className="text-[10px] text-muted-foreground shrink-0">{formatSize(item.size)}</span>
+                <FileDown className="w-3 h-3 text-muted-foreground shrink-0" />
+              </a>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function LinkedDealsPanel({ propertyId }: { propertyId: string }) {
+  // Thin wrapper around the canonical DealsSummary — the Deals twin of the
+  // tracker card. The old bespoke list showed raw status text with no stage
+  // counts and no route into the filtered Deals board.
+  return (
+    <Card data-testid="linked-deals-panel">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Handshake className="w-4 h-4" />
+          <h3 className="text-sm font-semibold">Linked Deals</h3>
+        </div>
+        <DealsSummary variant="card" propertyId={propertyId} />
       </CardContent>
     </Card>
   );
@@ -1783,70 +2634,244 @@ export function ClientBoardPanel({ propertyId, landlordId, allCompanies }: { pro
 }
 
 export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
-  const { data: deals } = useQuery<CrmDeal[]>({
-    queryKey: ["/api/crm/properties", propertyId, "deals"],
+  // Four evidence-based groups (Woody, 2026-08-05 rework): the internal
+  // team (BGP agents + the client's leasing directors), everyone on deals
+  // or tracker activity, tenants in occupation shown BRAND-FIRST, and
+  // consultants. Collapsible headers so the panel reads as a map, not a
+  // scroll. Never the raw company directory.
+  type LinkedContact = { id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; last_interaction: string | null; via: string | null; side?: string };
+  type OccupierRow = { company_id: string; company_name: string; contact: { id: string; name: string; role: string | null; email: string | null; last_interaction: string | null } | null };
+  const { data } = useQuery<{ landlord: LinkedContact[]; tenants: OccupierRow[]; deals: LinkedContact[]; interest: LinkedContact[]; internal: LinkedContact[]; consultants: LinkedContact[]; trackerUnlinked: Array<{ unit_name: string; status: string | null }>; pinned: LinkedContact[]; hiddenCount: number }>({
+    queryKey: ["/api/properties", propertyId, "linked-contacts"],
     queryFn: async () => {
-      const res = await fetch(`/api/crm/properties/${propertyId}/deals`, { credentials: "include" });
-      if (!res.ok) return [];
+      const res = await fetch(`/api/properties/${propertyId}/linked-contacts`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return { landlord: [], tenants: [], deals: [], interest: [], internal: [], consultants: [], trackerUnlinked: [], pinned: [], hiddenCount: 0 };
       return res.json();
     },
   });
 
-  const contactIds = useMemo(() => {
-    if (!deals) return [];
-    const ids = new Set<string>();
-    deals.forEach((d) => {
-      if (d.clientContactId) ids.add(d.clientContactId);
-      if (d.tenantId) ids.add(d.tenantId);
-    });
-    return Array.from(ids);
-  }, [deals]);
+  // Manual overrides — pin a contact the evidence missed, hide a wrong row.
+  const qcOverrides = useQueryClient();
+  const refreshLinked = () => qcOverrides.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linked-contacts"] });
+  const setOverride = async (contactId: string, kind: "pin" | "hide") => {
+    await apiRequest("POST", `/api/properties/${propertyId}/contact-override`, { contactId, kind }).catch(() => {});
+    refreshLinked();
+  };
+  const clearOverride = async (contactId: string) => {
+    await apiRequest("DELETE", `/api/properties/${propertyId}/contact-override/${contactId}`).catch(() => {});
+    refreshLinked();
+  };
+  const [addOpen, setAddOpen] = useState(false);
+  const [addSearch, setAddSearch] = useState("");
+  const { data: allCrmContacts = [] } = useQuery<any[]>({ queryKey: ["/api/crm/contacts"], enabled: addOpen, staleTime: 5 * 60 * 1000 });
+  const addMatches = addSearch.trim().length >= 2
+    ? allCrmContacts.filter(c => (c.name || "").toLowerCase().includes(addSearch.toLowerCase()) || (c.companyName || c.company_name || "").toLowerCase().includes(addSearch.toLowerCase())).slice(0, 8)
+    : [];
 
-  const { data: allContacts } = useQuery<CrmContact[]>({
-    queryKey: ["/api/crm/contacts"],
-    enabled: contactIds.length > 0,
-  });
+  // "On deals & tracker" merges deal parties with viewing/offer interest —
+  // one place for everyone actively in play, badges say why they're here.
+  const dealsAndTracker: LinkedContact[] = [
+    ...(data?.deals || []),
+    ...(data?.interest || []).filter(i => !(data?.deals || []).some(d => d.id === i.id)),
+  ];
+  const internal = data?.internal || [];
+  const landlordActive = (data?.landlord || []).filter(l => !internal.some(i => i.id === l.id));
+  const occupiers = data?.tenants || [];
+  const consultants = data?.consultants || [];
+  const trackerUnlinked = data?.trackerUnlinked || [];
+  const total = internal.length + dealsAndTracker.length + trackerUnlinked.length + landlordActive.length + occupiers.length + consultants.length;
 
-  const linkedContacts = useMemo(() => {
-    if (!allContacts || contactIds.length === 0) return [];
-    return allContacts.filter((c) => contactIds.includes(c.id));
-  }, [allContacts, contactIds]);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ internal: true, deals: true });
+
+  const personRow = (contact: LinkedContact, showVia: boolean, pinnedRow = false) => (
+    <div key={contact.id} className="group/lcrow relative">
+      <Link href={contact.id.startsWith("u-") ? "/hr" : contact.id.startsWith("co-") ? `/companies/${contact.company_id}` : `/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
+        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
+          {(contact.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+        </span>
+        <div className="flex-1 min-w-0">
+          <span className="text-xs font-medium truncate block">{contact.name}</span>
+          <span className="text-[10px] text-muted-foreground truncate block">
+            {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name !== contact.name ? contact.company_name : null].filter(Boolean).join(" · ")}
+          </span>
+        </div>
+        {contact.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">Client</Badge>}
+        {showVia && contact.via && contact.side !== "client" && (
+          <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate" title={contact.via}>{contact.via}</Badge>
+        )}
+        {contact.last_interaction && (
+          <span className="text-[9px] text-muted-foreground shrink-0">{new Date(contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+        )}
+      </Link>
+      {/* Hide (or unpin) — BGP team rows are managed on the property-team
+          map, so they don't get an X here. */}
+      {!contact.id.startsWith("u-") && !contact.id.startsWith("co-") && (
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); pinnedRow ? clearOverride(contact.id) : setOverride(contact.id, "hide"); }}
+          className="absolute right-0 top-1/2 -translate-y-1/2 hidden group-hover/lcrow:flex w-5 h-5 rounded-full bg-background border items-center justify-center text-muted-foreground hover:text-red-600 hover:border-red-300"
+          title={pinnedRow ? "Remove from this property" : "Hide from this property"}
+          data-testid={`contact-hide-${contact.id}`}
+        >
+          <X className="w-3 h-3" />
+        </button>
+      )}
+    </div>
+  );
+
+  const groupHeader = (key: string, title: string, count: number, tint: string) => (
+    <button
+      onClick={() => setOpenGroups(prev => ({ ...prev, [key]: !(prev[key] ?? false) }))}
+      className={`w-full flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-semibold py-1 rounded hover:bg-muted/50 transition-colors ${tint}`}
+      data-testid={`linked-contacts-group-${key}`}
+    >
+      {(openGroups[key] ?? false) ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+      <span className="text-left flex-1">{title}</span>
+      <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>
+    </button>
+  );
 
   return (
     <Card data-testid="linked-contacts-panel">
       <CardContent className="p-4">
-        <div className="flex items-center gap-2 mb-3">
+        <div className="flex items-center gap-2 mb-2">
           <Users className="w-4 h-4" />
-          <h3 className="text-sm font-semibold">Related Contacts</h3>
-          {linkedContacts.length > 0 && (
-            <Badge variant="secondary" className="text-[10px]">{linkedContacts.length}</Badge>
-          )}
+          <h3 className="text-sm font-semibold">Linked Contacts</h3>
+          {total > 0 && <Badge variant="secondary" className="text-[10px]">{total}</Badge>}
+          <div className="flex-1" />
+          <button
+            onClick={() => { setAddOpen(v => !v); setAddSearch(""); }}
+            className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+            data-testid="linked-contacts-add"
+          >
+            <Plus className="w-3 h-3" /> Add
+          </button>
         </div>
-        {linkedContacts.length === 0 ? (
+        {addOpen && (
+          <div className="mb-2 border rounded-md p-2 bg-muted/30">
+            <Input
+              autoFocus
+              placeholder="Search CRM contacts…"
+              value={addSearch}
+              onChange={(e) => setAddSearch(e.target.value)}
+              className="h-7 text-xs"
+              data-testid="linked-contacts-add-search"
+            />
+            {addSearch.trim().length >= 2 && (
+              <div className="mt-1.5 space-y-0.5 max-h-[180px] overflow-y-auto">
+                {addMatches.length === 0 ? (
+                  <p className="text-[10px] text-muted-foreground italic px-1 py-1">No matching CRM contacts.</p>
+                ) : addMatches.map((c: any) => (
+                  <button
+                    key={c.id}
+                    onClick={async () => { await setOverride(c.id, "pin"); setAddOpen(false); setAddSearch(""); }}
+                    className="w-full flex items-center gap-2 px-2 py-1 rounded hover:bg-muted text-left"
+                    data-testid={`linked-contacts-add-${c.id}`}
+                  >
+                    <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[8px] font-semibold shrink-0">
+                      {(c.name || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
+                    </span>
+                    <span className="text-xs truncate">{c.name}</span>
+                    <span className="text-[10px] text-muted-foreground truncate">{c.companyName || c.company_name || ""}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {total === 0 ? (
           <div className="text-center py-6">
             <Users className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-xs text-muted-foreground">No contacts linked via deals</p>
+            <p className="text-xs text-muted-foreground">Nobody actively involved yet — contacts appear here from the property team, deals, viewings, offers and the tenancy schedule.</p>
           </div>
         ) : (
-          <div className="space-y-1">
-            {linkedContacts.map((contact) => (
-              <div
-                key={contact.id}
-                className="flex items-center gap-2 px-2 py-1.5 rounded-md"
-                data-testid={`contact-item-${contact.id}`}
-              >
-                <Users className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <span className="text-xs font-medium truncate block">{contact.name}</span>
-                  {contact.companyName && (
-                    <span className="text-[10px] text-muted-foreground truncate block">{contact.companyName}</span>
-                  )}
-                </div>
-                {contact.role && (
-                  <Badge variant="outline" className="text-[10px] shrink-0">{contact.role}</Badge>
+          <div className="space-y-1.5 max-h-[480px] overflow-y-auto pr-1">
+            {internal.length > 0 && (
+              <div>
+                {groupHeader("internal", "Internal team", internal.length, "text-foreground")}
+                {(openGroups.internal ?? false) && <div className="space-y-0.5 mt-0.5">{internal.map(c => personRow(c, false))}</div>}
+              </div>
+            )}
+            {(data?.pinned || []).length > 0 && (
+              <div>
+                {groupHeader("pinned", "Added by team", (data?.pinned || []).length, "text-primary")}
+                {(openGroups.pinned ?? true) && <div className="space-y-0.5 mt-0.5">{(data?.pinned || []).map(c => personRow(c, false, true))}</div>}
+              </div>
+            )}
+            {(dealsAndTracker.length > 0 || trackerUnlinked.length > 0) && (
+              <div>
+                {groupHeader("deals", "On deals & tracker", dealsAndTracker.length + trackerUnlinked.length, "text-emerald-700")}
+                {(openGroups.deals ?? false) && (
+                  <div className="space-y-0.5 mt-0.5">
+                    {dealsAndTracker.map(c => personRow(c, true))}
+                    {/* Active tracker units with nobody linked — visible gap,
+                        not a silently empty group. Linking the brand on the
+                        tracker makes the contact appear here automatically. */}
+                    {trackerUnlinked.map(u => (
+                      <Link key={u.unit_name} href="/available" className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-amber-50 min-w-0" data-testid={`tracker-unlinked-${u.unit_name}`}>
+                        <span className="w-6 h-6 rounded bg-amber-100 text-amber-700 flex items-center justify-center text-[9px] font-semibold shrink-0">!</span>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-xs font-medium truncate block">{u.unit_name}</span>
+                          <span className="text-[10px] text-amber-700 truncate block">{u.status || "active"} — no brand linked yet, add it on the tracker</span>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
                 )}
               </div>
-            ))}
+            )}
+            {landlordActive.length > 0 && (
+              <div>
+                {groupHeader("landlord", "Landlord — active", landlordActive.length, "text-blue-700")}
+                {(openGroups.landlord ?? false) && <div className="space-y-0.5 mt-0.5">{landlordActive.map(c => personRow(c, false))}</div>}
+              </div>
+            )}
+            {occupiers.length > 0 && (
+              <div>
+                {groupHeader("tenants", "In occupation", occupiers.length, "text-muted-foreground")}
+                {(openGroups.tenants ?? false) && (
+                  <div className="space-y-0.5 mt-0.5">
+                    {occupiers.map(o => (
+                      <div key={o.company_id} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`occupier-item-${o.company_id}`}>
+                        <img
+                          src={localBrandLogoUrl(o.company_name) || ""}
+                          alt=""
+                          className="w-6 h-6 rounded object-contain bg-white border shrink-0"
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <Link href={`/companies/${o.company_id}`} className="text-xs font-semibold truncate block hover:underline">{o.company_name}</Link>
+                          {o.contact ? (
+                            <Link href={`/contacts/${o.contact.id}`} className="text-[10px] text-muted-foreground truncate block hover:underline">
+                              {[o.contact.name, o.contact.role].filter(Boolean).join(" · ")}
+                            </Link>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground/60 italic block">no contact on file</span>
+                          )}
+                        </div>
+                        {o.contact?.last_interaction && (
+                          <span className="text-[9px] text-muted-foreground shrink-0">{new Date(o.contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {consultants.length > 0 && (
+              <div>
+                {groupHeader("consultants", "Consultants", consultants.length, "text-violet-700")}
+                {(openGroups.consultants ?? false) && <div className="space-y-0.5 mt-0.5">{consultants.map(c => personRow(c, true))}</div>}
+              </div>
+            )}
+            {(data?.hiddenCount || 0) > 0 && (
+              <button
+                onClick={() => clearOverride("__hidden__")}
+                className="text-[10px] text-muted-foreground hover:text-foreground hover:underline px-2 pt-1"
+                data-testid="linked-contacts-restore-hidden"
+              >
+                {data!.hiddenCount} hidden — restore
+              </button>
+            )}
           </div>
         )}
       </CardContent>
@@ -1862,7 +2887,25 @@ function CreatePropertyDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { toast } = useToast();
-  const [formData, setFormData] = useState({
+  // When the address autocomplete resolves to a UPRN-canonical property
+  // that already exists in CRM, we capture its id here. Save then routes
+  // to it instead of creating a duplicate.
+  const [resolvedExistingId, setResolvedExistingId] = useState<string | null>(null);
+  // Landlord candidates for the inline picker. Same shape and react-query key
+  // as the parent fetch, so this is a cache-hit and adds no extra network.
+  const { data: allCompaniesForLandlord = [] } = useQuery<CrmCompany[]>({
+    queryKey: ["/api/crm/companies"],
+  });
+  const landlordOptions = useMemo(() => {
+    return allCompaniesForLandlord
+      .filter((c) => {
+        const t = (c.companyType || "").toLowerCase();
+        return t.includes("landlord") || t.includes("investor") || t.includes("developer")
+          || t.includes("reit") || t.includes("fund") || t.includes("freeholder");
+      })
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  }, [allCompaniesForLandlord]);
+  const emptyCreateForm = {
     name: "",
     groupName: "Properties",
     status: "",
@@ -1872,26 +2915,68 @@ function CreatePropertyDialog({
     address: null as any,
     agent: "",
     sqft: "",
+    landlordId: "",
     notes: "",
     website: "",
-  });
+  };
+  const [formData, setFormData] = useState(emptyCreateForm);
+
+  // Reset on EVERY close, not just successful create. The dialog stays
+  // mounted, so a cancelled session otherwise leaves resolvedExistingId
+  // armed — and the next "Create" silently PATCHes that old property.
+  const handleOpenChange = (v: boolean) => {
+    if (!v) {
+      setFormData(emptyCreateForm);
+      setResolvedExistingId(null);
+    }
+    onOpenChange(v);
+  };
 
   const createMutation = useMutation({
     mutationFn: async () => {
+      // Dedupe via resolver — if this address resolved to an existing
+      // UPRN-canonical property, update that one with the form's other
+      // fields instead of creating a duplicate.
+      if (resolvedExistingId) {
+        const updates: any = { ...formData };
+        if (updates.sqft) updates.sqft = parseFloat(updates.sqft);
+        else delete updates.sqft;
+        if (Array.isArray(updates.assetClass)) {
+          updates.assetClass = updates.assetClass.length > 0 ? updates.assetClass.join(", ") : null;
+        }
+        // Don't overwrite the resolver-set address with the same payload
+        Object.keys(updates).forEach((k) => {
+          if (updates[k] === "" || (Array.isArray(updates[k]) && updates[k].length === 0)) delete updates[k];
+        });
+        const res = await apiRequest("PATCH", `/api/crm/properties/${resolvedExistingId}`, updates);
+        return { ...(await res.json()), _existingId: resolvedExistingId };
+      }
       const payload: any = { ...formData };
       if (payload.sqft) payload.sqft = parseFloat(payload.sqft);
       else delete payload.sqft;
+      // Asset class is a single text column on crm_properties. The form allows
+      // multi-select for properties that genuinely serve multiple uses (Retail
+      // + F&B + Leisure on a shopping centre) — flatten to CSV before send.
+      if (Array.isArray(payload.assetClass)) {
+        payload.assetClass = payload.assetClass.length > 0 ? payload.assetClass.join(", ") : null;
+      }
       Object.keys(payload).forEach((k) => {
         if (payload[k] === "" || (Array.isArray(payload[k]) && payload[k].length === 0)) delete payload[k];
       });
       const res = await apiRequest("POST", "/api/crm/properties", payload);
       return res.json();
     },
-    onSuccess: () => {
-      toast({ title: "Property Created", description: `${formData.name} has been added.` });
+    onSuccess: (data: any) => {
+      toast({
+        title: data?._existingId ? "Property Updated" : "Property Created",
+        description: data?._existingId
+          ? `${formData.name} already existed — your changes have been merged in.`
+          : `${formData.name} has been added.`,
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
       onOpenChange(false);
-      setFormData({ name: "", groupName: "Properties", status: "", assetClass: [], tenure: "", bgpEngagement: [], address: null, agent: "", sqft: "", notes: "", website: "" });
+      setFormData({ name: "", groupName: "Properties", status: "", assetClass: [], tenure: "", bgpEngagement: [], address: null, agent: "", sqft: "", notes: "", website: "", landlordId: "" });
+      setResolvedExistingId(null);
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message || "Failed to create property", variant: "destructive" });
@@ -1899,12 +2984,12 @@ function CreatePropertyDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-lg" data-testid="dialog-create-property">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Building2 className="w-5 h-5" />
-            New Property
+            Add property
           </DialogTitle>
           <DialogDescription>Add a new property to the CRM</DialogDescription>
         </DialogHeader>
@@ -1922,20 +3007,51 @@ function CreatePropertyDialog({
             <Label>Address</Label>
             <AddressAutocomplete
               value={formData.address ? addressToResult(formData.address) : null}
-              onChange={(result) => setFormData((p) => ({ ...p, address: resultToAddress(result) }))}
+              onChange={(result) => {
+                // Mirror Google's structured fields into the top-level
+                // postcode/lat/lng columns too — not just the address jsonb —
+                // so downstream readers (Brand Gap, exports, healthcheck) see
+                // the postcode.
+                setFormData((p) => ({
+                  ...p,
+                  address: resultToAddress(result),
+                  postcode: result?.postcode || null,
+                  latitude: result?.lat != null ? String(result.lat) : null,
+                  longitude: result?.lng != null ? String(result.lng) : null,
+                }));
+                // If the user clears the address, drop the resolver link too
+                if (!result) setResolvedExistingId(null);
+              }}
               placeholder="Search for an address..."
+              resolveProperty
+              onResolve={(propertyId) => setResolvedExistingId(propertyId)}
             />
+            {resolvedExistingId && (
+              <div className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5 bg-amber-50 dark:bg-amber-900/20 rounded px-2 py-1.5">
+                <span className="shrink-0">ℹ️</span>
+                <span>
+                  This address already has a CRM record. Saving will open it instead of creating a duplicate.{" "}
+                  <a href={`/properties/${resolvedExistingId}`} className="underline font-medium">
+                    Open now
+                  </a>
+                </span>
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>Group</Label>
-              <Select value={formData.groupName} onValueChange={(v) => setFormData((p) => ({ ...p, groupName: v }))}>
-                <SelectTrigger data-testid="select-group">
-                  <SelectValue placeholder="Select group" />
+              <Label>Landlord</Label>
+              <Select
+                value={formData.landlordId || "__none__"}
+                onValueChange={(v) => setFormData((p) => ({ ...p, landlordId: v === "__none__" ? "" : v }))}
+              >
+                <SelectTrigger data-testid="select-landlord">
+                  <SelectValue placeholder="Select landlord" />
                 </SelectTrigger>
                 <SelectContent>
-                  {GROUP_TABS.filter((g) => g.id !== "all").map((g) => (
-                    <SelectItem key={g.id} value={g.id}>{g.label}</SelectItem>
+                  <SelectItem value="__none__">(none)</SelectItem>
+                  {landlordOptions.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -2022,7 +3138,7 @@ function CreatePropertyDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-create-property">
+          <Button variant="outline" onClick={() => handleOpenChange(false)} data-testid="button-cancel-create-property">
             Cancel
           </Button>
           <Button
@@ -2168,7 +3284,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
   const kycStatus = property.proprietorKycStatus;
   const prof = kycData?.profile;
 
-  const postcode = (property.address as any)?.postcode || "";
+  const postcode = (property.address as any)?.postcode || (property as any).postcode || "";
 
   const searchFreeholds = async () => {
     if (!postcode) {
@@ -2373,7 +3489,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
       } catch {}
       setScreening(false);
 
-      toast({ title: "KYC Complete", description: `${data.kycStatus === "pass" ? "Passed" : data.kycStatus === "warning" ? "Needs review" : "Failed"}` });
+      toast({ title: "KYC Complete", description: `${data.kycStatus === "approved" ? "Passed" : data.kycStatus === "in_review" ? "Needs review" : "Failed"}` });
     } catch (err: any) {
       toast({ title: "KYC Error", description: err.message, variant: "destructive" });
     } finally {
@@ -2414,11 +3530,11 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
   };
 
   const getKycBadge = () => {
-    if (kycStatus === "pass") return <Badge className="text-[9px] bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Passed</Badge>;
-    if (kycStatus === "warning") return <Badge className="text-[9px] bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Review</Badge>;
-    if (kycStatus === "fail") return <Badge className="text-[9px] bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">Failed</Badge>;
-    if (kycStatus === "individual") return <Badge className="text-[9px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Individual</Badge>;
-    if (kycStatus === "not_found") return <Badge variant="outline" className="text-[9px]">Not found</Badge>;
+    if (kycStatus === "approved") return <Badge className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Passed</Badge>;
+    if (kycStatus === "in_review") return <Badge className="text-[10px] bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Review</Badge>;
+    if (kycStatus === "rejected") return <Badge className="text-[10px] bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">Failed</Badge>;
+    if (kycStatus === "pending") return <Badge variant="outline" className="text-[10px]">Pending</Badge>;
+    if (kycStatus === "expired") return <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700">Expired</Badge>;
     return null;
   };
 
@@ -2426,9 +3542,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
     const lines: string[] = [];
     lines.push(`PROPERTY KYC REPORT — ${property.name}`);
     lines.push(`Generated: ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`);
-    lines.push(`Address: ${property.address ? [
-      (property.address as any).line1, (property.address as any).line2, (property.address as any).city, (property.address as any).postcode
-    ].filter(Boolean).join(", ") : "N/A"}`);
+    lines.push(`Address: ${formatAddress(property.address) || "N/A"}`);
     lines.push("");
     if (property.titleNumber) lines.push(`Title Number: ${property.titleNumber}`);
     if (property.proprietorName) {
@@ -2439,7 +3553,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
     if (property.proprietorCompanyNumber) lines.push(`Company Number: ${property.proprietorCompanyNumber}`);
     lines.push("");
     if (prof) {
-      lines.push(`KYC Status: ${kycStatus === "pass" ? "PASS" : kycStatus === "warning" ? "WARNING" : kycStatus === "fail" ? "FAIL" : kycStatus?.toUpperCase() || "NOT CHECKED"}`);
+      lines.push(`KYC Status: ${kycStatus === "approved" ? "PASS" : kycStatus === "in_review" ? "WARNING" : kycStatus === "rejected" ? "FAIL" : kycStatus?.toUpperCase() || "NOT CHECKED"}`);
       lines.push(`CH Status: ${prof.companyStatus}`);
       if (prof.companyType) lines.push(`Type: ${prof.companyType}`);
       const pscs = (kycData?.pscs || []).filter((p: any) => !p.ceasedOn);
@@ -2466,9 +3580,9 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
           <h3 className="font-semibold text-sm flex items-center gap-2">
             <ShieldCheck className="w-4 h-4" />
             Property KYC & Ownership
-            {kycStatus === "pass" && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
-            {kycStatus === "fail" && <XCircle className="w-3.5 h-3.5 text-red-500" />}
-            {kycStatus === "warning" && <AlertCircle className="w-3.5 h-3.5 text-yellow-500" />}
+            {kycStatus === "approved" && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
+            {kycStatus === "rejected" && <XCircle className="w-3.5 h-3.5 text-red-500" />}
+            {kycStatus === "in_review" && <AlertCircle className="w-3.5 h-3.5 text-yellow-500" />}
           </h3>
           {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
         </button>
@@ -2551,12 +3665,12 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
                       <div className="flex gap-x-4 text-[11px]">
                         <span className="text-muted-foreground">Proprietor:</span>
                         <span className="font-medium">{property.proprietorName || "—"}</span>
-                        <Badge variant="outline" className="text-[9px]">{property.proprietorType === "individual" ? "Individual" : "Company"}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{property.proprietorType === "individual" ? "Individual" : "Company"}</Badge>
                       </div>
                       {property.proprietorCompanyNumber && (
                         <div className="flex gap-x-4 text-[11px]">
                           <span className="text-muted-foreground">Co. No:</span>
-                          <a href={`https://find-and-update.company-information.service.gov.uk/company/${property.proprietorCompanyNumber}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5">
+                          <a href={`https://find-and-update.company-information.service.gov.uk/company/${property.proprietorCompanyNumber}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-0.5">
                             {property.proprietorCompanyNumber} <ExternalLink className="w-2.5 h-2.5" />
                           </a>
                         </div>
@@ -2638,13 +3752,13 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
                             <div className="flex-1 min-w-0">
                               <span className="font-mono font-medium">{tn}</span>
                               {t.address && <span className="text-muted-foreground ml-2 truncate">{t.address}</span>}
-                              {t.ownership_type && <Badge variant="outline" className="text-[8px] ml-1">{t.ownership_type}</Badge>}
+                              {t.ownership_type && <Badge variant="outline" className="text-[10px] ml-1">{t.ownership_type}</Badge>}
                             </div>
                             <div className="flex items-center gap-0.5 shrink-0">
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-5 px-1 text-[9px] gap-0.5"
+                                className="h-5 px-1 text-[10px] gap-0.5"
                                 onClick={() => downloadKycDocument(tn, "register")}
                                 disabled={downloadingKycDoc === `${tn}-register`}
                                 data-testid={`button-download-freehold-${idx}`}
@@ -2682,13 +3796,13 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
                             {ld.ownership?.details?.owner && (
                               <span className="text-muted-foreground ml-2 truncate">{ld.ownership.details.owner}</span>
                             )}
-                            <Badge variant="outline" className="text-[8px] ml-1">{ld.class || "Leasehold"}</Badge>
+                            <Badge variant="outline" className="text-[10px] ml-1">{ld.class || "Leasehold"}</Badge>
                           </div>
                           <div className="flex items-center gap-0.5 shrink-0">
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-5 px-1 text-[9px] gap-0.5"
+                              className="h-5 px-1 text-[10px] gap-0.5"
                               onClick={() => downloadKycDocument(ld.titleNumber, "register")}
                               disabled={downloadingKycDoc === `${ld.titleNumber}-register`}
                               data-testid={`button-download-leasehold-${idx}`}
@@ -2741,7 +3855,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
                   <span className="text-xs font-semibold">Companies House — {prof.companyName}</span>
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-muted-foreground">
-                  <a href={`https://find-and-update.company-information.service.gov.uk/company/${prof.companyNumber}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5">
+                  <a href={`https://find-and-update.company-information.service.gov.uk/company/${prof.companyNumber}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-0.5">
                     CH: {prof.companyNumber} <ExternalLink className="w-2.5 h-2.5" />
                   </a>
                   <span>Status: <span className={prof.companyStatus === "active" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>{prof.companyStatus}</span></span>
@@ -2849,6 +3963,13 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
     },
   });
 
+  // Same AI brand-suggestions dialog as the Letting Tracker — one structure,
+  // every surface a unit appears on (Woody, 2026-08-04). Staff-only: the
+  // target write is a research POST clients can't make.
+  const [suggestUnit, setSuggestUnit] = useState<{ id: string; unitName: string } | null>(null);
+  const { data: ltsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const ltsIsClient = !ltsViewer || ltsViewer.role === "Client" || !!ltsViewer.companyScopeId;
+
   const { data: viewingCounts } = useQuery<Record<string, number>>({
     queryKey: ["/api/available-units/all-viewings-counts"],
   });
@@ -2864,20 +3985,17 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
   const safeUnits = units || [];
   const hasUnits = safeUnits.length > 0;
   const totalUnits = safeUnits.length;
-  const available = safeUnits.filter(u => u.marketingStatus === "Available").length;
-  const underOffer = safeUnits.filter(u => u.marketingStatus === "Under Offer").length;
-  const let_ = safeUnits.filter(u => u.marketingStatus === "Let").length;
+  const available = safeUnits.filter(u => legacyToCode(u.marketingStatus) === "AVA").length;
+  const underOffer = safeUnits.filter(u => legacyToCode(u.marketingStatus) === "SOL").length;
+  const let_ = safeUnits.filter(u => legacyToCode(u.marketingStatus) === "COM").length;
   const totalSqft = safeUnits.reduce((s: number, u: any) => s + (u.sqft || 0), 0);
-  const availSqft = safeUnits.filter(u => u.marketingStatus === "Available").reduce((s: number, u: any) => s + (u.sqft || 0), 0);
+  const availSqft = safeUnits.filter(u => legacyToCode(u.marketingStatus) === "AVA").reduce((s: number, u: any) => s + (u.sqft || 0), 0);
   const totalViewings = safeUnits.reduce((s: number, u: any) => s + (viewingCounts?.[u.id] || 0), 0);
   const totalOffers = safeUnits.reduce((s: number, u: any) => s + (offerCounts?.[u.id] || 0), 0);
 
   const statusColor = (status: string) => {
-    if (status === "Available") return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
-    if (status === "Under Offer") return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
-    if (status === "Let") return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
-    if (status === "Withdrawn") return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
-    return "bg-gray-100 text-gray-600";
+    const code = legacyToCode(status);
+    return (code && DEAL_STATUS_BADGE_COLORS[code]) || "bg-gray-100 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300";
   };
 
   return (
@@ -2887,7 +4005,7 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
           <h3 className="font-semibold text-sm flex items-center gap-2">
             <Building2 className="w-4 h-4" />
             Leasing Tracker
-            <Badge variant="outline" className="text-[9px]">{totalUnits} unit{totalUnits !== 1 ? "s" : ""}</Badge>
+            <Badge variant="outline" className="text-[10px]">{totalUnits} unit{totalUnits !== 1 ? "s" : ""}</Badge>
           </h3>
           {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
         </button>
@@ -2942,14 +4060,26 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
                       {unit.askingRent && <span className="text-[10px] text-muted-foreground">£{unit.askingRent.toLocaleString()}/pa</span>}
                       {vc > 0 && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" />{vc}</span>}
                       {oc > 0 && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><FileText className="w-2.5 h-2.5" />{oc}</span>}
-                      <Badge className={`text-[9px] ${statusColor(unit.marketingStatus || "Available")}`}>{unit.marketingStatus || "Available"}</Badge>
+                      {!ltsIsClient && legacyToCode(unit.marketingStatus || "AVA") === "AVA" && (
+                        <button
+                          onClick={() => setSuggestUnit({ id: unit.id, unitName: unit.unitName })}
+                          className="text-muted-foreground hover:text-foreground transition-colors"
+                          title="AI: which brands should we pitch this unit to?"
+                          data-testid={`button-suggest-brands-${unit.id}`}
+                        >
+                          <Sparkles className="w-3 h-3" />
+                        </button>
+                      )}
+                      <Badge variant="outline" className={`border-transparent text-[10px] ${statusColor(unit.marketingStatus || "AVA")}`}>{(() => { const c = legacyToCode(unit.marketingStatus); return c ? DEAL_STATUS_LABELS[c] : (unit.marketingStatus || "Available"); })()}</Badge>
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            <Link href={`/deals?tab=letting&propertyId=${propertyId}`}>
+            <SuggestTargetsDialog unit={suggestUnit} onClose={() => setSuggestUnit(null)} />
+
+            <Link href={`/deals/letting?propertyId=${propertyId}`}>
               <Button variant="outline" size="sm" className="w-full h-7 text-[11px] gap-1" data-testid="button-view-leasing-tracker">
                 <ExternalLink className="w-3 h-3" />
                 Open in Leasing Tracker
@@ -2984,6 +4114,18 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
     staleTime: 10 * 60 * 1000,
   });
 
+  const { data: marketTone } = useQuery<any>({
+    queryKey: ["/api/market-tone", postcode],
+    queryFn: async () => {
+      if (!postcode) return null;
+      const res = await fetch(`/api/market-tone?postcode=${encodeURIComponent(postcode)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!postcode,
+    staleTime: 30 * 60 * 1000,
+  });
+
   const [fetchingTitle, setFetchingTitle] = useState<string | null>(null);
   const [aiMatch, setAiMatch] = useState<{ matchIndex: number | null; titleNumber: string | null; confidence: string; reason: string } | null>(null);
   const [aiMatchLoading, setAiMatchLoading] = useState(false);
@@ -2991,6 +4133,45 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
   const [expandedLeaseholds, setExpandedLeaseholds] = useState<Record<string, boolean>>({});
   const [leaseholdsData, setLeaseholdsData] = useState<Record<string, { titles: string[]; details: any[]; loading: boolean; page: number }>>({});
   const [downloadingDoc, setDownloadingDoc] = useState<string | null>(null);
+
+  const freeholds = data?.propertyDataCoUk?.freeholds?.data || [];
+  const hasFreeholds = freeholds.length > 0;
+
+  // Hooks must run on every render — these lived below the early
+  // no-postcode return, which crashed the panel with "Rendered more
+  // hooks" the moment a postcode arrived on a mounted instance.
+  useEffect(() => {
+    setAiMatch(null);
+    setAiMatchRan(false);
+    setAiMatchLoading(false);
+  }, [property.id]);
+
+  useEffect(() => {
+    if (hasFreeholds && !aiMatchRan && !property.titleNumber && fullAddress) {
+      setAiMatchRan(true);
+      setAiMatchLoading(true);
+      fetch("/api/title-search/ai-match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ propertyAddress: fullAddress, freeholds }),
+      })
+        .then(r => {
+          if (!r.ok) throw new Error("AI match failed");
+          return r.json();
+        })
+        .then(d => {
+          if (d.match) {
+            setAiMatch(d.match);
+            if (d.match.titleNumber && (d.match.confidence === "high" || d.match.confidence === "medium")) {
+              fillTitleFromIntelligence(d.match.titleNumber);
+            }
+          }
+        })
+        .catch(() => setAiMatch(null))
+        .finally(() => setAiMatchLoading(false));
+    }
+  }, [hasFreeholds, aiMatchRan, property.titleNumber, fullAddress]);
 
   if (!postcode) {
     return (
@@ -3009,8 +4190,6 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
     );
   }
 
-  const freeholds = data?.propertyDataCoUk?.freeholds?.data || [];
-  const hasFreeholds = freeholds.length > 0;
 
   const downloadTitleDocument = async (titleNumber: string, docType: "register" | "plan" = "register") => {
     setDownloadingDoc(`${titleNumber}-${docType}`);
@@ -3097,38 +4276,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
     }
   };
 
-  useEffect(() => {
-    setAiMatch(null);
-    setAiMatchRan(false);
-    setAiMatchLoading(false);
-  }, [property.id]);
 
-  useEffect(() => {
-    if (hasFreeholds && !aiMatchRan && !property.titleNumber && fullAddress) {
-      setAiMatchRan(true);
-      setAiMatchLoading(true);
-      fetch("/api/title-search/ai-match", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ propertyAddress: fullAddress, freeholds }),
-      })
-        .then(r => {
-          if (!r.ok) throw new Error("AI match failed");
-          return r.json();
-        })
-        .then(d => {
-          if (d.match) {
-            setAiMatch(d.match);
-            if (d.match.titleNumber && (d.match.confidence === "high" || d.match.confidence === "medium")) {
-              fillTitleFromIntelligence(d.match.titleNumber);
-            }
-          }
-        })
-        .catch(() => setAiMatch(null))
-        .finally(() => setAiMatchLoading(false));
-    }
-  }, [hasFreeholds, aiMatchRan, property.titleNumber, fullAddress]);
 
   const fillTitleFromIntelligence = async (selectedTitle: string) => {
     setFetchingTitle(selectedTitle);
@@ -3225,7 +4373,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                   <div className="space-y-1">
                     <p className="text-[10px] text-muted-foreground mb-1">{freeholds.length} freehold title{freeholds.length !== 1 ? "s" : ""} found for {postcode}</p>
                     {aiMatchLoading && (
-                      <div className="flex items-center gap-2 p-2 bg-violet-50 dark:bg-violet-950/30 rounded text-[10px] text-violet-700 dark:text-violet-300">
+                      <div className="flex items-center gap-2 p-2 bg-muted/40 rounded text-[10px] text-muted-foreground">
                         <Loader2 className="w-3 h-3 animate-spin" />
                         AI is matching your property address to the correct title...
                       </div>
@@ -3235,7 +4383,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                         <div className="flex items-center gap-1.5 mb-0.5">
                           <Sparkles className="w-3 h-3 text-green-600" />
                           <span className="text-[10px] font-semibold text-green-800 dark:text-green-200">AI Recommendation</span>
-                          <Badge variant="outline" className={`text-[8px] ${aiMatch.confidence === "high" ? "border-green-500 text-green-700" : aiMatch.confidence === "medium" ? "border-yellow-500 text-yellow-700" : "border-orange-500 text-orange-700"}`}>
+                          <Badge variant="outline" className={`text-[10px] ${aiMatch.confidence === "high" ? "border-green-500 text-green-700" : aiMatch.confidence === "medium" ? "border-yellow-500 text-yellow-700" : "border-orange-500 text-orange-700"}`}>
                             {aiMatch.confidence} confidence
                           </Badge>
                         </div>
@@ -3253,21 +4401,21 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                       return sorted.map((fh: any, i: number) => {
                         const tn = fh.title_number || fh.title;
                         const isSelected = property.titleNumber === tn;
-                        const isAiRecommended = aiMatch?.titleNumber === tn && aiMatch.confidence !== "none" && !property.titleNumber;
+                        const isAiRecommended = !!aiMatch && aiMatch.titleNumber === tn && aiMatch.confidence !== "none" && !property.titleNumber;
                         const lhCount = fh.polygons?.[0]?.leaseholds || 0;
                         const lhData = leaseholdsData[tn];
                         const isExpanded = expandedLeaseholds[tn];
                         return (
                           <div key={tn} className="space-y-1">
-                            <div className={`flex items-center justify-between p-2 rounded ${isSelected ? "bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800" : isAiRecommended ? "bg-green-50 dark:bg-green-950/20 border border-green-300 dark:border-green-800" : "bg-muted/30"}`}>
+                            <div className={`flex items-center justify-between p-2 rounded ${isSelected ? "bg-muted/40 border border-border" : isAiRecommended ? "bg-green-50 dark:bg-green-950/20 border border-green-300 dark:border-green-800" : "bg-muted/30"}`}>
                               <div className="min-w-0 flex-1">
                                 <span className="font-mono font-medium text-[11px]">{tn}</span>
                                 {fh.address && <span className="text-[10px] text-muted-foreground ml-2">{fh.address}</span>}
-                                {fh.ownership_type && <Badge variant="outline" className="text-[8px] ml-1">{fh.ownership_type}</Badge>}
-                                {isSelected && <Badge className="text-[8px] ml-1 bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Selected</Badge>}
-                                {isAiRecommended && <Badge className="text-[8px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
+                                {fh.ownership_type && <Badge variant="outline" className="text-[10px] ml-1">{fh.ownership_type}</Badge>}
+                                {isSelected && <Badge className="text-[10px] ml-1 bg-foreground text-background">Selected</Badge>}
+                                {isAiRecommended && <Badge className="text-[10px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
                                 {lhCount > 0 && (
-                                  <Badge variant="outline" className="text-[8px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
+                                  <Badge variant="outline" className="text-[10px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
                                     {lhCount} lease{lhCount !== 1 ? "s" : ""}
                                     {isExpanded ? " ▾" : " ▸"}
                                   </Badge>
@@ -3326,7 +4474,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-5 text-[9px] gap-0.5"
+                                        className="h-5 text-[10px] gap-0.5"
                                         onClick={() => downloadTitleDocument(ld.titleNumber, "register")}
                                         disabled={downloadingDoc === `${ld.titleNumber}-register`}
                                         data-testid={`button-download-leasehold-intel-${li}`}
@@ -3336,7 +4484,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-5 text-[9px] gap-0.5"
+                                        className="h-5 text-[10px] gap-0.5"
                                         onClick={() => fillTitleFromIntelligence(ld.titleNumber)}
                                         disabled={!!fetchingTitle}
                                         data-testid={`button-fill-leasehold-${li}`}
@@ -3351,7 +4499,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    className="w-full h-5 text-[9px]"
+                                    className="w-full h-5 text-[10px]"
                                     onClick={() => loadLeaseholdDetailBatch(tn, lhData.titles, lhData.page + 1)}
                                     data-testid={`button-more-leaseholds-${i}`}
                                   >
@@ -3359,7 +4507,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   </Button>
                                 )}
                                 {lhData.loading && lhData.details.length > 0 && (
-                                  <div className="flex items-center gap-2 p-1 text-[9px] text-muted-foreground">
+                                  <div className="flex items-center gap-2 p-1 text-[10px] text-muted-foreground">
                                     <Loader2 className="w-2.5 h-2.5 animate-spin" />
                                     Loading more...
                                   </div>
@@ -3489,7 +4637,57 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                   ))}
                 </IntelligenceSection>
               )}
-              {hasPdStats && (
+              {marketTone && (
+                <IntelligenceSection icon={TrendingUp} title="Commercial Market Tone" defaultOpen>
+                  <div className="space-y-2 text-xs">
+                    {[
+                      { key: "retail", label: "Retail" },
+                      { key: "offices", label: "Offices" },
+                      { key: "restaurants", label: "F&B / Restaurants" },
+                    ].map(({ key, label }) => {
+                      const rents = marketTone.commercial?.[key];
+                      const val = key === "offices" ? marketTone.commercial?.officesValuation : marketTone.commercial?.retailValuation;
+                      if (!rents && !val) return null;
+                      return (
+                        <div key={key} className="p-2 bg-muted/30 rounded space-y-1">
+                          <p className="font-medium text-[11px]">{label} <span className="text-muted-foreground font-normal">· {rents?.postcodeUsed || val?.postcodeUsed}</span></p>
+                          <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+                            {rents?.avgQuotingRentPerSqft != null && (
+                              <span>Quoting <span className="font-semibold">£{rents.avgQuotingRentPerSqft.toFixed(2)}/sqft</span></span>
+                            )}
+                            {rents?.avgQuotingRent != null && (
+                              <span>Avg rent <span className="font-semibold">£{Number(rents.avgQuotingRent).toLocaleString()}</span></span>
+                            )}
+                            {val?.rentEstimate?.perSqft != null && (
+                              <span>ERV <span className="font-semibold">£{val.rentEstimate.perSqft.toFixed(2)}/sqft</span></span>
+                            )}
+                            {val?.rentEstimate?.low != null && val?.rentEstimate?.high != null && (
+                              <span className="text-muted-foreground">range £{val.rentEstimate.low.toFixed(2)}–£{val.rentEstimate.high.toFixed(2)}</span>
+                            )}
+                            {val?.saleEstimate?.perSqft != null && (
+                              <span>Sale <span className="font-semibold">£{val.saleEstimate.perSqft.toFixed(0)}/sqft</span></span>
+                            )}
+                            {rents?.pointsAnalysed != null && (
+                              <span className="text-muted-foreground">{rents.pointsAnalysed} comps</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {marketTone.residential?.rents?.avgRentPerSqft != null && (
+                      <div className="p-2 bg-muted/30 rounded space-y-1">
+                        <p className="font-medium text-[11px]">Residential <span className="text-muted-foreground font-normal">· {marketTone.residential.rents.postcodeUsed}</span></p>
+                        <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+                          {marketTone.residential.rents.avgRent != null && <span>Avg rent <span className="font-semibold">£{Number(marketTone.residential.rents.avgRent).toLocaleString()}/mo</span></span>}
+                          {marketTone.residential.sold?.avgPricePerSqft != null && <span>Sold <span className="font-semibold">£{marketTone.residential.sold.avgPricePerSqft.toFixed(0)}/sqft</span></span>}
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-[10px] text-muted-foreground">Source: PropertyData · {new Date(marketTone.generatedAt).toLocaleDateString("en-GB")}</p>
+                  </div>
+                </IntelligenceSection>
+              )}
+              {hasPdStats && !marketTone && (
                 <IntelligenceSection icon={TrendingUp} title="Market Stats (PropertyData)">
                   <div className="grid grid-cols-2 gap-2">
                     {data.propertyDataCoUk["postcode-key-stats"].data.average_price && (
@@ -3510,12 +4708,6 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                         <p className="font-semibold">{data.propertyDataCoUk["postcode-key-stats"].data.average_yield}</p>
                       </div>
                     )}
-                    {data.propertyDataCoUk["postcode-key-stats"].data.turnover && (
-                      <div className="p-2 bg-muted/30 rounded">
-                        <p className="text-muted-foreground">Annual Turnover</p>
-                        <p className="font-semibold">{data.propertyDataCoUk["postcode-key-stats"].data.turnover}</p>
-                      </div>
-                    )}
                   </div>
                 </IntelligenceSection>
               )}
@@ -3526,7 +4718,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasFreeholds && (
               <div className={`p-2.5 rounded-lg space-y-0.5 ${aiMatch && aiMatch.confidence !== "none" && !property.titleNumber ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800" : "bg-muted/30"}`} data-testid="intel-summary-ownership">
                 <div className="flex items-center gap-1.5">
-                  {aiMatch && !property.titleNumber ? <Sparkles className="w-3 h-3 text-green-500" /> : <FileSearch className="w-3 h-3 text-indigo-500" />}
+                  {aiMatch && !property.titleNumber ? <Sparkles className="w-3 h-3 text-green-500" /> : <FileSearch className="w-3 h-3 text-muted-foreground" />}
                   <span className="text-[10px] text-muted-foreground font-medium">Land Titles</span>
                 </div>
                 <p className="text-sm font-bold">{freeholds.length} freehold{freeholds.length !== 1 ? "s" : ""}</p>
@@ -3544,7 +4736,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               return (
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-epc">
                   <div className="flex items-center gap-1.5">
-                    <Zap className="w-3 h-3 text-amber-500" />
+                    <Zap className="w-3 h-3 text-muted-foreground" />
                     <span className="text-[10px] text-muted-foreground font-medium">EPC Rating</span>
                   </div>
                   <p className="text-sm font-bold">{topEpc.ratingBand || topEpc.rating || "N/A"}</p>
@@ -3557,7 +4749,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               return (
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-voa">
                   <div className="flex items-center gap-1.5">
-                    <Landmark className="w-3 h-3 text-blue-500" />
+                    <Landmark className="w-3 h-3 text-muted-foreground" />
                     <span className="text-[10px] text-muted-foreground font-medium">Rateable Value</span>
                   </div>
                   <p className="text-sm font-bold">£{Number(topVoa.rateableValue || 0).toLocaleString()}</p>
@@ -3567,7 +4759,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             })()}
             <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-flood">
               <div className="flex items-center gap-1.5">
-                <Droplets className="w-3 h-3 text-cyan-500" />
+                <Droplets className="w-3 h-3 text-muted-foreground" />
                 <span className="text-[10px] text-muted-foreground font-medium">Flood Risk</span>
               </div>
               {hasFlood && data.floodRisk.activeFloods > 0 ? (
@@ -3587,7 +4779,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               return (
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-tfl">
                   <div className="flex items-center gap-1.5">
-                    <Train className="w-3 h-3 text-purple-500" />
+                    <Train className="w-3 h-3 text-muted-foreground" />
                     <span className="text-[10px] text-muted-foreground font-medium">Nearest Station</span>
                   </div>
                   <p className="text-sm font-bold truncate">{nearest.name}</p>
@@ -3598,7 +4790,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasPlanningApps && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning-apps">
                 <div className="flex items-center gap-1.5">
-                  <FileText className="w-3 h-3 text-blue-500" />
+                  <FileText className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Planning Apps</span>
                 </div>
                 <p className="text-sm font-bold">{planningApps.length} application{planningApps.length !== 1 ? "s" : ""}</p>
@@ -3608,7 +4800,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasPlanning && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning">
                 <div className="flex items-center gap-1.5">
-                  <ShieldAlert className="w-3 h-3 text-orange-500" />
+                  <ShieldAlert className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Planning</span>
                 </div>
                 <p className="text-sm font-bold">{Object.values(data.planningData).filter((v: any) => Array.isArray(v) && v.length > 0).length} designation(s)</p>
@@ -3618,7 +4810,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasListed && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-listed">
                 <div className="flex items-center gap-1.5">
-                  <Landmark className="w-3 h-3 text-rose-500" />
+                  <Landmark className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Listed Buildings</span>
                 </div>
                 <p className="text-sm font-bold">{data.listedBuilding.length} nearby</p>
@@ -3628,7 +4820,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasPdStats && data.propertyDataCoUk["postcode-key-stats"].data.average_yield && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-yield">
                 <div className="flex items-center gap-1.5">
-                  <TrendingUp className="w-3 h-3 text-green-500" />
+                  <TrendingUp className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Avg Yield</span>
                 </div>
                 <p className="text-sm font-bold">{data.propertyDataCoUk["postcode-key-stats"].data.average_yield}</p>
@@ -3643,27 +4835,36 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
 }
 
 export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: string; propertyName: string }) {
-  const { data, isLoading, refetch, isFetching } = useQuery<{ articles: PropertyNewsArticle[]; searchQuery: string }>({
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<{ articles: PropertyNewsArticle[]; searchQuery: string }>({
     queryKey: ["/api/properties", propertyId, "news"],
-    queryFn: () => fetch(`/api/properties/${propertyId}/news`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
+    queryFn: async () => {
+      const r = await fetch(`/api/properties/${propertyId}/news`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error(`News lookup failed (${r.status})`);
+      return r.json();
+    },
     staleTime: 5 * 60 * 1000,
   });
 
   const articles = data?.articles || [];
 
   return (
-    <Card data-testid="property-news-panel">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Newspaper className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold">News Feed</span>
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{propertyName}</Badge>
+    <Card data-testid="property-news-panel" className="overflow-hidden">
+      <CardContent className="p-4 pt-3">
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap -mx-4 -mt-3 px-4 pt-3 pb-2 bg-muted/40">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0">
+              <Newspaper className="h-3.5 w-3.5 text-primary" />
+            </span>
+            <span className="text-sm font-semibold shrink-0">News Feed</span>
+            {/* Property name in the badge is redundant with the page
+                header — only render it when there's plenty of room
+                (xl+) so narrow viewports don't truncate it to "Bluewa…". */}
+            <Badge variant="secondary" className="hidden xl:inline-flex text-[10px] px-1.5 py-0 truncate max-w-[180px]" title={propertyName}>{propertyName}</Badge>
           </div>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs gap-1"
+            className="h-7 text-xs gap-1 shrink-0"
             onClick={() => refetch()}
             disabled={isFetching}
             data-testid="button-refresh-news"
@@ -3678,25 +4879,62 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
           </div>
+        ) : isError ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <Newspaper className="w-6 h-6 mx-auto mb-2 opacity-30" />
+            <p className="text-xs">Couldn't load news — <button className="underline" onClick={() => refetch()}>retry</button></p>
+          </div>
         ) : articles.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <Newspaper className="w-6 h-6 mx-auto mb-2 opacity-30" />
             <p className="text-xs">No news found for this property</p>
           </div>
         ) : (
-          <ScrollArea className="max-h-[400px]">
+          <ScrollArea className="h-[360px] pr-2">
             <div className="divide-y">
-              {articles.map(article => (
+              {articles.map(article => {
+                // Derive a source domain for the favicon fallback. The URL
+                // hostname is authoritative — sourceName is a display label
+                // ("UK Retail Expansion (Google News)") and feeding it to the
+                // favicon API returned the anonymous globe on every row.
+                let faviconDomain: string | null = null;
+                try {
+                  const host = new URL(article.url).hostname.replace(/^www\./, "");
+                  faviconDomain = /google\.com$/.test(host)
+                    ? (article.sourceName && article.sourceName.includes(".") ? article.sourceName : null)
+                    : host;
+                } catch {
+                  if (article.sourceName?.includes(".")) faviconDomain = article.sourceName;
+                }
+                return (
                 <a key={article.id} href={article.url} target="_blank" rel="noopener noreferrer" className="block" data-testid={`news-article-${article.id}`}>
                   <div className="flex gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer">
-                    {article.imageUrl && (
+                    {article.imageUrl ? (
                       <img
                         src={article.imageUrl}
                         alt=""
                         className="w-16 h-16 rounded object-cover shrink-0"
+                        onError={(e) => {
+                          // Image broken — fall back to favicon if we
+                          // have a domain, else hide the slot.
+                          const img = e.target as HTMLImageElement;
+                          if (faviconDomain) {
+                            img.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(faviconDomain)}&sz=128`;
+                            img.className = "w-10 h-10 rounded border bg-muted p-1 shrink-0 self-start";
+                            img.onerror = null;
+                          } else {
+                            img.style.display = "none";
+                          }
+                        }}
+                      />
+                    ) : faviconDomain ? (
+                      <img
+                        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(faviconDomain)}&sz=128`}
+                        alt=""
+                        className="w-10 h-10 rounded border bg-muted p-1 shrink-0 self-start"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                       />
-                    )}
+                    ) : null}
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold leading-snug line-clamp-2">{article.title}</p>
                       {article.summary && (
@@ -3720,7 +4958,8 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
                     </div>
                   </div>
                 </a>
-              ))}
+                );
+              })}
             </div>
           </ScrollArea>
         )}
@@ -3772,9 +5011,9 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
         {data!.matchingRequirements.length > 0 && (
           <div>
             <div className="flex items-center gap-1.5 mb-2">
-              <FileText className="w-3.5 h-3.5 text-purple-500" />
+              <FileText className="w-3.5 h-3.5 text-muted-foreground" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Matching Requirements</p>
-              <Badge variant="secondary" className="text-[9px]">{data!.matchingRequirements.length}</Badge>
+              <Badge variant="secondary" className="text-[10px]">{data!.matchingRequirements.length}</Badge>
             </div>
             <div className="space-y-1">
               {data!.matchingRequirements.map((r: any) => (
@@ -3794,9 +5033,9 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
         {data!.comps.length > 0 && (
           <div>
             <div className="flex items-center gap-1.5 mb-2">
-              <TrendingUp className="w-3.5 h-3.5 text-orange-500" />
+              <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Historical Comps</p>
-              <Badge variant="secondary" className="text-[9px]">{data!.comps.length}</Badge>
+              <Badge variant="secondary" className="text-[10px]">{data!.comps.length}</Badge>
             </div>
             <div className="space-y-1">
               {data!.comps.map((c: any) => (
@@ -3817,9 +5056,9 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
         {data!.news.length > 0 && (
           <div>
             <div className="flex items-center gap-1.5 mb-2">
-              <Newspaper className="w-3.5 h-3.5 text-blue-500" />
+              <Newspaper className="w-3.5 h-3.5 text-muted-foreground" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">News Mentions</p>
-              <Badge variant="secondary" className="text-[9px]">{data!.news.length}</Badge>
+              <Badge variant="secondary" className="text-[10px]">{data!.news.length}</Badge>
             </div>
             <div className="space-y-1">
               {data!.news.map((n: any) => (
@@ -3898,9 +5137,109 @@ export function LinkedLandRegistryPanel({ propertyId }: { propertyId: string }) 
 // PropertyDetail extracted to @/components/property-detail.tsx
 
 
+function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
+  // The Properties board's canonical header (Woody, 2026-08-03) — same
+  // design language as TrackerSummary / DealsSummary: live counts off the
+  // two canonical feeds with chips deep-linking into each board, plus the
+  // portfolio map. Renders identically for staff and client logins (the
+  // feeds are already scoped server-side), so Landsec sees the same board.
+  const [mapOpen, setMapOpen] = useState(true);
+
+  const { data: units = [] } = useQuery<any[]>({
+    queryKey: ["/api/available-units"],
+    queryFn: async () => {
+      const r = await fetch("/api/available-units", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const { data: deals = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/deals", { excludeTracker: true }],
+    queryFn: async () => {
+      const r = await fetch("/api/crm/deals?excludeTrackerDeals=true", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  const ids = useMemo(() => new Set(items.map(p => p.id)), [items]);
+  const liveLettings = useMemo(() => units.filter(u => {
+    if (!u.propertyId || !ids.has(u.propertyId)) return false;
+    const code = legacyToCode(u.marketingStatus) || "AVA";
+    return ["OPP", "REP", "AVA", "NEG", "SOL", "EXC"].includes(code);
+  }).length, [units, ids]);
+  const liveDeals = useMemo(() => deals.filter(d => {
+    if (!d.propertyId || !ids.has(d.propertyId)) return false;
+    const code = legacyToCode(d.status);
+    return !!code && ["REP", "AVA", "NEG", "SOL", "EXC"].includes(code);
+  }).length, [deals, ids]);
+
+  const stores = useMemo(() => items.map(p => {
+    const lat = parseFloat(String((p as any).latitude ?? ""));
+    const lng = parseFloat(String((p as any).longitude ?? ""));
+    return {
+      id: p.id,
+      name: p.name,
+      address: typeof p.address === "string" ? p.address : (p.address as any)?.formatted || (p as any).postcode || null,
+      lat: Number.isFinite(lat) ? lat : null,
+      lng: Number.isFinite(lng) ? lng : null,
+      status: null,
+      tone: "linked" as const,
+      href: `/properties/${p.id}`,
+    };
+  }), [items]);
+  const geocodedCount = stores.filter(s => s.lat != null && s.lng != null).length;
+
+  return (
+    <div className="space-y-2" data-testid="properties-board-header">
+      {/* Summary chips follow the app pill standard (ui/pill.tsx metrics). */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide bg-card">
+          <Building2 className="w-3 h-3 text-muted-foreground" />
+          <span className="font-mono tabular-nums">{items.length}</span>
+          <span className="text-muted-foreground">propert{items.length === 1 ? "y" : "ies"}</span>
+        </span>
+        <Link href="/deals/letting" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveLettings ? "bg-card" : "opacity-40"}`} title="Open the Letting Tracker">
+          <Store className="w-3 h-3 text-muted-foreground" />
+          <span className="font-mono tabular-nums">{liveLettings}</span>
+          <span className="text-muted-foreground">live letting{liveLettings === 1 ? "" : "s"}</span>
+        </Link>
+        <Link href="/deals/list" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveDeals ? "bg-card" : "opacity-40"}`} title="Open the Deals board">
+          <Handshake className="w-3 h-3 text-muted-foreground" />
+          <span className="font-mono tabular-nums">{liveDeals}</span>
+          <span className="text-muted-foreground">live deal{liveDeals === 1 ? "" : "s"}</span>
+        </Link>
+        <button
+          onClick={() => setMapOpen(o => !o)}
+          data-no-min-touch
+          className="inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide bg-card hover:opacity-80"
+          data-testid="btn-toggle-portfolio-map"
+        >
+          <MapPin className="w-3 h-3 text-muted-foreground" />
+          <span className="text-muted-foreground">Map</span>
+          {mapOpen ? <ChevronUp className="w-3 h-3 text-muted-foreground" /> : <ChevronDown className="w-3 h-3 text-muted-foreground" />}
+        </button>
+      </div>
+      {mapOpen && (
+        <div className="border rounded-lg overflow-hidden" data-testid="properties-portfolio-map">
+          <BrandPortfolioMap stores={stores} height={260} alwaysRender />
+          {geocodedCount < items.length && (
+            <p className="text-[10px] text-muted-foreground px-2 py-1 border-t">
+              {geocodedCount} of {items.length} properties have a map position — the rest are still geocoding.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Properties() {
   const [, params] = useRoute("/properties/:id");
   const [search, setSearch] = useState("");
+  // Default view = "all" properties. The old "Properties" tab was a
+  // group_name=='Properties' filter and is gone; team tabs filter by
+  // bgp_engagement and only render when populated.
   const [activeGroup, setActiveGroup] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -3949,8 +5288,10 @@ function PropertiesList({
   teamFilter?: string | null;
 }) {
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [activeView, setActiveView] = useState<"list" | "landlordHealth">("list");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
     typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
@@ -3987,7 +5328,6 @@ function PropertiesList({
     landlord: true,
     status: true,
     assetClass: true,
-    tenure: true,
     engagement: true,
     deals: true,
     tenants: true,
@@ -3997,10 +5337,9 @@ function PropertiesList({
   });
 
   const COLUMN_LABELS: Record<string, string> = {
-    landlord: "Landlord",
+    landlord: "Ownership",
     status: "Status",
     assetClass: "Asset Class",
-    tenure: "Tenure",
     engagement: "Team",
     deals: "WIP",
     tenants: "Tenants",
@@ -4032,7 +5371,7 @@ function PropertiesList({
   });
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
 
-  const { data: agentLinks = [] } = useQuery<{ propertyId: string; userId: string }[]>({
+  const { data: agentLinks = [] } = useQuery<Array<{ propertyId: string; userId: string; role?: string | null }>>({
     queryKey: ["/api/crm/property-agents"],
   });
 
@@ -4056,6 +5395,14 @@ function PropertiesList({
   const inlineUpdateMutation = useMutation({
     mutationFn: async ({ id, field, value }: { id: string; field: string; value: any }) => {
       const updates: Record<string, any> = { [field]: value };
+      // When the inline address picker saves, also mirror the structured
+      // postcode/lat/lng into their top-level columns (the value carries
+      // them inside the address jsonb).
+      if (field === "address" && value) {
+        if (value.postcode !== undefined) updates.postcode = value.postcode || null;
+        if (value.lat != null) updates.latitude = String(value.lat);
+        if (value.lng != null) updates.longitude = String(value.lng);
+      }
       if (field === "status") {
         const property = filteredItems.find(p => p.id === id);
         const currentTeams = Array.isArray(property?.bgpEngagement) ? [...property.bgpEngagement] : property?.bgpEngagement ? [property.bgpEngagement] : [];
@@ -4142,6 +5489,11 @@ function PropertiesList({
 
   const { activeTeam } = useTeam();
   const isLandsecView = activeTeam === "Landsec";
+  // Client logins get a read-oriented table: the inline ownership editors,
+  // status/class/team setters and the header's Import / Add property /
+  // Landlord Health are staff tools (their writes are server-blocked anyway).
+  const { data: propsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"], staleTime: 5 * 60 * 1000 });
+  const isClientViewer = propsViewer?.role === "Client" || !!propsViewer?.companyScopeId;
 
   const landsecCompanyIds = useMemo(() => {
     if (!isLandsecView || !allCompanies) return null;
@@ -4157,7 +5509,11 @@ function PropertiesList({
 
   const items = useMemo(() => {
     const all = properties || [];
-    if (!isLandsecView || !landsecCompanyIds) return all;
+    if (!isLandsecView) return all;
+    // Fail CLOSED: if the Landsec company can't be resolved, show nothing
+    // rather than presenting the entire BGP portfolio under a "Landsec
+    // portfolio" label.
+    if (!landsecCompanyIds) return [];
     return all.filter(p => p.landlordId && landsecCompanyIds.has(p.landlordId));
   }, [properties, isLandsecView, landsecCompanyIds]);
 
@@ -4183,12 +5539,16 @@ function PropertiesList({
   }, [items]);
 
   const engagementValues = useMemo(() => {
-    const s = new Set<string>();
+    // Canonical team list first, then any stray values from the data so the
+    // user can still filter on legacy entries (e.g. "Hospitality", "USA").
+    const canonical = [...CRM_OPTIONS.dealTeam];
+    const canonicalSet = new Set<string>(canonical);
+    const stray = new Set<string>();
     items.forEach((i) => {
       const vals = Array.isArray(i.bgpEngagement) ? i.bgpEngagement : i.bgpEngagement ? [i.bgpEngagement] : [];
-      vals.forEach(v => s.add(v));
+      vals.forEach(v => { if (v && !canonicalSet.has(v)) stray.add(v); });
     });
-    return Array.from(s).sort();
+    return [...canonical, ...Array.from(stray).sort()];
   }, [items]);
 
   const teamUserIds = useMemo(() => {
@@ -4197,55 +5557,123 @@ function PropertiesList({
     return new Set(allUsers.filter(u => u.team?.toLowerCase().includes(tf)).map(u => String(u.id)));
   }, [teamFilter, allUsers]);
 
+  // Lower-cased company-name lookup, used by the broadened search below
+  // (landlord + tenant matching) — memoised so we don't rescan allCompanies
+  // per row per keystroke.
+  const companySearchMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of allCompanies) m.set(c.id, (c.name || "").toLowerCase());
+    return m;
+  }, [allCompanies]);
+
+  const propSort = useTableSort<CrmProperty>("name", "asc");
+
   const filteredItems = useMemo(() => {
+    const hasSearch = !!search.trim();
     return items.filter((item) => {
-      if (teamUserIds) {
-        const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
-        if (assignedIds.length > 0 && !assignedIds.some(id => teamUserIds.has(id))) return false;
+      // When a search term is active, every group / status / asset / tenure /
+      // engagement filter is ignored so search is global across the portfolio.
+      if (!hasSearch) {
+        if (teamUserIds) {
+          const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
+          if (assignedIds.length > 0 && !assignedIds.some(id => teamUserIds.has(id))) return false;
+        }
+        const isComp = HIDDEN_FROM_ALL.has(item.groupName || "");
+        // Comps are filtered off every tab — they live exclusively in the
+        // dedicated investment-comps schedule (and retail_leasing_comps),
+        // not on the property CRM board. Confirmed in 2026-06 that
+        // crm_properties has zero comp-tagged rows, but the guard stays
+        // in case imports stamp the value in future.
+        if (isComp) return false;
+        // "all" = every property. Team tabs = property whose
+        // bgp_engagement array contains the team string. Engagement can be
+        // an array (canonical), a single string (legacy), or null.
+        if (activeGroup !== "all") {
+          const eng = Array.isArray(item.bgpEngagement)
+            ? item.bgpEngagement
+            : item.bgpEngagement ? [item.bgpEngagement as unknown as string] : [];
+          if (!eng.includes(activeGroup)) return false;
+        }
+
+        const statusFilters = columnFilters["status"] || [];
+        if (statusFilters.length > 0 && (!item.status || !statusFilters.includes(item.status))) return false;
+
+        const assetFilters = columnFilters["assetClass"] || [];
+        if (assetFilters.length > 0) {
+          const itemAssets = Array.isArray(item.assetClass) ? item.assetClass : item.assetClass ? [item.assetClass] : [];
+          if (!itemAssets.some(a => assetFilters.includes(a))) return false;
+        }
+
+        const tenureFilters = columnFilters["tenure"] || [];
+        if (tenureFilters.length > 0 && (!item.tenure || !tenureFilters.includes(item.tenure))) return false;
+
+        const engagementFilters = columnFilters["engagement"] || [];
+        if (engagementFilters.length > 0) {
+          const itemEngagements = Array.isArray(item.bgpEngagement) ? item.bgpEngagement : item.bgpEngagement ? [item.bgpEngagement] : [];
+          if (!itemEngagements.some(e => engagementFilters.includes(e))) return false;
+        }
       }
-      if (activeGroup !== "all" && item.groupName !== activeGroup) return false;
 
-      const statusFilters = columnFilters["status"] || [];
-      if (statusFilters.length > 0 && (!item.status || !statusFilters.includes(item.status))) return false;
-
-      const assetFilters = columnFilters["assetClass"] || [];
-      if (assetFilters.length > 0) {
-        const itemAssets = Array.isArray(item.assetClass) ? item.assetClass : item.assetClass ? [item.assetClass] : [];
-        if (!itemAssets.some(a => assetFilters.includes(a))) return false;
-      }
-
-      const tenureFilters = columnFilters["tenure"] || [];
-      if (tenureFilters.length > 0 && (!item.tenure || !tenureFilters.includes(item.tenure))) return false;
-
-      const engagementFilters = columnFilters["engagement"] || [];
-      if (engagementFilters.length > 0) {
-        const itemEngagements = Array.isArray(item.bgpEngagement) ? item.bgpEngagement : item.bgpEngagement ? [item.bgpEngagement] : [];
-        if (!itemEngagements.some(e => engagementFilters.includes(e))) return false;
-      }
-
-      if (search) {
+      if (hasSearch) {
         const s = search.toLowerCase();
         const nameMatch = item.name.toLowerCase().includes(s);
         const addrMatch = formatAddress(item.address).toLowerCase().includes(s);
         const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
         const agentNames = allUsers.filter(u => assignedIds.includes(String(u.id))).map(u => (u.name || "").toLowerCase());
         const agentMatch = agentNames.some(n => n.includes(s));
-        if (!nameMatch && !addrMatch && !agentMatch) return false;
+        // Broaden search to match the Deals board: landlord/client name,
+        // linked tenant names, status, and postcode.
+        const landlordName = item.landlordId ? (companySearchMap.get(item.landlordId) || "") : "";
+        const landlordMatch = landlordName.includes(s);
+        const tenantNames = tenantLinks.filter(l => l.propertyId === item.id)
+          .map(l => companySearchMap.get(l.companyId) || "");
+        const tenantMatch = tenantNames.some(n => n.includes(s));
+        const statusMatch = (item.status || "").toLowerCase().includes(s);
+        const postcodeMatch = (extractPostcode(item.address) || "").toLowerCase().includes(s);
+        if (!nameMatch && !addrMatch && !agentMatch && !landlordMatch && !tenantMatch && !statusMatch && !postcodeMatch) return false;
       }
 
       return true;
     });
-  }, [items, activeGroup, columnFilters, search, agentLinks, allUsers, teamUserIds]);
+  }, [items, activeGroup, columnFilters, search, agentLinks, allUsers, teamUserIds, tenantLinks, companySearchMap]);
+
+  // Click-to-sort on the Property + Sq Ft headers. Falls back to the
+  // filtered order when no sort column is active.
+  const sortedItems = propSort.sortKey
+    ? propSort.sorted(filteredItems as any[], {
+        name: (p: any) => p.name,
+        sqft: (p: any) => p.sqft,
+      })
+    : filteredItems;
 
   useEffect(() => {
     setSelectedIds(new Set());
   }, [activeGroup, search, columnFilters]);
 
+  // Team tabs replace the old group-name tabs (Pipeline / Archived /
+  // Development / Investment Comps), which read 0 for nearly every
+  // property because no row was tagged with those exact group_name
+  // strings. Engagement (bgp_engagement) is populated on most rows and
+  // gives a useful slice — Investment vs Leasing vs Tenant Rep, etc.
+  //
+  // Empty teams are hidden so the toolbar doesn't grow a wall of dead
+  // zero-count chips. Sorted by count desc so the biggest teams sit
+  // closest to the "All Properties" tab.
   const groupCounts = useMemo(() => {
-    return GROUP_TABS.filter((g) => g.id !== "all").map((g) => ({
-      ...g,
-      count: items.filter((i) => i.groupName === g.id).length,
-    }));
+    const nonComp = items.filter((i) => !HIDDEN_FROM_ALL.has(i.groupName || ""));
+    return CRM_OPTIONS.dealTeam
+      .map((team) => ({
+        id: team,
+        label: team,
+        count: nonComp.filter((i) => {
+          const eng = Array.isArray(i.bgpEngagement)
+            ? i.bgpEngagement
+            : i.bgpEngagement ? [i.bgpEngagement as unknown as string] : [];
+          return eng.includes(team);
+        }).length,
+      }))
+      .filter((t) => t.count > 0)
+      .sort((a, b) => b.count - a.count);
   }, [items]);
 
   if (error) {
@@ -4274,26 +5702,43 @@ function PropertiesList({
     <PageLayout
       title="Properties"
       icon={Building2}
-      subtitle={`${items.length} properties in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
+      fullHeight
+      subtitle={`${countLabel(items.length, "property", "properties")} in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
       actions={
+        isClientViewer ? undefined : (
         <>
-          <Button
-            variant={activeView === "landlordHealth" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setActiveView(v => v === "landlordHealth" ? "list" : "landlordHealth")}
-            data-testid="button-landlord-health"
-          >
-            <ShieldAlert className="w-4 h-4 mr-2" />
-            Landlord Health
-          </Button>
+          {/* On mobile keep just the primary action — Landlord Health and
+              Import are desktop tools and bled off the right edge on a phone. */}
+          {!isMobile && (
+            <>
+              <Button
+                variant={activeView === "landlordHealth" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setActiveView(v => v === "landlordHealth" ? "list" : "landlordHealth")}
+                data-testid="button-landlord-health"
+              >
+                <ShieldAlert className="w-4 h-4 mr-2" />
+                Landlord Health
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowImport(true)}
+                data-testid="button-import-properties"
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Import
+              </Button>
+            </>
+          )}
           <Button
             onClick={() => setCreateDialogOpen(true)}
             data-testid="button-create-property"
           >
             <Plus className="w-4 h-4 mr-2" />
-            New Property
+            Add property
           </Button>
         </>
+        )
       }
       className="space-y-6"
       testId="properties-page"
@@ -4309,48 +5754,31 @@ function PropertiesList({
         />
       )}
 
-      {activeView === "list" && <><div className="flex items-center gap-3 overflow-x-auto pb-1">
-        {groupCounts.map((g) => (
-          <Card
-            key={g.id}
-            className={`flex-1 min-w-[140px] cursor-pointer transition-colors ${
-              activeGroup === g.id ? "border-primary bg-primary/5" : ""
-            }`}
-            onClick={() => setActiveGroup(activeGroup === g.id ? "all" : g.id)}
-            data-testid={`card-group-${g.id.toLowerCase()}`}
-          >
-            <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-muted-foreground" />
-                <div>
-                  <p className="text-lg font-bold" data-testid={`text-group-count-${g.id.toLowerCase()}`}>{g.count}</p>
-                  <p className="text-xs text-muted-foreground">{g.label}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-        <Card
-          className={`flex-1 min-w-[140px] cursor-pointer transition-colors ${
-            activeGroup === "all" ? "border-primary bg-primary/5" : ""
-          }`}
-          onClick={() => setActiveGroup("all")}
-          data-testid="card-group-all"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-muted-foreground" />
-              <div>
-                <p className="text-lg font-bold" data-testid="text-group-count-all">{items.length}</p>
-                <p className="text-xs text-muted-foreground">All</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {activeView === "list" && <PropertiesBoardHeader items={filteredItems} />}
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
+      {activeView === "list" && <>
+        <div className="flex flex-wrap gap-1.5">
+          {groupCounts.map((g) => (
+            <Pill
+              key={g.id}
+              active={activeGroup === g.id}
+              onClick={() => setActiveGroup(activeGroup === g.id ? "all" : g.id)}
+              data-testid={`chip-group-${g.id.toLowerCase()}`}
+            >
+              {g.label} <span className="opacity-70 font-mono tabular-nums">{g.count}</span>
+            </Pill>
+          ))}
+          <Pill
+            active={activeGroup === "all"}
+            onClick={() => setActiveGroup("all")}
+            data-testid="chip-group-all"
+          >
+            All <span className="opacity-70 font-mono tabular-nums">{items.length}</span>
+          </Pill>
+        </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search properties..."
@@ -4360,6 +5788,10 @@ function PropertiesList({
             data-testid="input-search-properties"
           />
         </div>
+        {/* On mobile the toolbar collapses to just the search box — the
+            column/saved-view controls are desktop power tools that squeezed
+            the search field down to nothing. */}
+        {!isMobile && (<>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" data-testid="button-toggle-columns">
@@ -4452,6 +5884,7 @@ function PropertiesList({
           </Button>
         )}
         <ViewToggle view={viewMode} onToggle={setViewMode} />
+        </>)}
       </div>
 
       {viewMode === "card" ? (
@@ -4465,7 +5898,7 @@ function PropertiesList({
               </div>
             ) : (
               <MobileCardView
-                items={filteredItems.map((item): MobileCardItem => {
+                items={sortedItems.map((item): MobileCardItem => {
                   const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
                   const agentNames = allUsers.filter(u => assignedIds.includes(String(u.id))).map(u => u.name || "").join(", ");
                   const teams = Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "");
@@ -4473,7 +5906,7 @@ function PropertiesList({
                   return {
                     id: item.id,
                     title: item.name,
-                    subtitle: item.address ? (typeof item.address === "object" ? (item.address as any).line1 || "" : String(item.address)) : undefined,
+                    subtitle: formatAddress(item.address) || undefined,
                     href: `/properties/${item.id}`,
                     status: item.status || undefined,
                     statusColor: BUILDING_ICON_COLORS[item.status || ""]?.replace("text-", "bg-") || "bg-muted-foreground",
@@ -4505,7 +5938,9 @@ function PropertiesList({
             <ScrollableTable minWidth={2200}>
               <Table>
                 <TableHeader>
-                  <TableRow>
+                  {/* §6 header spec — 11px semibold uppercase muted; the
+                      sorted/filtered column reads foreground, not terracotta. */}
+                  <TableRow className="[&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground [&_th_button]:font-semibold [&_th_.text-primary]:text-foreground">
                     <TableHead className="w-[40px] px-2">
                       <Checkbox
                         data-testid="checkbox-select-all-properties"
@@ -4525,8 +5960,8 @@ function PropertiesList({
                         }}
                       />
                     </TableHead>
-                    <TableHead className="min-w-[200px]">Property</TableHead>
-                    {visibleColumns.landlord && <TableHead className="min-w-[140px]">Landlord</TableHead>}
+                    <SortableTableHead sortKey="name" sort={propSort} className="min-w-[280px] w-[280px]">Property</SortableTableHead>
+                    {visibleColumns.landlord && <TableHead className="w-[110px] max-w-[110px]">Ownership</TableHead>}
                     {visibleColumns.status && (
                       <TableHead className="min-w-[90px] w-[90px]">
                         <ColumnFilterPopover
@@ -4547,18 +5982,8 @@ function PropertiesList({
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.tenure && (
-                      <TableHead className="min-w-[75px] w-[75px]">
-                        <ColumnFilterPopover
-                          label="Tenure"
-                          options={tenureValues}
-                          activeFilters={columnFilters["tenure"] || []}
-                          onToggleFilter={(val) => toggleFilter("tenure", val)}
-                        />
-                      </TableHead>
-                    )}
                     {visibleColumns.engagement && (
-                      <TableHead className="min-w-[110px]">
+                      <TableHead className="w-[140px] max-w-[140px]">
                         <ColumnFilterPopover
                           label="Team"
                           options={engagementValues}
@@ -4567,15 +5992,15 @@ function PropertiesList({
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.deals && <TableHead className="min-w-[140px]">WIP</TableHead>}
-                    {visibleColumns.tenants && <TableHead className="min-w-[140px]">Tenants</TableHead>}
-                    {visibleColumns.agents && <TableHead className="min-w-[120px]">BGP Contacts</TableHead>}
-                    {visibleColumns.sqft && <TableHead className="min-w-[60px] w-[60px]">Sq Ft</TableHead>}
-                    {visibleColumns.folderTree && <TableHead className="min-w-[140px]">Folder Tree</TableHead>}
+                    {visibleColumns.deals && <TableHead className="w-[140px] max-w-[140px]">WIP</TableHead>}
+                    {visibleColumns.tenants && <TableHead className="w-[110px] max-w-[110px]">Tenants</TableHead>}
+                    {visibleColumns.agents && <TableHead className="w-[110px] max-w-[110px]">BGP Contacts</TableHead>}
+                    {visibleColumns.sqft && <SortableTableHead sortKey="sqft" sort={propSort} align="right" className="min-w-[60px] w-[60px]">Sq Ft</SortableTableHead>}
+                    {visibleColumns.folderTree && <TableHead className="w-[110px] max-w-[110px]">Folder Tree</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredItems.map((item) => (
+                  {sortedItems.map((item) => (
                     <TableRow
                       key={item.id}
                       className="text-xs hover:bg-muted/50"
@@ -4613,7 +6038,7 @@ function PropertiesList({
                                 const hasEnrichmentData = !!(item.proprietorName || item.landlordId || item.titleNumber);
                                 if (isRecent && !hasEnrichmentData && item.address) {
                                   return (
-                                    <span className="inline-flex items-center gap-1 text-[9px] text-purple-500 animate-pulse" data-testid={`enriching-${item.id}`}>
+                                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground animate-pulse" data-testid={`enriching-${item.id}`}>
                                       <Loader2 className="w-2.5 h-2.5 animate-spin" />
                                       Enriching...
                                     </span>
@@ -4623,26 +6048,75 @@ function PropertiesList({
                               })()}
                             </div>
                             <div onClick={(e) => e.stopPropagation()}>
+                              {isClientViewer ? (
+                                addressToResult(item.address)?.formatted ? (
+                                  <span className="text-xs flex items-center gap-1">
+                                    <MapPin className="w-3 h-3 text-muted-foreground shrink-0" />
+                                    <span className="truncate max-w-[180px]">{addressToResult(item.address)?.formatted}</span>
+                                  </span>
+                                ) : null
+                              ) : (
                               <InlineAddress
                                 value={addressToResult(item.address)}
                                 onSave={(result) => inlineUpdateMutation.mutate({ id: item.id, field: "address", value: resultToAddress(result) })}
                                 placeholder="Set address"
                               />
+                              )}
                             </div>
                           </div>
                         </div>
                       </TableCell>
                       {visibleColumns.landlord && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
-                          <InlineLandlord
-                            propertyId={item.id}
-                            landlordId={item.landlordId}
-                            allCompanies={allCompanies}
-                          />
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex flex-col gap-0.5">
+                            <InlineOwnerLink
+                              propertyId={item.id}
+                              companyId={(item as any).landlordId}
+                              fieldName="landlordId"
+                              label="Client / Landlord"
+                              allCompanies={allCompanies}
+                              readOnly={isClientViewer}
+                            />
+                            <InlineOwnerLink
+                              propertyId={item.id}
+                              companyId={(item as any).freeholderId}
+                              fieldName="freeholderId"
+                              label="Freeholder"
+                              allCompanies={allCompanies}
+                              readOnly={isClientViewer}
+                            />
+                            <InlineOwnerLink
+                              propertyId={item.id}
+                              companyId={(item as any).longLeaseholderId}
+                              fieldName="longLeaseholderId"
+                              label="Long Leaseholder"
+                              allCompanies={allCompanies}
+                              readOnly={isClientViewer}
+                            />
+                            <InlineOwnerLink
+                              propertyId={item.id}
+                              companyId={(item as any).seniorLenderId}
+                              fieldName="seniorLenderId"
+                              label="Senior Lender"
+                              allCompanies={allCompanies}
+                              readOnly={isClientViewer}
+                            />
+                            <InlineOwnerLink
+                              propertyId={item.id}
+                              companyId={(item as any).juniorLenderId}
+                              fieldName="juniorLenderId"
+                              label="Junior Lender"
+                              allCompanies={allCompanies}
+                              readOnly={isClientViewer}
+                            />
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.status && (
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                          {isClientViewer ? (
+                            <span className="text-xs">{item.status || "—"}</span>
+                          ) : (
                           <InlineLabelSelect
                             value={item.status}
                             options={STATUS_OPTIONS}
@@ -4651,66 +6125,67 @@ function PropertiesList({
                             placeholder="Set status"
                             compact
                           />
+                          )}
                         </TableCell>
                       )}
                       {visibleColumns.assetClass && (
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
-                          <InlineEngagement
-                            value={item.assetClass}
+                          {isClientViewer ? (
+                            <span className="text-xs">{(Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass) || "—"}</span>
+                          ) : (
+                          <InlineLabelSelect
+                            value={Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass}
                             options={ASSET_CLASS_OPTIONS}
                             colorMap={ASSET_CLASS_COLORS}
                             onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "assetClass", value: val })}
                             placeholder="Set class"
                           />
-                        </TableCell>
-                      )}
-                      {visibleColumns.tenure && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
-                          <InlineLabelSelect
-                            value={item.tenure}
-                            options={TENURE_OPTIONS}
-                            colorMap={TENURE_COLORS}
-                            onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "tenure", value: val })}
-                            placeholder="Set tenure"
-                            compact
-                          />
+                          )}
                         </TableCell>
                       )}
                       {visibleColumns.engagement && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[140px] max-w-[140px]" onClick={(e) => e.stopPropagation()}>
+                          {isClientViewer ? (
+                            <span className="text-xs">{Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "—")}</span>
+                          ) : (
                           <InlineEngagement
                             value={item.bgpEngagement}
                             options={TEAM_OPTIONS}
                             colorMap={TEAM_COLORS}
                             onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "bgpEngagement", value: val })}
                           />
+                          )}
                         </TableCell>
                       )}
                       {visibleColumns.deals && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[140px] max-w-[140px]" onClick={(e) => e.stopPropagation()}>
                           <InlineDeals
                             propertyId={item.id}
                             dealLinks={dealLinks}
                             allDeals={allDealsRaw}
+                            readOnly={isClientViewer}
                           />
                         </TableCell>
                       )}
                       {visibleColumns.tenants && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
                           <InlineTenants
                             propertyId={item.id}
                             tenantLinks={tenantLinks}
                             allCompanies={allCompanies}
+                            readOnly={isClientViewer}
                           />
                         </TableCell>
                       )}
                       {visibleColumns.agents && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
                           <InlineAgents
                             propertyId={item.id}
                             agentLinks={agentLinks}
                             allUsers={allUsers}
                             colorMap={userColorMap}
+                            landlordId={item.landlordId}
+                            readOnly={isClientViewer}
                           />
                         </TableCell>
                       )}
@@ -4726,7 +6201,7 @@ function PropertiesList({
                         </TableCell>
                       )}
                       {visibleColumns.folderTree && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
                           <InlineFolderTree
                             propertyId={item.id}
                             propertyName={item.name}
@@ -4757,7 +6232,7 @@ function PropertiesList({
 
       {selectedIds.size > 0 && (
         <div
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-md border bg-background px-4 py-2 shadow-lg"
+          className="fixed bottom-20 md:bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-md border bg-background px-4 py-2 shadow-lg"
           data-testid="bulk-action-bar-properties"
         >
           <span className="text-sm font-medium" data-testid="text-selected-count-properties">
@@ -4778,7 +6253,7 @@ function PropertiesList({
                   onClick={() => bulkUpdateMutation.mutate({ ids: Array.from(selectedIds), field: "bgpEngagement", value: [team] })}
                   data-testid={`bulk-team-option-${team.toLowerCase().replace(/[\s\/]/g, "-")}`}
                 >
-                  <Badge className={`text-[10px] px-1.5 py-0 text-white ${TEAM_COLORS[team] || "bg-gray-500"}`}>
+                  <Badge variant="outline" className={`border-transparent text-[10px] px-1.5 py-0 text-white ${TEAM_COLORS[team] || "bg-gray-500"}`}>
                     {team}
                   </Badge>
                 </DropdownMenuItem>
@@ -4828,7 +6303,12 @@ function PropertiesList({
         </AlertDialogContent>
       </AlertDialog>
       </>}
-
+      <ImportAnythingDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        defaultTarget="crm_properties"
+        onCommitted={() => queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] })}
+      />
     </PageLayout>
   );
 }
@@ -4845,7 +6325,7 @@ function LandlordHealthView({
   onClose: () => void;
 }) {
   const [healthSearch, setHealthSearch] = useState("");
-  const [healthFilter, setHealthFilter] = useState<"all" | "missing_billing" | "missing_parent" | "missing_both" | "ok">("all");
+  const [healthFilter, setHealthFilter] = useState<"all" | "missing_landlord" | "missing_billing" | "missing_parent" | "missing_both" | "ok">("all");
   const { toast } = useToast();
 
   const queryClient_local = useQueryClient();
@@ -4863,14 +6343,43 @@ function LandlordHealthView({
     },
   });
 
-  // Only properties with a landlord
-  const withLandlord = properties.filter(p => p.landlordId);
+  const setLandlordMutation = useMutation({
+    mutationFn: async ({ id, landlordId }: { id: string; landlordId: string }) => {
+      await apiRequest("PUT", `/api/crm/properties/${id}`, { landlordId });
+    },
+    onSuccess: () => {
+      queryClient_local.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      toast({ title: "Landlord linked" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const setParentMutation = useMutation({
+    mutationFn: async ({ companyId, parentCompanyId }: { companyId: string; parentCompanyId: string }) => {
+      await apiRequest("PUT", `/api/crm/companies/${companyId}`, { parentCompanyId });
+    },
+    onSuccess: () => {
+      queryClient_local.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      queryClient_local.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      toast({ title: "Parent brand linked" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Show every property — including those with no landlord set yet, so they
+  // can be linked from this view.
+  const withLandlord = properties;
 
   const rows = withLandlord.map(p => {
     const landlord = allCompanies.find(c => c.id === p.landlordId);
     const billingEntity = allCompanies.find(c => c.id === p.billingEntityId);
     const parentCompany = landlord?.parentCompanyId ? allCompanies.find(c => c.id === landlord.parentCompanyId) : null;
 
+    const hasLandlord = !!landlord;
     const hasBilling = !!p.billingEntityId;
     const hasParent = !!parentCompany;
     const landlordIsSPV = landlord && (
@@ -4878,8 +6387,9 @@ function LandlordHealthView({
       !/^(grosvenor|landsec|hammerson|british land|derwent|great portland|canary wharf|crown estate|cadogan|longmartin)/i.test(landlord.name)
     );
 
-    let status: "ok" | "missing_billing" | "missing_parent" | "missing_both" = "ok";
-    if (!hasBilling && !hasParent) status = "missing_both";
+    let status: "ok" | "missing_landlord" | "missing_billing" | "missing_parent" | "missing_both" = "ok";
+    if (!hasLandlord) status = "missing_landlord";
+    else if (!hasBilling && !hasParent) status = "missing_both";
     else if (!hasBilling) status = "missing_billing";
     else if (!hasParent) status = "missing_parent";
 
@@ -4896,22 +6406,29 @@ function LandlordHealthView({
   const counts = {
     all: rows.length,
     ok: rows.filter(r => r.status === "ok").length,
+    missing_landlord: rows.filter(r => r.status === "missing_landlord").length,
     missing_billing: rows.filter(r => r.status === "missing_billing").length,
     missing_parent: rows.filter(r => r.status === "missing_parent").length,
     missing_both: rows.filter(r => r.status === "missing_both").length,
   };
 
-  const landlordCompanies = allCompanies.filter(c =>
-    c.companyType === "Landlord" || c.companyType === "Client" || c.companyType === "Landlord / Client"
-  );
+  // Same predicate as InlineLandlord — funds, REITs, investors and
+  // developers are landlords too; the old exact-match list ("Client",
+  // "Landlord / Client" aren't even canonical types) hid most of them.
+  const landlordCompanies = allCompanies.filter(c => {
+    const t = (c.companyType || "").toLowerCase();
+    return t.includes("landlord") || t.includes("investor") || t.includes("developer")
+      || t.includes("reit") || t.includes("fund") || t.includes("freeholder") || t.includes("client");
+  });
 
   return (
     <div className="space-y-4">
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
         {[
-          { key: "all", label: "All Landlord Properties", color: "bg-blue-50 border-blue-200", text: "text-blue-700" },
+          { key: "all", label: "All Properties", color: "bg-blue-50 border-blue-200", text: "text-blue-700" },
           { key: "ok", label: "✅ Fully Set Up", color: "bg-green-50 border-green-200", text: "text-green-700" },
+          { key: "missing_landlord", label: "🔴 No Landlord", color: "bg-red-50 border-red-200", text: "text-red-700" },
           { key: "missing_billing", label: "⚠️ Missing Billing Entity", color: "bg-amber-50 border-amber-200", text: "text-amber-700" },
           { key: "missing_parent", label: "⚠️ Missing Parent Brand", color: "bg-orange-50 border-orange-200", text: "text-orange-700" },
           { key: "missing_both", label: "🔴 Missing Both", color: "bg-red-50 border-red-200", text: "text-red-700" },
@@ -4930,7 +6447,7 @@ function LandlordHealthView({
       </div>
 
       {/* Explanation banner */}
-      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+      <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
         <strong>How this works:</strong> Each property should have (1) a <strong>Landlord / Client</strong> — the real relationship brand (e.g. Landsec, AEW, Grosvenor),
         and (2) a <strong>Billing Entity</strong> — the SPV/shell company used for invoicing (e.g. LS Tottenham Court Road Limited).
         Contacts, emails and calendar invites should always be linked to the Parent Brand.
@@ -4953,7 +6470,7 @@ function LandlordHealthView({
           <ScrollableTable minWidth={900}>
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="[&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground">
                   <TableHead className="min-w-[200px]">Property</TableHead>
                   <TableHead className="min-w-[160px]">Landlord / Client</TableHead>
                   <TableHead className="min-w-[160px]">Parent Brand</TableHead>
@@ -4978,16 +6495,44 @@ function LandlordHealthView({
                           {landlord.name}
                         </a>
                       ) : (
-                        <span className="text-xs text-muted-foreground italic">Not set</span>
+                        <Select
+                          onValueChange={(val) => setLandlordMutation.mutate({ id: property.id, landlordId: val })}
+                        >
+                          <SelectTrigger className="h-7 text-xs w-44 border-dashed border-red-400 text-red-600">
+                            <SelectValue placeholder="Set landlord..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {landlordCompanies.map(c => (
+                              <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       )}
                     </TableCell>
                     <TableCell className="py-2 px-3">
                       {parentCompany ? (
-                        <Badge className="bg-blue-100 text-blue-800 text-xs font-normal">
-                          {parentCompany.name}
-                        </Badge>
+                        <a href={`/companies/${parentCompany.id}`} className="hover:underline">
+                          <Badge className="bg-blue-100 text-blue-800 text-xs font-normal">
+                            {parentCompany.name}
+                          </Badge>
+                        </a>
+                      ) : landlord ? (
+                        <Select
+                          onValueChange={(val) => setParentMutation.mutate({ companyId: landlord.id, parentCompanyId: val })}
+                        >
+                          <SelectTrigger className="h-7 text-xs w-44 border-dashed border-amber-400 text-amber-600">
+                            <SelectValue placeholder="Link parent brand..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {landlordCompanies
+                              .filter(c => c.id !== landlord.id)
+                              .map(c => (
+                                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
                       ) : (
-                        <span className="text-xs text-amber-600 italic">⚠️ Not linked</span>
+                        <span className="text-xs text-muted-foreground italic">—</span>
                       )}
                     </TableCell>
                     <TableCell className="py-2 px-3">
@@ -5007,7 +6552,6 @@ function LandlordHealthView({
                             <SelectItem value={landlord.id}>{landlord.name} (current landlord)</SelectItem>
                             {landlordCompanies
                               .filter(c => c.id !== landlord.id)
-                              .slice(0, 30)
                               .map(c => (
                                 <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                               ))}
@@ -5019,6 +6563,7 @@ function LandlordHealthView({
                     </TableCell>
                     <TableCell className="py-2 px-3">
                       {status === "ok" && <Badge className="bg-green-100 text-green-700 text-xs">✅ OK</Badge>}
+                      {status === "missing_landlord" && <Badge className="bg-red-100 text-red-700 text-xs">🔴 No Landlord</Badge>}
                       {status === "missing_billing" && <Badge className="bg-amber-100 text-amber-700 text-xs">⚠️ No Billing</Badge>}
                       {status === "missing_parent" && <Badge className="bg-orange-100 text-orange-700 text-xs">⚠️ No Parent</Badge>}
                       {status === "missing_both" && <Badge className="bg-red-100 text-red-700 text-xs">🔴 Missing Both</Badge>}
