@@ -88,6 +88,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r565 · 2026-09-06 · LIGHT (r564 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written at
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke). Regression:
+  smoke GREEN 42/0.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (all POST /rocketreach/discover, listed keyless noise)
+  / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, twenty-fifth
+  clean hand-off. 0 app bugs from the scripted regression.
+- Triage: nothing outside listed environment noise.
+- Focus (LIGHT, no journey): r564 carry-forward + client payload-content
+  angle. Findings to follow.
+
 ### r564 · 2026-09-06 · FULL (rotation #1 BGP staff desktop 1440px) · 1 bug fixed, two halves — the notification bell's "N deals with no fee set" alert did nothing on click, and its number disagreed with the only list that could show it · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written at
