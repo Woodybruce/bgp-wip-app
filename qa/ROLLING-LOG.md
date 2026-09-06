@@ -88,6 +88,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r566 · 2026-09-06 · FULL (rotation #2 Landsec client · desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke).
+  Regression: smoke GREEN 42/0.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (POST /rocketreach/discover + the deliberate invalid
+  POST /api/investment-tracker probe — listed keyless noise) / mark 9x403 +
+  1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, twenty-sixth clean hand-off.
+  0 app bugs from the scripted regression.
+- Journey pending: Mark Warne at 1440px, a break-option task at Bluewater.
+
 ### r565 · 2026-09-06 · LIGHT (r564 had the journey) · 1 bug fixed — the Landsec dashboard's portfolio unit board counted the Tenancy Schedule but opened the ARCHIVED Leasing Schedule, which holds a different, smaller set · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written at
