@@ -3409,6 +3409,42 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r561: staff half of client-deal-hides-mlro-and-billing-fields. Stamps the
+  // MLRO working notes + the Xero billing record onto a fixture deal so the
+  // client half has something real to be denied, and proves staff still read
+  // every one of them back. Values are restamped each run (idempotent) and
+  // wiped by the next fixture restore.
+  await step(page, p, 'staff-deal-keeps-mlro-and-billing-fields', async () => {
+    const stamp = `QA-R${ROUND}-MLRO`;
+    const r = await page.evaluate(async ({ stamp }) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const arr = Array.isArray(list) ? list : (list.data || []);
+      const deal = arr.find((d) => d.propertyId === window.QA_FIX.bluewater) || arr.find((d) => d.propertyId && d.status);
+      if (!deal) return { err: 'no deal to stamp' };
+      const put = await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth,
+        body: JSON.stringify({
+          amlSarReference: stamp, amlComplianceNotes: `${stamp} compliance note`,
+          amlPepNotes: `${stamp} pep note`, amlRiskLevel: 'high',
+          mlrScopeReason: `${stamp} mlr scope`, invoicingNotes: `${stamp} invoicing note`,
+          xeroContactName: `${stamp} billing entity`, xeroAccountNumber: stamp,
+        }),
+      });
+      if (!put.ok) return { err: `PUT ${put.status}` };
+      const back = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      const d = back.deal || back;
+      return { id: deal.id, propertyId: deal.propertyId, d };
+    }, { stamp });
+    if (r.err) throw new Error(`could not stamp the MLRO/billing fields: ${r.err}`);
+    for (const k of ['amlSarReference', 'amlComplianceNotes', 'amlPepNotes', 'mlrScopeReason', 'invoicingNotes', 'xeroContactName', 'xeroAccountNumber']) {
+      if (!r.d || r.d[k] == null) throw new Error(`staff lost ${k} off their own deal payload`);
+    }
+    cross.mlroDealId = r.id;
+    cross.mlroPropertyId = r.propertyId;
+    cross.mlroStamp = stamp;
+  });
+
 }
 
 async function trackerStatusDeepLink(page, who) {
@@ -7798,6 +7834,53 @@ async function markRound(page, cross) {
     if (!portfolio) throw new Error('client strip lost its Portfolio insight');
     if (/, 0 currently available/.test(portfolio.detail)) {
       throw new Error(`client Portfolio insight says nothing is available while the tracker shows units: ${portfolio.detail}`);
+    }
+  });
+
+  // r561: every deal payload a client login can read carried BGP's MLRO
+  // working file — the compliance/PEP/EDD notes, the risk rating, the MLR
+  // scope reason and whether a SAR had been filed with its NCA reference —
+  // plus the Xero billing record, sitting right beside the poNumber and
+  // invoicedAt that stripDealFees had always hidden. Nothing in the client
+  // shell renders any of it; it rode the payload to the network tab. The
+  // property sub-read was worse: it hand-nulled only fee + feeNotes, so it
+  // also shipped the agency %, the fee-agreement label and its signed
+  // document URL. Staff half: staff-deal-keeps-mlro-and-billing-fields.
+  await step(page, p, 'client-deal-hides-mlro-and-billing-fields', async () => {
+    const propertyId = cross.mlroPropertyId || null;
+    const got = await page.evaluate(async ({ propertyId }) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const out = {};
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      out.list = Array.isArray(list) ? list : (list.data || []);
+      if (propertyId) {
+        const sub = await fetch(`/api/crm/properties/${propertyId}/deals`, { headers: auth });
+        out.subStatus = sub.status;
+        if (sub.ok) { const j = await sub.json(); out.sub = Array.isArray(j) ? j : (j.data || []); }
+      }
+      return out;
+    }, { propertyId });
+    const INTERNAL = ['amlSarFiled', 'amlSarReference', 'amlSarFiledAt', 'amlComplianceNotes',
+      'amlPepStatus', 'amlPepNotes', 'amlEddReason', 'amlRiskLevel', 'mlrScope', 'mlrScopeReason',
+      'invoicingNotes', 'invoicingEmail', 'xeroContactId', 'xeroContactName', 'xeroAccountNumber',
+      'xeroBillingAddress'];
+    const FEES = ['fee', 'feePercentage', 'feeAgreement', 'feeAgreementUrl', 'feeNotes',
+      'commission', 'poNumber', 'invoicedAt'];
+    const check = (rows, where) => {
+      for (const d of rows || []) {
+        for (const k of INTERNAL.concat(FEES)) {
+          if (d[k] != null) throw new Error(`client ${where} still carries ${k} = ${JSON.stringify(d[k])} on deal ${d.name || d.id}`);
+        }
+      }
+    };
+    if (!got.list.length) throw new Error('client deal list came back empty');
+    check(got.list, '/api/crm/deals');
+    if (propertyId) {
+      if (got.subStatus !== 200) throw new Error(`client property sub-read returned ${got.subStatus}`);
+      check(got.sub, '/api/crm/properties/:id/deals');
+    }
+    if (cross.mlroStamp && JSON.stringify(got).includes(cross.mlroStamp)) {
+      throw new Error("the staff MLRO stamp reached the client's deal payload");
     }
   });
 }

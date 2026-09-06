@@ -88,20 +88,93 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r561 · 2026-09-06 · LIGHT (r560 had the journey) · ROUND IN PROGRESS
+### r561 · 2026-09-06 · LIGHT (r560 had the journey) · 1 bug fixed (two leaks, one scrubber) — every deal payload a client login could read carried BGP's MLRO working file, incl. SAR filed + NCA reference, and the property sub-read shipped the fee agreement's signed-document URL · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env at postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke;
   two-bot in three chunks via qa/with-server.sh with QA_CROSS_FILE set).
-  Regression: smoke GREEN 42/0.
-- BASELINE CONFIRMED (own three-chunk pass): every scenario [ok]; tally
-  victoria 4x400 (all rocketreach-discover noise — the higher-count variant
-  r560 flagged, same class), mark 9x403 + 1x503, woody/nick/sam 0. The
-  r537-r560 signature, twenty-first clean hand-off. 0 app bugs from the
-  scripted regression.
-- Triage: all logged issues are listed environment noise; nothing to chase.
-- Focus this round (LIGHT, no journey): audit CLIENT-legitimate endpoints for
-  scoped-but-INTERNAL content (r560's angle) plus an under-worked surface.
-- Round in progress — final entry replaces this one.
+  Regression: smoke GREEN 42/0 before and GREEN 42/0 after the fix.
+- CARRY-FORWARD FROM r560, CONFIRMED with a full three-chunk pass of my own:
+  every scenario [ok], tally victoria 4x400 / mark 9x403 + 1x503 /
+  woody,nick,sam 0 — twenty-first clean hand-off. The victoria count came in
+  at r560's HIGHER variant (4) on the baseline pass and at the canonical 2 on
+  the post-fix pass; all four are POST /rocketreach/discover, the listed
+  keyless noise. Read the class, not the count (r560's note holds). 0 app
+  bugs from the scripted regression.
+- FOCUS (LIGHT, no journey): r560's angle — audit the endpoints a CLIENT
+  legitimately uses for content that is scoped but still INTERNAL. Method:
+  drove Mark's whole desktop shell in a browser (13 surfaces), captured every
+  /api/ response he actually receives (56 payloads, qa/r561-client-payload-audit.mjs)
+  and grepped each for internal markers (BGP emails, fee/WIP/commission/
+  invoice, leaderboard, leads, internal notes). Worth reusing — it reads what
+  the CLIENT'S OWN BROWSER is handed, not what a hand-picked endpoint returns.
+  CLEARED, do not re-do: /api/insights, /api/daily-digest, /api/activity-feed,
+  /api/notifications all return [] on this fixture (nothing to leak, but also
+  nothing proven — worth a re-check once seeded); /api/activity-summary is
+  the client's own deal/event only; the BGP email in /api/team-events is
+  Victoria as a named ATTENDEE of Mark's own meeting (legitimate); the BGP
+  emails in /api/client-teams are his own BGP contact card (legitimate); the
+  "prospect" hits in /api/crm/companies are a relationship-status value.
+- BUG FIXED (server/crm.ts, two leaks in one family, one scrubber):
+  (a) stripDealFees — the scrubber applied to every client deal payload —
+  hid the fee family but left BGP's MLRO WORKING FILE riding on the row:
+  amlComplianceNotes, amlPepStatus/Notes, amlEddRequired/Reason/Notes,
+  amlRiskLevel, amlSofAnalysis, amlSourceOfFunds/Wealth (+notes), amlAiTriage,
+  amlMarketData, mlrScope/ScopeReason/AssessedAt/By — and amlSarFiled,
+  amlSarFiledAt, amlSarReference, i.e. whether BGP has filed a Suspicious
+  Activity Report on a party and its NCA reference, which it is a criminal
+  offence to disclose to that party. Beside them rode the Xero billing record
+  (xeroContactId/Name/AccountNumber/BillingAddress, invoicingNotes,
+  invoicingEmail) — the same family as the poNumber and invoicedAt the
+  scrubber already nulled. Proven by seeding real values on Mark's own deal
+  and reading them straight back as Mark (qa/r561-deal-leak-probe.mjs).
+  (b) /api/crm/companies/:id/deals and /api/crm/properties/:id/deals nulled
+  only `fee` and `feeNotes` by hand instead of calling the scrubber, so the
+  same client got feePercentage, feeAgreement, feeAgreementUrl (the SIGNED
+  fee-agreement document link stripDealFees' own comment says clients must
+  never get), poNumber and invoicedAt — verified live, values seeded and read
+  back as Mark (qa/r561-subread-probe.mjs).
+  Both sub-reads now call stripDealFees, and stripDealFees nulls the MLRO and
+  billing families too. amlCheckCompleted is deliberately KEPT — it is the
+  soft-required workflow flag the client Letting Tracker reads at SOL.
+  NOT rendered anywhere in the client shell (checked /deals and a deal
+  profile as Mark: zero internal strings on screen) — this was network-tab
+  exposure, same class as r535 (leads) and r536 (firm-summary). Verified
+  after: every listed field null for Mark on all three endpoints, every one
+  still present and populated for Victoria. tsc clean, smoke re-green.
+- HARNESS GROWTH (qa/two-bot-round.mjs), the standard staff-keeps/client-loses
+  pair, both [ok] and non-vacuous (the staff half seeds the data the client
+  half looks for): victoria's staff-deal-keeps-mlro-and-billing-fields stamps
+  the MLRO notes + Xero record on the Bluewater deal via the real PUT and
+  asserts staff read all seven back; mark's client-deal-hides-mlro-and-billing-fields
+  asserts all sixteen internal + all eight fee fields are null on BOTH
+  /api/crm/deals AND /api/crm/properties/:id/deals, and that the staff stamp
+  string appears nowhere in his payload. Neither makes a deliberate 4xx, so
+  neither is registered in NEGATIVE_PROBE_SCENARIOS. Stamp is idempotent and
+  is wiped by the next fixture restore.
+- DEFERRED (1, new): the client Letting Tracker's per-unit compliance-gap dot
+  (available-units.tsx ~2110) computes `feeOk = deal.feeAgreement === "YES"`,
+  but feeAgreement is deliberately stripped for client logins — so the moment
+  a client has a SOL/EXC/COM/INV deal linked to a tracker unit, they get a
+  permanent red "Compliance gap: Fee agreement" dot about a BGP document they
+  cannot see or act on. Could NOT be reproduced visually this round: no
+  fixture deal is both SOL+ and unit-linked (r207 — Gail's deal has unit_id
+  NULL), and 0 dots render for either persona today, so it is logged rather
+  than fixed. Next round: link a SOL deal to a Bluewater unit, confirm as
+  Mark, then hide the dot (or the fee half of it) for client viewers.
+  Still open and unbuilt: UX #150, #157, #162, #170, #171, #172, #174-#223.
+- Suggestions added: UX-NOTES #223 (invert the client deal scrubber — an
+  allow-list DTO instead of the hand-maintained deny-list that let both of
+  this round's leaks happen).
+- New flakes: none. Setup notes: qa scripts must import playwright from
+  ../node_modules/playwright/index.mjs — playwright-core/index.js is CommonJS
+  and has no named chromium export; crm_deals has NO fee_notes or commission
+  COLUMN (both are API-shape only), so seeding those in SQL fails.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r561 was LIGHT -> r562 FULL, rotation #4 BGP staff mobile 390px.
+  Method worth reusing: drive a persona's whole shell in a real browser and
+  audit the payloads THEIR browser receives, not the endpoints you guessed
+  at — and when a payload is scrubbed by a hand-written null-list, check the
+  OTHER handlers that return the same row (sub-reads drift behind).
 
 ### r560 · 2026-09-05/06 · FULL (rotation #3 Landsec client MOBILE 390px) · 2 bugs fixed — the client Calendar strip published a BGP agent leaderboard by email + told a landlord nothing in his portfolio was available · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

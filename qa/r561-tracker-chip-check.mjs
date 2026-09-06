@@ -1,0 +1,17 @@
+import { chromium } from '/home/user/bgp-wip-app/node_modules/playwright/index.mjs';
+const BASE='http://127.0.0.1:5000'; const PASSWORD='B@nd0077!';
+const who=process.env.QA_USER||'mark.warne@landsec.com';
+const tag=process.env.QA_TAG||'before';
+const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium',args:['--no-sandbox']});
+const ctx=await b.newContext({viewport:{width:1440,height:900}});
+const r=await ctx.request.post(`${BASE}/api/auth/login`,{data:{username:who,password:PASSWORD}});
+const {token}=await r.json();
+const p=await ctx.newPage();
+await p.goto(BASE+'/login',{waitUntil:'domcontentloaded'}).catch(()=>{});
+await p.evaluate(t=>localStorage.setItem('authToken',t),token);
+await p.goto(BASE+'/available',{waitUntil:'domcontentloaded'});
+await p.waitForTimeout(8000);
+const flags=await p.$$eval('[data-testid^="compliance-flag-"]', els=>els.map(e=>({id:e.getAttribute('data-testid'), title:e.getAttribute('title')})));
+console.log(`${who} /available [${tag}] — compliance-gap dots:`, JSON.stringify(flags));
+await p.screenshot({path:`qa/smoke-shots/r561-tracker-${who.split('@')[0]}-${tag}.png`});
+await b.close();

@@ -13,6 +13,19 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+223. 2026-09-06 · Landsec client / desktop (QA r561) · Payload audit of the
+    client shell · A client deal row ships ~120 columns straight off
+    crm_deals; the client shell renders perhaps fifteen of them. Everything
+    else is protected by a hand-written null-list (stripDealFees) that has to
+    be extended by hand every time a staff feature adds a column — which is
+    exactly how the MLRO working notes and the Xero billing record ended up
+    on a landlord's payload (fixed this round), and how the property sub-read
+    drifted a whole fee family behind the canonical list. Suggested: invert
+    it — give scoped callers an explicit client deal DTO (allow-list of the
+    fields the client shell actually reads) instead of a deny-list, so a new
+    staff column is private by default. Needs Woody's numbered confirmation —
+    not built.
+
 221. 2026-09-06 · Landsec client / mobile 390px (QA r560) · Journey "what has
     BGP got outstanding on my portfolio" · The Calendar screen's insight strip
     is the only place a landlord gets portfolio intelligence on the phone

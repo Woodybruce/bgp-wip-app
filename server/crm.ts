@@ -1114,10 +1114,33 @@ export function setupCrmRoutes(app: Express) {
   // Still stripped: the internal fee NOTES, the signed FA document link, and
   // the raw commission field. The per-BGP-agent split lives on a separate
   // staff-gated endpoint (deal_fee_allocations), so it never rides along here.
+  // Beyond the fee family, a deal row carries two other BGP-internal
+  // families no client surface reads: the MLRO's own AML/CDD working notes
+  // (r561 — including whether a SAR was filed and its NCA reference, which
+  // it is a criminal offence to disclose to a party) and the Xero billing
+  // record that sits beside the already-stripped PO number and invoice date.
+  // Neither renders anywhere in the client shell, but both rode the deal
+  // payload out to a landlord login's network tab.
   const stripDealFees = <T extends Record<string, any>>(d: T): T => ({
     ...d, fee: null, feePercentage: null, feeAgreement: null,
     feeNotes: null, feeAgreementUrl: null, commission: null,
     poNumber: null, invoicedAt: null,
+    // MLRO / AML working file. amlCheckCompleted stays — it is the
+    // soft-required workflow flag the client Letting Tracker reads at SOL.
+    amlComplianceNotes: null, amlRiskLevel: null,
+    amlPepStatus: null, amlPepNotes: null,
+    amlEddRequired: null, amlEddReason: null, amlEddNotes: null,
+    amlEddCompletedAt: null, amlEddCompletedBy: null,
+    amlSarFiled: null, amlSarFiledAt: null, amlSarReference: null,
+    amlSourceOfFunds: null, amlSourceOfFundsNotes: null,
+    amlSourceOfWealth: null, amlSourceOfWealthNotes: null,
+    amlSofAnalysis: null, amlAiTriage: null, amlMarketData: null,
+    mlrScope: null, mlrScopeReason: null,
+    mlrScopeAssessedAt: null, mlrScopeAssessedBy: null,
+    // BGP's billing plumbing.
+    invoicingNotes: null, invoicingEmail: null,
+    xeroContactId: null, xeroContactName: null,
+    xeroAccountNumber: null, xeroBillingAddress: null,
   });
   // Ensure new comp columns exist (safe to re-run)
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_agreement_url TEXT`).catch(() => {});
@@ -2758,7 +2781,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const cdScope = await resolveCompanyScope(req);
       if (cdScope && cdScope !== req.params.id) return res.json([]);
       const deals = await storage.getCompanyDeals(req.params.id);
-      if (cdScope) return res.json(deals.map((d: any) => ({ ...d, fee: null, feeNotes: null })));
+      if (cdScope) return res.json(deals.map(stripDealFees));
       res.json(deals);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2786,9 +2809,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         return res.status(403).json({ error: "Not available for this account" });
       }
       const deals = await storage.getCrmDeals({ propertyId: req.params.id });
-      // Fees are BGP-internal — strip for client logins.
+      // Fees are BGP-internal — strip for client logins. Both this and the
+      // company sub-read used to null only fee + feeNotes by hand, so a
+      // client reading a property's deals still got the agency %, the
+      // fee-agreement label AND its signed-document URL, the PO number and
+      // the invoice date that the canonical list hides (r561). Same scrubber
+      // everywhere now.
       const dealArr: any[] = Array.isArray(deals) ? deals : (deals as any).data || [];
-      if (pdScope) return res.json(dealArr.map((d: any) => ({ ...d, fee: null, feeNotes: null })));
+      if (pdScope) return res.json(dealArr.map(stripDealFees));
       res.json(deals);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
