@@ -92,6 +92,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r574 · 2026-09-06 · FULL (rotation #2 Landsec client · desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (all POST /brand/:id/rocketreach/discover — listed
+  keyless class) / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE
+  CONFIRMED, thirty-fourth consecutive clean hand-off. 0 app bugs from the
+  regression. No chunk died at login.
+- Journey in progress: Landsec client desktop, the client-facing document
+  family per r573's pointer.
+
 ### r573 · 2026-09-06 · LIGHT (no journey — r572 had one) · 1 bug fixed (two halves) — the CLIENT-FACING weekly update PDF counted completed and withdrawn deals as "ACTIVE DEALS" because it compared `status` against words the column never holds · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
