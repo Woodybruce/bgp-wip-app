@@ -1,0 +1,11 @@
+import pg from 'pg';
+const c = new pg.Client({ connectionString: process.env.DATABASE_URL || 'postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke' });
+await c.connect();
+const cols = (await c.query(`SELECT column_name, data_type FROM information_schema.columns WHERE table_name='crm_comps' ORDER BY ordinal_position`)).rows;
+const parts = cols.map(x => `count(${x.column_name})::int AS "${x.column_name}"`).join(',');
+const r = (await c.query(`SELECT count(*)::int AS _rows, ${parts} FROM crm_comps`)).rows[0];
+const populated = Object.entries(r).filter(([k,v]) => v>0);
+const empty = Object.entries(r).filter(([k,v]) => v===0).map(([k])=>k);
+console.log('POPULATED:', JSON.stringify(Object.fromEntries(populated), null, 1));
+console.log('\nALL-NULL COLUMNS:', empty.join(', '));
+await c.end();

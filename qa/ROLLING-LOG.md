@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r573 · 2026-09-06 · LIGHT · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh).
+- Smoke GREEN 42 checks / 0 failures.
+- Two-bot three-chunk pass running (QA_CROSS_FILE shared) — tally to follow.
+- Triage angle this round: the dead-source sweep, driven off a scripted
+  all-null-column census of the whole fixture DB cross-referenced against
+  every aggregate/read in server/. Candidate under investigation: the
+  CLIENT-FACING weekly update PDF (server/weekly-report.ts) headlines
+  "ACTIVE DEALS" from `status !== "completed" && status !== "lost"` while
+  crm_deals.status holds the canonical 3-letter codes (COM/WIT/INV) — so
+  the filter excludes nothing.
+
 ### r572 · 2026-09-06 · FULL (rotation #1 BGP staff · desktop 1440px) · 1 bug fixed — the Landlord Intelligence board's "Biggest portfolios" leaderboard read "0 properties" for every landlord because it counted a supplementary link table instead of the ownership columns the profile it links to reads · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; dev server via qa/with-server.sh; .env written). Smoke
