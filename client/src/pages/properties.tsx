@@ -5193,12 +5193,12 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
   const liveLettings = useMemo(() => units.filter(u => {
     if (!u.propertyId || !ids.has(u.propertyId)) return false;
     const code = legacyToCode(u.marketingStatus) || "AVA";
-    return ["OPP", "REP", "AVA", "NEG", "SOL", "EXC"].includes(code);
+    return ["OPP", "REP", "AVA", "NEG", "HOT", "SOL", "EXC"].includes(code);
   }).length, [units, ids]);
   const liveDeals = useMemo(() => deals.filter(d => {
     if (!d.propertyId || !ids.has(d.propertyId)) return false;
     const code = legacyToCode(d.status);
-    return !!code && ["REP", "AVA", "NEG", "SOL", "EXC"].includes(code);
+    return !!code && ["REP", "AVA", "NEG", "HOT", "SOL", "EXC"].includes(code);
   }).length, [deals, ids]);
 
   const stores = useMemo(() => items.map(p => {

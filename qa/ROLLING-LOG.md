@@ -92,17 +92,78 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r574 · 2026-09-06 · FULL (rotation #2 Landsec client · desktop 1440px) · ROUND IN PROGRESS
+### r574 · 2026-09-06 · FULL (rotation #2 Landsec client · desktop 1440px) · 1 bug fixed — a letting or deal sitting at HOTs (heads of terms) was dropped from every "live lettings / live deals" summary, including the client dashboard's Properties & Deals board · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
-  GREEN 42 checks / 0 failures.
+  GREEN 42 checks / 0 failures before AND after the fix.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
   Tally victoria 4x400 (all POST /brand/:id/rocketreach/discover — listed
   keyless class) / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE
   CONFIRMED, thirty-fourth consecutive clean hand-off. 0 app bugs from the
-  regression. No chunk died at login.
-- Journey in progress: Landsec client desktop, the client-facing document
-  family per r573's pointer.
+  regression. No chunk died at login. (Note: the mark chunk exceeded the
+  600s foreground cap and was auto-backgrounded by the harness; it finished
+  clean — budget for it or split the chunk further.)
+- JOURNEY (Landsec client desktop 1440px, Mark Warne): "quarterly asset
+  review — what does BGP give me in writing, and does each figure match the
+  board it claims to summarise?" Dashboard KPIs -> tenancy schedule ->
+  the Excel BGP hands him -> Properties & Deals board -> Deals.
+- CHECKED AND CLEAN: the tenancy-schedule Excel (the one document the client
+  pulls that r550/r566/r567 had not re-checked end to end) agrees with the
+  board exactly — 199 data rows against the board's 200 (the one synthetic
+  Letting-Tracker row, by design), and its TOTAL row reproduces the board's
+  own sums to the decimal (NIA 623,652.5; ERV pa 27,301,007.4). Money
+  columns carry £, durations are excluded from the totals, and no £/sq ft
+  column is summed. Dashboard tiles reconcile too: 201 units = 199 Bluewater
+  + 2 Westgate, 77 vacant / 124 occupied / 61.7%, all off the tenancy master
+  the endpoint documents.
+- BUG FIXED (client/src/components/properties-summary.tsx,
+  client/src/components/tracker-summary.tsx, client/src/pages/properties.tsx).
+  HOT ("HOTs — heads of terms agreed", added to DEAL_STATUS_CODES on
+  2026-08-12) was never added to the live-status sets those summaries filter
+  on: all three matched ["OPP","REP","AVA","NEG","SOL","EXC"]. So a letting
+  at the stage immediately before signature — the one a landlord most wants
+  to see — was counted as NOT live: it vanished from the "N live lettings"
+  chip, from the per-property count chips, and, because PropertiesSummary's
+  `onlyActive` keeps only rows with something live, a property whose only
+  live activity sat at HOTs disappeared from the client dashboard's
+  Properties & Deals board altogether, while the ACTIVE DEALS tile above it
+  (status NOT IN WIT/COM/INV — HOTs included) still counted it and the
+  Letting Tracker the chip links to still listed it. LETTING_STATUSES in
+  shared/deal-status.ts already carries HOT; these four literals were simply
+  never updated. Added "HOT" to each; nothing else changed.
+- PROVEN before/after in the browser as Mark, one Bluewater unit moved to
+  HOTs (fixture restored). BEFORE: board header "2 properties · 77 live
+  lettings", Bluewater row "75". AFTER: "78 live lettings", Bluewater "76" —
+  matching the Letting Tracker widget on the same dashboard. Shots
+  qa/smoke-shots/r574-board-prefix.png and r574-board-postfix.png. tsc clean.
+- New two-bot scenario: victoria · staff-hots-letting-counts-as-live —
+  stages a unit at HOT, loads /properties, and fails if the "live lettings"
+  chip is short of the tracker feed's own non-closed count, then deletes the
+  probe unit. CONFIRMED it fires on the pre-fix file ("counts 81 live
+  lettings while the tracker feed holds 83 (2 at HOTs)") and passes on the
+  fixed one; full victoria chunk re-run green.
+- Fixture restored and verified: probe deal back to SOL, probe unit back to
+  AVA, QA-HOTS rows deleted (qa/r574-cleanup.mjs, qa/r574-probe-restore.mjs).
+- DEFERRED (found, not fixed — logged as UX #250/#251 instead since neither
+  has a visible symptom on this fixture): (a) /api/company-portfolio ships
+  stats.activeDeals from the ownership UNION (4) while the `deals` array in
+  the same payload still uses landlord_id alone (2) — the exact class r572
+  fixed in /api/crm/landlords and r573 deferred on /api/hunters/letting; only
+  the property-less subset renders today. (b) the tenancy Excel's TOTAL row
+  leaves Rent (pa) blank rather than saying the column is empty.
+- Also still open from r573 and NOT taken this round: the weekly PDF's blank
+  second page (#247) and /api/hunters/letting's landlord_id-only portfolio.
+- FOR r575 (rotation #3 LANDSEC CLIENT MOBILE 390px): the status-vocabulary
+  angle just paid on the CLIENT side of the app — a code added to the shared
+  set in August that half the readers never learned. Worth sweeping the phone
+  shell for the same shape: mobile-home.tsx already knows HOT
+  (["NEG","HOT","SOL","EXC"] = under offer) but the phone tracker chips and
+  any card that buckets a status are the obvious next place a new code went
+  unlearned. Grep for the pre-HOT literal before opening a browser.
+- New flakes: none. (Reminder: qa/r574-*.mjs probes drive the client
+  dashboard directly; ctx.route('**/*') aborting non-BASE traffic broke an
+  in-page fetch in one probe — two-bot's own visit() helper is the safe
+  pattern.)
 
 ### r573 · 2026-09-06 · LIGHT (no journey — r572 had one) · 1 bug fixed (two halves) — the CLIENT-FACING weekly update PDF counted completed and withdrawn deals as "ACTIVE DEALS" because it compared `status` against words the column never holds · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

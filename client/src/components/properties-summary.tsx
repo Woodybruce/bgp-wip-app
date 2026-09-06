@@ -26,8 +26,12 @@ import { Building2, Store, Handshake, ChevronRight } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { legacyToCode, type DealStatusCode } from "@shared/deal-status";
 
-const LIVE_LETTING = new Set<DealStatusCode>(["OPP", "REP", "AVA", "NEG", "SOL", "EXC"]);
-const LIVE_DEAL = new Set<DealStatusCode>(["REP", "AVA", "NEG", "SOL", "EXC"]);
+// HOT (heads of terms) is a LIVE stage — it was added to the code set after
+// these lists were written, so a deal or letting at HOTs dropped off every
+// summary row, and `onlyActive` hid the property outright while the Active
+// Deals tile above still counted it.
+const LIVE_LETTING = new Set<DealStatusCode>(["OPP", "REP", "AVA", "NEG", "HOT", "SOL", "EXC"]);
+const LIVE_DEAL = new Set<DealStatusCode>(["REP", "AVA", "NEG", "HOT", "SOL", "EXC"]);
 
 type SummaryRow = { id: string; name: string; asset_class: string | null; units_occupied: number | null };
 

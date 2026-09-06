@@ -13,6 +13,29 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+250. 2026-09-06 · Landsec client / dashboard desktop 1440px (QA r574) ·
+    Mark reads "ACTIVE DEALS 4" and looks for the four · The tile counts
+    every deal on a property he owns (landlord_id OR the property's
+    landlord_id OR a matching group name — the union the comment above the
+    query says was needed because "landlord_id alone missed nearly
+    everything"), but the `deals` array the same payload ships is still the
+    landlord_id-only list: 4 counted, 2 sent. Only the property-less ones
+    surface today (the "Other Deals" strip), so nothing visibly contradicts
+    the tile yet — but any client-side board that starts reading
+    portfolioData.deals inherits the older, narrower portfolio.
+    Suggestion: give the list query the same WHERE clause as the count in
+    /api/company-portfolio/:companyId (server/routes.ts ~8060).
+
+251. 2026-09-06 · Landsec client / dashboard desktop 1440px (QA r574) ·
+    Mark counts his own units off the tenancy Excel BGP gives him · The
+    downloaded rent roll totals every money column except the one a landlord
+    reads first: Rent (pa) is blank in the TOTAL row because
+    `passing_rent_pa` is null across the whole Landsec feed (#240), while
+    ERV, Rates, Service Charge and Insurance all total. A client cannot tell
+    "no data" from "sums to zero". Suggestion: print "not recorded" (or the
+    coverage note the dashboard tile already uses) in a totals cell whose
+    column has no values at all, rather than an empty cell.
+
 247. 2026-09-06 · Landsec client / emailed weekly update PDF (QA r573) ·
     Mark's colleague opens the weekly update BGP emails them · Every copy of
     the PDF carries a spurious blank second page. The per-page footer is

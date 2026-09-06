@@ -3862,6 +3862,59 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r574: HOTs (heads of terms) joined the status set on 2026-08-12, but the
+  // "live lettings / live deals" summaries were written before it and never
+  // picked it up — properties-summary, tracker-summary and the /properties
+  // header chips all matched ["OPP","REP","AVA","NEG","SOL","EXC"]. A letting
+  // sitting at heads of terms — the stage just before signature — dropped out
+  // of every one of those counts (and out of the client dashboard's
+  // Properties & Deals board entirely, since it only keeps rows with
+  // something live), while the Letting Tracker it links to still listed it.
+  await step(page, p, 'staff-hots-letting-counts-as-live', async () => {
+    const mk = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const propertyId = Array.isArray(units) && units[0] ? units[0].propertyId : null;
+      if (!propertyId) return { ok: false, why: 'no available unit to borrow a propertyId from' };
+      const res = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ propertyId, unitName: `QA-HOTS Unit R${round}`, marketingStatus: 'HOT' }) });
+      if (!res.ok) return { ok: false, why: `HOTs unit POST ${res.status}` };
+      const unit = await res.json();
+      return { ok: true, id: unit.id, propertyId };
+    }, ROUND);
+    if (!mk.ok) throw new Error(`could not stage a HOTs letting (${mk.why})`);
+    try {
+      await visit(page, p, '/properties', 'properties board');
+      await page.waitForTimeout(4000);
+      const r = await page.evaluate(async () => {
+        const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+        const units = await (await fetch('/api/available-units', { headers: auth })).json();
+        // The Letting Tracker's own pipeline: everything that is not closed.
+        const CLOSED = ['COM', 'WIT', 'INV'];
+        const feedLive = (Array.isArray(units) ? units : []).filter((u) => {
+          const s = String(u.marketingStatus || 'AVA').toUpperCase();
+          return !CLOSED.includes(s);
+        }).length;
+        const hots = (Array.isArray(units) ? units : []).filter((u) => String(u.marketingStatus || '').toUpperCase() === 'HOT').length;
+        const chip = Array.from(document.querySelectorAll('a[href="/deals/letting"]'))
+          .map((a) => (a.textContent || '').replace(/\s+/g, ' ').trim())
+          .find((t) => /live letting/i.test(t));
+        const shown = chip ? Number((chip.match(/\d[\d,]*/) || ['0'])[0].replace(/,/g, '')) : null;
+        return { feedLive, hots, chip, shown };
+      });
+      if (!r.hots) throw new Error('staged HOTs letting never reached the units feed');
+      if (r.shown == null) throw new Error('properties board lost its "live lettings" chip');
+      if (r.shown !== r.feedLive) {
+        throw new Error(`properties board counts ${r.shown} live lettings while the tracker feed holds ${r.feedLive} (${r.hots} at HOTs) — a heads-of-terms letting is being dropped`);
+      }
+    } finally {
+      await page.evaluate(async (id) => {
+        const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+        await fetch(`/api/available-units/${id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }, mk.id);
+    }
+  });
+
   // r564: the notification centre's "N deals with no fee set" alert was the
   // one row in the bell with no destination — it carried no dealId, so the
   // click handler did nothing at all. It now carries an explicit link, and

@@ -20,7 +20,7 @@ import { getAuthHeaders } from "@/lib/queryClient";
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { DEAL_STATUS_BADGE_COLORS, DEAL_STATUS_DOT_COLORS } from "@/lib/deal-status-colors";
 
-const LIVE_CODES = new Set<DealStatusCode>(["OPP", "REP", "AVA", "NEG", "SOL", "EXC"]);
+const LIVE_CODES = new Set<DealStatusCode>(["OPP", "REP", "AVA", "NEG", "HOT", "SOL", "EXC"]);
 
 type Unit = {
   id: string; propertyId: string; unitName: string | null; sqft: number | null;
