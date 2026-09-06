@@ -3540,6 +3540,32 @@ async function victoriaRound(page, cross) {
     cross.mlroStamp = stamp;
   });
 
+  await step(page, p, 'staff-leasing-board-stays-its-own-trimmed-set', async () => {
+    // Staff half of client-portfolio-board-opens-the-schedule-it-counted
+    // (r565). The archived /leasing-schedule board is deliberately kept for
+    // staff reference and holds a SMALLER, trimmed set than the tenancy
+    // master — which is exactly why the client dashboard board, which counts
+    // the master, must not link to it. If the two sets ever converge this
+    // assertion goes vacuous, so it asserts the gap explicitly.
+    const r = await page.evaluate(async (pid) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const l = await fetch(`/api/leasing-schedule/property/${pid}`, { headers: auth });
+      const t = await fetch(`/api/tenancy-schedule/property/${pid}`, { headers: auth });
+      const arr = async (res) => { const j = await res.json(); return Array.isArray(j) ? j : (j.units || j.rows || []); };
+      return {
+        lStatus: l.status, tStatus: t.status,
+        leasing: l.ok ? (await arr(l)).length : 0,
+        tenancy: t.ok ? (await arr(t)).length : 0,
+      };
+    }, BLUEWATER);
+    if (r.lStatus !== 200) throw new Error(`staff lost the archived leasing board (${r.lStatus})`);
+    if (r.tStatus !== 200) throw new Error(`staff tenancy schedule returned ${r.tStatus}`);
+    if (!r.leasing) throw new Error('archived leasing board came back empty for staff');
+    if (r.leasing >= r.tenancy) {
+      throw new Error(`leasing board (${r.leasing}) is no longer a subset of the tenancy master (${r.tenancy})`);
+    }
+  });
+
   // r564: the notification centre's "N deals with no fee set" alert was the
   // one row in the bell with no destination — it carried no dealId, so the
   // click handler did nothing at all. It now carries an explicit link, and
@@ -7979,6 +8005,71 @@ async function markRound(page, cross) {
     if (!portfolio) throw new Error('client strip lost its Portfolio insight');
     if (/, 0 currently available/.test(portfolio.detail)) {
       throw new Error(`client Portfolio insight says nothing is available while the tracker shows units: ${portfolio.detail}`);
+    }
+  });
+
+  await step(page, p, 'client-portfolio-board-opens-the-schedule-it-counted', async () => {
+    // r565: the client dashboard's portfolio board counted
+    // tenancy_schedule_units (the master the portfolio endpoint reads) but
+    // was titled "Leasing Schedule" and every row's "View Full" linked to
+    // /leasing-schedule/:id — a board carrying an ARCHIVED banner and a
+    // smaller, trimmed set. Bluewater read "199 units · 124 occ" on the card
+    // and 165 / 88 at the destination. The board must open the schedule it
+    // counted, and its "N occ" must equal the destination's occupied bucket.
+    await visit(page, p, '/', 'client dashboard');
+    await page.waitForTimeout(4000);
+    const card = await page.evaluate(() => {
+      const h = Array.from(document.querySelectorAll('h3'))
+        .find((e) => /Tenancy Schedule|Leasing Schedule/.test(e.textContent || ''));
+      if (!h) return null;
+      const root = h.closest('.h-full') || h.parentElement?.parentElement?.parentElement;
+      // The row's counts sit in sibling spans; reading the row's concatenated
+      // textContent glues the units badge onto the occ figure ("199124 occ").
+      const rows = Array.from(root.querySelectorAll('a[href]')).map((a) => {
+        const row = a.querySelector('[data-testid^="dash-prop-"]');
+        const occSpan = row && Array.from(row.querySelectorAll('span'))
+          .find((e) => /^\d+\s*occ$/.test((e.textContent || '').trim()));
+        return {
+          href: a.getAttribute('href'),
+          text: (a.textContent || '').replace(/\s+/g, ' ').trim(),
+          occ: occSpan ? Number((occSpan.textContent || '').trim().match(/\d+/)[0]) : null,
+        };
+      });
+      return { title: (h.textContent || '').replace(/\s+/g, ' ').trim(), rows };
+    });
+    if (!card) throw new Error('client dashboard lost its portfolio unit-schedule board');
+    if (/Leasing Schedule/.test(card.title)) {
+      throw new Error(`board is titled "${card.title}" while it counts the tenancy schedule`);
+    }
+    const propRows = card.rows.filter((r) => /View Full/.test(r.text));
+    if (!propRows.length) throw new Error('portfolio schedule board rendered no property rows');
+    for (const r of propRows) {
+      if (!/^\/tenancy-schedule\//.test(r.href || '')) {
+        throw new Error(`board row "${r.text.slice(0, 40)}" still points at ${r.href}`);
+      }
+    }
+    // The stated "N occ" must match the destination's Occupied bucket
+    // (Occupied / Trading / Let / Not Vacant — the tenancy board's own
+    // grouping). Derived Letting-Tracker vacant rows carry is_vacant and
+    // never land in it.
+    const OCCUPIED = ['Occupied', 'Trading', 'Let', 'Not Vacant'];
+    for (const r of propRows) {
+      const id = r.href.split('/').pop();
+      const stated = r.occ;
+      if (!Number.isFinite(stated)) throw new Error(`board row "${r.text.slice(0, 40)}" states no occ count`);
+      const rows = await page.evaluate(async (pid) => {
+        const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+          headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        });
+        if (!res.ok) return { status: res.status };
+        const j = await res.json();
+        return { units: Array.isArray(j) ? j : (j.units || j.rows || []) };
+      }, id);
+      if (rows.status) throw new Error(`destination /api/tenancy-schedule/property/${id} returned ${rows.status}`);
+      const occ = rows.units.filter((u) => !u.is_vacant && OCCUPIED.includes(u.status)).length;
+      if (occ !== stated) {
+        throw new Error(`board says ${stated} occ for ${id} but its destination holds ${occ}`);
+      }
     }
   });
 

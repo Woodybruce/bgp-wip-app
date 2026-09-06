@@ -13,6 +13,28 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+229. 2026-09-06 · Landsec client / desktop 1440px (QA r565) · Mark opened his
+    portfolio dashboard to see how full Bluewater is · The unit-schedule board
+    states "199 units · 124 occ · 7 exp" per property, but the two numbers a
+    landlord actually asks about — how many units are empty, and what that
+    vacancy is costing — aren't there. Vacancy has to be worked out by
+    subtraction (199 − 124), and the board's own destination shows VACANT 75
+    and a service charge figure it never surfaces here. Suggestion: put the
+    vacant count next to the occupied one on the card row (green "124 occ" /
+    amber "75 vac"), same as the schedule's own tiles, so the headline the
+    landlord came for is on the dashboard rather than one click away.
+
+230. 2026-09-06 · Landsec client / desktop 1440px (QA r565) · Mark clicked
+    through from the dashboard board to the Bluewater Tenancy Schedule · The
+    card counts 199 units and the schedule header reads 200. Both are honest
+    — the schedule merges in Letting Tracker units that have no tenancy row
+    yet (one, here), and the dashboard reads the stored table — but neither
+    screen says so, and a landlord reconciling two counts of his own centre
+    has no way to tell which is which. Suggestion: on the schedule header,
+    footnote the merged rows the way the WAULT tile already footnotes its
+    exclusions ("200 units · 1 from the Letting Tracker"), so the two figures
+    explain their own difference.
+
 227. 2026-09-06 · BGP staff / desktop 1440px (QA r564) · Victoria linked a
     follow-up task ("chase Landsec on the Bluewater HOTs") to the Bluewater
     MSU9 deal from My Tasks · The link is one-way. The task row gets a blue

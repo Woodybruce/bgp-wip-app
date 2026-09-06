@@ -88,18 +88,78 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r565 · 2026-09-06 · LIGHT (r564 had the journey) · ROUND IN PROGRESS
+### r565 · 2026-09-06 · LIGHT (r564 had the journey) · 1 bug fixed — the Landsec dashboard's portfolio unit board counted the Tenancy Schedule but opened the ARCHIVED Leasing Schedule, which holds a different, smaller set · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written at
-  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke). Regression:
-  smoke GREEN 42/0.
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke; browser work +
+  two-bot via qa/with-server.sh). Regression: smoke GREEN 42/0 before and
+  GREEN 42/0 after the fix.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
-  Tally victoria 4x400 (all POST /rocketreach/discover, listed keyless noise)
-  / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, twenty-fifth
-  clean hand-off. 0 app bugs from the scripted regression.
-- Triage: nothing outside listed environment noise.
-- Focus (LIGHT, no journey): r564 carry-forward + client payload-content
-  angle. Findings to follow.
+  Tally victoria 4x400 on the baseline pass / 2x400 on the re-run (all POST
+  /rocketreach/discover + the deliberate invalid POST /api/investment-tracker
+  probe — listed keyless noise, read the class not the count) / mark 9x403 +
+  1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, twenty-fifth clean hand-off.
+  0 app bugs from the scripted regression.
+- FOCUS (LIGHT, no journey): r564's method — read every card on a surface that
+  states a NUMBER and promises a destination, then count what the destination
+  renders. Applied to the CLIENT desktop dashboard (rotation #2's surface).
+- BUG FIXED (client/src/pages/dashboard.tsx). Mark's portfolio dashboard
+  carries a board titled "Leasing Schedule", badge "199 units across 2
+  properties", per-property row "Bluewater Shopping Centre · 199 · 124 occ ·
+  7 exp · View Full". Both the header "Open Board" (/leasing-schedule) and
+  every row's "View Full" (/leasing-schedule/:id) landed on a board that
+  renders its own ARCHIVED banner — "This board is retired — day-to-day
+  leasing lives on the property Tenancy Schedule and the Letting Tracker" —
+  and holds 165 rows / 88 Occupied for Bluewater. So the landlord's largest
+  portfolio board sent him to a retired screen whose numbers contradicted the
+  card that sent him: 199/124 on the card, 165/88 at the destination. The
+  count itself was never wrong — server/routes.ts feeds the board
+  tenancy_schedule_units on purpose ("the dashboard portfolio boards show
+  EVERY unit across the portfolio, so they read the tenancy schedule
+  (master), not the trimmed leasing board"); only the title and the links
+  disagreed with it. Fix: board label + heading now read "Tenancy Schedule",
+  each property row links to /tenancy-schedule/:propId, and the header link
+  is /properties labelled "All properties" (the app's own answer for picking
+  a property — see TenancyScheduleRedirect in App.tsx). Board id
+  portfolio-leasing kept so saved layouts survive. Verified LIVE as Mark at
+  1440px (qa/smoke-shots/r565-fix-destination.png): card reads "Tenancy
+  Schedule · 201 units across 2 properties", Bluewater row 199 · 124 occ,
+  click -> /tenancy-schedule/<id>, no ARCHIVED banner, header "200 units ·
+  OCCUPIED 124 · VACANT 75" — the occupied figure now matches the card
+  exactly. tsc clean, smoke re-green.
+- NOT A BUG, checked while there: the card's 199 vs the schedule header's 200
+  is the one derived Letting-Tracker vacant row the tenancy GET merges in
+  (available_units with no matching tenancy row, cast to is_vacant). Deliberate
+  and documented in server/tenancy-schedule.ts. Filed as UX #230 (neither
+  screen says so) rather than fixed. Likewise the schedule's "200 units" vs
+  OCCUPIED 124 + VACANT 75 = 199: that derived row carries status AVA and sits
+  in neither bucket. And the company-profile board card (CompanyPropertiesBoard,
+  "Open leasing board", 165 units · 88 occ) is internally consistent — it
+  counts the leasing board AND links to it; left alone.
+- HARNESS GROWTH (qa/two-bot-round.mjs), both non-vacuous on the fixture:
+  mark · client-portfolio-board-opens-the-schedule-it-counted — asserts the
+  board is not titled "Leasing Schedule", that every property row's href is
+  /tenancy-schedule/, and that each row's stated "N occ" equals the Occupied
+  bucket (Occupied/Trading/Let/Not Vacant, derived vacant rows excluded) in
+  the destination's own payload. victoria ·
+  staff-leasing-board-stays-its-own-trimmed-set — the archived board is still
+  reachable for staff AND still a strict subset of the tenancy master, which
+  is exactly why the client card must not point at it (the assertion goes
+  loud, not vacuous, if the two sets ever converge).
+- Suggestions added: UX-NOTES #229 (the card gives occupied but never vacant
+  — the landlord's headline needs subtraction) and #230 (the 199/200 pair
+  above: footnote the merged tracker rows the way the WAULT tile footnotes
+  its exclusions).
+- Still open and unbuilt: UX #150, #157, #162, #170, #171, #172, #174-#230.
+- Carry-forward from r564: nothing left open. New flakes: none new — the
+  startup mark login timed out once at two-bot boot and passed on a plain
+  re-run (cold vite compile, same family as the r262 note); no code change.
+  Real-device keyboard-up composer check (r405) still open for Woody.
+- Next: r565 was LIGHT -> r566 FULL. Rotation is due #2 Landsec client ·
+  desktop (r565 probed that surface but ran no journey). Method worth
+  reusing: a card that counts one table and links to another is invisible
+  until you click it — read the label, the number and the href as three
+  separate claims and check all three agree.
 
 ### r564 · 2026-09-06 · FULL (rotation #1 BGP staff desktop 1440px) · 1 bug fixed, two halves — the notification bell's "N deals with no fee set" alert did nothing on click, and its number disagreed with the only list that could show it · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

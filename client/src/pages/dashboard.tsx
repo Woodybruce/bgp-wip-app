@@ -1823,24 +1823,29 @@ export default function Dashboard() {
           // The standalone Portfolio Map board is folded into Properties &
           // Deals below (Woody, 2026-08-03: "same as properties and deals
           // but with map above").
+          // Counts tenancy_schedule_units (the master — see the portfolio
+          // endpoint), so it must open the Tenancy Schedule. It used to be
+          // titled "Leasing Schedule" and link to /leasing-schedule, a board
+          // that carries an ARCHIVED banner and holds a smaller, trimmed set
+          // — Bluewater read "199 units · 124 occ" here and 165 / 88 there.
           totalLeasingUnits > 0 ? {
             id: "portfolio-leasing",
-            label: "Leasing Schedule",
+            label: "Tenancy Schedule",
             defaultW: 6, defaultH: 10, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
                 <CardContent className="p-3 space-y-3 flex-1 overflow-hidden flex flex-col">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-sm flex items-center gap-2">
-                      <Building2 className="w-4 h-4" />Leasing Schedule
+                      <Building2 className="w-4 h-4" />Tenancy Schedule
                       <Badge variant="secondary" className="text-[10px]">{totalLeasingUnits} units across {leasingByProperty.size} properties</Badge>
                     </h3>
                     <div className="flex items-center gap-3 text-[10px]">
                       <span className="text-emerald-600 dark:text-emerald-400">{occupiedUnits} occupied</span>
                       {expiringUnits > 0 && <span className="text-amber-600 dark:text-amber-400">{expiringUnits} expiring</span>}
-                      <Link href="/leasing-schedule">
+                      <Link href="/properties">
                         <span className="text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-leasing-board">
-                          <ExternalLink className="w-3 h-3" />Open Board
+                          <ExternalLink className="w-3 h-3" />All properties
                         </span>
                       </Link>
                     </div>
@@ -1853,7 +1858,7 @@ export default function Dashboard() {
                         const propExpiring = propUnits.filter((u: any) => isExpiringSoon(u.lease_expiry)).length;
                         return (
                           <div key={propId} className="border rounded-lg overflow-hidden">
-                            <Link href={`/leasing-schedule/${propId}`}>
+                            <Link href={`/tenancy-schedule/${propId}`}>
                               <div className="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 text-left cursor-pointer" data-testid={`dash-prop-${propId}`}>
                                 <span className="font-medium text-sm">{name}</span>
                                 <Badge variant="secondary" className="text-[10px]">{propUnits.length}</Badge>
