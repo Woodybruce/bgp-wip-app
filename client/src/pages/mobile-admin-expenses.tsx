@@ -81,6 +81,7 @@ interface AdminSummary {
 
 interface PendingExpense {
   id: string;
+  approvalStage: number | null;
   merchant: string | null;
   amountPence: number;
   category: string | null;
@@ -243,10 +244,17 @@ function ApprovalsTab() {
   }, [rows]);
 
   const approveMutation = useMutation({
-    mutationFn: async (id: string) => (await apiRequest("POST", `/api/expenses/${id}/approve`, {})).json(),
+    mutationFn: async (id: string) => {
+      const expectedStage = rows.find(row => row.id === id)?.approvalStage ?? 1;
+      return (await apiRequest("POST", `/api/expenses/${id}/approve`, { expectedStage })).json();
+    },
     onSuccess: (json: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/admin/summary"] });
+      if (json?.success === false) {
+        toast({ title: "Already updated", description: "The expense changed before this approval. The list has been refreshed." });
+        return;
+      }
       toast(json?.advanced
         ? { title: "Info check done", description: "Passed to a director for spend sign-off." }
         : { title: "Approved", description: "Final sign-off — posting to Xero." });
@@ -255,7 +263,10 @@ function ApprovalsTab() {
   });
 
   const bulkApproveMutation = useMutation({
-    mutationFn: async (ids: string[]) => (await apiRequest("POST", `/api/expenses/approve-bulk`, { ids })).json(),
+    mutationFn: async (ids: string[]) => {
+      const expectedStages = Object.fromEntries(ids.map(id => [id, rows.find(row => row.id === id)?.approvalStage ?? 1]));
+      return (await apiRequest("POST", `/api/expenses/approve-bulk`, { ids, expectedStages })).json();
+    },
     onSuccess: (json: any) => {
       // Server responds immediately and processes in the background (see
       // expenses-approvals.tsx) — stagger refreshes so rows clear as they go.

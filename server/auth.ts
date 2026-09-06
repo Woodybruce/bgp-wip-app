@@ -100,7 +100,7 @@ async function createAuthToken(userId: string, ttlMs: number = AUTH_LIFETIME_MS)
 
 export async function getUserIdFromToken(token: string): Promise<string | null> {
   const result = await pool.query(
-    "SELECT user_id FROM auth_tokens WHERE token = $1 AND expires_at > NOW()",
+    "SELECT t.user_id FROM auth_tokens t JOIN users u ON u.id = t.user_id WHERE t.token = $1 AND t.expires_at > NOW() AND u.is_active IS DISTINCT FROM false",
     [token]
   );
   return result.rows[0]?.user_id || null;
@@ -239,60 +239,10 @@ export function setupAuth(app: Express) {
     next();
   });
 
-  // Domain-restricted registration — only @brucegillinghampollard.com emails
-  // can create themselves an account via password. Everyone else is locked
-  // out with a clear message. This is the route Woody asked for: 'tell
-  // people as and when so they can log in' — they sign up with their BGP
-  // email, pick a password, and they're in.
-  app.post("/api/auth/register", async (req: Request, res: Response) => {
-    try {
-      const email = String(req.body?.email || "").toLowerCase().trim();
-      const password = String(req.body?.password || "");
-      const name = String(req.body?.name || "").trim();
-      if (!email || !password || !name) {
-        return res.status(400).json({ message: "Name, email, and password are required" });
-      }
-      if (!email.endsWith("@brucegillinghampollard.com")) {
-        return res.status(403).json({ message: "Only @brucegillinghampollard.com email addresses can register" });
-      }
-      if (password.length < 8) {
-        return res.status(400).json({ message: "Password must be at least 8 characters" });
-      }
-      const allUsers = await storage.getAllUsers();
-      const existing = allUsers.find(u => u.email?.toLowerCase() === email || u.username?.toLowerCase() === email);
-      if (existing) {
-        return res.status(409).json({ message: "An account already exists for this email. Sign in instead." });
-      }
-
-      const hashed = await bcrypt.hash(password, 10);
-      const newUserId = `usr_${crypto.randomBytes(10).toString("hex")}`;
-      await storage.createUser({
-        id: newUserId,
-        username: email,
-        email,
-        name,
-        password: hashed,
-        isActive: true,
-      } as any);
-
-      // Log them straight in
-      const created = (await storage.getAllUsers()).find(u => u.id === newUserId);
-      if (!created) return res.status(500).json({ message: "Account created but could not load — try signing in" });
-
-      await new Promise<void>((resolve, reject) => {
-        req.session.regenerate((err) => err ? reject(err) : resolve());
-      });
-      req.session.userId = created.id;
-      req.session.cookie.maxAge = authLifetimeMs((created as any).role);
-      const token = await createAuthToken(created.id, authLifetimeMs((created as any).role));
-      req.session.save(() => {
-        const { password: _, ...safe } = created as any;
-        res.json({ ...safe, token });
-      });
-    } catch (err: any) {
-      console.error("[auth/register] error:", err?.message);
-      res.status(500).json({ message: "Registration failed. Please try again." });
-    }
+  // Microsoft verifies mailbox ownership before auto-provisioning staff.
+  // Existing staff and client password logins remain available.
+  app.post("/api/auth/register", (_req: Request, res: Response) => {
+    res.status(403).json({ message: "Use Microsoft 365 sign-in to create your BGP account. Contact an administrator for a client account." });
   });
 
   app.post("/api/auth/login", async (req: Request, res: Response) => {
@@ -417,6 +367,10 @@ export function setupAuth(app: Express) {
       user.isAdmin = true;
     }
     const { password: _, ...safeUser } = user;
+    const { rows: teamState } = await pool.query("SELECT active_team, client_view_mode FROM users WHERE id = $1", [userId]);
+    // NULL is the server's persisted All Teams selection.
+    (safeUser as any).activeTeam = teamState[0]?.active_team ?? null;
+
     // Team-expense oversight (read-only) — drives the "Team Expenses" nav +
     // page for non-admin team leads like Victoria. Empty for everyone else.
     try {
@@ -432,11 +386,10 @@ export function setupAuth(app: Express) {
     if (isBgpStaff && user.team) {
       const clientTeamInfo = await getClientTeamInfo(userId);
       if (clientTeamInfo) {
-        const cvmResult = await pool.query(`SELECT client_view_mode FROM users WHERE id = $1`, [userId]);
         (safeUser as any).canViewAsClient = true;
         (safeUser as any).clientTeamCompanyId = clientTeamInfo.companyId;
         (safeUser as any).clientTeamName = clientTeamInfo.companyName;
-        (safeUser as any).clientViewMode = !!(cvmResult.rows[0]?.client_view_mode);
+        (safeUser as any).clientViewMode = !!(teamState[0]?.client_view_mode);
       }
     }
     res.json(safeUser);

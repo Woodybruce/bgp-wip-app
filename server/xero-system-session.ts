@@ -79,7 +79,7 @@ export async function getSystemXeroSession(): Promise<{ xeroTokens: PersistedTok
     save: async () => {
       await db.execute(sql`
         UPDATE system_settings SET value = ${JSON.stringify(session.xeroTokens)}::jsonb, updated_at = NOW()
-        WHERE key = ${SYSTEM_KEY}
+        WHERE key = ${SYSTEM_KEY} AND value->>'refreshToken' = ${tokens.refreshToken}
       `);
     },
   };
@@ -122,19 +122,30 @@ export async function withSystemXero<T>(fn: (session: any) => Promise<T>): Promi
     console.warn("[xero-system] No system Xero session available — skipping");
     return null;
   }
-  const session = { xeroTokens: sys.xeroTokens };
+  const original = { ...sys.xeroTokens };
+  const session = { xeroTokens: { ...sys.xeroTokens } };
+  let operationFailed = false;
   try {
-    const result = await fn(session);
-    // Persist any token refresh that happened during the call
-    if (session.xeroTokens?.accessToken !== sys.xeroTokens.accessToken ||
-        session.xeroTokens?.expiresAt !== sys.xeroTokens.expiresAt ||
-        session.xeroTokens?.tenantId !== sys.xeroTokens.tenantId) {
-      Object.assign(sys.xeroTokens, session.xeroTokens);
-      await sys.save();
-    }
-    return result;
+    return await fn(session);
   } catch (e: any) {
+    operationFailed = true;
     console.error("[xero-system] call failed:", e?.message);
     throw e;
+  } finally {
+    // Refresh can succeed before the accounting request fails. Persist the
+    // rotation either way, but never restore tokens cleared by invalid_grant.
+    if (session.xeroTokens?.refreshToken && (
+        session.xeroTokens.accessToken !== original.accessToken ||
+        session.xeroTokens.refreshToken !== original.refreshToken ||
+        session.xeroTokens.expiresAt !== original.expiresAt ||
+        session.xeroTokens.tenantId !== original.tenantId)) {
+      Object.assign(sys.xeroTokens, session.xeroTokens);
+      try {
+        await sys.save();
+      } catch (e: any) {
+        console.error("[xero-system] token persistence failed:", e?.message);
+        if (!operationFailed) throw e;
+      }
+    }
   }
 }

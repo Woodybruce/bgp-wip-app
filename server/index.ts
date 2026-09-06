@@ -3051,7 +3051,7 @@ import brandImagesRouter from "./brand-images";
 import instagramRouter from "./instagram";
 import pipnetRequirementsRouter from "./pipnet-requirements";
 import purgeApolloContactsRouter from "./purge-apollo-contacts";
-import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw, sandboxAudit } from "./experian";
+import { experianHealth, fetchCommercialCredit, isExperianConfigured } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
 import dealVerdictsRouter from "./deal-verdicts";
@@ -3214,85 +3214,7 @@ app.get("/bgp-mark.png", async (_req, res) => {
   }
 });
 
-/**
- * ScraperAPI status check — confirms the key is set + valid, reports the
- * remaining credit balance and plan, and runs a single test fetch through
- * the proxy to verify end-to-end. Auth-light (require any session) so it
- * can be hit from the browser quickly. Three pieces:
- *   1) ENV: is SCRAPERAPI_KEY set
- *   2) Account: hit api.scraperapi.com/account → plan + credits
- *   3) Test fetch: pull a known-good Westminster IDOX docs page through
- *      the proxy and check we get HTML back (not a block / 503)
- */
-app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
-  const key = process.env.SCRAPERAPI_KEY;
-  const out: any = { keySet: !!key, keyLength: key?.length || 0 };
-  if (!key) {
-    out.error = "SCRAPERAPI_KEY env var is not set on this deployment.";
-    return res.status(503).json(out);
-  }
-  // 1) Account info — credit balance, plan name, request count
-  try {
-    const accRes = await fetch(`https://api.scraperapi.com/account?api_key=${encodeURIComponent(key)}`, {
-      signal: AbortSignal.timeout(8000),
-    });
-    if (accRes.ok) {
-      const account = await accRes.json() as any;
-      out.account = {
-        plan: account.subscriptionPlan || account.plan || "unknown",
-        creditsLeft: account.requestLimit != null && account.requestCount != null
-          ? account.requestLimit - account.requestCount
-          : null,
-        requestLimit: account.requestLimit ?? null,
-        requestCount: account.requestCount ?? null,
-        concurrencyLimit: account.concurrencyLimit ?? null,
-        failedRequestCount: account.failedRequestCount ?? null,
-      };
-    } else {
-      out.account = { error: `Account endpoint returned ${accRes.status}`, body: (await accRes.text().catch(() => "")).slice(0, 200) };
-    }
-  } catch (err: any) {
-    out.account = { error: err?.message || "fetch threw" };
-  }
 
-  // 2) Test fetch — known Westminster docs-tab URL (a real planning app on
-  // 18-22 Haymarket). If this comes back as HTML > 1KB the proxy is
-  // working end-to-end.
-  const testUrl = "https://idoxpa.westminster.gov.uk/online-applications/applicationDetails.do?activeTab=documents&keyVal=PEH1KFRPIVX00";
-  try {
-    const t0 = Date.now();
-    // Business plan includes UK geotargeting — request UK IPs so the
-    // residential rotation matches the origin's expected traffic profile
-    // (slightly faster + fewer soft-throttles on UK gov sites).
-    const tRes = await fetch(
-      `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&url=${encodeURIComponent(testUrl)}&country_code=uk&render=false`,
-      { signal: AbortSignal.timeout(25000) }
-    );
-    const elapsed = Date.now() - t0;
-    if (tRes.ok) {
-      const body = await tRes.text();
-      out.testFetch = {
-        ok: true,
-        status: tRes.status,
-        elapsedMs: elapsed,
-        bodyBytes: body.length,
-        looksLikeIdoxPage: /applicationDocumentsTable|Documents tab|application reference/i.test(body),
-        firstLine: body.slice(0, 200).replace(/\s+/g, " ").trim(),
-      };
-    } else {
-      out.testFetch = {
-        ok: false,
-        status: tRes.status,
-        elapsedMs: elapsed,
-        body: (await tRes.text().catch(() => "")).slice(0, 300),
-      };
-    }
-  } catch (err: any) {
-    out.testFetch = { ok: false, error: err?.message || "fetch threw" };
-  }
-
-  res.json(out);
-});
 
 const MAINTENANCE_MODE = false;
 const MAINTENANCE_ALLOWED_EMAILS = new Set([
@@ -3730,7 +3652,8 @@ app.use("/api/branding/assets", express.static(
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,
     // so match on the full originalUrl (minus query string).
-    const p = (req.originalUrl || req.url || "").split("?")[0];
+    const resourcePath = (req.originalUrl || req.url || "").split("?")[0].replace(/\/+$/, "");
+    const p = resourcePath.toLowerCase();
     if (p.startsWith("/api/auth/")) return next();
     try {
       const { isClientRequestUser } = await import("./company-scope");
@@ -3742,16 +3665,16 @@ app.use("/api/branding/assets", express.static(
         if (CLIENT_BLOCKED_SUBPATHS.some(re => re.test(p))) {
           return res.status(403).json({ error: "Not available for client accounts" });
         }
-        // Staff-only deal operations riding under the allowed /api/crm/deals
-        // prefix — none of their handlers client-check, so the gateway must:
-        // single + bulk delete, bulk field edits, the internal per-agent fee
-        // split, and the firm-wide rent-analysis / HOTs-parse AI ops. Deal
-        // create + edit stay open (scope-checked + fee-stripped in crm.ts).
-        if (/^\/api\/crm\/deals\/(bulk-update|bulk-delete|bulk-rent-analysis)$/.test(p) ||
+        // Internal fees and destructive operations retain their existing policy.
+        // Bulk edits are allowed and check every target's scope in crm.ts.
+        if (/^\/api\/crm\/deals\/(bulk-delete|bulk-rent-analysis)$/.test(p) ||
             /^\/api\/crm\/deals\/[^/]+\/(fee-allocations|parse-hots)$/.test(p) ||
             (req.method === "DELETE" && /^\/api\/crm\/deals\/[^/]+$/.test(p))) {
           return res.status(403).json({ error: "Not available for client accounts" });
         }
+        // Property edits use the same ownership/shared-access checks as deals.
+        if ((req.method === "PUT" && /^\/api\/crm\/properties\/[^/]+$/.test(p)) ||
+            (req.method === "POST" && p === "/api/crm/properties/bulk-update")) return next();
         // Contact-graph link writes ride under the allowed /api/crm/contacts
         // prefix but have no scope check — a client could wire ANY contact
         // onto ANY deal / property / requirement (including other tenants').
@@ -3800,7 +3723,7 @@ app.use("/api/branding/assets", express.static(
         // hit the enrichment button — they need to be able to use the app
         // in the same way we can"). Both only refresh derived/public data
         // on the brand record; gated on the client's brand slice.
-        const enrichTarget = p.match(/^\/api\/(?:brand\/([^/]+)\/credit-check|companies-house\/auto-kyc\/([^/]+))$/);
+        const enrichTarget = resourcePath.match(/^\/api\/(?:brand\/([^/]+)\/credit-check|companies-house\/auto-kyc\/([^/]+))$/i);
         if (req.method === "POST" && enrichTarget) {
           const { isClientVisibleBrand, resolveCompanyScope } = await import("./company-scope");
           const scope = await resolveCompanyScope(req);
@@ -3845,8 +3768,8 @@ app.use("/api/branding/assets", express.static(
       // for the client's own company or a brand in their visible slice.
       // Watchlist, alerts, watch writes and runs stay staff-only (they don't
       // match these shapes and fall through to the default block).
-      const covCrm = req.method === "GET" ? p.match(/^\/api\/covenant\/by-crm\/([^/]+)$/) : null;
-      const covNum = req.method === "GET" ? p.match(/^\/api\/covenant\/((?=[A-Za-z0-9]*\d)[A-Za-z0-9]{6,10})$/) : null;
+      const covCrm = req.method === "GET" ? resourcePath.match(/^\/api\/covenant\/by-crm\/([^/]+)$/i) : null;
+      const covNum = req.method === "GET" ? resourcePath.match(/^\/api\/covenant\/((?=[A-Za-z0-9]*\d)[A-Za-z0-9]{6,10})$/i) : null;
       if (covCrm || covNum) {
         const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
         const covScope = await resolveCompanyScope(req);
@@ -3861,7 +3784,7 @@ app.use("/api/branding/assets", express.static(
       // Full Brand Intelligence reads (profile, hunter-score, competitors,
       // suggested-units, ai-take, pack…) for the client's own company or any
       // brand in the hospitality slice; everything else stays blocked.
-      const brandRead = p.match(/^\/api\/brand\/([^/]+)\//);
+      const brandRead = resourcePath.match(/^\/api\/brand\/([^/]+)\//i);
       if (brandRead) {
         const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
         const scope = await resolveCompanyScope(req);
@@ -3874,7 +3797,7 @@ app.use("/api/branding/assets", express.static(
       // 2026-08-04 parity). Read-only: the exact landlord|brand/:id shape
       // only, so the raw meeting/email viewer routes and the curate POST
       // (a write) stay sealed for clients.
-      const activityRead = p.match(/^\/api\/activity\/(landlord|brand)\/([^/]+)$/);
+      const activityRead = resourcePath.match(/^\/api\/activity\/(landlord|brand)\/([^/]+)$/i);
       if (activityRead) {
         const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
         const scope = await resolveCompanyScope(req);
@@ -3884,7 +3807,7 @@ app.use("/api/branding/assets", express.static(
       // their own company and slice brands (Woody, 2026-08-04). The handler
       // in interactions.ts re-checks the same scope rule and 403s anything
       // outside it, so this only lets the request reach that gate.
-      const interactionsRead = p.match(/^\/api\/interactions\/company\/([^/]+)$/);
+      const interactionsRead = resourcePath.match(/^\/api\/interactions\/company\/([^/]+)$/i);
       if (interactionsRead) {
         const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
         const scope = await resolveCompanyScope(req);
@@ -3892,8 +3815,91 @@ app.use("/api/branding/assets", express.static(
       }
       if (allowed) return next();
       return res.status(403).json({ error: "Not available for client accounts" });
-    } catch { return next(); }
+    } catch (error) {
+      console.error("[client-access] Could not verify scope:", error);
+      return res.status(503).json({ error: "Could not verify access. Please try again." });
+    }
   });
+
+/**
+ * ScraperAPI status check — confirms the key is set + valid, reports the
+ * remaining credit balance and plan, and runs a single test fetch through
+ * the proxy to verify end-to-end. Auth-light (require any session) so it
+ * can be hit from the browser quickly. Three pieces:
+ *   1) ENV: is SCRAPERAPI_KEY set
+ *   2) Account: hit api.scraperapi.com/account → plan + credits
+ *   3) Test fetch: pull a known-good Westminster IDOX docs page through
+ *      the proxy and check we get HTML back (not a block / 503)
+ */
+app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
+  const key = process.env.SCRAPERAPI_KEY;
+  const out: any = { keySet: !!key, keyLength: key?.length || 0 };
+  if (!key) {
+    out.error = "SCRAPERAPI_KEY env var is not set on this deployment.";
+    return res.status(503).json(out);
+  }
+  // 1) Account info — credit balance, plan name, request count
+  try {
+    const accRes = await fetch(`https://api.scraperapi.com/account?api_key=${encodeURIComponent(key)}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (accRes.ok) {
+      const account = await accRes.json() as any;
+      out.account = {
+        plan: account.subscriptionPlan || account.plan || "unknown",
+        creditsLeft: account.requestLimit != null && account.requestCount != null
+          ? account.requestLimit - account.requestCount
+          : null,
+        requestLimit: account.requestLimit ?? null,
+        requestCount: account.requestCount ?? null,
+        concurrencyLimit: account.concurrencyLimit ?? null,
+        failedRequestCount: account.failedRequestCount ?? null,
+      };
+    } else {
+      out.account = { error: `Account endpoint returned ${accRes.status}`, body: (await accRes.text().catch(() => "")).slice(0, 200) };
+    }
+  } catch (err: any) {
+    out.account = { error: err?.message || "fetch threw" };
+  }
+
+  // 2) Test fetch — known Westminster docs-tab URL (a real planning app on
+  // 18-22 Haymarket). If this comes back as HTML > 1KB the proxy is
+  // working end-to-end.
+  const testUrl = "https://idoxpa.westminster.gov.uk/online-applications/applicationDetails.do?activeTab=documents&keyVal=PEH1KFRPIVX00";
+  try {
+    const t0 = Date.now();
+    // Business plan includes UK geotargeting — request UK IPs so the
+    // residential rotation matches the origin's expected traffic profile
+    // (slightly faster + fewer soft-throttles on UK gov sites).
+    const tRes = await fetch(
+      `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&url=${encodeURIComponent(testUrl)}&country_code=uk&render=false`,
+      { signal: AbortSignal.timeout(25000) }
+    );
+    const elapsed = Date.now() - t0;
+    if (tRes.ok) {
+      const body = await tRes.text();
+      out.testFetch = {
+        ok: true,
+        status: tRes.status,
+        elapsedMs: elapsed,
+        bodyBytes: body.length,
+        looksLikeIdoxPage: /applicationDocumentsTable|Documents tab|application reference/i.test(body),
+        firstLine: body.slice(0, 200).replace(/\s+/g, " ").trim(),
+      };
+    } else {
+      out.testFetch = {
+        ok: false,
+        status: tRes.status,
+        elapsedMs: elapsed,
+        body: (await tRes.text().catch(() => "")).slice(0, 300),
+      };
+    }
+  } catch (err: any) {
+    out.testFetch = { ok: false, error: err?.message || "fetch threw" };
+  }
+
+  res.json(out);
+});
 
   setupMicrosoftRoutes(app);
   setupWhatsAppRoutes(app);
@@ -4015,66 +4021,6 @@ app.use("/api/branding/assets", express.static(
       const report = await fetchCommercialCredit(companyNumber);
       if (!report) return res.status(404).json({ error: "No Experian credit report found for that company" });
       res.json(report);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || "Unknown error" });
-    }
-  });
-  // Temporary sandbox debug route — remove after testing
-  app.post("/api/experian/debug-raw", requireAuth, async (req, res) => {
-    try {
-      if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
-      const companyNumber = String(req.body?.companyNumber || "").trim();
-      if (!companyNumber) return res.status(400).json({ error: "companyNumber required" });
-      const result = await debugExperianRaw(companyNumber, {
-        path: req.body?.path,
-        method: req.body?.method,
-        reqBody: req.body?.reqBody,
-        extraHeaders: req.body?.extraHeaders,
-        baseOverride: req.body?.baseOverride,
-        noAuth: req.body?.noAuth,
-      });
-      res.json(result);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || "Unknown error" });
-    }
-  });
-  // Comprehensive sandbox audit — exercises every Experian product BGP cares
-  // about, returns a sales-ready buy list. Hit GET /api/experian/sandbox-audit
-  // (?regnum=XXXX optional, defaults to Experian's 99999999 dummy company).
-  app.get("/api/experian/sandbox-audit", requireAuth, async (req, res) => {
-    try {
-      const regnum = String(req.query?.regnum || "99999999");
-      const out = await sandboxAudit(regnum);
-      res.json(out);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || "Unknown error" });
-    }
-  });
-  // Business Profile endpoint discovery — hit once to find the correct path, then remove
-  app.get("/api/experian/discover-profile", requireAuth, async (req, res) => {
-    try {
-      if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
-      const regnum = String(req.query?.regnum || "99999999").trim().toUpperCase();
-      const candidates = [
-        { path: `/risk/business/v2/businessprofile/${regnum}`,                    method: "GET" },
-        { path: `/risk/business/v2/registeredbusinessprofile/${regnum}`,          method: "GET" },
-        { path: `/risk/business/v2/businessinformation/${regnum}`,                method: "GET" },
-        { path: `/business-information/businesses/uk/v1/profile/${regnum}`,       method: "GET" },
-        { path: `/business-information/businesses/uk/v2/profile/${regnum}`,       method: "GET" },
-        { path: `/kyb/businesses/uk/v1/profile/${regnum}`,                        method: "GET" },
-        { path: `/compliance/business/v1/company/${regnum}`,                      method: "GET" },
-        { path: `/risk/business/v2/businessprofile`,                              method: "POST", reqBody: { registrationNumber: regnum } },
-        { path: `/business-information/businesses/uk/v1/profile`,                 method: "POST", reqBody: { registrationNumber: regnum, country: "GB" } },
-      ];
-      // Run all in parallel — avoids sequential 30s timeouts stacking up
-      const settled = await Promise.allSettled(
-        candidates.map(c => debugExperianRaw(regnum, { path: c.path, method: c.method, reqBody: c.reqBody })
-          .then(r => ({ path: c.path, method: c.method, status: r.status, ok: r.status >= 200 && r.status < 300, preview: JSON.stringify(r.body).slice(0, 300) }))
-          .catch((e: any) => ({ path: c.path, method: c.method, status: null, ok: false, preview: e?.message }))
-        )
-      );
-      const results = settled.map(s => s.status === "fulfilled" ? s.value : { ok: false, preview: (s as any).reason?.message });
-      res.json({ regnum, results });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Unknown error" });
     }

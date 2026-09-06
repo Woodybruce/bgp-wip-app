@@ -287,7 +287,7 @@ function QuickAccessSection() {
 
 export function AppSidebar() {
   const { data: user } = useQuery<User>({ queryKey: ["/api/auth/me"] });
-  const { activeTeam, setActiveTeam, userTeam, additionalTeams } = useTeam();
+  const { activeTeam, setActiveTeam, exitClientView, userTeam, additionalTeams } = useTeam();
   const { colorScheme, setColorScheme } = useTheme();
   const { brand, isLandsec } = useBrand();
 
@@ -532,19 +532,7 @@ export function AppSidebar() {
         {isViewingAsClient && (
           <button
             type="button"
-            onClick={() => {
-              // Clear BOTH ways into client view: the team-picker switch
-              // (active_team) and the explicit client-view toggle (staff who
-              // sit ON a client team, like Victoria on Landsec, are scoped
-              // via client_view_mode — setActiveTeam alone didn't free them).
-              // Only staff on a client team can hold client_view_mode; for
-              // everyone else the disable would just 400 ("Not on a client
-              // team"), so skip it.
-              if ((user as any)?.canViewAsClient) {
-                apiRequest("POST", "/api/auth/client-view-mode", { enabled: false }).catch(() => {});
-              }
-              setActiveTeam("all");
-            }}
+            onClick={() => void exitClientView()}
             className="flex items-center justify-between gap-2 w-full px-2 py-1.5 mb-1 rounded-md text-[11px] font-medium bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent/80 transition-colors group-data-[collapsible=icon]:hidden"
             title="You're seeing the client's view. Click to return to the full BGP view."
             data-testid="button-exit-client-view"

@@ -10,7 +10,8 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
-    "qa:pg": "bash qa/start-postgres.sh"
+    "qa:pg": "bash qa/start-postgres.sh",
+    "qa:regression": "node --import tsx --test qa/regression/*.test.* qa/regression/access.cjs qa/regression/auth.cjs qa/regression/wip.cjs qa/regression/financial.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

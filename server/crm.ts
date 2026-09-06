@@ -1976,9 +1976,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     }
   });
 
-  app.delete("/api/crm/companies/:id", async (req, res) => {
+  app.delete("/api/crm/companies/:id", requireAuth, async (req, res) => {
     try {
-      await storage.deleteCrmCompany(req.params.id);
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Company deletion requires a staff account" });
+      await storage.deleteCrmCompany(String(req.params.id));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2335,6 +2336,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         return res.status(403).json({ error: "Access denied" });
       }
       const updates = { ...req.body };
+      if (scopeCompanyId) {
+        // Client edits must not overwrite identity, access or staff attestations.
+        for (const field of ["id", "createdAt", "landlordId", "leasingPrivacyEnabled", "proprietorKycStatus", "proprietorKycData", "kycCheckedAt"]) {
+          delete updates[field];
+        }
+      }
       const dateFields = ["titleSearchDate", "createdAt", "updatedAt", "kycCheckedAt"];
       for (const f of dateFields) {
         if (updates[f] && typeof updates[f] === "string") {
@@ -2436,6 +2443,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     try {
       const { ids, field, value } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids array required" });
+      const scope = await resolveCompanyScope(req);
+      if (scope) {
+        for (const id of ids) {
+          if (typeof id !== "string" || !(await isPropertyInScope(scope, id))) {
+            return res.status(403).json({ error: "Access denied" });
+          }
+        }
+      }
       const allowedFields = ["bgpEngagement", "status", "assetClass", "tenure"];
       if (!allowedFields.includes(field)) return res.status(400).json({ error: `Field '${field}' not allowed for bulk update` });
       for (const id of ids) {
@@ -2459,6 +2474,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     try {
       const { ids } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids array required" });
+      const scope = await resolveCompanyScope(req);
+      if (scope) {
+        for (const id of ids) {
+          if (typeof id !== "string" || !(await isPropertyInScope(scope, id))) {
+            return res.status(403).json({ error: "Access denied" });
+          }
+        }
+      }
       for (const id of ids) {
         await storage.deleteCrmProperty(id);
       }
@@ -2468,8 +2491,22 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/deals/bulk-update", requireAuth, async (req, res) => {
     try {
-      const { ids, field, value } = req.body;
+      const { ids, field } = req.body;
+      let { value } = req.body;
+      if (field === "status") {
+        const code = legacyToCode(value);
+        if (!code) return res.status(400).json({ error: "Unknown deal status" });
+        value = code;
+      }
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids array required" });
+      const scope = await resolveCompanyScope(req);
+      if (scope) {
+        for (const id of ids) {
+          if (typeof id !== "string" || !(await isDealInScope(scope, id))) {
+            return res.status(403).json({ error: "Access denied" });
+          }
+        }
+      }
       const allowedFields = ["team", "status", "dealType", "assetClass"];
       if (!allowedFields.includes(field)) return res.status(400).json({ error: `Field '${field}' not allowed for bulk update` });
 
@@ -2554,6 +2591,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     try {
       const { ids } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids array required" });
+      const scope = await resolveCompanyScope(req);
+      if (scope) {
+        for (const id of ids) {
+          if (typeof id !== "string" || !(await isDealInScope(scope, id))) {
+            return res.status(403).json({ error: "Access denied" });
+          }
+        }
+      }
       for (const id of ids) {
         await storage.deleteCrmDeal(id);
       }
@@ -2710,26 +2755,37 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.post("/api/crm/companies/:id/properties", async (req, res) => {
+  app.post("/api/crm/companies/:id/properties", requireAuth, async (req, res) => {
     try {
       const { propertyId } = req.body;
       if (!propertyId) return res.status(400).json({ error: "propertyId required" });
-      await storage.linkCompanyProperty(req.params.id, propertyId);
+      const scope = await resolveCompanyScope(req);
+      if (scope && ((scope !== String(req.params.id) && !(await isClientVisibleBrand(String(req.params.id), scope))) ||
+          !(await isPropertyInScope(scope, propertyId)))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await storage.linkCompanyProperty(String(req.params.id), propertyId);
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.delete("/api/crm/companies/:id/properties/:propertyId", async (req, res) => {
+  app.delete("/api/crm/companies/:id/properties/:propertyId", requireAuth, async (req, res) => {
     try {
-      await storage.unlinkCompanyProperty(req.params.id, req.params.propertyId);
+      const scope = await resolveCompanyScope(req);
+      if (scope && ((scope !== String(req.params.id) && !(await isClientVisibleBrand(String(req.params.id), scope))) ||
+          !(await isPropertyInScope(scope, String(req.params.propertyId))))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await storage.unlinkCompanyProperty(String(req.params.id), String(req.params.propertyId));
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.get("/api/crm/company-deal-links", async (_req, res) => {
+  app.get("/api/crm/company-deal-links", requireAuth, async (req, res) => {
     try {
       const links = await storage.getAllCompanyDealLinks();
-      res.json(links);
+      const scope = await resolveCompanyScope(req);
+      res.json(scope ? links.filter((link: any) => link.companyId === scope) : links);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -2763,18 +2819,28 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.post("/api/crm/companies/:id/deals", async (req, res) => {
+  app.post("/api/crm/companies/:id/deals", requireAuth, async (req, res) => {
     try {
       const { dealId } = req.body;
       if (!dealId) return res.status(400).json({ error: "dealId required" });
-      await storage.linkCompanyDeal(req.params.id, dealId);
+      const scope = await resolveCompanyScope(req);
+      if (scope && ((scope !== String(req.params.id) && !(await isClientVisibleBrand(String(req.params.id), scope))) ||
+          !(await isDealInScope(scope, dealId)))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await storage.linkCompanyDeal(String(req.params.id), dealId);
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.delete("/api/crm/companies/:id/deals/:dealId", async (req, res) => {
+  app.delete("/api/crm/companies/:id/deals/:dealId", requireAuth, async (req, res) => {
     try {
-      await storage.unlinkCompanyDeal(req.params.id, req.params.dealId);
+      const scope = await resolveCompanyScope(req);
+      if (scope && ((scope !== String(req.params.id) && !(await isClientVisibleBrand(String(req.params.id), scope))) ||
+          !(await isDealInScope(scope, String(req.params.dealId))))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await storage.unlinkCompanyDeal(String(req.params.id), String(req.params.dealId));
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -4199,9 +4265,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     }
   });
 
-  app.delete("/api/crm/deals/:id", async (req, res) => {
+  app.delete("/api/crm/deals/:id", requireAuth, async (req, res) => {
     try {
-      await storage.deleteCrmDeal(req.params.id);
+      const scope = await resolveCompanyScope(req);
+      if (scope && !(await isDealInScope(scope, String(req.params.id)))) return res.status(403).json({ error: "Access denied" });
+      await storage.deleteCrmDeal(String(req.params.id));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -4227,14 +4295,15 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.put("/api/crm/deals/:id/fee-allocations", async (req, res) => {
+  app.put("/api/crm/deals/:id/fee-allocations", requireAuth, async (req, res) => {
     try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Internal fee allocations require a staff account" });
       const { allocations } = req.body;
       if (!Array.isArray(allocations)) {
         return res.status(400).json({ error: "allocations must be an array" });
       }
       const validated = allocations.map((a: any) => ({
-        dealId: req.params.id,
+        dealId: String(req.params.id),
         agentName: String(a.agentName || ""),
         allocationType: a.allocationType === "fixed" ? "fixed" : "percentage",
         percentage: a.allocationType === "percentage" ? Number(a.percentage) || 0 : null,
@@ -4268,7 +4337,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           error: "Fee split must include the BGP House 15% row. Open the editor to re-add it (it auto-inserts).",
         });
       }
-      const result = await storage.setDealFeeAllocations(req.params.id, validated);
+      const result = await storage.setDealFeeAllocations(String(req.params.id), validated);
       // Keep crm_deals.internal_agent in sync with the fee-allocation
       // agents. Without this, the Deals board's BGP Contact column
       // (which reads internal_agent) diverges from the WIP report's
@@ -4279,16 +4348,16 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           .filter((a: any) => !a.isBgpHouse && a.agentName)
           .map((a: any) => String(a.agentName).trim())
           .filter((n: string) => n.length > 0);
-        const dealRow = await storage.getCrmDeal(req.params.id);
+        const dealRow = await storage.getCrmDeal(String(req.params.id));
         const existing: string[] = Array.isArray((dealRow as any)?.internalAgent)
           ? ((dealRow as any).internalAgent as string[])
           : ((dealRow as any)?.internalAgent ? [(dealRow as any).internalAgent as string] : []);
         const merged = Array.from(new Set([...existing, ...allocAgents]));
         if (merged.length !== existing.length || merged.some((n, i) => n !== existing[i])) {
-          await storage.updateCrmDeal(req.params.id, { internalAgent: merged } as any);
+          await storage.updateCrmDeal(String(req.params.id), { internalAgent: merged } as any);
         }
       } catch (mergeErr: any) {
-        console.warn(`[fee-allocations] internal_agent sync failed for ${req.params.id}:`, mergeErr?.message);
+        console.warn(`[fee-allocations] internal_agent sync failed for ${String(req.params.id)}:`, mergeErr?.message);
       }
       res.json(result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -6898,7 +6967,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const agentTotals = new Map<string, { invoiced: number; wip: number }>();
 
       for (const deal of deals) {
-        if (!deal.status || deal.fee == null) continue;
+        const code = legacyToCode(deal.status);
+        if (!code || !WIP_STATUSES.includes(code) || deal.fee == null) continue;
         const dealTeamArr = Array.isArray(deal.team) ? deal.team : (deal.team ? [deal.team] : []);
         const dealTeamsLower = dealTeamArr.map(t => (t || "").toLowerCase());
         // Wendy/Layla (fullView) see BGP-team rows too. fullView is folded
@@ -6915,7 +6985,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         if (agents && agents.length > 0) {
           for (const alloc of agents) {
             if (!senior && WIP_RESTRICTED_AGENTS.has(alloc.agentName.toLowerCase())) continue;
-            const agentFee = alloc.fixedAmount || Math.round(totalFee * ((alloc.percentage || 0) / 100) * 100) / 100;
+            const agentFee = alloc.fixedAmount ?? Math.round(totalFee * ((alloc.percentage || 0) / 100) * 100) / 100;
             const entry = agentTotals.get(alloc.agentName) || { invoiced: 0, wip: 0 };
             if (isInvoiced) entry.invoiced += agentFee;
             else entry.wip += agentFee;
@@ -6926,7 +6996,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           if (agentNames.length === 0) continue;
           const filteredNames = senior ? agentNames : agentNames.filter(n => !WIP_RESTRICTED_AGENTS.has(n.toLowerCase()));
           if (filteredNames.length === 0) continue;
-          const perAgent = totalFee / filteredNames.length;
+          const perAgent = totalFee / agentNames.length;
           for (const name of filteredNames) {
             const entry = agentTotals.get(name) || { invoiced: 0, wip: 0 };
             if (isInvoiced) entry.invoiced += perAgent;
@@ -6975,7 +7045,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       for (const deal of deals) {
         // Skip archived rows: WIT (withdrawn/lost/dead) + legacy comps statuses still present pre-migration
         const code = legacyToCode(deal.status);
-        if (code === "WIT" || (deal.status || "").toLowerCase().includes("comps")) continue;
+        if (!code || !WIP_STATUSES.includes(code)) continue;
         const totalFee = deal.fee || 0;
         const isInvoiced = isInvoicedStatus(deal.status);
         const dealAllocs = allocsByDeal.get(deal.id);
@@ -6987,7 +7057,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           if (agentAlloc) {
             isRelevant = true;
             const pct = (agentAlloc.percentage || 0) / 100;
-            allocatedAmount = agentAlloc.fixedAmount || (totalFee * pct);
+            allocatedAmount = agentAlloc.fixedAmount ?? (totalFee * pct);
           }
         } else {
           const agentNames = Array.isArray(deal.internalAgent) ? deal.internalAgent : (deal.internalAgent ? [deal.internalAgent] : []);
@@ -7005,13 +7075,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
         const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
 
-        function drilldownStage(status: string | null): string {
-          if (!status) return "pipeline";
-          if (isInvoicedStatus(status)) return "invoiced";
-          if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
-          return "pipeline";
-        }
-
         result.push({
           dealId: deal.id,
           name: deal.name,
@@ -7021,7 +7084,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           totalFee: totalFee,
           allocatedAmount: Math.round(allocatedAmount),
           status: deal.status || null,
-          stage: drilldownStage(deal.status),
+          stage: deriveStageFromStatus(deal.status),
           team: dealTeamArr.join(", "),
           isInvoiced,
           wip: isInvoiced ? 0 : Math.round(allocatedAmount),

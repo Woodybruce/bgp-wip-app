@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { legacyToCode } from "@shared/deal-status";
 import { isEquityUser } from "@/lib/utils";
+import { useTeam } from "@/lib/team-context";
 
 type BriefingData = { briefing: string; generatedAt: string };
 
@@ -197,6 +198,7 @@ function alertHref(a: Alert): string {
 
 export default function MobileHome() {
   const [, navigate] = useLocation();
+  const { exitClientView } = useTeam();
   const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   // Client logins (e.g. Landsec): no Expenses tile, and skip the BGP
   // commission/WIP queries entirely — they're staff-only and would 403.
@@ -249,17 +251,6 @@ export default function MobileHome() {
   // Staff currently scoped into a client's view — show an exit banner so
   // a phone can escape without finding the desktop sidebar.
   const isViewingAsClient = user?.role !== "Client" && !!(user as any)?.companyScopeId;
-  const exitClientView = async () => {
-    try {
-      if ((user as any)?.canViewAsClient) {
-        await apiRequest("POST", "/api/auth/client-view-mode", { enabled: false }).catch(() => {});
-      }
-      await apiRequest("POST", "/api/auth/active-team", { team: "all" });
-      localStorage.setItem("bgp_active_team", "all");
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
-      queryClient.invalidateQueries();
-    } catch { /* refetch will reflect whatever stuck */ }
-  };
   const { data: alerts = [] } = useQuery<Alert[]>({ queryKey: ["/api/daily-digest"] });
   const { data: tasks = [] } = useQuery<Task[]>({ queryKey: ["/api/tasks"] });
   const { data: commission, isFetched: commissionFetched } = useQuery<Commission>({

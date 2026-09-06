@@ -119,11 +119,16 @@ export default function ExpensesApprovals() {
 
   const approveMutation = useMutation({
     mutationFn: async (id: string) => {
-      const r = await apiRequest("POST", `/api/expenses/${id}/approve`, {});
+      const expectedStage = rows.find(row => row.id === id)?.approvalStage ?? 1;
+      const r = await apiRequest("POST", `/api/expenses/${id}/approve`, { expectedStage });
       return r.json();
     },
     onSuccess: (json: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
+      if (json?.success === false) {
+        toast({ title: "Already updated", description: "The expense changed before this approval. The list has been refreshed." });
+        return;
+      }
       toast(json?.advanced
         ? { title: "Info check done", description: "Passed to a director for spend sign-off." }
         : { title: "Approved", description: "Final sign-off — posting to Xero." });
@@ -133,7 +138,8 @@ export default function ExpensesApprovals() {
 
   const bulkApproveMutation = useMutation({
     mutationFn: async (ids: string[]) => {
-      const r = await apiRequest("POST", `/api/expenses/approve-bulk`, { ids });
+      const expectedStages = Object.fromEntries(ids.map(id => [id, rows.find(row => row.id === id)?.approvalStage ?? 1]));
+      const r = await apiRequest("POST", `/api/expenses/approve-bulk`, { ids, expectedStages });
       return r.json();
     },
     onSuccess: (json: any) => {

@@ -520,8 +520,12 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Not authenticated" });
     }
     try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const user = await storage.getUser(userId!);
+      if (!user || user.isActive === false) return res.status(401).json({ message: "Not authenticated" });
       const filename = String(req.params.filename || "");
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
+      res.set("Cache-Control", "private, no-store");
       const file = await getFile(`chat-media/${filename}`);
       if (!file) {
         const diskPath = path.join(CHAT_MEDIA_DIR, filename);
@@ -531,7 +535,6 @@ export async function registerRoutes(
       res.set("Content-Type", file.contentType);
       // chat-media also stores KYC documents (passports, bank statements) —
       // auth-gated content must never be publicly cacheable.
-      res.set("Cache-Control", "private, max-age=3600");
       const downloadTypes = [
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "application/vnd.ms-excel",
@@ -1186,9 +1189,26 @@ export async function registerRoutes(
       if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
 
       const targetId = req.params.id;
-      const result = await pool.query("DELETE FROM session WHERE sess::jsonb -> 'passport' ->> 'user' = $1 OR sess::jsonb ->> 'userId' = $1", [targetId]);
+      const client = await pool.connect();
+      let sessionsCleared = 0;
+      let tokensCleared = 0;
+      try {
+        await client.query("BEGIN");
+        const tokens = await client.query("DELETE FROM auth_tokens WHERE user_id = $1", [targetId]);
+        await client.query("DELETE FROM sso_exchange_codes WHERE user_id = $1", [targetId]);
+        const sessions = await client.query("DELETE FROM session WHERE sess::jsonb -> 'passport' ->> 'user' = $1 OR sess::jsonb ->> 'userId' = $1", [targetId]);
+        await client.query("COMMIT");
+        sessionsCleared = sessions.rowCount || 0;
+        tokensCleared = tokens.rowCount || 0;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+      getIO()?.in(`user:${targetId}`).disconnectSockets(true);
       const [user] = await pool.query("SELECT name FROM users WHERE id = $1", [targetId]).then(r => r.rows);
-      res.json({ success: true, name: user?.name, sessionsCleared: result.rowCount });
+      res.json({ success: true, name: user?.name, sessionsCleared, tokensCleared });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to force logout" });
     }

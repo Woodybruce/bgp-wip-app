@@ -148,7 +148,8 @@ function getRedirectUri(req: Request): string {
 // consumed` — knocking the whole system session offline. Keyed by RT
 // string so concurrent calls on the same token serialise, but different
 // sessions don't block each other.
-const refreshLocks = new Map<string, Promise<string | null>>();
+type XeroTokens = NonNullable<import("express-session").SessionData["xeroTokens"]>;
+const refreshLocks = new Map<string, Promise<XeroTokens | undefined>>();
 
 export async function refreshXeroToken(session: any): Promise<string | null> {
   // Callers can pass null/undefined deliberately to mean "no user session —
@@ -165,18 +166,18 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
 
   const inFlight = refreshLocks.get(rt);
   if (inFlight) {
-    // Another caller is already refreshing this token. Wait for them and
-    // then re-read from session — they will have mutated session.xeroTokens
-    // in place (we share the same session object across withSystemXero calls).
-    await inFlight.catch(() => {});
-    return session.xeroTokens?.accessToken || null;
+    // Background callers hold separate session objects. Copy the rotated
+    // tokens into every waiter instead of returning its expired token.
+    const tokens = await inFlight;
+    session.xeroTokens = tokens ? { ...tokens, tenantId: session.xeroTokens?.tenantId ?? tokens.tenantId } : undefined;
+    return tokens?.accessToken || null;
   }
 
   const clientId = process.env.XERO_CLIENT_ID;
   const clientSecret = process.env.XERO_CLIENT_SECRET;
   if (!clientId || !clientSecret) return null;
 
-  const run = (async (): Promise<string | null> => {
+  const run = (async (): Promise<XeroTokens | undefined> => {
     try {
       const res = await fetch(XERO_TOKEN_URL, {
         method: "POST",
@@ -204,7 +205,7 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
           } catch {/* table may not exist yet on a fresh boot */}
         }
         session.xeroTokens = undefined;
-        return null;
+        return undefined;
       }
 
       const data = await res.json();
@@ -214,17 +215,18 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
         refreshToken: data.refresh_token || session.xeroTokens.refreshToken,
         expiresAt: Date.now() + (data.expires_in || 1800) * 1000,
       };
-      return data.access_token;
+      return { ...session.xeroTokens };
     } catch (err) {
       console.error("[Xero] Token refresh error:", err);
       session.xeroTokens = undefined;
-      return null;
+      return undefined;
     }
   })();
 
   refreshLocks.set(rt, run);
   try {
-    return await run;
+    const tokens = await run;
+    return tokens?.accessToken || null;
   } finally {
     refreshLocks.delete(rt);
   }

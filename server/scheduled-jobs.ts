@@ -54,11 +54,13 @@ function nextDailyRun(now: Date, hhmm: string): Date {
 }
 
 function nextWeeklyRun(now: Date, value: string): Date {
-  const [dowStr, hhmm] = value.split(":", 2);
+  const [dowStr, hour, minute, extra] = value.split(":");
   const dow = DOW_MAP[dowStr.toUpperCase()];
   if (dow === undefined) throw new Error(`Bad weekly DOW: ${dowStr}`);
-  const [h, m] = hhmm.split(":").map(Number);
-  if (!Number.isFinite(h) || !Number.isFinite(m)) throw new Error(`Bad weekly time: ${hhmm}`);
+  const h = Number(hour), m = Number(minute);
+  if (!hour || !minute || extra !== undefined || !Number.isInteger(h) || !Number.isInteger(m) || h < 0 || h > 23 || m < 0 || m > 59) {
+    throw new Error(`Bad weekly time: ${value}`);
+  }
   const next = new Date(now);
   next.setSeconds(0, 0);
   next.setHours(h, m);

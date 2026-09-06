@@ -13,12 +13,23 @@
 
 import { pool } from "./db";
 import * as schema from "@shared/schema";
+import type { PoolClient } from "pg";
 
 // ── Tables Claude is NOT allowed to read or write ─────────────────────────
 // Sessions / token caches / file blobs / audit logs are off-limits even via
 // sql_query. Anything containing secrets, OAuth tokens, file binaries, or
 // internal AI plumbing.
 const READ_DENY = new Set<string>([
+  "users",                  // password hashes and authorization flags
+  "session",                // actual connect-pg-simple session table
+  "auth_tokens",
+  "sso_exchange_codes",
+  "system_settings",        // integration OAuth tokens and subscriber cookies
+  "user_sessions",
+  "api_keys",
+  "kyc_upload_tokens",
+  "kyc_upload_files",        // also contains live upload tokens
+  "staff_benefit_credentials",
   "msal_token_cache",       // OAuth tokens
   "sessions",               // session blobs
   "file_storage",           // raw file bytes — too large to ever return
@@ -28,9 +39,6 @@ const READ_DENY = new Set<string>([
 // Tables Claude can read but NEVER write to. Identity, security, billing.
 const WRITE_DENY = new Set<string>([
   ...READ_DENY,
-  "users",                  // password hashes, role escalation risk
-  "user_sessions",
-  "api_keys",
   "deleted_sharepoint_images",
 ]);
 
@@ -48,6 +56,11 @@ const FORBIDDEN_KEYWORDS = [
   /\bcopy\s+\w+\s+(to|from)\b/i,
   /;\s*\w/,                 // multi-statement queries blocked
   /\bpg_/i,                 // pg_* system catalog access blocked
+  /\binformation_schema\b/i, // describe_schema provides the filtered schema
+  /\bset_config\b/i,         // cannot alter transaction/timeout settings
+  /\b(?:query|table|schema|database)_to_xml\w*\b/i,
+  /\b(?:dblink\w*|lo_\w+)\b/i,
+  /\bu&\s*"/i,              // encoded identifiers can conceal denied table names
 ];
 
 const MAX_QUERY_ROWS = 5000;
@@ -75,6 +88,7 @@ function buildSchemaDigest(): TableInfo[] {
     // Drizzle exposes the physical table name via Symbol.for("drizzle:Name")
     const tableName = (value as any)[Symbol.for("drizzle:Name")] ?? null;
     if (!tableName || typeof tableName !== "string") continue;
+    if (READ_DENY.has(tableName.toLowerCase())) continue;
     const columns = (value as any)[Symbol.for("drizzle:Columns")] as Record<string, any> | undefined;
     if (!columns) continue;
     const cols: ColumnInfo[] = [];
@@ -141,11 +155,19 @@ export async function executeSqlQuery(query: string): Promise<{
 
   const limited = /\blimit\s+\d+/i.test(trimmed) ? trimmed : `${trimmed} LIMIT ${MAX_QUERY_ROWS}`;
 
-  const client = await pool.connect();
+  let client: PoolClient | undefined;
   try {
+    client = await pool.connect();
+    await client.query("BEGIN READ ONLY");
     await client.query(`SET LOCAL statement_timeout = ${QUERY_TIMEOUT_MS}`);
-    await client.query(`SET LOCAL transaction_read_only = true`);
-    const result = await client.query(limited);
+    // Extended protocol accepts exactly one statement, even if comments or
+    // quoting evade the text filter. PostgreSQL enforces read-only writes.
+    const queryConfig = {
+      text: limited,
+      queryMode: "extended",
+      query_timeout: QUERY_TIMEOUT_MS + 5000,
+    };
+    const result = await client.query(queryConfig);
     const rows = result.rows.slice(0, MAX_QUERY_ROWS);
     return {
       success: true,
@@ -156,7 +178,17 @@ export async function executeSqlQuery(query: string): Promise<{
   } catch (err: any) {
     return { success: false, error: err?.message || "Query failed" };
   } finally {
-    client.release();
+    if (client) {
+      let cleanupError: Error | undefined;
+      try {
+        await client.query("ROLLBACK");
+      } catch (err) {
+        cleanupError = err instanceof Error ? err : new Error(String(err));
+      }
+      // A failed rollback must not put a connection with unknown transaction
+      // state back into the pool for the next caller.
+      client.release(cleanupError);
+    }
   }
 }
 
@@ -263,7 +295,7 @@ export async function executeSqlWrite(
   if (!table || !isValidIdent(table)) {
     return { success: false, error: "Invalid or missing table name" };
   }
-  if (WRITE_DENY.has(table)) {
+  if (WRITE_DENY.has(table.toLowerCase())) {
     return { success: false, error: `Table "${table}" is not writable via sql_write.` };
   }
   if (!["insert", "update", "delete"].includes(op)) {

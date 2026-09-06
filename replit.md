@@ -3,6 +3,12 @@
 ## Overview
 The BGP Dashboard is a comprehensive property management solution for Bruce Gillingham Pollard, consolidating operations, property tracking, news curation, and contact management into a single, intelligent platform. It features a native PostgreSQL CRM with integrated AI capabilities to enhance efficiency and provide market insights for property management in key London areas, aiming to replace disparate systems.
 
+## Audit decisions and fixes (6 September 2026)
+
+Woody confirmed that clients retain full editing abilities for all authorised properties and deals, including shared records and ChatBGP workflows. Fix access checks at record boundaries; do not replace client editing with blanket staff-only/read-only rules. Experian has no active account and is legacy cleanup. The diagnostic audit page/routes and integration-health credential prompts were removed; Goad data attribution is separate.
+
+The audit patch addresses scoped link/bulk operations, verified staff onboarding, token revocation, SQL transaction enforcement, account cache isolation, team/navigation consistency, WIP calculations, concurrent expense approvals/Xero requests, weekly schedules and staged exact-commit deployment. See [audit fix details and validation](docs/audit-fixes-2026-09-06.md). Private-file ownership enforcement needs trusted storage/share metadata plus a legacy-file backfill; [the proposed migration plan](docs/chat-media-access-plan.md) awaits schema approval. Do not add a history-only file gate that breaks generated/shared client documents.
+
 ## File Storage
 All uploaded files are stored under the `ChatBGP/` root folder (not `uploads/`). Subfolders: `chat-files`, `chat-media`, `doc-templates`, `hots`, `landlord-packs`, `legal-dd`, `marketing-files`, `investment-marketing`, `profile-pics`, `runs`, `smart-docs`, `templates`, `advice-engine`, `archivist-temp`, `sp-temp`, `transcribe-tmp`. The folder is gitignored. Files are also persisted in the `file_storage` DB table for durability.
 

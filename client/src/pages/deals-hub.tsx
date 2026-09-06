@@ -28,17 +28,24 @@ type TabKey = "deals" | "letting" | "investment" | "wip-report" | "properties";
 
 const TAB_PATHS = new Set(["letting", "investment", "report", "properties", "list"]);
 
-function getTabFromLocation(loc: string): TabKey | null {
+export function getTabFromLocation(loc: string): TabKey | null {
   if (loc.startsWith("/deals/letting")) return "letting";
   if (loc.startsWith("/deals/investment") || loc.startsWith("/investment-tracker")) return "investment";
   if (loc.startsWith("/deals/report") || loc.startsWith("/wip-report")) return "wip-report";
   if (loc.startsWith("/deals/properties") || loc === "/properties" || loc.startsWith("/properties/")) return "properties";
   if (loc.startsWith("/deals/list")) return "deals";
   // Bare /deals → null so the component picks the landing tab by device:
-  // WIP Report on desktop (the financial roll-up), Deals on mobile (WIP is
-  // hidden there). The Deals schedule lives at /deals/list.
+  // WIP Report on desktop, Deals on mobile. Explicit tab URLs work on both.
   return null;
 }
+
+export const DEAL_TAB_ROUTES: Record<TabKey, string> = {
+  "wip-report": "/deals/report",
+  deals: "/deals/list",
+  letting: "/deals/letting",
+  investment: "/deals/investment",
+  properties: "/deals/properties",
+};
 
 function isDealProfile(loc: string): boolean {
   const match = loc.match(/^\/deals\/([^/]+)/);
@@ -71,7 +78,7 @@ export default function DealsHub() {
       if (t === "investment" || t === "wip-report") setLocation("/deals/list", { replace: true });
       return;
     }
-    if (t) setTab(t);
+    setTab(t || ((typeof window !== "undefined" && window.innerWidth < 768) ? "deals" : "wip-report"));
   }, [location, isProfile, isClient]);
 
   // WIP Report — the financial roll-up every agent wants. Now shown on both
@@ -101,14 +108,7 @@ export default function DealsHub() {
 
   const switchTab = (t: TabKey) => {
     setTab(t);
-    const routes: Record<TabKey, string> = {
-      "wip-report": "/deals",
-      deals: "/deals/list",
-      letting: "/deals/letting",
-      investment: "/deals/investment",
-      properties: "/deals/properties",
-    };
-    const target = routes[t];
+    const target = DEAL_TAB_ROUTES[t];
     if (location !== target) setLocation(target);
   };
 
