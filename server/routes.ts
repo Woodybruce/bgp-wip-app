@@ -4039,7 +4039,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           au.deal_id AS "dealId",
           d.deal_ref AS "dealRef",
           au.agent_user_ids AS "agentUserIds",
-          au.viewings_count AS "viewingsCount",
+          -- Live count from unit_viewings, not the denormalised
+          -- available_units.viewings_count column: nothing has ever
+          -- written that column, so every consumer of it read 0 while
+          -- /all-viewings-counts (same table, same rule) read the real
+          -- figure — the same unit showed "2 viewings" on the tracker
+          -- and none on the phone letting card (r570).
+          (SELECT COUNT(*)::int FROM unit_viewings v WHERE v.unit_id = au.id) AS "viewingsCount",
           au.last_viewing_date AS "lastViewingDate",
           au.marketing_start_date AS "marketingStartDate",
           au.created_at AS "createdAt",
@@ -4326,7 +4332,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           au.marketing_status AS "marketingStatus",
           au.deal_id AS "dealId",
           au.agent_user_ids AS "agentUserIds",
-          au.viewings_count AS "viewingsCount",
+          -- Live count from unit_viewings, not the denormalised
+          -- available_units.viewings_count column: nothing has ever
+          -- written that column, so every consumer of it read 0 while
+          -- /all-viewings-counts (same table, same rule) read the real
+          -- figure — the same unit showed "2 viewings" on the tracker
+          -- and none on the phone letting card (r570).
+          (SELECT COUNT(*)::int FROM unit_viewings v WHERE v.unit_id = au.id) AS "viewingsCount",
           au.last_viewing_date AS "lastViewingDate",
           au.marketing_start_date AS "marketingStartDate",
           au.created_at AS "createdAt",

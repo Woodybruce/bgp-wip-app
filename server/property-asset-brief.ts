@@ -153,7 +153,11 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     //     2026-08-03). Surface every unit not yet completed/invoiced.
     const lettingsQ = await pool.query<any>(
       `SELECT au.id, au.unit_name, au.marketing_status, au.sqft, au.asking_rent,
-              au.deal_id, au.viewings_count, au.last_viewing_date, tc.name AS operator_name
+              au.deal_id, au.last_viewing_date, tc.name AS operator_name,
+              -- Live count (r570): available_units.viewings_count is never
+              -- written, so the brief printed no viewings on units the
+              -- tracker showed several on.
+              (SELECT COUNT(*)::int FROM unit_viewings v WHERE v.unit_id = au.id) AS viewings_count
          FROM available_units au
          LEFT JOIN crm_companies tc ON tc.id = au.tenant_company_id
         WHERE au.property_id = $1

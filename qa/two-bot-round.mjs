@@ -3262,6 +3262,37 @@ async function victoriaRound(page, cross) {
     if (out.delStatus !== 200 || out.stillThere) throw new Error('lease event not deleted');
   });
 
+  await step(page, p, 'staff-tracker-viewings-count-is-live', async () => {
+    // r570: available_units.viewings_count is a denormalised column nothing
+    // has ever written, so the unit payload said 0 viewings on every one of
+    // 81 units while /all-viewings-counts (the same unit_viewings rows) said
+    // 2 — the tracker read the live query, the phone letting card and the
+    // property asset brief read the dead column. The two must agree.
+    const out = await page.evaluate(async () => {
+      const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: h })).json();
+      const rows = Array.isArray(units) ? units : (units.units || []);
+      const unit = rows[0];
+      if (!unit) return { noUnit: true };
+      const post = await fetch(`/api/available-units/${unit.id}/viewings`, { method: 'POST', headers: h, body: JSON.stringify({ viewingDate: new Date().toISOString().slice(0, 10), attendees: 'QA-VIEWING-COUNT probe', outcome: 'Interested', notes: 'r570 live-count guard' }) });
+      const created = post.ok ? await post.json() : null;
+      const counts = await (await fetch('/api/available-units/all-viewings-counts', { headers: h })).json();
+      const after = await (await fetch('/api/available-units', { headers: h })).json();
+      const afterRows = Array.isArray(after) ? after : (after.units || []);
+      const mine = afterRows.find(r => r.id === unit.id);
+      const detail = await (await fetch(`/api/available-units/${unit.id}`, { headers: h })).json();
+      const mismatches = afterRows.filter(r => (r.viewingsCount || 0) !== (counts[r.id] || 0)).map(r => r.unitName);
+      if (created) await fetch(`/api/available-units/viewings/${created.id}`, { method: 'DELETE', headers: h });
+      return { createStatus: post.status, live: counts[unit.id] || 0, listCount: mine?.viewingsCount ?? null, detailCount: detail?.viewingsCount ?? null, mismatches: mismatches.slice(0, 5) };
+    });
+    if (out.noUnit) throw new Error('no available units to count viewings on');
+    if (out.createStatus !== 200 && out.createStatus !== 201) throw new Error(`viewing create ${out.createStatus}`);
+    if (!out.live) throw new Error('the live viewings-count endpoint did not see the viewing just logged');
+    if (out.listCount !== out.live) throw new Error(`unit payload says ${out.listCount} viewings, the live count says ${out.live}`);
+    if (out.detailCount !== out.live) throw new Error(`single-unit read says ${out.detailCount} viewings, the live count says ${out.live}`);
+    if (out.mismatches.length) throw new Error(`units whose viewingsCount disagrees with the live count: ${out.mismatches.join(', ')}`);
+  });
+
   await step(page, p, 'staff-tenancy-tile-filters-its-own-count', async () => {
     // r556: the Occupied tile counted Occupied+Trading+Let+Not Vacant (124)
     // but clicking it filtered on exact equality (87 rows); Vacant read 76

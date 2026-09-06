@@ -88,16 +88,77 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r570 · 2026-09-06 · ROUND IN PROGRESS · FULL (rotation #4 BGP staff, mobile 390px)
+### r570 · 2026-09-06 · FULL (rotation #4 BGP staff, mobile 390px) · 1 bug fixed — the unit payload's `viewingsCount` came from a denormalised column nothing has ever written, so it read 0 viewings on all 81 tracker units while the tracker's own live count read 2 on one of them · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; dev server via qa/with-server.sh). Regression: smoke
   GREEN 42 checks / 0 failures.
-- Two-bot three-chunk pass (QA_CROSS_FILE shared): EVERY scenario [ok].
-  Tally victoria 4x400 (POST /rocketreach/discover + the deliberate invalid
-  POST /api/investment-tracker probe — listed keyless noise) / mark 9x403 +
-  1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, thirtieth consecutive clean
-  hand-off. 0 app bugs from the regression.
-- Journey in progress: Victoria on the phone shell (iPhone UA + touch, 390px).
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 on the first pass / 2x400 on the post-fix re-run —
+  same two listed classes either way (POST /rocketreach/discover + the
+  deliberate invalid POST /api/investment-tracker probe; read the class, not
+  the count) / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED,
+  thirtieth consecutive clean hand-off. 0 app bugs from the regression.
+- JOURNEY (Victoria, iPhone UA + touch, 390px — real phone shell, not the
+  desktop app at 390px). "At Bluewater between meetings: log the viewing I
+  just did on L112, register the operator's interest, move the unit's
+  status — then reload and check the phone kept it." EVERY WRITE COMPLETED
+  AND PERSISTED across a full reload in a NEW browser session: viewing saved
+  (card went Viewing -> Viewing (1) -> (2) across runs, dialog re-read the
+  company, date, time, attendees, outcome and notes verbatim); interest
+  logged with a note (card Interest (1), dialog identical after reload);
+  status moved Available -> Opportunity through the phone edit dialog and the
+  chips followed on reload (MARKETING 79 -> 78, OPPORTUNITY 0 -> 1) with the
+  card badge reading Opportunity. Phone-vs-desktop diff on the SAME record
+  (L112, shots r570-phone-l112.png / r570-desktop-l112.png): status
+  "Opportunity" both, activity 2/0/1 both, Area "— sf" on desktop and the row
+  hidden on the phone (UX #135, intended) — no divergence. Fixture restored
+  at the end (status back to AVA, probe viewings + interest row deleted).
+- BUG FIXED (server/routes.ts x2, server/property-asset-brief.ts). Chasing
+  the phone-vs-desktop value check into the payload: /api/available-units
+  reported `viewingsCount: 0` on L112 while the same screen showed
+  "Viewing (2)" and /api/available-units/all-viewings-counts said 2. Cause:
+  the payload selected `au.viewings_count` — a denormalised column that NO
+  code path anywhere writes (grep: three readers, zero writers), so it is 0
+  on all 81 units while the real rows sit in `unit_viewings`. The tracker
+  page dodged it by querying /all-viewings-counts, which is why nobody had
+  noticed; the two readers that trust the payload did not. Fix: both the list
+  and the single-unit read now select
+  `(SELECT COUNT(*)::int FROM unit_viewings v WHERE v.unit_id = au.id)`,
+  exactly the rule /all-viewings-counts uses, so the two agree by
+  construction rather than by luck; same substitution in the property asset
+  brief's lettings query, which prints "· N viewings" per unit into generated
+  commentary.
+- VERIFIED: post-fix, list-vs-counts mismatches 0 across all 81 units; L112
+  reads 2 on the list, 2 on the single-unit read and 2 from the counts
+  endpoint; the three units that actually have viewings now carry them
+  (MSU9 letting 1, L112 2, WVU04 1) where every unit previously read 0; the
+  Bluewater asset brief's lettings block now carries viewings_count 1 on MSU9
+  letting instead of 0. tsc clean. Pre-fix evidence for the guard: the same
+  probe read viewingsCount 0 with the live count at 2.
+- New two-bot scenario: victoria · staff-tracker-viewings-count-is-live —
+  logs a viewing, then fails if the unit payload, the single-unit read and
+  /all-viewings-counts disagree, or if ANY unit's viewingsCount differs from
+  the live count (catches both the blank and a future stale value), then
+  deletes the probe. [ok] on the post-fix re-run.
+- CHECKED, NOT BUGS: the staff tracker table's 16 headers vs 11 cells on a
+  row reconciles — the Target-operator cell carries colSpan 6. The phone
+  home's "MY BILLING £0" beside "TOTAL BILLING £250,000" is personal-vs-firm
+  by design (the code says "team/firm WIP roll-up") — the label, not the
+  number, is the problem -> UX #241. fmtMoney divides by 100 on both the
+  phone card and hr-overview, so phone and desktop agree on the commission
+  fields whatever the unit. L112 showing no Area is genuine sparse data, not
+  systemic: 55 of 81 tracker units carry sqft.
+- DEFERRED, FLAG ONLY (do not tidy): the `let-card-<id>` letting list in
+  client/src/components/mobile-app.tsx is the other reader of the payload
+  field fixed above, and it looks UNREACHABLE from the current phone shell —
+  it lives on a "today" tab and the bottom nav is Dashboard | Messages |
+  Deals | News. Left alone: deleting a whole card list on a reachability
+  guess is the wrong move for a QA round, and the payload it reads is correct
+  now either way. Worth Woody's call on whether that tab is retired.
+- Suggestions added: UX #241 (phone home stacks a personal scheme-year
+  billing card above an unlabelled firm-wide one). New flakes: none.
+- Next journey: r570 had the journey -> r571 may be LIGHT; then rotation #1
+  staff desktop.
 
 ### r569 · 2026-09-06 · LIGHT (r568 had the journey) · 1 bug fixed — the tenancy board's only headline RATE ("Avg ERV £psf") averaged a per-annum column that is null on every row of the Landsec feed, so it read "—" on a board whose own ERV figures total £22.3m · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

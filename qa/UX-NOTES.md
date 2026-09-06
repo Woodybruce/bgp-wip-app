@@ -13,6 +13,20 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+241. 2026-09-06 · BGP staff / phone home 390px (QA r570) · Victoria opens
+    her phone and reads her billing position off the home screen · The first
+    card is "MY BILLING — 2026/27" and every figure in it is £0 (Billed,
+    Commission, Potential, Negotiating, Solicitors — her own scheme-year
+    numbers). Directly beneath it sits a second money card labelled only
+    "TOTAL BILLING £250,000". That second figure is the FIRM's roll-up —
+    Σ (amtWip + amtInvoice) over every entry /api/wip returns, with no
+    person and no year filter (7 deals, agent null on all of them) — but
+    nothing on the card says whose or when, so stacked under a card that
+    names its owner and its scheme year it reads as the total OF the card
+    above. · Label it for what it is ("Firm billing — all open WIP" or
+    "Team total") and state the basis, the way the r569 ERV tile now does.
+    The two cards are not comparable and only one of them says so.
+
 239. 2026-09-06 · both personas / tenancy board desktop + phone (QA r569) ·
     A landlord (or an agent pricing a void) wants the per-unit rate behind
     the board's "Avg ERV £psf" headline · The board's payload carries
