@@ -147,7 +147,7 @@ function AiDailyBriefing() {
 type Alert = { type: string; severity: "critical" | "warning" | "info"; title: string; detail?: string; entityId?: string; entityType?: string };
 type Task = { id: string; title: string; status: string; priority: string; deal_name?: string | null; property_name?: string | null; contact_name?: string | null };
 type DealSummary = { id: string; name: string; status: string; property_name?: string | null };
-type Commission = { billedPence: number; commissionEarned: number; commissionForecast: number; schemeYear: string; wipByStage?: { neg: number; sol: number; exc: number; com: number } };
+type Commission = { billedPence: number; commissionEarned: number; commissionForecast: number; schemeYear: string; wipByStage?: { neg: number; hot: number; sol: number; exc: number; com: number } };
 
 // Core boards shown on Home by default. Everything else (admin / WIP tools)
 // hides behind "Show all" so the home screen stays focused on daily work.
@@ -486,10 +486,14 @@ export default function MobileHome() {
                     </div>
                   </div>
                   {commission.wipByStage && (
-                    <div className="mt-2.5 pt-2.5 border-t border-white/10 grid grid-cols-2 gap-2">
+                    <div className="mt-2.5 pt-2.5 border-t border-white/10 grid grid-cols-3 gap-2">
                       <div>
                         <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.neg)}</p>
                         <p className="text-[10px] opacity-70">Negotiating</p>
+                      </div>
+                      <div>
+                        <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.hot)}</p>
+                        <p className="text-[10px] opacity-70">HOTs</p>
                       </div>
                       <div>
                         <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.sol)}</p>

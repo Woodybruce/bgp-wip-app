@@ -92,18 +92,86 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r578 · 2026-09-06 · FULL (rotation #4 BGP staff · mobile 390px) · ROUND IN PROGRESS
+### r578 · 2026-09-06 · FULL (rotation #4 BGP staff · mobile 390px) · 1 bug fixed — an agent's OWN commission card dropped their deal the moment it moved FORWARD out of Negotiating into heads of terms · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh).
-  Smoke GREEN 42 checks / 0 failures.
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures, and GREEN again after the fix.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
   Tally victoria 4x400 (all POST /brand/:id/rocketreach/discover) / mark
   9x403 + 1x503 + 1x404 (listed brochure-file 404) / woody,nick,sam 0 —
   BASELINE CONFIRMED, thirty-seventh consecutive clean hand-off. The mark
-  chunk again exceeded the 600s foreground cap (known, harmless). 0 app
-  bugs from the regression itself.
-- Journey and deep angle in progress: staff phone shell at 390px (iPhone
-  UA + touch), plus the tail of the status-literal sweep.
+  chunk again exceeded the 600s foreground cap (known, harmless). 0 app bugs
+  from the regression itself.
+- JOURNEY (Victoria, iPhone UA + touch, 390x844): "out of the office — check
+  where I am against the team, then work the tracker". Phone home -> /hr ->
+  /wip-report -> /deals/letting -> unit Edit dialog -> Add-unit dialog.
+- CHECKED AND CLEAN on the staff phone: no error boundary, no horizontal
+  scroll and no page errors on /, /hr, /wip-report, /deals/letting; both the
+  Edit-unit and Add-unit dialogs fit 390px exactly (scrollWidth ==
+  clientWidth) and the property / unit-name comboboxes both work by touch;
+  the Add-unit picker pre-fills from the tenancy spine. The tracker chips
+  reconcile (Marketing 79 + Negotiating 2 = All 81) and the phone WIP report
+  agrees with /api/wip to the pound (7 rows, £250,000, £0 invoiced) and with
+  the /hr ski hero.
+- BUG FIXED (server/hr-routes.ts ~795-1021, plus client/src/pages/hr.tsx and
+  client/src/components/mobile-home.tsx). GET /api/hr/staff/:id/commission —
+  the agent's own money — bucketed `wipByStage` as NEG / SOL / EXC / COM and
+  computed `wipTotal = neg + sol`. HOT joined the enum on 2026-08-12 and sits
+  BETWEEN NEG and SOL, so a deal moving FORWARD one stage — Negotiating to
+  heads of terms, where the fee is more certain, not less — matched no bucket
+  at all: it fell out of the agent's pipeline, out of `forecastPence`, out of
+  the tier waterfall and out of `commissionForecast`, then reappeared at
+  Solicitors. Same page, third vocabulary: the ski-target hero counts HOT
+  (r575) and the Hunger Games pipeline board counts HOT (r577), while the
+  agent's own card did not. Now NEG/HOT/SOL, with the "+ NEG / SOL converts"
+  scenario relabelled and `sources.wip` carrying `hot`.
+- PROVEN in the browser as Victoria on the phone, by stepping ONE probe deal
+  (£80k, 100% allocated to her) NEG -> HOT and changing nothing else:
+  BEFORE the fix, phone home went "£80k Negotiating" -> "£0 Negotiating £0
+  Solicitors" and /hr went "+ £80k WIP / Forecast £80k / £80k PIPELINE" ->
+  "+ £0 WIP / Forecast £0 / £0 PIPELINE", while the ski hero on the SAME
+  PAGE still counted the deal at £330k firm WIP. AFTER, at HOT: phone home
+  "£80k HOTs", /hr "+ £80k WIP / Forecast £80k / £80k PIPELINE".
+  Shots qa/smoke-shots/r578-neg-*, r578-hot-*, r578-hotfix3-*.
+  The phone card gained a HOTs sub-tile (2-col -> 3-col) and the /hr WIP
+  breakdown tile, which already summed neg+sol under the label
+  "Negotiating", now sums neg+hot+sol and says "Neg / HOTs / Sol".
+  Probe rows removed (qa/r578-probe-setup.mjs / qa/r578-probe-restore.mjs).
+- New two-bot scenario, FIRE-TESTED (fails on the pre-fix server, passes on
+  the fixed one): victoria · staff-own-commission-keeps-the-fee-through-hots
+  — creates a fee-allocated deal (85% agent / 15% BGP House) at NEG, checks
+  the agent's own wipTotal moves by their 85%, PUTs the deal to HOT, and
+  fails if the total, the forecast or the HOTs bucket moves. Pre-fix message:
+  "moved the agent's own WIP from 650590p to 0p".
+- DEFERRED as suggestions, not fixed (UX #262-#264): the phone's "TOTAL
+  BILLING £330,000" is the FIRM's WIP roll-up and sits unlabelled directly
+  under a card that just said her own billing is £0 (#262); the /hr
+  commission card prints "target £0 / est. commission £0" and a 100%
+  progress bar when no salary is recorded, instead of saying the target is
+  unset (#263); the phone chrome titles an unrouted URL from its slug, so a
+  dead link renders "Letting Tracker" over "Page not found" (#264).
+- CHECKED AND CLEAN, do not re-report: available-units' UNIT_STATUSES
+  (OPP/AVA only) and UNIT_STAGE_EDITABLE are the 2026-08-14 "the unit is only
+  ever Opportunity or Available, the DEAL owns everything past that" rule —
+  the Edit dialog correctly froze MSU9's status as "Negotiating — driven by
+  the deal"; DEAL_PIPELINE_STATUSES already carries HOT. The Add-unit
+  picker's "tenancy · 100 · 131,693 sq ft" sub-line is floor_level, real
+  fixture data, not an unlabelled number.
+- Still open and NOT taken: #247 (weekly PDF blank second page — still the
+  cheapest one-liner on the list), #250, #251, #252, #253, #254, #255,
+  #256-#261, and /api/hunters/letting's landlord_id-only portfolio.
+- New flake: a cold phone `goto('/')` right after the dev server's first
+  vite compile can land on /chatbgp instead of the mobile home (seen twice,
+  same run). Re-goto '/' and it lands correctly — the r578 helper retries
+  when [data-testid="mobile-home-total-billing"] is absent.
+- tsc clean. Fixture verified back to the shipped state (0 probe rows).
+- FOR r579 (rotation #1 BGP STAFF DESKTOP): the r578 angle has an obvious
+  next step — /api/hr/staff/:id/commission is now right about HOT, but
+  `topDeals` / `awaitingPayment` and the tier "scenarios" on the same payload
+  were not read against real multi-stage data. Also unswept: the staff phone
+  WRITE paths themselves — this round opened both the Edit-unit and Add-unit
+  dialogs at 390px and confirmed they fit and pre-fill, but did not SUBMIT
+  either (the r546 lesson says submitting is where the bugs are).
 
 ### r577 · 2026-09-06 · LIGHT (r576 had the journey) · 2 bugs fixed, both from the SERVER half of the status sweep — the KYC compliance alert went silent at exactly the stage before the AML gate, and the Hunger Games boards ranked people on a status list the page's other two figures had already moved past · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

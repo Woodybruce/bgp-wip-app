@@ -787,12 +787,15 @@ export function setupHrRoutes(app: Express) {
       // ── WIP / pipeline from crm_deals ───────────────────────────────────────
       // Per-deal share: prefer explicit deal_fee_allocations row for this agent,
       // else split fee equally across internal_agent[]. Status buckets:
-      //   NEG/SOL = under-offer / in-solicitors      (early WIP)
+      //   NEG/HOT/SOL = under-offer / heads of terms / in-solicitors (early WIP)
       //   EXC     = exchanged                         (committed, fee close)
       //   COM     = completed but not yet invoiced    (almost-billed)
+      // HOT sits between NEG and SOL (added to the enum 2026-08-12) — leaving
+      // it out made an agent's own pipeline drop to zero the moment a deal
+      // reached heads of terms and reappear at Solicitors (r578).
       // Date filter on the scheme year uses completed_at → exchanged_at →
       // target_date → instructed_at, whichever is set.
-      let wipByStage: { neg: number; sol: number; exc: number; com: number } = { neg: 0, sol: 0, exc: 0, com: 0 };
+      let wipByStage: { neg: number; hot: number; sol: number; exc: number; com: number } = { neg: 0, hot: 0, sol: 0, exc: 0, com: 0 };
       let topDeals: Array<{ id: string; name: string; fee: number; status: string; date: string | null }> = [];
       let awaitingPayment: Array<{ id: string; name: string; fee: number; status: string; date: string | null; invoicedAt: string | null }> = [];
       try {
@@ -831,6 +834,7 @@ export function setupHrRoutes(app: Express) {
         for (const r of dealRows) {
           const pence = Math.round((parseFloat(r.my_portion) || 0) * 100);
           if (r.status === "NEG") wipByStage.neg += pence;
+          else if (r.status === "HOT") wipByStage.hot += pence;
           else if (r.status === "SOL") wipByStage.sol += pence;
           else if (r.status === "EXC") wipByStage.exc += pence;
           else if (r.status === "COM") wipByStage.com += pence;
@@ -937,9 +941,9 @@ export function setupHrRoutes(app: Express) {
       // Primary billed for the tier waterfall — toggle between fee-due (the
       // default, "earned") and Paid-only ("payable"). EXC/COM deals already
       // sit inside billings on the fee-due basis, so the incremental
-      // pipeline is NEG/SOL only — counting exc/com again would double it.
+      // pipeline is NEG/HOT/SOL only — counting exc/com again would double it.
       const primaryBilledPence = paidOnly ? paidPence : wipInvoicedPence;
-      const wipTotal = wipByStage.neg + wipByStage.sol;
+      const wipTotal = wipByStage.neg + wipByStage.hot + wipByStage.sol;
       const forecastPence = wipInvoicedPence + wipTotal;
       const commissionEarned = tierCommission(primaryBilledPence);
       const commissionForecast = tierCommission(forecastPence);
@@ -990,7 +994,7 @@ export function setupHrRoutes(app: Express) {
         },
         {
           key: "pipeline",
-          label: "+ NEG / SOL converts",
+          label: "+ NEG / HOTs / SOL converts",
           totalPence: forecastPence,
           commission: commissionForecast,
           deltaCommission: commissionForecast - tierCommission(feeDuePence),
@@ -1018,7 +1022,7 @@ export function setupHrRoutes(app: Express) {
           invoiced: { billedPence: invoicedPence },
           feeDue:   { billedPence: feeDuePence },
           paid:     { billedPence: paidPence },
-          wip:      { neg: wipByStage.neg, sol: wipByStage.sol, exc: wipByStage.exc, com: wipByStage.com, total: wipTotal },
+          wip:      { neg: wipByStage.neg, hot: wipByStage.hot, sol: wipByStage.sol, exc: wipByStage.exc, com: wipByStage.com, total: wipTotal },
         },
         t1, t2, t3,
         tierBreakdown,

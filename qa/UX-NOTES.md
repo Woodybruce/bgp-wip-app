@@ -13,6 +13,33 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+262. 2026-09-06 · BGP staff / phone home (QA r578) · Victoria opens the app on
+    her phone and reads her money · the finance card headlines "MY BILLING —
+    2026/27 · £0 Billed · £0 Commission · £0 Potential", and the very next
+    card, in the same scroll, reads "TOTAL BILLING £330,000". That second
+    figure is the FIRM's WIP roll-up (/api/wip, taps through to the WIP
+    report) — nothing on it says so, and it sits directly under a card that
+    has just said her own billing is zero. Suggestion: label it for what it
+    is ("Firm WIP" / "Total billing — all teams", or the team name when the
+    user is scoped to one), so the two numbers can't be read as hers.
+
+263. 2026-09-06 · BGP staff / phone /hr (QA r578) · Victoria checks her
+    commission on the move · her card reads "COMMISSION · 2026/27 target £0 /
+    £0 billed + £80k WIP / Forecast £80k → est. commission £0". The target is
+    £0 because no salary is recorded, so every derived figure on the card is
+    honestly meaningless, but the card presents them as real numbers and the
+    progress bar reads 100%. Suggestion: when the scheme target is zero,
+    replace the target/commission line with "No commission target set — ask
+    HR" and keep only the billed + WIP figures, which are real.
+
+264. 2026-09-06 · BGP staff / phone, any unrouted path (QA r578) · a stale or
+    mistyped link (the round hit /letting-tracker; the real route is
+    /deals/letting) · the phone chrome prints a confident page title in the
+    header — "Letting Tracker" — above the app's "Page not found" body, so
+    the screen reads as if a real page failed to load rather than as a dead
+    link. Suggestion: derive the mobile header title from the matched route,
+    not the URL slug, so a 404 says "Not found" in the header too.
+
 259. 2026-09-06 · BGP staff / HR overview → Hunger Games "Top team" (QA r577)
     · Woody reads a team's pipeline off the strip · /api/hr/team-summary
     aggregates every deal `NOT IN ('INV','ARCH','WIT')` — the exclusion form,

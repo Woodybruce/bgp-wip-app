@@ -132,7 +132,7 @@ interface CommissionData {
   schemeYearStart?: string;
   schemeYearEnd?: string;
   billedPence: number;
-  wipByStage: { neg: number; sol: number; exc: number; com: number };
+  wipByStage: { neg: number; hot: number; sol: number; exc: number; com: number };
   wipTotal: number;
   forecastPence: number;
   paidOnly?: boolean;
@@ -686,8 +686,8 @@ function CommissionTab({ userId }: { userId: string }) {
           {data.wipTotal > 0 && (
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-md border p-2.5 text-center">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Negotiating</div>
-                <div className="text-sm font-semibold mt-0.5">{fmtSalary(data.wipByStage.neg + data.wipByStage.sol)}</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Neg / HOTs / Sol</div>
+                <div className="text-sm font-semibold mt-0.5">{fmtSalary(data.wipByStage.neg + data.wipByStage.hot + data.wipByStage.sol)}</div>
               </div>
               <div className="rounded-md border p-2.5 text-center">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Exchanged</div>

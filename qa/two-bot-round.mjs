@@ -4036,6 +4036,55 @@ async function victoriaRound(page, cross) {
     if (dCount !== 1) throw new Error(`a deal at HOTs moved the agent's active-deal count by ${dCount} (expected 1)`);
   });
 
+  // r578: HOT sits between NEG and SOL, but the agent's OWN commission card
+  // bucketed NEG/SOL/EXC/COM only — so a deal moving forward one stage, from
+  // Negotiating to heads of terms, dropped straight out of their pipeline,
+  // their forecast and the phone's "My billing" tile, and came back at
+  // Solicitors. Park one fee-allocated deal on the logged-in agent and step
+  // it NEG -> HOT: the WIP total must not move.
+  await step(page, p, 'staff-own-commission-keeps-the-fee-through-hots', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const u = (me && me.user) || me || {};
+      const name = u.name; const id = u.id;
+      if (!name || !id) return { ok: false, why: 'no id/name on /api/auth/me' };
+      const wip = async () => {
+        const res = await fetch(`/api/hr/staff/${id}/commission`, { headers: auth });
+        if (!res.ok) return { err: res.status };
+        const j = await res.json();
+        return { total: j.wipTotal, stages: j.wipByStage, forecast: j.forecastPence };
+      };
+      const base = await wip();
+      if (base.err) return { ok: false, why: `commission GET ${base.err}` };
+      const FEE = 7654;
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-COMM HOTs R${round}`, status: 'NEG', fee: FEE, dealType: 'New Letting',
+          internalAgent: [name], targetDate: new Date().toISOString().slice(0, 10) }) });
+      if (!res.ok) return { ok: false, why: `deal POST ${res.status}` };
+      const deal = await res.json();
+      const cleanup = async () => { await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {}); };
+      const alloc = await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ allocations: [
+          { agentName: name, allocationType: 'percentage', percentage: 85, fixedAmount: null, isBgpHouse: false },
+          { agentName: 'BGP House', allocationType: 'percentage', percentage: 15, fixedAmount: null, isBgpHouse: true },
+        ] }) });
+      if (!alloc.ok) { await cleanup(); return { ok: false, why: `fee-allocations PUT ${alloc.status}` }; }
+      const atNeg = await wip();
+      const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ status: 'HOT' }) });
+      if (!put.ok) { await cleanup(); return { ok: false, why: `status PUT ${put.status}` }; }
+      const atHot = await wip();
+      await cleanup();
+      return { ok: true, share: Math.round(FEE * 0.85 * 100), base, atNeg, atHot };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a commission deal (${r.why})`);
+    const negDelta = r.atNeg.total - r.base.total;
+    if (negDelta !== r.share) throw new Error(`the agent's 85% of a QA deal at NEG moved their own WIP by ${negDelta}p (expected ${r.share}p)`);
+    if (r.atHot.total !== r.atNeg.total) throw new Error(`stepping the same deal NEG -> HOTs moved the agent's own WIP from ${r.atNeg.total}p to ${r.atHot.total}p — heads of terms is missing from the personal commission buckets`);
+    if ((r.atHot.stages || {}).hot !== r.share) throw new Error(`the HOTs bucket read ${(r.atHot.stages || {}).hot} instead of ${r.share}p`);
+    if (r.atHot.forecast !== r.atNeg.forecast) throw new Error(`the agent's forecast moved from ${r.atNeg.forecast}p to ${r.atHot.forecast}p on a stage step`);
+  });
+
 }
 
 async function trackerStatusDeepLink(page, who) {
