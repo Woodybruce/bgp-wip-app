@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r576 · 2026-09-06 · FULL (rotation #3 Landsec client · mobile 390px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (all POST /brand/:id/rocketreach/discover) / mark
+  9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, thirty-fifth
+  consecutive clean hand-off. No chunk died at login; the mark chunk fitted
+  inside the 600s cap this round.
+- Status-literal sweep run: 87 lists, 38 exact, 49 divergent. Working the
+  client-facing half (mobile-home tiles, available-units pill sets).
+- Journey and triage in progress.
+
 ### r575 · 2026-09-06 · LIGHT (no journey — r574 had one) · 1 bug fixed — the firm's ski-target WIP and forecast counted no deal at HOTs and still counted REP, deleted from WIP a week earlier · 4 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
