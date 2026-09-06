@@ -5338,7 +5338,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [search, setSearch] = useState(urlParams.get("search") || savedListFilters?.search || "");
   // Deep links from DealsSummary (the Deals twin of the tracker summary):
   // /deals/list?status=NEG&propertyId=… lands here pre-filtered.
-  const [activeGroup, setActiveGroup] = useState(() => legacyToCode(urlParams.get("status")) || savedListFilters?.activeGroup || "all");
+  // ?noFee=1 — the notification centre's "N deals with no fee set" alert lands
+  // here. It must show EXACTLY the set that alert counted, so it overrides the
+  // restored status group and the default team filter below (r564).
+  const [noFeeFilter, setNoFeeFilter] = useState(urlParams.get("noFee") === "1");
+  const [activeGroup, setActiveGroup] = useState(() => (urlParams.get("noFee") === "1" ? "all" : legacyToCode(urlParams.get("status")) || savedListFilters?.activeGroup || "all"));
   const [propertyIdFilter, setPropertyIdFilter] = useState<string | null>(urlParams.get("propertyId"));
   // ?new=1 deep link — the WIP report's New Deal button lands here with the
   // create dialog already open.
@@ -5376,13 +5380,17 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       if (!currentUserForViews) return;
       // Restored session filters already carry the user's team choice — only
       // seed a default when there is no snapshot, but let ?team= always win.
-      const teamToSet = isClientDeals ? null : (urlTeamParam || (!savedListFilters && activeTeam && activeTeam !== "all" ? activeTeam : null));
+      const teamToSet = isClientDeals || noFeeFilter ? null : (urlTeamParam || (!savedListFilters && activeTeam && activeTeam !== "all" ? activeTeam : null));
       if (teamToSet) {
         setColumnFilters(prev => ({ ...prev, team: [teamToSet] }));
+      } else if (noFeeFilter) {
+        // A restored snapshot can carry a team filter that would hide some of
+        // the counted deals — the alert's count and this list must agree.
+        setColumnFilters(prev => { const { team, ...rest } = prev; return rest; });
       }
       setTeamFilterInitialised(true);
     }
-  }, [activeTeam, teamFilterInitialised, urlTeamParam, isClientDeals, savedListFilters, currentUserForViews]);
+  }, [activeTeam, teamFilterInitialised, urlTeamParam, isClientDeals, savedListFilters, currentUserForViews, noFeeFilter]);
 
   // Self-heal: client sessions that already carry a poisoned team filter
   // (seeded by the race above and persisted in the session snapshot) get
@@ -5395,6 +5403,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   useEffect(() => {
     if (isClientDeals) return;
+    // ?noFee=1 must show every counted deal, including ones with no team —
+    // re-applying the viewer's team here hid two of the five (r564).
+    if (noFeeFilter) {
+      setColumnFilters(prev => { const { team, ...rest } = prev; return rest; });
+      return;
+    }
     if (teamFilterInitialised && activeTeam && !urlTeamParam) {
       if (activeTeam === "all") {
         setColumnFilters(prev => { const { team, ...rest } = prev; return rest; });
@@ -5402,7 +5416,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         setColumnFilters(prev => ({ ...prev, team: [activeTeam] }));
       }
     }
-  }, [activeTeam, isClientDeals]);
+  }, [activeTeam, isClientDeals, noFeeFilter]);
 
   useEffect(() => {
     if (!teamFilterInitialised) return;
@@ -5941,6 +5955,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     return baseDeals.filter((deal) => {
       if (propertyIdFilter && deal.propertyId !== propertyIdFilter) return false;
       const dealCode = legacyToCode(deal.status);
+      if (noFeeFilter) {
+        // Same test as the notification's SQL: fee blank or zero, and the
+        // deal still live (not withdrawn, completed or invoiced).
+        const feeNum = Number(deal.fee);
+        const feeBlank = deal.fee === null || deal.fee === undefined || (deal.fee as any) === "" || !Number.isFinite(feeNum) || feeNum === 0;
+        if (!feeBlank) return false;
+        if (dealCode && ["WIT", "COM", "INV"].includes(dealCode)) return false;
+      }
       // Always compare canonical codes — statusValues only ever offers codes
       // (legacy free-text rows are normalised through legacyToCode), so the
       // old raw-string branch silently dropped legacy-status rows from the
@@ -5979,7 +6001,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       if (search && !matchesSearch(deal)) return false;
       return true;
     });
-  }, [baseDeals, activeGroup, columnFilters, search, matchesSearch, myName, propertyIdFilter]);
+  }, [baseDeals, activeGroup, columnFilters, search, matchesSearch, myName, propertyIdFilter, noFeeFilter]);
 
   const teamFilteredDeals = useMemo(() => {
     if (!columnFilters["team"]?.length) return baseDeals;
@@ -6054,7 +6076,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     setColumnFilters({});
   };
 
-  const hasFilters = search || activeGroup !== "all" || activeFilterCount > 0 || !!propertyIdFilter;
+  const hasFilters = search || activeGroup !== "all" || activeFilterCount > 0 || !!propertyIdFilter || noFeeFilter;
 
   if (error) {
     return (
@@ -6258,6 +6280,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           <Badge variant="secondary" className="gap-1 shrink-0" data-testid="chip-property-filter">
             {properties.find(p => p.id === propertyIdFilter)?.name || "Property"}
             <button onClick={() => setPropertyIdFilter(null)} className="ml-0.5 hover:text-destructive" aria-label="Clear property filter">
+              <X className="w-3 h-3" />
+            </button>
+          </Badge>
+        )}
+        {noFeeFilter && (
+          <Badge variant="secondary" className="gap-1 shrink-0" data-testid="chip-no-fee-filter">
+            No fee set
+            <button onClick={() => setNoFeeFilter(false)} className="ml-0.5 hover:text-destructive" aria-label="Clear no-fee filter">
               <X className="w-3 h-3" />
             </button>
           </Badge>

@@ -13,6 +13,30 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+227. 2026-09-06 · BGP staff / desktop 1440px (QA r564) · Victoria linked a
+    follow-up task ("chase Landsec on the Bluewater HOTs") to the Bluewater
+    MSU9 deal from My Tasks · The link is one-way. The task row gets a blue
+    deal chip that opens the deal correctly, but the deal page itself shows
+    no sign of the task anywhere — not in Deal Activity, not in Comments, not
+    in History & activity. Anyone else opening that deal has no idea a
+    chase is booked, and Victoria can't see her own commitment from the
+    record she's working in. Suggestion: a small "Tasks" line on the deal
+    page listing linked tasks (title, owner, due, done state) with an add
+    control, so the deal record shows the work booked against it.
+
+228. 2026-09-06 · BGP staff / desktop 1440px (QA r564) · Victoria opened CRM
+    to look at BGP's client landlords · The pill row reads "Total Landlords 5
+    · BGP Clients 0 · Non-Clients 5", and no landlord carries the client
+    crown — including Landsec, which has its own portal logins, 2 properties
+    and 3 deals with BGP. Clicking "BGP Clients" empties the list. The pill
+    tests companyType = 'Client' / 'Landlord / Client' or is_portfolio_account
+    (client/src/pages/people.tsx:139), but client access is actually granted
+    by a user's team name resolving to a company
+    (getCompanyIdForClientTeam) — nothing writes that flag back. Suggestion:
+    derive "BGP client" from the thing that decides it (a company with client
+    logins), or surface the flag on the company edit form so someone can set
+    it; either way the pill should not tell staff the firm has no clients.
+
 226. 2026-09-06 · Landsec client / desktop (QA r563) · Reading the Letting
     Tracker's Ref column · The red compliance dot beside a deal ref is the
     only compliance signal a client gets on that board, and its tooltip is

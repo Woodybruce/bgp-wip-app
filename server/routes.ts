@@ -9513,10 +9513,19 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       }
 
       // Deals without fee allocated
+      // Same rule as the Deals list (storage.getCrmDeals excludeTrackerDeals):
+      // the Deals board is SOL+ only, so pre-Solicitors pipeline is excluded.
+      // It used to be counted here, which both flagged deals that aren't
+      // meant to carry a fee yet and made this alert's number disagree with
+      // the list it now opens (r564).
       const noFeeResult = await pool.query(`
         SELECT COUNT(*)::int as count FROM crm_deals
         WHERE (fee IS NULL OR fee = 0)
         AND status NOT IN ('WIT', 'COM', 'INV')
+        AND (status IS NULL OR lower(status) NOT IN (
+          'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live',
+          'ava', 'available', 'neg', 'negotiating', 'negotiation',
+          'under negotiation', 'in negotiation', 'hot', 'hots', 'heads of terms'))
       `);
       const noFeeCount = noFeeResult.rows[0]?.count || 0;
       if (noFeeCount > 0) {
@@ -9527,6 +9536,10 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
           description: "Active deals without fee allocation need attention",
           severity: noFeeCount > 10 ? "urgent" : "warning",
           createdAt: new Date().toISOString(),
+          // No single deal to open, so carry an explicit destination: the
+          // deals list filtered to exactly the set counted above. Without
+          // it this was the one alert in the bell that did nothing on click.
+          link: "/deals/list?noFee=1",
         });
       }
 

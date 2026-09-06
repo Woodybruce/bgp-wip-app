@@ -88,16 +88,80 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r564 · 2026-09-06 · FULL (rotation #1 BGP staff desktop 1440px) · ROUND IN PROGRESS
+### r564 · 2026-09-06 · FULL (rotation #1 BGP staff desktop 1440px) · 1 bug fixed, two halves — the notification bell's "N deals with no fee set" alert did nothing on click, and its number disagreed with the only list that could show it · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written at
   postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke; browser work +
-  two-bot via qa/with-server.sh). Regression: smoke GREEN 42/0.
+  two-bot via qa/with-server.sh). Regression: smoke GREEN 42/0 before and
+  GREEN 42/0 after the fix.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
-  Tally victoria 4x400 (all POST /rocketreach/discover, listed keyless noise)
-  / mark 9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, twenty-fourth
-  clean hand-off. 0 app bugs from the scripted regression.
-- Journey pending: staff desktop 1440px as victoria@.
+  Tally victoria 4x400 (all POST /rocketreach/discover + the deliberate
+  invalid POST /api/investment-tracker probe, listed keyless noise) / mark
+  9x403 + 1x503 / woody,nick,sam 0 — BASELINE CONFIRMED, twenty-fourth clean
+  hand-off. 0 app bugs from the scripted regression.
+- Journey (Victoria, 1440px): "a tenant's agent rang about a Bluewater unit —
+  log the follow-up and work the alerts". Dashboard -> CRM (/contacts) ->
+  Landsec company record -> My Tasks: quick-add a task, open Edit Task, set
+  priority High + due date + Link to Deal + tags, SAVE, hard-reload, reopen
+  the dialog — every field persisted (PATCH /api/tasks carries them, r557
+  guard holds). Followed the task row's deal chip: lands on /deals/<id>
+  correctly. Then the notification bell (8 items) — clicked three rows to
+  check each delivers its destination.
+- BUG FIXED (server/routes.ts + client/src/components/notification-center.tsx
+  + client/src/pages/deals.tsx). The bell's stuck-deal and KYC rows each
+  navigate to their deal. The "5 deals with no fee set / Active deals
+  without fee allocation need attention" row — the one money row in the bell
+  — did NOTHING: the server pushes it with no dealId and no propertyId, and
+  notification-center's handleClick only knows those two, so isClickable was
+  false, the row had no pointer cursor, and clicking it left Victoria on the
+  dashboard with the popover still open. Half two, found by fixing half one:
+  once it navigated, the alert said 5 and its own list rendered 3. The alert
+  counted every crm_deal with a blank fee, but /deals/list is SOL+ ONLY
+  (storage.getCrmDeals excludeTrackerDeals — pre-Solicitors pipeline lives on
+  the tracker and the WIP report), so a NEG or AVA deal it counts can never
+  appear there. Fix: the notification carries an explicit `link`
+  (/deals/list?noFee=1) and handleClick honours it; the deals list reads
+  ?noFee=1 as a deep-link filter (fee blank/zero + status not WIT/COM/INV),
+  forces the status group to All, and suppresses the viewer's team filter for
+  that view — both the seed effect AND the activeTeam re-apply effect, which
+  was what still hid two rows on the first verify pass; a removable
+  "No fee set" chip (chip-no-fee-filter) shows why the list is short; and the
+  alert's SQL now carries the same SOL+ rule, so it counts what the board can
+  show and stops flagging deals not meant to carry a fee yet. Verified LIVE
+  at 1440px: alert 3 -> click -> /deals/list?noFee=1 -> 3 rows, chip present,
+  "3 deals · Total fees: £0". tsc clean, smoke re-green.
+- NOT A BUG, checked: the Landsec profile's board card reads
+  "Bluewater 165 units · 88 occ" — /api/leasing-schedule/company/<id> and
+  /api/leasing-schedule/property/<id> agree exactly (165 rows, 88 Occupied,
+  75 Vacant). The 200/124/76 in older entries is a stale fixture number, not
+  a live disagreement.
+- HARNESS GROWTH (qa/two-bot-round.mjs): victoria ·
+  staff-no-fee-alert-opens-the-list-it-counted — reads /api/notifications,
+  asserts the no_fee row carries a link containing noFee=1, and asserts its
+  stated count equals the fee-less live deals in
+  /api/crm/deals?excludeTrackerDeals=true (the set the destination renders).
+  Passes non-vacuously on the fixture. The client half is already covered:
+  the existing client-notification scenarios assert /api/notifications is []
+  for a client login, so no such link is ever offered to them.
+- Suggestions added: UX-NOTES #227 (the task->deal link is one-way — the deal
+  page never shows the task booked against it) and #228 (CRM's "BGP Clients"
+  pill reads 0 and no landlord carries the crown, Landsec included, because
+  the pill tests a flag nothing writes while client access is actually
+  granted by team name).
+- Still open and unbuilt: UX #150, #157, #162, #170, #171, #172, #174-#228.
+- New flakes: none. Housekeeping: running two-bot-round.mjs directly does NOT
+  purge (run-round.sh's psql purge targets the old bgp role), so QA-R<round>
+  probe deals survive the chunk and inflate exactly the kind of count this
+  round was auditing — purge with a pg script against
+  postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke before reading
+  any figure. Real-device keyboard-up composer check (r405) still open for
+  Woody.
+- Next: r564 was FULL -> r565 may be LIGHT. Rotation is due #2 Landsec client
+  desktop. Method worth reusing: click the alerts, tiles and chips that state
+  a NUMBER and promise a destination — then count what the destination
+  actually renders. A row with no destination and a row whose destination
+  structurally cannot hold what it counted are the same bug seen from two
+  ends.
 
 ### r563 · 2026-09-06 · LIGHT (r562 had the journey) · 1 bug fixed — the client Letting Tracker flagged a "Compliance gap: Fee agreement" on every instructed deal, driven by a field clients are never sent · r562's other carry-forward CLOSED as not-a-bug · 1 suggestion
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

@@ -3540,6 +3540,34 @@ async function victoriaRound(page, cross) {
     cross.mlroStamp = stamp;
   });
 
+  // r564: the notification centre's "N deals with no fee set" alert was the
+  // one row in the bell with no destination — it carried no dealId, so the
+  // click handler did nothing at all. It now carries an explicit link, and
+  // its count is the SOL+ set the Deals list can actually show (it used to
+  // count tracker-stage deals the board excludes by design, so the alert
+  // said 5 and its own list rendered 3).
+  await step(page, p, 'staff-no-fee-alert-opens-the-list-it-counted', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const notifs = await (await fetch('/api/notifications', { headers: auth })).json();
+      const row = (Array.isArray(notifs) ? notifs : []).find((n) => n.type === 'no_fee');
+      const deals = await (await fetch('/api/crm/deals?excludeTrackerDeals=true', { headers: auth })).json();
+      const arr = Array.isArray(deals) ? deals : (deals.data || []);
+      const live = arr.filter((d) => {
+        const st = String(d.status || '').toUpperCase();
+        const feeNum = Number(d.fee);
+        const blank = d.fee == null || d.fee === '' || !Number.isFinite(feeNum) || feeNum === 0;
+        return blank && !['WIT', 'COM', 'INV'].includes(st);
+      });
+      return { row: row || null, listCount: live.length, total: arr.length };
+    });
+    if (!r.row) { if (r.listCount === 0) return; throw new Error(`${r.listCount} fee-less deals on the board but no no_fee alert`); }
+    if (!r.row.link) throw new Error('the no-fee alert still has no destination — clicking it does nothing');
+    if (!/noFee=1/.test(r.row.link)) throw new Error(`no-fee alert links somewhere unfiltered: ${r.row.link}`);
+    const said = parseInt(String(r.row.title).match(/(\d+)/)?.[1] || '-1', 10);
+    if (said !== r.listCount) throw new Error(`no-fee alert counts ${said} but its own list holds ${r.listCount}`);
+  });
+
 }
 
 async function trackerStatusDeepLink(page, who) {

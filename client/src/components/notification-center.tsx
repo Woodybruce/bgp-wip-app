@@ -14,6 +14,9 @@ interface Notification {
   createdAt: string;
   dealId?: string;
   propertyId?: string;
+  /** Explicit destination for alerts that aren't about one deal or property
+      (e.g. "5 deals with no fee set") — without it those rows were inert. */
+  link?: string;
 }
 
 const severityConfig: Record<string, { color: string; bg: string; icon: typeof AlertTriangle }> = {
@@ -46,6 +49,8 @@ export function NotificationCenter() {
       navigate(`/deals/${notification.dealId}`);
     } else if (notification.propertyId) {
       navigate(`/properties/${notification.propertyId}`);
+    } else if (notification.link) {
+      navigate(notification.link);
     }
     setOpen(false);
   };
@@ -84,7 +89,7 @@ export function NotificationCenter() {
               {notifications.map((notification) => {
                 const sev = severityConfig[notification.severity] || severityConfig.info;
                 const TypeIcon = typeIcons[notification.type] || sev.icon;
-                const isClickable = !!(notification.dealId || notification.propertyId);
+                const isClickable = !!(notification.dealId || notification.propertyId || notification.link);
                 return (
                   <div
                     key={notification.id}

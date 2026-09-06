@@ -1,0 +1,33 @@
+import { chromium } from '../node_modules/playwright/index.mjs';
+import { existsSync } from 'fs';
+const BASE='http://localhost:5000', USER='victoria@brucegillinghampollard.com', PASSWORD='B@nd0077!', TAG='r564j';
+const QA_CHROMIUM = existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : null;
+const browser = await chromium.launch(QA_CHROMIUM ? { executablePath: QA_CHROMIUM, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] });
+try {
+  const ctx = await browser.newContext({ viewport:{width:1440,height:900}, locale:'en-GB' });
+  await ctx.route('**/*',(route)=>{const u=route.request().url(); if(u.startsWith(BASE)||u.startsWith('data:')||u.startsWith('blob:'))return route.continue(); return route.abort();});
+  const user = await (await ctx.request.post(`${BASE}/api/auth/login`,{data:{username:USER,password:PASSWORD}})).json();
+  const page = await ctx.newPage();
+  let bucket=[];
+  page.on('response',(res)=>{if(res.status()>=400)bucket.push(`HTTP ${res.status()} ${res.request().method()} ${res.url().replace(BASE,'')}`);});
+  page.on('pageerror',(e)=>bucket.push(`PAGEERROR ${String(e).slice(0,250)}`));
+  page.on('console',(m)=>{if(m.type()==='error'&&!/Failed to load resource/.test(m.text()))bucket.push(`CONSOLE ${m.text().slice(0,220)}`);});
+  const flush=(l)=>{const s=[...new Set(bucket)];bucket=[];console.log(s.length?`   [${l}] `+s.join('\n   '):`   [${l}] clean`);};
+  let step=50; const shot=async(l)=>{step++;const p=`qa/smoke-shots/${TAG}-${step}-${l}.png`;await page.screenshot({path:p});console.log('   shot',p);};
+  await page.goto(BASE).catch(()=>{});
+  await page.evaluate(([t,u])=>{localStorage.setItem('bgp_auth_token',t);localStorage.setItem('authToken',t);localStorage.setItem('user',JSON.stringify(u));},[user.token,user]);
+  await page.goto(BASE+'/tasks',{waitUntil:'domcontentloaded'}).catch(()=>{});
+  await page.waitForLoadState('networkidle').catch(()=>{}); await page.waitForTimeout(3000);
+  const row = page.locator('[data-testid^="task-row-"]').first();
+  const id = await row.getAttribute('data-testid');
+  const tid = id.replace('task-row-','');
+  console.log('== row text:', (await row.innerText()).replace(/\s+/g,' ').slice(0,300));
+  await page.locator(`[data-testid="task-edit-${tid}"]`).click();
+  await page.waitForTimeout(1500);
+  await shot('edit-dialog');
+  const dlg = page.locator('[role="dialog"]');
+  console.log('== dialog text:', (await dlg.innerText().catch(()=>'NO DIALOG')).replace(/\s+/g,' ').slice(0,1200));
+  console.log('== dialog testids:', JSON.stringify(await page.evaluate(()=>{const d=document.querySelector('[role="dialog"]');return d?[...d.querySelectorAll('[data-testid]')].map(e=>e.getAttribute('data-testid')):[];})));
+  console.log('== dialog inputs:', JSON.stringify(await page.evaluate(()=>{const d=document.querySelector('[role="dialog"]');return d?[...d.querySelectorAll('input,textarea,select,button')].map(e=>({tag:e.tagName,type:e.getAttribute('type'),name:e.getAttribute('name'),ph:e.getAttribute('placeholder'),id:e.getAttribute('data-testid'),val:e.value===undefined?null:String(e.value).slice(0,40),txt:(e.innerText||'').trim().slice(0,28)})):[];})));
+  flush('edit');
+} finally { await browser.close(); }
