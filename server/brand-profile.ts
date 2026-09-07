@@ -825,6 +825,28 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     const c = company.rows[0];
 
+    // Self-heal a stale store undercount HERE, not just in the client (a
+    // long-lived browser tab runs an old bundle and never fires its
+    // trigger): a chain left with a couple of stray rows by the old strict
+    // name matcher (Greggs: 1 row for 2,600 shops) re-scans in the
+    // background. startJob dedupes concurrent kicks; the 7-day recency
+    // guard stops genuinely small footprints re-burning Places quota.
+    try {
+      const found = stores.rows.length;
+      const claimed = Number(c.store_count) || 0;
+      const freshest = Math.max(0, ...stores.rows.map((s: any) => (s.researched_at ? new Date(s.researched_at).getTime() : 0)));
+      if (found > 0 && found <= 3 && claimed >= 25 && Date.now() - freshest > 7 * 24 * 3600_000) {
+        const { startJob } = await import("./brand-jobs");
+        const { alreadyRunning } = startJob(`research-stores:${companyId}:uk`, async () => {
+          const out = await researchBrandStores(String(companyId), { scope: "uk" });
+          return { ...out, scope: "uk", company: { id: companyId, name: (out as any).companyName } };
+        });
+        if (!alreadyRunning) console.log(`[brand-profile] store undercount self-heal: re-scanning ${c.name} (${found} stored vs store_count ${claimed})`);
+      }
+    } catch (e: any) {
+      console.warn(`[brand-profile] store self-heal kick failed: ${e?.message}`);
+    }
+
     // Resolve bgp_contact_user_ids → user display names + per-account
     // roles from crm_company_bgp_roles (Charlotte = Investment lead).
     let coverers: Array<{ id: string; name: string; email: string | null; role: string | null }> = [];
