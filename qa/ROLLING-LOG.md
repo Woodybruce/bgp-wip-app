@@ -92,6 +92,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r602 · 2026-09-07 · FULL (rotation #4: BGP staff · phone 390px) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+- **REGRESSION AT BASELINE.** Chunked recipe, 45s settle, shared
+  `QA_CROSS_FILE=/tmp/qa-cross-602.json`: victoria **147 ok** / 6x400 + 1x409;
+  mark head (`QA_UNTIL=client-properties-table-readonly-cells`) **176 ok** /
+  9x403 + 1x503; mark tail + woody/nick/sam **38 ok** / 1x403.
+  Sum **361 ok, 18 issues** — exactly the r601 baseline. **Streak 56.**
+  Triage: nothing new, all 18 are the documented set.
+- Journey in progress: Victoria on the staff phone shell.
+
 ### r601 · 2026-09-07 · LIGHT (r600 had the journey — no journey this round) · 2 bugs fixed: EVERY PDF footer loop but one wrote below its own bottom margin, so five document types shipped a spurious blank page (UX #247, 7 doors censused) · and a client could silently reassign the BGP team on their own deal (UX #171's scope half, 2 doors) · r600's harness trap CLOSED · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Smoke
