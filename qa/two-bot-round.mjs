@@ -4085,6 +4085,60 @@ async function victoriaRound(page, cross) {
     if (r.atHot.forecast !== r.atNeg.forecast) throw new Error(`the agent's forecast moved from ${r.atNeg.forecast}p to ${r.atHot.forecast}p on a stage step`);
   });
 
+  // r579: the annual review's "Sync from WIP" bucketed fee allocations as
+  // INV -> achieved / SOL -> under offer / NEG -> negotiating. HOT joined the
+  // enum after that spec, so a deal stepping FORWARD out of Negotiating into
+  // heads of terms dropped out of BOTH pipeline figures on the agent's own
+  // review form.
+  await step(page, p, 'staff-review-pipeline-keeps-the-fee-through-hots', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const u = (me && me.user) || me || {};
+      const name = u.name; const id = u.id;
+      if (!name || !id) return { ok: false, why: 'no id/name on /api/auth/me' };
+      const period = `QA-REVIEW-R${round}`;
+      const rev = await fetch(`/api/hr/reviews/${id}`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ period, kind: 'annual' }) });
+      if (!rev.ok) return { ok: false, why: `review POST ${rev.status}` };
+      const review = await rev.json();
+      const dropReview = async () => { await fetch(`/api/hr/reviews/${review.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {}); };
+      const FEE = 5432;
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-REVIEW HOTs R${round}`, status: 'NEG', fee: FEE, dealType: 'New Letting',
+          internalAgent: [name], targetDate: new Date().toISOString().slice(0, 10) }) });
+      if (!res.ok) { await dropReview(); return { ok: false, why: `deal POST ${res.status}` }; }
+      const deal = await res.json();
+      const cleanup = async () => {
+        await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+        await dropReview();
+      };
+      const alloc = await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ allocations: [{ agentName: name, allocationType: 'percentage', percentage: 100, fixedAmount: null, isBgpHouse: false }] }) });
+      if (!alloc.ok) { await cleanup(); return { ok: false, why: `fee-allocations PUT ${alloc.status}` }; }
+      const sync = async () => {
+        const s = await fetch(`/api/hr/reviews/${review.id}/sync-from-wip`, { method: 'POST', credentials: 'include', headers: auth });
+        if (!s.ok) return { err: s.status };
+        const j = await s.json();
+        return { under: j.changes.pipeline_under_offer_pence, neg: j.changes.pipeline_negotiating_pence, matched: j.matchedAllocations };
+      };
+      const atNeg = await sync();
+      if (atNeg.err) { await cleanup(); return { ok: false, why: `sync-from-wip ${atNeg.err}` }; }
+      const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ status: 'HOT' }) });
+      if (!put.ok) { await cleanup(); return { ok: false, why: `status PUT ${put.status}` }; }
+      const atHot = await sync();
+      await cleanup();
+      return { ok: true, fee: FEE * 100, atNeg, atHot };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a review sync (${r.why})`);
+    if (r.atNeg.neg < r.fee) throw new Error(`a 100%-allocated deal at NEG put only ${r.atNeg.neg}p in the review's negotiating pipeline (expected at least ${r.fee}p)`);
+    const negTotal = r.atNeg.under + r.atNeg.neg;
+    const hotTotal = r.atHot.under + r.atHot.neg;
+    if (hotTotal !== negTotal) throw new Error(`stepping the deal NEG -> HOTs moved the review's pipeline from ${negTotal}p to ${hotTotal}p — heads of terms is missing from the review's fee buckets`);
+    if (r.atHot.under < r.fee) throw new Error(`at HOTs the review's under-offer pipeline read ${r.atHot.under}p, not the ${r.fee}p heads-of-terms fee`);
+    if (!r.atHot.matched) throw new Error(`at HOTs the sync reported ${r.atHot.matched} allocations matched — the agent's own allocation went missing from the match count`);
+  });
+
 }
 
 async function trackerStatusDeepLink(page, who) {

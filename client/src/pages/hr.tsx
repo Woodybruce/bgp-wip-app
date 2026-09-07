@@ -3166,8 +3166,9 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   const [compReason, setCompReason] = useState<string>("");
 
   // Pull target / achieved / pipeline figures straight from the WIP
-  // report — target = 3 × salary, achieved = INV fees, under offer = SOL,
-  // negotiating = NEG. Maps the user's name to fee allocations server-side.
+  // report — target = 3 × salary, achieved = INV fees, under offer = HOT +
+  // SOL, negotiating = NEG. Maps the user's name to fee allocations
+  // server-side.
   const syncFromWip = useMutation({
     mutationFn: async ({ id }: { id: string }) =>
       apiRequest("POST", `/api/hr/reviews/${id}/sync-from-wip`).then(r => r.json()),
@@ -3346,7 +3347,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   className="h-7 text-xs"
                   onClick={() => syncFromWip.mutate({ id: editing.id })}
                   disabled={syncFromWip.isPending}
-                  title="Pull target (3× salary) and fees-achieved / under-offer / negotiating from the WIP report"
+                  title="Pull target (3× salary) and fees-achieved / HOTs+under-offer / negotiating from the WIP report"
                   data-testid="button-sync-from-wip"
                 >
                   {syncFromWip.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <BarChart3 className="w-3.5 h-3.5 mr-1" />} Sync from WIP
@@ -3411,7 +3412,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Pipeline — under offer (£)</Label>
+                <Label className="text-xs">Pipeline — HOTs / under offer (£)</Label>
                 <MoneyInput
                   value={editing.pipeline_under_offer_pence ? Math.round(editing.pipeline_under_offer_pence / 100) : null}
                   onCommit={(n) => updateReview.mutate({ id: editing.id, body: { pipeline_under_offer_pence: n === null ? null : n * 100 } })}

@@ -4,8 +4,13 @@
  * Mapping (Woody's spec, 14 May 2026):
  *   fees_target_pence            = current_salary_pence * 3
  *   fees_achieved_pence          = sum of fee allocations on INV-status deals
- *   pipeline_under_offer_pence   = sum on SOL-status deals  (a.k.a. Solicitors / Under Offer)
+ *   pipeline_under_offer_pence   = sum on HOT + SOL deals   (heads of terms agreed / Solicitors)
  *   pipeline_negotiating_pence   = sum on NEG-status deals  (a.k.a. Negotiating)
+ *
+ * HOT (heads of terms agreed, pre-solicitors) joined the status enum on
+ * 2026-08-12, after Woody's spec. It sits between NEG and SOL, so a deal
+ * stepping FORWARD out of Negotiating used to match no bucket at all and
+ * the agent's review pipeline dropped to zero until Solicitors (r579).
  *
  * Per-agent allocation calc:
  *   - allocation_type='fixed'      → fixed_amount (£)
@@ -38,6 +43,7 @@ export interface SyncReviewResult {
 interface AllocationTotals {
   inv: number; // £
   sol: number; // £
+  hot: number; // £
   neg: number; // £
   matchCount: number;
 }
@@ -76,7 +82,7 @@ async function getAgentAllocationTotals(userName: string): Promise<AllocationTot
          END AS gbp
        FROM deal_fee_allocations a
        JOIN crm_deals d ON d.id = a.deal_id
-       WHERE d.status IN ('INV', 'SOL', 'NEG')
+       WHERE d.status IN ('INV', 'SOL', 'HOT', 'NEG')
      )
      SELECT status, COALESCE(SUM(gbp), 0)::text AS total_gbp
        FROM normalised
@@ -90,16 +96,17 @@ async function getAgentAllocationTotals(userName: string): Promise<AllocationTot
     `SELECT COUNT(*)::text AS n
        FROM deal_fee_allocations a
        JOIN crm_deals d ON d.id = a.deal_id
-      WHERE d.status IN ('INV', 'SOL', 'NEG')
+      WHERE d.status IN ('INV', 'SOL', 'HOT', 'NEG')
         AND LOWER(TRIM(REGEXP_REPLACE(a.agent_name, '\\s*\\(\\s*BGP\\s*House\\s*\\)\\s*$', '', 'i'))) = ANY($1::text[])`,
     [variantList.map((v) => v.toLowerCase().trim())],
   );
 
-  const out: AllocationTotals = { inv: 0, sol: 0, neg: 0, matchCount: Number(countRes.rows[0]?.n || 0) };
+  const out: AllocationTotals = { inv: 0, sol: 0, hot: 0, neg: 0, matchCount: Number(countRes.rows[0]?.n || 0) };
   for (const row of r.rows) {
     const gbp = Number(row.total_gbp) || 0;
     if (row.status === "INV") out.inv = gbp;
     else if (row.status === "SOL") out.sol = gbp;
+    else if (row.status === "HOT") out.hot = gbp;
     else if (row.status === "NEG") out.neg = gbp;
   }
   return out;
@@ -128,7 +135,7 @@ export async function syncReviewFromWip(reviewId: string): Promise<SyncReviewRes
   const salaryPence = row.current_salary_pence ? Number(row.current_salary_pence) : null;
   const targetPence = salaryPence ? salaryPence * 3 : null;
   const achievedPence = Math.round(totals.inv * 100);
-  const underOfferPence = Math.round(totals.sol * 100);
+  const underOfferPence = Math.round((totals.sol + totals.hot) * 100);
   const negotiatingPence = Math.round(totals.neg * 100);
 
   await pool.query(
@@ -143,7 +150,7 @@ export async function syncReviewFromWip(reviewId: string): Promise<SyncReviewRes
   );
 
   console.log(
-    `[review-wip-sync] ${row.name} (review ${reviewId}): target=£${(targetPence || 0) / 100} achieved=£${totals.inv} sol=£${totals.sol} neg=£${totals.neg} (${totals.matchCount} allocations matched)`,
+    `[review-wip-sync] ${row.name} (review ${reviewId}): target=£${(targetPence || 0) / 100} achieved=£${totals.inv} sol=£${totals.sol} hot=£${totals.hot} neg=£${totals.neg} (${totals.matchCount} allocations matched)`,
   );
 
   return {
