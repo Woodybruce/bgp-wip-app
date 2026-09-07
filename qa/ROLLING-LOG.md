@@ -92,6 +92,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r594 · 2026-09-07 · FULL (rotation #4 BGP staff · mobile 390px) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- Two-bot on `QA_CROSS_FILE=/tmp/qa-cross-594.json`: chunk 1
+  `QA_PERSONAS=victoria` **141 [ok]**, exact baseline (6x400 + 1x409), no
+  `[skip]`, no flow failures. Chunk 2 `mark,woody,nick,sam` was SIGTERMed at
+  the 600s cap with **179 [ok]** and 12 issue lines that are ALL
+  `Target page, context or browser has been closed` (the kill closing
+  chromium, incl. the three `login harness-crash` lines for woody/nick/sam
+  who never got to run) — its http tally to that point was 10x403 + 2x503,
+  the documented client class. Re-ran `QA_PERSONAS=woody,nick,sam` alone:
+  **24 [ok], 0 issues**, which confirms those three crashes were the kill.
+  mark's last 9 scenarios are UNVERIFIED this round.
+- Triage: nothing outside documented noise so far.
+- Journey + fixes in progress.
+
 ### r593 · 2026-09-07 · LIGHT (no journey — r592 took rotation #3) · deferred pool: the en-dash guard hole PROMOTED TO A BUG and fixed, both sides · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
