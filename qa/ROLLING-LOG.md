@@ -92,14 +92,143 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r586 · 2026-09-07 · FULL (rotation #4 BGP staff · mobile 390px) · ROUND IN PROGRESS
-- Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas).
-  Smoke GREEN 42/0.
-- TWO-BOT victoria chunk: 0 flow failures, tally 4x400 + 1x409 — exactly the
+### r586 · 2026-09-07 · FULL (rotation #4 BGP staff · mobile 390px) · 2 bugs fixed, both the LEGACY-LABEL-vs-CODE class — pathway said every scheme was fully LET, ChatBGP put £456,789 of withdrawn fees in the firm pipeline · 3 suggestions
+- Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs). Smoke GREEN 42/0.
+- TWO-BOT: victoria chunk 0 flow failures, tally 4x400 + 1x409 — exactly the
   baseline class (rocketreach discover x2 + the deliberate invalid POST
-  probe; the 409 is r583's drilldown tolerating the SOL+ AML gate). Nothing
-  to triage. mark chunk pending.
-- Journey pending: staff phone 390px, real task with a write.
+  probe; the 409 is r583's drilldown tolerating the SOL+ AML gate). The 8s
+  settle in front of the command worked first time, no ECONNRESET.
+  **The mark chunk was NOT run** (budget went on the journey, which was this
+  round's brief) — knowingly dropped, so the clean-hand-off streak stays
+  unextended at 43. Both fixes are staff/AI-context paths, no client-scope
+  surface changed.
+- JOURNEY (the round's main event) — Victoria on an iPhone UA at 390px, out
+  of the office: "just come out of a viewing at Bluewater, log it and chase
+  the next step." Walked as her, every step judged, screenshots
+  qa/smoke-shots/r586-*.png:
+  * `/` on the phone lands on **Messages/ChatBGP**, not a dashboard — the
+    bottom nav is Dashboard/Messages/Deals/News. Fine once you know it.
+  * `/available` (Letting Tracker) phone card list: 81 units, pill row
+    OPPORTUNITY 0 / MARKETING 79 / NEGOTIATING 2 / HOTS 0 / SOLICITORS 0 /
+    HISTORIC 0 — adds up, HOT is present in every set on this page
+    (LIVE_PILL_STATUSES, DEAL_PIPELINE_STATUSES, PRE_SOL_CODES), so the HOT
+    fault line is NOT open here. Cards carry unit · property · status chip ·
+    Files/Viewing/Offer/Interest/Edit. Area/Rent rows hide when null (UX
+    #135), which on this fixture means most cards show nothing but the name.
+  * THE WRITE, and it works end to end: tapped `unit-viewing-<id>` on MSU9
+    Bluewater, filled date/time/attendees/outcome/notes with thumbs, saved,
+    reloaded — card counter went to "(1)", and the row is in unit_viewings
+    with every field intact (outcome 'Interested', time '14:30', notes
+    complete). Reopened the dialog: both entries render with date, time,
+    outcome and notes, no h-overflow (dialog 372px inside a 390px viewport).
+  * CHASED THE NEXT STEP: Tasks quick-add on the phone, task created,
+    "1 open" after a full reload. Persists.
+  * Property page `/properties/:id` renders on the phone and its LAST
+    ACTIVITY flipped to "today" off the viewing. `/deals` (WIP report) and
+    the deal detail both render; `/deals/:id` header comes through empty in
+    the DOM h1/h2 but the page title text is there. NOTE `/property/:id`
+    (singular) 404s — the route is `/properties/:id`; not a bug, but two
+    rounds have now guessed wrong, so it is written down here.
+  * NOTHING BROKEN in the journey itself — no 500s, no error boundaries, no
+    overflow, no lost write. The three things that annoyed her are UX #281-283.
+- BUG 1 FIXED — **the property pathway reported every scheme as fully LET,
+  with zero vacancy, always.** server/property-pathway.ts:2662 derived the
+  tenancy summary with
+  `(u.marketingStatus || "Available").toLowerCase() === "available"`;
+  available_units.marketing_status holds CODES (AVA/NEG/...), guaranteed by
+  the boot canonicaliser, so `vacant` was ALWAYS 0, `let_` always
+  units.length, and the derived status always "let" — which is what feeds
+  the Why Buy deck / pathway review's read of the asset. Now
+  `(legacyToCode(u.marketingStatus) || "AVA") === "AVA"`, delegating to the
+  canonical helper so a pre-canonical label still counts.
+- BUG 2 FIXED (r585's nominated highest-value leftover) — **ChatBGP reported
+  withdrawn deals, and their fees, in the firm's pipeline total.**
+  server/chatbgp.ts:1902 filtered active deals with
+  `!["Dead","Withdrawn","Leasing Comps","Investment Comps"].includes(status)`
+  — the comps half is right (those ARE literal stored values) but WIT is not,
+  so a withdrawn deal stayed in "Pipeline snapshot: N active deals, total
+  fees £X". Now `!isExcludedLegacyStatus(status) && legacyToCode(status)`
+  not in TERMINAL_STATUSES.
+- PROVEN with controls in qa/r586-probe.mjs (ALL PASS, `--restore` available
+  but not needed — it restores in-script and re-reads to confirm):
+  * pathway: over the real 50 Bluewater units the old predicate returns
+    vacant=0 / "let"; the new one vacant=49 / "mixed". CONTROLS — an all-AVA
+    set reads "vacant" under the new predicate and STILL "let" under the old
+    one; a COM unit is not counted vacant; a legacy "Available" label still
+    is. Without those the "mixed" alone proves nothing.
+  * chatbgp: the fixture ships **no WIT deal at all**, so every "the
+    withdrawn row is absent" assertion was vacuous on the first run (caught
+    it, exactly the trap r584/r585 flagged). The probe now steps the biggest
+    fee-bearing deal to WIT itself: old filter 8 active / £706,789, new
+    filter 7 active / £250,000 — **£456,789 of withdrawn fees was being
+    reported to staff as firm pipeline** — then restores the deal and
+    re-reads to confirm. CONTROLS: a live deal is still counted, and the
+    comps pseudo-statuses stay excluded.
+  NOT VISUALLY VERIFIED, and say it plainly: neither fix has a renderable
+  surface in this container. Pathway stage 1 and ChatBGP both need AI keys,
+  and there is no local GET that returns a pathway tenancy payload. The proof
+  is at the predicate/data level with the controls above.
+- New two-bot scenario: `victoria · staff-units-ship-codes-so-vacancy-counts`
+  — guards the INPUT bug 1's predicate consumes (there is no pathway GET to
+  assert against): /api/available-units must ship marketing_status CODES, and
+  the payload must contain at least one AVA unit, so the "no labels" assertion
+  cannot pass vacuously on a fixture of nothing but COM rows.
+- SUGGESTIONS: UX #281 (the manual viewing form accepts a byte-identical
+  duplicate silently — the diary path dedupes, the typed path does not, and a
+  phone is where you re-tap Save), #282 (Tasks quick-add captures text only,
+  so "by Friday" stays prose and the task never reaches the property's THIS
+  WEEK'S FOCUS), #283 (the Viewings dialog opens with the blank add-form
+  expanded under the whole history, so Save is below everything on 390px).
+- STILL DEFERRED from the sweep's label set, highest value first:
+  * server/goad-plan-data.ts:654 — `(marketing_status||"").toLowerCase() ===
+    "available"`, always false, so "Marketed as Available in BGP CRM" /
+    confirmed_vacant NEVER fires on a Goad plan. Same shape as bug 1 and now
+    the top of the list; one-liner, OS-keyless here.
+  * server/property-asset-brief.ts:211 — **a HOT fault line, READ and
+    confirmed open.** The asset brief folds un-dealed letting units into the
+    funnel by marketing status: `neg|negotiating|under_offer|und` -> hots,
+    `sol|solicitors|exc|exchanged` -> legals. HOT is a legal
+    available_units.marketing_status (the column's vocabulary is
+    LETTING_STATUSES) and it is in NEITHER arm, so a unit at HOTs with no
+    crm_deals row is counted in no bucket at all — silently dropped at the
+    stage just before signature, which is the exact failure this file was
+    written to stop. Not fixed here (two-bug cap); one arm, add
+    `s === "hot" || s === "hots"` to the hots bucket.
+  * server/routes.ts:6005 and :7673 — the deal->unit migration handlers
+    CREATE available_units rows with `marketingStatus: "Available"`, a LABEL
+    written into the codes column. Self-heals at the next boot
+    (index.ts:1479 canonicalises) but until then those units are invisible to
+    every code predicate — routes.ts:177's AVA available_count, the letting
+    tracker pills, and now the pathway vacancy. A write-side bug the sweep's
+    label shape does NOT catch (it looks for comparisons, not assignments) —
+    worth a SIXTH shape.
+  * server/chatbgp.ts:2101 and server/property-asset-brief.ts:607 — both
+    print the raw code with a label FALLBACK (`[${u.marketing_status ||
+    "Available"}]`, `(u.marketing_status || "available")`), so the client
+    ChatBGP context and the asset brief stamp units "[AVA]" rather than
+    "Marketing". Cosmetic at the prompt level, not a predicate; judgement
+    call, left alone.
+  * server/chatbgp.ts:1852, server/tenancy-schedule.ts:1654/:1685,
+    server/daily-briefing.ts:179 — MIXED or NON-deal columns
+    (investment_tracker.status, leasing_schedule_units.status). Still need a
+    vocabulary decision first; do NOT blind-fix.
+  * KNOWN-FINE, do not re-report: property-asset-brief.ts:165/211/214 list
+    the codes ALONGSIDE the labels (belt-and-braces — 211/214's bug is the
+    missing HOT, not the labels), expansion-intel.ts:41, routes.ts:4513,
+    client/src/pages/requirements.tsx:1352, property-plans.ts:199 (an
+    assignment, not a comparison), property-pathway.ts:1978/:3076 (they test
+    /vacant/i over SharePoint-extracted tenancy text — a different source and
+    a different vocabulary, correct as written).
+  * r581's open Woody policy call: INVESTMENT_STATUSES missing HOT.
+- New flakes: none. `/property/:id` singular 404s (route is `/properties/:id`)
+  and available_units.unit_name embeds the scheme name ("MSU9, Bluewater,
+  Bluewater") while the phone card TITLE strips it — so match units by id or
+  startsWith in a journey script, never by the visible card title.
+- FOR r587 (LIGHT — no journey): goad-plan-data.ts:654 and the
+  property-asset-brief.ts:211 HOT arm are both one-liners with proofs already
+  scoped above. Consider teaching the sweep a sixth shape for label WRITES
+  (routes.ts:6005/:7673 are the known pair).
 
 ### r585 · 2026-09-07 · LIGHT (no journey — r584 had the rotation) · 2 bugs fixed: My Portfolio widget 500 + always-empty comp set · sweep extended to the label shape · 2 suggestions
 - Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via

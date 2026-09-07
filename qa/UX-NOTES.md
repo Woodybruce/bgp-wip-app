@@ -13,6 +13,43 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+281. 2026-09-07 · BGP staff / mobile 390px (QA r586) · Victoria just out of a
+    viewing at Bluewater, logging it from the unit card's "Viewing" action ·
+    the manual viewing form accepted a byte-identical second viewing on the
+    same unit — same date, same time, same attendees, same notes, same
+    outcome — with no warning and no merge, and the card counter went to
+    "(2)". The diary sync path dedupes properly (on iCalUId, covered by the
+    smoke suite); only the hand-typed path has no guard. On a phone, where a
+    save that looks like it didn't land is the normal reason to tap again,
+    this is the easy mistake to make · Suggested: when the form is submitted
+    with the same unit + date + time (or the same attendees) as an existing
+    viewing, ask "you already logged a viewing at 14:30 today — add another,
+    or edit that one?" rather than silently creating a twin.
+
+282. 2026-09-07 · BGP staff / mobile 390px (QA r586) · same journey, chasing
+    the next step: Victoria types the follow-up into the Tasks quick-add box
+    ("send MSU9 Bluewater floor plans + rent quote by Friday") · it saves
+    fine and survives a reload, but the quick-add captures the text only —
+    no due date, no property/unit link, no assignee. So "by Friday" stays as
+    prose the app can't chase, and the task does not appear under the
+    property's own "THIS WEEK'S FOCUS" (still "0 / No open tasks on this
+    property") even though it names the unit. The full New Task dialog has
+    the fields; the quick-add is what you actually use one-handed ·
+    Suggested: parse an obvious date phrase out of the quick-add text into
+    the due date (and offer the property when the text matches a scheme
+    name), or put a single "due" chip next to the quick-add box.
+
+283. 2026-09-07 · BGP staff / mobile 390px (QA r586) · Victoria reopening the
+    unit's Viewings dialog to check what she logged · the dialog opens with
+    the blank "Add Viewing" form expanded underneath the list of existing
+    viewings, so on a 390px screen the Save button sits below every viewing
+    already recorded and she scrolls past her own history to reach it — and
+    on the way back up it is not obvious which block is the new entry and
+    which is the record · Suggested: collapse the add form behind its "Add
+    Viewing" header on the phone (the Files dialog's Info-sheet panel
+    already uses exactly that pattern), so the dialog opens on the history
+    and expands to write.
+
 279. 2026-09-07 · BGP staff / desktop 1440px (QA r585) · Victoria trying to
     put the "My Portfolio" widget on her dashboard · the widget picker's
     PATCH /api/auth/me/dashboard-widgets accepted `["my-portfolio"]` and

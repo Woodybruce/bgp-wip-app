@@ -4209,6 +4209,37 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r586: the pathway tenancy summary derived vacancy with
+  // `(marketingStatus || "Available").toLowerCase() === "available"`, so with
+  // available_units.marketing_status canonicalised to CODES it saw ZERO vacant
+  // units and reported every scheme "let" (property-pathway.ts:2667). The
+  // pathway payload has no local GET, so this guards the INPUT the predicate
+  // consumes: the units endpoint must ship codes, and a canonical vacancy
+  // count over them must be non-zero on a fixture that is nearly all marketed.
+  await step(page, p, 'staff-units-ship-codes-so-vacancy-counts', async () => {
+    const got = await page.evaluate(async () => {
+      const res = await fetch('/api/available-units', {
+        credentials: 'include',
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const rows = Array.isArray(j) ? j : (j.data || j.units || []);
+      return { total: rows.length, statuses: [...new Set(rows.map(u => u.marketingStatus).filter(Boolean))] };
+    });
+    if (got.status) throw new Error(`/api/available-units returned ${got.status}`);
+    if (!got.total) throw new Error('units payload is empty — nothing to check');
+    const CODES = ['OPP', 'AVA', 'NEG', 'HOT', 'SOL', 'EXC', 'COM', 'WIT', 'INV'];
+    const labels = got.statuses.filter(s => !CODES.includes(s));
+    if (labels.length) {
+      throw new Error(`available_units ships legacy marketing_status LABELS ${JSON.stringify(labels)} — the code predicates over unit status (pathway vacancy, the AVA available_count, the letting tracker pills) stop matching those rows`);
+    }
+    // CONTROL: without a marketed unit in the payload the assertion above is
+    // vacuous — a fixture of nothing but COM rows would also pass it.
+    const vacant = got.statuses.filter(s => s === 'AVA').length;
+    if (!vacant) throw new Error('no AVA unit in the payload — vacancy would read 0 for a reason other than the bug');
+  });
+
   // r585: the My Portfolio dashboard widget was doubly broken.
   //   (a) /api/dashboard/my-portfolio selected `c.job_title` from crm_contacts,
   //       which has no such column (it is `role`) — so the endpoint 500'd for

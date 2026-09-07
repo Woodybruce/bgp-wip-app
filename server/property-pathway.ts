@@ -21,6 +21,7 @@ import { performPropertyLookup } from "./property-lookup";
 import { executeCreateSharePointFolder, executeUploadFileToSharePoint } from "./utils/sharepoint-operations";
 import { askPerplexity } from "./perplexity";
 import { callClaude } from "./utils/anthropic-client";
+import { legacyToCode } from "@shared/deal-status";
 
 /**
  * Property Pathway Orchestrator
@@ -2659,7 +2660,11 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     try {
       const units = await db.select().from(availableUnits).where(eq(availableUnits.propertyId, crmMatch.id)).limit(50);
       if (units.length) {
-        const vacant = units.filter((u) => (u.marketingStatus || "Available").toLowerCase() === "available").length;
+        // available_units.marketing_status holds CODES (canonicalised at boot),
+        // so the old `=== "available"` label test never matched and every
+        // property came back "let" with zero vacancy. AVA is the marketed /
+        // vacant code; legacyToCode keeps any pre-canonical label working.
+        const vacant = units.filter((u) => (legacyToCode(u.marketingStatus) || "AVA") === "AVA").length;
         const let_ = units.length - vacant;
         const status: "vacant" | "let" | "mixed" | "unknown" = vacant === units.length ? "vacant" : let_ === units.length ? "let" : "mixed";
         tenancy = {

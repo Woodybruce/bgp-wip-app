@@ -47,6 +47,7 @@ import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
+import { legacyToCode, isExcludedLegacyStatus, TERMINAL_STATUSES } from "@shared/deal-status";
 
 const CHATBGP_MODEL = "claude-sonnet-4-6";      // Lightweight sub-tasks only — the main chat defaults to Fable 5 via chatbgp-model-router.
 const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning fallback tier.
@@ -1899,7 +1900,12 @@ export async function getCrmContext(): Promise<string> {
     ctx += `Total: ${properties.length} properties, ${deals.length} deals, ${companies.length} companies, ${contacts.length} contacts\n`;
 
     if (deals.length > 0) {
-      const activeDeals = deals.filter((d: any) => !["Dead", "Withdrawn", "Leasing Comps", "Investment Comps"].includes(d.status));
+      // crm_deals.status holds CODES, so the old "Dead"/"Withdrawn" labels
+      // matched nothing and withdrawn deals — and their fees — were counted
+      // in the firm's pipeline total. The comps pseudo-statuses ARE stored
+      // literally, so they keep their own check.
+      const activeDeals = deals.filter((d: any) => !isExcludedLegacyStatus(d.status)
+        && !TERMINAL_STATUSES.includes(legacyToCode(d.status) as any));
       const byStage: Record<string, number> = {};
       let totalFees = 0;
       for (const d of activeDeals) {
