@@ -4183,6 +4183,32 @@ async function victoriaRound(page, cross) {
   // legacy labels ('SOLs'/'Exchanged'/'Completing') while the column stores
   // codes, so it never fired at any stage. /api/notifications' twin was
   // fixed at r577; this is the copy that was missed.
+  // r584 staff half of client-tracker-ships-canonical-status-codes: the same
+  // ground truth for crm_deals.status. The CLIENT portfolio context and the
+  // client search tool excluded dead deals with NOT IN ('Dead','Withdrawn') —
+  // legacy labels against a codes column, so a WITHDRAWN deal was never
+  // dropped from what a landlord is told. Both now use NOT IN ('WIT'), which
+  // only holds while the column stays canonical.
+  await step(page, p, 'staff-deals-ship-canonical-status-codes', async () => {
+    const got = await page.evaluate(async () => {
+      const res = await fetch('/api/crm/deals', {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const rows = Array.isArray(j) ? j : (j.data || j.deals || []);
+      return { total: rows.length, statuses: [...new Set(rows.map(d => d.status).filter(Boolean))] };
+    });
+    if (got.status) throw new Error(`/api/crm/deals returned ${got.status}`);
+    if (!got.total) throw new Error('deals payload is empty — nothing to check');
+    const CODES = ['REP', 'SPEC', 'LIVE', 'OPP', 'AVA', 'NEG', 'HOT', 'SOL', 'EXC', 'COM', 'WIT', 'INV'];
+    const EXCLUDED = ['Leasing Comps', 'Investment Comps'];
+    const labels = got.statuses.filter(s => !CODES.includes(s) && !EXCLUDED.includes(s));
+    if (labels.length) {
+      throw new Error(`crm_deals ships legacy status LABELS ${JSON.stringify(labels)} — every codes-only predicate over deal status (WIP staging, the KYC alerts, the client ChatBGP context) silently stops matching those rows`);
+    }
+  });
+
   await step(page, p, 'staff-digest-flags-kyc-on-a-solicitors-deal', async () => {
     const r = await page.evaluate(async (round) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
@@ -8884,6 +8910,37 @@ async function markRound(page, cross) {
     const want = Math.round(got.nia).toLocaleString('en-GB');
     if (!got.shown.includes(want)) {
       throw new Error(`property overview Area reads "${got.shown}" while its own tenancy schedule totals ${want} sq ft`);
+    }
+  });
+
+  // r584: BOTH of this round's fixes rest on one ground truth — every status
+  // column the fixture carries is CANONICAL CODES, so any predicate written
+  // against a legacy LABEL matches nothing. Three ChatBGP context builders
+  // still compared available_units.marketing_status to 'Available' /
+  // 'Under Offer', so the landlord's assistant was told, of a centre with 75
+  // free units, "76 units (0 available)" — immediately above a list of those
+  // same units each stamped [AVA]. Guard the invariant the fixes depend on:
+  // if a legacy label ever reappears in this column, the codes-only
+  // predicates go quietly dead again.
+  await step(page, p, 'client-tracker-ships-canonical-status-codes', async () => {
+    const got = await page.evaluate(async () => {
+      const res = await fetch('/api/available-units', {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const rows = Array.isArray(j) ? j : (j.units || j.data || []);
+      return { total: rows.length, statuses: [...new Set(rows.map(u => u.marketingStatus).filter(Boolean))] };
+    });
+    if (got.status) throw new Error(`client /api/available-units returned ${got.status}`);
+    if (!got.total) throw new Error('client tracker payload is empty — nothing to check');
+    const CODES = ['REP', 'OPP', 'AVA', 'NEG', 'HOT', 'SOL', 'EXC', 'COM', 'WIT', 'INV'];
+    const labels = got.statuses.filter(s => !CODES.includes(s));
+    if (labels.length) {
+      throw new Error(`the client letting tracker ships legacy status LABELS ${JSON.stringify(labels)} — every codes-only predicate over marketing_status silently stops matching those rows`);
+    }
+    if (!got.statuses.includes('AVA')) {
+      throw new Error(`no unit on the client tracker reads AVA (saw ${JSON.stringify(got.statuses)}) — the "N available" count ChatBGP is handed would be 0`);
     }
   });
 

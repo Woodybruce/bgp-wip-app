@@ -174,7 +174,7 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
         const r = await pool.query(
           `SELECT p.name, p.status, p.asset_class,
             (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id) as unit_count,
-            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'Available') as available_count
+            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'AVA') as available_count
            FROM crm_properties p WHERE p.id = $1`, [id]);
         const p = r.rows[0];
         if (p) {

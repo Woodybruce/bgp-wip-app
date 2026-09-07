@@ -13,6 +13,44 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+277. 2026-09-07 · Landsec client / mobile 390px (QA r584) · Mark Warne on
+    the train, opening his phone home to see where his empty units stand ·
+    the "MY PORTFOLIO — LETTING TRACKER" tile reads
+    `77 Available · 1 Under offer · 0 Let · 78 On tracker`, and it is right —
+    it counts tracker units (mobile-home.tsx:293). One tap down, the Deals
+    tab reads "2 deals — Landsec · +2 letting deals on the Letting Tracker"
+    and lists them at SOLICITORS and EXCHANGED. Both are stages PAST "under
+    offer", yet the home tile says one unit is under offer and none are let.
+    Nothing is broken: the tracker holds pre-solicitors lettings, crm_deals
+    holds SOL+ (the "Deals CRM is SOL+ ONLY" rule), so a unit LEAVES the
+    tracker's under-offer bucket exactly when it enters the Deals tab. But a
+    landlord reads the two screens as one pipeline and cannot see where the
+    boundary is — his most advanced deals are invisible on the home tile
+    that claims to summarise his portfolio. SUGGESTION: give the phone home
+    tile a fifth figure sourced from crm_deals ("2 in legals"), or a footer
+    line "+2 deals with solicitors — see Deals", so the tile accounts for
+    every unit rather than only the pre-legals ones. Same shape as #250 on
+    the desktop (ACTIVE DEALS 4 vs a 2-row deals array), and worth solving
+    once for both shells.
+
+278. 2026-09-07 · Landsec client / mobile 390px (QA r584) · Mark adding a
+    task from his phone ("chase BGP on the MSU9 offer"), typing into every
+    field the dialog offers and setting a due date of Friday 17:00 · the
+    write is clean and PERSISTS perfectly — title, description, priority,
+    category and due date all survive a reload and re-read identically from
+    the edit dialog (verified this round). But the `datetime-local` value
+    `2026-09-11T17:00` is stored as `2026-09-11T17:00:00.000Z`: the wall
+    clock the user typed is banked as UTC. In September the UK is on BST, so
+    a 17:00 task is really due 18:00 local, and anything that compares the
+    column to `now()` — reminder windows, "due today", the digest's overdue
+    bucket — is an hour out for half the year. It reads back correct because
+    the render is the same naive slice, so the error is invisible until
+    something else consumes the timestamp. SUGGESTION: decide one convention
+    for `tasks.due_date` (store as UTC with an explicit local→UTC conversion
+    on save, or keep it a naive local timestamp and stop appending Z) and
+    apply it in both directions. Flagging rather than fixing — it touches
+    every task consumer, so it is Woody's call.
+
 275. 2026-09-07 · BGP staff / desktop (QA r583) · Victoria opening the WIP
     report's Agent Summary and clicking her own row to see which deals make
     up her WIP total · the drilldown's STAGE column is the panel's only

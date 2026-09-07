@@ -1847,7 +1847,7 @@ export async function getCrmContext(): Promise<string> {
           WHERE r.deal_id IS NULL ORDER BY r.created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT au.unit_name, au.use_class, au.sqft, au.asking_rent, au.marketing_status, au.location, p.name as property_name 
           FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id 
-          WHERE au.marketing_status IN ('Available', 'Under Offer') ORDER BY au.created_at DESC LIMIT 20`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
+          WHERE au.marketing_status IN ('AVA', 'NEG') ORDER BY au.created_at DESC LIMIT 20`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT asset_name as name, status, guide_price, address, asset_type, board_type FROM investment_tracker 
           WHERE status NOT IN ('Dead', 'Withdrawn') ORDER BY updated_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT tenant, name, area_location, headline_rent, rent_psf_nia, nia_sqft, use_class, transaction_type, lease_start 
@@ -2078,7 +2078,7 @@ export async function getClientCrmContext(scopeCompanyId: string): Promise<strin
                   (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS tenant_name
            FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
            WHERE (d.property_id = ANY($1) OR d.landlord_id = $2)
-             AND d.status NOT IN ('Dead','Withdrawn')
+             AND d.status NOT IN ('WIT')
            ORDER BY d.updated_at DESC LIMIT 40`,
           [propIds, scopeCompanyId]
         ).catch(() => ({ rows: [] })),
@@ -2154,7 +2154,7 @@ export async function clientScopedCrmSearch(scopeCompanyId: string, rawQuery: st
             (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS "tenantName"
      FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
      WHERE (d.property_id IN (${scopedPropsSql}) OR d.landlord_id = $1)
-       AND d.status NOT IN ('Dead','Withdrawn')
+       AND d.status NOT IN ('WIT')
        AND (${like("d.name", 2)} OR ${like("p.name", 2 + patterns.length)})
      LIMIT 15`,
     [scopeCompanyId, ...patterns, ...patterns]
@@ -14743,9 +14743,9 @@ export function setupChatBGPRoutes(app: Express) {
             const [propRows, dealRows, unitRows, reqRows] = await Promise.all([
               pool.query(`SELECT p.*, 
                 (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id) as unit_count,
-                (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'Available') as available_count
+                (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'AVA') as available_count
                 FROM crm_properties p WHERE p.id = $1`, [thread.propertyId]),
-              pool.query(`SELECT name, status, deal_type, fee, team FROM crm_deals WHERE property_id = $1 AND status NOT IN ('Dead','Withdrawn') ORDER BY created_at DESC LIMIT 10`, [thread.propertyId]).catch(() => ({ rows: [] })),
+              pool.query(`SELECT name, status, deal_type, fee, team FROM crm_deals WHERE property_id = $1 AND status NOT IN ('WIT') ORDER BY created_at DESC LIMIT 10`, [thread.propertyId]).catch(() => ({ rows: [] })),
               pool.query(`SELECT unit_name, use_class, sqft, asking_rent, marketing_status FROM available_units WHERE property_id = $1 ORDER BY unit_name LIMIT 15`, [thread.propertyId]).catch(() => ({ rows: [] })),
               pool.query(`SELECT r.name, r.use, r.size, c.name as company_name FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON r.company_id = c.id WHERE r.requirement_locations IS NOT NULL AND EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = $1 AND (r.requirement_locations && ARRAY[p.name])) LIMIT 5`, [thread.propertyId]).catch(() => ({ rows: [] })),
             ]);

@@ -92,18 +92,140 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r584 · 2026-09-07 · FULL (rotation #3 Landsec client · mobile 390px) · ROUND IN PROGRESS
+### r584 · 2026-09-07 · FULL (rotation #3 Landsec client · mobile 390px) · 2 bugs fixed, both the LEGACY-LABEL-vs-CODE class — ChatBGP was told every property had ZERO available units · 2 suggestions
 - Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; .env written). Smoke GREEN 42 checks / 0 failures.
-- Two-bot CHUNKED per r583's note. victoria chunk: 19 [ok], 0 failures,
-  tally 4x400 + 1x409 — exactly the baseline class (3x rocketreach + the
-  deliberate invalid POST /api/investment-tracker probe; the 409 is r583's
-  new drilldown scenario tolerating the SOL+ AML gate, correct behaviour).
-  mark chunk running.
-- Triage: nothing outside the baseline class so far.
-- Journey to come: Landsec client on the PHONE SHELL (iPhone UA + touch at
-  390px), a landlord's real task on the move; plus UX #276 (the phone home
-  fetches /api/daily-digest and never renders it).
+  qa/apply-sql.mjs; .env written; servers via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures.
+- TWO-BOT, chunked per r583 (still mandatory — the full pass hits the 600s
+  cap). victoria 19 [ok] 0 failures, tally 4x400 + 1x409; mark 12 [ok] 0
+  failures, tally 9x403 + 1x503 + 1x404. EXACTLY the baseline class
+  (rocketreach + the deliberate invalid POST /api/investment-tracker probe;
+  the client guard probes; keyless AI regenerate; the listed brochure-file
+  404). The 409 is r583's drilldown scenario tolerating the SOL+ AML gate —
+  correct behaviour. FORTY-THIRD consecutive clean hand-off. No new flakes.
+- HARNESS TRAP I FELL INTO, don't repeat: a re-run of the mark chunk with a
+  FRESH QA_CROSS_FILE produced 2 flow-failures
+  (client-deal-detail-fee-stripped "404", client-brief-target-scope "no
+  briefId from staff-brief-target-create"). Both are the missing cross-file,
+  not app bugs — gotcha (d) is load-bearing. There is NO QA_ONLY/QA_SCENARIOS
+  filter in two-bot-round.mjs; a chunk is all-or-nothing per persona.
+- JOURNEY (Mark Warne, real mobile context — iPhone UA + touch at 390px):
+  "I'm on the train to Bluewater. Where are my empty units, and let me put a
+  note in for BGP before I forget it." Phone home -> /available -> Deals tab
+  (all three pill tabs) -> Tasks (full write) -> deal detail phone-vs-desktop
+  diff. Shots qa/smoke-shots/r584-*.png, r584b-*, r584c-*, r584f-*.
+- CLEAN, don't redo: the phone home tile reconciles exactly against the
+  tracker (77 AVA + 1 NEG = 78 on tracker; tracker page ALL 78 / MARKETING
+  77 / NEGOTIATING 1). The TASK WRITE is fully sound — title, description,
+  priority, category and due date all persist across a reload and re-read
+  identically from the edit dialog, and the API row carries every field
+  (only the timezone convention is off, UX #278). The client deal page at
+  390px carries the SAME testid set as at 1440px (all four phone sections
+  plus files/property/comments/history) — no content is dropped on the
+  phone. `isClientTracker` is threaded deliberately through
+  available-units.tsx (Add unit / Edit / party pickers / hideFees), so the
+  client's own tracker being writable is DESIGN, not a leak. Bare /deals on
+  the phone settles in ~3s (gotcha (j)) and then renders fully — not a bug.
+- GROUND TRUTH ESTABLISHED FIRST, and it is broader than r583's: not only is
+  crm_deals.status 100% codes, **available_units.marketing_status is 100%
+  codes too (AVA 80, NEG 1)** — and both are GUARANTEED so by the boot
+  auto-migrate canonicalisers (server/index.ts:1463 for deals, :1479 for
+  units). So a legacy LABEL cannot survive a server start, and every
+  label-only predicate over either column is dead code. investment_tracker
+  .status is MIXED ('Live' 56, 'AVA' 49, 'COM' 7, 'SPEC' 6, 'SOL' 1) — do
+  NOT apply the same reasoning there without checking.
+- BUG 1 FIXED — **ChatBGP was told every property has ZERO available units.**
+  `available_units.marketing_status` is codes; three context builders
+  compared it to the legacy LABELS:
+  * server/routes.ts:177 (buildTaggedEntityContext, the @mention context) —
+    `marketing_status = 'Available'`, so the line handed to the model reads
+    "Property **Bluewater Shopping Centre** — 76 units (0 available)" while
+    the very NEXT lines of the same context list those units each stamped
+    [AVA]. A self-contradicting context; the model answers the headline.
+  * server/chatbgp.ts:1850 (the firm-wide "Available Units" block) —
+    `IN ('Available', 'Under Offer')` returns 0 rows of 81, so the whole
+    block never renders and ChatBGP believes BGP is marketing nothing.
+  * server/chatbgp.ts:14746 — the same available_count in a property thread.
+  The SIBLING handlers already had it right: server/crm.ts:4799/4950/4995
+  all use `marketing_status IN ('AVA','NEG')`. These three were stale copies.
+  Now 'AVA' / IN ('AVA','NEG') to match. **This is squarely the client-phone
+  surface: "Ask ChatBGP…" is the FIRST button on Mark Warne's phone home and
+  "which of my units are free" is Landsec's whole question.**
+- BUG 2 FIXED — a WITHDRAWN deal never left what the landlord is told.
+  server/chatbgp.ts:2081 (getClientCrmContext, the "### Active deals on your
+  properties" block a CLIENT login's ChatBGP is grounded on) and :2157
+  (clientScopedCrmSearch, the scoped replacement for search_crm on client
+  logins) both excluded dead deals with `d.status NOT IN
+  ('Dead','Withdrawn')` — labels against a codes column, so a deal at WIT
+  was never dropped. :14748 carried the same predicate for property threads.
+  All three now `NOT IN ('WIT')`, the house pattern (aml-compliance.ts:1076,
+  daily-briefing.ts:110, microsoft.ts:1329, property-asset-brief.ts passim).
+- PROVEN, with CONTROLS, through the real exported functions
+  (qa/r584-probe.mjs, run in two phases because getClientCrmContext caches
+  2 min per process — a same-process control reads the stale context and
+  looks like a failure):
+  * BUG 1 BEFORE "76 units (0 available)" / AFTER "76 units (75 available)";
+    firm-wide block 0 rows -> 81 rows.
+  * BUG 2 stepped Landsec's "Bluewater MSU9 letting" NEG -> WIT. PHASE=wit:
+    the patched context and search both omit it. PHASE=control at NEG: both
+    DO carry it (context 4 lines incl. the deal; search 3 deals) — so the
+    two assertions are not vacuous. 0 failures in both phases.
+  NOT VISUALLY VERIFIED, and be honest about it: neither fix has a rendered
+  surface — both feed the LLM prompt, and AI is keyless in this container, so
+  there is no screenshot of ChatBGP giving the right answer. The proof is at
+  the context-string level, which is the whole of what these call sites
+  produce.
+- New two-bot scenarios, both fire-tested green against the patched server:
+  `mark · client-tracker-ships-canonical-status-codes` (fails if the client
+  letting-tracker payload ever ships a legacy status LABEL, or if no unit
+  reads AVA — i.e. if the "N available" count would go back to 0) and
+  `victoria · staff-deals-ship-canonical-status-codes` (the same guard on
+  crm_deals.status, tolerating the two 'Leasing Comps'/'Investment Comps'
+  pseudo-statuses that shared/deal-status.ts still recognises). These guard
+  the INVARIANT both fixes rest on rather than the fixes' output, because
+  the output is a prompt string with no endpoint.
+- DEFERRED, same class, confirmed dead, nobody's yet:
+  * server/goad-plan-data.ts:654 — the CRM vacancy override on the Goad plan
+    tests `(marketing_status||"").toLowerCase() === "available"`, i.e.
+    "ava" === "available", always false. So "Marketed as Available in BGP
+    CRM" / confirmed_vacant NEVER fires on a Goad/property-intelligence
+    plan. One-line fix; OS-keyless locally so it needs a prod-ish check.
+  * server/chatbgp.ts:1902 — the staff "Pipeline snapshot" counts active
+    deals with `!["Dead","Withdrawn","Leasing Comps","Investment Comps"]
+    .includes(d.status)`; the comps half still works (those ARE literal
+    values) but WIT does not, so ChatBGP reports withdrawn deals AND their
+    fees in the firm's pipeline total.
+  * server/chatbgp.ts:1852 — investment_tracker `NOT IN ('Dead','Withdrawn')`
+    is a no-op, but that column is MIXED; needs a vocabulary decision first.
+  * ai-intelligence.ts:722 / :375 / :250 / :284 / :625 and microsoft.ts:1135
+    — all still exactly as r583 listed them. :375 (comp analysis fed an
+    ALWAYS-EMPTY comp set) is the highest-impact one left.
+  * crm.ts:4679 — `NOT IN ('Dead','Withdrawn')` style, unreviewed.
+  Also still nobody's: #253, #255, #250, #251, #247, #266,
+  /api/hunters/letting's landlord_id-only portfolio, and r581's Woody policy
+  call (INVESTMENT_STATUSES missing HOT).
+- A SIXTH SHAPE FOR THE SWEEP: `qa/r575-status-literal-sweep.mjs` only reads
+  crm_deals.status. **available_units.marketing_status has never been swept**
+  — this round found three dead predicates over it by hand-grep in about a
+  minute, and goad-plan-data's is a fourth. Teach the sweep the column, and
+  the `.toLowerCase() === "<label>"` shape while you're there.
+- SUGGESTIONS (UX #277, #278): the phone home tile's under-offer/let figures
+  are tracker-only, so a landlord's two most advanced deals are invisible on
+  the tile that claims to summarise his portfolio (#277, same shape as #250,
+  worth solving once for both shells); and `tasks.due_date` banks the typed
+  wall clock as UTC, so a 17:00 BST task is really 18:00 and every
+  now()-comparing consumer is an hour out for half the year (#278).
+- Fixture restored (probe deal back to NEG, verified in-script; the task the
+  journey created and the two-bot QA rows are swept by run-round.sh purge).
+  tsc clean. Scripts kept: qa/r584-probe.mjs, qa/r584-query.mjs (a read-only
+  console.table query helper — handy, the round rules ban psql one-liners),
+  qa/r584-client-mobile-journey.mjs, qa/r584-client-task-write.mjs,
+  qa/r584-phone-deals.mjs, qa/r584-deal-diff.mjs, qa/r584-deeplink.mjs.
+- FOR r585 (rotation #4, BGP STAFF MOBILE 390px): the label-vs-code seam is
+  STILL not exhausted after three rounds on it — but the highest-value next
+  move is the SWEEP EXTENSION above (marketing_status + the `.toLowerCase()
+  === label` shape), because hand-grepping keeps finding these and the
+  census keeps missing them. Then ai-intelligence.ts:375.
 
 ### r583 · 2026-09-07 · LIGHT (no journey — r582 had it) · 2 bugs fixed, both the LEGACY-LABEL-vs-CODE class r582 opened · 2 suggestions
 - Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
