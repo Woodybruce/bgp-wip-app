@@ -92,6 +92,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r593 · 2026-09-07 · LIGHT (no journey — r592 took rotation #3) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+- Two-bot chunked on `QA_CROSS_FILE=/tmp/qa-cross-593.json`: chunk 1
+  `QA_PERSONAS=victoria` **140 [ok]** (6x400 + 1x409, documented baseline);
+  chunk 2 `QA_PERSONAS=mark,woody,nick,sam` **212 [ok]** (exactly 9x403 +
+  1x503 + 1x404, documented baseline). No flow failures, no `[skip]` lines.
+  **Streak 49.** Chunk 2 hit the 600s Bash cap again; read from its file.
+- Triage: nothing new — every logged issue is documented noise/deliberate probe.
+- Working the deferred pool (tracker orphans, the en-dash guard hole).
+
 ### r592 · 2026-09-07 · FULL (rotation #3 — Landsec client · mobile 390px) · journey: "an operator came to me direct", with a self-add write · 1 bug fixed, BOTH HALVES: the Letting Tracker stamped a value the LANDLORD'S OWN tenancy schedule buckets into no tile, and its delete stranded the stub · 2 suggestions
 - Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`
   **GREEN 42/0**, then `node qa/apply-sql.mjs qa/seed-personas.sql` (the
