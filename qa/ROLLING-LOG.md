@@ -92,6 +92,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r581 · 2026-09-07 · LIGHT (r580 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written). Smoke GREEN 42 checks / 0 failures.
+- Two-bot full pass running (`node qa/two-bot-round.mjs victoria`, background
+  per the r580 harness note). All scenarios [ok] so far, no new error classes.
+- DEEP ANGLE (r580's hand-off): TAUGHT THE SWEEP the shapes it was blind to.
+  qa/r575-status-literal-sweep.mjs now recognises four shapes, not one:
+  list (array / SQL IN), keys (object literal KEYED by status codes — the
+  shape r580's three stage-weight tables hid in), union (TS string-literal
+  union type) and case (switch dispatch on status). Census went 87 -> 104
+  sets, 49 -> 61 divergent: 15 keys, 1 union, 1 case newly visible, 12 of
+  them divergent. New --kind= filter.
+- Triage of the 12 newly-visible divergences in progress.
+
 ### r580 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · 1 bug fixed — a deal stepping FORWARD into heads of terms fell out of the FIRM's forward book entirely, on three weight tables at once · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke

@@ -1,14 +1,24 @@
 #!/usr/bin/env node
-// r575 — census every hardcoded deal-status literal list in client/ + server/
-// and diff it against the canonical sets in shared/deal-status.ts.
+// r575 — census every hardcoded deal-status set in client/ + server/ and diff
+// it against the canonical sets in shared/deal-status.ts.
 //
-// The recurring bug shape (r573, r574): a filter compares crm_deals.status to
-// a list of codes typed out by hand. When a code is added to the shared enum
-// (HOT, 2026-08-12) every hand-typed list silently stops matching it.
+// The recurring bug shape (r573-r580): some code enumerates crm_deals.status
+// by hand. When a code is added to the shared enum (HOT, 2026-08-12) every
+// hand-typed set silently stops covering it, and a deal at that stage is
+// dropped — from a list, or from the money.
 //
-// Usage: node qa/r575-status-literal-sweep.mjs [--all]
-//   default: only lists that DIVERGE from every canonical set
-//   --all:   every literal list found
+// r581: the sweep originally recognised ONE shape — a comma-separated ARRAY of
+// quoted codes. r580's bug (three stage-weight tables that silently zeroed a
+// HOT deal's value) hid in a shape the sweep could not see: an object KEYED by
+// status codes. Three more shapes are now recognised:
+//   list   ["SOL","EXC"]              — array / SQL IN (...)
+//   keys   { NEG: 0.5, SOL: 0.75 }    — lookup table keyed by status  (r580)
+//   union  'NEG' | 'SOL'              — TS string-literal union type   (r580)
+//   case   case "NEG": ... case "SOL" — switch dispatch on status
+//
+// Usage: node qa/r575-status-literal-sweep.mjs [--all] [--kind=keys,case]
+//   default: only sets that DIVERGE from every canonical set
+//   --all:   every set found
 
 import fs from "node:fs";
 import path from "node:path";
@@ -49,37 +59,89 @@ const files = [...walk(path.join(ROOT, "client", "src")), ...walk(path.join(ROOT
 // A "literal list" = 2+ quoted canonical codes separated only by , / whitespace,
 // optionally inside [ ] or ( ). Covers JS arrays and SQL `IN ('SOL','EXC')`.
 const LIST = /(['"`])([A-Z]{2,5})\1(\s*,\s*(['"`])[A-Z]{2,5}\4)+/g;
+// A TS string-literal union: 'NEG' | 'SOL' | 'EXC'.
+const UNION = /(['"`])([A-Z]{2,5})\1(\s*\|\s*(['"`])[A-Z]{2,5}\4)+/g;
+// A flat object literal — no nested braces, which is every lookup table of the
+// weight/label/colour kind. Keys may be bare or quoted.
+const FLAT_OBJ = /\{[^{}]*\}/g;
+const OBJ_KEY = /(?:^|[{,;\n])\s*(?:(['"`])([A-Za-z_$][\w$]*)\1|([A-Za-z_$][\w$]*))\s*:/g;
+// switch dispatch: case "NEG":
+const CASE = /\bcase\s+(['"`])([A-Z]{2,5})\1\s*:/g;
+// how many lines apart two `case` labels may be and still count as one switch
+const CASE_WINDOW = 40;
+
+const lineOf = (text, idx) => text.slice(0, idx).split("\n").length;
 
 const findings = [];
-for (const f of files) {
-  const text = fs.readFileSync(f, "utf8");
+const seen = new Set();
+const push = (f) => {
+  const key = `${f.file}:${f.line}:${f.kind}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  findings.push(f);
+};
+
+for (const file of files) {
+  const text = fs.readFileSync(file, "utf8");
   const lines = text.split("\n");
-  for (const m of text.matchAll(LIST)) {
-    const codes = [...m[0].matchAll(/['"`]([A-Z]{2,5})['"`]/g)].map((x) => x[1]);
-    // every member must be a canonical code — otherwise it's some other enum
-    if (!codes.every((c) => ALL.has(c))) continue;
-    if (codes.length < 2) continue;
-    const line = text.slice(0, m.index).split("\n").length;
-    const set = [...new Set(codes)].sort();
-    const matches = Object.entries(CANON)
-      .filter(([, v]) => v.length === set.length && [...v].sort().join() === set.join())
-      .map(([k]) => k);
-    findings.push({
-      file: path.relative(ROOT, f),
-      line,
-      codes: set,
-      raw: lines[line - 1].trim().slice(0, 160),
-      matches,
-    });
+  const rel = path.relative(ROOT, file);
+  const at = (line, codes, kind) =>
+    push({ file: rel, line, kind, codes: [...new Set(codes)].sort(), raw: (lines[line - 1] || "").trim().slice(0, 160) });
+
+  for (const [kind, re] of [["list", LIST], ["union", UNION]]) {
+    for (const m of text.matchAll(re)) {
+      const codes = [...m[0].matchAll(/['"`]([A-Z]{2,5})['"`]/g)].map((x) => x[1]);
+      // every member must be a canonical code — otherwise it's some other enum
+      if (codes.length < 2 || !codes.every((c) => ALL.has(c))) continue;
+      at(lineOf(text, m.index), codes, kind);
+    }
   }
+
+  // keys — an object literal whose keys are ALL canonical status codes is a
+  // lookup table keyed by status: weights, labels, colours, buckets.
+  for (const m of text.matchAll(FLAT_OBJ)) {
+    const body = m[0];
+    const keys = [...body.matchAll(OBJ_KEY)].map((k) => k[2] || k[3]);
+    if (keys.length < 2 || !keys.every((k) => ALL.has(k))) continue;
+    at(lineOf(text, m.index), keys, "keys");
+  }
+
+  // case — a run of `case "CODE":` labels close together is one switch on status
+  const cases = [...text.matchAll(CASE)]
+    .filter((m) => ALL.has(m[2]))
+    .map((m) => ({ line: lineOf(text, m.index), code: m[2] }));
+  let run = [];
+  const flush = () => {
+    if (run.length >= 2) at(run[0].line, run.map((r) => r.code), "case");
+    run = [];
+  };
+  for (const c of cases) {
+    if (run.length && c.line - run[run.length - 1].line > CASE_WINDOW) flush();
+    run.push(c);
+  }
+  flush();
 }
 
+findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+for (const f of findings) {
+  f.matches = Object.entries(CANON)
+    .filter(([, v]) => v.length === f.codes.length && [...v].sort().join() === f.codes.join())
+    .map(([k]) => k);
+}
+
+const kindArg = process.argv.find((a) => a.startsWith("--kind="));
+const kinds = kindArg ? kindArg.slice(7).split(",") : null;
 const showAll = process.argv.includes("--all");
-const shown = showAll ? findings : findings.filter((x) => x.matches.length === 0);
+const diverge = findings.filter((x) => x.matches.length === 0);
+let shown = showAll ? findings : diverge;
+if (kinds) shown = shown.filter((x) => kinds.includes(x.kind));
+
+const tally = (rows) =>
+  ["list", "keys", "union", "case"].map((k) => `${k} ${rows.filter((r) => r.kind === k).length}`).join(" · ");
 
 console.log(`canonical: ${CANON.DEAL_STATUS_CODES.join(",")}`);
-console.log(`${findings.length} hardcoded status-literal list(s) in client/ + server/ + shared/`);
-console.log(`${findings.length - findings.filter((x) => x.matches.length === 0).length} match a canonical set exactly; ${findings.filter((x) => x.matches.length === 0).length} diverge\n`);
+console.log(`${findings.length} hardcoded status set(s) in client/ + server/ + shared/  [${tally(findings)}]`);
+console.log(`${findings.length - diverge.length} match a canonical set exactly; ${diverge.length} diverge  [${tally(diverge)}]\n`);
 
 for (const f of shown) {
   const near = Object.entries(CANON)
@@ -89,7 +151,7 @@ for (const f of shown) {
       return { k, missing, extra, dist: missing.length + extra.length };
     })
     .sort((a, b) => a.dist - b.dist)[0];
-  console.log(`${f.file}:${f.line}`);
+  console.log(`${f.file}:${f.line}  [${f.kind}]`);
   console.log(`  codes:  ${f.codes.join(",")}`);
   console.log(`  code:   ${f.raw}`);
   if (f.matches.length) console.log(`  == ${f.matches.join(" / ")}`);
