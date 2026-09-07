@@ -92,6 +92,26 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r592 · 2026-09-07 · FULL (rotation #3 — Landsec client · mobile 390px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`
+  **GREEN 42 checks / 0 failures**, then `node qa/apply-sql.mjs
+  qa/seed-personas.sql` (the seeding trap — mandatory on a client round).
+- Two-bot chunked on a shared `QA_CROSS_FILE=/tmp/qa-cross-592.json`:
+  chunk 1 `QA_PERSONAS=victoria` **140 [ok]**, chunk 2
+  `QA_PERSONAS=mark,woody,nick,sam` **212 [ok]**. No flow failures. Triage:
+  every issue is documented baseline — victoria 6x400 (rocketreach x3, the
+  deliberate invalid POST /api/investment-tracker, the two deliberate probes
+  in `staff-unbalanced-fee-split-is-refused`) + 1x409 (the SOL+ AML gate,
+  correct); mark exactly 9x403 (client guard probes) + 1x503 (keyless
+  commentary regenerate) + 1x404 (the listed brochure file); woody/nick/sam
+  0. **Streak 48 clean hand-offs.** No self-skips: all seven skip-capable
+  scenarios logged [ok] with no `[skip]` line. Chunk 2 again hit the 600s
+  Bash cap and was read from its redirect file (documented harness trap).
+- Journey underway: Mark Warne on an iPhone at 390px — "an operator came to
+  me direct" (phone /brands as a client → global-directory self-add WRITE →
+  brand profile phone pills incl. Compliance & KYC). Ground r584 did not
+  cover.
+
 ### r591 · 2026-09-07 · LIGHT (no journey — r590 had it) · 2 bugs fixed: the Letting Tracker wrote marketing CODES into the leasing board's LABEL column, and deleting a scheme stranded its whole unit spine · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0** (3m38s),
   then `node qa/apply-sql.mjs qa/seed-personas.sql`.
