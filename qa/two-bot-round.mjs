@@ -1835,6 +1835,44 @@ async function victoriaRound(page, cross) {
     cross.compId = r.compId;
   });
 
+  // r596: the comps area tabs were 16 hardcoded central-London sub-markets
+  // plus an "Other" that substring-searched for the literal word "other", so
+  // a comp anywhere else (the fixture holds West End, Oxford Street, Reading)
+  // was unreachable by EVERY tab. Tabs are now derived from the comps on the
+  // board. Uses the comp the scenario above just logged.
+  await step(page, p, 'staff-comp-area-tabs-reach-every-comp', async () => {
+    if (!cross.compId) { console.log(`  [skip] ${p} · staff-comp-area-tabs-reach-every-comp — no comp id from the step above`); return; }
+    const AREA = 'Dartford';
+    const put = async (data) => page.evaluate(async ([id, d]) => {
+      const r = await fetch('/api/crm/comps/' + id, { method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        body: JSON.stringify(d) });
+      return r.status;
+    }, [cross.compId, data]);
+    if ((await put({ areaLocation: AREA, verified: true })) >= 400) throw new Error('could not park the QA comp in an out-of-London area');
+    await page.goto(BASE + '/comps');
+    await page.locator('[data-testid="text-comps-title"]').waitFor({ timeout: 25000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    const tabs = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="area-tab-"]')].map(e => e.textContent.trim()));
+    if (!tabs.length) throw new Error('comps area tabs never rendered');
+    if (!tabs.includes(AREA)) throw new Error(`no area tab for "${AREA}" — tabs were ${JSON.stringify(tabs)}`);
+    await page.locator(`[data-testid="area-tab-${AREA}"]`).click();
+    await page.waitForTimeout(900);
+    const rows = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="comp-row-"]')]
+      .map(e => e.getAttribute('data-testid').replace('comp-row-', '')));
+    if (!rows.includes(cross.compId)) throw new Error(`the "${AREA}" tab does not show the comp filed there (${rows.length} row(s))`);
+    // NEAR-MISS CONTROL: a curated London area with nothing in it must not be
+    // offered — otherwise the tabs are just the old hardcoded list again.
+    const comps = await page.evaluate(async () => (await (await fetch('/api/crm/comps', { credentials: 'include',
+      headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } })).json()));
+    const hay = (Array.isArray(comps) ? comps : []).map(c => `${c.areaLocation || ''} ${c.groupName || ''}`.toLowerCase()).join('|');
+    const dead = ['Mayfair', 'Soho', 'Chelsea'].filter(a => !hay.includes(a.toLowerCase()));
+    if (!dead.length) throw new Error('CONTROL vacuous — every curated area holds a comp');
+    const offered = dead.filter(a => tabs.includes(a));
+    if (offered.length) throw new Error(`dead area tab(s) still offered: ${offered.join(', ')}`);
+    await put({ areaLocation: null, verified: false });
+  });
+
   // r532: a Landsec-owned investment requirement, so the client chunks can
   // prove the detail read is company-scoped (list already was, /:id was not).
   await step(page, p, 'agent-add-investment-requirement', async () => {

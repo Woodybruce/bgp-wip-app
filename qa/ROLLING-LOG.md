@@ -92,21 +92,107 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r596 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · ROUND IN PROGRESS
+### r596 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · journey: "Nick needs comparable evidence to support a quote", with a write · 1 bug fixed: the comps board's area tabs were a hardcoded London list and its "Other" tab matched nothing, so 8 of the 13 comps were unreachable by EVERY tab · 2 scope worries probed and CLEARED · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
 - Two-bot `QA_PERSONAS=victoria` FIRST (r595's hand-off): **142 [ok], 0
-  [skip]**, exact baseline (6x400 + 1x409). Clean.
-- `QA_PERSONAS=mark` second: **176 [ok]** then **KILLED at the 590s Bash
-  cap mid-run** — the 12 flow-failures are all the kill signature
-  ("Target page, context or browser has been closed", plus the first
-  casualty `client-properties-table-readonly-cells` reporting "never
-  rendered a tenants cell"). Real issues before the kill were **exact
-  baseline: 9x403 (client guard probes) + 1x503 (keyless AI regenerate)**,
-  no phantoms — running victoria first worked. UNVERIFIED TAIL this round,
-  from `client-properties-table-readonly-cells` onward (r595 had these
-  green): re-run next round.
-- Journey in progress: staff desktop 1440px, ground not covered by r588.
+  [skip]**, exact baseline (6x400 + 1x409). `QA_PERSONAS=mark` second:
+  **176 [ok]** then **KILLED at the 590s Bash cap mid-run** — the 12
+  flow-failures are all the kill signature, including the first casualty
+  `client-properties-table-readonly-cells` reporting "never rendered a
+  tenants cell". Real issues before the kill were **exact baseline: 9x403 +
+  1x503**, and NO phantoms — running victoria first works, as r595 said.
+  **UNVERIFIED TAIL, re-run next round:**
+  `client-properties-table-readonly-cells` onward (r595 had these green).
+- **JOURNEY (staff desktop 1440px, deliberately different ground from r588's
+  properties/available route): `/` → `/comps` → Add comp dialog → typeahead
+  onto the Bluewater property → SAVE → read the row back → `/comps` reload →
+  `/properties/:id` → `/requirements`.** The write landed intact — every
+  field she typed came back on the row, the counts moved 1→2 comps and 0→1
+  areas, and her row rendered. No error boundary, no page error, only
+  documented noise. But the board itself does not survive being used:
+- **BUG FIXED (client/src/pages/comps.tsx) — the comps area filter offered 16
+  hardcoded central-London sub-markets and an "Other" tab that could never
+  match anything, so most of the evidence on the board was unreachable.**
+  `AREA_GROUPS` was a fixed list (Mayfair, City, Covent Garden, Soho …) while
+  `areaLocation` is written by a **free-text Input** on the create dialog —
+  and **its two siblings in the SAME dialog, Use Class and Transaction Type,
+  are Selects bound to the very constants their filters enumerate** (lesson
+  12; censused both columns, 100% inside their option sets — those filters
+  are healthy, area alone is not). Ground truth of the column: of the 11
+  areas in `crm_comps`, only **Covent Garden (2) and Camden (1)** have a tab;
+  **West End (3), Oxford Street (3), Reading (1) and my Dartford comp** have
+  none — and the escape hatch labelled "Other" ran
+  `areaLocation.includes("other")`, i.e. a substring search for the literal
+  word, so it matched **none of them either**. Victoria is Head of *National*
+  Leasing. The `filtered` set also feeds the **CSV export**, so an area-scoped
+  evidence schedule exports whatever the broken filter returns — "Other"
+  exported an empty file. **The sibling page proves it was an oversight, not
+  a policy:** `investment-comps.tsx`, whose own comment says it "mirrors the
+  AREA_GROUPS pill row", implements `matchesRegion` with
+  `if (region === "Other") return !comp.region && !comp.market` — the correct
+  semantics, one file away. FIX: the tabs are now **derived from the comps on
+  the board** (curated areas that hold something, in curated order; then any
+  area the data carries that the list never named; then "Other" only when
+  unfiled comps exist), "Other" now means *no area recorded* like its
+  sibling, and **Clear** now offers itself for, and clears, an active area tab
+  (it previously ignored `activeArea` entirely, so an empty area tab showed
+  "Try adjusting your filters" with no Clear button to press — UX #300's
+  cousin).
+- Verified **visually and end to end**, `qa/r596-area-tabs-verify.mjs`
+  **28 PASS, 0 FAIL**: it first confirms the 11 AI leads through the **real
+  review PUT** the "Confirm Lead" button uses (until she does, everything
+  sits on the Leads tab and the area tabs have almost nothing to filter —
+  that is why a naive baseline reads only 2 confirmed comps), then asserts a
+  tab exists for **every** confirmed comp's area, clicks the
+  previously-unreachable ones and reads the rows back (**not vacuous**: 8
+  comps in areas the curated list never named; Oxford Street returns its 3),
+  **CONTROL** four curated London areas hold nothing and are correctly NOT
+  offered as dead tabs, **"Other" returns exactly the 2 unfiled comps** with a
+  **NEAR-MISS CONTROL** that it excludes the Dartford and Oxford Street rows,
+  and Clear returns the row to All Areas. Restores the leads to unverified.
+- Harness: new scenario **`staff-comp-area-tabs-reach-every-comp`** (victoria,
+  right after `agent-add-scheme-comp`, reusing the comp it just logged so
+  nothing extra needs tearing down): parks that comp in an out-of-London area,
+  asserts a tab appears and shows it, plus a **near-miss control** that
+  curated areas holding no comps are not offered — which is what would fail if
+  the hardcoded list ever came back. Victoria re-run **143 [ok], 0 [skip]**,
+  new scenario green. (4x400 not 6x400 this run — two of the three rocketreach
+  discover fires didn't happen; fewer errors, not more, environment variance.)
+- **TWO SCOPE WORRIES PROBED AND CLEARED — do not re-report.** (a)
+  `POST/PUT/DELETE /api/crm/comps` (crm.ts:5708-5730) carry **no
+  `requireAuth`** while every sibling route in the same block does. Probed
+  live: all three return **401 "Not authenticated"** — a global gate covers
+  `/api`, with `GET /api/crm/properties` as a control. (b) the same three
+  carry **no `resolveCompanyScope`** while the GETs are carefully scoped.
+  Probed as mark against a comp outside his slice (Camden / Bleecker Burger):
+  **403 "Read-only access for client accounts"** on PUT and on POST, with the
+  out-of-scope GET's 403 as a control and the row re-read to prove it was
+  unchanged. Both are cosmetic inconsistencies, not holes.
+- Not bugs, checked before blaming: `/requirements` reads **"0 / 1 fit your
+  available units"** — the only active requirement is the leftover
+  `QA-REQ-R1` with `size` NULL, and `parseReqSize` returns null so the ranker
+  honestly returns nothing. `/api/crm/properties/:id/comps` 404s because no
+  such endpoint exists (my guess, not a route).
+- Fixture handed back: **au 76 · ts 201 · comps 13** (11 fixture leads + the
+  2 QA-COMP rows two victoria chunks leave alive for mark, by design) · ls
+  **173** — `qa/r595-cleanup.mjs` removed 0 because the residual rows are
+  `QA-BIGNUM Unit R1`, `QA-HOTS Unit R1`, `QA-UNIT-R1` and the two
+  `QA Honi pitch` rows, the already-deferred residual-QA-rows pool.
+- Suggestions added: **UX #302** (a comp carries `propertyId` to a scheme and
+  the property page never shows it — the link is stored and never used),
+  **UX #303** (the create dialog asks for no term / rent-free / floor area,
+  yet the server devalues on read and returned "term assumed 5 yrs", and that
+  assumed net effective goes into the client CSV in the same column as real
+  ones).
+- Bugs deferred: none new. Still Woody's calls: UX #297, the vacancy-basis
+  question (#290/#286/#295), the `'Available'::text` column default (needs a
+  migration), `add_property_imagery`'s missing scope check, and the residual
+  QA rows above.
+- New flakes: none. `npx tsc --noEmit` clean.
+- Next: **r597 is a LIGHT round** (this one had the journey). Re-run
+  `QA_PERSONAS=mark` first thing to cover this round's unverified tail, and
+  chunk it — it hit the cap again.
 
 ### r595 · 2026-09-07 · LIGHT (no journey) · 2 bugs fixed, both the FIFTEENTH round of the label-vs-code class and both the SAME literal 'Available' reaching the codes column — once written by hand in a raw INSERT, once supplied by the postgres COLUMN DEFAULT when the field is simply absent · 1 phantom identified · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

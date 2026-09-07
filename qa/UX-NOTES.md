@@ -13,6 +13,35 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+302. 2026-09-07 · BGP staff / desktop 1440px (QA r596, journey) · Victoria
+   logging a comparable at Bluewater to support a quote, then opening the
+   Bluewater property page to see the evidence in context · the comp she just
+   created carries `propertyId` = Bluewater (the create dialog's typeahead
+   links it, and shows "Linked to BGP property" in green), but the property
+   page has **no comparable-evidence section at all** — 74,748 characters of
+   page and not one comp. To read her own evidence back she has to leave the
+   scheme, go to /comps and search for it. The link is stored and never used.
+   → SUGGESTION: a small "Comparable evidence" card on the property page
+   listing comps where `propertyId` matches (name · tenant · date · headline
+   rent · net effective), each row deep-linking to /comps/:id. Same data the
+   comps board already returns; no new endpoint beyond a `propertyId` filter.
+
+303. 2026-09-07 · BGP staff / desktop 1440px (QA r596, journey) · Victoria
+   creating a comp from an agent's confirmation · the create dialog collects
+   Property, Tenant, Area, Use Class, Transaction Type, Headline Rent, Zone A
+   and Date — and **nothing about the lease**: no term, no rent-free, no floor
+   area. But the server devalues every comp on read, so the row came straight
+   back carrying `devaluation: { netEffectiveRentPa: 92500, termCertainYears:
+   5, rentFreeMonths: 0, note: "5 yr term certain · term assumed 5 yrs" }`.
+   The note is honest, but the board then shows that assumed-term net
+   effective in the same column as comps devalued from real terms, and the
+   "Net Effective Rent" column is what goes into the client export. She was
+   never asked for the numbers that would have made it real.
+   → SUGGESTION: add Term (yrs), Rent free (mths) and Floor area (sq ft) to
+   the create dialog — three inputs beside the two rent fields — and, where
+   the term really is assumed, mark that cell on the board and in the CSV
+   ("£92,500 pa *assumed 5yr") rather than only in the devaluation note.
+
 300. 2026-09-07 · BGP staff / desktop (QA r595, triage) · Victoria opening
    /comps to find rent-review evidence · the board reads **"0 comps · 0
    verified · 0 areas"** and the empty state says **"No matching comps — Try

@@ -281,12 +281,24 @@ const MEASUREMENT_OPTIONS = ["NIA", "GIA", "IPMS 3 Office", "IPMS 3 Retail", "IT
 const SOURCE_OPTIONS = ["BGP Direct", "Opposing Agent", "Published", "EGi/CoStar", "Market Intel", "OneDrive Extract"];
 const COMP_TYPE_OPTIONS = ["Retail", "F&B / Restaurant", "Office", "Mixed Use", "Industrial", "Leisure / Gym", "Medical", "Other"];
 
+// Curated ordering for the area pill row. It is a preferred order, NOT the
+// whole vocabulary: `areaLocation` is a free-text field on the create dialog
+// (its siblings Use Class and Transaction Type are Selects bound to the
+// constants their filters enumerate — this one never was), so a national
+// comp lands in an area this list has never heard of. The tabs are derived
+// from the data below; anything here that has no comps is not offered.
 const AREA_GROUPS = [
-  "All Areas", "Mayfair", "City", "Covent Garden", "Marylebone", "Chelsea",
+  "Mayfair", "City", "Covent Garden", "Marylebone", "Chelsea",
   "Fitzrovia", "Farringdon", "Islington", "Kings Cross", "Soho",
   "Midtown", "Paddington", "Richmond", "East London", "SE1 / London Bridge",
-  "Camden", "Other",
+  "Camden",
 ];
+const ALL_AREAS = "All Areas";
+const OTHER_AREA = "Other";
+const compAreaText = (c: { areaLocation?: string | null; groupName?: string | null }) =>
+  `${c.areaLocation || ""} ${c.groupName || ""}`.toLowerCase();
+const matchesArea = (c: { areaLocation?: string | null; groupName?: string | null }, area: string) =>
+  compAreaText(c).includes(area.toLowerCase());
 
 const USE_CLASS_COLORS: Record<string, string> = {
   "E(a) Retail": "bg-blue-600 text-white",
@@ -2162,6 +2174,22 @@ export default function Comps() {
   const leadComps = useMemo(() => comps.filter(isLead), [comps]);
   const confirmedComps = useMemo(() => comps.filter(c => !isLead(c)), [comps]);
 
+  // The area tabs come from the comps on the board, not from a fixed list of
+  // London sub-markets: a curated area is offered only when something sits in
+  // it, any area the data carries that the curated list never named gets its
+  // own tab, and "Other" appears only when there are comps with no area at
+  // all. Before this, a comp in West End, Oxford Street, Reading or Dartford
+  // could not be reached by ANY tab — including "Other" (r596).
+  const areaGroups = useMemo(() => {
+    const present = [...new Set(confirmedComps.map(c => (c.areaLocation || c.groupName || "").trim()).filter(Boolean))];
+    const curated = AREA_GROUPS.filter(a => present.some(p => p.toLowerCase().includes(a.toLowerCase())));
+    const extra = present
+      .filter(p => !AREA_GROUPS.some(a => p.toLowerCase().includes(a.toLowerCase())))
+      .sort((a, b) => a.localeCompare(b));
+    const unfiled = confirmedComps.some(c => !compAreaText(c).trim());
+    return [ALL_AREAS, ...curated, ...extra, ...(unfiled ? [OTHER_AREA] : [])];
+  }, [confirmedComps]);
+
   const filtered = useMemo(() => {
     let result = confirmedComps;
     if (debouncedSearch) {
@@ -2175,8 +2203,14 @@ export default function Comps() {
         c.comments?.toLowerCase().includes(q)
       );
     }
-    if (activeArea !== "All Areas") {
-      result = result.filter(c => c.areaLocation?.toLowerCase().includes(activeArea.toLowerCase()) || c.groupName?.toLowerCase().includes(activeArea.toLowerCase()));
+    if (activeArea === OTHER_AREA) {
+      // "Other" used to substring-search for the literal word "other", so it
+      // matched nothing and the comps it exists to catch were unreachable.
+      // It now means what the investment-comps sibling means by it: no area
+      // recorded at all.
+      result = result.filter(c => !compAreaText(c).trim());
+    } else if (activeArea !== ALL_AREAS) {
+      result = result.filter(c => matchesArea(c, activeArea));
     }
     if (activeUseClass !== "all") {
       result = result.filter(c => c.useClass === activeUseClass);
@@ -2592,8 +2626,8 @@ export default function Comps() {
               {TRANSACTION_TYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
             </SelectContent>
           </Select>
-          {(activeUseClass !== "all" || activeTxnType !== "all" || activeVerified !== "all" || search) && (
-            <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs" onClick={() => { setSearch(""); setActiveUseClass("all"); setActiveTxnType("all"); setActiveVerified("all"); }} data-testid="button-clear-filters">
+          {(activeUseClass !== "all" || activeTxnType !== "all" || activeVerified !== "all" || activeArea !== ALL_AREAS || search) && (
+            <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs" onClick={() => { setSearch(""); setActiveUseClass("all"); setActiveTxnType("all"); setActiveVerified("all"); setActiveArea(ALL_AREAS); }} data-testid="button-clear-filters">
               <FilterX className="w-3.5 h-3.5" /> Clear
             </Button>
           )}
@@ -2606,12 +2640,12 @@ export default function Comps() {
               <SelectValue placeholder="All Areas" />
             </SelectTrigger>
             <SelectContent>
-              {AREA_GROUPS.map(area => <SelectItem key={area} value={area}>{area}</SelectItem>)}
+              {areaGroups.map(area => <SelectItem key={area} value={area}>{area}</SelectItem>)}
             </SelectContent>
           </Select>
         ) : (
         <div className="flex items-center gap-1.5 mt-3 flex-wrap">
-          {AREA_GROUPS.map(area => (
+          {areaGroups.map(area => (
             <button
               key={area}
               onClick={() => setActiveArea(area)}
