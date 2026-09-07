@@ -1157,6 +1157,21 @@ function ClientCrmHub() {
   const { data: myContacts = [] } = useQuery<CrmContact[]>({ queryKey: ["/api/crm/contacts"] });
   const { data: agents = [] } = useQuery<DirectoryAgent[]>({ queryKey: ["/api/client/agent-directory"] });
 
+  // "Your Contacts" means the client's OWN people. /api/crm/contacts serves a
+  // client the WIDER visibility set on purpose — own company + the brand slice
+  // + agent companies — so the Requirements board can name a principal/agent
+  // contact per requirement. Rendering that whole set here labelled
+  // "<team> Contacts" put Starbucks' Head of Acquisitions and a Testco Agents
+  // person on Landsec's own tab, with an edit pencil whose dialog read
+  // "Edit contact — Landsec" (the agent's save 403s; a brand contact's save
+  // silently amends the BRAND's record). Narrow to the client's own company.
+  const ownContacts = useMemo(
+    () => (hubUser?.companyScopeId
+      ? (myContacts as any[]).filter(c => c.companyId === hubUser.companyScopeId)
+      : []),
+    [myContacts, hubUser?.companyScopeId],
+  );
+
   // Properties this client is actively targeting brands at — drives the
   // "targeting at" dropdown without another fetch.
   const targetProperties = useMemo(() => {
@@ -1187,7 +1202,7 @@ function ClientCrmHub() {
       <div>
         <h1 className="text-2xl font-bold">CRM</h1>
         <p className="text-sm text-muted-foreground">
-          {brands.length.toLocaleString()} brands · {agents.length.toLocaleString()} tenant rep agents · {myContacts.length.toLocaleString()} of your contacts
+          {brands.length.toLocaleString()} brands · {agents.length.toLocaleString()} tenant rep agents · {ownContacts.length.toLocaleString()} of your contacts
         </p>
       </div>
 
@@ -1439,7 +1454,7 @@ function ClientCrmHub() {
             </div>
           )}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {myContacts.map((c: any) => (
+            {ownContacts.map((c: any) => (
               <Card key={c.id} className="group" data-testid={`client-contact-${c.id}`}>
                 <CardContent className="p-3">
                   <div className="flex items-start justify-between gap-2">
@@ -1463,7 +1478,7 @@ function ClientCrmHub() {
                 </CardContent>
               </Card>
             ))}
-            {myContacts.length === 0 && (
+            {ownContacts.length === 0 && (
               <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No contacts yet.</p>
             )}
           </div>

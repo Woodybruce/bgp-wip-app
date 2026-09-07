@@ -9508,6 +9508,51 @@ async function markRound(page, cross) {
   // property sub-read was worse: it hand-nulled only fee + feeNotes, so it
   // also shipped the agency %, the fee-agreement label and its signed
   // document URL. Staff half: staff-deal-keeps-mlro-and-billing-fields.
+  // r598: /api/crm/contacts serves a client the WIDE set on purpose — own
+  // company + the brand slice + agent companies — so the Requirements board
+  // can name a principal/agent contact per requirement. The client CRM hub's
+  // "<team> Contacts" tab rendered that whole set as the client's OWN people,
+  // pencil and all: Starbucks' Head of Acquisitions and a Testco Agents
+  // person sat on Landsec's tab under a dialog reading "Edit contact —
+  // Landsec". This pins the two halves the fix depends on: the endpoint stays
+  // wide (do not narrow it — other boards read it), and the writability line
+  // through it is own-company + brand slice YES, agent company NO.
+  await step(page, p, 'client-contacts-endpoint-stays-wide-but-agents-stay-readonly', async () => {
+    const got = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const raw = await (await fetch('/api/crm/contacts', { headers: auth })).json();
+      const rows = Array.isArray(raw) ? raw : (raw.data || []);
+      const cos = await (await fetch('/api/client/brand-directory', { headers: auth })).json();
+      return { scope: me.companyScopeId, rows, brandIds: (Array.isArray(cos) ? cos : []).map(b => b.id) };
+    });
+    if (!got.scope) throw new Error('/api/auth/me gave the client no companyScopeId — the hub cannot tell its own people apart');
+    const own = got.rows.filter(c => c.companyId === got.scope);
+    const foreign = got.rows.filter(c => c.companyId && c.companyId !== got.scope);
+    if (!own.length) throw new Error('client sees none of its own contacts');
+    if (!foreign.length) throw new Error('/api/crm/contacts stopped serving the client the wider brand/agent set — the Requirements board Principal/Agent Contact columns go to "—"');
+    if (got.rows.some(c => !c.companyId)) throw new Error('a companyId-less contact reached the client');
+    // Every foreign contact must be a brand the client can see or an agent —
+    // never another landlord's private people.
+    const brandIds = new Set(got.brandIds);
+    const agentish = [];
+    for (const c of foreign) if (!brandIds.has(c.companyId)) agentish.push(c);
+    const verdicts = await page.evaluate(async (ids) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const out = {};
+      for (const id of ids) {
+        const r = await fetch('/api/crm/contacts/' + id, { method: 'PUT', headers: auth, body: JSON.stringify({ role: 'r598-writability-probe' }) });
+        out[id] = r.status;
+      }
+      return out;
+    }, agentish.map(c => c.id));
+    for (const c of agentish) {
+      if (verdicts[c.id] !== 403) {
+        throw new Error(`a client PUT on non-brand foreign contact ${c.name} (${c.companyId}) returned ${verdicts[c.id]}, expected 403`);
+      }
+    }
+  });
+
   await step(page, p, 'client-deal-hides-mlro-and-billing-fields', async () => {
     const propertyId = cross.mlroPropertyId || null;
     const got = await page.evaluate(async ({ propertyId }) => {

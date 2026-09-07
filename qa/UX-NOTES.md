@@ -13,6 +13,36 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+306. 2026-09-07 · Landsec client / desktop 1440px (QA r598) · Mark Warne
+   prepping for Monday's leasing meeting opened Requirements from his own
+   nav, expecting "who is looking for space in my centres" · the page loads
+   clean and says "0 active requirements / No active requirements found".
+   That is CORRECT for the fixture and by design: a client sees only
+   requirements scoped to their own company plus ones sourced from PIPnet
+   (server/crm.ts:5013) — manually-entered BGP requirements stay hidden. But
+   the fixture holds one requirement and neither condition can ever match it,
+   so for a landlord client this nav item is a permanently empty screen with
+   no explanation of WHY it is empty. Suggestion: give the client's empty
+   state a sentence that says what would appear here ("Occupier requirements
+   BGP imports from PIPnet, plus anything logged against Landsec — ask your
+   BGP team to share a requirement"), the way /api/client/sharepoint/root's
+   404 already degrades to "ask your BGP team". Same treatment for Brand
+   Intelligence's "Active Requirements Radar — 0 brands searching", which
+   reads as a data gap rather than a scoping rule.
+
+307. 2026-09-07 · Landsec client / desktop 1440px (QA r598) · after adding
+   Priya Raman to his own CRM (the round's write — worked end to end, card
+   drew instantly, survived a reload, landed on Landsec) Mark had no way to
+   tell BGP she is now the leasing contact · the client CRM hub's Add/Edit
+   contact dialog saves silently: no toast, and nothing on the BGP side is
+   notified, so a contact the client adds sits in the CRM until a BGP person
+   happens to open that company. Suggestion: (a) a success toast on the
+   client contact save — the same gap as UX #291 on the property focus-task
+   write, so worth doing as one change; (b) consider a light notification to
+   the client's BGP team lead when a client adds or amends a contact at their
+   own company, since a new named leasing contact is exactly the thing the
+   team wants to know about before the next meeting.
+
 304. 2026-09-07 · BGP staff / desktop (QA r597, triage) · Woody or Nick
    adding an investment asset, then clicking a stage pill on
    /investment-tracker to see what is in that stage · the page bridges the

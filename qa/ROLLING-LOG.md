@@ -92,21 +92,103 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r598 · 2026-09-07 · FULL (rotation #2 — Landsec client · desktop 1440px) · ROUND IN PROGRESS
+### r598 · 2026-09-07 · FULL (rotation #2 — Landsec client · desktop 1440px) · journey: "Monday leasing-meeting prep", with a write · 1 bug fixed: the client CRM hub rendered the WIDE contact set as the client's OWN people — Starbucks' and an agent's contacts sat on Landsec's tab under an "Edit contact — Landsec" dialog · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
 - **REGRESSION AT BASELINE, four chunks on `QA_CROSS_FILE=/tmp/qa-cross-598.json`:**
-  victoria FIRST **144 [ok]** / 6x400 + 1x409 (one MORE ok than the stated
-  143 baseline, identical issue tally — the baseline line is stale by one,
-  not a phantom) · mark **176 + 12 = 188 [ok]** / 9x403 + 1x503, chunked at
-  `client-properties-table-readonly-cells` per r597's hand-off · woody,nick,sam
-  **24 [ok]**, 0 issues. All four chunks closed with a tally line (not killed).
-  **Streak 52.**
-- Triage: every issue is documented baseline noise — rocketreach 400s, the
-  deliberate invalid tracker POST, the two deliberate probes in
-  `staff-unbalanced-fee-split-is-refused`, the SOL+ AML 409 gate, mark's 9
-  client-gateway 403s and the keyless-AI 503.
-- Journey (client desktop 1440px) in progress; final entry replaces this.
+  victoria FIRST **144 [ok]** / 6x400 + 1x409 · mark **176 + 12 = 188 [ok]** /
+  9x403 + 1x503, chunked at `client-properties-table-readonly-cells` per
+  r597's hand-off (the tail is ~2 min, still exactly 12) · woody,nick,sam
+  **24 [ok]**, 0 issues. All four closed with a tally line (not killed).
+  **Streak 52.** Every issue is documented baseline noise.
+  - **BASELINE CORRECTIONS for the next round.** victoria is **144**, not the
+    stated 143 — same issue tally, so the brief's number was stale by one, not
+    a phantom. And mark's 403 count rises to **10x403** from now on: this
+    round's new scenario makes one DELIBERATE refused PUT (see below), the
+    same shape as victoria's deliberate probes.
+- JOURNEY (client desktop 1440px, shots `qa/smoke-shots/r598*-*.png`),
+  deliberately NOT r590's ground (r590 took dashboard → tracker → property →
+  tenancy → focus task): **"Monday leasing meeting with BGP — who is looking
+  for space in my centres, what rental evidence backs the quotes, who is
+  acting for these brands, and get my new leasing contact on file."**
+  `/` → **/requirements** → **/comps** → **/brands** → the **client CRM hub**
+  (`/companies`, three pills: Brand Directory · Agents · Landsec Contacts) →
+  the **WRITE**. Nothing out of scope anywhere; the staff-only estate stayed
+  hidden; no h-overflow at 1440px (the comps table's 2740px is its own
+  `table-scroll-container`, by design).
+- **THE WRITE WORKED END TO END.** Mark added *Priya Raman · Head of Leasing,
+  South East · priya.raman@landsec.example* from the CRM hub's Add contact:
+  dialog correctly titled "Add contact — Landsec", card drew immediately,
+  **survived a reload**, and landed on `companyId = Landsec`. No toast though
+  → UX #307.
+- **BUG FIXED (client/src/pages/people.tsx, `ClientCrmHub`) — the
+  "<team> Contacts" tab was the whole WIDE visibility set, not the client's
+  own people.** `/api/crm/contacts` deliberately serves a client own company
+  **+ the brand slice + every Agent-type company** (server/crm.ts:2041, so the
+  Requirements board can name a principal/agent contact per requirement and
+  the tracker's pickers work). The hub piped that array straight into the tab
+  labelled "Landsec Contacts" and into "N of your contacts":
+  - **9 cards where 4 are Landsec's.** Tom Barista (Starbucks, Head of
+    Acquisitions), Sam Tester (Testco Ramen), Alex Agentson (Testco Agents
+    LLP) and two brand-slice contacts all read as Mark's own colleagues, and
+    every brand contact was a **duplicate** of the Brand Directory tab.
+  - **Every card's edit pencil claimed the wrong owner.** It passes
+    `companyName: hubUser?.team`, so opening Alex Agentson gave a dialog
+    headed **"Edit contact — Landsec"**. Saving it **403s** ("Access denied" —
+    agent contacts are readable, never writable). Saving Tom Barista
+    **succeeds (200)** — i.e. Mark silently amends **Starbucks'** CRM record
+    from a tab that told him it was his own company's. Both reproduced in the
+    browser before the fix.
+  Fix: an `ownContacts` memo narrowing to `hubUser.companyScopeId` (set on
+  `/api/auth/me` for every resolvable client, auth.ts:428), used for the
+  count, the grid and the empty state. **Fails closed** — no scope, no cards,
+  matching the Add button's existing gate. The endpoint is UNCHANGED on
+  purpose; narrowing it would blank the Requirements board's contact columns.
+- **VISUALLY VERIFIED both directions:** after the fix the tab renders exactly
+  **4 cards** and "4 of your contacts"; the agent and brand pencils are gone
+  (`count() === 0`); the **Brand Directory tab still names Tom Barista and Sam
+  Tester**, so nothing became unreachable; and the round's own new contact
+  (own-company) still shows. `npx tsc --noEmit` clean.
+- **NEW SCENARIO `client-contacts-endpoint-stays-wide-but-agents-stay-readonly`**
+  (qa/two-bot-round.mjs, mark). The bug was in a renderer, so this pins the
+  BOUNDARY the fix leans on, from both sides: the endpoint must stay **wide**
+  (fails if the own-company set OR the foreign set goes empty — i.e. it fails
+  if a future round "tidies" the endpoint and blanks the Requirements board),
+  no `companyId`-less contact may reach a client, every foreign contact must be
+  a visible brand or an agent, and a client PUT on a **non-brand foreign**
+  contact must be **403**. **NOT VACUOUS:** flipping the expected status to 200
+  failed it with `a client PUT on non-brand foreign contact Alex Agentson
+  (aaaaaaaa-…-0010) returned 403`; tree restored and re-verified `[ok]`. Its
+  one refused PUT is the deliberate 403 that moves mark's baseline to 10.
+- CHECKED, NOT BUGS: client **comps** scoping is sound (1 of 13 comps reaches
+  Mark — the QA row whose name carries "Bluewater Shopping Centre", via the
+  free-text scheme fallback at crm.ts:5661) and **r596's area-tab fix holds
+  for a client too** (only `All Areas` + `Other`, and the area-less comp IS
+  reachable under `Other`). The **Agents** pill reading "0 tenant rep agents"
+  is the CLAUDE.md decided rule working — Testco Agents LLP represents no
+  brand in Landsec's Brand CRM — though it read oddly next to an agent sitting
+  in "Landsec Contacts", which is how this round found the bug.
+- Suggestions: **UX #306** (the client's Requirements screen is permanently
+  empty by design with no explanation — same for the Brand Intelligence
+  "Active Requirements Radar"), **UX #307** (silent save on the client contact
+  write; fold the toast in with UX #291, plus notifying the BGP team lead).
+- Deferred pool unchanged: UX #297, the vacancy-basis question
+  (#290/#286/#295), the two column DEFAULTs, UX #304, `add_property_imagery`'s
+  missing scope check, the residual QA rows.
+- Fixture: the journey's Priya Raman row is live-DB only and is wiped by the
+  next `run-smoke.sh` restore — no cleanup owed.
+- Setup notes: **`/crm` is NOT a route** — the client CRM hub is `PeoplePage`
+  at **`/companies`**, and the CLIENT_ALLOWED_ROUTES guard bounces `/crm`
+  straight to `/` (cost this round one browser run). A node probe importing
+  `pg` must do `import pg from '../node_modules/pg/lib/index.js'` then
+  `const { Pool } = pg` — `pg` is CommonJS, so the named import fails and a
+  bare `'pg'` from /tmp does not resolve. The CRM hub's save button reads
+  **"Add contact"**, not "Save", when creating.
+- Next: **r598 had the journey → r599 may be LIGHT**; the FULL round after
+  takes **rotation #3, Landsec client · mobile 390px**. Still unclaimed from
+  r597: the `label` kind is 24 divergent and has never been read end to end —
+  point the new sweep shapes at it. Worth a look on the client desktop:
+  UX #171/#192/#247/#298 were not on this round's route.
 
 ### r597 · 2026-09-07 · LIGHT (no journey) · 1 bug fixed: BOTH ChatBGP `create_available_unit` handlers stamped the label "Available" into the codes column, the SEVENTEENTH round of the label-vs-code class and the r595 bug in the two doors nobody checked · 2 harness fixes (scenario filters; two new sweep shapes) · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
