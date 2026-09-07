@@ -92,6 +92,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r595 · 2026-09-07 · LIGHT (no journey) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+- Two-bot chunk 1 `QA_PERSONAS=mark` ALONE (r594's hand-off): **185 [ok] / 14
+  issues**, and **r594's unverified tail is GREEN** —
+  `client-schedule-cells-read-like-the-staff-view` onward all [ok] through
+  `client-deal-hides-mlro-and-billing-fields`. The chunk self-backgrounded
+  and ran to completion this time.
+- Triage: 8x403 client guard probes, 1x503 keyless AI regenerate, 1x404
+  listed brochure-file, plus the two documented fresh-cross-file phantoms
+  (`client-deal-detail-fee-stripped` 404, `client-brief-target-scope` no
+  briefId) = noise. **ONE candidate to chase: `client-comps-readonly ·
+  flow-failure: Net Effective column missing on client comps`** — not in the
+  mark baseline, under investigation.
+
 ### r594 · 2026-09-07 · FULL (rotation #4 BGP staff · mobile 390px) · 2 bugs fixed, both the LABEL-vs-CODE class landing in the SAME hole from two sides — the asset brief's four "in play" queries cannot match the code HOT, and the tracker's offer/viewing writers bank '' where every consumer tests IS NOT NULL · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
