@@ -172,11 +172,17 @@ async function renderWeeklyReportPdf(contact: any, activity: any): Promise<Buffe
   }
 
   // Footer
+  // Footer sits below the bottom margin — writing there makes pdfkit add a
+  // blank page unless the margin is zeroed for the stamp (r601; same recipe
+  // as server/deal-report.ts).
   const range = doc.bufferedPageRange();
   for (let i = 0; i < range.count; i++) {
     doc.switchToPage(range.start + i);
+    const oldBottom = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
     doc.font("Helvetica").fontSize(6.5).fillColor("#999")
-      .text(`Weekly Update — Bruce Gillingham Pollard — Confidential`, leftM, 810, { width: pageW, align: "center" });
+      .text(`Weekly Update — Bruce Gillingham Pollard — Confidential`, leftM, 810, { width: pageW, align: "center", lineBreak: false });
+    doc.page.margins.bottom = oldBottom;
   }
 
   doc.end();

@@ -1121,6 +1121,12 @@ export function setupCrmRoutes(app: Express) {
   // record that sits beside the already-stripped PO number and invoice date.
   // Neither renders anywhere in the client shell, but both rode the deal
   // payload out to a landlord login's network tab.
+  // Who inside BGP owns a deal is BGP's call, not the client's. The party
+  // pickers went read-only in the client UI (r534/UX #155) but the write
+  // doors stayed open, so a client PUT could silently reassign the BGP team
+  // and internal agent on their own deal (UX #171, proven r601). Stripped on
+  // both client write doors below — create and edit.
+  const CLIENT_STRIPPED_ASSIGNMENT_FIELDS = ["team", "internalAgent", "internalAgentIds"] as const;
   const stripDealFees = <T extends Record<string, any>>(d: T): T => ({
     ...d, fee: null, feePercentage: null, feeAgreement: null,
     feeNotes: null, feeAgreementUrl: null, commission: null,
@@ -3247,6 +3253,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           fee: null, feePercentage: null, feeNotes: null,
           feeAgreement: null, feeAgreementUrl: null, commission: null,
         };
+        for (const f of CLIENT_STRIPPED_ASSIGNMENT_FIELDS) delete (req.body as any)[f];
       }
       // Resolve a "__tenancy__<id>" unitId picked from the tenancy
       // schedule directly. Finds (or creates) a matching property_units
@@ -3436,7 +3443,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (editScope) {
         const inScope = !!oldDeal && (await isDealInScope(editScope, req.params.id));
         if (!inScope) return res.status(403).json({ error: "Not available for client accounts" });
-        for (const f of ["fee", "feePercentage", "feeNotes", "feeAgreement", "feeAgreementUrl", "commission"]) {
+        for (const f of ["fee", "feePercentage", "feeNotes", "feeAgreement", "feeAgreementUrl", "commission",
+                         ...CLIENT_STRIPPED_ASSIGNMENT_FIELDS]) {
           delete (req.body as any)[f];
         }
       }

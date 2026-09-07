@@ -92,29 +92,102 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r601 · 2026-09-07 · LIGHT (r600 had the journey) — ROUND IN PROGRESS
+### r601 · 2026-09-07 · LIGHT (r600 had the journey — no journey this round) · 2 bugs fixed: EVERY PDF footer loop but one wrote below its own bottom margin, so five document types shipped a spurious blank page (UX #247, 7 doors censused) · and a client could silently reassign the BGP team on their own deal (UX #171's scope half, 2 doors) · r600's harness trap CLOSED · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Smoke
+  re-run after the fixes: **GREEN 42/0** again. `npx tsc --noEmit` clean.
 - **REGRESSION AT BASELINE.** Chunked recipe, three Bash calls sharing
-  `QA_CROSS_FILE=/tmp/qa-cross-601.json`: victoria **146 ok** / 6x400 + 1x409;
-  mark head (QA_UNTIL=client-properties-table-readonly-cells) **176 ok** /
-  9x403 + 1x503; mark tail + woody/nick/sam **37 ok** / 1x403. Sum **359 ok**,
-  **18 issues** — exactly the r600 baseline. **Streak 55.**
-- Triage: nothing new. All 18 are the documented set (fee-split 400s,
-  drilldown 409, client-gateway 403s, keyless-AI 503). r600's brochure-404
+  `QA_CROSS_FILE=/tmp/qa-cross-601.json`, victoria first: victoria **146 ok**
+  / 6x400 + 1x409; mark head (`QA_UNTIL=client-properties-table-readonly-cells`)
+  **176 ok** / 9x403 + 1x503; mark tail + woody/nick/sam **37 ok** / 1x403.
+  Sum **359 ok, 18 issues** — exactly the r600 baseline. **Streak 55.**
+  Triage: nothing new; all 18 are the documented set. r600's brochure-404
   flake did NOT reproduce, as predicted — it needs all personas in one process.
 - Setup note: mark's first chunk died at `login()` with **ECONNRESET**
-  (two-bot-round.mjs:134) after a 25s settle; a 45s settle was clean, and 45s
-  was used for every later chunk. Treat 25s as too short on this container.
-- **HARNESS FIXED (r600's hand-off):** the positional arg was ONLY ever a
-  round number, so `node qa/two-bot-round.mjs victoria` parsed to `ROUND=NaN`
-  and ran all five personas. It now accepts **either** an integer round number
-  **or** a persona list (`victoria,mark` — same effect as QA_PERSONAS=), and
-  **exits 2 loudly** on anything else. Verified: `banana` and `victoria,marc`
-  both print usage + persona list and exit 2; `node qa/two-bot-round.mjs sam`
-  considered ONLY sam's 11 scenarios (1 ok + 10 filtered under QA_ONLY),
-  victoria/mark/woody/nick never ran; integer arg unchanged (all three
-  regression chunks above passed `601`).
+  (two-bot-round.mjs:134) after a 25s settle; 45s was clean and was used for
+  every later chunk. On this container treat 25s as too short, not 8s.
+- **HARNESS — r600's hand-off CLOSED.** The positional arg was ONLY ever the
+  round number (`parseInt(process.argv[2])`), so `node qa/two-bot-round.mjs
+  victoria` gave `ROUND=NaN` and ran all five personas — that is also where
+  r600's "QA Thread RNaN media" name came from. It now takes **either** an
+  integer round number **or** a persona list (`victoria,mark`, same effect as
+  `QA_PERSONAS=`) and **exits 2 loudly** on anything else. Verified: `banana`
+  and `victoria,marc` both print usage + the persona list and exit 2;
+  `node qa/two-bot-round.mjs sam` considered ONLY sam's 11 scenarios (1 ok +
+  10 filtered under QA_ONLY) with victoria/mark/woody/nick never starting;
+  the integer form is unchanged (all three regression chunks passed `601`).
+- **BUG 1 — five PDF generators shipped a blank second page (UX #247).**
+  Every generator stamps its per-page footer in its own `bufferedPageRange`
+  loop at its own hardcoded y; A4 is 841.89pt and these docs set
+  `margins.bottom = 60/64/80`, so the footer y sits BELOW `page.maxY()` and
+  pdfkit closes the page and writes the footer on a fresh one — page 1 ends
+  with **no footer at all** and the reader gets two pages for one page of
+  content. `server/deal-report.ts:483` already carried the standard recipe
+  (`const oldBottom = doc.page.margins.bottom; doc.page.margins.bottom = 0;`
+  … restore); **nobody had applied it to the other six doors.**
+  **Censused all seven footer loops:** weekly-report.ts:179 (**the client's
+  emailed weekly update — UX #247's own report**), deal-docs.ts:237/323/394
+  (HoTs / Offer Summary / Completion Report), unit-brief-doc.ts:173
+  (`height - 46` vs bottom 64), document-templates.ts:1144 and :2975 (y=776
+  vs bottom 80). deal-report.ts was already correct; brand-pack.ts is fine
+  because it builds with `margins: {bottom: 0}`. All six patched with the
+  same recipe + `lineBreak: false`.
+  **VERIFIED by page count over the live endpoints, before and after:**
+  weekly-report / hots / offer-summary / completion all **2 pages -> 1 page**.
+  And the footer really is on the surviving page — inflating page 1's content
+  stream shows the hex TJ run decoding to "Weekly Update — Bruce Gillingham
+  Pollard — Confidential" at device y≈814.7, i.e. at the foot of page 1.
+  **Honest limit:** unit-brief-doc and the two document-templates doors are
+  the identical idiom and are tsc-clean, but this fixture has no brief/doc
+  template to render, so they are censused-and-patched, not endpoint-proven.
+- **BUG 2 — a client could reassign BGP's own deal owners (UX #171's scope
+  half).** `PUT /api/crm/deals/:id` strips only the six fee fields for a
+  client caller (server/crm.ts:3439), so `team` / `internalAgent` /
+  `internalAgentIds` rode straight through. **Proven** before the fix: mark's
+  PUT returned 200 and `team` went `null -> ["QA r601 Probe Team"]` read back
+  as staff. **The second door:** `POST /api/crm/deals` (create) pins the
+  landlord and nulls the fees but never touched the assignment fields, so a
+  client's new deal could be born assigned to a team of their choosing.
+  Fixed both from one shared `CLIENT_STRIPPED_ASSIGNMENT_FIELDS` list next to
+  `stripDealFees`. `bulk-update` (which allows `field: "team"`) is already
+  gateway-blocked for clients — checked, left alone.
+  **VERIFIED:** client PUT 200 with `team`/`internalAgent` unchanged while a
+  benign `comments` edit on the same PUT still lands (the strip is not too
+  wide); client POST 201 with `team=null`; **staff PUT still assigns** (no
+  regression); probe deal deleted and the fixture deal restored.
+  **NOT fixed, still Woody's:** #171's other half — whether DEAL STATUS and
+  DEAL TYPE should be the client's to set at all. Untouched.
+- **TWO NEW SCENARIOS**, both `[ok]`, 0 issues, neither makes a refused
+  request so **the issue tally is unchanged**:
+  - `staff-report-pdfs-are-one-page` (victoria, last in her round) — renders
+    all four reachable PDFs, asserts exactly one `/Type /Page` object each AND
+    that the footer text survives on it (inflates the content stream; pdfkit
+    writes standard-font text as hex **TJ arrays interleaved with kerning
+    offsets**, so the hex runs must be joined WITHOUT the numbers — the first
+    draft failed on "Subject to contract" for exactly that reason).
+  - `client-deal-assignment-stays-bgps` (mark, after
+    `client-deal-hides-mlro-and-billing-fields`) — client PUTs a hijacked
+    team + internal agent and asserts 200, both fields unmoved, and the
+    benign field on the same PUT landing. Restores `comments` itself.
+  **NEW BASELINES: victoria 146 -> 147, mark 189 -> 190, sum 359 -> 361**
+  (woody/nick/sam unchanged at 24). Issue signature unchanged: 6x400 + 1x409
+  (victoria) / 10x403 + 1x503 (mark).
+- **SUGGESTIONS (qa/UX-NOTES.md #316-#317):** one shared
+  `stampPageFooters(doc, textFor)` helper so the eighth generator cannot get
+  the y or the margin wrong (#316); render BGP Team / Internal Agent as plain
+  read-only text in the client deal drawer now that the write is silently
+  stripped, since a live-looking chip that never saves is worse than a label
+  (#317).
+- Deferred, untouched: UX #297, the vacancy-basis question (#290/#286/#295),
+  the two column DEFAULTs (#305 + schema.ts:1817), #304, #308/#315, #309,
+  #310-#314, `add_property_imagery`'s missing scope check, the residual QA
+  fixture rows. **STILL UNVISITED:** #192 (KYC portal drops the file it says
+  is "stored securely"), #298 (combobox ranks `Create company "X"` above the
+  real match). #247 and #171(scope half) are now DONE.
+- No navigation/page/control moved and no client-side file changed, so
+  `server/chatbgp-app-map.ts` needed no change. `shared/schema.ts` and
+  `migrations/` untouched.
+- Next round is **FULL: rotation #4, BGP staff · mobile 390px.**
 
 ### r600 · 2026-09-07 · FULL · journey: **Landsec client · phone 390px** (rotation slot #3) · r599's hand-off ANSWERED · 1 bug fixed (the Messages unread badge with nothing behind it) · 6 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

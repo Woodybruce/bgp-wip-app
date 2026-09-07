@@ -4850,6 +4850,60 @@ async function victoriaRound(page, cross) {
     if (!r.severities.includes('critical')) throw new Error(`kyc_gap alerts came back as ${r.severities.join('/')}, not critical`);
   });
 
+  // r601: every per-page footer in the PDF generators was written at a y BELOW
+  // the document's own bottom margin, so pdfkit closed the page and stamped
+  // the footer onto a fresh one — one page of content shipped as a two-page
+  // PDF with page 1 carrying no footer at all. Counts /Type /Page objects and
+  // insists the footer text is really on the page that survives.
+  await step(page, p, 'staff-report-pdfs-are-one-page', async () => {
+    const auth = { Authorization: 'Bearer ' + page.qaToken };
+    const pick = async (url, key) => {
+      const j = await (await fetch(`${BASE}${url}`, { headers: auth })).json();
+      const arr = Array.isArray(j) ? j : (j[key] || j.data || []);
+      return arr;
+    };
+    const contacts = await pick('/api/crm/contacts', 'contacts');
+    const deals = await pick('/api/crm/deals', 'deals');
+    const contact = contacts.find((c) => c.id);
+    const deal = deals.find((d) => d.id);
+    if (!contact) throw new Error('no CRM contact to render a weekly update for');
+    if (!deal) throw new Error('no deal to render deal documents for');
+    const targets = [
+      ['weekly update', `/api/weekly-report/${contact.id}.pdf`, /Confidential/],
+      ['heads of terms', `/api/deal/${deal.id}/hots.pdf`, /Subject to contract/],
+      ['offer summary', `/api/deal/${deal.id}/offer-summary.pdf`, /Subject to contract/],
+      ['completion report', `/api/deal/${deal.id}/completion.pdf`, /Completion Report/],
+    ];
+    const zlib = nodeRequire('zlib');
+    for (const [label, url, footerRe] of targets) {
+      const res = await fetch(`${BASE}${url}`, { headers: auth });
+      if (!res.ok) throw new Error(`${label} PDF returned ${res.status}`);
+      const bin = Buffer.from(await res.arrayBuffer()).toString('latin1');
+      const pages = (bin.match(/\/Type\s*\/Page[^s]/g) || []).length;
+      if (pages !== 1) throw new Error(`${label} PDF is ${pages} pages for one page of content — the footer is spilling onto a blank page`);
+      // The footer text lives in the (flate) page content stream; pdfkit
+      // writes standard-font text as hex TJ arrays, so decode to check.
+      let hay = '';
+      const re = /stream\r?\n/g; let m;
+      while ((m = re.exec(bin))) {
+        const start = m.index + m[0].length;
+        const end = bin.indexOf('endstream', start);
+        if (end < 0) continue;
+        try {
+          const out = zlib.inflateSync(Buffer.from(bin.slice(start, end), 'latin1')).toString('latin1');
+          // A TJ array interleaves hex glyph runs with kerning offsets — join
+          // only the hex runs, or a number lands mid-word and no phrase matches.
+          for (const arr of out.matchAll(/\[([^\]]*)\]\s*TJ/g)) {
+            hay += [...arr[1].matchAll(/<([0-9a-f]*)>/gi)]
+              .map((h) => Buffer.from(h[1], 'hex').toString('latin1')).join('') + '\n';
+          }
+          for (const lit of out.matchAll(/\(((?:[^()\\]|\\.)*)\)\s*Tj/g)) hay += lit[1] + '\n';
+        } catch { /* not a flate stream */ }
+      }
+      if (!footerRe.test(hay)) throw new Error(`${label} PDF lost its footer off the only page it has`);
+    }
+  });
+
 }
 
 async function trackerStatusDeepLink(page, who) {
@@ -9686,6 +9740,51 @@ async function markRound(page, cross) {
     }
     if (cross.mlroStamp && JSON.stringify(got).includes(cross.mlroStamp)) {
       throw new Error("the staff MLRO stamp reached the client's deal payload");
+    }
+  });
+
+  // r601/UX #171: the client UI made the party pickers read-only (r534) but
+  // PUT /api/crm/deals/:id still accepted `team` and `internalAgent`, so a
+  // client could silently reassign which BGP team and which BGP agent owned
+  // their own deal. The edit door must stay OPEN (200, benign fields land)
+  // while those two fields are stripped server-side.
+  await step(page, p, 'client-deal-assignment-stays-bgps', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const arr = Array.isArray(list) ? list : (list.data || []);
+      const deal = arr.find((d) => d.id);
+      if (!deal) return { err: 'client sees no deal to edit' };
+      const before = { team: deal.team ?? null, internalAgent: deal.internalAgent ?? null, comments: deal.comments ?? null };
+      const put = await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth,
+        body: JSON.stringify({
+          team: ['QA r601 hijacked team'],
+          internalAgent: ['QA r601 hijacked agent'],
+          internalAgentIds: [],
+          comments: 'QA r601 assignment probe',
+        }),
+      });
+      const back = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      const d = back.deal || back;
+      // Put the benign field back the way the client found it.
+      await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth, body: JSON.stringify({ comments: before.comments }),
+      });
+      return { status: put.status, before, after: { team: d.team ?? null, internalAgent: d.internalAgent ?? null, comments: d.comments ?? null } };
+    });
+    if (r.err) throw new Error(r.err);
+    if (r.status !== 200) throw new Error(`a client editing their OWN deal got ${r.status} — the edit door should stay open`);
+    if (r.after.comments !== 'QA r601 assignment probe') {
+      throw new Error(`the client's benign deal edit did not land (comments = ${JSON.stringify(r.after.comments)}) — the strip is too wide`);
+    }
+    for (const k of ['team', 'internalAgent']) {
+      if (JSON.stringify(r.after[k]) !== JSON.stringify(r.before[k])) {
+        throw new Error(`a client reassigned BGP's own ${k}: ${JSON.stringify(r.before[k])} -> ${JSON.stringify(r.after[k])}`);
+      }
+      if (JSON.stringify(r.after[k] || []).includes('QA r601 hijacked')) {
+        throw new Error(`the client's ${k} value persisted on the deal`);
+      }
     }
   });
 }

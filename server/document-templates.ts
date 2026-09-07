@@ -1141,8 +1141,13 @@ export async function exportDocumentToPdf(content: string, title: string): Promi
 
   const range = doc.bufferedPageRange();
   const totalPages = range.count;
+  // The footer sits below the bottom margin — writing there makes pdfkit add
+  // a blank page unless the margin is zeroed for the stamp (r601; same recipe
+  // as server/deal-report.ts).
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
+    const oldBottom = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
     // BGP green header bar
     doc.rect(0, 0, 595, 8).fill(bgpGreen);
     doc.fontSize(7).fillColor("#FFFFFF").font("Helvetica-Bold")
@@ -1154,6 +1159,7 @@ export async function exportDocumentToPdf(content: string, title: string): Promi
     doc.text(generatedDate, leftM, 776, { width: 150, align: "left" });
     doc.text("Bruce Gillingham Pollard — Confidential", leftM + 130, 776, { width: 220, align: "center" });
     doc.text(`Page ${i - range.start + 1} of ${totalPages}`, rightEdge - 80, 776, { width: 80, align: "right" });
+    doc.page.margins.bottom = oldBottom;
   }
 
   doc.end();
@@ -2972,8 +2978,13 @@ Be concise, professional, and use British English. All document advice should al
 
         const range = doc.bufferedPageRange();
         const totalPages = range.count;
+        // The footer sits below the bottom margin — writing there makes pdfkit add
+        // a blank page unless the margin is zeroed for the stamp (r601; same recipe
+        // as server/deal-report.ts).
         for (let i = range.start; i < range.start + range.count; i++) {
           doc.switchToPage(i);
+          const oldBottom = doc.page.margins.bottom;
+          doc.page.margins.bottom = 0;
           // Green header bar overlay on each page (already drawn by drawHeader but reinforce for buffered pages)
           doc.rect(0, 0, 595, 8).fill(bgpGreen);
           doc.fontSize(7).fillColor("#FFFFFF").font("Helvetica-Bold")
@@ -2984,6 +2995,7 @@ Be concise, professional, and use British English. All document advice should al
           doc.text(generatedDate, leftM, 776, { width: 150, align: "left" });
           doc.text("Bruce Gillingham Pollard — Confidential", leftM + 130, 776, { width: 220, align: "center" });
           doc.text(`Page ${i - range.start + 1} of ${totalPages}`, rightEdge - 80, 776, { width: 80, align: "right" });
+          doc.page.margins.bottom = oldBottom;
         }
 
         doc.end();

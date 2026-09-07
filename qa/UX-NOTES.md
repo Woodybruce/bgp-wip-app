@@ -13,6 +13,33 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+316. 2026-09-07 · BGP staff / any PDF the app emails out (QA r601) · Woody
+   opens a Heads of Terms or a weekly update to check it before it goes ·
+   Every generator writes the SAME footer through its own hand-rolled
+   `bufferedPageRange` loop, at its own hardcoded y (810 / 776 /
+   `height - 46`), with its own margin-zeroing workaround — and r601 found
+   FIVE of the seven loops missing that workaround, so five document types
+   shipped a spurious blank page for years while `deal-report.ts` alone was
+   correct. Suggestion: one `stampPageFooters(doc, textFor)` helper in a
+   shared module that does the margin dance once and takes the footer text
+   as a callback; every generator calls it and no future generator can get
+   the y or the margin wrong. (Fixing all seven doors was r601's work; this
+   is the de-duplication that stops the eighth.)
+
+317. 2026-09-07 · BGP staff / deal audit trail (QA r601) · a BGP agent asks
+   "who changed the owner of this deal?" · r601 closed the door that let a
+   CLIENT write `team` / `internalAgent` on their own deal, and the strip is
+   silent — the client's PUT still returns 200 and the field simply doesn't
+   move. That is the right behaviour for the fee fields it sits beside (a
+   client should not learn that fees exist by being refused), but ownership
+   is different: if a client's Deals table still SHOWS those two chips as
+   editable-looking, they will keep trying and keep seeing nothing happen.
+   Suggestion: render BGP Team and Internal Agent as plain read-only text
+   (no chip affordance) in the client shell's deal drawer, the same way
+   r534 did the party pickers. Woody's remaining #171 question stands
+   separately: should DEAL STATUS and DEAL TYPE be the client's to set at
+   all, or BGP's alone?
+
 310. 2026-09-07 · Landsec client / phone 390px (QA r600, Mark Warne) · the
    Messages tab carried an unread badge ("1", later "2"); tapping it landed on
    the ALL chip, which read **"No conversations yet"**. ALL is people-only by

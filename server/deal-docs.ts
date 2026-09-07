@@ -230,11 +230,17 @@ router.get("/api/deal/:dealId/hots.pdf", requireAuth, async (req, res) => {
     }
 
     // Footer
+    // Footer sits below the bottom margin — writing there makes pdfkit add a
+    // blank page unless the margin is zeroed for the stamp (r601; same recipe
+    // as server/deal-report.ts).
     const range = doc.bufferedPageRange();
     for (let i = 0; i < range.count; i++) {
       doc.switchToPage(range.start + i);
+      const oldBottom = doc.page.margins.bottom;
+      doc.page.margins.bottom = 0;
       doc.font("Helvetica").fontSize(6.5).fillColor("#999")
-        .text(`Heads of Terms v${hots?.version || 1} — Subject to contract — Bruce Gillingham Pollard`, leftM, 810, { width: pageW, align: "center" });
+        .text(`Heads of Terms v${hots?.version || 1} — Subject to contract — Bruce Gillingham Pollard`, leftM, 810, { width: pageW, align: "center", lineBreak: false });
+      doc.page.margins.bottom = oldBottom;
     }
 
     doc.end();
@@ -316,11 +322,17 @@ router.get("/api/deal/:dealId/offer-summary.pdf", requireAuth, async (req, res) 
       doc.font("Helvetica").fontSize(10).fillColor("#333").text(deal.comments, leftM, y, { width: pageW, lineGap: 2 });
     }
 
+    // Footer sits below the bottom margin — writing there makes pdfkit add a
+    // blank page unless the margin is zeroed for the stamp (r601; same recipe
+    // as server/deal-report.ts).
     const range = doc.bufferedPageRange();
     for (let i = 0; i < range.count; i++) {
       doc.switchToPage(range.start + i);
+      const oldBottom = doc.page.margins.bottom;
+      doc.page.margins.bottom = 0;
       doc.font("Helvetica").fontSize(6.5).fillColor("#999")
-        .text(`Offer Summary — Subject to contract — Bruce Gillingham Pollard`, leftM, 810, { width: pageW, align: "center" });
+        .text(`Offer Summary — Subject to contract — Bruce Gillingham Pollard`, leftM, 810, { width: pageW, align: "center", lineBreak: false });
+      doc.page.margins.bottom = oldBottom;
     }
     doc.end();
     await new Promise<void>((resolve) => doc.on("end", () => resolve()));
@@ -387,11 +399,17 @@ router.get("/api/deal/:dealId/completion.pdf", requireAuth, async (req, res) => 
       }
     }
 
+    // Footer sits below the bottom margin — writing there makes pdfkit add a
+    // blank page unless the margin is zeroed for the stamp (r601; same recipe
+    // as server/deal-report.ts).
     const range = doc.bufferedPageRange();
     for (let i = 0; i < range.count; i++) {
       doc.switchToPage(range.start + i);
+      const oldBottom = doc.page.margins.bottom;
+      doc.page.margins.bottom = 0;
       doc.font("Helvetica").fontSize(6.5).fillColor("#999")
-        .text(`Completion Report — Bruce Gillingham Pollard`, leftM, 810, { width: pageW, align: "center" });
+        .text(`Completion Report — Bruce Gillingham Pollard`, leftM, 810, { width: pageW, align: "center", lineBreak: false });
+      doc.page.margins.bottom = oldBottom;
     }
     doc.end();
     await new Promise<void>((resolve) => doc.on("end", () => resolve()));
