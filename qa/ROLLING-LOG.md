@@ -92,6 +92,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r598 · 2026-09-07 · FULL (rotation #2 — Landsec client · desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+- **REGRESSION AT BASELINE, four chunks on `QA_CROSS_FILE=/tmp/qa-cross-598.json`:**
+  victoria FIRST **144 [ok]** / 6x400 + 1x409 (one MORE ok than the stated
+  143 baseline, identical issue tally — the baseline line is stale by one,
+  not a phantom) · mark **176 + 12 = 188 [ok]** / 9x403 + 1x503, chunked at
+  `client-properties-table-readonly-cells` per r597's hand-off · woody,nick,sam
+  **24 [ok]**, 0 issues. All four chunks closed with a tally line (not killed).
+  **Streak 52.**
+- Triage: every issue is documented baseline noise — rocketreach 400s, the
+  deliberate invalid tracker POST, the two deliberate probes in
+  `staff-unbalanced-fee-split-is-refused`, the SOL+ AML 409 gate, mark's 9
+  client-gateway 403s and the keyless-AI 503.
+- Journey (client desktop 1440px) in progress; final entry replaces this.
+
 ### r597 · 2026-09-07 · LIGHT (no journey) · 1 bug fixed: BOTH ChatBGP `create_available_unit` handlers stamped the label "Available" into the codes column, the SEVENTEENTH round of the label-vs-code class and the r595 bug in the two doors nobody checked · 2 harness fixes (scenario filters; two new sweep shapes) · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
