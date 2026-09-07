@@ -92,6 +92,32 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r589 · 2026-09-07 · LIGHT (no journey — r588 had it) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` ONCE, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the r587 seeding trap, obeyed).
+- TWO-BOT, both chunks run (the streak was owed one — r588 skipped them).
+  Chunk 1 `QA_PERSONAS=victoria`: 140 [ok], 7 issues — all accounted for.
+  4x400 baseline (rocketreach discover x3 + the deliberate invalid
+  POST /api/investment-tracker probe) + 1x409 (the drilldown scenario
+  tolerating the SOL+ AML gate, correct) + **2x400 that are NEW BUT EXPECTED**:
+  they are `staff-unbalanced-fee-split-is-refused`'s own deliberate probes.
+  Chunk 2 `QA_PERSONAS=mark,woody,nick,sam`: in flight.
+  Note for future rounds: `qa/with-server.sh` takes the command as ONE
+  quoted string (`$1`) — `bash qa/with-server.sh node qa/two-bot-round.mjs`
+  runs `bash -c "node"` and **exits 0 in two seconds with zero output**,
+  which looks exactly like a clean run. Quote it.
+- r588'S TWO NEW SCENARIOS FIRE-TESTED (first ever execution) — **both pass
+  for real, neither self-skipped.** `staff-unbalanced-fee-split-is-refused`
+  proves it by its two logged 400s. `staff-unit-writes-canonicalise-status`
+  proves it by the absence of any `POST /api/available-units` http issue —
+  its two self-skip doors are "no properties" (impossible on the fixture)
+  and "the POST was refused", which would have logged one.
+- TRIAGE: nothing outside the documented baseline and the two expected new
+  probe 400s. No flow failures in either chunk.
+- In progress: routes.ts:4499's snake_case early-return (caller sweep done,
+  it is a real user-facing bug — see the final entry) and teaching
+  `qa/r575-status-literal-sweep.mjs` the ASSIGNMENT shape.
+
 ### r588 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · 2 bugs fixed: the add-unit dialog dropped a fee split SILENTLY, and r587's hand-off label-WRITE class killed at the write boundary · 2 suggestions
 - Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`
   (GREEN 42/0), then `node qa/apply-sql.mjs qa/seed-personas.sql` (r587's
