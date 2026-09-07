@@ -92,6 +92,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r588 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`,
+  then `node qa/apply-sql.mjs qa/seed-personas.sql` (per r587's process miss).
+- Smoke GREEN 42/0. No new triage from smoke.
+- Plan: staff-desktop journey with a write; fix pile headed by r587's
+  hand-off (the sweep's SIXTH SHAPE — label WRITES at routes.ts:6005/:7673).
+
 ### r587 · 2026-09-07 · LIGHT (no journey — r586 had the rotation) · 2 bugs fixed: the asset-brief funnel silently DROPPED every HOTs unit, and the Goad plan's CRM vacancy override never fired · both two-bot chunks clean · 2 suggestions
 - Bring-up: canonical recipe, `npm run qa:pg` ONCE. Smoke GREEN 42/0.
 - Round type LIGHT per r586's hand-off; r588 takes rotation #1 (BGP staff ·
