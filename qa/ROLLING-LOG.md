@@ -92,14 +92,125 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r585 · 2026-09-07 05:20Z · LIGHT · ROUND IN PROGRESS
+### r585 · 2026-09-07 · LIGHT (no journey — r584 had the rotation) · 2 bugs fixed: My Portfolio widget 500 + always-empty comp set · sweep extended to the label shape · 2 suggestions
 - Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs). Smoke GREEN 42 checks / 0 failures.
-- Plan per r584's hand-off: (1) extend qa/r575-status-literal-sweep.mjs to
-  available_units.marketing_status and the `.toLowerCase() === "<label>"`
-  shape; (2) spend the found budget on the two highest-impact deferred hits
-  (ai-intelligence.ts:375, chatbgp.ts:1902 / goad-plan-data.ts:654).
-- Two-bot chunks to follow (they double as the fire-test for new scenarios).
+  qa/apply-sql.mjs). Smoke GREEN 42/0 BEFORE and AFTER the fixes.
+- TWO-BOT: victoria chunk (QA_PERSONAS + QA_CROSS_FILE per the harness rule)
+  22 [ok] / 0 flow failures, tally 4x400 + 1x409 — exactly the baseline class
+  (rocketreach + the deliberate invalid POST probe; the 409 is r583's
+  drilldown tolerating the SOL+ AML gate). The FIRST attempt died at
+  `login()` with ECONNRESET — server still booting, the listed gotcha; a
+  re-run with an 8s settle was clean. **The mark chunk was NOT run this
+  round** (budget) — both fixes are on staff-only paths (my-portfolio is
+  requireAuth staff, ai-intelligence is staff), so no client-scope surface
+  changed. Treat the clean-hand-off streak as unextended, not broken.
+- SWEEP EXTENSION DONE, and it paid for itself immediately.
+  `qa/r575-status-literal-sweep.mjs` now has a FIFTH shape, `label`: a quoted
+  legacy LABEL used as a value in a comparison or membership test against a
+  status-ish column — `marketing_status = 'Available'`,
+  `NOT IN ('Dead','Withdrawn')`, and r584's
+  `(x||"").toLowerCase() === "available"`. Three things make it usable
+  rather than noise:
+  * the LABEL VOCABULARY is parsed out of shared/deal-status.ts (LEGACY_MAP
+    keys + DEAL_STATUS_LABELS values, minus anything that is itself a code,
+    minus the two comps pseudo-statuses that really are stored values), so
+    it tracks the enum instead of being hand-typed;
+  * every hit CARRIES ITS COLUMN and that column's ground truth — `codes`
+    (crm_deals.status, available_units.marketing_status: DEAD, matches
+    nothing), `mixed` (investment_tracker.status: may be half-alive, needs a
+    vocabulary decision first), `?` (undetermined);
+  * two filters kill the false-positive flood — a hit whose column can't be
+    determined is hidden unless `--all` (those are almost all a DIFFERENT
+    enum: leasing-schedule Occupied/Vacant, AML complete/incomplete), and a
+    SQL CASE arm (`... THEN 'NEG'`) is skipped because TRANSLATING a label is
+    the canonicaliser's job, only COMPARING to one is the bug.
+  Census now: 246 sets [list 89 · keys 15 · union 1 · case 1 · label 140],
+  91 divergent, of which **27 actionable label candidates**. It re-found
+  every hand-grepped hit r584 listed AND turned up new ones, incl. the
+  crm.ts:9098 that became bug 1 below. `--kind=label` is the way in.
+- BUG 1 FIXED (the big one, and it was NOT the one I went looking for) —
+  **the "My Portfolio" dashboard widget was dead for every staff member who
+  had a deal.** `/api/dashboard/my-portfolio` (server/crm.ts:9143) selected
+  `c.job_title` from crm_contacts; that column does not exist, it is `role`
+  (microsoft.ts:1274 already aliases `c.role as job_title`). So the endpoint
+  answered **500 `column c.job_title does not exist`** for anyone whose
+  deals resolved to a property — and because the query runs only after the
+  deal lookup, the whole widget just never drew. Fixed to
+  `c.role AS job_title`, which keeps the downstream `pc.job_title` at :9209
+  and the client's `jobTitle` field working. Found by accident: I was
+  writing the control for bug 2 in the same handler.
+  SAME HANDLER, SAME COMMIT — the label bug that led me there:
+  server/crm.ts:9098 excluded dead deals with `d.status NOT IN
+  ('Dead','Draft')`, labels against a codes column ('Draft' was never in the
+  vocabulary at all), so a WITHDRAWN deal — and the property it drags into
+  the grouping — stayed on the staff member's own dashboard. Now
+  `NOT IN ('WIT')`, the house pattern.
+- BUG 2 FIXED — **comp analysis was fed an always-empty comp set.**
+  server/ai-intelligence.ts:375 (`GET /api/ai/comp-analysis/:propertyId`)
+  selected its leasing comps with `IN ('Completed','Invoiced','Billed',
+  'Exchanged')` — 0 rows always, so the model was asked to analyse comps
+  with no comps. Now `IN ('EXC','COM','INV')`. Same file :722 (the M365
+  email-triage deal matcher) had the mirror-image no-op,
+  `NOT IN ('Completed','Withdrawn','Invoiced','Billed')`, so triage matched
+  emails against completed and withdrawn deals too — now
+  `NOT IN ('WIT','COM','INV')` (= CLOSED_STATUSES). This was r584's
+  nominated highest-impact leftover.
+- PROVEN, with controls, in qa/r585-probe.mjs (0 failures) against the real
+  endpoint: my-portfolio 500 -> 200; with MSU9 stepped to WIT and both deals
+  assigned to Victoria, the payload carries the live SOL deal (**control —
+  without it the next assertion is vacuous**) and NOT the WIT one; the old
+  label comp predicate returns 0 rows where the new code predicate returns 1.
+  `--restore` puts the fixture back, and it was run (verified by re-reading
+  crm_deals).
+  NOT VISUALLY VERIFIED, and be honest about it: bug 1's fix has a rendered
+  surface — the My Portfolio widget — but I could not get that widget onto
+  Victoria's dashboard. It is not on the default staff layout in this
+  fixture, and PATCHing /api/auth/me/dashboard-widgets to add it was
+  accepted and echoed back yet the dashboard still rendered only
+  widget-kpi-overview after a reload (qa/r585-portfolio-ui.mjs, shot
+  r585-dashboard.png). That is UX #279 — filed, not chased. So the proof for
+  both bugs is at the API/query level.
+- New two-bot scenario, fire-tested green in situ: `victoria ·
+  staff-my-portfolio-drops-withdrawn-deals` — asserts the endpoint answers
+  200 with an array (guards the job_title 500, which was total breakage) and
+  then creates a SOL and a WIT deal on a real property assigned to the
+  logged-in user, asserting the SOL one comes back (control) and the WIT one
+  does not, then deletes both. It self-skips if the user has no name or the
+  fixture has no properties — so if it ever reports [ok] suspiciously fast,
+  check it isn't skipping.
+- SUGGESTIONS: UX #279 (a picked dashboard widget silently not sticking) and
+  UX #280 (dashboard widgets have no error state — a 500'd endpoint renders
+  as a missing tile, indistinguishable from one the user never added, which
+  is exactly how bug 1 survived).
+- STILL DEFERRED, same class, from the sweep's 27 (highest value first):
+  * server/chatbgp.ts:1902 — staff "Pipeline snapshot" active-deal count
+    uses `!["Dead","Withdrawn","Leasing Comps","Investment Comps"]
+    .includes(d.status)`; the comps half works, WIT does not, so ChatBGP
+    reports withdrawn deals AND their fees in the firm's pipeline total.
+    Prompt-level only, no rendered surface locally.
+  * server/goad-plan-data.ts:654 — `(marketing_status||"").toLowerCase() ===
+    "available"`, always false, so "Marketed as Available in BGP CRM" /
+    confirmed_vacant NEVER fires on a Goad plan. One-liner; OS-keyless here.
+  * server/chatbgp.ts:1852 and server/tenancy-schedule.ts:1654/:1685 and
+    server/daily-briefing.ts:179 — all over MIXED or NON-deal columns
+    (investment_tracker.status, leasing_schedule_units.status). Do NOT
+    blind-fix: each needs a vocabulary decision first. daily-briefing.ts:179
+    (`t.status IN ('Occupied','Not Vacant','Let')`) reads the tenancy
+    schedule, which is its own enum — probably CORRECT, read it before
+    touching.
+  * server/property-pathway.ts:1978/2662/2664/3076,
+    server/property-asset-brief.ts:165/211/214/607, server/property-plans.ts
+    :199, server/kyc-orchestrator.ts:906, server/index.ts:5949,
+    server/hr-routes.ts:191, server/expansion-intel.ts:41,
+    server/crm.ts:4679, server/microsoft.ts:1135 — unreviewed remainder.
+    expansion-intel.ts:41 and routes.ts:4513 were READ and are FINE
+    (belt-and-braces: they list the codes alongside the labels).
+    client/src/pages/requirements.tsx:1352 is also FINE (compares to the
+    CODE 'NEG', merely displays labels) — a sweep false positive worth
+    remembering.
+  * r581's open Woody policy call: INVESTMENT_STATUSES missing HOT.
+- No new flakes. The ECONNRESET-at-login-on-a-cold-server gotcha is real and
+  cost one chunk run; the 8s settle in front of the command fixed it.
 
 ### r584 · 2026-09-07 · FULL (rotation #3 Landsec client · mobile 390px) · 2 bugs fixed, both the LEGACY-LABEL-vs-CODE class — ChatBGP was told every property had ZERO available units · 2 suggestions
 - Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via

@@ -13,6 +13,28 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+279. 2026-09-07 · BGP staff / desktop 1440px (QA r585) · Victoria trying to
+    put the "My Portfolio" widget on her dashboard · the widget picker's
+    PATCH /api/auth/me/dashboard-widgets accepted `["my-portfolio"]` and
+    echoed it back, but after a full reload the dashboard still rendered
+    only the always-on set (widget-kpi-overview) — the My Portfolio widget
+    never appeared. Not chased to a root cause inside this round's budget,
+    so it is a SUGGESTION not a filed bug, but it means a staff member who
+    picks a widget may get no feedback that the pick did not stick ·
+    Suggested: worth a targeted look at how dashboard.tsx reconciles the
+    saved widget list against the always-on/default set, and either render
+    the picked widget or tell the user why it was dropped.
+
+280. 2026-09-07 · BGP staff / any surface (QA r585) · the same round found
+    /api/dashboard/my-portfolio 500ing on a column that does not exist, and
+    the failure was completely silent to the user — the widget simply never
+    drew. Nothing on the dashboard says "this panel failed to load" ·
+    Suggested: give dashboard widgets a small shared error state ("couldn't
+    load — retry") rather than rendering nothing, so a broken endpoint
+    surfaces as a visible fault instead of a missing tile. A dead tile is
+    indistinguishable from a tile the user never added, which is exactly how
+    this one survived unnoticed.
+
 277. 2026-09-07 · Landsec client / mobile 390px (QA r584) · Mark Warne on
     the train, opening his phone home to see where his empty units stand ·
     the "MY PORTFOLIO — LETTING TRACKER" tile reads
