@@ -3604,7 +3604,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // Knowledge capture — on transition to Completed, if a `learning`
       // note was posted with the update, persist it as a brand_signals row
       // against the tenant so the brand card shows our deal learnings.
-      const completing = req.body.status === "Completed" && oldDeal?.status !== "Completed";
+      // Canonical codes, not labels — the dialog sends "COM", so the old
+      // label check never fired and every learning the agent typed was
+      // dropped by the `delete req.body.learning` below.
+      const completing = legacyToCode(req.body.status) === "COM" && legacyToCode(oldDeal?.status) !== "COM";
       const learning: string | null = typeof req.body?.learning === "string"
         ? req.body.learning.trim().slice(0, 2000) || null
         : null;

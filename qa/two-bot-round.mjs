@@ -9081,6 +9081,41 @@ async function woodyRound(page, cross) {
     }
   });
 
+  // r582: the deal dialog's green "What did we learn from this deal?" box.
+  // The server gated the knowledge capture on the legacy LABEL "Completed"
+  // while the dialog sends the CODE "COM", then deleted `learning` from the
+  // body — so every learning an agent typed was silently discarded.
+  await step(page, p, 'staff-deal-learning-reaches-the-brand-card', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const brands = await (await fetch('/api/crm/companies', { credentials: 'include', headers: auth })).json().catch(() => []);
+      const tenant = (Array.isArray(brands) ? brands : []).find((c) => c.id);
+      if (!tenant) return { ok: false, why: 'no company to hang the learning on' };
+      const LEARNING = 'QA-LRN probe learning — 9m rent free to accept ZoneA 300.';
+      // aml_check_completed = YES is the documented MLRO override; without it
+      // the SOL+ AML gate 409s before the learning path is ever reached.
+      const mk = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: 'QA-LRN learning probe', status: 'EXC', fee: 25000,
+          dealType: 'New Letting', tenantId: tenant.id, amlCheckCompleted: 'YES' }) });
+      if (!mk.ok) return { ok: false, why: `deal POST ${mk.status}` };
+      const deal = await mk.json();
+      try {
+        const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+          body: JSON.stringify({ status: 'COM', learning: LEARNING, changeReason: 'qa-lrn probe' }) });
+        if (!put.ok) return { ok: false, why: `deal PUT COM ${put.status}` };
+        const prof = await (await fetch(`/api/brand/${tenant.id}/profile`, { credentials: 'include', headers: auth })).json().catch(() => ({}));
+        const sigs = prof?.signals || [];
+        const hit = sigs.find((x) => (x.detail || '').includes('QA-LRN probe learning'));
+        if (!hit) return { ok: false, why: 'stepping the deal to Completed discarded the learning the agent typed — nothing reached the tenant brand card' };
+        if (!/QA-LRN learning probe/.test(hit.headline || '')) return { ok: false, why: `the captured signal does not name the deal ("${hit.headline}")` };
+        return { ok: true };
+      } finally {
+        await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      }
+    });
+    if (!r.ok) throw new Error(`deal-learning capture failed (${r.why})`);
+  });
+
   // Historical billings (r400): static Sage-era invoiced WIP behind the
   // equity/admin gate. Equity gets the pre-aggregated payload (FY2019-26,
   // known totals); non-equity staff 403.

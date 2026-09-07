@@ -92,27 +92,117 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r582 · 2026-09-07 · FULL (rotation #2 Landsec client · desktop 1440px) · ROUND IN PROGRESS
+### r582 · 2026-09-07 · FULL (rotation #2 Landsec client · desktop 1440px) · 1 bug fixed — the deal dialog's "What did we learn from this deal?" box threw the agent's text away on every save · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; .env written). Smoke GREEN 42 checks / 0 failures.
-- Two-bot FULL pass running (`node qa/two-bot-round.mjs 582` under
-  qa/with-server.sh; backgrounds itself past the 600s cap). victoria + most of
-  mark clean so far, no failures — only the baseline-class 403 echo on
-  client-chat-media-own-roundtrip (which then passes).
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures.
+- Two-bot FULL pass (`node qa/two-bot-round.mjs 582`; backgrounds itself past
+  the 600s cap — read the output file): 341 [ok], 0 failures. Tally
+  4x400 / 9x403 / 1x503 / 1x404 = the BASELINE class for class, FORTY-FIRST
+  consecutive clean hand-off. 0 app bugs from the regression. No new flakes.
 - Status-literal sweep re-run: 104 sets, 42 exact, 62 divergent
   [list 50 · keys 10 · union 1 · case 1]. Deadcol sweep run.
-- TRIAGE: every client-facing status set the sweep flags (properties-summary
-  33/34, tracker-summary 23, properties.tsx 5196/5201, available-units
-  88/92/93/94 + 1326) already carries HOT — r574's fixes hold.
-  deals-summary.tsx:27 LIVE_CODES misses HOT but its feed is SOL+ only
-  (#255), symptomless. dashboard.tsx:2106 Vacancy Pipeline tests deal status
-  with `.includes("completed")` on a CODE field — a fifth shape the sweep is
-  blind to (legacy status WORDS via substring) — but the endpoint already
-  filters WIT/COM/INV in SQL, so it is a no-op, not a bug.
-- BUG UNDER FIX: server/crm.ts:3607 gates the deal "What did we learn?"
-  knowledge capture on `req.body.status === "Completed"` — a legacy WORD —
-  while the dialog sends the CODE "COM". The learning text is then deleted
-  from the body. Verifying in the browser.
+- CLIENT-SIDE HOT TRIAGE (r581's hand-off): every client-facing status set the
+  sweep flags already carries HOT — properties-summary 33/34, tracker-summary
+  23, properties.tsx 5196/5201, available-units 88/92/93/94 + 1326. r574's
+  fixes hold. deals-summary.tsx:27 LIVE_CODES misses HOT but its feed is
+  SOL+ only (#255), so no pre-SOL code ever reaches it — symptomless, do NOT
+  "tidy". The client half of the fault line is, as far as the census can see,
+  CLOSED.
+- JOURNEY (Mark Warne, 1440px): "a Bluewater unit has gone under offer —
+  which one, at what rent, and does my portfolio's vacancy picture reflect
+  it?" Dashboard read field by field, then the portfolio payload read as the
+  client, then the EXPIRING(6M) tile followed to its popover.
+  Reconciles: tiles 201 units / 124 occupied / 77 vacant / 61.7% occupancy;
+  Vacancy Pipeline 75 Bluewater + 2 Westgate = 77, Bluewater vacancy 75/199
+  = 38%; Passing Rent honestly "—  no passing rent recorded yet"
+  (tenancy_schedule_units.passing_rent_pa is all-NULL on this fixture — 0 of
+  201 rows, confirmed by the deadcol sweep, so this is data onboarding not a
+  bug); EXPIRING(6M) tile 7 and its popover share ONE filter (isExpiringSoon
+  at dashboard.tsx:1442) so the count and the list cannot diverge; 74 of 201
+  units carry a lease_expiry. Shots qa/smoke-shots/r582j-11-dash.png,
+  r582k-21-expiring.png.
+- BUG FIXED (server/crm.ts:3607). The deal edit dialog shows a green panel
+  "What did we learn from this deal?" the moment an agent steps a deal to
+  Completed, promising "Attaches to the tenant's brand card so the team
+  builds a deal knowledge bank" — and deals.tsx:2332 does POST the text as
+  `learning`. The server gated the capture on
+  `req.body.status === "Completed"` — the LEGACY LABEL — while the dialog
+  sends the CODE "COM" (isCompletingNow is `formStatusCode === "COM"`). So
+  `completing` was never true, and eight lines later
+  `delete req.body.learning` threw the text away. Save succeeded, toast
+  green, brand_signals row never written. The very NEXT block in the same
+  handler already does it right (`legacyToCode(deal.status) === "COM"` for
+  the comps auto-copy), and deals.tsx:2287 carries a comment about fixing
+  exactly this class of bug on the CLIENT side — the server's copy was
+  missed. Now `legacyToCode(req.body.status) === "COM" &&
+  legacyToCode(oldDeal?.status) !== "COM"`.
+- PROVEN through the real endpoint the dialog uses, BEFORE against the
+  pre-fix server and AFTER against the patched one (a second server on :5001
+  so the two-bot pass on :5000 was not disturbed). BEFORE: PUT 200, deal
+  EXC -> COM, `RESULT: NO brand_signals row — the learning the agent typed
+  was DISCARDED`. AFTER: the row lands with the exact text against the right
+  brand_company_id. Then PROVEN VISUALLY at 1440px on /companies/<tenant>:
+  the brand card's "Signals (2)" section now reads "Deal learning: R582
+  learning probe deal · 07/09/2026". Shot
+  qa/smoke-shots/r582-learning-after.png.
+- Gate note for future probes: a PUT to COM needs BOTH a senior login
+  (Victoria 403s — "Senior approval required") AND `amlCheckCompleted: 'YES'`
+  (the documented MLRO override; without it the SOL+ AML gate 409s before the
+  learning path is reached). Both are correct behaviour, not bugs.
+- New two-bot scenario: woody · staff-deal-learning-reaches-the-brand-card —
+  POSTs a deal at EXC against a real tenant with the MLRO override, PUTs it
+  to COM with a learning, and fails if the learning never appears in
+  /api/brand/:id/profile signals or if the captured signal does not name the
+  deal. The /api/brand/:id/profile read path it asserts on was validated live
+  this round (200, signals array, learning present). NOT fire-tested against
+  the pre-fix file — its two assertions are exactly the two readings the
+  manual before/after produced. FIRE-TEST IT NEXT ROUND.
+  run-round.sh purge now sweeps QA-LRN% and R582%.
+- Probe rows removed, fixture verified back to shipped state (0 rows). tsc
+  clean. Scripts kept: qa/r582-client-journey.mjs, qa/r582-client-journey2.mjs,
+  qa/r582-learning-probe.mjs, qa/r582-learning-visual.mjs.
+- DEFERRED as suggestions, not fixed (UX #273-#274): the client dashboard's
+  VACANCY PIPELINE coverage bar reads "Pipeline 1%" in rose for Bluewater
+  ("75 vacant units · 1 active deal", footer "2 letting deals working the
+  voids") while the Letting Tracker card BESIDE IT on the same dashboard
+  reads "78 live lettings" — the bar's numerator is crm_deals, and every
+  pre-solicitors letting lives on the Letting Tracker by design, so a
+  landlord reads a red 1% as "BGP is working one of my 75 empty units"
+  (#273); and the Lease Expiry Timeline badge says "expiring within 5 yrs"
+  while its ceiling is 31 Dec of year+5, i.e. six years four months out in
+  September 2026 (#274).
+- DEFERRED, still nobody's: #250 CONFIRMED LIVE and read as the client this
+  round — /api/company-portfolio ships `stats.activeDeals: 4` from the
+  ownership UNION while the `deals` array in the SAME payload carries only 2
+  rows (landlord_id alone), so the ACTIVE DEALS tile says 4 and the Vacancy
+  Pipeline footer built from the array says 2, on one screen. Also untouched:
+  #253, #255, #251, #247, #266, /api/hunters/letting's landlord_id-only
+  portfolio, and r581's Woody policy call (INVESTMENT_STATUSES in
+  shared/deal-status.ts:74 is missing HOT — PUT IT TO WOODY).
+- A FIFTH SHAPE FOR THE SWEEP, worth teaching it: dashboard.tsx:2106 decides
+  whether a deal is active with `st.includes("completed")` /
+  `("withdrawn")` / `("closed")` / `("fallen")` on a field that carries the
+  CODE — legacy status WORDS tested by SUBSTRING, which the census cannot
+  see at all. Here it is a no-op (the endpoint already filters WIT/COM/INV in
+  SQL) and edozo-map.tsx:4231 (`d.status === "Completed"` for a marker
+  colour) is cosmetic — but this round's actual bug was exactly this shape,
+  in server/crm.ts. `grep -rn 'includes("completed")' client/src server`
+  found only those two; a proper sweep kind would keep it that way.
+- CHECKED AND CLEAN, do not re-report: the Lease Expiry Timeline accumulates
+  `u.sqft` into `${propKey}_sqft` but /api/company-portfolio's leasingUnits
+  select carries no sqft column and nothing renders the value — dead, and
+  symptomless. The client dashboard's `occupiedUnits` (client-side, from
+  leasingUnits) and `occupiedCount` (stats.totalUnits - vacantUnits) agree at
+  124. Duplicate tracker rows on the client's Letting Tracker list (L090 x2,
+  U062 x4, U124/U125/U126 x2) and "Bluewater - Whiole Demise" are FIXTURE
+  data, not app behaviour.
+- FOR r583 (rotation #3 Landsec client · mobile 390px): still untaken — the
+  review form's AI draft and generate-letter paths (r579); the staff phone
+  WRITE paths (r578 opened Edit-unit and Add-unit at 390px but never
+  SUBMITTED); and the ~49 status sets that were visible before r581 widened
+  the census and have never been individually judged. Fire-test this round's
+  new scenario.
 
 ### r581 · 2026-09-07 · LIGHT (r580 had the journey) · 2 bugs fixed — an agent's own "Working on right now" card printed the RAW CODE for heads of terms, and the deal Edit dialog could not record HOTs at all (UX #252, deferred six rounds) · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

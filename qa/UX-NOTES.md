@@ -13,6 +13,37 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+273. 2026-09-07 · Landsec client / desktop 1440px (QA r582) · Mark Warne on
+    his portfolio dashboard, asking "is BGP actually working my empty units?"
+    · the VACANCY PIPELINE card reads "Bluewater Shopping Centre — 75 vacant
+    units · 1 active deal · Vacancy 38% · Pipeline 1%" with the Pipeline bar
+    drawn ROSE (the card's own <40% colour), and its footer reads "77 total
+    vacant units across 2 properties · 2 letting deals working the voids".
+    Sitting immediately beside it on the SAME dashboard, the Letting Tracker
+    card reads "78 live lettings · 160,382.5 sq ft · 77 Available · 1
+    Negotiating". The two panels are counting different tables: the Vacancy
+    Pipeline's numerator is `portfolioData.deals` (crm_deals), while every
+    pre-solicitors LETTING in this app lives on the Letting Tracker
+    (available_units) by design — so the coverage bar can only ever see the
+    handful of lettings that reached crm_deals, and a landlord reads a red
+    1% as "BGP has 75 of my units empty and is working one of them".
+    Suggested: either count the client's live tracker units (NEG/HOT/SOL/EXC
+    — the ones genuinely under negotiation) into the Pipeline numerator
+    alongside crm_deals, or relabel the bar so it plainly says what it
+    measures ("deals past solicitors") instead of "the active deals working
+    to fill them". Needs Woody's numbered confirmation — not built.
+
+274. 2026-09-07 · Landsec client / desktop 1440px (QA r582) · same dashboard ·
+    the LEASE EXPIRY TIMELINE badge says "N expiring within 5 yrs across M
+    properties", but its window is `new Date(now.getFullYear() + 5, 11, 31)`
+    — 31 December of the fifth year out — so in September 2026 it is actually
+    reporting everything expiring up to 31 Dec 2031, six years and four
+    months away, and the quarter axis runs to Q4 2031 to match. A landlord
+    reconciling the badge against his own five-year expiry profile will be
+    over by up to five quarters. Suggested: either move the ceiling to
+    `now + 5 years` to the day, or say "to end 2031" on the badge. One-line
+    either way. Needs Woody's numbered confirmation — not built.
+
 271. 2026-09-07 · BGP staff / any surface reading a unit's marketing state
     (QA r581) · the app answers "is this unit under offer?" from two hardcoded
     maps that disagree about heads of terms. `PUBLIC_CODE_MAP`
