@@ -13,6 +13,41 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+268. 2026-09-07 · BGP staff / Deals → Board view (QA r580) · Victoria
+    switches the Deals board to the kanban to see where her deals sit · the
+    board has five columns — Negotiating, Solicitors, Exchanged, Completed,
+    Invoiced — but the Deals list it renders is SOL+ ONLY by the 2026-08-25
+    rule (storage.getCrmDeals excludeTrackerDeals strips OPP/REP/SPEC/LIVE/
+    AVA/NEG/HOT), so the Negotiating column can never hold anything. It reads
+    as "no deals in negotiation" rather than "negotiation lives elsewhere",
+    and there is no HOTs column at all. Suggestion: drop the NEG column and
+    replace it with a link to the Letting Tracker / WIP report where the
+    pre-Solicitors pipeline actually lives — or, if the board is meant to
+    show the whole book, stop stripping NEG/HOT and add the HOTs column.
+
+269. 2026-09-07 · BGP staff / HR → a person → Commission (QA r580) · reading
+    the "Awaiting payment" chase list · the badge is computed as
+    `status === "INV" ? "Invoiced" : "Completed"`, and the commission engine
+    feeds this list EXC, COM and INV deals — so a deal that has only
+    EXCHANGED is badged "Completed". The sub-line is worse: the server maps
+    `invoicedAt: null` unconditionally, so every row falls through to
+    "Completed {feeDue date}" — including the rows badged "Invoiced", which
+    then say Invoiced and Completed at once. Suggestion: badge the real
+    status (Exchanged / Completed / Invoiced) and either carry the real
+    invoice date or drop the "Completed" wording from the sub-line.
+
+270. 2026-09-07 · BGP staff / HR → a review → Record compensation (QA r580)
+    · an admin records a bonus twice (double-click, or re-opening the form
+    after a refresh) · the bonus INSERT is `ON CONFLICT (user_id,
+    effective_date, amount_pence, kind) DO NOTHING`, so the second write is
+    a silent no-op and `inserted.bonus` comes back null — but the endpoint
+    still returns ok and still creates Wendy's high-priority "Push to Xero:
+    {name} — Bonus £X" payroll task. Payroll is then chasing a bonus that
+    was not recorded on the second submit (and the salary_history insert has
+    no conflict guard at all, so that one genuinely duplicates). Suggestion:
+    when nothing was inserted, say "already recorded" and skip the payroll
+    task; give salary_history the same dedupe key as bonus_history.
+
 265. 2026-09-07 · BGP staff / HR → a person → Reviews (QA r579) · Victoria
     presses "Sync from WIP" on her own annual review to pull her fee figures
     off the WIP report · the toast reads "Synced from WIP (0 allocations)"

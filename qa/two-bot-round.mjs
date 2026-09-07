@@ -8999,6 +8999,43 @@ async function woodyRound(page, cross) {
     if (!r.ok) throw new Error(`cashflow board v3 check failed (${r.why})`);
   });
 
+  // r580: a deal moving FORWARD out of Negotiating into heads of terms must
+  // stay in the firm's forward book. The projection weight tables carried
+  // NEG/SOL/EXC only, so at HOT the deal fell out of the Xero WIP forecast
+  // AND the cashflow board's stage strip entirely, then reappeared at SOL.
+  await step(page, p, 'staff-forward-book-keeps-the-deal-through-hots', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const read = async () => {
+        const fin = await (await fetch('/api/xero/financials?refresh=1', { credentials: 'include', headers: auth })).json();
+        const cash = await (await fetch('/api/cashflow', { credentials: 'include', headers: auth })).json();
+        const stages = cash?.deals?.byStage || {};
+        const mine = Object.entries(stages).flatMap(([code, v]) => (v.deals || [])
+          .filter((d) => d.name === 'QA-FWD forward book probe').map((d) => ({ code, weighted: d.weighted })));
+        return { unweighted: fin?.wip?.unweightedPipeline ?? null, weighted: fin?.wip?.weightedPipeline ?? null, mine };
+      };
+      const mk = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: 'QA-FWD forward book probe', status: 'NEG', fee: 200000, targetDate: '2026-11-03', dealType: 'New Letting' }) });
+      if (!mk.ok) return { ok: false, why: `deal POST ${mk.status}` };
+      const deal = await mk.json();
+      try {
+        const neg = await read();
+        if (neg.mine.length !== 1 || neg.mine[0].code !== 'NEG') return { ok: false, why: `probe not in the NEG forward book (${JSON.stringify(neg.mine)})` };
+        const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ status: 'HOT' }) });
+        if (!put.ok) return { ok: false, why: `deal PUT HOT ${put.status}` };
+        const hot = await read();
+        if (!hot.mine.length) return { ok: false, why: 'stepping the deal NEG -> HOT dropped it out of the firm forward book entirely' };
+        if (hot.mine[0].code !== 'HOT') return { ok: false, why: `probe landed in ${hot.mine[0].code}, expected HOT` };
+        if (hot.unweighted !== neg.unweighted) return { ok: false, why: `unweighted WIP pipeline moved on a stage step: ${neg.unweighted} -> ${hot.unweighted}` };
+        if (!(hot.weighted > neg.weighted)) return { ok: false, why: `weighted WIP pipeline did not rise moving forward: ${neg.weighted} -> ${hot.weighted}` };
+        return { ok: true };
+      } finally {
+        await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      }
+    });
+    if (!r.ok) throw new Error(`forward book HOTs check failed (${r.why})`);
+  });
+
   // Historical billings (r400): static Sage-era invoiced WIP behind the
   // equity/admin gate. Equity gets the pre-aggregated payload (FY2019-26,
   // known totals); non-equity staff 403.

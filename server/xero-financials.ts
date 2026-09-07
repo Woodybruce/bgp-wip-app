@@ -482,12 +482,17 @@ export async function buildFinancials(session: any): Promise<any> {
 // ── WIP pipeline + invoice cross-reference ──────────────────────────────
 // Joins crm_deals (fee + canonical status) to xero_invoices (by deal_id)
 // so the dashboard can forecast the year and surface reconciliation gaps:
-//   - NEG / SOL / EXC fees = the live pipeline, weighted for projection
+//   - NEG / HOT / SOL / EXC fees = the live pipeline, weighted for projection
 //   - COM deals with NO Xero invoice = "completed, not yet invoiced" —
 //     fees earned but unbilled (the money-left-on-table list)
 //   - INV / invoiced amounts deliberately NOT added to the projection:
 //     they're already inside Xero's actual income figures
-const STAGE_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9 };
+// HOT (heads of terms agreed) joined the enum 2026-08-12 and sits BETWEEN NEG
+// and SOL, so its weight sits between theirs. Before r580 it had no bucket and
+// no branch below, so a deal moving FORWARD out of Negotiating fell through the
+// whole loop and was counted NOWHERE — not in the pipeline, not in the early
+// pipeline, not in the weighted or unweighted totals.
+const STAGE_WEIGHTS: Record<string, number> = { NEG: 0.5, HOT: 0.6, SOL: 0.75, EXC: 0.9 };
 
 async function buildWipForecast(): Promise<any> {
   const { rows } = await pool.query(`
@@ -511,6 +516,7 @@ async function buildWipForecast(): Promise<any> {
 
   const pipeline: Record<string, { total: number; count: number }> = {
     NEG: { total: 0, count: 0 },
+    HOT: { total: 0, count: 0 },
     SOL: { total: 0, count: 0 },
     EXC: { total: 0, count: 0 },
   };
@@ -524,7 +530,7 @@ async function buildWipForecast(): Promise<any> {
     if (!code || code === "WIT") continue;
     const fee = Number(d.fee) || 0;
 
-    if (code === "NEG" || code === "SOL" || code === "EXC") {
+    if (code === "NEG" || code === "HOT" || code === "SOL" || code === "EXC") {
       pipeline[code].total += fee;
       pipeline[code].count++;
       continue;
@@ -575,6 +581,7 @@ async function buildWipForecast(): Promise<any> {
   toInvoiceDeals.sort((a, b) => new Date(b.completedAt || 0).getTime() - new Date(a.completedAt || 0).getTime());
   const weightedPipeline =
     pipeline.NEG.total * STAGE_WEIGHTS.NEG +
+    pipeline.HOT.total * STAGE_WEIGHTS.HOT +
     pipeline.SOL.total * STAGE_WEIGHTS.SOL +
     pipeline.EXC.total * STAGE_WEIGHTS.EXC;
 
@@ -582,7 +589,7 @@ async function buildWipForecast(): Promise<any> {
     pipeline,
     weights: STAGE_WEIGHTS,
     weightedPipeline: Math.round(weightedPipeline),
-    unweightedPipeline: Math.round(pipeline.NEG.total + pipeline.SOL.total + pipeline.EXC.total),
+    unweightedPipeline: Math.round(pipeline.NEG.total + pipeline.HOT.total + pipeline.SOL.total + pipeline.EXC.total),
     toInvoice: { total: Math.round(toInvoiceTotal), count: toInvoiceDeals.length, deals: toInvoiceDeals.slice(0, 12) },
     invoicedAwaitingPayment: Math.round(invoicedAwaitingPayment),
     earlyPipeline: { total: Math.round(early.total), count: early.count },

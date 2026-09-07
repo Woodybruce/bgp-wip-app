@@ -261,11 +261,11 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
       forwardDeals: Math.round(forwardDeals),
       legacy: Math.round(legacy),
       projectedFy: Math.round(projectedFyIncome),
-      byStage: (["NEG", "SOL", "EXC", "COM"] as const)
+      byStage: (["NEG", "HOT", "SOL", "EXC", "COM"] as const)
         .map(code => {
           const s = data.deals?.byStage?.[code];
-          const labels: Record<string, string> = { NEG: "Negotiating", SOL: "At solicitors", EXC: "Exchanged", COM: "Completed, to invoice" };
-          const weights: Record<string, number> = { NEG: 50, SOL: 75, EXC: 90, COM: 100 };
+          const labels: Record<string, string> = { NEG: "Negotiating", HOT: "Heads of terms", SOL: "At solicitors", EXC: "Exchanged", COM: "Completed, to invoice" };
+          const weights: Record<string, number> = { NEG: 50, HOT: 60, SOL: 75, EXC: 90, COM: 100 };
           return s ? { code, label: labels[code], weightPct: weights[code], weighted: s.weighted, unweighted: s.unweighted, count: s.count, deals: s.deals || [] } : null;
         })
         .filter((s): s is NonNullable<typeof s> => !!s),

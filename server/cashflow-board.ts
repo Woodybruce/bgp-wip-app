@@ -64,7 +64,12 @@ async function xeroSnapshot(): Promise<any | null> {
 // month (completed → exchanged → target date); COM deals that still have no
 // Xero invoice count at full weight. Everything is read-only reference —
 // the board's typed budget stays the plan of record.
-const PROJ_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9, COM: 1 };
+// HOT (heads of terms agreed) joined the enum 2026-08-12 and sits BETWEEN
+// NEG and SOL, so its weight sits between theirs. Without an entry here a
+// deal moving FORWARD out of Negotiating matched no weight and was skipped
+// by the `code in PROJ_WEIGHTS` guard below — it fell out of the firm's
+// forward book entirely and reappeared only at Solicitors (r580).
+const PROJ_WEIGHTS: Record<string, number> = { NEG: 0.5, HOT: 0.6, SOL: 0.75, EXC: 0.9, COM: 1 };
 let _projLogged = false; // one composition log per boot — enough to audit the pipeline from deploy logs
 async function buildDealProjection(): Promise<{
   byMonth: Record<string, { weighted: number; count: number }>;

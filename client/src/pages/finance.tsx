@@ -19,7 +19,7 @@ import { formatDate } from "@/lib/format";
 import { RefreshCw, AlertTriangle, ExternalLink } from "lucide-react";
 
 interface WipForecast {
-  pipeline: Record<"NEG" | "SOL" | "EXC", { total: number; count: number }>;
+  pipeline: Record<"NEG" | "HOT" | "SOL" | "EXC", { total: number; count: number }>;
   weights: Record<string, number>;
   weightedPipeline: number;
   unweightedPipeline: number;

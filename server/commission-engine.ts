@@ -277,7 +277,9 @@ export async function buildCommissionStatements(): Promise<{ fyStart: string; st
 // cumulative billings and run through the same tier bands, giving the
 // commission the firm would owe if the weighted book lands. Deals already
 // at fee-due (EXC/COM/INV) are in the statements, not the forward book.
-const FORWARD_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75 };
+// HOT sits between NEG and SOL (enum 2026-08-12); omitting it dropped a
+// deal at heads of terms out of the forward commission projection (r580).
+const FORWARD_WEIGHTS: Record<string, number> = { NEG: 0.5, HOT: 0.6, SOL: 0.75 };
 
 export interface CommissionOutlook {
   fyStart: string;

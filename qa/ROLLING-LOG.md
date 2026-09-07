@@ -92,12 +92,82 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r580 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · ROUND IN PROGRESS
-- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas).
-  Smoke GREEN 42 checks / 0 failures.
-- Status-literal sweep re-run: 87 lists, 38 exact, 49 divergent (unchanged
-  from r579 after its fix landed).
-- Triage in progress; journey next.
+### r580 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · 1 bug fixed — a deal stepping FORWARD into heads of terms fell out of the FIRM's forward book entirely, on three weight tables at once · 3 suggestions
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures.
+- Two-bot full pass (`node qa/two-bot-round.mjs victoria` runs every persona):
+  30 scenarios, every one [ok]. Tally 4x400 / 9x403 / 1x503 / 1x404 — the
+  BASELINE class for class, thirty-ninth consecutive clean hand-off. 0 app
+  bugs from the regression itself. Note for future rounds: the chunk exceeds
+  the 600s foreground cap and lands in the background — read its output file,
+  do not re-run it.
+- Status-literal sweep re-run: 87 lists, 38 exact, 49 divergent. The sweep
+  MISSED this round's bug, because the weight tables are Records keyed by
+  status, not array literals — worth teaching it `Record<string, number>`
+  keyed by status codes.
+- DEEP ANGLE: instead of the sweep's own list, chased every STAGE WEIGHT
+  table in server/ — the places that decide what a deal is WORTH at a stage
+  rather than whether it is listed. Three of them, all pre-HOT.
+- BUG FIXED (server/cashflow-board.ts:67, server/xero-financials.ts:490 +
+  its pipeline bucketing, server/commission-engine.ts:280, plus the render
+  list in client/src/lib/outlook-model.ts and the type in
+  client/src/pages/finance.tsx). All three tables read NEG/SOL/EXC(/COM) and
+  HOT joined the enum 2026-08-12 BETWEEN NEG and SOL:
+  * cashflow-board's `if (!code || !(code in PROJ_WEIGHTS)) continue` skipped
+    a HOT deal outright — out of byMonth, out of byStage, out of the diag log.
+  * xero-financials' buildWipForecast had no HOT bucket and no HOT branch, so
+    a HOT deal fell through the WHOLE loop: not in the pipeline, not in the
+    early pipeline, not in weighted or unweighted totals.
+  * commission-engine's FORWARD_WEIGHTS dropped it from the projected forward
+    commission.
+  HOT now weights 0.6, between NEG 0.5 and SOL 0.75, in all three.
+- PROVEN in the browser on /finance as Woody (equity) at 1440px by stepping
+  ONE £200,000 probe deal NEG -> HOT and changing nothing else. BEFORE:
+  firm WIP pipeline £450,000 unweighted / £225,000 weighted at NEG became
+  £250,000 / £125,000 at HOT, and the Company outlook stage strip showed only
+  "Negotiating 1 deal · £250,000 at 50% £125,000" — the deal was GONE. AFTER:
+  £450,000 / £245,000, and the strip reads "Negotiating 1 deal · £250,000 at
+  50% £125,000" + "Heads of terms 1 deal · £200,000 at 60% £120,000". The
+  unweighted total no longer moves on a stage step and the weighted total
+  RISES moving forward, which is the only direction it should go. Shots
+  qa/smoke-shots/r580-finance-prefix-{neg,hot}.png, r580-finance-fix-{neg,hot}.png.
+- New two-bot scenario, FIRE-TESTED against the genuine pre-fix files (git
+  stash of the five changed files): woody ·
+  staff-forward-book-keeps-the-deal-through-hots — POSTs a dated £200,000
+  deal at NEG, checks it is in the cashflow forward book's NEG bucket, PUTs
+  it to HOT, and fails if it leaves the forward book, lands in the wrong
+  bucket, moves the unweighted pipeline, or fails to raise the weighted one.
+  Pre-fix message: "stepping the deal NEG -> HOT dropped it out of the firm
+  forward book entirely". run-round.sh purge now sweeps QA-FWD% and R580%.
+- Probe deal removed, fixture verified back to shipped state (0 R580 rows).
+  tsc clean. Probe scripts kept: qa/r580-probe-setup.mjs,
+  qa/r580-probe-restore.mjs, qa/r580-outlook-probe.mjs.
+- DEFERRED as suggestions, not fixed (UX #268-#270): the Deals BOARD view
+  still has a Negotiating column that the SOL+-only list rule guarantees can
+  never fill, and no HOTs column (#268); the /hr "Awaiting payment" chase
+  list badges every non-INV deal "Completed" — so an EXCHANGED deal reads as
+  completed — and hardcodes `invoicedAt: null` server-side so even the rows
+  badged "Invoiced" print "Completed {date}" (#269); record-compensation
+  dedupes the bonus INSERT with ON CONFLICT DO NOTHING but still returns ok
+  and still raises Wendy's "Push to Xero — Bonus £X" payroll task, so a
+  double-submit chases a bonus that was not recorded, while salary_history
+  has no dedupe at all and genuinely duplicates (#270).
+- CHECKED AND CLEAN, do not re-report: the commission payload's `topDeals`
+  is DEAD — the Top-deals-YTD card was removed Nov 2025 and nothing renders
+  it (there is a comment saying so); its lack of a status filter is
+  therefore symptomless, do NOT "tidy" it. deal-kanban's
+  TENANT_HEADING_STATUSES missing HOT is inert for the same reason as #268
+  (HOT never reaches that board). hr-routes.ts:1380 is a COMMENT quoting the
+  old list, already fixed at r577; hr-routes.ts:2826/3451 (COM/INV and
+  COM/INV/EXC) are deliberate closed-won and CV-notable-deal filters.
+- FOR r581 (rotation #2 Landsec client · desktop): the CLIENT-side half of
+  this round is untaken — a HOT deal's effect on every client-facing money
+  figure has never been stepped through, and r574 proved the client dashboard
+  is sensitive to exactly this. Also still untaken from r579: the review
+  form's AI draft and generate-letter paths (both keyless-503 locally, so
+  drive what renders around them), and the staff phone WRITE paths (r578
+  opened the Edit-unit and Add-unit dialogs at 390px but never SUBMITTED).
 
 ### r579 · 2026-09-06/07 · LIGHT (r578 had the journey) · 1 bug fixed — an agent's ANNUAL REVIEW pipeline dropped their whole fee the moment a deal stepped forward into heads of terms · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
