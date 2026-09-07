@@ -8901,10 +8901,14 @@ These terms are indicative only and do not constitute a binding agreement.`;
         alerts.push({ type: "unmatched_requirement", severity: "info", title: `Open requirement: ${r.name}`, detail: `${r.company_name || "Unknown"} — no deal linked yet`, entityId: r.id, entityType: "requirement" });
       }
 
+      // Canonical codes — crm_deals.status stores codes, not the legacy
+      // labels this list used to carry ('SOLs'/'Exchanged'/'Completing'),
+      // so the digest's KYC alert never fired at any stage. Same set as
+      // /api/notifications: NEG onward, HOT included (r577).
       const kycGaps = await pool.query(
         `SELECT id, name FROM crm_deals 
          WHERE kyc_approved = false 
-         AND status IN ('SOLs', 'Exchanged', 'Completing')
+         AND status IN ('NEG', 'HOT', 'SOL', 'EXC', 'COM')
          LIMIT 10`
       );
       for (const d of kycGaps.rows) {

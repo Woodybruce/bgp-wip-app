@@ -92,16 +92,105 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r583 · 2026-09-07 · LIGHT · ROUND IN PROGRESS
-- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas).
-  Smoke GREEN 42 checks / 0 failures.
-- Two-bot: run CHUNKED (the full pass does NOT self-background in this
-  container — it just gets killed at the 600s cap; chunk with
-  QA_PERSONAS + QA_CROSS_FILE). victoria chunk: 132 [ok], 0 failures,
-  only the baseline rocketreach POST 400s. Remaining personas running.
-- Deep angle (r582 hand-off): grep server/ for comparisons against LEGACY
-  LABEL strings while crm_deals.status stores CODES (fixture confirms:
-  SOL/NEG/AVA/HOT/EXC, no legacy labels at all). Triage list below.
+### r583 · 2026-09-07 · LIGHT (no journey — r582 had it) · 2 bugs fixed, both the LEGACY-LABEL-vs-CODE class r582 opened · 2 suggestions
+- Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written; servers via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures.
+- TWO-BOT — READ THIS BEFORE NEXT ROUND: the full pass does NOT self-background
+  in this container. It runs to the 600s Bash cap and is KILLED, losing the
+  stdout tally (the jsonl only carries [ISSUE] lines, so a killed run looks
+  deceptively clean). CHUNK IT: `QA_PERSONAS=... QA_CROSS_FILE=/tmp/qa-cross-N.json`
+  inside qa/with-server.sh, one chunk per Bash call. Even victoria alone
+  exceeds 560s. Chunks run: victoria 132 [ok] · mark 170 [ok] · woody 12 [ok]
+  = 314 [ok], 0 failures. Issue tally EXACTLY the baseline class —
+  victoria 4x400 (3x rocketreach + the deliberate invalid POST
+  /api/investment-tracker probe), mark 9x403 (the deliberate client guard
+  probes) + 1x503 (keyless AI regenerate). nick/sam not reached; no new
+  flakes. Baseline class CONFIRMED, FORTY-SECOND clean hand-off.
+- r582's hand-off done: `woody · staff-deal-learning-reaches-the-brand-card`
+  FIRE-TESTED green against the fixed server.
+- DEEP ANGLE (r582's): grep server/ for comparisons against LEGACY LABEL
+  strings. First established the ground truth — crm_deals.status on this
+  fixture is 100% CODES (SOL/NEG/AVA/HOT/EXC, zero legacy labels), so every
+  label-only predicate in server/ is dead code that silently matches nothing.
+  The grep is a rich seam; two were worth fixing this round, the rest below.
+- BUG 1 FIXED (server/crm.ts:7203, /api/wip/agent-drilldown/:agentName).
+  The WIP report's Agent Summary panel: click an agent and the drilldown
+  lists the deals behind their WIP total, with a STAGE column. Its bucketing
+  was a hand-rolled local `drilldownStage` comparing the status CODE to
+  `["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged",
+  "Completed"]` — only "NEG" is a code, so EVERY deal from HOTs to Completed
+  fell through to "pipeline". The same row's `wip` field is computed
+  separately (`isInvoiced ? 0 : allocated`, via the canonical
+  isInvoicedStatus) and DID carry the money — so the panel that exists to
+  explain an agent's WIP total labelled most of those deals "pipeline" while
+  counting their fees as WIP, and the MAIN WIP table on the same page staged
+  them correctly. shared/deal-status.ts already exports
+  `deriveStageFromStatus`, crm.ts already IMPORTS it, and the two sibling
+  handlers (crm.ts:7279 WIP schedule, :9287 its Excel export) already call
+  it — the drilldown was the one stale copy. Now delegates to it.
+- BUG 2 FIXED (server/routes.ts:8904, /api/daily-digest). The digest's
+  CRITICAL "KYC not approved: <deal> — Deal is progressing but KYC has not
+  been completed" alert filtered on
+  `status IN ('SOLs', 'Exchanged', 'Completing')` — three legacy labels, one
+  of which ('Completing') was never even a real label. Against a codes
+  column that matches NOTHING: on this fixture the old predicate returns 0
+  rows while the canonical set returns 7. So the firm's loudest AML alert
+  has been structurally silent at every stage, on every deal, forever.
+  /api/notifications' identical alert was fixed at r577 (comment at
+  routes.ts:9560) — this is the copy that was missed. Now the same set:
+  `('NEG','HOT','SOL','EXC','COM')`.
+- PROVEN. BEFORE/AFTER at the predicate (0 rows vs 7) and live through the
+  real endpoints as Victoria (qa/r583-probe.mjs, all green): the drilldown
+  returns the SOL deal staged `wip` while carrying £100,000 of WIP, and the
+  digest returns 8 kyc_gap alerts including the probe, all severity
+  critical. VISUAL: qa/smoke-shots/r583-drilldown-stage.png at 1440px shows
+  the row reading `SOL … WIP` in the Stage column (pre-fix it read
+  `pipeline`). tsc clean.
+- NOT VISUALLY VERIFIED, be honest about it: bug 2's alert. Its only render
+  site is the dashboard "activity-alerts" widget; the widget is in
+  DEFAULT_WIDGETS and Victoria's dashboard_widgets is null, but
+  `card-activity-alerts` did not mount inside a 4s networkidle wait in the
+  automated pass (qa/r583-visual.mjs) — a harness/lazy-grid problem, not a
+  fix problem, since the payload is proven. The phone home does NOT render
+  it at all (see UX #276). NEXT ROUND: put eyes on that widget.
+- New two-bot scenarios (victoria, fire-tested through their exact API
+  sequences): `staff-drilldown-stages-a-solicitors-deal-as-wip` and
+  `staff-digest-flags-kyc-on-a-solicitors-deal`. Note the first tolerates a
+  409 from the SOL+ AML gate on the step to EXC (correct behaviour, r582).
+  run-round.sh purge now sweeps QA-STAGE% and QA-KYCGAP%.
+- DEFERRED — THE REST OF THE LEGACY-LABEL SEAM, all confirmed dead against a
+  codes column, none triaged for user impact yet. Work these by impact:
+  * ai-intelligence.ts:722 — email triage excludes closed deals with
+    `NOT IN ('Completed','Withdrawn','Invoiced','Billed')`, so it excludes
+    nothing and matches emails against dead deals. M365-gated locally.
+  * ai-intelligence.ts:375 — comp analysis reads "completed deals" with
+    `IN ('Completed','Invoiced','Billed','Exchanged')` → always ZERO rows,
+    so the AI comp analysis is fed an empty comp set. Keyless locally.
+  * ai-intelligence.ts:250/284/625 — requirement/item status vs "Completed"
+    /"Withdrawn"; check the requirements vocabulary first, it may differ.
+  * microsoft.ts:1135 — `["Negotiating","Under Offer","HOTs Agreed","SOLs",
+    "Exchanged"].includes(d.status)` — all labels, always false.
+  * crm.ts:4679, chatbgp.ts:1852/2081/2157/14748, expansion-intel.ts:41 —
+    `NOT IN ('Dead','Withdrawn')` style exclusions; expansion-intel carries
+    BOTH codes and labels and is fine, the chatbgp ones are label-only so
+    withdrawn deals leak into ChatBGP's context.
+  * chatbgp.ts:1902 — `!["Dead","Withdrawn","Leasing Comps",
+    "Investment Comps"].includes(d.status)` — same.
+  Also still nobody's: #253, #255, #250 (CONFIRMED LIVE by r582), #251,
+  #247, #266, /api/hunters/letting's landlord_id-only portfolio.
+- SUGGESTIONS (UX #275, #276): the drilldown's Stage column renders the raw
+  lowercase enum `pipeline` as plain grey text next to two proper badges,
+  in a table an agent reads about their own money (#275); and the PHONE
+  home fetches /api/daily-digest on every mount and never renders it, so
+  the firm's proactive alerts — including the KYC one revived this round —
+  are desktop-only while the phone still pays for the query (#276).
+- Fixture restored (probe rows purged, 5 shipped deals back). Scripts kept:
+  qa/r583-probe.mjs, qa/r583-visual.mjs, qa/r583-visual2.mjs.
+- FOR r584 (rotation #3, LANDSEC CLIENT MOBILE 390px): the client half of
+  the code-vs-label fault line still looks closed, so chase the phone shell
+  itself — and carry #276 with you, the client phone home runs the same
+  dead digest query.
 
 ### r582 · 2026-09-07 · FULL (rotation #2 Landsec client · desktop 1440px) · 1 bug fixed — the deal dialog's "What did we learn from this deal?" box threw the agent's text away on every save · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

@@ -7201,10 +7201,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
 
         function drilldownStage(status: string | null): string {
-          if (!status) return "pipeline";
-          if (isInvoicedStatus(status)) return "invoiced";
-          if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
-          return "pipeline";
+          return deriveStageFromStatus(status);
         }
 
         result.push({

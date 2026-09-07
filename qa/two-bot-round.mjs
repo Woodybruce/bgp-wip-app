@@ -4142,6 +4142,67 @@ async function victoriaRound(page, cross) {
     if (!r.atHot.matched) throw new Error(`at HOTs the sync reported ${r.atHot.matched} allocations matched — the agent's own allocation went missing from the match count`);
   });
 
+  // r583: the agent drilldown on the WIP report kept a hand-rolled stage
+  // bucket that compared crm_deals.status (CODES) to LEGACY LABELS, so every
+  // deal from HOTs to Completed showed "pipeline" in the Stage column of the
+  // very panel that explains the agent's WIP total — while the same row's
+  // money counted as WIP. The canonical helper is deriveStageFromStatus.
+  await step(page, p, 'staff-drilldown-stages-a-solicitors-deal-as-wip', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const name = ((me && me.user) || me || {}).name;
+      if (!name) return { ok: false, why: 'no name on /api/auth/me' };
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-STAGE R${round}`, status: 'SOL', fee: 40000, dealType: 'New Letting', internalAgent: [name] }) });
+      if (!res.ok) return { ok: false, why: `deal POST ${res.status}` };
+      const deal = await res.json();
+      const drop = async () => { await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {}); };
+      const read = async () => {
+        const d = await fetch(`/api/wip/agent-drilldown/${encodeURIComponent(name)}`, { credentials: 'include', headers: auth });
+        if (!d.ok) return { err: d.status };
+        const rows = await d.json();
+        return { row: (Array.isArray(rows) ? rows : []).find(x => x.dealId === deal.id) || null };
+      };
+      const atSol = await read();
+      const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ status: 'EXC' }) });
+      const atExc = put.ok ? await read() : { gated: put.status };
+      await drop();
+      return { ok: true, atSol, atExc };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a drilldown deal (${r.why})`);
+    if (r.atSol.err) throw new Error(`agent-drilldown returned ${r.atSol.err}`);
+    if (!r.atSol.row) throw new Error(`the agent's own SOL deal is missing from their WIP drilldown`);
+    if (r.atSol.row.stage !== 'wip') throw new Error(`a deal at Solicitors stages as "${r.atSol.row.stage}" in the WIP drilldown while the same row carries £${r.atSol.row.wip} of WIP`);
+    // The step to EXC can be refused by the SOL+ AML gate (409, correct
+    // behaviour and documented at r582) — only judge the stage if it moved.
+    if (!r.atExc.gated && r.atExc.row && r.atExc.row.stage !== 'wip') throw new Error(`stepping the deal to Exchanged dropped its drilldown stage to "${r.atExc.row.stage}"`);
+  });
+
+  // r583: the daily digest's critical "KYC not approved" alert filtered on
+  // legacy labels ('SOLs'/'Exchanged'/'Completing') while the column stores
+  // codes, so it never fired at any stage. /api/notifications' twin was
+  // fixed at r577; this is the copy that was missed.
+  await step(page, p, 'staff-digest-flags-kyc-on-a-solicitors-deal', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-KYCGAP R${round}`, status: 'SOL', fee: 25000, dealType: 'New Letting' }) });
+      if (!res.ok) return { ok: false, why: `deal POST ${res.status}` };
+      const deal = await res.json();
+      const dig = await fetch('/api/daily-digest', { credentials: 'include', headers: auth });
+      const body = dig.ok ? await dig.json() : null;
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      if (!dig.ok) return { ok: false, why: `daily-digest ${dig.status}` };
+      const alerts = Array.isArray(body) ? body : (body && body.alerts) || [];
+      const kyc = alerts.filter(a => a.type === 'kyc_gap');
+      return { ok: true, total: alerts.length, kyc: kyc.length, severities: [...new Set(kyc.map(a => a.severity))] };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not read the digest (${r.why})`);
+    if (r.kyc === 0) throw new Error(`the daily digest raised ${r.total} alerts and not one kyc_gap, with unapproved deals sitting at Solicitors — the alert is silent at the stage that matters`);
+    if (!r.severities.includes('critical')) throw new Error(`kyc_gap alerts came back as ${r.severities.join('/')}, not critical`);
+  });
+
 }
 
 async function trackerStatusDeepLink(page, who) {

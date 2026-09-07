@@ -13,6 +13,33 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+275. 2026-09-07 · BGP staff / desktop (QA r583) · Victoria opening the WIP
+    report's Agent Summary and clicking her own row to see which deals make
+    up her WIP total · the drilldown's STAGE column is the panel's only
+    explanation of why a deal counts, and it renders three ways — a green
+    "Invoiced" badge, a yellow "WIP" badge, or, for anything else, the bare
+    lowercase word `pipeline` as plain grey text (wip-report.tsx:667 and
+    :742, the `<span className="text-muted-foreground">{d.stage}</span>`
+    fallback). A raw enum value leaking into a table an agent reads about
+    their own money looks like a rendering fault even when it's correct.
+    SUGGESTION: give pipeline its own chip (e.g. amber "Pipeline", matching
+    the badge the WIP report already uses at wip-report.tsx:1929) so all
+    three stages read as deliberate labels rather than two badges and a
+    lowercase word.
+
+276. 2026-09-07 · BGP staff / phone (QA r583) · the phone home screen
+    (mobile-home.tsx:263) fetches `/api/daily-digest` on every mount and
+    binds it to an `alerts` array that is never rendered anywhere in the
+    component — the only surface that renders the digest is the desktop
+    dashboard's "Activity Feed" widget. So the firm's proactive alerts
+    (stuck deals, unmatched requirements, cooling contacts, and the critical
+    "KYC not approved" alert this round revived) are invisible to anyone
+    working from the phone, while the phone still pays for the query on
+    every home visit. SUGGESTION: either render the digest on the phone home
+    (a compact alert strip above Tasks, tapping through to the record) or
+    drop the dead query — but the alerts are the kind of thing an agent most
+    wants on a phone, so rendering is probably the right half.
+
 273. 2026-09-07 · Landsec client / desktop 1440px (QA r582) · Mark Warne on
     his portfolio dashboard, asking "is BGP actually working my empty units?"
     · the VACANCY PIPELINE card reads "Bluewater Shopping Centre — 75 vacant
