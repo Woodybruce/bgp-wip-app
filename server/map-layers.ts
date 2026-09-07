@@ -738,7 +738,7 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
   });
 
   // ─── Occupier plan — Goad/Edozo unit polygons with names ─────────────────
-  // Serves goad_units (from Edozo or an Experian import) as GeoJSON for the
+  // Serves goad_units (Edozo WFS) as GeoJSON for the
   // viewport. Names live on the polygons, so this replaces the OSM/NGD name-
   // guessing entirely for any area we have coverage for. If the viewport is
   // uncovered and Edozo is configured, we pull it live, cache to goad_units,
