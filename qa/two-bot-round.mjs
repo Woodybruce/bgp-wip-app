@@ -4330,11 +4330,34 @@ async function victoriaRound(page, cross) {
       if (!neg.__status) made.push(neg.id);
       const unknown = await mk(`QA-R588-LBL-U R${round}`, 'Something Else');
       if (!unknown.__status) made.push(unknown.id);
+      // r595: the LAST door a label still walked through. canonicaliseUnitStatus
+      // only rewrites a status that is THERE, so a POST that simply omits the
+      // field left drizzle to omit the column and postgres to apply the table
+      // default — the literal 'Available'. JSON.stringify drops an undefined
+      // value, so this really does send a body with no marketingStatus key.
+      const omitted = await mk(`QA-R588-LBL-D R${round}`, undefined);
+      if (!omitted.__status) made.push(omitted.id);
       // Read back through the tracker endpoint the pills read.
       const units = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
       const all = Array.isArray(units) ? units : (units?.data || units?.units || []);
       const find = (id) => all.find(u => u.id === id)?.marketingStatus ?? null;
-      const out = { label: find(label.id), neg: neg.__status ? 'skipped' : find(neg.id), unknown: unknown.__status ? 'skipped' : find(unknown.id) };
+      const out = { label: find(label.id), neg: neg.__status ? 'skipped' : find(neg.id), unknown: unknown.__status ? 'skipped' : find(unknown.id),
+                    omitted: omitted.__status ? 'skipped' : find(omitted.id) };
+      // Global invariant over the whole tracker, not just this scenario's
+      // rows: available_units.marketing_status is a CODES column, so any
+      // value outside LETTING_STATUSES is a label that every code predicate
+      // (stat tiles, the in-play regex, ChatBGP's `= 'AVA'` count) walks past.
+      const CODES = ['OPP','AVA','NEG','HOT','SOL','EXC','COM','WIT','INV'];
+      // Skip the harness's own QA- rows: this scenario deliberately posts
+      // 'Something Else' just above to prove the canonicaliser leaves an
+      // unrecognised value alone, and that row is still on the board here.
+      // Matched anywhere in the name, not just at the start: the boot
+      // auto-seed re-lists a leftover QA deal as "<Scheme> – QA-…".
+      const realRows = all.filter(u => !/QA-/.test(String(u.unitName || '')));
+      out.strayTrackerStatuses = [...new Set(realRows
+        .map(u => u.marketingStatus)
+        .filter(v => typeof v === 'string' && v.trim() && !CODES.includes(v)))];
+      out.trackerRows = realRows.length;
       // r589: one of these three rows survived the round and drifted the
       // fixture (81 -> 82 listings), silently. Report the DELETE statuses and
       // the survivors so a leak fails loudly instead of leaving a phantom
@@ -4407,6 +4430,9 @@ async function victoriaRound(page, cross) {
     if (got.label !== 'AVA') throw new Error(`a unit posted with the label "Available" came back as ${JSON.stringify(got.label)} — a label in a codes column is invisible to every code predicate`);
     if (got.neg !== 'skipped' && got.neg !== 'NEG') throw new Error(`CONTROL failed: "Under Negotiation" came back as ${JSON.stringify(got.neg)}, not NEG — the canonicaliser is blanket-stamping`);
     if (got.unknown !== 'skipped' && got.unknown !== 'Something Else') throw new Error(`CONTROL failed: an unrecognised status was rewritten to ${JSON.stringify(got.unknown)} instead of being left alone`);
+    if (got.omitted !== 'skipped' && got.omitted !== 'AVA') throw new Error(`a unit posted with NO marketingStatus came back as ${JSON.stringify(got.omitted)} — the postgres column default is the label 'Available', which no code predicate matches`);
+    if (!got.trackerRows) throw new Error('CONTROL failed: the tracker list came back empty, so the stray-status sweep below is vacuous');
+    if ((got.strayTrackerStatuses || []).length) throw new Error(`the letting tracker is carrying non-code status value(s) ${JSON.stringify(got.strayTrackerStatuses)} in available_units.marketing_status — invisible to every code predicate over that column`);
     if (got.leaked) throw new Error(`this scenario leaked ${got.leaked} of its own unit row(s) into the fixture (DELETE statuses ${JSON.stringify(got.dels)}) — the next round inherits a phantom listing`);
     // r591: LEASING_STATUSES from shared/lease-status-mirror.ts. A raw code
     // here renders as an unrecognised grey chip and is missing from the

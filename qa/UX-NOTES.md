@@ -13,6 +13,31 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+300. 2026-09-07 · BGP staff / desktop (QA r595, triage) · Victoria opening
+   /comps to find rent-review evidence · the board reads **"0 comps · 0
+   verified · 0 areas"** and the empty state says **"No matching comps — Try
+   adjusting your filters"**, while the strip immediately above it says "11 AI
+   leads awaiting review". Nothing is wrong with her filters: every comp the
+   firm holds is an unconfirmed AI extraction sitting on the Leads tab, and
+   the empty state sends her to fiddle with filters instead. (The CLIENT
+   version of the same screen gets this right — "No comparable evidence
+   recorded for your schemes yet. Your BGP team adds comps as deals
+   complete.") Suggestion: when `confirmedComps` is empty but `leadComps`
+   is not, swap the empty state for "Nothing confirmed yet — 11 AI leads are
+   waiting for review" with the existing Leads-tab button, and stop offering
+   the filter advice. One conditional in comps.tsx.
+
+301. 2026-09-07 · BGP admin / desktop (QA r595, triage) · running Letting
+   Tracker → Focus (`POST /api/admin/letting-tracker-focus`) · on the QA
+   fixture the dry run reports `scanned 76 · keep 6 · prune 70 · pullIn 2`
+   and hands back a **12-name `pruneSample`** for 70 deletions. Sixty-four of
+   the units about to be deleted are never named anywhere before the run
+   commits. Same family as #297: a destructive admin action that will not
+   itemise what it removes. Suggestion: return the FULL prune list (it is
+   only unit + scheme names) and put it behind a scrollable confirm with a
+   "download list" — or at minimum say "…and 58 more" so the operator knows
+   the sample is a sample.
+
 298. 2026-09-07 · BGP staff / mobile 390px (QA r594) · Victoria logging a
    verbal offer on a Bluewater unit from her phone, thumb-typing the tenant's
    name into the Company picker · she typed "Honi" and the panel put

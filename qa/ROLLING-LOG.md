@@ -92,20 +92,111 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r595 · 2026-09-07 · LIGHT (no journey) · ROUND IN PROGRESS
+### r595 · 2026-09-07 · LIGHT (no journey) · 2 bugs fixed, both the FIFTEENTH round of the label-vs-code class and both the SAME literal 'Available' reaching the codes column — once written by hand in a raw INSERT, once supplied by the postgres COLUMN DEFAULT when the field is simply absent · 1 phantom identified · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
-- Two-bot chunk 1 `QA_PERSONAS=mark` ALONE (r594's hand-off): **185 [ok] / 14
-  issues**, and **r594's unverified tail is GREEN** —
-  `client-schedule-cells-read-like-the-staff-view` onward all [ok] through
-  `client-deal-hides-mlro-and-billing-fields`. The chunk self-backgrounded
-  and ran to completion this time.
-- Triage: 8x403 client guard probes, 1x503 keyless AI regenerate, 1x404
-  listed brochure-file, plus the two documented fresh-cross-file phantoms
-  (`client-deal-detail-fee-stripped` 404, `client-brief-target-scope` no
-  briefId) = noise. **ONE candidate to chase: `client-comps-readonly ·
-  flow-failure: Net Effective column missing on client comps`** — not in the
-  mark baseline, under investigation.
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Restored
+  and re-smoked a second time after the destructive verifier below: **GREEN
+  42/0 again**, baselines back to au 76 / ls 169 / ts 201.
+- Two-bot `QA_PERSONAS=mark` ALONE (r594's hand-off): **185 [ok]**, and
+  **r594's UNVERIFIED TAIL IS GREEN** —
+  `client-schedule-cells-read-like-the-staff-view` through
+  `client-deal-hides-mlro-and-billing-fields` all [ok]. The chunk
+  self-backgrounded and ran to completion. `QA_PERSONAS=victoria` **141
+  [ok]**, exact baseline (6x400 + 1x409). woody/nick/sam not re-run (r594
+  had them 24/0 and nothing this round touched their surfaces).
+- **NEW PHANTOM — the third of the run-mark-without-victoria family, add it
+  to the list beside `client-deal-detail-fee-stripped` and
+  `client-brief-target-scope`: `client-comps-readonly · flow-failure: Net
+  Effective column missing on client comps`.** It is NOT an app bug. The
+  fixture's 11 `crm_comps` rows are **all AI leads** (unverified, evidence
+  source News), so `confirmedComps` is empty, the comps TABLE never renders,
+  and the only "Net Effective" text on the page lives in that table's `<th>`
+  (comps.tsx:2810). Victoria's `agent-add-scheme-comp` is what puts a
+  confirmed comp on the board — its own comment says "Kept alive for mark's
+  round". Proven `qa/r595-comps-phantom-probe.mjs` **5 PASS**: baseline 0
+  → staff logs the comp → client sees "Net Effective" → **near-miss
+  CONTROL**, delete the comp and it goes away again. Run mark after a
+  victoria chunk, or expect this line.
+- **BUG FIXED 1 (server/storage.ts `createAvailableUnit`) — the last door a
+  LABEL still walked into `available_units.marketing_status`, and it opens
+  precisely because nobody sends anything.** r588 canonicalises unit status
+  ON WRITE, but `canonicaliseUnitStatus` only rewrites a status that is
+  THERE (`typeof raw !== "string" || !raw.trim()` → return unchanged). A
+  `POST /api/available-units` body that OMITS `marketingStatus` therefore
+  has drizzle omit the column and **postgres apply the table default, which
+  is the literal `'Available'::text`** (schema.ts:1817) — a label, straight
+  past the canonicaliser, into the codes column. Consumers that then walk
+  past it: `chatbgp.ts:14752`'s `marketing_status = 'AVA'` available-count
+  (exactly the r584 bug), the `stat-card-<code>` tiles, `IN ('AVA','NEG')`
+  marketed-unit predicates, and r594's `IN_PLAY_STATUS_RX` (r594 established
+  legacy "Available" matches NEITHER in-play regex). The boot canonicaliser
+  cleans it at the NEXT restart, not before. Both today's UI callers
+  (`unified-add-unit-dialog.tsx:142`, `PropertyTenancySchedule.tsx:786`) do
+  send "AVA", so this is a write-BOUNDARY hole, hardened the same way r594
+  hardened the offer/viewing writers. FIX: `createAvailableUnit` supplies
+  `"AVA"` — the code the default already meant — when the status is absent
+  or blank. Verified live `qa/r595-default-status-probe.mjs` **3 PASS**:
+  omitted → AVA; **CONTROL** explicit label "Available" still canonicalises
+  to AVA; **CONTROL near-miss** explicit "NEG" preserved, so the fix is not
+  blanket-stamping.
+- **BUG FIXED 2 (server/routes.ts:5938) — the deferred 'Available' literal,
+  four rounds on the board, now closed.** The PULL-IN pass of
+  `POST /api/admin/letting-tracker-focus` INSERTed
+  `marketing_status` as the literal `'Available'` with a raw `pool.query`,
+  bypassing `canonicaliseUnitStatus` — while **the same file's two other
+  pull-in paths (routes.ts:6036, :7727) already went through
+  `storage.createAvailableUnit` with `marketingStatus: "AVA"`** (lesson 12
+  again: the sibling in the same file is the tell). FIX: route it through
+  `storage.createAvailableUnit` like its siblings. Verified END TO END
+  through the real endpoint, `qa/r595-verify.mjs` **6 PASS**: seed one idle
+  strategy-board row with activity → dry run names it among its pull-ins
+  (**baseline not vacuous**) → `dryRun:false` → the created listing banks
+  **AVA, not 'Available'**, and it is a `LETTING_STATUSES` code →
+  **CONTROL**, no non-code status anywhere in `available_units` after the
+  run. NOTE the verifier is DESTRUCTIVE (`dryRun:false` also prunes — it
+  deleted 70 of the 76 fixture listings); it says so and the fixture was
+  restored + re-smoked afterwards.
+- Harness growth, both inside the already-loaded
+  `staff-unit-writes-canonicalise-status` so nothing new has to be torn
+  down: (a) a fourth probe POST with `marketingStatus` **omitted**
+  (JSON.stringify drops an undefined value, so the body really has no key)
+  asserting it comes back `AVA`; (b) a **global invariant** over the whole
+  tracker list — no `available_units.marketing_status` outside
+  `LETTING_STATUSES`, with a not-vacuous row-count guard. (b) needed one
+  iteration: it first fired on the scenario's OWN deliberate "Something
+  Else" control row, so it now skips names matching /QA-/ (matched anywhere,
+  not anchored — the boot auto-seed re-lists a leftover QA deal as
+  "<Scheme> – QA-…"). Victoria 141 [ok] after.
+- **NEW GOTCHA, cost this round ~10 minutes: a probe that deletes only its
+  `available_units` rows leaves the AUTO-CREATED DEAL, and the next server
+  BOOT re-lists it under the en-dash name — which then answers the POST's
+  dupe guard, so the NEXT run reads the WRONG ROW and a control fails for no
+  reason.** Symptom: `alreadyListed=true` and a returned row named
+  "<Scheme> – <your unit>". Always purge deals too: `qa/r595-cleanup.mjs`
+  (the r593-cleanup shape, five projections). Also swept a leftover
+  `QA-UNIT-R1` leasing row from the mark chunk — **a mark chunk drifts
+  `leasing_schedule_units` 169 → 170**, same documented family as victoria's
+  169 → 172.
+- Bugs deferred: none new. Still Woody's calls, NOT blind fixes: UX #297
+  (scheme delete strands the investment position), the vacancy-basis
+  question (#290/#286/#295), and **`add_property_imagery` still has NO scope
+  check at all** (chatbgp.ts ~5081, handlers ~6851/~12375) — a client login
+  can attach imagery to ANY property id; scope-model change, needs its own
+  review.
+- **Worth a durable move next: the `'Available'::text` COLUMN DEFAULT is
+  still on `available_units.marketing_status`.** The storage fix covers the
+  drizzle path and both raw INSERTs name the column explicitly, so no door
+  is open today — but the default is a loaded gun for the next writer.
+  Changing it needs a migration, so it was NOT touched (CLAUDE.md: flag
+  schema/migration changes). Woody's call.
+- Suggestions added: UX #300 (staff /comps blames the filters when all 11
+  comps are unreviewed AI leads — the CLIENT copy of the same empty state
+  gets it right), #301 (tracker Focus reports a 12-name sample for 70
+  deletions).
+- New flakes: none. `npx tsc --noEmit` clean.
+- Next: **r596 takes rotation #1, BGP staff · desktop 1440px.** Run
+  `QA_PERSONAS=victoria` BEFORE `QA_PERSONAS=mark` or accept the
+  `client-comps-readonly` phantom above.
 
 ### r594 · 2026-09-07 · FULL (rotation #4 BGP staff · mobile 390px) · 2 bugs fixed, both the LABEL-vs-CODE class landing in the SAME hole from two sides — the asset brief's four "in play" queries cannot match the code HOT, and the tracker's offer/viewing writers bank '' where every consumer tests IS NOT NULL · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
