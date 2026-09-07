@@ -92,25 +92,164 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r592 · 2026-09-07 · FULL (rotation #3 — Landsec client · mobile 390px) · ROUND IN PROGRESS
+### r592 · 2026-09-07 · FULL (rotation #3 — Landsec client · mobile 390px) · journey: "an operator came to me direct", with a self-add write · 1 bug fixed, BOTH HALVES: the Letting Tracker stamped a value the LANDLORD'S OWN tenancy schedule buckets into no tile, and its delete stranded the stub · 2 suggestions
 - Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`
-  **GREEN 42 checks / 0 failures**, then `node qa/apply-sql.mjs
-  qa/seed-personas.sql` (the seeding trap — mandatory on a client round).
-- Two-bot chunked on a shared `QA_CROSS_FILE=/tmp/qa-cross-592.json`:
-  chunk 1 `QA_PERSONAS=victoria` **140 [ok]**, chunk 2
-  `QA_PERSONAS=mark,woody,nick,sam` **212 [ok]**. No flow failures. Triage:
-  every issue is documented baseline — victoria 6x400 (rocketreach x3, the
-  deliberate invalid POST /api/investment-tracker, the two deliberate probes
-  in `staff-unbalanced-fee-split-is-refused`) + 1x409 (the SOL+ AML gate,
-  correct); mark exactly 9x403 (client guard probes) + 1x503 (keyless
-  commentary regenerate) + 1x404 (the listed brochure file); woody/nick/sam
-  0. **Streak 48 clean hand-offs.** No self-skips: all seven skip-capable
-  scenarios logged [ok] with no `[skip]` line. Chunk 2 again hit the 600s
-  Bash cap and was read from its redirect file (documented harness trap).
-- Journey underway: Mark Warne on an iPhone at 390px — "an operator came to
-  me direct" (phone /brands as a client → global-directory self-add WRITE →
-  brand profile phone pills incl. Compliance & KYC). Ground r584 did not
-  cover.
+  **GREEN 42/0**, then `node qa/apply-sql.mjs qa/seed-personas.sql` (the
+  seeding trap — mandatory on a client round).
+- Two-bot chunked on a shared `QA_CROSS_FILE=/tmp/qa-cross-592.json`: chunk 1
+  `QA_PERSONAS=victoria` **140 [ok]**, chunk 2 `QA_PERSONAS=mark,woody,nick,sam`
+  **212 [ok]**, no flow failures. Every issue documented baseline — victoria
+  6x400 (rocketreach x3, the deliberate invalid POST /api/investment-tracker,
+  the two deliberate probes in `staff-unbalanced-fee-split-is-refused`) +
+  1x409 (SOL+ AML gate, correct); mark exactly 9x403 + 1x503 + 1x404;
+  woody/nick/sam 0. **Streak 48.** No self-skips — all seven skip-capable
+  scenarios logged [ok] with no `[skip]` line. Chunk 2 hit the 600s Bash cap
+  again and was read from its redirect file (documented harness trap).
+- JOURNEY (Mark Warne, iPhone UA + touch at 390px, deliberately NOT r584's
+  route): "a jewellery/watch operator stopped me in the mall at Bluewater —
+  who are they, are they on my list, add them if not, are they good for the
+  covenant, and which unit would I put them in." phone home -> /brands on the
+  phone -> quick-search -> Add-brand dialog -> **the self-add WRITE** -> brand
+  profile phone pills (Compliance & KYC) -> the client Leasing Schedule at
+  390px -> the Tenancy Schedule at 390px -> global-search palette. Shots
+  `qa/smoke-shots/r592-*.png`.
+- CLEAN, don't redo: **the client's global-directory self-add is sound end to
+  end** — dialog -> toast -> `POST /api/client/crm/add-brand` -> `/api/crm/
+  companies` (11 rows, brand present) -> the list after a full reload (9 -> 10
+  results, a new "Luxury 1" category tile) -> the /brands quick-search now
+  finds it -> the phone global-search palette finds it, with a NEAR-MISS
+  control ('QA Retail Brand', out of slice and NOT added, returns "No results"
+  from the palette and 403 from every scoped brand surface).
+  `qa/r592-selfadd-reach-probe.mjs` walks the self-added brand, an in-slice
+  control and the not-added control across seven scoped surfaces: the
+  self-added brand behaves **identically to the in-slice control everywhere**,
+  so `crm_extra_brand_ids` is honoured consistently and no surface hand-rolls
+  the category slice. Brand profile on the phone carries all six pills
+  (Chat/Contacts/Intel/Stores/Social/Compliance); Compliance & KYC IS visible
+  per Woody's 2026-08-01 decision and the staff-only edit/refresh/rescrape
+  buttons are correctly hidden behind `!bcIsClient` — the only Companies House
+  control left for a client is an external <a> to companieshouse.gov.uk, not a
+  write. The "parked"-less rows on the KYC checklist (Latest accounts, Annual
+  report) are deliberate (`row.key !== "accounts" && !== "annual_report"`).
+- BUG FIXED — **every unit a BGP agent adds on the Letting Tracker landed on
+  the LANDLORD'S OWN Tenancy Schedule in no tile at all, and the tracker's
+  delete then stranded it.** `POST /api/available-units` calls
+  `ensureTenancyRowForAvailableUnit` (routes.ts:4589), which inserts a spine
+  stub with `mapMarketingToTenancyStatus(marketing_status)`
+  (unit-mirror.ts:231). Its DEFAULT arm returned the string **"Marketing"** —
+  and unit-mirror.ts's OWN comment calls that a legacy imported value, not
+  part of the canonical vocab. It is absent from `SCHEDULE_STATUSES`, from
+  `STATUS_BUCKETS` (`Occupied:[Occupied,Trading,Let,Not Vacant]`,
+  `Vacant:[Vacant,Void,Available,AVA]`) and from `SCHEDULE_STATUS_COLOURS`
+  (PropertyTenancySchedule.tsx:232/247/253). So on the landlord's schedule the
+  new unit was in `units.length` but in NEITHER the Occupied nor the Vacant
+  tile, **invisible to the vacant filter the void list is built from**, and
+  chip-colourless. NEG collapsed onto the same value, losing the In
+  Negotiation state (which has its own tile).
+  **Second half, the r591 drift shape:** the stub cleanup in
+  `DELETE /api/available-units/:id` (routes.ts:4877) required
+  `status = 'Marketing'` — the ONE value the mirror stamps for AVA/NEG — so a
+  stub created for a SOL/EXC unit ('Under Offer') or a COM/INV one
+  ('Occupied') never matched and was **stranded on the landlord's tenancy
+  schedule forever**. Two paths writing/reading one column; only one of them
+  was checked when the value set grew.
+  Now: `mapMarketingToTenancyStatus` maps onto canonical states (AVA/OPP/LIVE/
+  unknown -> Vacant, NEG/HOT -> In Negotiation, SOL/EXC -> Under Offer,
+  COM/INV -> Occupied, WIT/ARCH -> Archived) — all of which round-trip back
+  through `mapTenancyToMarketingStatus` to the same codes; the delete and the
+  create both read one exported `TENANCY_STUB_STATUSES` (legacy 'Marketing'
+  included) so they cannot drift again; and on the read side 'Marketing' joins
+  the Vacant bucket + gets a chip colour, so any production row already
+  stamped with it counts as the vacancy it is.
+- PROVEN with CONTROLS (`qa/r592-probe.mjs --restore`, before/after through the
+  real endpoints): BEFORE — stubs at AVA and NEG both landed on 'Marketing',
+  `bucketed:false`, tiles `total 203 · occupied 125 · vacant 75 · MISSING 3`;
+  the tracker DELETEs then left **2 spine rows behind** (the 'Under Offer' and
+  'Occupied' stubs). AFTER — AVA -> 'Vacant' (in the Vacant tile and filter),
+  NEG -> 'In Negotiation', tiles `occupied 125 · vacant 76 · MISSING 2` (the
+  two remaining are 'In Negotiation'/'Under Offer', which have their OWN tiles
+  when non-zero — correctly surfaced, unlike 'Marketing'), and **0 spine rows
+  left behind**. CONTROLS: the COM stub ('Occupied') and SOL stub ('Under
+  Offer') were already correct before the fix and are unchanged by it, and the
+  199 pre-existing Bluewater spine rows were untouched throughout.
+- **VISUALLY VERIFIED** (`qa/r592-verify.mjs`, shots `r592-71-verify-tenancy-
+  tiles.png` / `r592-72-verify-vacant-filter.png`): victoria adds
+  `QA-R592-VERIFY` at AVA on the tracker; Mark's own Tenancy Schedule at 390px
+  then reads **Vacant 76** (was 75), Occupied unchanged at 124, and tapping the
+  Vacant tile SHOWS the unit — before the fix it was in neither tile and not in
+  that list. The tracker DELETE takes its spine stub with it (0 left).
+- Scenario cover added to `staff-unit-writes-canonicalise-status`: it now
+  counts the auto-created tenancy-spine stubs BEFORE the deletes, asserts each
+  carries a status the landlord's board actually buckets (with a NOT-VACUOUS
+  control that fails loudly if the POST created no stub), and asserts none
+  survives the tracker DELETE. Fire-tested: victoria chunk re-run **140 [ok]**,
+  scenario `[ok]`, not skipped.
+- Post-fix `bash qa/run-smoke.sh` **GREEN 42/0**; `npx tsc --noEmit` clean.
+- FIXTURE restored exactly: `au 76 / ls 169 / ts 201`, `tenancy_schedule_units`
+  status census back to Occupied 87 · Vacant 71 · Not Vacant 36 · Void 6 ·
+  Let 1 with **no 'Marketing' rows**, and Landsec's `crm_extra_brand_ids` back
+  to just Testco Fashion (the journey's self-add undone). `qa/r591-cleanup.mjs`
+  used at the end.
+- STILL OPEN, FLAGGING LOUDLY (untouched — it is a scope-model change, not a
+  blind fix): **`add_property_imagery` has NO scope check at all**
+  (chatbgp.ts ~5081, handlers ~6851 and ~12375), so a client login can attach
+  imagery to ANY property id. Needs its own review with Woody.
+- NOTED, fixed elsewhere, do NOT re-fix here: ChatBGP `edit_image` /
+  `save_to_image_studio` 403ing a client on their own upload — fixed on branch
+  `claude/land-sec-chat-osube5`, not on qa-staging. Expect the old behaviour.
+- DEFERRED POOL, examined this round: **(a) r589's `--kind=assign --all`
+  27-hit census is now DONE** — 28 hits, only ONE diverges and that one
+  (property-plans.ts:199) is the already-listed sweep false positive (a local
+  variable). Of the rest, every server hit is either a different enum
+  (staff_reviews, hr, models/mcp job status, leasing_schedule_units labels), a
+  prompt/tool-description string, or a comparison the sweep mis-shapes as a
+  write. The one that looked real — `deals.tsx:3633` PUTting
+  `status: "HOTs"` at a codes column — is SAFE: `PUT /api/crm/deals/:id`
+  canonicalises with `legacyToCode` before anything reads or writes
+  (crm.ts:3452-3456). **routes.ts:4877 was the live one in that census and is
+  the bug fixed above** — so the assign shape has now paid out. Remaining
+  deferred, unchanged: (b) UX #289/#293's en-dash guard hole; (c) UX #290/#286's
+  vacancy-basis decision (Woody's call — and note the same question now sits on
+  the tenancy board, where 'In Negotiation'/'Under Offer' units are in neither
+  the Occupied nor the Vacant tile by design); (d) `investment_tracker`'s 119
+  property_id orphans; (e) the residual QA leasing rows + 5 QA deals; (f)/(g)/
+  (h)/(i) unchanged.
+- NEW GROUND TRUTH, record it: **`tenancy_schedule_units.status` is its OWN
+  vocabulary and it is MIXED** — 'Occupied' 87 · 'Vacant' 71 · **'Not Vacant'
+  36** · **'Void' 6** · **'Let' 1** (the last three from the Landsec feed).
+  `SCHEDULE_STATUSES` is the canonical set the editor offers; `STATUS_BUCKETS`
+  (PropertyTenancySchedule.tsx:247) is what the TILES actually fold, and r556
+  already had to fix tiles-vs-filter drift there. Do NOT apply deal-code
+  reasoning to this column. Its own bridges are
+  `mapTenancyToMarketingStatus` / `mapTenancyToLeasingStatus` /
+  `mapMarketingToTenancyStatus` in server/unit-mirror.ts.
+- Also observed, NOT bugs: the tenancy board's PASSING RENT tile reads "—"
+  because `passing_rent_pa` is null on all 199 fixture rows (the Excel import
+  maps "rent pa" -> that column, so it is fixture data, not code); the
+  leasing board's null-status row `QA Honi pitch (Landsec)` is a fixture row
+  and is why 165 != 88+76 there. `mobile-home.tsx`'s client portfolio tile is
+  well built — `legacyToCode` bridged, buckets cover OPP..INV, and "0 Let" is
+  genuine (no COM/INV units on the tracker).
+- Suggestions: UX #294 (the /brands quick-search dead-ends on a brand that
+  exists in the wider directory and tells the client to "try a shorter name"),
+  UX #295 (the two Bluewater boards report different occupancy with no stated
+  basis, and the leasing board's "pulls live from the Tenancy Schedule"
+  strapline overclaims what the route joins).
+- New flakes: none. Minor a11y noise seen on the phone (not filed as a bug):
+  `Warning: Missing 'Description' or 'aria-describedby' for {DialogContent}`
+  from the Add-brand dialog and the global-search palette.
+- Scripts kept: `qa/r592-client-mobile-journey.mjs` (harness — also reports
+  H-overflow, the widest overflowing elements, and sub-44px non-pill tap
+  targets), `qa/r592-brand-selfadd.mjs`, `qa/r592-brand-profile-phone.mjs`,
+  `qa/r592-leasing-phone.mjs`, `qa/r592-tenancy-phone.mjs`,
+  `qa/r592-find-added-brand.mjs`, `qa/r592-global-search.mjs`,
+  `qa/r592-selfadd-reach-probe.mjs`, `qa/r592-probe.mjs` (--restore),
+  `qa/r592-verify.mjs`.
+- FOR r593: **LIGHT round** (r592 had the journey) — spend it on triage and the
+  deferred pool. Highest-value untouched items now: (d) `investment_tracker`'s
+  119 property_id orphans, never examined; (b) UX #289/#293's en-dash guard
+  hole, which has a named source; and the residual QA leasing rows. The
+  `assign` census is closed — don't re-run it.
 
 ### r591 · 2026-09-07 · LIGHT (no journey — r590 had it) · 2 bugs fixed: the Letting Tracker wrote marketing CODES into the leasing board's LABEL column, and deleting a scheme stranded its whole unit spine · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0** (3m38s),

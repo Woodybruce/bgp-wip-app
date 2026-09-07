@@ -4349,6 +4349,18 @@ async function victoriaRound(page, cross) {
       const lsRows = Array.isArray(ls) ? ls : (ls?.units || ls?.data || []);
       const lsMade = lsRows.filter(u => String(u.unit_name || u.unitName || '').startsWith(`QA-R588-LBL-`));
       out.leasingStatuses = lsMade.map(u => u.status ?? null);
+      // r592: the POST ALSO mirrors a stub onto the LANDLORD'S tenancy spine
+      // (ensureTenancyRowForAvailableUnit). That board buckets its KPI tiles
+      // via STATUS_BUCKETS and colours chips from SCHEDULE_STATUS_COLOURS;
+      // the mirror used to stamp the legacy value "Marketing", which is in
+      // neither — so an agent's new unit sat in the row list, outside the
+      // Vacant tile, and outside the vacant filter the landlord's void list
+      // is built from. Count the stubs BEFORE the deletes so the teardown
+      // assertion below can't pass on an empty set.
+      const tsBefore = await (await fetch(`/api/tenancy-schedule/property/${rows[0].id}`, { credentials: 'include', headers: h })).json().catch(() => []);
+      const tsRowsB = Array.isArray(tsBefore) ? tsBefore : (tsBefore?.units || tsBefore?.data || []);
+      const tsMade = tsRowsB.filter(u => String(u.unit_number || u.unitNumber || u.premises || '').startsWith('QA-R588-LBL-'));
+      out.tenancyStatuses = tsMade.map(u => u.status ?? null);
       const dels = [];
       for (const id of made) {
         const d = await fetch(`/api/available-units/${id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => ({ status: 0 }));
@@ -4378,6 +4390,13 @@ async function victoriaRound(page, cross) {
       const stillDeals = await (await fetch('/api/crm/deals', { credentials: 'include', headers: h })).json().catch(() => []);
       out.dealsLeft = (Array.isArray(stillDeals) ? stillDeals : (stillDeals?.data || stillDeals?.deals || []))
         .filter(x => /QA-R588-LBL-/.test(String(x.name || ''))).length;
+      // r592: the tracker DELETE clears the untouched spine stub it created,
+      // but the predicate matched the single literal 'Marketing' — so a stub
+      // for a SOL/EXC or COM/INV unit was stranded on the landlord's schedule
+      // for good. Both sides now read TENANCY_STUB_STATUSES.
+      const tsAfter = await (await fetch(`/api/tenancy-schedule/property/${rows[0].id}`, { credentials: 'include', headers: h })).json().catch(() => []);
+      const tsRowsA = Array.isArray(tsAfter) ? tsAfter : (tsAfter?.units || tsAfter?.data || []);
+      out.tenancyLeft = tsRowsA.filter(u => String(u.unit_number || u.unitNumber || u.premises || '').startsWith('QA-R588-LBL-')).length;
       const still = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
       const stillRows = Array.isArray(still) ? still : (still?.data || still?.units || []);
       out.dels = dels;
@@ -4397,6 +4416,14 @@ async function victoriaRound(page, cross) {
     if (stray.length) throw new Error(`the auto-created leasing-schedule row(s) carry ${JSON.stringify(stray)} — a marketing CODE in the leasing board's LABEL column (chip renders raw, Vacant tile misses it)`);
     if (!(got.leasingStatuses || []).length) throw new Error('CONTROL failed: the POST created no leasing-schedule row to check — this assertion is vacuous');
     if (got.dealsLeft) throw new Error(`this scenario leaked ${got.dealsLeft} auto-created deal(s) (DELETE statuses ${JSON.stringify(got.dealDels)}) — a boot hook re-materialises a tracker listing from each one on the next restart`);
+    // r592: the tenancy board's tiles only bucket these. A status outside the
+    // set (the legacy 'Marketing' the mirror used to stamp) leaves the unit in
+    // the row list and in NO tile, and the vacant filter walks past it.
+    const TENANCY_BUCKETED = ['Vacant', 'Void', 'Available', 'AVA', 'Occupied', 'Trading', 'Let', 'Not Vacant', 'In Negotiation', 'Under Offer', 'Lease Event', 'Archived', 'Opportunity'];
+    const tStray = (got.tenancyStatuses || []).filter(v => v !== null && !TENANCY_BUCKETED.includes(v));
+    if (tStray.length) throw new Error(`the auto-created tenancy-spine stub(s) carry ${JSON.stringify(tStray)} — a status the landlord's own schedule buckets into no tile (missing from Occupied AND Vacant, hidden from the vacant filter, no chip colour)`);
+    if (!(got.tenancyStatuses || []).length) throw new Error('CONTROL failed: the POST created no tenancy-spine stub to check — this assertion is vacuous');
+    if (got.tenancyLeft) throw new Error(`${got.tenancyLeft} tenancy-spine stub(s) survived the tracker DELETE — stranded on the landlord's tenancy schedule with no unit behind them`);
   });
 
   // r588: the fee-allocation rule is that percentage rows must sum to 100%

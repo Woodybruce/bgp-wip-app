@@ -13,6 +13,38 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+294. 2026-09-07 · Landsec client / mobile 390px (QA r592) · an operator
+   stopped Mark in the mall at Bluewater; on his phone he typed their name
+   into the search box at the top of /brands to see what BGP already knew ·
+   the quick-search only looks inside his own CRM, so it answered "No matches
+   for 'Jewel' — try a shorter name". The brand DOES exist — it's just outside
+   his hospitality/leisure/fitness slice — and the advice is wrong: no shorter
+   name would ever find it. Nothing in that empty state points at the "Add
+   brand" button that searches the wider directory, so the only way through is
+   to already know the two-step dance. Once added, the same search finds it
+   instantly · SUGGESTION: when the quick-search returns nothing from the
+   client's own CRM, run the same term against /api/client/crm/global-brands
+   and render the hits under a second heading ("Not in your CRM — tap to add"),
+   each with the inline Add button from the dialog. Same two endpoints, one
+   step instead of three, and the "try a shorter name" line only shows when
+   the directory is genuinely empty too.
+
+295. 2026-09-07 · Landsec client / mobile 390px (QA r592) · Mark wanted the
+   occupancy position on one scheme and opened both boards Bluewater offers ·
+   /leasing-schedule/:id reports "165 Total Units · 88 Occupied · 76 Vacant"
+   while /tenancy-schedule/:id reports "199 units · Occupied 124 · Vacant 75"
+   for the same centre on the same day. Both are internally consistent (the
+   leasing board is a strategy board over a 165-row subset), but nothing on
+   either says so — and the leasing board's own strapline reads "Unit facts
+   (tenant, rent, dates) pull live from the Tenancy Schedule", which the
+   route only does for tenant name and the three lease dates, not rent or
+   status. On a phone the two boards can't be put side by side, so a landlord
+   reads them as a contradiction · SUGGESTION: the leasing board is already
+   badged ARCHIVED — either drop its Occupied/Vacant tiles altogether (the
+   Tenancy Schedule is the occupancy source of record) or label them with
+   their basis ("88 of the 165 strategy rows"), and trim the strapline to the
+   fields it actually joins live.
+
 292. 2026-09-07 · BGP staff / desktop (QA r591) · an agent removing a unit
    from the Letting Tracker · `DELETE /api/available-units/:id` takes the
    tracker card away, but the two rows the CREATE spawned on its behalf stay:
