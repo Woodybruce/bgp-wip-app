@@ -1774,7 +1774,13 @@ async function victoriaRound(page, cross) {
         }
         await fetch('/api/tenancy-schedule/bulk-delete', { method: 'POST', credentials: 'include', headers: auth,
           body: JSON.stringify({ propertyId: prop.id }) }).catch(() => {});
+        // r591: count the property's board rows BEFORE the delete so the
+        // cascade check below can't pass on an empty set.
+        const before = await (await fetch(`/api/leasing-schedule/property/${prop.id}`, { headers: auth })).json().catch(() => []);
+        out.leasingBefore = (Array.isArray(before) ? before : (before?.units || before?.data || [])).length;
         await fetch(`/api/crm/properties/${prop.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+        const after = await (await fetch(`/api/leasing-schedule/property/${prop.id}`, { headers: auth })).json().catch(() => []);
+        out.leasingAfter = (Array.isArray(after) ? after : (after?.units || after?.data || [])).length;
       };
       try {
         const mkRow = () => fetch('/api/tenancy-schedule/unit', { method: 'POST', credentials: 'include', headers: auth,
@@ -1793,6 +1799,11 @@ async function victoriaRound(page, cross) {
     }, ROUND);
     if (!r.ok) throw new Error(`re-import simulation failed (${r.why})`);
     if (r.trackerRows !== 1) throw new Error(`delete + re-import left ${r.trackerRows} tracker rows for one unit (want 1 — duplication regression)`);
+    // r591: deleting a scheme used to strand its whole unit spine. One QA
+    // rent-roll re-import left 157 orphan leasing_schedule_units rows behind
+    // every round — rows no surface can reach but every count still scans.
+    if (!r.leasingBefore) throw new Error('CONTROL failed: the throwaway property had no leasing-schedule rows, so the cascade check below is vacuous');
+    if (r.leasingAfter) throw new Error(`deleting the property left ${r.leasingAfter} of its ${r.leasingBefore} leasing-schedule row(s) orphaned`);
   });
 
   // Comps parity: a comp Victoria logs against the client's scheme must show
@@ -4328,11 +4339,45 @@ async function victoriaRound(page, cross) {
       // fixture (81 -> 82 listings), silently. Report the DELETE statuses and
       // the survivors so a leak fails loudly instead of leaving a phantom
       // unit for the next round to trip over.
+      // r591: POST /api/available-units ALSO auto-creates a
+      // leasing_schedule_units row, and that board has its own enum
+      // (Vacant / In Negotiation / Under Offer / Occupied / Archived).
+      // The create path used to write the marketing CODE straight in, so a
+      // just-added unit sat on the client-facing board as a raw "AVA" chip,
+      // outside the Vacant tile and outside the vacant filter.
+      const ls = await (await fetch(`/api/leasing-schedule/property/${rows[0].id}`, { credentials: 'include', headers: h })).json().catch(() => []);
+      const lsRows = Array.isArray(ls) ? ls : (ls?.units || ls?.data || []);
+      const lsMade = lsRows.filter(u => String(u.unit_name || u.unitName || '').startsWith(`QA-R588-LBL-`));
+      out.leasingStatuses = lsMade.map(u => u.status ?? null);
       const dels = [];
       for (const id of made) {
         const d = await fetch(`/api/available-units/${id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => ({ status: 0 }));
         dels.push(d.status);
       }
+      // Deleting the tracker listing does NOT remove the leasing-schedule row
+      // the POST spawned, so this scenario has to take its own board rows out
+      // or it drifts the fixture every round (r590 found three of them
+      // showing as a fake letting on the CLIENT dashboard).
+      out.leasingDels = [];
+      for (const u of lsMade) {
+        const d = await fetch(`/api/leasing-schedule/unit/${u.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => ({ status: 0 }));
+        out.leasingDels.push(d.status);
+      }
+      // r591: the POST also auto-creates a backing crm_deal named
+      // "<Scheme> – <Unit>" (EN DASH), and deleting the tracker row leaves it.
+      // A boot hook then re-materialises a tracker listing from that orphan
+      // deal with a NEW id every restart — this is the "something re-creates
+      // the row at boot" r590 was chasing. Take the deal out too.
+      const deals = await (await fetch('/api/crm/deals', { credentials: 'include', headers: h })).json().catch(() => []);
+      const dealRows = Array.isArray(deals) ? deals : (deals?.data || deals?.deals || []);
+      out.dealDels = [];
+      for (const d of dealRows.filter(x => /QA-R588-LBL-/.test(String(x.name || '')))) {
+        const r = await fetch(`/api/crm/deals/${d.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => ({ status: 0 }));
+        out.dealDels.push(r.status);
+      }
+      const stillDeals = await (await fetch('/api/crm/deals', { credentials: 'include', headers: h })).json().catch(() => []);
+      out.dealsLeft = (Array.isArray(stillDeals) ? stillDeals : (stillDeals?.data || stillDeals?.deals || []))
+        .filter(x => /QA-R588-LBL-/.test(String(x.name || ''))).length;
       const still = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
       const stillRows = Array.isArray(still) ? still : (still?.data || still?.units || []);
       out.dels = dels;
@@ -4344,6 +4389,14 @@ async function victoriaRound(page, cross) {
     if (got.neg !== 'skipped' && got.neg !== 'NEG') throw new Error(`CONTROL failed: "Under Negotiation" came back as ${JSON.stringify(got.neg)}, not NEG — the canonicaliser is blanket-stamping`);
     if (got.unknown !== 'skipped' && got.unknown !== 'Something Else') throw new Error(`CONTROL failed: an unrecognised status was rewritten to ${JSON.stringify(got.unknown)} instead of being left alone`);
     if (got.leaked) throw new Error(`this scenario leaked ${got.leaked} of its own unit row(s) into the fixture (DELETE statuses ${JSON.stringify(got.dels)}) — the next round inherits a phantom listing`);
+    // r591: LEASING_STATUSES from shared/lease-status-mirror.ts. A raw code
+    // here renders as an unrecognised grey chip and is missing from the
+    // Vacant count on the property's leasing board.
+    const LEASING = ['Vacant', 'In Negotiation', 'Under Offer', 'Occupied', 'Trading', 'Lease Event', 'Archived'];
+    const stray = (got.leasingStatuses || []).filter(v => v !== null && !LEASING.includes(v));
+    if (stray.length) throw new Error(`the auto-created leasing-schedule row(s) carry ${JSON.stringify(stray)} — a marketing CODE in the leasing board's LABEL column (chip renders raw, Vacant tile misses it)`);
+    if (!(got.leasingStatuses || []).length) throw new Error('CONTROL failed: the POST created no leasing-schedule row to check — this assertion is vacuous');
+    if (got.dealsLeft) throw new Error(`this scenario leaked ${got.dealsLeft} auto-created deal(s) (DELETE statuses ${JSON.stringify(got.dealDels)}) — a boot hook re-materialises a tracker listing from each one on the next restart`);
   });
 
   // r588: the fee-allocation rule is that percentage rows must sum to 100%

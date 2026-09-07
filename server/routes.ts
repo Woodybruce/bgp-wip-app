@@ -39,7 +39,8 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
-import { legacyToCode } from "@shared/deal-status";
+import { legacyToCode, DEAL_STATUS_CODES } from "@shared/deal-status";
+import { codeToLeasingStatus } from "@shared/lease-status-mirror";
 import { registerIngestRoutes } from "./ingest-routes";
 import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { setupStripeIssuingRoutes } from "./stripe-issuing";
@@ -4563,12 +4564,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           [parsed.propertyId, parsed.unitName || ""]
         );
         if (existingLs.rows.length === 0) {
+          // The Leasing Schedule has its OWN enum (Vacant / In Negotiation /
+          // Under Offer / Occupied / Archived) — it is not the canonical code
+          // set. Writing the tracker's marketing CODE straight in left the
+          // client-facing board showing a raw "AVA"/"HOT" chip that neither
+          // STATUS_CHIP_COLORS nor the Vacant tile recognises. Translate
+          // through the shared bridge, same as the PATCH mirror does.
           await pool.query(
             `INSERT INTO leasing_schedule_units
                (property_id, unit_name, sqft, rent_pa, status)
              VALUES ($1, $2, $3, $4, $5)`,
             [parsed.propertyId, parsed.unitName || null, parsed.sqft ?? null,
-             parsed.askingRent ?? null, parsed.marketingStatus || "AVA"]
+             parsed.askingRent ?? null, codeToLeasingStatus(parsed.marketingStatus) || "Vacant"]
           );
         }
       } catch (e: any) {
@@ -6403,12 +6410,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Marketing CODE -> Leasing Schedule enum, as a SQL CASE derived from the
+  // shared bridge so the backfill can't drift from codeToLeasingStatus.
+  const LEASING_STATUS_CASE = `CASE lower(trim(coalesce(au.marketing_status, '')))\n${
+    DEAL_STATUS_CODES.map((c) => `             WHEN '${c.toLowerCase()}' THEN '${codeToLeasingStatus(c)}'`).join("\n")
+  }\n           END`;
+
   app.post("/api/available-units/backfill-leasing-schedule", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const { rows } = await pool.query(
         `WITH inserted AS (
            INSERT INTO leasing_schedule_units (property_id, unit_name, sqft, rent_pa, status)
-           SELECT au.property_id, au.unit_name, au.sqft, au.asking_rent, COALESCE(au.marketing_status, 'AVA')
+           SELECT au.property_id, au.unit_name, au.sqft, au.asking_rent,
+                  COALESCE(${LEASING_STATUS_CASE}, 'Vacant')
            FROM available_units au
            WHERE NOT EXISTS (
              SELECT 1 FROM leasing_schedule_units ls

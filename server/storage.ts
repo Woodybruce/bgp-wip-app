@@ -1013,6 +1013,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteCrmProperty(id: string): Promise<void> {
+    const {
+      propertyUnits, tenancyScheduleUnits, leasingScheduleUnits, leasingScheduleAudit,
+      unitMarketingFiles, unitViewings, unitOffers,
+    } = await import("@shared/schema");
     await db.transaction(async (tx) => {
       await tx.update(crmDeals).set({ propertyId: null }).where(eq(crmDeals.propertyId, id));
       await tx.delete(crmPropertyAgents).where(eq(crmPropertyAgents.propertyId, id));
@@ -1021,6 +1025,26 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(crmContactProperties).where(eq(crmContactProperties.propertyId, id));
       await tx.delete(crmCompanyProperties).where(eq(crmCompanyProperties.propertyId, id));
       await tx.delete(crmReqInvestProperties).where(eq(crmReqInvestProperties.propertyId, id));
+      // The unit spine and its two projections are OWNED by the property —
+      // once the property row is gone nothing can reach them, but every
+      // count that scans the table still does. Deleting a scheme used to
+      // strand its whole rent roll: one QA re-import left 157 orphan
+      // leasing_schedule_units rows behind, and a stranded available_units
+      // row keeps a card on the firm-wide Letting Tracker for a scheme that
+      // no longer exists. Children of the tracker rows go first, mirroring
+      // deleteAvailableUnit.
+      const trackerRows = await tx.select({ id: availableUnits.id })
+        .from(availableUnits).where(eq(availableUnits.propertyId, id));
+      for (const u of trackerRows) {
+        await tx.delete(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, u.id));
+        await tx.delete(unitViewings).where(eq(unitViewings.unitId, u.id));
+        await tx.delete(unitOffers).where(eq(unitOffers.unitId, u.id));
+      }
+      await tx.delete(availableUnits).where(eq(availableUnits.propertyId, id));
+      await tx.delete(leasingScheduleAudit).where(eq(leasingScheduleAudit.propertyId, id));
+      await tx.delete(leasingScheduleUnits).where(eq(leasingScheduleUnits.propertyId, id));
+      await tx.delete(tenancyScheduleUnits).where(eq(tenancyScheduleUnits.propertyId, id));
+      await tx.delete(propertyUnits).where(eq(propertyUnits.propertyId, id));
       await tx.delete(crmProperties).where(eq(crmProperties.id, id));
     });
   }
