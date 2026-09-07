@@ -104,10 +104,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   same 4x400 + 1x409 baseline, with the new
   `staff-units-ship-codes-so-vacancy-counts` scenario [ok] — fire-tested in
   situ, not just syntax-checked.
-  **The mark chunk was NOT run** (budget went on the journey, which was this
-  round's brief) — knowingly dropped, so the clean-hand-off streak stays
-  unextended at 43. Both fixes are staff/AI-context paths, no client-scope
-  surface changed.
+  MARK CHUNK RAN TOO, after the fixes: 0 flow failures, tally 9x403 + 1x503 +
+  1x404 — exactly the documented client baseline (guard probes, the keyless
+  AI regenerate, the listed brochure-file 404). **Clean-hand-off streak
+  extended to 44.** Note for the next round: this chunk exceeds the 600s Bash
+  cap on its own — the harness moved it to the background and it finished
+  there with its tally intact, but do not count on that; it is the same run
+  that "looks deceptively clean" when it is killed instead, so always read
+  the tally, never the exit code.
 - JOURNEY (the round's main event) — Victoria on an iPhone UA at 390px, out
   of the office: "just come out of a viewing at Bluewater, log it and chase
   the next step." Walked as her, every step judged, screenshots
