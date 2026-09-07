@@ -92,6 +92,28 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r582 · 2026-09-07 · FULL (rotation #2 Landsec client · desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written). Smoke GREEN 42 checks / 0 failures.
+- Two-bot FULL pass running (`node qa/two-bot-round.mjs 582` under
+  qa/with-server.sh; backgrounds itself past the 600s cap). victoria + most of
+  mark clean so far, no failures — only the baseline-class 403 echo on
+  client-chat-media-own-roundtrip (which then passes).
+- Status-literal sweep re-run: 104 sets, 42 exact, 62 divergent
+  [list 50 · keys 10 · union 1 · case 1]. Deadcol sweep run.
+- TRIAGE: every client-facing status set the sweep flags (properties-summary
+  33/34, tracker-summary 23, properties.tsx 5196/5201, available-units
+  88/92/93/94 + 1326) already carries HOT — r574's fixes hold.
+  deals-summary.tsx:27 LIVE_CODES misses HOT but its feed is SOL+ only
+  (#255), symptomless. dashboard.tsx:2106 Vacancy Pipeline tests deal status
+  with `.includes("completed")` on a CODE field — a fifth shape the sweep is
+  blind to (legacy status WORDS via substring) — but the endpoint already
+  filters WIT/COM/INV in SQL, so it is a no-op, not a bug.
+- BUG UNDER FIX: server/crm.ts:3607 gates the deal "What did we learn?"
+  knowledge capture on `req.body.status === "Completed"` — a legacy WORD —
+  while the dialog sends the CODE "COM". The learning text is then deleted
+  from the body. Verifying in the browser.
+
 ### r581 · 2026-09-07 · LIGHT (r580 had the journey) · 2 bugs fixed — an agent's own "Working on right now" card printed the RAW CODE for heads of terms, and the deal Edit dialog could not record HOTs at all (UX #252, deferred six rounds) · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
