@@ -92,6 +92,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r583 · 2026-09-07 · LIGHT · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas).
+  Smoke GREEN 42 checks / 0 failures.
+- Two-bot: run CHUNKED (the full pass does NOT self-background in this
+  container — it just gets killed at the 600s cap; chunk with
+  QA_PERSONAS + QA_CROSS_FILE). victoria chunk: 132 [ok], 0 failures,
+  only the baseline rocketreach POST 400s. Remaining personas running.
+- Deep angle (r582 hand-off): grep server/ for comparisons against LEGACY
+  LABEL strings while crm_deals.status stores CODES (fixture confirms:
+  SOL/NEG/AVA/HOT/EXC, no legacy labels at all). Triage list below.
+
 ### r582 · 2026-09-07 · FULL (rotation #2 Landsec client · desktop 1440px) · 1 bug fixed — the deal dialog's "What did we learn from this deal?" box threw the agent's text away on every save · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
