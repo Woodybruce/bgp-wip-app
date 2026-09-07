@@ -2072,7 +2072,7 @@ export function setupHrRoutes(app: Express) {
              )
            AND COALESCE(d.status, '') NOT IN ('INV','ARCH','WIT')
          ORDER BY
-           CASE d.status WHEN 'COM' THEN 0 WHEN 'EXC' THEN 1 WHEN 'NEG' THEN 2 WHEN 'SOL' THEN 2 ELSE 3 END,
+           CASE d.status WHEN 'COM' THEN 0 WHEN 'EXC' THEN 1 WHEN 'SOL' THEN 2 WHEN 'HOT' THEN 2 WHEN 'NEG' THEN 2 ELSE 3 END,
            d.fee DESC NULLS LAST
          LIMIT 20`,
         [trackingName, req.params.userId]

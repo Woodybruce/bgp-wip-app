@@ -9036,6 +9036,51 @@ async function woodyRound(page, cross) {
     if (!r.ok) throw new Error(`forward book HOTs check failed (${r.why})`);
   });
 
+  // r581: the agent's own "Working on right now" card. A deal at heads of
+  // terms was in NEITHER the card's stage-label map NOR its colour map, so it
+  // printed the raw code "HOT" against a grey bar where every other stage
+  // reads a sentence; and the endpoint's ORDER BY ranked HOT in the ELSE
+  // bucket, below Speculative, on a card that only shows the first 8.
+  await step(page, p, 'staff-active-deals-card-reads-hots', async () => {
+    const made = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json().catch(() => ({}));
+      const myId = me?.id || me?.user?.id;
+      const myName = me?.name || me?.user?.name;
+      if (!myId || !myName) return { ok: false, why: 'no self id/name from /api/auth/me' };
+      const mk = async (name, status) => {
+        const r = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ name, status, fee: 90000, targetDate: '2026-11-03', dealType: 'New Letting', internalAgent: [myName], internalAgentIds: [myId] }) });
+        return r.ok ? (await r.json()).id : null;
+      };
+      const hot = await mk('QA-ACT heads of terms probe', 'HOT');
+      const spec = await mk('QA-ACT speculative probe', 'SPEC');
+      if (!hot || !spec) return { ok: false, why: 'probe deal POST failed' };
+      const list = await (await fetch(`/api/hr/staff/${myId}/active-deals`, { credentials: 'include', headers: auth })).json();
+      const iHot = list.findIndex((d) => d.name === 'QA-ACT heads of terms probe');
+      const iSpec = list.findIndex((d) => d.name === 'QA-ACT speculative probe');
+      if (iHot < 0) return { ok: false, why: 'a deal at heads of terms is missing from the agent\'s active deals', ids: [hot, spec] };
+      if (iSpec >= 0 && iHot > iSpec) return { ok: false, why: `heads of terms sorts BELOW speculative (${iHot} vs ${iSpec})`, ids: [hot, spec] };
+      return { ok: true, myId, ids: [hot, spec] };
+    });
+    try {
+      if (!made.ok) throw new Error(`active-deals HOTs check failed (${made.why})`);
+      await visit(page, p, `/hr?person=${made.myId}`, 'HR profile');
+      await page.waitForTimeout(1500);
+      const row = page.locator(`[data-testid^="active-deal-"]`).filter({ hasText: 'QA-ACT heads of terms probe' }).first();
+      if (!(await row.count())) throw new Error('active-deals HOTs check failed (the probe row never rendered on the HR profile)');
+      const txt = (await row.innerText()).replace(/\s+/g, ' ');
+      if (/\bHOT\b/.test(txt)) throw new Error(`active-deals HOTs check failed (the card prints the raw status code: "${txt}")`);
+      const bar = (await row.locator('span').first().getAttribute('class')) || '';
+      if (/bg-muted/.test(bar)) throw new Error('active-deals HOTs check failed (heads of terms draws the unknown-status grey bar)');
+    } finally {
+      await page.evaluate(async (ids) => {
+        const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+        for (const id of (ids || []).filter(Boolean)) await fetch(`/api/crm/deals/${id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      }, made.ids);
+    }
+  });
+
   // Historical billings (r400): static Sage-era invoiced WIP behind the
   // equity/admin gate. Equity gets the pre-aggregated payload (FY2019-26,
   // known totals); non-equity staff 403.

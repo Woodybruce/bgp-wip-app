@@ -13,6 +13,32 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+271. 2026-09-07 · BGP staff / any surface reading a unit's marketing state
+    (QA r581) · the app answers "is this unit under offer?" from two hardcoded
+    maps that disagree about heads of terms. `PUBLIC_CODE_MAP`
+    (server/routes.ts ~3781, the public leasing feed for the marketing site)
+    publishes NEG, HOT and SOL alike as "Under Offer". But
+    `mapMarketingToTenancyStatus` (server/unit-mirror.ts ~233) and
+    `dealStatusToTenancyStatus` (client/src/pages/deals.tsx ~703) both draw
+    the line at SOL, so a unit at heads of terms creates/reads a tenancy-spine
+    row saying "Marketing". Same unit, same day: "Under Offer" on the public
+    website, "Marketing" on the spine. The public map is the newer decision
+    (Woody, Sep 2026) and reads right; the other two predate HOT. Suggestion:
+    Woody picks ONE boundary for "under offer" and the three maps share it —
+    ideally a single helper in shared/deal-status.ts so the next status added
+    to the enum lands in all three at once.
+
+272. 2026-09-07 · BGP staff / Deals → new deal dialog (QA r581) · Victoria
+    creates a deal she has just agreed heads of terms on · every
+    pre-Solicitors status in the picker is disabled with "— use Letting
+    Tracker", which is right for a leasing deal but the tip and the rule are
+    leasing-shaped: an INVESTMENT deal (Sale / Purchase) has no Letting
+    Tracker to go to, so an investment deal at Negotiating or HOTs cannot be
+    created at its real stage from this dialog at all — the user has to
+    create it at Solicitors and correct it afterwards. Suggestion: gate the
+    pre-Solicitors disable on `dealType === "Leasing"`, the same condition the
+    tip below the Type field already uses.
+
 268. 2026-09-07 · BGP staff / Deals → Board view (QA r580) · Victoria
     switches the Deals board to the kanban to see where her deals sit · the
     board has five columns — Negotiating, Solicitors, Exchanged, Completed,

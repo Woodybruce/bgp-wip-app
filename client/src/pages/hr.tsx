@@ -32,6 +32,7 @@ import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useToast } from "@/hooks/use-toast";
 import { getQueryFn } from "@/lib/queryClient";
 import type { User as AuthUser } from "@shared/schema";
+import { DEAL_STATUS_LABELS } from "@shared/deal-status";
 import HrOverview from "./hr-overview";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -2166,8 +2167,10 @@ function ActiveDealsCard({ userId }: { userId: string }) {
   });
   if (isLoading || deals.length === 0) return null;
 
-  const stageLabel = (s: string) => ({ NEG: "In negotiation", SOL: "In solicitors", EXC: "Exchanged", COM: "Completed", LIVE: "Live", SPEC: "Spec", AVA: "Available", REP: "Reported" }[s] || s);
-  const stageColor = (s: string) => ({ NEG: "bg-amber-500", SOL: "bg-amber-500", EXC: "bg-blue-500", COM: "bg-emerald-500" }[s] || "bg-muted-foreground/30");
+  // Falls back to the canonical label rather than the raw code, so a status
+  // added to the shared enum reads as English here without a code change.
+  const stageLabel = (s: string) => ({ NEG: "In negotiation", HOT: "Heads of terms", SOL: "In solicitors", EXC: "Exchanged", COM: "Completed", LIVE: "Live", SPEC: "Spec", AVA: "Available", REP: "Reported" }[s] || DEAL_STATUS_LABELS[s as keyof typeof DEAL_STATUS_LABELS] || s);
+  const stageColor = (s: string) => ({ NEG: "bg-amber-500", HOT: "bg-amber-500", SOL: "bg-amber-500", EXC: "bg-blue-500", COM: "bg-emerald-500" }[s] || "bg-muted-foreground/30");
   const totalFee = deals.reduce((sum, d) => sum + d.fee, 0);
 
   return (

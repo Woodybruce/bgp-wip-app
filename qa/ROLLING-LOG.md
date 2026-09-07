@@ -92,19 +92,116 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r581 · 2026-09-07 · LIGHT (r580 had the journey) · ROUND IN PROGRESS
+### r581 · 2026-09-07 · LIGHT (r580 had the journey) · 2 bugs fixed — an agent's own "Working on right now" card printed the RAW CODE for heads of terms, and the deal Edit dialog could not record HOTs at all (UX #252, deferred six rounds) · 2 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
-  qa/apply-sql.mjs; .env written). Smoke GREEN 42 checks / 0 failures.
-- Two-bot full pass running (`node qa/two-bot-round.mjs victoria`, background
-  per the r580 harness note). All scenarios [ok] so far, no new error classes.
-- DEEP ANGLE (r580's hand-off): TAUGHT THE SWEEP the shapes it was blind to.
-  qa/r575-status-literal-sweep.mjs now recognises four shapes, not one:
-  list (array / SQL IN), keys (object literal KEYED by status codes — the
-  shape r580's three stage-weight tables hid in), union (TS string-literal
-  union type) and case (switch dispatch on status). Census went 87 -> 104
-  sets, 49 -> 61 divergent: 15 keys, 1 union, 1 case newly visible, 12 of
-  them divergent. New --kind= filter.
-- Triage of the 12 newly-visible divergences in progress.
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures, and GREEN again after both fixes.
+- Two-bot FULL pass (`node qa/two-bot-round.mjs victoria` runs every persona;
+  backgrounds itself past the 600s cap — read the output file, per r580):
+  340 [ok], 0 failures. Tally 4x400 / 9x403 / 1x503 / 1x404 = the BASELINE
+  class for class, FORTIETH consecutive clean hand-off. 0 app bugs from the
+  regression itself. No new flakes.
+- DEEP ANGLE (r580's hand-off, taken): TAUGHT THE SWEEP THE SHAPES IT WAS
+  BLIND TO. qa/r575-status-literal-sweep.mjs recognised ONE shape — a
+  comma-separated ARRAY of quoted codes. It now recognises four:
+    list   ["SOL","EXC"]              array / SQL IN (...)
+    keys   { NEG: 0.5, SOL: 0.75 }    lookup table KEYED by status  <- r580's bug
+    union  'NEG' | 'SOL'              TS string-literal union type
+    case   case "NEG": ... case "SOL" switch dispatch on status
+  Census 87 -> 104 sets, 49 -> 61 divergent; 17 newly visible, 12 of them
+  divergent. New --kind=keys,case filter. It now sees all three of r580's
+  weight tables. Census is a CENSUS again, not a partial one.
+- TRIAGED all 12 newly-visible divergences. Two were live bugs, both fixed;
+  one is a Woody policy call (below); the rest are r580's own fixed tables,
+  the deliberate PUBLIC_CODE_MAP, and dead code.
+- BUG 1 FIXED (client/src/pages/hr.tsx ActiveDealsCard ~2169/2170 + the
+  ORDER BY in server/hr-routes.ts:2075). The "Working on right now" card on an
+  agent's HR profile carried a stageLabel map and a stageColor map that both
+  predate HOT, and the endpoint's ORDER BY ranked COM 0 / EXC 1 / NEG,SOL 2 /
+  ELSE 3 — so heads of terms fell in the ELSE bucket, below Speculative, on a
+  card that renders only the first 8. HOT added to both maps (amber, with
+  NEG/SOL) and to rank 2; stageLabel now falls back to the canonical
+  DEAL_STATUS_LABELS instead of the raw code, so the NEXT status added to the
+  enum reads as English here without a code change.
+- PROVEN in the browser as Victoria at 1440px with two identical £90,000 probe
+  deals side by side, one NEG one HOT. BEFORE: "R581 probe — negotiating unit
+  In negotiation" amber, "R581 probe — heads of terms unit HOT" on
+  bg-muted-foreground/30 — the raw enum code and the grey unknown-status bar,
+  on a card where every other stage reads a sentence. AFTER: "Heads of terms",
+  amber. Shots qa/smoke-shots/r581-activedeals-{before,after}.png.
+- BUG 2 FIXED — UX #252, deferred since r575 (client/src/lib/crm-options.ts:141
+  + the PRE_SOL guard in client/src/pages/deals.tsx ~2652).
+  CRM_OPTIONS.dealStatus was EXACTLY the pre-HOT INVESTMENT_STATUSES, so the
+  deal create/edit dialog's Status picker never offered heads of terms. r575
+  reverted this unverified because it could not open the dialog from
+  /deals/list; THE ROUTE THAT DOES OPEN IT is the deal detail page
+  /deals/:id -> data-testid="button-edit-deal". Driven there, the bug is worse
+  than #252 described: a deal ALREADY at HOT opens for edit with a BLANK
+  Status field (the Select has no matching item, so it falls through to the
+  "Select status" placeholder) — the form reads as though the deal has no
+  status at all. HOT added between NEG and SOL, and to PRE_SOL so it follows
+  the same "use Letting Tracker" rule as the other pre-Solicitors codes on
+  create while staying selectable in edit. Same list feeds the Deals table's
+  inline status cell in non-WIP mode, which gains HOTs too.
+- PROVEN in the browser as Victoria at 1440px on /deals/<HOT deal> -> Edit.
+  BEFORE: STATUS FIELD SHOWS "" and the picker lists Reporting, Speculative,
+  Live, Available, Negotiating, Solicitors, Exchanged, Completed, Withdrawn,
+  Invoiced — no HOTs. AFTER: STATUS FIELD SHOWS "HOTs" and the option sits
+  between Negotiating and Solicitors. Shots
+  qa/smoke-shots/r581-dialog-{before,after}.png.
+- New two-bot scenario: victoria/woody · staff-active-deals-card-reads-hots —
+  posts a HOT deal and a SPEC deal for the logged-in agent, fails if HOT is
+  missing from /api/hr/staff/:id/active-deals or sorts BELOW the speculative
+  one, then renders /hr?person=<self> and fails if the row prints the raw code
+  "HOT" or draws the bg-muted fallback bar. Syntax-checked (node --check) and
+  its four assertions are exactly the four readings the manual before/after
+  above produced — but it was NOT fire-tested against the pre-fix files this
+  round (the full pass exceeds the time budget). FIRE-TEST IT NEXT ROUND.
+  run-round.sh purge now sweeps QA-ACT% and R581%.
+- Probe deals removed, fixture verified back to shipped state (0 rows).
+  tsc clean. Probe scripts kept: qa/r581-probe-setup.mjs,
+  qa/r581-probe-restore.mjs, qa/r581-activedeals-probe.mjs,
+  qa/r581-dialog-probe.mjs.
+- DEFERRED — THE STRONGEST THING THIS ROUND FOUND AND DID NOT FIX, because it
+  is a Woody policy call on a CANONICAL shared list: `INVESTMENT_STATUSES` in
+  shared/deal-status.ts (line 74) IS ITSELF MISSING HOT. LETTING_STATUSES and
+  WIP_STATUSES both carry it; INVESTMENT_STATUSES never got it, because HOT
+  was Alex's 2026-08-12 LETTING-tracker call. client/src/pages/investment-
+  tracker.tsx sets both STATUSES and SUMMARY_STATUSES from it, so on the
+  Investment Tracker an asset at heads of terms: is counted into
+  statusSummary but has NO pill to display the count (the stage pills ARE the
+  stats, so they no longer sum to the board), has no filter chip, gets
+  `undefined` in the statusOrder sort, and CANNOT BE SET to HOTs from either
+  the row's inline status select or the asset dialog. One-line fix
+  (`"NEG", "HOT", "SOL"` on line 74) — but the question "does an investment
+  deal have a heads-of-terms stage?" is Woody's, and the file is a canonical
+  shared source, so it is flagged rather than changed. THE NEXT ROUND SHOULD
+  PUT THIS TO WOODY.
+- DEFERRED as suggestions, not fixed (UX #271-#272): the app answers "is this
+  unit under offer?" from three hardcoded maps that DISAGREE about heads of
+  terms — routes.ts PUBLIC_CODE_MAP publishes NEG/HOT/SOL alike as "Under
+  Offer" (Woody, Sep 2026) while unit-mirror.ts mapMarketingToTenancyStatus
+  and deals.tsx dealStatusToTenancyStatus both draw the line at SOL, so the
+  same unit reads "Under Offer" on the public website and "Marketing" on the
+  tenancy spine (#271); and the dialog's "— use Letting Tracker" disable on
+  every pre-Solicitors status is leasing-shaped, so an INVESTMENT deal at
+  Negotiating or HOTs cannot be created at its real stage at all — there is no
+  Letting Tracker for it to go to (#272).
+- CHECKED AND CLEAN, do not re-report: hr.tsx:629/630 carry a SECOND
+  stageLabel/stageColor pair (on the commission card) that is DEAD — nothing
+  calls them, the only call sites are inside ActiveDealsCard's own scope. Do
+  NOT "tidy" them; their missing HOT is symptomless. server/routes.ts
+  PUBLIC_CODE_MAP (AVA/NEG/HOT/SOL) is complete and deliberate — everything
+  else is never public, per its own comment. outlook-model.ts:267/268,
+  finance.tsx:22, cashflow-board.ts, commission-engine.ts and
+  xero-financials.ts all carry HOT correctly since r580.
+- FOR r582 (rotation #2 Landsec client · desktop 1440px): the CLIENT-side half
+  of the HOT fault line is STILL untaken — a HOT deal's effect on every
+  client-facing money figure has never been stepped through, and r574 proved
+  the client dashboard is sensitive to exactly this. Also still untaken: the
+  review form's AI draft and generate-letter paths (r579), and the staff phone
+  WRITE paths — r578 opened the Edit-unit and Add-unit dialogs at 390px but
+  never SUBMITTED.
 
 ### r580 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · 1 bug fixed — a deal stepping FORWARD into heads of terms fell out of the FIRM's forward book entirely, on three weight tables at once · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via

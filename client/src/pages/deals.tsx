@@ -2649,7 +2649,7 @@ export function DealFormDialog({
                     // Letting Tracker. Disable them when creating a new
                     // deal, but keep them selectable in edit mode so
                     // existing deals don't get stuck.
-                    const PRE_SOL = ["REP", "SPEC", "LIVE", "AVA", "NEG"];
+                    const PRE_SOL = ["REP", "SPEC", "LIVE", "AVA", "NEG", "HOT"];
                     const isPreSol = PRE_SOL.includes(s);
                     return (
                       <SelectItem key={s} value={s} disabled={s === "INV" || (!isEdit && isPreSol)}>
