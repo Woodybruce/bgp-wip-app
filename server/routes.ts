@@ -4507,7 +4507,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const seg = parsed.unitName.split(",")[0].trim().toLowerCase();
         if (seg.length >= 2) {
           const dupe = await pool.query(
-            `SELECT * FROM available_units
+            `SELECT id FROM available_units
              WHERE property_id = $1
                AND lower(trim(split_part(coalesce(unit_name, ''), ',', 1))) = $2
                AND coalesce(marketing_status, '') NOT IN ('Withdrawn', 'WIT')
@@ -4515,7 +4515,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             [parsed.propertyId, seg]
           );
           if (dupe.rows.length > 0) {
-            return res.status(200).json({ ...dupe.rows[0], alreadyListed: true });
+            // Re-read through storage so this answers in the SAME camelCase
+            // shape as the create path below. It used to ship the raw pg row
+            // (snake_case), so every caller reading `unit.dealId` off it got
+            // undefined — which silently skipped the Add-Unit fee-split PUT
+            // on any re-add (r589).
+            const listed = await storage.getAvailableUnit(dupe.rows[0].id);
+            return res.status(200).json({ ...(listed || { id: dupe.rows[0].id }), alreadyListed: true });
           }
         }
       }

@@ -13,6 +13,33 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+288. 2026-09-07 · BGP staff / any surface (QA r589) · Victoria clicking
+   "Send to Letting Tracker" on a vacant tenancy row that is ALREADY on the
+   tracker · she gets the toast "On the Letting Tracker — Listing created and
+   linked back to this tenancy row", which is not what happened: the server's
+   one-live-listing-per-unit guard returned the EXISTING listing and created
+   nothing. Unlike the Add-Unit dialog (fixed this round), this caller
+   (`sendToTrackerMutation`, client/src/components/PropertyTenancySchedule.tsx:774)
+   does not read the response at all, so it cannot tell the two cases apart.
+   SUGGESTION: read `alreadyListed` off the response here too and say
+   "Already on the tracker" instead — same wording as the Add-Unit dialog, so
+   the two paths agree. Cheap, and it stops her hunting for a second listing
+   she believes she just made.
+
+289. 2026-09-07 · BGP staff / desktop (QA r589) · re-adding a unit to the
+   tracker under a name the tracker already stores in a longer form · the
+   "one live listing per unit" guard (Woody, 2026-08-04 — "sort the double
+   counting") compares the FIRST COMMA SEGMENT of the posted name against the
+   first comma segment of the STORED `unit_name`. But some add paths store
+   the name PREFIXED with the scheme ("Bluewater Shopping Centre – QA-…",
+   observed live this round), and the prefix is joined with an en dash, not a
+   comma — so the segments never match and the guard sails past. The unit can
+   then be double-listed, which is the exact thing the guard exists to stop.
+   SUGGESTION: normalise both sides before comparing — strip a leading
+   "<property name> –/-/:" prefix as well as splitting on the comma — or stop
+   prefixing the scheme name into `unit_name` on write and let the UI compose
+   the display label (the phone card already strips it back off).
+
 286. 2026-09-07 · BGP staff / desktop 1440px (QA r588) · Victoria reading a
    property page to tell a landlord where his scheme stands · the SAME page
    prints two different vacancy rates from two different unit boards, one

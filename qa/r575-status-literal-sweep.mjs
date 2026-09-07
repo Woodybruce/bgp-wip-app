@@ -28,7 +28,16 @@
 // ground truth: `codes` (dead), `mixed` (investment_tracker.status — half
 // alive, needs a vocabulary decision first), or `?` (undetermined — read it).
 //
-// Usage: node qa/r575-status-literal-sweep.mjs [--all] [--kind=keys,case,label]
+// A sixth shape, `assign`, is the WRITE side of the same class: a legacy
+// LABEL stamped INTO a status column. r588 fixed three of these
+// (routes.ts:6005, routes.ts:7673, unified-add-unit-dialog.tsx:142 all wrote
+// the label "Available" into available_units.marketing_status) and the sweep
+// could not find any of them, because it only ever looked for COMPARISONS —
+// `marketingStatus: "Available"` has a colon, not an operator. A write is
+// strictly worse than a dead read: a dead read matches nothing, a bad write
+// puts a value in the table that every code predicate then misses.
+//
+// Usage: node qa/r575-status-literal-sweep.mjs [--all] [--kind=keys,case,label,assign]
 //   default: only sets that DIVERGE from every canonical set (label: all)
 //   --all:   every set found
 
@@ -136,6 +145,34 @@ for (const file of files) {
     at(lineOf(text, m.index), keys, "keys");
   }
 
+  // Which column is this line writing/reading? Shared by assign + label.
+  const columnAt = (i, win) => {
+    const wide = lines.slice(Math.max(0, i - 25), i + 3).join("\n");
+    if (/marketing_status|marketingStatus/.test(win)) return "available_units.marketing_status";
+    if (/\binvestment_tracker\b/.test(wide)) return "investment_tracker.status";
+    if (/\bcrm_deals\b|\bcrmDeals\b/.test(wide)) return "crm_deals.status";
+    return "?";
+  };
+
+  // assign — a quoted LEGACY LABEL written INTO a status field: an object
+  // property (`marketingStatus: "Available"`, incl. Drizzle .set()/.values())
+  // or a SQL/JS assignment (`marketing_status = 'Available'`). This is the
+  // r588 shape the comparison-only sweep was blind to.
+  const ASSIGN = /\b(marketing_status|marketingStatus|deal_status|dealStatus|status)\s*(:|=(?!=))\s*(['"`])([A-Za-z][A-Za-z ]{1,24})\3/g;
+  const assignedLines = new Set();
+  for (let i = 0; i < lines.length; i++) {
+    for (const m of lines[i].matchAll(ASSIGN)) {
+      const label = m[4];
+      if (!LABELS.has(label.toLowerCase())) continue;
+      const win = lines.slice(Math.max(0, i - 3), i + 2).join("\n");
+      const column = columnAt(i, win);
+      assignedLines.add(i);
+      at(i + 1, [LABELS.get(label.toLowerCase())], "assign", {
+        labels: [label], column, truth: COLUMN_TRUTH[column] || "?", field: m[1],
+      });
+    }
+  }
+
   // label — a quoted LEGACY LABEL used as a value in a comparison or a
   // membership test against a status-ish column. This is the shape that hid
   // four dead predicates from r575-r583.
@@ -154,12 +191,10 @@ for (const file of files) {
     // canonicaliser itself — mapping labels to codes is exactly where labels
     // belong. Comparing against one is the bug; translating one is not.
     if (/\bTHEN\s+'/.test(lines[i])) continue;
-    // Which column? the identifier itself first, then the nearest table name.
-    const wide = lines.slice(Math.max(0, i - 25), i + 3).join("\n");
-    let column = "?";
-    if (/marketing_status|marketingStatus/.test(win)) column = "available_units.marketing_status";
-    else if (/\binvestment_tracker\b/.test(wide)) column = "investment_tracker.status";
-    else if (/\bcrm_deals\b|\bcrmDeals\b/.test(wide)) column = "crm_deals.status";
+    // A line the assign pass already claimed is a WRITE, not a comparison —
+    // reporting it twice would inflate the census.
+    if (assignedLines.has(i)) continue;
+    const column = columnAt(i, win);
     const truth = COLUMN_TRUTH[column] || "?";
     at(i + 1, quoted.map((v) => LABELS.get(v.toLowerCase())), "label", { labels: [...new Set(quoted)], column, truth });
   }
@@ -197,12 +232,12 @@ const showAll = process.argv.includes("--all");
 // could NOT determine is usually a DIFFERENT enum (leasing-schedule
 // Occupied/Vacant, AML complete/incomplete), so it is noise by default and
 // only shows under --all. Determined-column hits are the candidate list.
-const diverge = findings.filter((x) => (x.kind === "label" ? x.truth !== "?" : x.matches.length === 0));
+const diverge = findings.filter((x) => (x.kind === "label" || x.kind === "assign" ? x.truth !== "?" : x.matches.length === 0));
 let shown = showAll ? findings : diverge;
 if (kinds) shown = shown.filter((x) => kinds.includes(x.kind));
 
 const tally = (rows) =>
-  ["list", "keys", "union", "case", "label"].map((k) => `${k} ${rows.filter((r) => r.kind === k).length}`).join(" · ");
+  ["list", "keys", "union", "case", "label", "assign"].map((k) => `${k} ${rows.filter((r) => r.kind === k).length}`).join(" · ");
 
 console.log(`canonical: ${CANON.DEAL_STATUS_CODES.join(",")}`);
 console.log(`${findings.length} hardcoded status set(s) in client/ + server/ + shared/  [${tally(findings)}]`);
@@ -217,7 +252,18 @@ for (const f of shown) {
     })
     .sort((a, b) => a.dist - b.dist)[0];
   console.log(`${f.file}:${f.line}  [${f.kind}]`);
-  if (f.kind === "label") {
+  if (f.kind === "assign") {
+    console.log(`  WRITES the label ${f.labels.join(" | ")} into \`${f.field}\`  (canonical: ${f.codes.join(",")})`);
+    console.log(`  column: ${f.column}  [holds ${f.truth}]`);
+    console.log(`  code:   ${f.raw}`);
+    console.log(
+      f.truth === "codes"
+        ? `  BAD WRITE: this stamps a label into a codes column — every code predicate then misses the row`
+        : f.truth === "mixed"
+          ? `  MIXED column — decide the vocabulary before changing the write`
+          : `  column undetermined — read it (may be a different enum entirely)`,
+    );
+  } else if (f.kind === "label") {
     console.log(`  labels: ${f.labels.join(" | ")}  ->  ${f.codes.join(",")}`);
     console.log(`  column: ${f.column}  [holds ${f.truth}]`);
     console.log(`  code:   ${f.raw}`);

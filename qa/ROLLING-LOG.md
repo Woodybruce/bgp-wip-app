@@ -92,31 +92,115 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r589 · 2026-09-07 · LIGHT (no journey — r588 had it) · ROUND IN PROGRESS
-- Bring-up: `npm run qa:pg` ONCE, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql` (the r587 seeding trap, obeyed).
-- TWO-BOT, both chunks run (the streak was owed one — r588 skipped them).
-  Chunk 1 `QA_PERSONAS=victoria`: 140 [ok], 7 issues — all accounted for.
-  4x400 baseline (rocketreach discover x3 + the deliberate invalid
-  POST /api/investment-tracker probe) + 1x409 (the drilldown scenario
-  tolerating the SOL+ AML gate, correct) + **2x400 that are NEW BUT EXPECTED**:
-  they are `staff-unbalanced-fee-split-is-refused`'s own deliberate probes.
-  Chunk 2 `QA_PERSONAS=mark,woody,nick,sam`: in flight.
-  Note for future rounds: `qa/with-server.sh` takes the command as ONE
-  quoted string (`$1`) — `bash qa/with-server.sh node qa/two-bot-round.mjs`
-  runs `bash -c "node"` and **exits 0 in two seconds with zero output**,
-  which looks exactly like a clean run. Quote it.
+### r589 · 2026-09-07 · LIGHT (no journey — r588 had it) · 2 bugs fixed: the already-listed early return shipped snake_case so a re-add dropped the fee split, and the boot status-fix hook wrote LABELS into a codes column · 2 suggestions
+- Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`
+  **GREEN 42/0**, then `node qa/apply-sql.mjs qa/seed-personas.sql` (the r587
+  seeding trap, obeyed).
+- **BOTH TWO-BOT CHUNKS RUN — the streak is paid back and advances to 45.**
+  Chunk 1 `QA_PERSONAS=victoria`: 140 [ok]. Chunk 2
+  `QA_PERSONAS=mark,woody,nick,sam`: 211 [ok]. Shared
+  `QA_CROSS_FILE=/tmp/qa-cross-589.json`. **No flow failures in either
+  chunk**; every issue is documented baseline: victoria 4x400 (rocketreach
+  discover x3 + the deliberate invalid POST /api/investment-tracker probe) +
+  1x409 (the drilldown scenario tolerating the SOL+ AML gate, correct);
+  mark exactly 9x403 + 1x503 + 1x404; woody/nick/sam 0. The only NEW lines
+  are `staff-unbalanced-fee-split-is-refused`'s own two deliberate 400s.
 - r588'S TWO NEW SCENARIOS FIRE-TESTED (first ever execution) — **both pass
-  for real, neither self-skipped.** `staff-unbalanced-fee-split-is-refused`
-  proves it by its two logged 400s. `staff-unit-writes-canonicalise-status`
-  proves it by the absence of any `POST /api/available-units` http issue —
-  its two self-skip doors are "no properties" (impossible on the fixture)
-  and "the POST was refused", which would have logged one.
-- TRIAGE: nothing outside the documented baseline and the two expected new
-  probe 400s. No flow failures in either chunk.
-- In progress: routes.ts:4499's snake_case early-return (caller sweep done,
-  it is a real user-facing bug — see the final entry) and teaching
-  `qa/r575-status-literal-sweep.mjs` the ASSIGNMENT shape.
+  for real, neither self-skipped.** The fee-split one proves it by its two
+  logged 400s; the canonicalise one by the absence of any
+  `POST /api/available-units` http issue (its only two skip doors are "no
+  properties", impossible on the fixture, and "the POST was refused", which
+  would have logged one).
+- HARNESS TRAP, NEW AND NASTY: `qa/with-server.sh` takes its command as ONE
+  quoted string (`$1`). `bash qa/with-server.sh node qa/two-bot-round.mjs`
+  runs `bash -c "node"` and **exits 0 in two seconds with no output at all**
+  — indistinguishable from a clean run at a glance. Quote it.
+- BUG 1 FIXED — **a re-add told Victoria "Unit added" and threw her fee split
+  away without attempting it.** r588's hand-off flagged the shape;
+  it is a real user-facing bug. `POST /api/available-units`'s already-listed
+  guard (routes.ts:4499) shipped the RAW pg row —
+  `res.json({ ...dupe.rows[0], alreadyListed: true })`, snake_case — while
+  every other response from that handler comes back through Drizzle in
+  camelCase. CALLER SWEEP (3 POST callers): `available-units.tsx:847` reads
+  `unit?.dealId` off it to fold the user's fee split onto the auto-created
+  deal, so on a re-add `dealId` was **undefined and the fee PUT was never
+  even fired** — the r588 bug class again, through a different door and one
+  step worse (r588's split was refused loudly-then-swallowed; this one was
+  never attempted). `unified-add-unit-dialog.tsx:145` reads only `id` (same
+  key either way, fine) and `PropertyTenancySchedule.tsx:774` reads nothing
+  (fine, but see UX #288). Fixed in two layers: the guard now re-reads
+  through `storage.getAvailableUnit` so it answers in the SAME camelCase
+  shape, AND the create path stops claiming "Unit added" when nothing was
+  added ("Already on the tracker — the existing listing was updated, not
+  duplicated").
+  **VISUALLY VERIFIED** — `qa/r589-probe.mjs` (Part A API + Part B browser,
+  shots `qa/smoke-shots/r589-01-dialog.png` / `-02-toast.png`): response now
+  camelCase with `dealId` present and **zero snake_case keys**, id matches the
+  existing listing, count 83 -> 83 (no duplicate), toast reads "Already on the
+  tracker — fee split NOT saved", and the network log shows
+  `400 PUT /api/crm/deals/…/fee-allocations` **firing at all**, which it never
+  did before. (That 400 is the known-correct 100% rule — UX #287, not this bug.)
+- BUG 2 FIXED — **the boot status-normalisation hook wrote LABELS into a
+  codes column.** Found BY the new sweep shape below, which is the point of
+  it. server/index.ts:5949 ran, in a `setTimeout` 1s after boot (so AFTER the
+  canonicaliser at :1463), `SET status = 'SOLs' WHERE status = 'Solicitors'`
+  and `SET status = 'Live' WHERE status = 'Active'`. `'Solicitors'` is already
+  in the canonicaliser's vocabulary so that arm was merely dead — but
+  **`'Active'` is NOT**, so it survives to the hook, which then stamps the
+  LABEL `'Live'` into `crm_deals.status`, where it sits invisible to every
+  code predicate until the next restart. Both now write the CODES (`'SOL'` /
+  `'LIVE'`) and match `LOWER(TRIM(status))`. Proven at the predicate level
+  WITH CONTROLS (`qa/r589-probe2.mjs`): 'Solicitors'->SOL, 'Active'->LIVE, an
+  already-canonical NEG untouched, 'Something Else' left verbatim, fixture
+  clean. **Not visually verified and cannot be** — no user surface writes
+  'Active'; this is a boot hook.
+- **THE SWEEP NOW KNOWS THE WRITE SIDE (the durable move r588 asked for).**
+  `qa/r575-status-literal-sweep.mjs` gains a SIXTH shape, `assign`: a quoted
+  legacy LABEL written INTO a status field, either as an object property
+  (`marketingStatus: "Available"`, incl. Drizzle `.set()`/`.values()`) or an
+  assignment (`marketing_status = 'Available'`). This is precisely why the
+  census never flagged r588's three label WRITES — it looked for COMPARISONS
+  only, and a colon is not an operator. A line the assign pass claims is
+  skipped by the label pass, so the census does not double-count.
+  Census is now **262 sets [list 91 · keys 15 · union 1 · case 1 · label 125 ·
+  assign 29]**, 89 divergent, of which **assign 2**: server/index.ts:5949
+  (bug 2 above — found by this, fixed this round) and property-plans.ts:199,
+  which is a **FALSE POSITIVE** and already on the known-fine list — it is a
+  local `status` variable for a plan datum, not a column write; the column
+  guess came from a nearby table mention. Still a candidate list, not a bug
+  list.
+- HARNESS FIX — **`staff-unit-writes-canonicalise-status` leaked a row into
+  the fixture, silently.** After chunk 1 the fixture held 82 listings, not 81,
+  with `'Bluewater Shopping Centre – QA-R588-LBL-N R1'` still present; its
+  DELETE returns 200 when re-tried by hand, so the leak is in the scenario,
+  not the endpoint. The scenario now records its own DELETE statuses, re-reads
+  the list, and **throws if any of its three rows survive** — so the next
+  round gets a loud failure instead of a phantom unit. Both r588 scenarios
+  also now LOG their skips (`[skip] …`) rather than returning silently, which
+  is what made the fire-test take inference rather than reading. Fixture
+  restored to 81 via new `qa/r589-cleanup.mjs`.
+- SUGGESTIONS: **UX #288** — "Send to Letting Tracker" on a row already
+  listed toasts "Listing created and linked back", which is false; that caller
+  should read `alreadyListed` too, same wording as the dialog. **UX #289** —
+  the one-live-listing guard compares comma segments, but some paths store
+  `unit_name` PREFIXED with the scheme joined by an EN DASH ("Bluewater
+  Shopping Centre – …", observed live this round), so the segments never match
+  and the double-counting guard sails past.
+- DEFERRED, unchanged from r588's list: chatbgp.ts:2101,
+  property-asset-brief.ts:607; the MIXED/non-deal-column set (chatbgp.ts:1852,
+  tenancy-schedule.ts:1654/:1685, daily-briefing.ts:179); the unreviewed
+  remainder kyc-orchestrator.ts:906, hr-routes.ts:191, crm.ts:4679,
+  microsoft.ts:1135 (**index.ts:5949 comes OFF this list — fixed above**);
+  r581's open Woody policy call (INVESTMENT_STATUSES missing HOT).
+- FOR r590 (rotation #2, **Landsec client · desktop 1440px**): do the journey.
+  Then (a) `--kind=assign --all` has 27 undetermined-column hits nobody has
+  read — that is the next census pass, and the write side is where the damage
+  is; (b) UX #289's en-dash prefix is a real double-listing hole, worth
+  promoting from a suggestion to a bug if a client-visible surface can
+  double-count; (c) no scenario asserts the re-add path — worth one
+  (staff re-adds a listed unit -> `alreadyListed` true, camelCase `dealId`
+  present, no duplicate) now that it is fixed.
+- New flakes: none. Streak 45.
 
 ### r588 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · 2 bugs fixed: the add-unit dialog dropped a fee split SILENTLY, and r587's hand-off label-WRITE class killed at the write boundary · 2 suggestions
 - Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`

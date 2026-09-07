@@ -4324,13 +4324,26 @@ async function victoriaRound(page, cross) {
       const all = Array.isArray(units) ? units : (units?.data || units?.units || []);
       const find = (id) => all.find(u => u.id === id)?.marketingStatus ?? null;
       const out = { label: find(label.id), neg: neg.__status ? 'skipped' : find(neg.id), unknown: unknown.__status ? 'skipped' : find(unknown.id) };
-      for (const id of made) await fetch(`/api/available-units/${id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      // r589: one of these three rows survived the round and drifted the
+      // fixture (81 -> 82 listings), silently. Report the DELETE statuses and
+      // the survivors so a leak fails loudly instead of leaving a phantom
+      // unit for the next round to trip over.
+      const dels = [];
+      for (const id of made) {
+        const d = await fetch(`/api/available-units/${id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => ({ status: 0 }));
+        dels.push(d.status);
+      }
+      const still = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
+      const stillRows = Array.isArray(still) ? still : (still?.data || still?.units || []);
+      out.dels = dels;
+      out.leaked = made.filter(id => stillRows.some(u => u.id === id)).length;
       return out;
     }, ROUND);
-    if (got.skip) return;
+    if (got.skip) { console.log(`  [skip] ${p} · staff-unit-writes-canonicalise-status — ${got.skip}`); return; }
     if (got.label !== 'AVA') throw new Error(`a unit posted with the label "Available" came back as ${JSON.stringify(got.label)} — a label in a codes column is invisible to every code predicate`);
     if (got.neg !== 'skipped' && got.neg !== 'NEG') throw new Error(`CONTROL failed: "Under Negotiation" came back as ${JSON.stringify(got.neg)}, not NEG — the canonicaliser is blanket-stamping`);
     if (got.unknown !== 'skipped' && got.unknown !== 'Something Else') throw new Error(`CONTROL failed: an unrecognised status was rewritten to ${JSON.stringify(got.unknown)} instead of being left alone`);
+    if (got.leaked) throw new Error(`this scenario leaked ${got.leaked} of its own unit row(s) into the fixture (DELETE statuses ${JSON.stringify(got.dels)}) — the next round inherits a phantom listing`);
   });
 
   // r588: the fee-allocation rule is that percentage rows must sum to 100%
@@ -4354,7 +4367,7 @@ async function victoriaRound(page, cross) {
       const noHouse = await put([{ agentName: 'Someone', allocationType: 'percentage', percentage: 100, isBgpHouse: false }]);
       return { lone: lone.status, loneErr: String(loneBody?.error || '').slice(0, 120), noHouse: noHouse.status };
     });
-    if (got.skip) return;
+    if (got.skip) { console.log(`  [skip] staff-unbalanced-fee-split-is-refused — ${got.skip}`); return; }
     if (got.lone !== 400) throw new Error(`a lone BGP House 15% split was accepted (HTTP ${got.lone}) — the 100% rule is not holding`);
     if (!/sum to 100/i.test(got.loneErr)) throw new Error(`the 400 did not explain the imbalance: "${got.loneErr}" — the client surfaces this text to the user`);
     if (got.noHouse !== 400) throw new Error(`a split with no BGP House row was accepted (HTTP ${got.noHouse})`);

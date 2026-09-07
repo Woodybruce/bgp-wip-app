@@ -874,9 +874,9 @@ export default function AvailableUnitsPage() {
           }
         }
       }
-      return { unit, feeSplitError };
+      return { unit, feeSplitError, alreadyListed: !!unit?.alreadyListed };
     },
-    onSuccess: ({ feeSplitError }: { unit: any; feeSplitError: string | null }) => {
+    onSuccess: ({ feeSplitError, alreadyListed }: { unit: any; feeSplitError: string | null; alreadyListed: boolean }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       invalidateDealCaches();
       setCreateOpen(false);
@@ -886,9 +886,17 @@ export default function AvailableUnitsPage() {
       setShowAllUnitFields(false);
       if (feeSplitError) {
         toast({
-          title: "Unit added — fee split NOT saved",
+          title: alreadyListed ? "Already on the tracker — fee split NOT saved" : "Unit added — fee split NOT saved",
           description: feeSplitError,
           variant: "destructive",
+        });
+      } else if (alreadyListed) {
+        // The server returns the existing listing instead of creating a
+        // second one. Saying "Unit added" here told her a write had happened
+        // when it hadn't (r589).
+        toast({
+          title: "Already on the tracker",
+          description: "This unit is already listed — the existing listing was updated, not duplicated.",
         });
       } else {
         toast({ title: "Unit added" });
