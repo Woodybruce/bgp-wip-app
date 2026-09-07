@@ -4676,7 +4676,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
         pool.query(
           `SELECT d.id, d.status, d.deal_type, p.id AS property_id, p.name AS property_name
              FROM crm_deals d JOIN crm_properties p ON p.id = d.property_id
-            WHERE d.tenant_id = $1 AND d.status NOT IN ('Dead','Withdrawn') ${propScope(2)}`, p2([brandId])),
+            WHERE d.tenant_id = $1 AND d.status NOT IN ('WIT','Dead','Withdrawn') ${propScope(2)}`, p2([brandId])),
         pool.query(
           `SELECT t.id, t.status, t.priority, t.created_at, au.unit_name,
                   p.id AS property_id, p.name AS property_name

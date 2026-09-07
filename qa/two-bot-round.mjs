@@ -4691,6 +4691,46 @@ async function victoriaRound(page, cross) {
     if (r.sawDead) throw new Error('my-portfolio still shows a WITHDRAWN deal — the dead-deal filter is comparing status against legacy LABELS again');
   });
 
+  // r599: the SAME dead-deal label bug as the scenario above, on the door
+  // nobody had read — a brand profile's "Portfolio activity" panel. Its
+  // "Tenant at" tier unioned the leasing schedule with every crm_deals row
+  // filtered by `status NOT IN ('Dead','Withdrawn')`, i.e. legacy LABELS over
+  // a codes column, so a WITHDRAWN deal rendered as a green "tenant at"
+  // badge on the honest-pitch view. Same shape as chatbgp's investment
+  // context (both fixed together).
+  await step(page, p, 'staff-brand-activity-drops-withdrawn-deals', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const props = await (await fetch('/api/crm/properties', { credentials: 'include', headers: auth })).json();
+      const rows = Array.isArray(props) ? props : (props.data || props.properties || []);
+      const cos = await (await fetch('/api/crm/companies', { credentials: 'include', headers: auth })).json();
+      const brands = (Array.isArray(cos) ? cos : (cos.data || [])).filter(c => c.id);
+      if (!rows.length || !brands.length) return { ok: true, skipped: 'no property or company to attach to' };
+      const brand = brands[0];
+      const mk = async (status) => {
+        const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ name: `QA-BRANDACT-${status} R${round}`, status, dealType: 'New Letting',
+            propertyId: rows[0].id, tenantId: brand.id }) });
+        return res.ok ? await res.json() : null;
+      };
+      const live = await mk('COM');
+      const dead = await mk('WIT');
+      const res = await fetch(`/api/brands/${brand.id}/portfolio-activity`, { credentials: 'include', headers: auth });
+      const body = res.ok ? await res.json() : null;
+      for (const d of [live, dead]) if (d?.id) await fetch(`/api/crm/deals/${d.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      if (!res.ok) return { ok: false, why: `portfolio-activity ${res.status}` };
+      const deals = (body?.tenantAt || []).filter(x => x.via === 'deal');
+      return { ok: true, live: !!live, dead: !!dead, brand: brand.name,
+        sawLive: deals.some(d => d.id === live?.id), sawDead: deals.some(d => d.id === dead?.id) };
+    }, ROUND);
+    if (!r.ok) throw new Error(r.why);
+    if (r.skipped) return;
+    if (!r.live || !r.dead) throw new Error('could not create the probe deals');
+    // control — without this the WIT assertion below is vacuous
+    if (!r.sawLive) throw new Error(`brand ${r.brand}'s Portfolio activity dropped the LIVE deal too — the "Tenant at" tier is not reading crm_deals at all`);
+    if (r.sawDead) throw new Error(`brand ${r.brand}'s Portfolio activity lists a WITHDRAWN deal as "Tenant at" — the dead-deal filter is comparing status against legacy LABELS again`);
+  });
+
   // r594: a CRM picker that was never touched posts "" for its id, so a
   // tracker offer/viewing logged without picking a company banked
   // company_id = '' rather than NULL. Every consumer tests IS NOT NULL — the

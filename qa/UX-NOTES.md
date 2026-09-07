@@ -13,6 +13,35 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+308. 2026-09-07 · BGP staff (QA r599, code read — the label-kind sweep) ·
+   the brand profile's "Portfolio activity" panel promises three HONEST
+   tiers, and its top tier "Tenant at" (green badge) is fed by the leasing
+   schedule UNIONED with every crm_deals row for that brand that is not
+   withdrawn (server/crm.ts:4677). So a deal at AVA, NEG, HOT, SOL or EXC —
+   i.e. a brand BGP is still negotiating with — renders under "Tenant at"
+   with a green tenant badge and the deal type as its label. That reads as
+   "they already trade here" on the exact panel a pitch is built from.
+   (The withdrawn ones were a straight bug and are fixed; the in-flight ones
+   are a judgement call.) Suggestion: keep only COM/INV deals in "Tenant at"
+   and move the live stages into the "Pitched — with evidence" tier they
+   already have, each carrying its status ("Solicitors", "HOTs") as the
+   evidence line. Needs Woody's call — "tenant at" may be deliberate shorthand
+   for "we have something going here".
+
+309. 2026-09-07 · BGP staff / desktop (QA r599, code read) · the per-requirement
+   "Matching Available Units" dialog badges every row with a two-value
+   ternary — `marketingStatus === "NEG" ? "Under offer" : "Available"`
+   (client/src/pages/requirements.tsx:1352). It is CORRECT today only because
+   the endpoint behind it hardcodes `marketing_status IN ('AVA','NEG')`
+   (server/crm.ts:4950 and :4993). The moment anyone widens that pool — the
+   obvious next ask is showing HOT units so the team can see what is nearly
+   gone — every non-NEG unit silently reads "Available", including one at
+   HOTs or solicitors. This is the r597 `|| "Available"` shape waiting to
+   happen, one edit away in a different file from the one that would be
+   edited. Suggestion: render the badge from the shared vocabulary
+   (`DEAL_STATUS_LABELS[legacyToCode(unit.marketingStatus)]`) so the dialog
+   tracks whatever the pool holds, and drop the coupling entirely.
+
 306. 2026-09-07 · Landsec client / desktop 1440px (QA r598) · Mark Warne
    prepping for Monday's leasing meeting opened Requirements from his own
    nav, expecting "who is looking for space in my centres" · the page loads

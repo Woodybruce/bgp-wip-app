@@ -92,18 +92,100 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r599 · 2026-09-07 · LIGHT (r598 had the journey) — ROUND IN PROGRESS
+### r599 · 2026-09-07 · LIGHT (r598 had the journey) · the UNCLAIMED `label`-kind sweep read end to end at last · 1 bug fixed (2 doors): a dead-deal filter written in legacy LABELS over a codes column, so WITHDRAWN deals rendered as "Tenant at" on brand profiles · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`.
-- **REGRESSION AT BASELINE (r598's new numbers), four chunks on
-  `QA_CROSS_FILE=/tmp/qa-cross-599.json`:** victoria FIRST **144 [ok]** /
-  6x400 + 1x409 · mark **176 + 13 = 189 [ok]** / 10x403 + 1x503 (chunked at
-  `client-properties-table-readonly-cells`, tail ~2 min) · woody,nick,sam
-  **24 [ok]**, 0 issues. All four closed with a tally line. **Streak 53.**
-- Triage: every logged issue is documented baseline noise (victoria's
-  deliberate 400/409 probes, mark's deliberate scope 403s incl. r598's new
-  refused PUT, one keyless-AI 503).
-- Work in progress: the unclaimed `label`-kind sweep, deferred pool.
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+- **REGRESSION EXACTLY AT r598's NEW BASELINE**, four chunks on
+  `QA_CROSS_FILE=/tmp/qa-cross-599.json`: victoria FIRST **144 [ok]** /
+  6x400 + 1x409 · mark **176 + 13 = 189 [ok]** / 10x403 + 1x503 (split at
+  `client-properties-table-readonly-cells`; the 13-tail ran in ~2 min) ·
+  woody,nick,sam **24 [ok]**, 0 issues. All four closed with a tally line.
+  **Streak 53.** Every logged issue is documented baseline noise.
+- **THE `label` KIND, UNCLAIMED FOR FOUR ROUNDS, IS NOW READ END TO END.**
+  `node qa/r575-status-literal-sweep.mjs --kind=label` → 127 label sites, **24
+  divergent**. Triaged all 24: **22 are false positives of one of two kinds** —
+  (a) the sweep guesses the column and guesses wrong for the LABEL-vocabulary
+  tables (`PropertyTenancySchedule.tsx:1847`, `daily-briefing.ts:179`
+  read `tenancy_schedule_units.status`, which really does hold 'Occupied' /
+  'Not Vacant' / 'Let'), or for a locally-computed `"vacant"|"let"|"mixed"`
+  that never touches a column (`property-pathway.ts:1979/2669/3081`, one
+  comment at :2664); (b) the predicate lists the **code alongside** the legacy
+  label, which is the correct tolerant idiom (`routes.ts:4536`/`:7724`,
+  `tenancy-schedule.ts:1654`/`:1685`, `expansion-intel.ts:41`,
+  `kyc-orchestrator.ts:906`, `property-asset-brief.ts:176` and its three
+  deliberate legacy-tolerance branches, `index.ts:5991`'s one-way migration
+  UPDATE, `hr-routes.ts:191`'s display label, `properties.tsx:4100` behind
+  `legacyToCode`). **Two were real**, below. The kind is now spent: a future
+  round can re-run it as a cheap control, not as new ground.
+- **BUG FIXED — the dead-deal filter written in labels, on TWO doors
+  (lesson 11 again, and the same class as the already-guarded
+  `staff-my-portfolio-drops-withdrawn-deals`):**
+  - **`server/crm.ts:4679`, `/api/brands/:id/portfolio-activity`** — the
+    "honest pitch view". Its top tier `tenantAt` unions the leasing schedule
+    with `SELECT … FROM crm_deals d WHERE d.tenant_id = $1 AND d.status NOT IN
+    ('Dead','Withdrawn')`. `crm_deals.status` holds **CODES** (`WIT` =
+    Withdrawn), so the filter matched nothing and every **withdrawn** deal
+    came back — rendered by `brand-profile-panel.tsx:4330` as a row under
+    **"Tenant at"** with a green emerald badge. A brand BGP walked away from
+    read as a sitting tenant on the panel a pitch is built from.
+  - **`server/chatbgp.ts:1853`** — the same predicate over
+    `investment_tracker` (`status NOT IN ('Dead','Withdrawn')`), whose
+    vocabulary is Live/AVA/COM/SPEC/SOL/WIT. Also dead; ChatBGP's investment
+    context fed withdrawn tracker rows to the model as live stock.
+  Both now read `NOT IN ('WIT','Dead','Withdrawn')` — the code added, the
+  legacy labels kept for tolerance, matching `expansion-intel.ts:41`'s idiom.
+  A census of `NOT IN ('Dead'…)` across server/, shared/ and client/src finds
+  **exactly these two doors**, both fixed. `npx tsc --noEmit` clean.
+- **NEW SCENARIO `staff-brand-activity-drops-withdrawn-deals`**
+  (qa/two-bot-round.mjs, victoria — sits just before
+  `staff-tracker-activity-writes-null-not-blank`). Creates a **COM** and a
+  **WIT** probe deal against the first company + property, reads
+  `/api/brands/:id/portfolio-activity`, deletes both, and asserts the WIT one
+  is absent — with the **COM one present as the control**, so over-filtering
+  fails it too. **NOT VACUOUS:** restoring the pre-fix predicate failed it
+  with `brand Amorino's Portfolio activity lists a WITHDRAWN deal as "Tenant
+  at" — the dead-deal filter is comparing status against legacy LABELS
+  again`; tree restored and re-verified `[ok]` alongside the existing
+  `staff-my-portfolio-drops-withdrawn-deals`.
+  **This moves victoria's baseline to 145 [ok]** — the scenario makes no
+  refused request, so the issue tally is unchanged (6x400 + 1x409).
+- **NOT VISUALLY VERIFIED, and say so plainly.** Proven at the API boundary
+  in both directions (above), not in the browser: a probe seeded COM+WIT deals
+  for **Amorino** at Bluewater and loaded `/companies/<id>` as victoria, but
+  the **"Portfolio activity" card never rendered at all** on that profile (the
+  overview showed BGP take / Stores / UK STORES and no panel; the probe deals
+  appeared nowhere in the page text). `PortfolioActivityBlock` is mounted
+  unconditionally at `brand-profile-panel.tsx:2254` and returns null only when
+  all four of its arrays are empty — which the seeded COM deal should have
+  prevented. **HAND-OFF: is the panel reachable on a brand profile at all?**
+  Either it sits behind a render branch this profile does not take, or its
+  four queries came back empty for a reason the API round-trip does not show.
+  Worth 10 minutes next round — if it is unreachable, the bug fixed here is
+  latent on the UI and the ChatBGP door is the live one.
+- CHECKED, NOT A BUG: `requirements.tsx:1352`'s
+  `marketingStatus === "NEG" ? "Under offer" : "Available"` badge. Both
+  matches endpoints pin the pool to `marketing_status IN ('AVA','NEG')`
+  (crm.ts:4950, :4993), so the two-value ternary is exhaustive **today**. It
+  is one edit away from the r597 shape though → UX #309.
+- Suggestions: **UX #308** (the "Tenant at" tier also carries live AVA/NEG/
+  HOT/SOL/EXC deals under a green tenant badge — a judgement call for Woody,
+  separate from the withdrawn bug), **UX #309** (the requirements dialog's
+  badge should read the shared vocabulary instead of coupling to the
+  endpoint's hardcoded pool).
+- Deferred pool unchanged: UX #297, the vacancy-basis question
+  (#290/#286/#295), the two column DEFAULTs, UX #304,
+  `add_property_imagery`'s missing scope check, the residual QA rows. Still
+  unvisited: UX #171, #192, #247, #298.
+- Fixture: the probe deals are created and deleted inside their own scripts;
+  `qa/r599-brand-activity-visual.mjs` DELETEs its two `QA599-*` rows on the
+  way out (confirmed). No cleanup owed.
+- Setup note: a foreground two-bot chunk can exceed the Bash cap and be moved
+  to a background task file — it still completed and still printed its tally
+  line, so read the task output file and apply the same kill test there.
+- Next: **r599 was LIGHT → r600 is FULL**, taking **rotation #3, Landsec
+  client · mobile 390px**. Use **victoria = 145** as the new baseline. First
+  thing worth doing on that round: the Portfolio-activity render question
+  above.
 
 ### r598 · 2026-09-07 · FULL (rotation #2 — Landsec client · desktop 1440px) · journey: "Monday leasing-meeting prep", with a write · 1 bug fixed: the client CRM hub rendered the WIDE contact set as the client's OWN people — Starbucks' and an agent's contacts sat on Landsec's tab under an "Edit contact — Landsec" dialog · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
