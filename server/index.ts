@@ -3051,7 +3051,6 @@ import brandImagesRouter from "./brand-images";
 import instagramRouter from "./instagram";
 import pipnetRequirementsRouter from "./pipnet-requirements";
 import purgeApolloContactsRouter from "./purge-apollo-contacts";
-import { experianHealth, fetchCommercialCredit, isExperianConfigured } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
 import dealVerdictsRouter from "./deal-verdicts";
@@ -4010,21 +4009,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.get("/api/rocketreach/health", async (_req, res) => {
     res.json(await rocketreachHealth());
   });
-  app.get("/api/experian/health", async (_req, res) => {
-    res.json(await experianHealth());
-  });
-  app.post("/api/experian/credit-report", requireAuth, async (req, res) => {
-    try {
-      if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
-      const companyNumber = String(req.body?.companyNumber || "").trim();
-      if (!companyNumber) return res.status(400).json({ error: "companyNumber required" });
-      const report = await fetchCommercialCredit(companyNumber);
-      if (!report) return res.status(404).json({ error: "No Experian credit report found for that company" });
-      res.json(report);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || "Unknown error" });
-    }
-  });
+  // Experian credit API removed (Woody, 2026-09-07: "we don't have an
+  // account") — covenant strength comes from the covenant engine
+  // (Companies House + The Gazette), which was always the primary source.
   app.use(propertyGapAnalysisRouter);
   app.use(brandPackRouter);
   app.use(dealVerdictsRouter);

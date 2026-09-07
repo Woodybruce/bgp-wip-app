@@ -827,29 +827,10 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
       ? "approved"
       : "in_review";
 
-  // Experian commercial credit — non-fatal. Pulls a covenant view (credit
-  // score, recommended limit, CCJs, turnover) so leasing can sanity-check
-  // affordability at the brand stage rather than waiting for the deal AML.
-  let experianReport: any = null;
-  try {
-    const { fetchCommercialCredit, isExperianConfigured, persistExperianTurnover } = await import("./experian");
-    if (isExperianConfigured()) {
-      experianReport = await fetchCommercialCredit(chNumber!);
-      if (experianReport && experianReport.turnover != null && experianReport.turnover > 0) {
-        const { pool } = await import("./db");
-        const result = await persistExperianTurnover(pool, {
-          companyId: company.id,
-          companyName: profile.companyName || company.name,
-          report: experianReport,
-        });
-        if (result?.inserted || result?.updated) {
-          console.log(`[auto-kyc] Persisted Experian turnover for "${company.name}" (£${Number(experianReport.turnover).toLocaleString()}, ${result.inserted ? "new" : "refreshed"})`);
-        }
-      }
-    }
-  } catch (err: any) {
-    console.warn(`[auto-kyc] Experian lookup failed for "${company.name}":`, err?.message);
-  }
+  // Experian removed 2026-09-07 (no account) — affordability/covenant view
+  // comes from the covenant engine (CH + Gazette). Null keeps the stored
+  // report shape stable for readers of historical rows.
+  const experianReport: any = null;
 
   const kycReport: any = {
     profile,
