@@ -200,6 +200,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   double-count; (c) no scenario asserts the re-add path — worth one
   (staff re-adds a listed unit -> `alreadyListed` true, camelCase `dealId`
   present, no duplicate) now that it is fixed.
+- Post-fix regression: `bash qa/run-smoke.sh` re-run after both server edits — **GREEN 42/0 again**.
 - New flakes: none. Streak 45.
 
 ### r588 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · 2 bugs fixed: the add-unit dialog dropped a fee split SILENTLY, and r587's hand-off label-WRITE class killed at the write boundary · 2 suggestions
