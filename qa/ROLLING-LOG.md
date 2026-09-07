@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r584 · 2026-09-07 · FULL (rotation #3 Landsec client · mobile 390px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written). Smoke GREEN 42 checks / 0 failures.
+- Two-bot CHUNKED per r583's note. victoria chunk: 19 [ok], 0 failures,
+  tally 4x400 + 1x409 — exactly the baseline class (3x rocketreach + the
+  deliberate invalid POST /api/investment-tracker probe; the 409 is r583's
+  new drilldown scenario tolerating the SOL+ AML gate, correct behaviour).
+  mark chunk running.
+- Triage: nothing outside the baseline class so far.
+- Journey to come: Landsec client on the PHONE SHELL (iPhone UA + touch at
+  390px), a landlord's real task on the move; plus UX #276 (the phone home
+  fetches /api/daily-digest and never renders it).
+
 ### r583 · 2026-09-07 · LIGHT (no journey — r582 had it) · 2 bugs fixed, both the LEGACY-LABEL-vs-CODE class r582 opened · 2 suggestions
 - Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; servers via qa/with-server.sh). Smoke
