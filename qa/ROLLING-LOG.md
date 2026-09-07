@@ -92,28 +92,121 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r587 · 2026-09-07 · LIGHT (round in progress) — heartbeat
-- Bring-up: canonical recipe, `npm run qa:pg` once. Smoke GREEN 42 checks /
-  0 failures (regression clean).
-- Round type LIGHT per r586's hand-off: no journey, no new rotation surface.
-  r588 takes rotation #1 (BGP staff · desktop 1440px).
-- TRIAGE of r586's two nominated candidates — BOTH READ AND CONFIRMED OPEN:
-  * `server/goad-plan-data.ts:654` — the CRM vacancy override tests
-    `(c.marketing_status || "").toLowerCase() === "available"` over
-    available_units.marketing_status, a CODES column, so it is always false
-    and "Marketed as Available in BGP CRM" / confirmed_vacant NEVER fires on
-    a Goad / property-intelligence plan. Same shape as r586's bug 1.
-  * `server/property-asset-brief.ts:211` — the un-dealed-unit funnel fold has
-    `neg|negotiating|under_offer|und` -> hots and
-    `sol|solicitors|exc|exchanged` -> legals. HOT is a legal value of
-    available_units.marketing_status (LETTING_STATUSES includes it, sitting
-    between NEG and SOL) and it is in NEITHER arm, so a unit at HOTs with no
-    crm_deals row lands in no bucket at all. The ORDER BY at :165 also has no
-    'hot' arm, so such a unit sorts to the bottom with the AVA rows.
-- Both are this round's two fixes. Two-bot chunks (victoria + mark) to run —
-  r585 and r586 both dropped the mark chunk, so the clean-hand-off streak has
-  stood unextended at 43 for two rounds and this LIGHT round should run both.
-- Final entry replaces this one.
+### r587 · 2026-09-07 · LIGHT (no journey — r586 had the rotation) · 2 bugs fixed: the asset-brief funnel silently DROPPED every HOTs unit, and the Goad plan's CRM vacancy override never fired · both two-bot chunks clean · 2 suggestions
+- Bring-up: canonical recipe, `npm run qa:pg` ONCE. Smoke GREEN 42/0.
+- Round type LIGHT per r586's hand-off; r588 takes rotation #1 (BGP staff ·
+  desktop 1440px). Both fixes are r586's two nominated candidates, read and
+  confirmed open before touching anything.
+- BUG 1 FIXED — **the asset-brief funnel counted a HOTs unit in NO bucket at
+  all**, silently dropping it at the stage just before signature, which is the
+  exact failure that fold was written to stop (Woody, 2026-08-04, "are these
+  pipeline lozenges working?"). server/property-asset-brief.ts:211 folds
+  un-dealed letting units in by marketing status —
+  `neg|negotiating|under_offer|und` -> hots, `sol|solicitors|exc|exchanged` ->
+  legals. HOT is a LEGAL value of available_units.marketing_status (that
+  column's vocabulary is LETTING_STATUSES, where HOT sits between NEG and SOL)
+  and it was in NEITHER arm. Now the hots arm also takes
+  `hot|hots|heads of terms`. The ORDER BY at :165 had no 'hot' arm either, so
+  such a unit sorted to the bottom with the AVA tail — given a HOT arm at
+  rank 2 in the same commit.
+  **VISUALLY VERIFIED** (this one HAS a rendered surface, unlike r584-r586's
+  fixes): seeded one un-dealed unit at HOT, loaded `/properties/:id` as
+  Victoria at 1440px — the PIPELINE & PERFORMANCE funnel reads **HOTS 2**
+  (was 1) and the drilldown names "BWREST Portakabin Bluewater · HOT".
+  Screenshots qa/smoke-shots/r587-funnel-hots{,-drilldown}.png.
+- BUG 2 FIXED — **the Goad / property-intelligence plan's CRM vacancy override
+  never fired.** server/goad-plan-data.ts:654 tested
+  `(c.marketing_status || "").toLowerCase() === "available"` over
+  available_units.marketing_status, a CODES column (guaranteed by the boot
+  canonicaliser at index.ts:1479), so it was `"ava" === "available"` — always
+  false, and "Marketed as Available in BGP CRM" / confirmed_vacant never
+  reached a plan. Now `legacyToCode(c.marketing_status) === "AVA"`.
+  NOTE deliberately NO `|| "AVA"` default here, unlike r586's pathway fix: the
+  query LEFT JOINs available_units, so a property with no units at all yields
+  a NULL status and must not read as confirmed_vacant.
+- PROVEN in qa/r587-probe.mjs (ALL PASS, `--restore` available):
+  * bug 1 END TO END OVER HTTP, not at the predicate level — drives one
+    un-dealed unit AVA -> HOT -> NEG -> SOL -> AVA against the real
+    GET /api/properties/:id/asset-brief. HOT: hots 1 -> 2, funnel TOTAL
+    3 -> 4 (the unit used to be lost), named in the drilldown, no leak into
+    legals. CONTROLS: the AVA baseline read (without it a non-zero hots count
+    proves nothing), a NEG unit still lands in hots, a SOL unit still lands in
+    legals and not in hots, an AVA unit lands in neither (so the fix is not a
+    blanket fold), and the old arms are shown to route "hot"/"hots" to
+    neither bucket.
+  * bug 2 at the predicate level with controls (no renderable surface — a Goad
+    plan needs VOA sqlite + Places keys): over 78 real (property, unit-status)
+    pairs the old predicate fired on **0** and the new one on 78. CONTROLS: a
+    legacy "Available" label still fires, COM and NEG do not, and a NULL
+    status does not (the LEFT JOIN case above — defensive, and hypothetical on
+    this fixture, which has 0 such pairs).
+- TWO-BOT: **both chunks run — the streak is extended, at 44** (r585 and r586
+  both dropped the mark chunk for budget; a LIGHT round with no journey to
+  fund is the round that should pay it back).
+  * victoria: 0 flow failures, tally 4x400 + 1x409 — exactly the baseline
+    class (rocketreach discover x2 + the deliberate invalid POST probe, and
+    r583's drilldown tolerating the SOL+ AML gate).
+  * mark: 0 flow failures, tally 9x403 + 1x503 + 1x404 — exactly baseline.
+  * The 8s settle in front of each chunk worked every time; no ECONNRESET.
+- **PROCESS MISS, worth reading before your round does the same thing:** the
+  FIRST mark chunk logged 2 flow failures — `client-turnover-slice`
+  ("in-slice turnover row missing") and `client-search-scoping` ("client
+  search can't find an in-slice brand"). NOT app bugs: run-smoke.sh restores
+  the DB and I went straight to the chunks without re-applying
+  `node qa/apply-sql.mjs qa/seed-personas.sql`, so the in-slice hospitality
+  brand **Honi Poke was simply absent** while out-of-slice 'QA Retail Brand'
+  was present — which is exactly the shape of a real Landsec-slice
+  regression. Confirmed by querying for the brand, seeded, re-ran, both green.
+  Seed personas after run-smoke.sh EVEN IF you are not doing a journey.
+  Second gotcha from the same chunk: piping a chunk through `tail -30` means
+  the harness's background capture keeps only those 30 lines and the
+  flow-failure detail is GONE — read `qa/logs/round-1.jsonl` instead, or
+  redirect the chunk to a file and tail the file.
+- New two-bot scenario: `victoria · staff-asset-brief-counts-hots-units` —
+  drives an un-dealed AVA unit to HOT and back over the API and asserts the
+  funnel's hots bucket AND its total both gain the unit, then that it is
+  restored. **Fire-tested for non-vacuity** (qa/r587-scenario-check.mjs, kept):
+  it picks Unit BX10 on a different property from the probe's and moves
+  hots 0 -> 1, total 1 -> 2. It self-skips only if the payload has no
+  un-dealed AVA unit or the PATCH is refused — check that first if it ever
+  reports [ok] suspiciously fast.
+- SUGGESTIONS: UX #284 (the funnel drilldown prints the RAW CODE "HOT" as the
+  sub-line on a rendered, client-visible surface, where DEAL_STATUS_LABELS
+  already says "HOTs" — and un-dealed unit rows are formatted differently from
+  deal rows in the same list), #285 (the fold's FAILURE MODE is the real
+  problem: an unmapped status just vanishes from the funnel total with no
+  remainder to notice it by, which is how this bug lived from 2026-08-04 to
+  now — OPP is still unmapped; derive the fold from LETTING_STATUSES and
+  render an "N units not in a stage" footnote).
+- NOT DONE, and it is the top of the pile for r588 — **the sweep's SIXTH
+  SHAPE for label WRITES.** `server/routes.ts:6005` and `:7673`, the
+  deal->unit migration handlers, CREATE available_units rows with
+  `marketingStatus: "Available"` — a LABEL written into a codes column. It
+  self-heals at the next boot but until then those units are invisible to
+  every code predicate (routes.ts:177's AVA available_count, the letting
+  tracker pills, the pathway vacancy, and now this round's funnel). The
+  sweep's `label` shape does NOT catch it because it looks for COMPARISONS,
+  not ASSIGNMENTS. Fixing the known pair is the cheap move; teaching
+  `qa/r575-status-literal-sweep.mjs` the assignment shape is the durable one.
+  Budget went on running both two-bot chunks instead — a deliberate trade.
+- STILL DEFERRED, unchanged from r586: server/chatbgp.ts:2101 and
+  server/property-asset-brief.ts:607 (raw code with a label fallback —
+  cosmetic at the prompt level, and now partly written up as UX #284);
+  server/chatbgp.ts:1852, server/tenancy-schedule.ts:1654/:1685,
+  server/daily-briefing.ts:179 (MIXED or NON-deal columns — each needs a
+  vocabulary decision first, do NOT blind-fix); unreviewed remainder
+  kyc-orchestrator.ts:906, index.ts:5949, hr-routes.ts:191, crm.ts:4679,
+  microsoft.ts:1135; r581's open Woody policy call (INVESTMENT_STATUSES
+  missing HOT).
+- KNOWN-FINE list unchanged, with one correction to r586's note:
+  property-asset-brief.ts:165/211/214 list codes alongside labels and that IS
+  belt-and-braces, but :165 and :211 were NOT clean — the missing HOT is now
+  fixed at both. :214 (the legals arm) is genuinely fine as written.
+- New flakes: none. tsc clean (`npx tsc --noEmit`, exit 0) after both fixes
+  and the harness change. Smoke re-run not repeated after the fixes — neither
+  fix is on a smoke-covered path, and both two-bot chunks ran post-fix.
+- FOR r588 (rotation #1, BGP staff · desktop 1440px): the sweep's sixth shape
+  above, plus the routes.ts:6005/:7673 label-write pair it would catch.
 
 ### r586 · 2026-09-07 · FULL (rotation #4 BGP staff · mobile 390px) · 2 bugs fixed, both the LEGACY-LABEL-vs-CODE class — pathway said every scheme was fully LET, ChatBGP put £456,789 of withdrawn fees in the firm pipeline · 3 suggestions
 - Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
