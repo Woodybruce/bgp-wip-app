@@ -36,3 +36,9 @@ The browser pass found a reactive session-verification bug and a second CRM writ
 `portfolio-contacts.test.mjs` and `portfolio-contacts-filter.test.ts` run in the standard suite. The actual PostgreSQL checks in `portfolio-contacts-postgres.mjs` exercise temporary tables, including records past the previous 200-occupier cap. `qa/portfolio-contacts-smoke.mjs` uses authenticated client API calls and desktop/phone browsers against the disposable smoke fixture, covering linked records, paging, filters, errors and retained owned/shared-property editing. It removes its exact synthetic IDs in a finally block. Commands and limitations are documented in `docs/portfolio-contacts-2026-09-07.md`.
 
 `qa/client-brand-logo-smoke.mjs` uses the same local browser fixture without direct database access. It verifies the actual Landsec mark, light/dark palettes and opaque/broken/delayed fetched-logo responses.
+
+## Employer corrections and imports
+
+`contact-verification.test.mjs`, `crm-import-employer.test.cjs` and `crm-contact-promotion.test.cjs` run in the standard suite. `contact-verification-postgres.mjs` and `crm-import-employer-postgres.mjs` execute the production helpers/handlers against unique disposable schemas in `bgp_crm_directory_regression`. They test real concurrent transactions and remove their schemas afterward. Each requires its own guarded local database variable (see the script header).
+
+`qa/contact-data-health-smoke.mjs` exercises real staff/client endpoints and employer review on desktop and phone, including explicit employer choice, stale saves, duplicate findings and preserved requirement/representation IDs. It also checks real imports with synthetic provider results and the desktop import summary, then confirms the imported person appears on the phone agency profile. It removes its exact fixture records afterward. See `docs/crm-employer-fixes-2026-09-07.md` for commands and limitations.

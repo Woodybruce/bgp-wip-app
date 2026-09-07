@@ -978,9 +978,9 @@ export function registerInteractionRoutes(app: Express) {
       }
 
       // crm_interactions.contact_id is NOT NULL — resolve the sender to a
-      // contact: the picked one, else an email match, else a new contact row
-      // on the matched company (mirrors what the Graph sync does for
-      // unknown-but-relevant senders).
+      // contact: the picked one, else an email match, else a new contact.
+      // The company chosen for filing is interaction context, not evidence
+      // that the sender works there (they may represent that brand).
       let resolvedContactId = contactId || null;
       if (!resolvedContactId && senderEmail) {
         const byEmail = await pool.query(
@@ -991,16 +991,11 @@ export function registerInteractionRoutes(app: Express) {
       let contactCreated = false;
       if (!resolvedContactId) {
         if (!senderEmail) return res.status(400).json({ error: "no contact match and no sender email to create one from" });
-        let companyName: string | null = null;
-        if (companyId) {
-          const co = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId]);
-          companyName = co.rows[0]?.name || null;
-        }
         const created = await pool.query(
           `INSERT INTO crm_contacts (name, email, company_id, company_name, notes)
-           VALUES ($1, $2, $3, $4, 'Added from the Outlook add-in')
+           VALUES ($1, $2, NULL, NULL, 'Added from the Outlook add-in; employer unconfirmed')
            RETURNING id`,
-          [String(senderName || senderEmail).slice(0, 200), String(senderEmail).slice(0, 200), companyId || null, companyName]
+          [String(senderName || senderEmail).slice(0, 200), String(senderEmail).trim().slice(0, 200)]
         );
         resolvedContactId = created.rows[0].id;
         contactCreated = true;

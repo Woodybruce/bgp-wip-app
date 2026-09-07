@@ -394,6 +394,41 @@ router.post("/api/brand/:companyId/rocketreach/discover", requireAuth, async (re
   }
 });
 
+// Provider search context is not employment evidence. Keep identity and
+// employer checks separate so a refreshed brand page cannot re-import a
+// corrected agency contact as an employee of the represented brand.
+function contactIdentityEmail(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const email = value.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  const local = email.split("@")[0];
+  if (/^(info|contact|hello|enquiries|enquiry|office|admin|team|sales|support|property|properties|acquisitions|lettings|leasing|reception|marketing|accounts|careers|jobs|noreply|no-reply)$/.test(local)) return null;
+  return email;
+}
+
+function contactIdentityLinkedIn(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const url = new URL(/^https?:\/\//i.test(value.trim()) ? value.trim() : `https://${value.trim()}`);
+    if (!/^([a-z]{2,3}\.)?linkedin\.com$/i.test(url.hostname) || !/^https?:$/.test(url.protocol)) return null;
+    const profile = url.pathname.match(/^\/in\/([^/]+)\/?$/i);
+    return profile ? `linkedin.com/in/${profile[1].toLowerCase()}` : null;
+  } catch { return null; }
+}
+
+function contactImportName(value: unknown): string {
+  return typeof value === "string" ? value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "") : "";
+}
+
+type ContactImportResult = {
+  name: string;
+  status: "inserted" | "existing" | "skipped";
+  contactId?: string;
+  companyId?: string | null;
+  companyName?: string | null;
+  reason?: string;
+};
+
 router.post("/api/brand/:companyId/rocketreach/import", requireAuth, async (req: Request, res: Response) => {
   try {
     const companyId = String(req.params.companyId);
@@ -423,64 +458,115 @@ router.post("/api/brand/:companyId/rocketreach/import", requireAuth, async (req:
       people.push(...enriched);
     }
 
-    let inserted = 0;
-    for (const p of people) {
-      if (!p.name) continue;
-      if (p.email) {
-        const dup = await pool.query(`SELECT 1 FROM crm_contacts WHERE company_id = $1 AND lower(email) = lower($2)`, [companyId, p.email]);
-        if (dup.rowCount) continue;
-      }
-      if (p.linkedin_url) {
-        const dup = await pool.query(`SELECT 1 FROM crm_contacts WHERE company_id = $1 AND lower(linkedin_url) = lower($2)`, [companyId, p.linkedin_url]);
-        if (dup.rowCount) continue;
-      }
-      const roleNote = p.source === "parent_group" && p.source_company_name
-        ? `${p.role || "Contact"} [via ${p.source_company_name}]`
-        : (p.role || null);
+    const results: ContactImportResult[] = [];
+    const connection = await pool.connect();
+    try {
+      await connection.query("BEGIN");
+      // Serialise this importer's identity checks and writes. Provider calls
+      // have already finished, so the lock never waits on RocketReach.
+      await connection.query("SELECT pg_advisory_xact_lock(hashtext('rocketreach-contact-import'))");
+      const companies = (await connection.query(
+        "SELECT id, name FROM crm_companies WHERE merged_into_id IS NULL",
+      )).rows;
+      const contacts = (await connection.query(
+        "SELECT id, name, email, linkedin_url, company_id, company_name FROM crm_contacts",
+      )).rows;
 
-      // Build a notes blob with the extra context RocketReach gives us so it
-      // doesn't get lost — past employers, education, bio, secondary emails.
-      const notesParts: string[] = [];
-      if (p.previous_employers && p.previous_employers.length) {
-        const prev = p.previous_employers
-          .map((j) => `${j.title ? j.title + " @ " : ""}${j.company}${j.end_date ? ` (until ${j.end_date.slice(0, 7)})` : ""}`)
-          .join("; ");
-        notesParts.push(`Past: ${prev}`);
-      }
-      if (p.education) notesParts.push(`Education: ${p.education}`);
-      if (p.work_email && p.personal_email && p.work_email.toLowerCase() !== p.personal_email.toLowerCase()) {
-        notesParts.push(`Personal email: ${p.personal_email}`);
-      }
-      if (p.work_phone && p.mobile_phone && p.work_phone !== p.mobile_phone) {
-        notesParts.push(`Work phone: ${p.work_phone}`);
-      }
-      if (p.location) notesParts.push(`Based in ${p.location}`);
-      if (p.bio) notesParts.push(p.bio);
-      // RocketReach sometimes returns people who have MOVED ON from the
-      // brand being browsed (Neville Maling: imported from Wagamama's page
-      // while RocketReach itself said current employer = Wasabi). Surface
-      // the disagreement instead of silently stamping the browsed brand.
-      if (p.current_employer) {
-        const browsed = company.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const actual = p.current_employer.toLowerCase().replace(/[^a-z0-9]/g, "");
-        if (browsed && actual && !browsed.includes(actual) && !actual.includes(browsed)) {
-          notesParts.push(`⚠ RocketReach lists current employer as ${p.current_employer} — imported from the ${company.name} page, needs review`);
+      for (const p of people) {
+        const name = typeof p?.name === "string" ? p.name.trim() : "";
+        const skip = (reason: string) => results.push({ name, status: "skipped", reason });
+        if (!name) { skip("A contact name is required."); continue; }
+        const emails = [p.email, p.work_email, p.personal_email].map(contactIdentityEmail).filter((email): email is string => !!email);
+        const email = emails[0] || null;
+        const linkedIn = contactIdentityLinkedIn(p.linkedin_url);
+        if (!email && !linkedIn) {
+          skip("No personal email or LinkedIn profile to identify this person safely.");
+          continue;
         }
+        const matches = contacts.filter((contact) =>
+          emails.includes(contactIdentityEmail(contact.email) || "")
+          || (linkedIn && contactIdentityLinkedIn(contact.linkedin_url) === linkedIn));
+        if (matches.length > 1) {
+          skip("Email or LinkedIn matches multiple CRM contacts; review the existing records.");
+          continue;
+        }
+        if (matches.length === 1) {
+          const existing = matches[0];
+          const existingLinkedIn = contactIdentityLinkedIn(existing.linkedin_url);
+          if ((linkedIn && existingLinkedIn && linkedIn !== existingLinkedIn)
+            || (contactImportName(existing.name) && contactImportName(existing.name) !== contactImportName(name))) {
+            skip("The matching CRM contact has a different name or LinkedIn profile; review the identity.");
+            continue;
+          }
+          const existingCompanyName = companies.find((candidate) => candidate.id === existing.company_id)?.name || existing.company_name || null;
+          const employerDiffers = contactImportName(p.current_employer)
+            && contactImportName(p.current_employer) !== contactImportName(existingCompanyName);
+          results.push({ name, status: "existing", contactId: existing.id,
+            companyId: existing.company_id, companyName: existingCompanyName,
+            ...(employerDiffers ? { reason: `RocketReach lists ${p.current_employer}; the existing CRM employer was left unchanged for review.` } : {}),
+          });
+          continue;
+        }
+
+        const employer = contactImportName(p.current_employer);
+        if (!employer) { skip("RocketReach did not confirm a current employer."); continue; }
+        const employers = companies.filter((candidate) => contactImportName(candidate.name) === employer);
+        if (employers.length !== 1) {
+          skip(employers.length
+            ? `More than one CRM company matches ${p.current_employer}; review the employer.`
+            : `Current employer ${p.current_employer} has no matching CRM company.`);
+          continue;
+        }
+        const employerCompany = employers[0];
+        const notesParts: string[] = [
+          `Discovered from the ${company.name} profile. RocketReach current employer: ${p.current_employer}.`,
+        ];
+        if (p.source === "parent_group" && p.source_company_name) {
+          notesParts.push(`Parent-group search: ${p.source_company_name}`);
+        }
+        if (p.previous_employers?.length) {
+          const prev = p.previous_employers
+            .map((j) => `${j.title ? j.title + " @ " : ""}${j.company}${j.end_date ? ` (until ${j.end_date.slice(0, 7)})` : ""}`)
+            .join("; ");
+          notesParts.push(`Past: ${prev}`);
+        }
+        if (p.education) notesParts.push(`Education: ${p.education}`);
+        if (p.work_email && p.personal_email && p.work_email.toLowerCase() !== p.personal_email.toLowerCase()) {
+          notesParts.push(`Personal email: ${p.personal_email}`);
+        }
+        if (p.work_phone && p.mobile_phone && p.work_phone !== p.mobile_phone) notesParts.push(`Work phone: ${p.work_phone}`);
+        if (p.location) notesParts.push(`Based in ${p.location}`);
+        if (p.bio) notesParts.push(p.bio);
+
+        const { rows: [created] } = await connection.query(
+          `INSERT INTO crm_contacts (name, role, email, phone, phone_mobile, linkedin_url, avatar_url, notes, company_id, company_name, enrichment_source, last_enriched_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'rocketreach-search', now())
+           RETURNING id, name, email, linkedin_url, company_id, company_name`,
+          [name, p.role || null, email || p.email?.trim() || null, p.work_phone || p.mobile_phone || p.phone || null,
+            p.mobile_phone || null, p.linkedin_url?.trim() || null, p.avatar_url || null,
+            notesParts.join(" · "), employerCompany.id, employerCompany.name],
+        );
+        contacts.push(created);
+        results.push({ name, status: "inserted", contactId: created.id,
+          companyId: employerCompany.id, companyName: employerCompany.name });
       }
-      const notes = notesParts.length ? notesParts.join(" · ") : null;
-
-      const phoneMobile = p.mobile_phone || null;
-      const phonePrimary = p.work_phone || p.mobile_phone || p.phone || null;
-
-      await pool.query(
-        `INSERT INTO crm_contacts (name, role, email, phone, phone_mobile, linkedin_url, avatar_url, notes, company_id, company_name, enrichment_source, last_enriched_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'rocketreach-search', now())`,
-        [p.name, roleNote, p.email || null, phonePrimary, phoneMobile, p.linkedin_url || null, p.avatar_url || null, notes, companyId, company.name],
-      );
-      inserted++;
+      await connection.query("COMMIT");
+    } catch (error) {
+      await connection.query("ROLLBACK");
+      throw error;
+    } finally {
+      connection.release();
     }
-
-    res.json({ inserted, requested: people.length });
+    const inserted = results.filter((result) => result.status === "inserted");
+    res.json({
+      inserted: inserted.length,
+      insertedHere: inserted.filter((result) => result.companyId === company.id).length,
+      insertedElsewhere: inserted.filter((result) => result.companyId !== company.id).length,
+      existing: results.filter((result) => result.status === "existing").length,
+      skipped: results.filter((result) => result.status === "skipped").length,
+      requested: people.length,
+      results,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { ContactImportResults, type ContactImportResult } from "@/components/contact-import-results";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { PropertyFoldersPanel, ClientPropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
@@ -420,6 +421,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const [addSignalOpen, setAddSignalOpen] = useState(false);
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
   const [contactsFinding, setContactsFinding] = useState(false);
+  const [contactImport, setContactImport] = useState<{ companyId: string; result?: ContactImportResult; error?: string } | null>(null);
   const [editingDomain, setEditingDomain] = useState(false);
   const [domainInput, setDomainInput] = useState("");
   const autoContactsRan = useRef(false);
@@ -430,14 +432,21 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
   async function runContactDiscovery() {
     setContactsFinding(true);
+    setContactImport(null);
     try {
-      // RocketReach only — Apollo disabled.
-      try {
-        const rrRes = await apiRequest("POST", `/api/brand/${companyId}/rocketreach/discover`, {}).then(r => r.json());
-        if (rrRes.people?.length > 0) {
-          await apiRequest("POST", `/api/brand/${companyId}/rocketreach/import`, { people: rrRes.people });
-        }
-      } catch { /* non-fatal */ }
+      const rrRes = await apiRequest("POST", `/api/brand/${companyId}/rocketreach/discover`, {}).then(r => r.json());
+      const result: ContactImportResult = rrRes.people?.length > 0
+        ? await apiRequest("POST", `/api/brand/${companyId}/rocketreach/import`, { people: rrRes.people }).then(r => r.json())
+        : { inserted: 0, insertedHere: 0, insertedElsewhere: 0, existing: 0, skipped: 0, requested: 0, results: [] };
+      setContactImport({ companyId, result });
+      void queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      const employers = new Set(result.results.filter(row => row.status === "inserted" && row.companyId).map(row => row.companyId));
+      void queryClient.invalidateQueries({ predicate: query =>
+        (query.queryKey[0] === "/api/brand" && employers.has(String(query.queryKey[1])))
+        || String(query.queryKey[0]).startsWith("/api/company-portfolio")
+        || String(query.queryKey[0]).startsWith("/api/crm/companies") });
+    } catch (error) {
+      setContactImport({ companyId, error: error instanceof Error ? error.message.replace(/^\d{3}:\s*/, "") : "Please try again." });
     } finally {
       setContactsFinding(false);
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
@@ -1547,7 +1556,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 type="button"
                 onClick={() => runContactDiscovery()}
                 disabled={contactsFinding}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border bg-background hover:bg-muted text-xs font-medium transition-colors disabled:opacity-50"
+                className="inline-flex min-h-11 items-center gap-1 px-2 py-1 rounded-md border border-border bg-background hover:bg-muted text-sm font-medium transition-colors disabled:opacity-50"
                 data-testid="button-refresh-contacts"
               >
                 <Sparkles className="w-3 h-3" /> {contactsFinding ? "Finding…" : "Refresh contacts"}
@@ -1594,6 +1603,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </button>
               </>)}
             </div>
+
+            {!isClientViewer && contactImport?.companyId === companyId && <div className="order-1 mt-3"><ContactImportResults result={contactImport.result} error={contactImport.error} /></div>}
 
             {/* Single BGP AI take + Ask ChatBGP question runner — sits above
                 all zones. Client logins get both too (Woody, 2026-08-04:

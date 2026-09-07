@@ -11,6 +11,7 @@ import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { pillMetrics, pillInactive } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Users, Mail, Linkedin, Loader2, RefreshCw, Plus, ChevronDown, ChevronRight, Phone } from "lucide-react";
 
@@ -51,25 +52,25 @@ export function KeyContactRow({ contact, companyId, discovery }: { contact: any;
   const lastTouchLabel = lastTouch ? formatRelativeShort(lastTouch) : null;
 
   return (
-    <div className="flex items-start gap-2.5 md:gap-2 text-xs hover:bg-muted/50 rounded p-1.5 md:p-1 -mx-1 transition-colors">
-      <Link href={`/contacts/${contact.id}`} className="w-9 h-9 md:w-6 md:h-6 rounded-full bg-muted flex items-center justify-center text-[10px] md:text-[9px] font-medium shrink-0 overflow-hidden">
+    <div className="flex items-start gap-2.5 md:gap-2 text-sm hover:bg-muted/50 rounded p-1.5 md:p-1 -mx-1 transition-colors">
+      <Link href={`/contacts/${contact.id}`} className="w-9 h-9 md:w-6 md:h-6 rounded-full bg-muted flex items-center justify-center text-[11px] md:text-[11px] font-medium shrink-0 overflow-hidden">
         {contact.avatar_url ? <img src={contact.avatar_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.currentTarget.style.display = "none"); }} /> : (contact.name?.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "?")}
       </Link>
       <div className="min-w-0 flex-1">
-        <div className="font-medium truncate flex items-center gap-1 text-[13px] md:text-xs">
+        <div className="font-medium truncate flex items-center gap-1 text-sm">
           <Link href={`/contacts/${contact.id}`} className="hover:underline">{contact.name}</Link>
           {discovery?.bgp?.threadCount ? (
-            <span className="text-[9px] px-1 py-0 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 shrink-0" title="BGP has real email history with this person">
+            <span className="text-[11px] px-1 py-0 rounded bg-muted text-primary border border-border shrink-0" title="BGP has real email history with this person">
               known · {discovery.bgp.threadCount} threads
             </span>
           ) : discovery?.ai?.confidence != null ? (
-            <span className="text-[9px] px-1 py-0 rounded bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800 shrink-0 tabular-nums" title={discovery.ai?.reason || "AI-verified against RocketReach/Apollo"}>
+            <span className="text-[11px] px-1 py-0 rounded bg-muted text-primary border border-border shrink-0 tabular-nums" title={discovery.ai?.reason || "AI-verified against RocketReach/Apollo"}>
               AI {discovery.ai.confidence}
             </span>
           ) : null}
           {touches > 0 && (
             <span
-              className="ml-auto text-[9px] px-1 py-0 rounded bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800 shrink-0"
+              className="ml-auto text-[11px] px-1 py-0 rounded bg-muted text-muted-foreground border border-border shrink-0"
               title={lastTouch ? `${touches} touch${touches === 1 ? "" : "es"} · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : `${touches} touches`}
             >
               {touches}{lastTouchLabel ? ` · ${lastTouchLabel}` : ""}
@@ -89,7 +90,7 @@ export function KeyContactRow({ contact, companyId, discovery }: { contact: any;
               if (e.key === "Enter") saveRole.mutate(roleDraft.trim());
               if (e.key === "Escape") { setEditingRole(false); setRoleDraft(contact.role || ""); }
             }}
-            className="text-[10px] w-full border rounded px-1 py-0.5 bg-background"
+            className="text-[11px] w-full border rounded px-1 py-0.5 bg-background"
             placeholder="e.g. Head of Leasing"
           />
         ) : (
@@ -128,48 +129,71 @@ export function KeyContactRow({ contact, companyId, discovery }: { contact: any;
   );
 }
 
+interface PromotedContact {
+  id: string;
+  name: string;
+  email: string | null;
+  created: boolean;
+  companyId: string | null;
+  companyName: string | null;
+  employerConfirmed: boolean;
+}
+
+function ContactPromotionFeedback({ contact }: { contact: PromotedContact }) {
+  return <div className="rounded-lg border border-border bg-muted/30 p-3 mt-3 space-y-1 text-sm" data-testid="contact-promotion-feedback">
+    <p role="status">{contact.name}: {contact.created ? "added to CRM" : "already in CRM"}. {contact.employerConfirmed ? `Recorded employer: ${contact.companyName}.` : "Employer unconfirmed."}</p>
+    <p className="text-[11px] text-muted-foreground">This addition keeps employment separate from the brand where the person was discovered.</p>
+    <Link href={`/contacts/${contact.id}`} className="inline-flex min-h-11 items-center font-medium underline" data-testid="contact-promotion-open">Open contact record</Link>
+  </div>;
+}
+
 function PendingSendersList({ suggestions, companyId }: { suggestions: any[]; companyId: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: psViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const psIsClient = !psViewer || psViewer.role === "Client" || !!psViewer.companyScopeId;
-  
+  const [saved, setSaved] = useState<Record<string, PromotedContact>>({});
+  const [lastSaved, setLastSaved] = useState<{ companyId: string; contact: PromotedContact } | null>(null);
+
   const promote = useMutation({
-    mutationFn: async (email: string) => {
-      const res = await apiRequest("POST", `/api/brand/${companyId}/promote-sender`, { email });
-      return res.json();
+    mutationFn: async ({ sender, sourceCompanyId }: { sender: any; sourceCompanyId: string }) => {
+      const res = await apiRequest("POST", `/api/brand/${sourceCompanyId}/promote-sender`, { email: sender.email, name: sender.name });
+      return res.json() as Promise<PromotedContact>;
     },
-    onSuccess: (out: any, email: any) => {
-      toast({ title: "Contact added", description: `${out.name} (${email}) is now a CRM contact.` });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    onSuccess: (out, { sender, sourceCompanyId }) => {
+      setSaved(previous => ({ ...previous, [`${sourceCompanyId}:${sender.email}`]: out }));
+      setLastSaved({ companyId: sourceCompanyId, contact: out });
+      toast({ title: out.created ? "Contact added to CRM" : "Contact already in CRM", description: out.employerConfirmed ? `Recorded employer: ${out.companyName}` : "Employer unconfirmed — open the contact to review." });
+      void queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/brand", sourceCompanyId, "profile"] });
     },
     onError: (e: any) => toast({ title: "Couldn't add contact", description: e?.message, variant: "destructive" }),
   });
-  if (suggestions.length === 0) return null;
+  if (suggestions.length === 0 && lastSaved?.companyId !== companyId) return null;
   return (
     <div className="mt-3 pt-2 border-t border-border/40">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
-        From BGP inboxes ({suggestions.length} not in CRM)
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5">
+        From BGP inboxes <span className="font-mono tabular-nums">({suggestions.filter(sender => !saved[`${companyId}:${sender.email}`]).length} to review)</span>
       </div>
       <div className="space-y-0.5 max-h-[180px] overflow-y-auto pr-1">
         {suggestions.map((s) => (
           <div key={s.email} className="flex items-center gap-1.5 text-[11px] px-1 py-1 rounded hover:bg-muted/50">
             <Mail className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
-            <span className="truncate flex-1 font-mono text-[10px]">{s.email}</span>
-            <span className="text-[9px] text-muted-foreground shrink-0">{s.touches}{s.last_touch ? ` · ${formatRelativeShort(s.last_touch)}` : ""}</span>
-            {!psIsClient && (
-            <button
-              onClick={() => promote.mutate(s.email)}
-              disabled={promote.isPending}
-              className="text-[10px] px-1.5 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50 shrink-0"
-              title="Create a CRM contact for this email and link to this company"
+            <span className="truncate flex-1 font-mono text-[11px]">{s.email}</span>
+            <span className="text-[11px] text-muted-foreground shrink-0">{s.touches}{s.last_touch ? ` · ${formatRelativeShort(s.last_touch)}` : ""}</span>
+            {!psIsClient && (saved[`${companyId}:${s.email}`] ? <Link href={`/contacts/${saved[`${companyId}:${s.email}`].id}`} className="inline-flex min-h-11 items-center text-sm underline">In CRM</Link> :
+            <Button variant="outline" size="sm"
+              onClick={() => promote.mutate({ sender: s, sourceCompanyId: companyId })} disabled={promote.isPending}
+              className="min-h-11 text-sm shrink-0" data-testid={`pending-sender-add-${s.email}`}
+              title="Save this person to CRM with their employer unconfirmed"
             >
-              <Plus className="w-2.5 h-2.5 inline" /> Add
-            </button>
+              <Plus className="w-3 h-3 mr-1" /> Add to CRM
+            </Button>
             )}
           </div>
         ))}
       </div>
+      {lastSaved?.companyId === companyId && <ContactPromotionFeedback contact={lastSaved.contact} />}
     </div>
   );
 }
@@ -192,7 +216,8 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const { data: kcViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const kcIsClient = !kcViewer || kcViewer.role === "Client" || !!kcViewer.companyScopeId;
   const [showAll, setShowAll] = useState(false);
-  const [addedEmails, setAddedEmails] = useState<Set<string>>(new Set());
+  const [addedContacts, setAddedContacts] = useState<Record<string, PromotedContact>>({});
+  const [lastAdded, setLastAdded] = useState<{ companyId: string; contact: PromotedContact } | null>(null);
   const [addingEmail, setAddingEmail] = useState<string | null>(null);
   // Extra sections are collapsed to headers by default — their titles and
   // counts are visible right under the main list instead of a full page of
@@ -274,18 +299,20 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     const rowKey = normEmail(k.email) || normName(k.name);
     setAddingEmail(rowKey);
     try {
-      await apiRequest("POST", "/api/crm/contacts", {
-        name: k.name || (k.email ? k.email.split("@")[0].replace(/\./g, " ").replace(/\b\w/g, (ch: string) => ch.toUpperCase()) : "Unknown"),
+      const response = await apiRequest("POST", `/api/brand/${companyId}/promote-sender`, {
+        name: k.name || undefined,
         email: k.email || undefined,
         phone: k.phone || k.mobile || undefined,
+        mobile: k.mobile || undefined,
         role: k.title || undefined,
-        companyId,
-        companyName,
+        linkedin: k.linkedin_url || k.linkedin || undefined,
       });
-      setAddedEmails((prev) => new Set(prev).add(rowKey));
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-      toast({ title: `${k.name || k.email} added to CRM`, description: `Linked to ${companyName}` });
+      const contact: PromotedContact = await response.json();
+      setAddedContacts(previous => ({ ...previous, [`${companyId}:${rowKey}`]: contact }));
+      setLastAdded({ companyId, contact });
+      void queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      toast({ title: contact.created ? "Contact added to CRM" : "Contact already in CRM", description: contact.employerConfirmed ? `Recorded employer: ${contact.companyName}` : "Employer unconfirmed — open the contact to review." });
     } catch (e: any) {
       toast({ title: "Couldn't add contact", description: e?.message, variant: "destructive" });
     } finally {
@@ -297,25 +324,26 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   // "known" = BGP has real email history with them; otherwise the provider
   // that surfaced them.
   const provenance = (k: any): { label: string; cls: string } => {
-    if (k.bgp?.threadCount) return { label: `known · ${k.bgp.threadCount} threads`, cls: "text-emerald-700 border-emerald-200" };
-    if (k.sources?.includes("rocketreach")) return { label: "RocketReach", cls: "text-blue-700 border-blue-200" };
-    if (k.sources?.includes("apollo")) return { label: "Apollo", cls: "text-violet-700 border-violet-200" };
+    if (k.bgp?.threadCount) return { label: `known · ${k.bgp.threadCount} threads`, cls: "text-primary border-border" };
+    if (k.sources?.includes("rocketreach")) return { label: "RocketReach", cls: "text-primary border-border" };
+    if (k.sources?.includes("apollo")) return { label: "Apollo", cls: "text-muted-foreground border-border" };
     return { label: k.sources?.[0] || "discovered", cls: "" };
   };
 
   return (
-    <Card>
+    <Card data-testid={`company-contacts-board-${companyId}`}>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+        <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Users className="w-3.5 h-3.5" /> Key contacts
-          <Badge variant="outline" className="text-[10px]">{crmVisible.length + discoveredVisible.length}{hiddenCount > 0 ? ` / ${allContacts.length + discovered.length}` : ""}</Badge>
+          <Badge variant="outline" className="text-[11px] font-mono tabular-nums">{crmVisible.length + discoveredVisible.length}{hiddenCount > 0 ? ` / ${allContacts.length + discovered.length}` : ""}</Badge>
         </CardTitle>
         {!kcIsClient && (
         <button
           onClick={() => rescan()}
           disabled={scanning}
-          className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1"
-          title="Refresh — runs the contact discovery engine again (BGP email + RocketReach + Apollo + AI check)"
+          className="min-h-11 text-sm px-2 rounded border border-border bg-card hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1"
+          data-testid="contact-cascade-refresh"
+          title="Refresh contact discovery"
         >
           {scanning ? <><Loader2 className="w-3 h-3 animate-spin" /> Scanning…</> : <><RefreshCw className="w-3 h-3" /> Refresh contacts</>}
         </button>
@@ -323,7 +351,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {crmVisible.length === 0 && discoveredVisible.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic">
+          <p className="text-sm text-muted-foreground italic">
             {scanning
               ? "Mining BGP email, searching RocketReach + Apollo, AI-checking every candidate — 20-40s on first open…"
               : allContacts.length + discovered.length === 0
@@ -337,46 +365,47 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
             ))}
             {discoveredVisible.map((k: any) => {
               const rowKey = normEmail(k.email) || normName(k.name);
-              const added = addedEmails.has(rowKey);
+              const added = addedContacts[`${companyId}:${rowKey}`];
               const conf = k.ai?.confidence;
-              const confCls = conf == null ? "" : conf >= 70 ? "text-emerald-700 border-emerald-200" : conf >= 40 ? "text-amber-700 border-amber-200" : "text-red-600 border-red-200";
+              const confCls = conf == null ? "" : conf >= 70 ? "text-primary border-border" : conf >= 40 ? "text-muted-foreground border-border" : "text-destructive border-border";
               const src = provenance(k);
               return (
-                <div key={rowKey} className="flex items-start gap-2 text-xs rounded p-1 -mx-1 hover:bg-muted/50 transition-colors">
-                  <span className="w-6 h-6 rounded-full bg-muted/70 border border-dashed flex items-center justify-center text-[9px] font-medium shrink-0">
+                <div key={rowKey} className="flex flex-wrap items-start gap-2 text-sm rounded p-1 -mx-1 hover:bg-muted/50 transition-colors">
+                  <span className="w-6 h-6 rounded-full bg-muted/70 border border-dashed flex items-center justify-center text-[11px] font-medium shrink-0">
                     {(k.name || k.email || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
                   </span>
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 basis-[calc(100%-2rem)] md:basis-0 flex-1">
                     <p className="font-medium truncate">{k.name || k.email}</p>
-                    <p className="text-[10px] text-muted-foreground truncate" title={k.ai?.reason || ""}>
+                    <p className="text-[11px] text-muted-foreground break-words [overflow-wrap:anywhere] md:truncate" title={k.ai?.reason || ""}>
                       {[k.title, k.email, k.phone || k.mobile].filter(Boolean).join(" · ") || "—"}
                     </p>
                   </div>
                   {conf != null && (
-                    <Badge variant="outline" className={`text-[9px] shrink-0 tabular-nums ${confCls}`} title={k.ai?.reason || ""}>{conf}</Badge>
+                    <Badge variant="outline" className={`text-[11px] shrink-0 tabular-nums ${confCls}`} title={k.ai?.reason || ""}>{conf}</Badge>
                   )}
-                  <Badge variant="outline" className={`text-[9px] shrink-0 ${src.cls}`}>{src.label}</Badge>
+                  <Badge variant="outline" className={`text-[11px] shrink-0 ${src.cls}`}>{src.label}</Badge>
                   {added ? (
-                    <Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">in CRM</Badge>
-                  ) : (
+                    <Link href={`/contacts/${added.id}`} className="inline-flex min-h-11 items-center text-sm underline" data-testid={`contact-cascade-open-${rowKey}`}>In CRM · open</Link>
+                  ) : !kcIsClient ? (
                     <Button
                       size="sm"
                       variant="outline"
-                      className="h-6 px-2 text-[10px] shrink-0"
+                      className="min-h-11 px-2 text-sm shrink-0"
                       onClick={() => addToCrm(k)}
-                      disabled={addingEmail === rowKey}
+                      disabled={addingEmail !== null}
                       data-testid={`button-add-known-${rowKey}`}
                     >
-                      {addingEmail === rowKey ? <Loader2 className="w-3 h-3 animate-spin" /> : "+ Add"}
+                      {addingEmail === rowKey ? <Loader2 className="w-3 h-3 animate-spin" /> : "Add to CRM"}
                     </Button>
-                  )}
+                  ) : null}
                 </div>
               );
             })}
           </div>
         )}
+        {lastAdded?.companyId === companyId && <ContactPromotionFeedback contact={lastAdded.contact} />}
         {summary && !kcIsClient && (
-          <p className="text-[10px] text-muted-foreground mt-1.5">
+          <p className="text-[11px] text-muted-foreground mt-1.5">
             {allContacts.length} in CRM{crmAiChecked > 0 ? ` (${crmAiChecked} AI-verified)` : ""}
             {discovered.length > 0 ? ` · ${discovered.length} new discovered` : " · no new contacts found"}
             {summary.revealed ? ` · ${summary.revealed} emails revealed` : ""}
@@ -386,7 +415,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
         {hiddenCount > 0 && (
           <button
             onClick={() => setShowAll(v => !v)}
-            className="mt-1.5 text-[10px] text-primary hover:underline"
+            className={`${pillMetrics} ${pillInactive} mt-1.5`}
           >
             {showAll ? "Show property-tier only" : `Show all ${allContacts.length + discovered.length} contacts`}
           </button>
@@ -397,12 +426,12 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
             <div key={s.key} className="mt-2 pt-1.5 border-t border-border/40">
               <button
                 onClick={() => setOpenSections(prev => ({ ...prev, [s.key]: !isOpen }))}
-                className={`w-full flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-semibold py-1 rounded hover:bg-muted/50 transition-colors ${s.tint || "text-muted-foreground"}`}
+                className={`w-full flex items-center gap-1.5 text-[11px] uppercase tracking-wide font-semibold py-1 rounded hover:bg-muted/50 transition-colors ${s.tint || "text-muted-foreground"}`}
                 data-testid={`toggle-contacts-section-${s.key}`}
               >
                 {isOpen ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
                 <span className="text-left flex-1">{s.title}</span>
-                <Badge variant="outline" className="text-[9px] tabular-nums">{s.rows.length}</Badge>
+                <Badge variant="outline" className="text-[11px] tabular-nums">{s.rows.length}</Badge>
               </button>
               {isOpen && (
                 <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1 mt-1">
