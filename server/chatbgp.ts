@@ -2047,7 +2047,7 @@ Strict rules:
 - You may only discuss this client's own properties, units, deals and the tenants on them. You have NO access to other clients' data, BGP's wider pipeline, BGP fees, or internal firm information — never speculate about or acknowledge details of any other client or BGP internal matters.
 - Use search_crm to look up the client's properties, available units, deals, tenants and comp evidence on their schemes. Results are already filtered to their portfolio — the same slice their Comps board shows.
 - You can create operator targeting briefs for the client's units with create_targeting_brief. Gather the objective, target operator criteria, priority categories, named target operators, deliverable deadlines and success measures conversationally first, then call the tool once. The branded brief document is saved to the unit's Letting Tracker files and filed to SharePoint automatically — include the download link the tool returns.
-- **You can drive the app on their behalf, not just answer questions.** You have the same app tooling an agent has for their portfolio: update properties and units, maintain the tenancy/leasing schedule, log viewings and offers, create and update deals, requirements, comps, companies and contacts, run the Property Pathway, generate documents/decks/PDFs/Word/Excel, create and edit images and file them to a building, manage tasks and diary entries, run KYC/covenant checks and look up market data. If a request maps to a tool, DO IT rather than telling them to ask their BGP team.
+- **You can drive the app on their behalf, not just answer questions.** You have the same app tooling an agent has for their portfolio: update properties and units, maintain the tenancy/leasing schedule, log viewings and offers, create and update deals, requirements, comps, companies and contacts, run the Property Pathway, generate documents/decks/PDFs/Word/Excel, create and edit images — including marking up, sketching on or annotating a plan or photo they have just attached to the chat, which needs NO property record and must never be gated behind creating one — and file them to a building when there is one, manage tasks and diary entries, run KYC/covenant checks and look up market data. If a request maps to a tool, DO IT rather than telling them to ask their BGP team.
 - Two things you genuinely cannot do: (a) anything in BGP's own systems — SharePoint/OneDrive filing, BGP mailboxes, BGP diaries; and (b) raw database, bulk/merge/delete or app-administration operations. For those, say plainly that it's a BGP-team action and offer to do the in-app equivalent (e.g. attach the document to the property/unit record instead of a SharePoint folder).
 - Never reveal or infer anything about another client, another landlord's portfolio, BGP's internal fees/WIP or the firm's pipeline. Every tool call you make must concern THIS client's own properties, units, deals and tenants. If a request would require reaching outside their portfolio, decline that part.
 - Be professional and concise. Use UK English and UK date/number formats.`;
@@ -7667,7 +7667,15 @@ export async function executeCrmToolRaw(
         const mime = inferredExt === "png" ? "image/png" : inferredExt === "webp" ? "image/webp" : "image/jpeg";
         const userId = req.session?.userId || (req as any).tokenUserId || null;
         const linkPropertyId = fnArgs.propertyId ? String(fnArgs.propertyId) : null;
-        const linkCompanyId = fnArgs.companyId ? String(fnArgs.companyId) : null;
+        // A scoped (client) caller's row must carry their company when it is
+        // not linked to a building, or the ai-edit call below 403s the row we
+        // just created — a client uploading a plan to mark up has no property
+        // to file it against. Mirrors the upload route's own fallback in
+        // image-studio.ts. Staff (null scope) keep the firm-wide pool.
+        const editorScope = await resolveCompanyScope(req as any).catch(() => null);
+        const linkCompanyId = editorScope
+          ? (linkPropertyId ? null : editorScope)
+          : (fnArgs.companyId ? String(fnArgs.companyId) : null);
         const insertRes = await pool.query(
           `INSERT INTO image_studio_images
              (file_name, category, tags, description, source, mime_type, file_size, width, height, thumbnail_data, local_path, uploaded_by, property_id, company_id, created_at)
@@ -7888,7 +7896,13 @@ export async function executeCrmToolRaw(
 
       const sessionUserId = req.session?.userId || "chatbgp";
       const propertyId = fnArgs.propertyId ? String(fnArgs.propertyId) : null;
-      const companyId = fnArgs.companyId ? String(fnArgs.companyId) : null;
+      // Same fallback as edit_image: without it a scoped caller's unlinked
+      // save lands orphaned — invisible in their own Image Studio and
+      // un-editable afterwards.
+      const saveScope = await resolveCompanyScope(req as any).catch(() => null);
+      const companyId = saveScope
+        ? (propertyId ? null : saveScope)
+        : (fnArgs.companyId ? String(fnArgs.companyId) : null);
       const insertResult = await pool.query(
         `INSERT INTO image_studio_images (file_name, category, area, tags, description, source, width, height, file_size, thumbnail_data, local_path, uploaded_by, address, brand_name, property_type, property_id, company_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
         [fileName, category, area || null, tags, description || null, "chatbgp", width, height, imageBuffer.length, thumbnailData, localPath, sessionUserId, address || null, brandName || null, propertyType || null, propertyId, companyId]
