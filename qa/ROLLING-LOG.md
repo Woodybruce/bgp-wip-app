@@ -163,6 +163,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   the POST guard), so #289 stands on its own.
 - Suggestions: UX #290 (three unlabelled, mutually contradictory vacancy
   figures on one persona's screen), UX #291 (silent task write).
+- POST-FIX: `mark` chunk re-run — **188 [ok]** (187 baseline + the new
+  scenario, which fired for real: `[ok] mark · client-tracker-counts-each-unit-once`),
+  same 9x403 + 1x503 + 1x404 and no flow failures. `bash qa/run-smoke.sh`
+  re-run after the server change: **GREEN 42/0**.
 - No new flakes.
 
 ### r589 · 2026-09-07 · LIGHT (no journey — r588 had it) · 2 bugs fixed: the already-listed early return shipped snake_case so a re-add dropped the fee split, and the boot status-fix hook wrote LABELS into a codes column · 2 suggestions
