@@ -25,6 +25,12 @@ The Agents tab shows the brands and source of each person's link, unique people 
 
 The separate “Landsec Contacts” tab remains an identified bug: it uses the broad contacts API and mixes own-company, visible-brand and agency contacts under an own-company title. A proposed “Landsec team” view would request the actual Landsec company subset. This pass changes Agents only; it does not silently narrow the shared contacts API used by Requirements or relink imported people.
 
+## Evidence-plan demises and editing (7 September 2026)
+
+Pete needs every lettable demise selectable, editable and labelled within its actual boundary. AI now supplies label/seed candidates across a whole-level overview and close-up tiles; pixel-connected contours supply the geometry instead of saturated-pixel bounding rectangles. Refresh adds missing units and refines only unambiguous overlapping AI outlines, retaining row IDs, facts, marker coordinates and evidence; manually corrected units are protected. Trace unit is a provider-free click-to-preview fallback, and Draw/Redraw has explicit Finish, Undo and Cancel. Unknown or leaking boundaries stay for manual drawing rather than being promoted as confident rectangles.
+
+All units have contained, movable labels and appear in the searchable unit list even without evidence. Manual and linked-schedule edits remain open on failure; matched edits update the canonical schedule row with stale-link checks. Explicit schedule linking adopts a unique row reference, without adding a second schedule copy or changing schema. Evidence entries can be edited, source-file links route correctly, and ambiguous ref/tenant joins no longer attach to the first match. Refresh/crop/save protect against obsolete image geometry. See `docs/evidence-plan-fixes-2026-09-07.md` for verification and limits; live AI completeness and the current production plan are separate from the original demo-image tests.
+
 ## File Storage
 All uploaded files are stored under the `ChatBGP/` root folder (not `uploads/`). Subfolders: `chat-files`, `chat-media`, `doc-templates`, `hots`, `landlord-packs`, `legal-dd`, `marketing-files`, `investment-marketing`, `profile-pics`, `runs`, `smart-docs`, `templates`, `advice-engine`, `archivist-temp`, `sp-temp`, `transcribe-tmp`. The folder is gitignored. Files are also persisted in the `file_storage` DB table for durability.
 
