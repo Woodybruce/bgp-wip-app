@@ -92,6 +92,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r596 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+- Two-bot `QA_PERSONAS=victoria` FIRST (r595's hand-off): **142 [ok], 0
+  [skip]**, exact baseline (6x400 + 1x409). Clean.
+- `QA_PERSONAS=mark` second: **176 [ok]** then **KILLED at the 590s Bash
+  cap mid-run** — the 12 flow-failures are all the kill signature
+  ("Target page, context or browser has been closed", plus the first
+  casualty `client-properties-table-readonly-cells` reporting "never
+  rendered a tenants cell"). Real issues before the kill were **exact
+  baseline: 9x403 (client guard probes) + 1x503 (keyless AI regenerate)**,
+  no phantoms — running victoria first worked. UNVERIFIED TAIL this round,
+  from `client-properties-table-readonly-cells` onward (r595 had these
+  green): re-run next round.
+- Journey in progress: staff desktop 1440px, ground not covered by r588.
+
 ### r595 · 2026-09-07 · LIGHT (no journey) · 2 bugs fixed, both the FIFTEENTH round of the label-vs-code class and both the SAME literal 'Available' reaching the codes column — once written by hand in a raw INSERT, once supplied by the postgres COLUMN DEFAULT when the field is simply absent · 1 phantom identified · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Restored
