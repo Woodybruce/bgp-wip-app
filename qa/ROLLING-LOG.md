@@ -92,6 +92,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r586 · 2026-09-07 · FULL (rotation #4 BGP staff · mobile 390px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas).
+  Smoke GREEN 42/0.
+- TWO-BOT victoria chunk: 0 flow failures, tally 4x400 + 1x409 — exactly the
+  baseline class (rocketreach discover x2 + the deliberate invalid POST
+  probe; the 409 is r583's drilldown tolerating the SOL+ AML gate). Nothing
+  to triage. mark chunk pending.
+- Journey pending: staff phone 390px, real task with a write.
+
 ### r585 · 2026-09-07 · LIGHT (no journey — r584 had the rotation) · 2 bugs fixed: My Portfolio widget 500 + always-empty comp set · sweep extended to the label shape · 2 suggestions
 - Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
   qa/apply-sql.mjs). Smoke GREEN 42/0 BEFORE and AFTER the fixes.
