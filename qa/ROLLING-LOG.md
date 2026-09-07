@@ -92,6 +92,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r603 · 2026-09-07 · LIGHT (r602 had the journey — no journey this round) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+- Regression, chunked recipe, 45s settle, shared `QA_CROSS_FILE=/tmp/qa-cross-603.json`:
+  victoria **148 ok** / 6x400 + 1x409 — **exactly the r602 baseline**. mark head
+  chunk (`QA_UNTIL=client-properties-table-readonly-cells`) running; mark tail +
+  woody/nick/sam to follow.
+- Triage so far: **nothing new** — victoria's 7 issues are the known
+  deliberate-refusal signature, all listed in earlier rounds.
+- Targets this round (all three from the parent brief): UX #320 (prove the
+  second tracker's reachability), UX #298 (combobox ranks Create above the real
+  match), UX #192 (KYC portal drops the file it says it stores).
+- Provisional — replaced by the final entry at the end of the round.
+
 ### r602 · 2026-09-07 · FULL · journey: **BGP staff · phone 390px** (rotation slot #4) · 1 bug fixed (raw status CODES in the alert prose the team reads) · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Smoke
