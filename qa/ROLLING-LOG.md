@@ -92,6 +92,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r585 · 2026-09-07 05:20Z · LIGHT · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs). Smoke GREEN 42 checks / 0 failures.
+- Plan per r584's hand-off: (1) extend qa/r575-status-literal-sweep.mjs to
+  available_units.marketing_status and the `.toLowerCase() === "<label>"`
+  shape; (2) spend the found budget on the two highest-impact deferred hits
+  (ai-intelligence.ts:375, chatbgp.ts:1902 / goad-plan-data.ts:654).
+- Two-bot chunks to follow (they double as the fire-test for new scenarios).
+
 ### r584 · 2026-09-07 · FULL (rotation #3 Landsec client · mobile 390px) · 2 bugs fixed, both the LEGACY-LABEL-vs-CODE class — ChatBGP was told every property had ZERO available units · 2 suggestions
 - Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; servers via qa/with-server.sh). Smoke
