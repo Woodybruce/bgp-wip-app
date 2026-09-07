@@ -142,6 +142,18 @@ export function legacyToCode(raw: string | null | undefined): DealStatusCode | n
   return LEGACY_MAP[trimmed.toLowerCase()] ?? null;
 }
 
+// Human label for a stored status — canonical code or legacy free text.
+// Falls back to the raw string (then `fallback`) so an unmapped value shows
+// what is actually stored rather than "undefined". Use this ANYWHERE a
+// status is written into a sentence a user reads: the bell, the digest,
+// emails, reports. Raw codes ("stuck in AVA") mean nothing to the team.
+export function dealStatusLabel(raw: string | null | undefined, fallback = "Unknown"): string {
+  const code = legacyToCode(raw);
+  if (code) return DEAL_STATUS_LABELS[code];
+  const trimmed = String(raw ?? "").trim();
+  return trimmed || fallback;
+}
+
 // Status groups used by server-side SQL exclusion lists.
 // Use these instead of maintaining divergent hardcoded strings in each file.
 // All SQL queries should compare against canonical codes (post-migration).

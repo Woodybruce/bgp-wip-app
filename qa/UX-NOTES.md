@@ -13,6 +13,43 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+318. 2026-09-07 · BGP staff / phone 390px (QA r602, Victoria) · a tenant rep
+   rings about a unit; she opens the Letting Tracker on her phone and scans
+   for it · each unit card carries ONLY the unit name, the scheme and the
+   status chip, then five action words (Files / Viewing / Offer / Interest /
+   Edit). No size, no quoting rent, no available date, no agent, no tenant in
+   negotiation — 76 cards that differ by name alone, so finding the right one
+   means searching for a name she has to already know. The card body is also
+   inert: only the five action words respond to a tap (same family as #311).
+   Suggestion: put one facts line on the card (sq ft · quoting rent ·
+   available date, or the tenant name once a deal is on it), and make the
+   card body open the unit's Edit sheet so the whole card is the target.
+
+319. 2026-09-07 · BGP staff / phone 390px (QA r602) · reaching the Letting
+   Tracker at all · staff get there by Deals tab → "Letting Tracker" toggle,
+   which works — but the phone HOME's quick links are Deals / Expenses /
+   Images / CRM and its board grid is Brand Intelligence / Comps / SharePoint
+   / Property Intelligence, so the tracker is nowhere on the home screen. The
+   CLIENT (Landsec) phone home, by contrast, leads with a "My portfolio —
+   letting tracker" roll-up tile (Available / Under offer / Let counts) AND a
+   Tracker quick link (`mobile-home.tsx:174`). For a leasing agency the
+   tracker is the daily board; the landlord gets a better door to it than the
+   agent does. Suggestion: add Tracker to the staff QUICK_LINKS (Expenses is
+   already one tap away via the Boards row / My Card), or give staff the same
+   roll-up tile counting their own team's units.
+
+320. 2026-09-07 · BGP staff / phone 390px (QA r602, code read during the
+   journey) · `client/src/components/mobile-app.tsx` contains a whole phone
+   "More" tab — Letting/Investment tracker (with My Invoiced / My WIP tiles,
+   status filter dropdown, per-unit viewings + offers sheets), Reqs, News and
+   Docs sub-tabs, roughly a thousand lines gated on `tab === "menu"` — that
+   NOTHING can reach: `setTab` is only ever called with "chats" or "ai", and
+   no route mounts `MobileApp initialTab="menu"` (App.tsx mounts "ai" and
+   "chats" only). It is a SECOND tracker implementation, invisible and
+   un-QA'd, that will silently drift from `/available`. Suggestion: decide
+   and act — either wire the tab back into the chat shell, or delete the
+   dead branch and its queries so there is one phone tracker to maintain.
+
 316. 2026-09-07 · BGP staff / any PDF the app emails out (QA r601) · Woody
    opens a Heads of Terms or a weekly update to check it before it goes ·
    Every generator writes the SAME footer through its own hand-rolled

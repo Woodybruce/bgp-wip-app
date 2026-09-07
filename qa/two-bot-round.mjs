@@ -4850,6 +4850,36 @@ async function victoriaRound(page, cross) {
     if (!r.severities.includes('critical')) throw new Error(`kyc_gap alerts came back as ${r.severities.join('/')}, not critical`);
   });
 
+  // r602: the bell and the phone-home digest wrote the RAW status CODE into
+  // a sentence a human reads ("stuck in AVA", "Deal in NEG without KYC
+  // clearance"). Every other surface renders the label. This asserts both
+  // feeds carry labels and no bare code survives in their prose.
+  await step(page, p, 'staff-alert-prose-uses-status-labels', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const [n, d] = await Promise.all([
+        fetch('/api/notifications', { credentials: 'include', headers: auth }),
+        fetch('/api/daily-digest', { credentials: 'include', headers: auth }),
+      ]);
+      if (!n.ok || !d.ok) return { ok: false, why: `notifications ${n.status} / digest ${d.status}` };
+      const notes = await n.json();
+      const dig = await d.json();
+      const prose = [
+        ...(Array.isArray(notes) ? notes : []).map(x => `${x.title || ''} ${x.description || ''}`),
+        ...(Array.isArray(dig) ? dig : []).map(x => `${x.title || ''} ${x.detail || ''}`),
+      ];
+      // Bare 3-4 letter codes, not the labels they stand for. HOT is excluded
+      // only as part of "HOTs", which IS the label.
+      const CODE = /(?:^|[\s("'])(OPP|REP|SPEC|LIVE|AVA|NEG|HOT|SOL|EXC|COM|WIT|INV)(?:$|[\s)"'.,])/;
+      const offenders = prose.filter(t => CODE.test(t.replace(/HOTs/g, 'heads')));
+      const labelled = prose.filter(t => /(stuck in|Deal in|status: )\s*(Opportunity|Reporting|Speculative|Live|Available|Negotiating|HOTs|Solicitors|Exchanged|Completed|Withdrawn|Invoiced)/.test(t));
+      return { ok: true, count: prose.length, offenders: offenders.slice(0, 3), labelled: labelled.length };
+    });
+    if (!r.ok) throw new Error(`could not read the alert feeds (${r.why})`);
+    if (r.offenders.length) throw new Error(`a raw status code reached the user's alert prose: ${JSON.stringify(r.offenders)}`);
+    if (r.count > 0 && r.labelled === 0) throw new Error(`${r.count} alerts and not one carries a status label — did the label stop being rendered at all?`);
+  });
+
   // r601: every per-page footer in the PDF generators was written at a y BELOW
   // the document's own bottom margin, so pdfkit closed the page and stamped
   // the footer onto a fresh one — one page of content shipped as a two-page

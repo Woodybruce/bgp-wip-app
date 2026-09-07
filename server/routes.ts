@@ -39,7 +39,7 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
-import { legacyToCode, DEAL_STATUS_CODES } from "@shared/deal-status";
+import { legacyToCode, DEAL_STATUS_CODES, dealStatusLabel } from "@shared/deal-status";
 import { codeToLeasingStatus } from "@shared/lease-status-mirror";
 import { registerIngestRoutes } from "./ingest-routes";
 import { registerGenericCrmRoutes } from "./generic-crm-routes";
@@ -8955,7 +8955,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       for (const d of stuckDeals.rows) {
         const ms = Date.now() - new Date(d.updated_at).getTime();
         const days = isNaN(ms) ? 30 : Math.floor(ms / 86400000);
-        alerts.push({ type: "stuck_deal", severity: "warning", title: `Stuck deal: ${d.name}`, detail: `No update for ${days}+ days (status: ${d.status})`, entityId: d.id, entityType: "deal" });
+        alerts.push({ type: "stuck_deal", severity: "warning", title: `Stuck deal: ${d.name}`, detail: `No update for ${days}+ days (status: ${dealStatusLabel(d.status)})`, entityId: d.id, entityType: "deal" });
       }
 
       const unmatchedReqs = await pool.query(
@@ -9587,7 +9587,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         notifications.push({
           id: `stuck-${d.id}`,
           type: "stuck_deal",
-          title: `${d.name} stuck in ${d.status || "Unknown"}`,
+          title: `${d.name} stuck in ${dealStatusLabel(d.status)}`,
           description: `No update for ${days} days`,
           severity: days > 60 ? "urgent" : "warning",
           createdAt: d.updated_at,
@@ -9644,7 +9644,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
           id: `kyc-${d.id}`,
           type: "kyc_gap",
           title: `KYC not approved: ${d.name}`,
-          description: `Deal in ${d.status} without KYC clearance`,
+          description: `Deal in ${dealStatusLabel(d.status)} without KYC clearance`,
           severity: "urgent",
           createdAt: new Date().toISOString(),
           dealId: d.id,

@@ -92,16 +92,91 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r602 · 2026-09-07 · FULL (rotation #4: BGP staff · phone 390px) · ROUND IN PROGRESS
+### r602 · 2026-09-07 · FULL · journey: **BGP staff · phone 390px** (rotation slot #4) · 1 bug fixed (raw status CODES in the alert prose the team reads) · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Smoke
+  re-run after the fix: **GREEN 42/0**. `npx tsc --noEmit` clean.
 - **REGRESSION AT BASELINE.** Chunked recipe, 45s settle, shared
   `QA_CROSS_FILE=/tmp/qa-cross-602.json`: victoria **147 ok** / 6x400 + 1x409;
   mark head (`QA_UNTIL=client-properties-table-readonly-cells`) **176 ok** /
-  9x403 + 1x503; mark tail + woody/nick/sam **38 ok** / 1x403.
-  Sum **361 ok, 18 issues** — exactly the r601 baseline. **Streak 56.**
-  Triage: nothing new, all 18 are the documented set.
-- Journey in progress: Victoria on the staff phone shell.
+  9x403 + 1x503; mark tail + woody/nick/sam **38 ok** / 1x403. Sum **361 ok,
+  18 issues** — exactly the r601 baseline. **Streak 56.** Triage: nothing new.
+- **JOURNEY (staff phone, 390px):** "a tenant rep has rung about a Bluewater
+  unit while I'm on the train" — cold open → Letting Tracker → search MSU9 →
+  read the existing viewing + offer → **log the call as a viewing (the write)**
+  → leave myself a task. Both writes landed and read back: the viewing sheet
+  saved company (Honi Poke), contact, date/time, attendees, **Interested**
+  outcome and notes, the row rendered all of it, the card counter moved
+  **Viewing (1) → Viewing (2)**, "Viewing added" toast; `/tasks` went
+  **0 open → 1 open** with a "Task created" toast. Offers sheet, global
+  search (finds the deal), notifications bell and `/deals` (3 deals, pill
+  row, WIP/Properties/Deals/Letting toggles) all render clean at 390px, no
+  overflow, no error boundary.
+- **Two things I got wrong before checking, worth recording:** (1) the
+  tracker IS reachable by tapping — **Deals tab → "Letting Tracker" toggle**
+  (`toggle-deals-letting`), not just by URL; (2) a `/deals` capture that
+  looked like a stuck skeleton was a mid-load screenshot — a 3/6/10s re-probe
+  showed the full list every time. Neither is a bug.
+- **Harness note (not the app):** the shared combobox renders its options as
+  cmdk `div[role="option"]`, NOT buttons — `button:has-text("…")` times out
+  on every company/contact picker. Use `[role="option"]:has-text(…)`.
+- **BUG FIXED — the alert prose the whole firm reads was written in raw
+  status CODES.** On the phone bell: "**Deal in EXC** without KYC clearance",
+  "Westgate – RU10 Test **stuck in AVA**"; on the phone home + desktop
+  dashboard digest: "No update for 39+ days (**status: AVA**)". Every other
+  surface renders labels — the same deal reads "Exchanged" on the Deals list
+  and "Marketing" on the tracker chip — so the one place that shouts at you
+  is the one place that speaks in codes, and AVA/COM/WIT are not vocabulary a
+  new agent has. **Censused every server-side site that writes a status into
+  a human sentence:** three live ones, all in `server/routes.ts`
+  (`/api/notifications` :9590 stuck-deal title + :9647 kyc_gap description,
+  `/api/daily-digest` :8958 stuck-deal detail — the digest feeds
+  `mobile-home.tsx:263`, i.e. the staff phone home, and dashboard.tsx:112).
+  Three more in `server/ai-intelligence.ts` (:75, :98, :477) have **no client
+  consumer at all** (`/api/ai/deal-alerts`, `/api/ai/smart-search` are
+  unwired) — left alone deliberately, noted here so the next round doesn't
+  re-find them. The two sites that already did it right
+  (`activity-summary.ts:219`, `weekly-report.ts:161`) are both null-guarded;
+  checked, unchanged. Fixed with one shared **`dealStatusLabel(raw)`** in
+  `shared/deal-status.ts` — `legacyToCode` → `DEAL_STATUS_LABELS`, falling
+  back to the raw string then "Unknown" so an unmapped legacy value shows
+  what is stored rather than `undefined` (the failure mode of the bare
+  `DEAL_STATUS_LABELS[legacyToCode(x)!]` idiom).
+  **VERIFIED live on the phone bell:** the same 9 items now read "Deal in
+  Exchanged / Solicitors / Negotiating / **HOTs** without KYC clearance" and
+  "stuck in Available / Exchanged"; a code regex over the panel text returns
+  false. Deal names and counts unchanged.
+- **ONE NEW SCENARIO**, `[ok]`, 0 issues, makes no refused request so the
+  issue tally is unchanged: `staff-alert-prose-uses-status-labels` (victoria,
+  before the PDF scenario) reads `/api/notifications` + `/api/daily-digest`
+  and fails on any bare code in a title/description/detail, and also fails if
+  NO alert carries a label (so deleting the label rendering can't pass it).
+  Proved the assertion bites: the three captured pre-fix strings all trip it,
+  the four post-fix ones don't ("HOTs" is masked first — it IS the label).
+  **NEW BASELINE: victoria 147 -> 148, sum 361 -> 362** (mark 190,
+  woody/nick/sam 24 unchanged). Issue signature unchanged.
+- **SUGGESTIONS (qa/UX-NOTES.md #318-#320):** the phone tracker card carries
+  no unit facts (no size / rent / date / tenant) and only its five action
+  words are tappable, so 76 cards differ by name alone (#318); the tracker is
+  absent from the staff phone HOME while the Landsec client home leads with a
+  letting-tracker roll-up tile **and** a Tracker quick link — the landlord
+  gets a better door to it than the agent (#319); and `mobile-app.tsx` holds
+  an entire unreachable phone "More" tab — a SECOND tracker implementation,
+  ~1000 lines, gated on `tab === "menu"` which `setTab` never sets and no
+  route mounts — that will drift from `/available` unwatched (#320).
+- Deferred, untouched: UX #297, the vacancy-basis question (#290/#286/#295),
+  the two column DEFAULTs (#305 + schema.ts:1817), #304, #308/#315, #309,
+  #310-#314, #316-#317, `add_property_imagery`'s missing scope check, the
+  residual QA fixture rows. **STILL UNVISITED:** #192 (KYC portal drops the
+  file it says is "stored securely"), #298 (combobox ranks `Create company
+  "X"` above the real match — and #320 is now in the same "nobody has looked"
+  bucket).
+- No navigation/page/control moved and no client file changed, so
+  `server/chatbgp-app-map.ts` needed no change — its phone section is
+  accurate (it already warns that many pages are URL-only on the phone).
+  `shared/schema.ts` and `migrations/` untouched.
+- Next round is **LIGHT** (this one had the journey); rotation resumes at
+  **#1 BGP staff · desktop**.
 
 ### r601 · 2026-09-07 · LIGHT (r600 had the journey — no journey this round) · 2 bugs fixed: EVERY PDF footer loop but one wrote below its own bottom margin, so five document types shipped a spurious blank page (UX #247, 7 doors censused) · and a client could silently reassign the BGP team on their own deal (UX #171's scope half, 2 doors) · r600's harness trap CLOSED · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
