@@ -9153,6 +9153,38 @@ async function markRound(page, cross) {
     }
   });
 
+  // r590: Bluewater carried FOUR tracker rows for U062 and two each for L090
+  // and L130 — one canonical unit apiece (they share property_units.unit_id),
+  // spawned by re-imports that pointed each copy at a different duplicate
+  // tenancy row. Mark's dashboard, Letting Tracker, risk register and sq ft
+  // total each counted every copy, so a board paper quoting them overstated
+  // Bluewater's vacancy by five units / ~12,900 sq ft. The boot heal now
+  // collapses on the canonical key; this is the client-side guard.
+  await step(page, p, 'client-tracker-counts-each-unit-once', async () => {
+    const got = await page.evaluate(async () => {
+      const res = await fetch('/api/available-units', {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const rows = Array.isArray(j) ? j : (j.units || j.data || []);
+      const byKey = {};
+      for (const u of rows) {
+        if (!u.unitId) continue;
+        const k = `${u.propertyId}|${u.unitId}|${String(u.unitName || '').trim().toLowerCase()}`;
+        (byKey[k] = byKey[k] || []).push(u.unitName);
+      }
+      return { total: rows.length, keyed: Object.keys(byKey).length,
+               dupes: Object.values(byKey).filter(v => v.length > 1).map(v => `${v[0]} x${v.length}`) };
+    });
+    if (got.status) throw new Error(`client /api/available-units returned ${got.status}`);
+    if (!got.total) throw new Error('client tracker payload is empty — nothing to check');
+    if (!got.keyed) { console.log('  [skip] client-tracker-counts-each-unit-once — no unitId on any row'); return; }
+    if (got.dupes.length) {
+      throw new Error(`the client letting tracker lists the same canonical unit more than once (${got.dupes.join('; ')}) — every vacancy count and sq ft total it feeds is overstated`);
+    }
+  });
+
   // r561: every deal payload a client login can read carried BGP's MLRO
   // working file — the compliance/PEP/EDD notes, the risk rating, the MLR
   // scope reason and whether a SAR had been filed with its NCA reference —

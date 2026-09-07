@@ -4409,8 +4409,44 @@ app.use("/api/branding/assets", express.static(
             UPDATE leasing_schedule_units ls SET tenancy_unit_id = NULL
              WHERE ls.tenancy_unit_id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.id = ls.tenancy_unit_id)`);
-          const total = (delAvail.rowCount || 0) + (unlinkAvail.rowCount || 0) + (delLs.rowCount || 0) + (unlinkLs.rowCount || 0);
-          if (total) console.log(`[orphan-projection heal] tracker: ${delAvail.rowCount} duplicate(s) removed + ${unlinkAvail.rowCount} unlinked; leasing: ${delLs.rowCount} removed + ${unlinkLs.rowCount} unlinked`);
+          // Same duplicate class, second door: re-imports also spawned tracker
+          // rows whose tenancy_unit_id is LIVE but points at a duplicate
+          // tenancy row, so the sweep above (dangling links only) leaves them
+          // standing. The canonical spine already knows they are one unit —
+          // they share property_units.unit_id — so collapse on that key too.
+          // Bluewater carried U062 x4, L090 x2 and L130 x2 this way and the
+          // client's own dashboard, Letting Tracker, risk register and sq ft
+          // total counted every copy (found r590, Mark Warne's board paper).
+          // Bare copies only: no deal, viewing, offer, interest, brief or
+          // marketing file, and the name must match too. Keeps the richest
+          // row, tie-broken oldest-first. Idempotent.
+          const delDupeUnitId = await pool.query(`
+            DELETE FROM available_units au
+             WHERE au.unit_id IS NOT NULL
+               AND au.deal_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM unit_viewings v WHERE v.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_offers f WHERE f.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_interest i WHERE i.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_briefs b WHERE b.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_marketing_files mf WHERE mf.unit_id = au.id)
+               AND EXISTS (
+                     SELECT 1 FROM available_units au2
+                      WHERE au2.id <> au.id
+                        AND au2.property_id = au.property_id
+                        AND au2.unit_id = au.unit_id
+                        AND lower(trim(coalesce(au2.unit_name, ''))) = lower(trim(coalesce(au.unit_name, '')))
+                        AND (
+                              au2.deal_id IS NOT NULL
+                           OR EXISTS (SELECT 1 FROM unit_viewings v2 WHERE v2.unit_id = au2.id)
+                           OR EXISTS (SELECT 1 FROM unit_offers f2 WHERE f2.unit_id = au2.id)
+                           OR EXISTS (SELECT 1 FROM unit_interest i2 WHERE i2.unit_id = au2.id)
+                           OR EXISTS (SELECT 1 FROM unit_briefs b2 WHERE b2.unit_id = au2.id)
+                           OR EXISTS (SELECT 1 FROM unit_marketing_files m2 WHERE m2.unit_id = au2.id)
+                           OR (coalesce(au2.created_at, 'epoch'::timestamptz), au2.id)
+                            < (coalesce(au.created_at,  'epoch'::timestamptz), au.id)
+                        ))`);
+          const total = (delAvail.rowCount || 0) + (unlinkAvail.rowCount || 0) + (delLs.rowCount || 0) + (unlinkLs.rowCount || 0) + (delDupeUnitId.rowCount || 0);
+          if (total) console.log(`[orphan-projection heal] tracker: ${delAvail.rowCount} duplicate(s) removed + ${unlinkAvail.rowCount} unlinked + ${delDupeUnitId.rowCount} same-unit duplicate(s) collapsed; leasing: ${delLs.rowCount} removed + ${unlinkLs.rowCount} unlinked`);
         } catch (e: any) {
           console.error("[orphan-projection heal] failed:", e?.message);
         }

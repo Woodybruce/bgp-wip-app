@@ -13,6 +13,35 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+290. 2026-09-07 · Landsec client / desktop (QA r590) · Mark Warne pulling
+   Bluewater's vacancy together for a board paper · three surfaces in one
+   sitting gave him three different vacancy numbers, none of them labelled
+   with its basis. Client dashboard: "TOTAL UNITS 201 / 124 occupied · 77
+   vacant · full rent roll" (self-consistent, 124+77=201). Tenancy Schedule
+   for the same property: "201 units", "OCCUPIED 124", "VACANT 76" — which
+   is 200, one short of its own header. Property page risk register: "76
+   units vacant with no active deal". The dashboard looks to be deriving
+   vacant as total-minus-occupied while the schedule counts vacant rows
+   directly, so any row that is neither lands in the dashboard's vacant
+   figure and nowhere in the schedule's. SUGGESTION: make one of them the
+   source (count both states directly and show the remainder explicitly —
+   "201 units · 124 occupied · 76 vacant · 1 unclassified"), and label the
+   basis on each tile as r571 did for the leasing/tenancy denominators
+   (see #286). A board paper cannot quote a figure whose own page does not
+   add up.
+
+291. 2026-09-07 · Landsec client / desktop (QA r590) · Mark adding a focus
+   task on the Bluewater property page ("Board paper: confirm U062 marketing
+   status with BGP") · the write worked — POST /api/tasks 200, the row
+   appeared under THIS WEEK'S FOCUS, survived a reload and turned up on My
+   Tasks — but nothing confirmed it: no toast, and the input clears the
+   instant the row draws, so on a slow render the two are momentarily
+   indistinguishable from the text having been dropped. Every other write in
+   the client shell toasts. SUGGESTION: toast "Task added to Bluewater
+   Shopping Centre" on success (and, per lesson 8, toast the failure loudly
+   if the POST does not return 2xx — right now a failed task write would
+   look identical to a successful one that has not re-rendered yet).
+
 288. 2026-09-07 · BGP staff / any surface (QA r589) · Victoria clicking
    "Send to Letting Tracker" on a vacant tenancy row that is ALREADY on the
    tracker · she gets the toast "On the Letting Tracker — Listing created and

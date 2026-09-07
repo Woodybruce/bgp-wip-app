@@ -92,18 +92,78 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r590 · 2026-09-07 · FULL (rotation #2 — Landsec client · desktop 1440px) · ROUND IN PROGRESS
+### r590 · 2026-09-07 · FULL (rotation #2 — Landsec client · desktop 1440px) · journey: Mark Warne's Bluewater board paper, with a write · 1 bug fixed: the client's own vacancy counts double-counted five units · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql` (seeding trap obeyed).
-- Two-bot, chunked, shared `QA_CROSS_FILE=/tmp/qa-cross-590.json`:
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- Two-bot chunked on a shared `QA_CROSS_FILE=/tmp/qa-cross-590.json`:
   chunk 1 `QA_PERSONAS=victoria` **140 [ok]**, chunk 2
-  `QA_PERSONAS=mark,woody,nick,sam` **211 [ok]**. No flow failures.
-  Triage: every issue is documented baseline — victoria 4x400 (rocketreach x3
-  + the deliberate invalid POST /api/investment-tracker) + 1x409 (SOL+ AML
-  gate, correct) + 2x400 from `staff-unbalanced-fee-split-is-refused`'s own
-  probes; mark 9x403 + 1x503 (keyless AI regenerate) + 1x404 (listed brochure
-  file, logged twice, same URL); woody/nick/sam 0. **Streak 46.**
-- Journey + fixes to follow.
+  `QA_PERSONAS=mark,woody,nick,sam` **211 [ok]**, no flow failures. Every
+  issue is documented baseline — victoria 6x400 (rocketreach x3, the
+  deliberate invalid POST /api/investment-tracker, and the two deliberate
+  probes inside `staff-unbalanced-fee-split-is-refused`) + 1x409 (SOL+ AML
+  gate, correct); mark 9x403 + 1x503 + 1x404 (the listed brochure file,
+  logged twice, same URL); woody/nick/sam 0. **Streak 46.**
+- JOURNEY (client desktop 1440px, shots `r590-01`…`r590-13`): "board paper
+  due — where does every empty unit at Bluewater stand, and what is under
+  offer?" Dashboard -> Letting Tracker board -> property page -> tenancy
+  schedule -> a focus-task WRITE -> My Tasks. **No cross-client or BGP-only
+  leakage anywhere**: /api/available-units hands Mark 79 of the DB's 82 rows,
+  the three withheld are out of his portfolio, and every unit/deal on every
+  board is Landsec's. The staff-only panels stay hidden.
+- **THE WRITE WORKED END TO END.** Mark typed "Board paper: confirm U062
+  marketing status with BGP" into THIS WEEK'S FOCUS on the Bluewater property
+  page: `POST /api/tasks` 200, row drew, survived a reload, and appears on
+  /tasks. No toast though — UX #291.
+- BUG FIXED — **the client's own vacancy numbers double-counted five empty
+  units, ~12,900 sq ft, on the surface a board paper is written from.**
+  Bluewater carried FOUR `available_units` rows for `U062 Bluewater - Upper
+  Level` and two each for `L090 Bluewater` and `L130 Bluewater - Lower
+  Level`. They are not four units: all four share one canonical
+  `property_units.unit_id`, same name, same 1,408 sqft, no deal, no viewing,
+  offer, interest, brief or file on any of them — re-imports pointed each
+  copy at a DIFFERENT duplicate tenancy row. The boot heal at index.ts:4381
+  already exists for exactly this class (its own comment says "Bluewater:
+  U062 x8") but it only collapses rows whose `tenancy_unit_id` is DANGLING;
+  these all point at live tenancy rows, so it walked past them every boot.
+  Every count downstream believed all four: dashboard "79 live lettings ·
+  161,282.5 sq ft" and "77 Available", the Letting Tracker's ALL STATUSES 77
+  / MARKETING 75, and the property risk register's "76 units vacant with no
+  active deal".
+  FIX: a second DELETE in the same heal, collapsing on the canonical key
+  (`property_id` + `unit_id` + normalised `unit_name`). Bare copies only —
+  no deal and nothing in unit_viewings/offers/interest/briefs/marketing_files
+  — keeping the richest row, tie-broken oldest-first, idempotent.
+  **VISUALLY VERIFIED** (`qa/r590-verify.mjs`, shots `r590-12-dash-fixed.png`
+  / `r590-13-board-fixed.png`): heal logs "5 same-unit duplicate(s)
+  collapsed"; dashboard now reads **74 live lettings · 148,383.5 sq ft** and
+  **72 Available**, the board **72 of 74 units / MARKETING 70**, and U062,
+  L090 and L130 each appear exactly ONCE. CONTROLS, all held: rows carrying a
+  deal unchanged at 4; duplicate canonical keys 0 (was 3); and
+  `U062/U063 Bluewater` — a genuinely different unit with a confusingly
+  similar name — survives untouched, so the collapse is not name-matching its
+  way through real listings. `npx tsc --noEmit` clean.
+- NEW SCENARIO: `mark · client-tracker-counts-each-unit-once` — asserts no
+  two rows the client tracker ships share a (propertyId, unitId, unitName)
+  key. NOT vacuous: all 74 rows carry `unitId`, checked before adding it.
+- FIXTURE HYGIENE, and r589's leak fix is only half done: chunk 1 again left
+  QA rows behind — one in `available_units` AND three in
+  `leasing_schedule_units` (`QA-R588-LBL-A/N/U R1`), which the r589 guard does
+  not look at. They inflated the tenancy spine to 201 units and put a fake
+  "Negotiating" letting on Mark's client dashboard. Worse, something
+  RE-CREATES the available_units row on the next boot (new id each time,
+  `server/unit-mirror.ts:180` the likely door) — deleting it is not enough.
+  `qa/r590-cleanup.mjs` added; the leak itself is DEFERRED.
+- DEFERRED: (a) the leak above + whatever re-creates the row at boot;
+  (b) UX #290's vacancy-arithmetic disagreement (201 units / 124 occupied /
+  76 vacant on the tenancy schedule vs 77 vacant on the dashboard) — a
+  denominator/basis decision, #286's family, not a blind fix;
+  (c) r589's nominated `--kind=assign --all` 27-hit census pass, untouched
+  this round; (d) UX #289's en-dash guard hole, still unfixed — note the
+  double-count found this round came through a DIFFERENT door (import, not
+  the POST guard), so #289 stands on its own.
+- Suggestions: UX #290 (three unlabelled, mutually contradictory vacancy
+  figures on one persona's screen), UX #291 (silent task write).
+- No new flakes.
 
 ### r589 · 2026-09-07 · LIGHT (no journey — r588 had it) · 2 bugs fixed: the already-listed early return shipped snake_case so a re-add dropped the fee split, and the boot status-fix hook wrote LABELS into a codes column · 2 suggestions
 - Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`
