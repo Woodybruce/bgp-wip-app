@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r579 · 2026-09-06/07 · LIGHT (r578 had the journey) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas).
+  Smoke GREEN 42 checks / 0 failures.
+- Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
+  Tally victoria 4x400 (all POST /brand/:id/rocketreach/discover) / mark
+  9x403 + 1x503 + 1x404 (listed brochure-file 404) / woody,nick,sam 0 —
+  BASELINE CONFIRMED, thirty-eighth consecutive clean hand-off. The victoria
+  chunk died once at login on ECONNRESET (listed flake) and was clean on
+  re-run. 0 app bugs from the regression itself.
+- Triage: all logged issues are listed environment noise. Deep angle this
+  round = the remaining server-side status-literal divergences by user
+  impact (qa/r575-status-literal-sweep.mjs).
+
 ### r578 · 2026-09-06 · FULL (rotation #4 BGP staff · mobile 390px) · 1 bug fixed — an agent's OWN commission card dropped their deal the moment it moved FORWARD out of Negotiating into heads of terms · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
