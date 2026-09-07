@@ -117,6 +117,45 @@ test('model parsing demands proper JSON shape and finite coordinates, and maps t
   assert.deepEqual(result[0].seed, { x: .5, y: .7 });
 });
 
+test('generated region tags cannot become saved unit references or tenant names', () => {
+  const region = { id: 62, polygon: [{ x: .1, y: .1 }, { x: .4, y: .1 }, { x: .4, y: .4 }, { x: .1, y: .4 }], dot: { x: .2, y: .2 }, pixels: 500 };
+  const result = mapDetectedPlanUnits({ units: [
+    { regionId: 62, unitRef: '@62', tenant: '@62' },
+    { unitRef: '@62', tenant: null, seed: { x: .2, y: .2 } },
+    { regionId: 62, unitRef: 'D1', tenant: 'Lakeland' },
+    { regionId: 62, unitRef: '62', tenant: 'A numbered shop' },
+  ] }, { x: 0, y: 0, width: 1, height: 1 }, [region]);
+  assert.equal(result.length, 3);
+  assert.equal(result[0].unitRef, null);
+  assert.equal(result[0].tenant, null);
+  assert.equal(result[1].unitRef, 'D1');
+  assert.equal(result[2].unitRef, '62', 'Genuine numeric references are not prohibited');
+});
+
+test('vision receives an unmarked original alongside the geometry aid, with identical crop coordinates', async () => {
+  const image = raster(240, 180);
+  rect(image, 30, 40, 120, 140, teal);
+  const png = await sharp(image.data, { raw: { width: image.width, height: image.height, channels: 3 } }).png().toBuffer();
+  const names = ['DETECT_PROMPT', 'extractJsonObject', 'detectTile'];
+  const source = names.map(name => find('server/evidence-plan.ts', node => (ts.isFunctionDeclaration(node) && node.name?.text === name)
+    || (ts.isVariableStatement(node) && node.declarationList.declarations.some(item => item.name.getText() === name)))).join('\n');
+  let request;
+  const { tile } = evaluate(source + '\nexports.tile = detectTile;', {
+    anthropic: { messages: { create: async body => { request = body; return { stop_reason: 'end_turn', content: [{ type: 'text', text: '{"units":[]}' }] }; } } },
+    require: name => { assert.equal(name, './plan-unit-detection'); return { mapDetectedPlanUnits }; },
+  });
+  await tile(sharp, png, 240, 180, .1, .2, .6, .6, [], false, []);
+  const images = request.messages[0].content.filter(block => block.type === 'image').map(block => Buffer.from(block.source.data, 'base64'));
+  assert.equal(images.length, 2);
+  const expected = await sharp(png).extract({ left: 24, top: 36, width: 144, height: 108 }).resize({ width: 144, height: 108 }).jpeg({ quality: 92 }).toBuffer();
+  assert.deepEqual(images[0], expected, 'Reference-reading image must not include helper labels or grid');
+  assert.notDeepEqual(images[1], images[0]);
+  for (const bytes of images) {
+    const meta = await sharp(bytes).metadata();
+    assert.equal(meta.width, 144); assert.equal(meta.height, 108);
+  }
+});
+
 async function detectionJob({ existing = [], candidates, changedBackground = false, expired = false, failTiles = false, customImage } = {}) {
   const image = customImage || raster();
   if (!customImage) { rect(image, 20, 20, 75, 100, teal); rect(image, 90, 20, 140, 100, teal); }
@@ -182,7 +221,7 @@ async function detectionJob({ existing = [], candidates, changedBackground = fal
 test('refresh keeps manually saved outlines, identifiers and attached data while adding a missing outline', async () => {
   const preserved = { id: 'saved', unit_ref: 'A1', polygon: [{ x: .08, y: .1 }, { x: .33, y: .1 }, { x: .33, y: .6 }, { x: .08, y: .6 }], source: 'manual', dot: { x: .2, y: .3 }, passing_rent: 120000, notes: 'Saved human facts' };
   const result = await detectionJob({ existing: [preserved] });
-  assert.equal(result.calls, 10, 'overview plus nine close-up tiles');
+  assert.equal(result.calls, 1, 'each candidate is classified once in its own close-up');
   assert.equal(result.writes.length, 1);
   assert.equal(result.writes[0][2], 'A2');
   assert.deepEqual(result.current[0], preserved);
@@ -210,23 +249,40 @@ test('repeated saved refs and an AI label in a different place cannot replace ex
   assert.equal(duplicate.refinements.length, 0);
 });
 
-test('conflicting printed labels on the same traced shape are withheld for review', async () => {
+test('conflicting printed labels retain one editable outline with a review label', async () => {
   const result = await detectionJob({ candidates: [
     { unitRef: 'A1', seed: { x: 45 / 240, y: 60 / 180 }, polygon: null },
     { unitRef: 'A2', seed: { x: 50 / 240, y: 65 / 180 }, polygon: null },
   ] });
-  assert.equal(result.writes.length, 0);
+  assert.equal(result.writes.length, 1);
+  assert.match(result.writes[0][2], /^Unlabelled \d+-\d+$/);
   assert.equal(result.refinements.length, 0);
-  assert.ok(result.updates.at(-1).values[3].includes('conflicting or repeated unit labels'));
+  assert.ok(result.updates.at(-1).values[3].includes('outlines need a confirmed unit label'));
 });
 
-test('two distinct demises with the same printed reference are withheld for review', async () => {
+test('two distinct demises with the same printed reference remain separately editable', async () => {
   const result = await detectionJob({ candidates: [
     { unitRef: 'A1', seed: { x: 45 / 240, y: 60 / 180 }, polygon: null },
     { unitRef: 'A1', seed: { x: 115 / 240, y: 60 / 180 }, polygon: null },
   ] });
-  assert.equal(result.writes.length, 0);
-  assert.ok(result.updates.at(-1).values[3].includes('conflicting or repeated unit labels'));
+  assert.equal(result.writes.length, 2);
+  assert.notEqual(result.writes[0][2], result.writes[1][2]);
+  for (const row of result.writes) assert.match(row[2], /^Unlabelled \d+-\d+$/);
+  assert.ok(result.updates.at(-1).values[3].includes('outlines need a confirmed unit label'));
+});
+
+test('uncertain new labels cannot alter an overlapping manual unit or its saved facts', async () => {
+  const saved = { id: 'manual', unit_ref: 'A1', source: 'manual', passing_rent: 150000, notes: 'Confirmed lease', polygon: [
+    { x: .07, y: .09 }, { x: .34, y: .09 }, { x: .34, y: .6 }, { x: .07, y: .6 },
+  ] };
+  const result = await detectionJob({ existing: [saved], candidates: [
+    { unitRef: 'A1', tenant: 'Tenant A', seed: { x: 45 / 240, y: 60 / 180 }, polygon: null },
+    { unitRef: 'A1', tenant: 'Tenant B', seed: { x: 115 / 240, y: 60 / 180 }, polygon: null },
+  ] });
+  assert.deepEqual(result.current[0], saved);
+  assert.equal(result.refinements.length, 0);
+  assert.equal(result.writes.length, 1);
+  assert.match(result.writes[0][2], /^Unlabelled \d+-\d+$/);
 });
 
 test('a failed trace never removes existing units or pretends an approximate box is an outline', async () => {
@@ -300,14 +356,14 @@ test('an unlabelled observation can acquire its later printed label without a fa
   assert.equal(result.writes[0][3], 'Tenant A');
 });
 
-test('scan progress advances through all ten sections and retries are bounded', async () => {
+test('scan progress follows candidate batches and retries are bounded', async () => {
   const successful = await detectionJob();
-  const steps = successful.updates.filter(row => row.sql.includes('total_docs = 10')).map(row => row.values[1]);
+  const steps = successful.updates.filter(row => row.sql.includes('total_docs = $3')).map(row => row.values[1]);
   assert.equal(steps[0], 0);
-  assert.equal(Math.max(...steps), 10);
+  assert.equal(Math.max(...steps), 1);
   assert.ok(successful.updates.at(-1).sql.includes("status = 'done'"));
   const failed = await detectionJob({ failTiles: true });
-  assert.equal(failed.calls, 20, 'each section is tried at most twice');
+  assert.equal(failed.calls, 2, 'each batch is tried at most twice');
   assert.equal(failed.writes.length, 0);
   assert.ok(failed.updates.at(-1).sql.includes("status = 'error'"));
 });

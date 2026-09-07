@@ -114,7 +114,7 @@ export function scoreAcceptedUnits(acceptedUnits, sampleFile) {
     acceptedPredictionsWithoutAnySampleOrControl: predictionAssociations.filter(prediction => !prediction.positiveSampleIds.length && !prediction.negativeControlIds.length).length,
     limitations: [
       'Point coverage is not boundary accuracy. Inspect returns, walls, exclusions and labels visually; no polygon IoU is available from these point annotations.',
-      'This held-out sample is not a complete census. Predictions outside the samples remain unscored, not presumed correct or false.',
+      'This independent annotation sample is not a complete census or a held-out evaluation after iterative development. Predictions outside the samples remain unscored, not presumed correct or false.',
       'Readable-label scores apply only to explicit non-null ground-truth labels at the correct sampled location. A null label expectation is not guessed.',
       ...(sampleFile.limitations || []),
       ...(sampleFile.shape_scoring_limit ? [sampleFile.shape_scoring_limit] : []),

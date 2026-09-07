@@ -3,9 +3,12 @@
 // Required env: ANTHROPIC_API_KEY, EVIDENCE_PLAN_DATABASE_URL (audit DB only).
 // Run: node --import tsx qa/evidence-plan-automatic-eval.mjs --case=brent-cross --out=/absolute/audit/output
 // Supported cases: brent-cross, brixton. Each process is capped at 20 provider requests.
+// --replay-from=/absolute/completed-real-run verifies and reuses those exact responses;
+// replay requires the audit DB but no provider credentials/network, and is labelled separately.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +31,9 @@ const imagePath = path.resolve(root, args.image || selected.image);
 const output = path.resolve(args.out || path.join(root, '../audit-evidence/evidence-plan-20260907', `automatic-provider-${args.case}-${Date.now()}`));
 const cap = Number(process.env.EVIDENCE_SCAN_MAX_CALLS || 20);
 if (!Number.isInteger(cap) || cap < 1 || cap > 20) throw new Error('EVIDENCE_SCAN_MAX_CALLS must be 1..20 (default 20 per image)');
-if (!process.env.ANTHROPIC_API_KEY && !args['prepare-only']) throw new Error('ANTHROPIC_API_KEY must be injected at runtime; this script never reads credential files');
+if (args['replay-from'] && (typeof args['replay-from'] !== 'string' || !path.isAbsolute(args['replay-from']))) throw new Error('Use --replay-from=/absolute/completed-actual-run');
+const replayPath = args['replay-from'] ? path.resolve(args['replay-from']) : null;
+if (!process.env.ANTHROPIC_API_KEY && !args['prepare-only'] && !replayPath) throw new Error('ANTHROPIC_API_KEY must be injected at runtime; this script never reads credential files');
 const connectionString = process.env.EVIDENCE_PLAN_DATABASE_URL;
 function auditDatabaseConfig(value) {
   if (!value) throw new Error('Provide EVIDENCE_PLAN_DATABASE_URL for the disposable audit database');
@@ -56,16 +61,80 @@ const tileSource = ['DETECT_PROMPT', 'extractJsonObject', 'detectTile'].map(decl
 const workerSource = declaration('runDetectJob');
 const imageBytes = fs.readFileSync(imagePath);
 const meta = await sharp(imageBytes).metadata();
+// This compares the exact fields recorded by the original evaluator. The full
+// detectTile/prompt source is also required to be byte-identical to the donor,
+// so replay cannot silently test changed image assembly or provider options.
+function requestSignature(request) {
+  return {
+    model: request.model, max_tokens: request.max_tokens, prompt: request.prompt,
+    images: request.images.map(image => ({ sha256: image.sha256, bytes: image.bytes, mediaType: image.mediaType })),
+    requestOptions: { timeout: request.requestOptions?.timeout, maxRetries: request.requestOptions?.maxRetries },
+  };
+}
+function loadReplay(directory) {
+  const manifestBytes = fs.readFileSync(path.join(directory, 'manifest.json'));
+  const summaryBytes = fs.readFileSync(path.join(directory, 'summary.json'));
+  const donor = JSON.parse(manifestBytes), summary = JSON.parse(summaryBytes);
+  const count = summary.providerUsage?.requests;
+  if (summary.stage !== 'actual_automatic_pipeline_completed' || summary.jobStatus !== 'done'
+    || donor.provider !== 'Anthropic Messages API' || donor.replay || summary.replay
+    || (donor.executionMode && donor.executionMode !== 'live_provider')
+    || !Number.isInteger(count) || count < 1 || count > cap
+    || summary.providerUsage.completed !== count || summary.providerUsage.failed !== 0 || summary.providerRequestCapReached) {
+    throw new Error('Replay donor must be a completed, successful actual-provider run with no failed requests or prior replay');
+  }
+  if (donor.case !== args.case || donor.image?.sha256 !== digest(imageBytes)
+    || donor.image.width !== meta.width || donor.image.height !== meta.height) throw new Error('Replay donor image/hash/frame does not match this run');
+  const scannerBytes = fs.readFileSync(path.join(directory, 'executed-scanner-source.ts'));
+  const acceptedUnitsBytes = fs.readFileSync(path.join(directory, 'automatically-saved-units.json'));
+  const acceptedUnits = JSON.parse(acceptedUnitsBytes);
+  if (!Array.isArray(acceptedUnits) || acceptedUnits.length !== summary.finalUnitCount) throw new Error('Replay donor saved-unit artifact does not match its final unit count');
+  if (!scannerBytes.toString().includes(tileSource)) throw new Error('Replay requires identical detection prompt and request-building source; only worker/persistence changes can be replayed');
+  for (const file of ['server/plan-unit-detection.ts', 'shared/plan-geometry.ts']) {
+    if (donor.sourceSha256?.[file] !== digest(fs.readFileSync(path.join(root, file)))) throw new Error(`Replay requires unchanged geometry source: ${file}`);
+  }
+  const files = fs.readdirSync(directory);
+  if (files.filter(file => /^request-\d+-request\.json$/.test(file)).length !== count
+    || files.filter(file => /^request-\d+-response\.json$/.test(file)).length !== count
+    || files.some(file => /^request-\d+-error\.json$/.test(file))) throw new Error('Replay donor request/response files do not match its reported complete request count');
+  const requests = Array.from({ length: count }, (_, index) => {
+    const ordinal = index + 1, prefix = `request-${String(ordinal).padStart(2, '0')}`;
+    const requestBytes = fs.readFileSync(path.join(directory, `${prefix}-request.json`));
+    const responseBytes = fs.readFileSync(path.join(directory, `${prefix}-response.json`));
+    const request = JSON.parse(requestBytes), response = JSON.parse(responseBytes);
+    if (!Array.isArray(request.images) || !Array.isArray(request.prompt) || !Array.isArray(response.content)
+      || response.stop_reason === 'max_tokens' || typeof response.id !== 'string' || !response.id.startsWith('msg_')) throw new Error(`Replay donor request ${ordinal} is not a complete recorded provider response`);
+    for (const image of request.images) {
+      if (typeof image.file !== 'string' || path.basename(image.file) !== image.file
+        || !image.file.startsWith(`${prefix}-image-`)) throw new Error('Invalid donor image filename');
+      const bytes = fs.readFileSync(path.join(directory, image.file));
+      if (digest(bytes) !== image.sha256 || bytes.length !== image.bytes) throw new Error(`Replay donor image integrity check failed for ${image.file}`);
+    }
+    return { ordinal, request, response, responseBytes, requestSha256: digest(requestBytes), responseSha256: digest(responseBytes) };
+  });
+  return { requests, acceptedUnits, provenance: {
+    donorDirectory: directory, donorManifestSha256: digest(manifestBytes), donorSummarySha256: digest(summaryBytes),
+    donorScannerSourceSha256: digest(scannerBytes), donorImageSha256: donor.image.sha256,
+    donorAcceptedUnitsSha256: digest(acceptedUnitsBytes),
+    donorRequestCount: count, donorProviderUsage: summary.providerUsage,
+    donorRequests: requests.map(item => ({ ordinal: item.ordinal, requestSha256: item.requestSha256, responseSha256: item.responseSha256 })),
+    requestMatching: 'Identical detection source, model, max_tokens, ordered text prompts, ordered image SHA-256/bytes/media type, timeout and maxRetries; unchanged geometry source.',
+    verifiedRequests: [], allRequestsConsumed: false, externalProviderCalls: 0,
+  } };
+}
+const replay = replayPath ? loadReplay(replayPath) : null;
 const manifest = {
   startedAt: new Date().toISOString(), case: args.case, name: selected.name,
   gitHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
   gitStatus: execFileSync('git', ['status', '--short'], { cwd: root, encoding: 'utf8' }).trim(),
   sourceSha256: Object.fromEntries(['server/evidence-plan.ts', 'server/plan-unit-detection.ts', 'shared/plan-geometry.ts', 'qa/evidence-plan-automatic-eval.mjs'].map(file => [file, digest(fs.readFileSync(path.join(root, file)))])),
   image: { path: imagePath, sha256: digest(imageBytes), width: meta.width, height: meta.height, bytes: imageBytes.length },
-  maxProviderRequests: cap, provider: 'Anthropic Messages API', model: 'from actual detectTile source (no override)',
+  maxProviderRequests: cap, provider: replay ? 'Recorded Anthropic responses; no external provider calls' : 'Anthropic Messages API', model: 'from actual detectTile source (no override)',
+  executionMode: replay ? 'recorded_response_replay' : 'live_provider',
+  ...(replay ? { replay: replay.provenance } : {}),
   inputScope: 'Original image only, newly uploaded empty level; no tenancy schedule, evidence records, existing units, manual seeds or manual region selections supplied.',
   databaseScope: 'Throwaway schema on explicitly restricted disposable local audit database; never production.',
-  stage: args['prepare-only'] ? 'prepared_only_no_provider_or_database_run' : 'running_actual_automatic_pipeline',
+  stage: args['prepare-only'] ? 'prepared_only_no_provider_or_database_run' : replay ? 'running_recorded_response_replay' : 'running_actual_automatic_pipeline',
 };
 write('manifest.json', manifest);
 write('executed-scanner-source.ts', commonSource + '\n' + tileSource + '\n' + workerSource);
@@ -89,11 +158,13 @@ if (args['prepare-only']) {
 }
 const schema = `qa_actual_scan_${process.pid}_${Date.now()}`;
 const db = new pg.Pool({ ...databaseConfig, max: 4, options: `-c search_path=${schema}` });
-const sdk = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const sdk = replay ? null : new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const usage = { requests: 0, completed: 0, failed: 0, input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
-let observationIndex = 0, budgetExhausted = false, lastProgress = '', schemaCreated = false;
+const externalUsage = () => replay ? Object.fromEntries(Object.keys(usage).map(key => [key, 0])) : { ...usage };
+let observationIndex = 0, budgetExhausted = false, lastProgress = '', schemaCreated = false, replayMismatch = false;
 const observations = [];
 const anthropic = { messages: { create: async (body, options) => {
+  if (replayMismatch) throw new Error('Replay stopped after a request mismatch; no alternative responses can be substituted');
   if (usage.requests >= cap) { budgetExhausted = true; throw new Error(`Evaluation provider request limit (${cap}) reached`); }
   const ordinal = ++usage.requests, prefix = `request-${String(ordinal).padStart(2, '0')}`;
   const started = Date.now();
@@ -104,16 +175,33 @@ const anthropic = { messages: { create: async (body, options) => {
     fs.writeFileSync(path.join(output, name), bytes);
     return { file: name, sha256: digest(bytes), bytes: bytes.length, mediaType: block.source.media_type };
   });
-  write(`${prefix}-request.json`, { model: body.model, max_tokens: body.max_tokens,
+  const request = { model: body.model, max_tokens: body.max_tokens,
     prompt: content.filter(block => block.type === 'text').map(block => block.text), images: imagesSaved,
-    requestOptions: { timeout: options?.timeout, maxRetries: options?.maxRetries }, startedAt: new Date(started).toISOString() });
-  console.log(`[actual scan ${args.case}] provider request ${ordinal}/${cap}`);
+    requestOptions: { timeout: options?.timeout, maxRetries: options?.maxRetries }, startedAt: new Date(started).toISOString() };
+  write(`${prefix}-request.json`, request);
+  console.log(`[${replay ? 'recorded-response replay' : 'actual scan'} ${args.case}] ${replay ? 'verifying recorded request' : 'provider request'} ${ordinal}/${cap}`);
   try {
-    const response = await sdk.messages.create(body, options);
+    let response;
+    if (replay) {
+      const donor = replay.requests[ordinal - 1];
+      try {
+        if (!donor) throw new Error('No remaining donor response');
+        assert.equal(JSON.stringify(requestSignature(request)), JSON.stringify(requestSignature(donor.request)));
+      } catch {
+        replayMismatch = true;
+        throw new Error(`Replay request ${ordinal} does not exactly match the donor model, prompt, images or options`);
+      }
+      response = donor.response;
+      fs.writeFileSync(path.join(output, `${prefix}-response.json`), donor.responseBytes);
+      replay.provenance.verifiedRequests.push({ ordinal, currentRequestSha256: digest(fs.readFileSync(path.join(output, `${prefix}-request.json`))),
+        donorRequestSha256: donor.requestSha256, responseSha256: donor.responseSha256 });
+      write('replay-verification.json', replay.provenance);
+    } else response = await sdk.messages.create(body, options);
     usage.completed++;
     for (const key of ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']) usage[key] += Number(response.usage?.[key] || 0);
-    write(`${prefix}-response.json`, response);
-    append('provider-usage.jsonl', { ordinal, elapsedMs: Date.now() - started, model: response.model, stopReason: response.stop_reason, usage: response.usage });
+    if (!replay) write(`${prefix}-response.json`, response);
+    append(replay ? 'recorded-response-usage.jsonl' : 'provider-usage.jsonl', { ordinal, elapsedMs: Date.now() - started, model: response.model, stopReason: response.stop_reason, usage: response.usage,
+      ...(replay ? { usageMeaning: 'Historical donor token usage; replay makes zero external calls and incurs no provider token usage' } : {}) });
     return response;
   } catch (error) {
     usage.failed++;
@@ -141,7 +229,7 @@ const { runDetectJob } = evaluate(workerSource + '\nexports.runDetectJob = runDe
   detectTile: async (...args) => {
     const requestStart = usage.requests;
     const result = await extracted.detectTile(...args);
-    const frame = { x: args[4], y: args[5], width: args[6], height: args[7], overview: args[9] };
+    const frame = { x: args[4], y: args[5], width: args[6], height: args[7], overview: args[9], focused: args[11] || false, candidateIds: (args[10] || []).map(region => region.id) };
     const observation = { sectionAttempt: ++observationIndex, requestOrdinal: usage.requests, requestStart, frame, observations: result };
     observations.push(observation); write('provider-selected-observations.json', observations);
     return result;
@@ -171,6 +259,34 @@ try {
   const job = (await db.query('SELECT * FROM evidence_plan_jobs WHERE id = $1', [started.jobId])).rows[0];
   const units = (await db.query('SELECT * FROM evidence_plan_units WHERE plan_id = $1 ORDER BY unit_ref, id', [planId])).rows;
   write('job-result.json', job); write('automatically-saved-units.json', units);
+  if (replay) {
+    if (replayMismatch || usage.failed || usage.requests !== replay.requests.length || usage.completed !== replay.requests.length
+      || job.status !== 'done' || budgetExhausted) throw new Error('Replay did not consume every donor request exactly once and complete the worker successfully');
+    replay.provenance.allRequestsConsumed = true;
+    write('replay-verification.json', replay.provenance);
+    const boundaryGroups = rows => {
+      const groups = new Map();
+      for (const row of rows) {
+        const key = digest(JSON.stringify(row.polygon));
+        const group = groups.get(key) || [];
+        group.push({ unitRef: row.unit_ref, tenant: row.tenant_name || null, source: row.source });
+        groups.set(key, group);
+      }
+      return groups;
+    };
+    const before = boundaryGroups(replay.acceptedUnits), after = boundaryGroups(units);
+    write('replay-accepted-unit-comparison.json', {
+      mode: 'Recorded actual-provider responses replayed through changed worker/persistence; no new model evaluation',
+      donorAcceptedUnitsSha256: replay.provenance.donorAcceptedUnitsSha256,
+      replayAcceptedUnitsSha256: digest(fs.readFileSync(path.join(output, 'automatically-saved-units.json'))),
+      donorUnitCount: replay.acceptedUnits.length, replayUnitCount: units.length,
+      addedBoundaries: [...after].filter(([key]) => !before.has(key)).map(([boundarySha256, labels]) => ({ boundarySha256, labels })),
+      removedBoundaries: [...before].filter(([key]) => !after.has(key)).map(([boundarySha256, labels]) => ({ boundarySha256, labels })),
+      changedLabels: [...after].filter(([key, labels]) => before.has(key) && JSON.stringify(before.get(key)) !== JSON.stringify(labels))
+        .map(([boundarySha256, labels]) => ({ boundarySha256, before: before.get(boundarySha256), after: labels })),
+      limits: 'Exact saved-polygon comparison, not accuracy scoring. UUIDs are deliberately ignored. Use the independent sample scorer separately and label results as recorded-response replay.',
+    });
+  }
   const markerFont = Math.max(12, (meta.width || 1000) * .005);
   const shapes = units.map(unit => {
     const polygon = unit.polygon || [], dot = unit.dot || geometry.interiorPoint(polygon);
@@ -182,11 +298,14 @@ try {
   const inputRate = Number(process.env.EVIDENCE_SCAN_INPUT_USD_PER_MILLION), outputRate = Number(process.env.EVIDENCE_SCAN_OUTPUT_USD_PER_MILLION);
   const pricingKnown = Number.isFinite(inputRate) && Number.isFinite(outputRate) && inputRate > 0 && outputRate > 0;
   result = {
-    completedAt: new Date().toISOString(), elapsedMs: Date.now() - Date.parse(manifest.startedAt), stage: 'actual_automatic_pipeline_completed',
+    completedAt: new Date().toISOString(), elapsedMs: Date.now() - Date.parse(manifest.startedAt), stage: replay ? 'verified_recorded_response_replay_completed' : 'actual_automatic_pipeline_completed',
+    executionMode: replay ? 'recorded_response_replay' : 'live_provider',
     case: args.case, jobStatus: job.status, imageSections: { completed: job.done_docs, total: job.total_docs },
-    providerUsage: usage, providerRequestCapReached: budgetExhausted,
-    estimatedTokenCostUsd: pricingKnown ? (usage.input_tokens * inputRate + usage.output_tokens * outputRate) / 1000000 : null,
-    costNote: pricingKnown ? 'Estimate using externally supplied per-million-token rates; cache charges and provider billing adjustments excluded.' : 'Provider returned token usage, not billed cost; no unverified pricing assumed.',
+    providerUsage: externalUsage(), providerRequestCapReached: budgetExhausted,
+    ...(replay ? { replay: { ...replay.provenance, verificationSha256: digest(fs.readFileSync(path.join(output, 'replay-verification.json'))) },
+      replayUsage: { ...usage, meaning: 'Recorded response count and historical donor tokens, not new provider coverage or charges' } } : {}),
+    estimatedTokenCostUsd: replay ? 0 : pricingKnown ? (usage.input_tokens * inputRate + usage.output_tokens * outputRate) / 1000000 : null,
+    costNote: replay ? 'Offline replay of recorded responses. No external provider calls or new token charges.' : pricingKnown ? 'Estimate using externally supplied per-million-token rates; cache charges and provider billing adjustments excluded.' : 'Provider returned token usage, not billed cost; no unverified pricing assumed.',
     modelObservationCount: observations.reduce((sum, item) => sum + item.observations.length, 0),
     finalUnitCount: units.length, unlabelledUnitCount: units.filter(unit => /^Unlabelled\b/i.test(unit.unit_ref)).length,
     reviewDetails: job.error || null, sourceHead: manifest.gitHead, output,
@@ -194,7 +313,8 @@ try {
   };
   if (job.status !== 'done' || budgetExhausted) process.exitCode = 2;
 } catch (error) {
-  result = { stage: 'evaluation_failed', completedAt: new Date().toISOString(), case: args.case, error: { name: error.name, message: error.message }, providerUsage: usage, output };
+  result = { stage: 'evaluation_failed', executionMode: replay ? 'recorded_response_replay' : 'live_provider', completedAt: new Date().toISOString(), case: args.case,
+    error: { name: error.name, message: error.message }, providerUsage: externalUsage(), ...(replay ? { replay: replay.provenance, replayUsage: usage } : {}), output };
   process.exitCode = 1;
 } finally {
   try { if (schemaCreated) await db.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); }

@@ -106,7 +106,7 @@ try {
   const unit = (await db.query('SELECT * FROM evidence_plan_units')).rows[0];
   const entry = (await db.query('SELECT * FROM evidence_plan_entries')).rows[0];
   check('verified geometry, evidence link and completion counters persist together', () => {
-    assert.equal(finished.status, 'done'); assert.equal(finished.total_docs, 10); assert.equal(finished.done_docs, 10);
+    assert.equal(finished.status, 'done'); assert.equal(finished.total_docs, 1); assert.equal(finished.done_docs, 1);
     assert.equal(finished.created, 1); assert.equal(finished.linked, 1); assert.equal(entry.unit_id, unit.id);
   });
   const completeBefore = JSON.stringify(finished);

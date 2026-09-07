@@ -1287,11 +1287,11 @@ function extractJsonObject(text: string): any | null {
   return null;
 }
 
-const DETECT_PROMPT = (known: string[], overview = false) => `This is ${overview ? "the whole level" : "part of one level"} of a UK retail plan. It may be a coloured letting plan or a black-and-white architectural/site drawing. Magenta grid lines mark 0.1 intervals of THIS image. Blue numbered outlines show genuinely enclosed pixel regions detected on the original drawing, not inferred unit boundaries.
+const DETECT_PROMPT = (known: string[], overview = false) => `These two images show the SAME ${overview ? "whole level" : "part of one level"} of a UK retail plan, with identical coordinates. IMAGE 1 is the unmarked original: read shop names and printed unit references ONLY from this image. IMAGE 2 is a geometry aid: blue outlines and @123 tags are generated region IDs, NEVER printed unit numbers. Magenta grid lines in image 2 mark 0.1 intervals. A region may be a shop, lettering, stairs, a legend or another non-unit area.
 
-Prefer selecting regionId for each numbered region that visibly represents one lettable shop/restaurant/kiosk demise. Read the original plan label, not the blue number. A shop can have no readable label: return unitRef:null and tenant:null WITH its regionId so a person can name it. Reject internal rooms, corridors, roads, surrounding buildings outside the marked retail site, title panels and fragmented parts of a larger shop. Do not treat every numbered region as a unit. If a true unit has no suitable numbered region, supply its printed label plus seed and optional visible outline as below.
+First identify actual shops/restaurants/kiosks in IMAGE 1. Then select their matching regionId from IMAGE 2, removing the @ prefix (e.g. @123 becomes regionId:123). Copy unitRef and tenant only when legible on IMAGE 1; otherwise use null. Never copy an @ tag or its numeric part into unitRef or tenant, and never put a tenant name in unitRef. A clearly recognisable shop can have no readable label: return unitRef:null and tenant:null WITH its regionId so a person can name it. Reject stairs, internal rooms, corridors, roads, surrounding buildings outside the marked retail site, title panels, text fragments and fragmented parts of a larger shop. A closed region alone is not evidence of a retail unit. If a true unit has no suitable region, supply its original printed label plus seed and optional visible outline as below.
 
-Find lettable shops, restaurants and kiosks, including white/pale units and large anchor stores. Give an interior seed on the unit's filled floor area, away from text, walls and the mall. The seed will be used to trace the actual enclosed pixels. ${overview ? "Include large units and units crossing the middle of the plan. Return seeds only; this pass covers units that may be cut across close-up tiles." : "A unit may cross the tile edge: report it if its label and a reliable interior seed are visible. Add a polygon following its visible walls ONLY if its complete outline is visible. Never substitute an approximate rectangle for an irregular outline."}
+Find lettable shops, restaurants and kiosks, including white/pale units and large anchor stores. Give an interior seed on the unit's filled floor area, away from text, walls and the mall. The seed will be used to trace the actual enclosed pixels. ${overview ? "For this overview return only clearly recognisable anchor stores and large units that may be cut across close-up tiles. Do not inventory small regions at this scale; separate detailed passes inspect those. Return region IDs or seeds, not guessed polygons." : "A unit may cross the tile edge: report it if its original label and a reliable interior seed are visible. Add a polygon following its visible walls ONLY if its complete outline is visible. Never substitute an approximate rectangle for an irregular outline."}
 
 Ignore page borders, legends, title/contact panels, text-only kiosk lists, malls, toilets, stairs, lifts, car parks, arrows and annotation boxes. Do not assign known refs to shapes by guesswork. Read the printed label; use null for a ref when only the tenant is visible.
 
@@ -1300,8 +1300,41 @@ Return JSON only:
 
 All x/y fractions are 0..1 in THIS image, x rightwards, y downwards. ${known.length ? `Known scheme refs (use only when the printed label matches): ${known.join(", ")}` : ""}`;
 
-async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, ox: number, oy: number, fw: number, fh: number, known: string[], overview = false, regions: import("./plan-unit-detection").PlanUnitRegion[] = []): Promise<import("./plan-unit-detection").DetectedPlanUnit[]> {
+async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, ox: number, oy: number, fw: number, fh: number, known: string[], overview = false, regions: import("./plan-unit-detection").PlanUnitRegion[] = [], focused = false): Promise<import("./plan-unit-detection").DetectedPlanUnit[]> {
   const { mapDetectedPlanUnits } = await import("./plan-unit-detection");
+  if (focused) {
+    const content: any[] = [{ type: "text", text: `Inspect each candidate separately. Each pair shows the SAME close-up of a retail plan: first the original, then the same view with ONE blue boundary and everything outside it faded. Only the unfaded area belongs to the candidate. A unit can be L-shaped or have narrow returns behind neighbouring shops. Neighbours in a concave notch are outside the unit even when they lie inside its rectangular crop; their presence does not mean it combines multiple units. Candidate IDs appear only in accompanying text and are NOT unit references.
+For each candidate decide whether that exact boundary is one complete lettable shop, restaurant or kiosk. Include vacant and unlabelled retail units. Label readability does not determine isUnit: a clearly recognizable kiosk with no readable name is still a unit and its labels can be null. Reject lettering/logo fragments, internal rooms, stairs, lifts, toilets, malls, legend/table cells, surrounding non-retail buildings and partial pieces of a larger unit. Do not switch to a neighbouring shop. A closed shape alone does not make a unit.
+Read tenant and unitRef from the original inside the highlighted boundary or its frontage label. A nearby label is usable only when a clear leader line connects it to this exact candidate; never borrow a neighbour's label. If there is no readable label, retain a recognizable unit with null labels. Preserve combined references such as A2/A3/A4. If a label is unreadable use null; do not invent a number or copy a candidate ID. Return one decision for EVERY supplied candidate, including rejections, as JSON only: {"units":[{"regionId":123,"isUnit":true,"unitRef":"B12","tenant":"Example"},{"regionId":124,"isUnit":false,"unitRef":null,"tenant":null}]}. Do not return seeds or polygons; each decision is tied to its supplied boundary.` }];
+    for (const region of regions) {
+      const xs = region.polygon.map(p => p.x * W), ys = region.polygon.map(p => p.y * H);
+      const pad = Math.max(28, Math.min(100, Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * .2));
+      const left = Math.max(0, Math.floor(Math.min(...xs) - pad)), top = Math.max(0, Math.floor(Math.min(...ys) - pad));
+      const width = Math.min(W, Math.ceil(Math.max(...xs) + pad)) - left, height = Math.min(H, Math.ceil(Math.max(...ys) + pad)) - top;
+      const scale = Math.min(2, 768 / Math.max(width, height));
+      const tw = Math.max(1, Math.round(width * scale)), th = Math.max(1, Math.round(height * scale));
+      const points = region.polygon.map(p => `${(p.x * W - left) * tw / width},${(p.y * H - top) * th / height}`).join(" ");
+      const ring = region.polygon.map((p, index) => `${index ? "L" : "M"}${(p.x * W - left) * tw / width},${(p.y * H - top) * th / height}`).join(" ");
+      const overlay = Buffer.from(`<svg width="${tw}" height="${th}" xmlns="http://www.w3.org/2000/svg"><path d="M0,0 H${tw} V${th} H0 Z ${ring} Z" fill="white" fill-rule="evenodd" opacity="0.85"/><polygon points="${points}" fill="none" stroke="#006ce0" stroke-width="3"/></svg>`);
+      const frame = sharp(planImage).extract({ left, top, width, height }).resize({ width: tw, height: th });
+      const original = await frame.clone().jpeg({ quality: 95 }).toBuffer();
+      const outlined = await frame.clone().composite([{ input: overlay, left: 0, top: 0 }]).jpeg({ quality: 95 }).toBuffer();
+      content.push({ type: "text", text: `Candidate ${region.id}: original close-up.` },
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: original.toString("base64") } },
+        { type: "text", text: `Candidate ${region.id}: inspect ONLY the blue boundary in this matching view.` },
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: outlined.toString("base64") } });
+    }
+    const msg = await anthropic.messages.create({ model: "claude-sonnet-4-6", max_tokens: 6000,
+      messages: [{ role: "user", content }] }, { timeout: 75000, maxRetries: 0 });
+    if (msg.stop_reason === "max_tokens") throw new Error("Detection reply was incomplete");
+    const parsed = extractJsonObject(msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join(""));
+    const rows = parsed?.units;
+    if (!Array.isArray(rows) || rows.length !== regions.length || new Set(rows.map((row: any) => row?.regionId)).size !== regions.length
+      || rows.some((row: any) => !Number.isInteger(row?.regionId) || !regions.some(region => region.id === row.regionId) || typeof row.isUnit !== "boolean")) {
+      throw new Error("Detection did not return one decision per proposed boundary");
+    }
+    return mapDetectedPlanUnits({ units: rows.filter((row: any) => row.isUnit) }, { x: 0, y: 0, width: 1, height: 1 }, regions);
+  }
   const left = Math.round(ox * W), top = Math.round(oy * H);
   const width = Math.min(W - left, Math.round(fw * W)), height = Math.min(H - top, Math.round(fh * H));
   const scale = Math.min(1, 1600 / Math.max(width, height));
@@ -1319,14 +1352,18 @@ async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, o
     const points = region.polygon.map(p => `${(p.x * W - left) * scale},${(p.y * H - top) * scale}`).join(" ");
     const x = (region.dot.x * W - left) * scale, y = (region.dot.y * H - top) * scale;
     lines.push(`<polygon points="${points}" fill="none" stroke="#006ce0" stroke-width="1.2" opacity="0.7"/>`);
-    lines.push(`<text x="${x}" y="${y}" text-anchor="middle" font-size="11" font-weight="bold" fill="#0057bc" stroke="white" stroke-width="3" paint-order="stroke">${region.id}</text>`);
+    lines.push(`<text x="${x}" y="${y}" text-anchor="middle" font-size="11" font-weight="bold" fill="#0057bc" stroke="white" stroke-width="3" paint-order="stroke">@${region.id}</text>`);
   }
   const grid = Buffer.from(`<svg width="${tw}" height="${th}" xmlns="http://www.w3.org/2000/svg">${lines.join("")}</svg>`);
-  const tile = await sharp(planImage).extract({ left, top, width, height })
-    .resize({ width: tw, height: th }).composite([{ input: grid, top: 0, left: 0 }]).jpeg({ quality: 92 }).toBuffer();
+  const frame = sharp(planImage).extract({ left, top, width, height }).resize({ width: tw, height: th });
+  const original = await frame.clone().jpeg({ quality: 92 }).toBuffer();
+  const tile = await frame.clone().composite([{ input: grid, top: 0, left: 0 }]).jpeg({ quality: 92 }).toBuffer();
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-4-6", max_tokens: 16000,
     messages: [{ role: "user", content: [
+      { type: "text", text: "IMAGE 1 — original drawing. Read actual shop names and printed references here." },
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: original.toString("base64") } },
+      { type: "text", text: "IMAGE 2 — boundary proposals. Blue @ tags identify proposed regions only." },
       { type: "image", source: { type: "base64", media_type: "image/jpeg", data: tile.toString("base64") } },
       { type: "text", text: DETECT_PROMPT(known, overview) },
     ] }],
@@ -1368,7 +1405,7 @@ function frontageDot(raw: Buffer, W: number, H: number, box: { x0: number; y0: n
 }
 
 async function runDetectJob(planId: string, jobId: string, level: any, propertyId: string | null, _refresh = false): Promise<void> {
-  let inactive = false;
+  let inactive = false, totalSections = 10;
   const bump = async (sets: string, vals: any[]) => {
     const result = await pool.query(`UPDATE evidence_plan_jobs SET ${sets}, updated_at = now()
       WHERE id = $${vals.length + 1} AND status = 'running' AND updated_at > now() - interval '3 minutes' AND created_at > now() - interval '30 minutes' RETURNING id`, [...vals, jobId]);
@@ -1376,7 +1413,7 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
     return !inactive;
   };
   const checkpoint = async (message: string, completed: number) => {
-    if (inactive || !await bump("error = $1, done_docs = $2, total_docs = 10", [message, completed])) throw new Error("This scan has expired or stopped. Start a new scan to continue.");
+    if (inactive || !await bump("error = $1, done_docs = $2, total_docs = $3", [message, completed, totalSections])) throw new Error("This scan has expired or stopped. Start a new scan to continue.");
   };
   const heartbeat = setInterval(() => { void bump("error = error", []).catch(() => { inactive = true; }); }, 30000);
   heartbeat.unref?.();
@@ -1413,15 +1450,19 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
     const ev = await pool.query(`SELECT DISTINCT unit_ref FROM evidence_plan_entries WHERE plan_id = $1 AND unit_ref IS NOT NULL`, [planId]);
     for (const r of ev.rows) known.add(String(r.unit_ref));
     const knownList = [...known].slice(0, 500);
-    const frames = [{ ox: 0, oy: 0, fw: 1, fh: 1, overview: true },
-      ...[0, .3, .6].flatMap(oy => [0, .3, .6].map(ox => ({ ox, oy, fw: .4, fh: .4, overview: false })))];
+    const batchSize = Math.max(12, Math.ceil(regions.length / 20));
+    const frames = regions.length ? Array.from({ length: Math.ceil(regions.length / batchSize) }, (_, index) => ({
+      ox: 0, oy: 0, fw: 1, fh: 1, overview: false, focused: true, regions: regions.slice(index * batchSize, (index + 1) * batchSize),
+    })) : [{ ox: 0, oy: 0, fw: 1, fh: 1, overview: true, focused: false, regions: [] },
+      ...[0, .3, .6].flatMap(oy => [0, .3, .6].map(ox => ({ ox, oy, fw: .4, fh: .4, overview: false, focused: false, regions: [] })))];
+    totalSections = frames.length;
     const found: import("./plan-unit-detection").DetectedPlanUnit[] = [];
     let failedTiles = 0;
     for (const [index, frame] of frames.entries()) {
-      await checkpoint(`Reading image section ${index + 1} of ${frames.length} (${regions.length} enclosed regions to check)…`, index);
+      await checkpoint(`Reading image section ${index + 1} of ${frames.length} (${regions.length} boundary candidates to inspect)…`, index);
       let got: import("./plan-unit-detection").DetectedPlanUnit[] | null = null;
       for (let attempt = 0; attempt < 2 && got === null; attempt++) {
-        try { got = await detectTile(sharp, file.data, W, H, frame.ox, frame.oy, frame.fw, frame.fh, knownList, frame.overview, regions); }
+        try { got = await detectTile(sharp, file.data, W, H, frame.ox, frame.oy, frame.fw, frame.fh, knownList, frame.overview, frame.regions, frame.focused); }
         catch (error: any) {
           if (inactive) throw error;
           if (attempt === 0) await checkpoint(`Retrying image section ${index + 1} of ${frames.length}…`, index);
@@ -1463,6 +1504,15 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
     }
     const ambiguous = new Set([...refCounts.entries()].filter(([, count]) => count > 1).map(([key]) => key));
     for (const candidate of candidates) if (candidate.conflictingLabel) ambiguous.add(normaliseUnitRef(candidate.ref));
+    let labelReviews = 0;
+    for (const candidate of candidates) if (ambiguous.has(normaliseUnitRef(candidate.ref))) {
+      // A questionable label must not hide a verified demise from editing.
+      // Numeric, position-based placeholders cannot inherit schedule facts
+      // through tenant-name fallback and stay stable when region IDs change.
+      candidate.ref = `Unlabelled ${Math.round(candidate.dot.x * 10000)}-${Math.round(candidate.dot.y * 10000)}`;
+      candidate.printedRef = false;
+      labelReviews++;
+    }
     await checkpoint("Checking labels and saving verified boundaries…", frames.length);
     const connection = await pool.connect();
     let created = 0, refined = 0, preserved = 0, linked = 0;
@@ -1475,7 +1525,6 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       if (!liveJob || inactive) throw new Error("This scan expired before saving. Existing outlines and information are unchanged.");
       const existing = (await connection.query("SELECT id, unit_ref, polygon, source FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2 FOR UPDATE", [planId, level.id])).rows;
       for (const candidate of candidates) {
-        if (ambiguous.has(normaliseUnitRef(candidate.ref))) { preserved++; continue; }
         const sameRef = existing.filter(row => normaliseUnitRef(row.unit_ref) === normaliseUnitRef(candidate.ref));
         const overlaps = (row: any) => planPolygonsOverlap(candidate.polygon, row.polygon);
         if (sameRef.length) {
@@ -1505,7 +1554,7 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       const details = [refined ? `${refined} existing AI outlines refined; saved information and marker positions kept` : "",
         failedTiles ? `${failedTiles} image sections could not be read` : "",
         untraced ? `${untraced} candidates lacked a reliable closed boundary` : "",
-        ambiguous.size ? `${ambiguous.size} conflicting or repeated unit labels need review` : ""].filter(Boolean).join("; ");
+        labelReviews ? `${labelReviews} outlines need a confirmed unit label; uncertain or repeated labels were left unlabelled` : ""].filter(Boolean).join("; ");
       await connection.query("UPDATE evidence_plans SET updated_at = now() WHERE id = $1", [planId]);
       await connection.query(`UPDATE evidence_plan_jobs SET status = 'done', done_docs = total_docs, extracted = $1,
         created = $2, linked = $3, error = $4, updated_at = now() WHERE id = $5 AND status = 'running'`, [found.length, created, linked, details || null, jobId]);

@@ -17,6 +17,12 @@ test('duplicate schedule refs never select an arbitrary first tenant',()=>{
 test('contradictory explicit unit ref cannot fall back to another shop of the same tenant',()=>{
   assert.equal(match({unit_ref:'A9',tenant_name:'Tea Shop'},[schedule('one','A1')]).row,null);
 });
+test('review placeholders stay editable without inheriting a guessed lease through the tenant name',()=>{
+  const unit={unit_ref:'Unlabelled 6510-4720',tenant_name:'Tea Shop',notes:'Check the printed unit number',passing_rent:12000};
+  const result=present(unit,[schedule('one','A1','Tea Shop',{passing_rent_pa:90000})]);
+  assert.equal(result.ts_linked,false);assert.equal(result.passing_rent,12000);assert.equal(result.notes,unit.notes);
+  assert.equal(unitPatch({unitRef:'A1',notes:'Confirmed on the drawing'}).unitRef,'A1');
+});
 test('name-only match accepts one actual shop while excluding its ancillary storage',()=>{
   const result=match({unit_ref:'Tea Shop'},[schedule('shop','A1'),schedule('storage','Storage 4','Tea Shop',{permitted_use:'Storage'})]);
   assert.equal(result.row.id,'shop');assert.equal(result.method,'tenant');

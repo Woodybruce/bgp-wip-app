@@ -18,8 +18,13 @@ export function mapDetectedPlanUnits(value: unknown, frame: { x: number; y: numb
     const validPolygon = polygon && polygon.every(Boolean) && isValidPolygon(polygon) ? polygon as Point[] : null;
     const seed = region?.dot || point(row?.seed) || (validPolygon ? interiorPoint(validPolygon) : null);
     if (!seed || (!region && validPolygon && !pointInPolygon(seed, validPolygon))) continue;
-    const unitRef = typeof row?.unitRef === "string" ? row.unitRef.trim().slice(0, 80) || null : null;
-    const tenant = typeof row?.tenant === "string" ? row.tenant.trim().slice(0, 160) || null : null;
+    const sourceLabel = (value: unknown, limit: number) => {
+      if (typeof value !== "string") return null;
+      const label = value.trim().slice(0, limit);
+      return /^@\s*\d+$/.test(label) ? null : label || null;
+    };
+    const unitRef = sourceLabel(row?.unitRef, 80);
+    const tenant = sourceLabel(row?.tenant, 160);
     if (unitRef || tenant || region) result.push({ unitRef, tenant, seed, polygon: region?.polygon || validPolygon, ...(region ? { regionId: region.id } : {}) });
   }
   return result;
@@ -55,7 +60,7 @@ function simplifyClosed(points: Point[], tolerance: number): Point[] {
 // work too: colour saturation is never used as a proxy for a lettable unit.
 // A region reaching the image edge or covering most of the page is rejected;
 // the caller can ask the user to click a clearer interior or draw the outline.
-export function tracePlanUnit(raster: PlanRaster, desired: Point, expected?: Point[] | null): TracedPlanUnit | null {
+export function tracePlanUnit(raster: PlanRaster, desired: Point, expected?: Point[] | null, colourTolerance: 24 | 32 = 24): TracedPlanUnit | null {
   const { data, width: W, height: H } = raster;
   if (!Number.isInteger(W) || !Number.isInteger(H) || W < 3 || H < 3 || data.length !== W * H * 3
     || !Number.isFinite(desired?.x) || !Number.isFinite(desired?.y) || desired.x < 0 || desired.x > 1 || desired.y < 0 || desired.y > 1) return null;
@@ -66,8 +71,8 @@ export function tracePlanUnit(raster: PlanRaster, desired: Point, expected?: Poi
   } : null;
   // Bound memory/work for high-resolution PDFs, but leave ample margin for
   // imperfect AI vertices. Touching this window rejects an incomplete trace.
-  const marginX = expectedBox ? Math.max(.015, (expectedBox.x1 - expectedBox.x0) * .5) : 0;
-  const marginY = expectedBox ? Math.max(.015, (expectedBox.y1 - expectedBox.y0) * .5) : 0;
+  const marginX = expectedBox ? Math.max(.02, (expectedBox.x1 - expectedBox.x0) * .5) : 0;
+  const marginY = expectedBox ? Math.max(.02, (expectedBox.y1 - expectedBox.y0) * .5) : 0;
   const left = expectedBox ? Math.max(0, Math.floor((expectedBox.x0 - marginX) * W)) : 0;
   const top = expectedBox ? Math.max(0, Math.floor((expectedBox.y0 - marginY) * H)) : 0;
   const right = expectedBox ? Math.min(W, Math.ceil((expectedBox.x1 + marginX) * W)) : W;
@@ -95,7 +100,7 @@ export function tracePlanUnit(raster: PlanRaster, desired: Point, expected?: Poi
   // The broader tolerance needed for coloured JPEG fills can join such a
   // unit to long neighbouring walls (live Brent Cross D3). Keep those lines
   // outside the fill region instead of trimming a guessed rectangular box.
-  const tolerance = Math.max(...colour) < 150 && Math.max(...colour) - Math.min(...colour) < 30 ? 12 : 24;
+  const tolerance = Math.max(...colour) < 150 && Math.max(...colour) - Math.min(...colour) < 30 ? 12 : colourTolerance;
   const matches = (x: number, y: number) => {
     const i = (y * W + x) * 3;
     return Math.max(Math.abs(data[i] - colour[0]), Math.abs(data[i + 1] - colour[1]), Math.abs(data[i + 2] - colour[2])) <= tolerance;
@@ -120,6 +125,69 @@ export function tracePlanUnit(raster: PlanRaster, desired: Point, expected?: Poi
     }
   }
   if (touchesEdge || count < Math.max(16, Math.round(W * H * .000002))) return null;
+  // Close only narrow breaks in this single small coloured component. A JPEG
+  // gap can connect a printed logo to the mall, turning the logo into a false
+  // concave edge. Retain a repair only when it encloses a substantial hole.
+  let repairedLabelGap = false;
+  let smallColoured = Math.max(...colour) - Math.min(...colour) > 30 && count < W * H * .005;
+  if (smallColoured) {
+    let minX = rw, minY = rh, maxX = 0, maxY = 0;
+    for (let n = 0; n < count; n++) {
+      const x = queue[n] % rw, y = Math.floor(queue[n] / rw);
+      minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+    }
+    const bw = maxX - minX + 1, bh = maxY - minY + 1;
+    smallColoured = bw * bh < W * H * .005;
+    if (smallColoured) {
+      const sw = bw + 4, sh = bh + 4, source = new Uint8Array(sw * sh);
+      for (let n = 0; n < count; n++) source[(Math.floor(queue[n] / rw) - minY + 2) * sw + queue[n] % rw - minX + 2] = 1;
+      const exterior = (fill: Uint8Array) => {
+        const outside = new Uint8Array(fill.length), walk = new Int32Array(fill.length);
+        let length = 1; walk[0] = 0; outside[0] = 1;
+        for (let n = 0; n < length; n++) {
+          const pos = walk[n], x = pos % sw, y = Math.floor(pos / sw);
+          for (const next of [x ? pos - 1 : -1, x + 1 < sw ? pos + 1 : -1, y ? pos - sw : -1, y + 1 < sh ? pos + sw : -1]) {
+            if (next < 0 || outside[next] || fill[next]) continue;
+            outside[next] = 1; walk[length++] = next;
+          }
+        }
+        return outside;
+      };
+      const before = exterior(source);
+      for (const radius of [1, 2]) {
+        const dilated = new Uint8Array(source.length), closed = source.slice();
+        for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+          if (!source[y * sw + x]) continue;
+          for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
+            if (x + dx >= 0 && x + dx < sw && y + dy >= 0 && y + dy < sh) dilated[(y + dy) * sw + x + dx] = 1;
+          }
+        }
+        let added = 0;
+        for (let y = 2; y < sh - 2; y++) for (let x = 2; x < sw - 2; x++) {
+          if (source[y * sw + x]) continue;
+          let contained = true;
+          for (let dy = -radius; dy <= radius && contained; dy++) for (let dx = -radius; dx <= radius; dx++) {
+            if (!dilated[(y + dy) * sw + x + dx]) { contained = false; break; }
+          }
+          if (contained) { closed[y * sw + x] = 1; added++; }
+        }
+        if (!added || added > count * .05) continue;
+        const after = exterior(closed);
+        let enclosed = 0;
+        for (let n = 0; n < source.length; n++) if (before[n] && !after[n] && !closed[n]) enclosed++;
+        if (enclosed < Math.max(16, added * 4, bw * bh * .03)) continue;
+        for (let y = 2; y < sh - 2; y++) for (let x = 2; x < sw - 2; x++) {
+          const n = y * sw + x;
+          if (!closed[n] || source[n]) continue;
+          const pos = (minY + y - 2) * rw + minX + x - 2;
+          mask[pos] = 2; queue[count++] = pos;
+        }
+        repairedLabelGap = true;
+        break;
+      }
+    }
+  }
+
   // Edges of the pixel union form closed rings. The largest positive ring
   // is the outer demise; label/text holes are intentionally excluded.
   const edges = new Map<number, number[]>();
@@ -165,10 +233,11 @@ export function tracePlanUnit(raster: PlanRaster, desired: Point, expected?: Poi
       } else { positions.set(key, path.length); path.push(point); }
     }
   }
-  // A mall/page background can surround many different unit fills. Do not
-  // mistake its outer page-sized ring for one demise. Text holes are small.
+  // Reject sparse mall/page backgrounds. A bounded small coloured unit may
+  // contain a large printed logo; allow more empty area only when a narrow
+  // gap was closed around that logo, without adding any neighbouring fill.
   const boundary = outer as Point[] | null;
-  if (!boundary || largest > count * 1.35) return null;
+  if (!boundary || largest > count * (repairedLabelGap ? 2.5 : smallColoured ? 1.8 : 1.35)) return null;
   // Collapse collinear grid edges before simplification to retain corners.
   const corners = boundary.filter((p, i) => {
     const a = boundary[(i + boundary.length - 1) % boundary.length], b = boundary[(i + 1) % boundary.length];
@@ -196,7 +265,7 @@ export function findPlanUnitRegions(raster: PlanRaster, limit = 400): PlanUnitRe
   if (W < 3 || H < 3 || data.length !== W * H * 3) return [];
   const seen = new Uint8Array(W * H), queue = new Int32Array(W * H);
   const minimum = Math.max(24, Math.round(W * H * .000015));
-  const components: { seed: Point; box: Point[]; pixels: number }[] = [];
+  const components: { seed: Point; box: Point[]; pixels: number; smallTexturedFill: boolean }[] = [];
   const eligible = (i: number) => {
     const r = data[i * 3], g = data[i * 3 + 1], b = data[i * 3 + 2];
     const low = Math.min(r, g, b), high = Math.max(r, g, b);
@@ -221,32 +290,43 @@ export function findPlanUnitRegions(raster: PlanRaster, limit = 400): PlanUnitRe
       }
     }
     const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-    if (count < minimum || count > W * H * .42 || x0 === 0 || y0 === 0 || x1 === W - 1 || y1 === H - 1
-      || Math.min(bw, bh) < Math.max(4, Math.min(W, H) * .004) || Math.max(bw / bh, bh / bw) > 25 || count / (bw * bh) < .2) continue;
+    const tinyColoured = Math.max(...colour) - Math.min(...colour) > 30
+      && count >= Math.max(24, Math.round(W * H * .00001)) && Math.min(bw, bh) >= Math.max(4, Math.min(W, H) * .003)
+      && bw * bh <= W * H * .0005 && Math.max(bw / bh, bh / bw) <= 5 && count / (bw * bh) >= .4;
+    if ((!tinyColoured && (count < minimum || Math.min(bw, bh) < Math.max(4, Math.min(W, H) * .004))) || count > W * H * .42 || x0 === 0 || y0 === 0 || x1 === W - 1 || y1 === H - 1
+      || Math.max(bw / bh, bh / bw) > 25 || count / (bw * bh) < .2) continue;
     const cx = sumX / count, cy = sumY / count;
-    let best = start, score = Infinity;
-    for (let n = 0; n < count; n++) {
-      const pos = queue[n], x = pos % W, y = Math.floor(pos / W);
-      // Pick real floor pixels near the centre, clear of text and wall edges.
-      if (x <= x0 || x >= x1 || y <= y0 || y >= y1) continue;
-      const clearance = Math.max(1, Math.min(5, Math.floor(Math.min(bw, bh) / 6)));
-      if (x < x0 + clearance || x > x1 - clearance || y < y0 + clearance || y > y1 - clearance) continue;
-      const clear = [-clearance, 0, clearance].every(dy => [-clearance, 0, clearance].every(dx => {
-        const next = pos + dy * W + dx;
-        const i = next * 3;
-        return Math.max(Math.abs(data[i] - colour[0]), Math.abs(data[i + 1] - colour[1]), Math.abs(data[i + 2] - colour[2])) <= tolerance;
-      }));
-      if (!clear) continue;
-      const d = (x - cx) ** 2 + (y - cy) ** 2;
-      if (d < score) { score = d; best = pos; }
+    let best = start, score = Infinity, smallTexturedFill = false;
+    // Tiny coloured kiosks can have lettering across most of their floor.
+    // Retry only these failed seeds with a 3×3 patch and slightly more JPEG
+    // tolerance; keep the normal seed and contour for every existing region.
+    for (const retry of [false, true]) {
+      if (retry && (Number.isFinite(score) || Math.max(...colour) - Math.min(...colour) <= 30
+        || bw * bh > W * H * .0005 || Math.max(bw / bh, bh / bw) > 3 || count / (bw * bh) < .4)) break;
+      if (retry) smallTexturedFill = true;
+      for (let n = 0; n < count; n++) {
+        const pos = queue[n], x = pos % W, y = Math.floor(pos / W);
+        // Pick real floor pixels near the centre, clear of text and wall edges.
+        if (x <= x0 || x >= x1 || y <= y0 || y >= y1) continue;
+        const clearance = retry ? 1 : Math.max(1, Math.min(5, Math.floor(Math.min(bw, bh) / 6)));
+        if (x < x0 + clearance || x > x1 - clearance || y < y0 + clearance || y > y1 - clearance) continue;
+        const clear = [-clearance, 0, clearance].every(dy => [-clearance, 0, clearance].every(dx => {
+          const next = pos + dy * W + dx;
+          const i = next * 3;
+          return Math.max(Math.abs(data[i] - colour[0]), Math.abs(data[i + 1] - colour[1]), Math.abs(data[i + 2] - colour[2])) <= tolerance;
+        }));
+        if (!clear) continue;
+        const d = (x - cx) ** 2 + (y - cy) ** 2;
+        if (d < score) { score = d; best = pos; }
+      }
     }
     if (!Number.isFinite(score)) continue;
-    components.push({ seed: { x: (best % W + .5) / W, y: (Math.floor(best / W) + .5) / H }, pixels: count,
+    components.push({ seed: { x: (best % W + .5) / W, y: (Math.floor(best / W) + .5) / H }, pixels: count, smallTexturedFill,
       box: [{ x: x0 / W, y: y0 / H }, { x: (x1 + 1) / W, y: y0 / H }, { x: (x1 + 1) / W, y: (y1 + 1) / H }, { x: x0 / W, y: (y1 + 1) / H }] });
   }
   const regions: PlanUnitRegion[] = [];
   for (const component of components.sort((a, b) => b.pixels - a.pixels).slice(0, Math.max(1, limit) * 2)) {
-    const traced = tracePlanUnit(raster, component.seed, component.box);
+    const traced = tracePlanUnit(raster, component.seed, component.box, component.smallTexturedFill ? 32 : 24);
     if (!traced || regions.some(row => pointInPolygon(traced.dot, row.polygon) && pointInPolygon(row.dot, traced.polygon))) continue;
     regions.push({ ...traced, id: 0 });
     if (regions.length >= limit) break;
@@ -254,7 +334,7 @@ export function findPlanUnitRegions(raster: PlanRaster, limit = 400): PlanUnitRe
   return regions.filter(region => !regions.some(other => other !== region
     && polygonArea(other.polygon) > polygonArea(region.polygon) * 1.25
     && pointInPolygon(region.dot, other.polygon)
-    && region.polygon.every(point => pointInPolygon(point, other.polygon))))
+    && region.polygon.every(point => boundaryDistance(point, other.polygon) >= -1 / Math.min(W, H))))
     .sort((a, b) => a.dot.y - b.dot.y || a.dot.x - b.dot.x).map((region, index) => ({ ...region, id: index + 1 }));
 }
 
