@@ -4864,19 +4864,26 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // Add Unit also mirrors a stub row onto the tenancy spine
       // (ensureTenancyRowForAvailableUnit). Remove that stub too — but only
       // when it's still clearly the untouched mirror (points back at this
-      // unit, status 'Marketing', no tenant/rent/lease data); an adopted or
-      // since-edited spine row is real schedule data and stays (it just
-      // loses its dead tracker link inside deleteAvailableUnit). Must run
-      // BEFORE the unit delete — that path nulls letting_tracker_unit_id.
+      // unit, carries a status the mirror itself stamps, no tenant/rent/lease
+      // data); an adopted or since-edited spine row is real schedule data and
+      // stays (it just loses its dead tracker link inside deleteAvailableUnit).
+      // Must run BEFORE the unit delete — that path nulls
+      // letting_tracker_unit_id.
+      // r592: this matched the single literal 'Marketing', which is only what
+      // the mirror stamps for AVA/NEG. A stub created for a SOL/EXC unit
+      // ('Under Offer') or a COM/INV one ('Occupied') never matched, so it was
+      // stranded on the landlord's tenancy schedule for good. Both sides now
+      // read TENANCY_STUB_STATUSES so they cannot drift.
       const tenancyId = (unitRow as any)?.tenancyUnitId;
       if (tenancyId) {
         try {
+          const { TENANCY_STUB_STATUSES } = await import("./unit-mirror");
           await pool.query(
             `DELETE FROM tenancy_schedule_units
               WHERE id = $1 AND letting_tracker_unit_id = $2
-                AND status = 'Marketing'
+                AND status = ANY($3::text[])
                 AND tenant_name IS NULL AND passing_rent_pa IS NULL AND lease_expiry IS NULL`,
-            [tenancyId, unitId]
+            [tenancyId, unitId, [...TENANCY_STUB_STATUSES]]
           );
         } catch (e: any) {
           console.warn(`[available-units DELETE] tenancy stub cleanup failed for ${tenancyId}:`, e?.message);

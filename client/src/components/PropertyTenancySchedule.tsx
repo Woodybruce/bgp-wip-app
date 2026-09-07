@@ -244,15 +244,21 @@ const SCHEDULE_STATUSES = [
 // exact string equality — so the Occupied tile read 124 and showed 87 rows,
 // and Vacant read 76 and showed 69 (r556). Tiles and their filters now share
 // one definition; a status with no bucket filters to itself.
+// r592: "Marketing" is what the Letting Tracker's mirror stamped on every
+// spine stub it created for an AVA/NEG unit (server/unit-mirror.ts). It is
+// not in SCHEDULE_STATUSES, so those units sat in the row list and in no
+// tile at all. The mirror now writes canonical states, but rows already
+// carrying the legacy value must still count as the vacancies they are.
 const STATUS_BUCKETS: Record<string, string[]> = {
   "Occupied": ["Occupied", "Trading", "Let", "Not Vacant"],
-  "Vacant": ["Vacant", "Void", "Available", "AVA"],
+  "Vacant": ["Vacant", "Void", "Available", "AVA", "Marketing"],
 };
 const inStatusBucket = (status: string | null | undefined, bucket: string) =>
   (STATUS_BUCKETS[bucket] || [bucket]).includes(status || "");
 const SCHEDULE_STATUS_COLOURS: Record<string, string> = {
   "Vacant":         "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
   "Void":           "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300", // Landsec feed
+  "Marketing":      "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300", // legacy tracker stub — a vacancy
   "Opportunity":    "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900 dark:text-fuchsia-300",
   "In Negotiation": "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
   "Under Offer":    "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",

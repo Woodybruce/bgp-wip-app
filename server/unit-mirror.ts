@@ -228,12 +228,31 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
 // match the schedule GET uses, so it never creates a duplicate. Idempotent:
 // if the available unit is already linked, it no-ops. This is creation-only
 // (not on every edit) to avoid surprising agents mid-edit.
+// Every status this can stamp on a fresh spine stub. The tracker's DELETE
+// path (routes.ts) clears the untouched stub it created, and used to match
+// the single literal 'Marketing' — so a stub created for a SOL or COM unit
+// was stranded on the landlord's schedule forever. One exported set drives
+// both sides so create and delete cannot drift apart (r592).
+export const TENANCY_STUB_STATUSES = [
+  "Vacant", "In Negotiation", "Under Offer", "Occupied", "Archived",
+  "Marketing", // legacy — stubs created before r592 still carry it
+] as const;
+
+// The unified schedule's own vocabulary is SCHEDULE_STATUSES in
+// client/src/components/PropertyTenancySchedule.tsx, and its KPI tiles
+// bucket via STATUS_BUCKETS. "Marketing" is in NEITHER — it's a legacy
+// imported value (see mapTenancyToMarketingStatus above), so stamping it on
+// a fresh stub put the unit in the row list but in no tile, hid it from the
+// Vacant filter the landlord's void list is built from, and left it without
+// a chip colour. Map onto canonical states instead; they round-trip back
+// through mapTenancyToMarketingStatus to the same codes (r592).
 function mapMarketingToTenancyStatus(s: string | null | undefined): string {
   switch ((s || "").trim().toUpperCase()) {
     case "SOL": case "EXC": return "Under Offer";
     case "COM": case "INV": return "Occupied";
     case "WIT": case "ARCH": return "Archived";
-    default: return "Marketing"; // AVA / LIVE / NEG / unknown → being marketed
+    case "NEG": case "HOT": return "In Negotiation";
+    default: return "Vacant"; // AVA / OPP / LIVE / unknown → empty, being marketed
   }
 }
 
