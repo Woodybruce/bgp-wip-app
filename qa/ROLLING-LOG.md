@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r599 · 2026-09-07 · LIGHT (r598 had the journey) — ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- **REGRESSION AT BASELINE (r598's new numbers), four chunks on
+  `QA_CROSS_FILE=/tmp/qa-cross-599.json`:** victoria FIRST **144 [ok]** /
+  6x400 + 1x409 · mark **176 + 13 = 189 [ok]** / 10x403 + 1x503 (chunked at
+  `client-properties-table-readonly-cells`, tail ~2 min) · woody,nick,sam
+  **24 [ok]**, 0 issues. All four closed with a tally line. **Streak 53.**
+- Triage: every logged issue is documented baseline noise (victoria's
+  deliberate 400/409 probes, mark's deliberate scope 403s incl. r598's new
+  refused PUT, one keyless-AI 503).
+- Work in progress: the unclaimed `label`-kind sweep, deferred pool.
+
 ### r598 · 2026-09-07 · FULL (rotation #2 — Landsec client · desktop 1440px) · journey: "Monday leasing-meeting prep", with a write · 1 bug fixed: the client CRM hub rendered the WIDE contact set as the client's OWN people — Starbucks' and an agent's contacts sat on Landsec's tab under an "Edit contact — Landsec" dialog · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
