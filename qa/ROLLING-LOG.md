@@ -92,6 +92,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r580 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas).
+  Smoke GREEN 42 checks / 0 failures.
+- Status-literal sweep re-run: 87 lists, 38 exact, 49 divergent (unchanged
+  from r579 after its fix landed).
+- Triage in progress; journey next.
+
 ### r579 · 2026-09-06/07 · LIGHT (r578 had the journey) · 1 bug fixed — an agent's ANNUAL REVIEW pipeline dropped their whole fee the moment a deal stepped forward into heads of terms · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
   qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
