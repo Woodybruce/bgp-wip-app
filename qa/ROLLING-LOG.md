@@ -92,6 +92,29 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r597 · 2026-09-07 · LIGHT (no journey) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- **HARNESS FIX (the r596 hand-off, item A): `qa/two-bot-round.mjs` now takes
+  scenario filters** — `QA_ONLY=a,b`, `QA_SKIP_UNTIL=x` (skip the prefix) and
+  `QA_UNTIL=y` (stop before y, exclusive), all matching a scenario name
+  exactly or as a substring. Filtered steps print `[filtered]`, never `[ok]`,
+  and the closing line now reads `N ok, M issues · FILTERED RUN (…), K
+  scenario(s) not run` — so a partial run can never be banked as a full one,
+  and **a killed run has no closing line at all**, which is now the cheap
+  kill test (lesson 7).
+- **THE MARK TAIL IS BACK GREEN.** Split at the exact point r594/r596 both
+  died: `QA_UNTIL=client-properties-table-readonly-cells` = **176 [ok]**,
+  exact baseline (9x403 + 1x503), completed not killed; then
+  `QA_SKIP_UNTIL=client-properties-table-readonly-cells` = the 12-scenario
+  tail, **12 [ok], 0 issues, in ~2 minutes**. Total mark 188 [ok].
+- victoria FIRST: **143 [ok], 0 [skip]**, exact baseline (6x400 + 1x409), no
+  phantoms. woody,nick,sam **24 [ok], 0 issues**.
+- One ECONNRESET at `login()` on the first mark chunk (documented noise —
+  8s settle too short after a cold restart); **25s settle** cleared it.
+- Triage: nothing outside the documented baseline. Continuing on the sweep
+  shapes and the deferred pool.
+
 ### r596 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · journey: "Nick needs comparable evidence to support a quote", with a write · 1 bug fixed: the comps board's area tabs were a hardcoded London list and its "Other" tab matched nothing, so 8 of the 13 comps were unreachable by EVERY tab · 2 scope worries probed and CLEARED · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).

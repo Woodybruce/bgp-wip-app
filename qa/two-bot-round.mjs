@@ -25,6 +25,32 @@ const PERSONAS = (process.env.QA_PERSONAS || 'victoria,mark,woody,nick,sam')
   .split(',').map((s) => s.trim()).filter(Boolean);
 const CROSS_FILE = process.env.QA_CROSS_FILE || '';
 
+// Scenario filters (r597). A persona chunk that is killed at the Bash cap
+// loses its tail, and re-running the whole persona to reach it costs a round
+// (r594 and r596 both lost the same mark tail). QA_ONLY=a,b runs only the
+// named scenarios; QA_SKIP_UNTIL=x skips every scenario before the first one
+// matching x and runs the rest; QA_UNTIL=y stops at the first scenario
+// matching y (exclusive), so QA_UNTIL=y then QA_SKIP_UNTIL=y splits a persona
+// into two chunks that cover it exactly once. All match a name exactly or as a
+// substring. Filtered steps print [filtered], never [ok], and the closing
+// tally names the filter — a partial run must never read as a full one.
+const ONLY = (process.env.QA_ONLY || '').split(',').map((s) => s.trim()).filter(Boolean);
+const SKIP_UNTIL = (process.env.QA_SKIP_UNTIL || '').trim();
+const UNTIL = (process.env.QA_UNTIL || '').trim();
+let cursorReached = !SKIP_UNTIL;
+let stopReached = false;
+const tally = { ok: 0, filtered: 0 };
+function scenarioSelected(scenario) {
+  if (!cursorReached) {
+    if (scenario === SKIP_UNTIL || scenario.includes(SKIP_UNTIL)) cursorReached = true;
+    else return false;
+  }
+  if (UNTIL && !stopReached && (scenario === UNTIL || scenario.includes(UNTIL))) stopReached = true;
+  if (stopReached) return false;
+  if (ONLY.length && !ONLY.some((n) => scenario === n || scenario.includes(n))) return false;
+  return true;
+}
+
 const BASE = 'http://localhost:5000';
 const ROUND = parseInt(process.argv[2] || '1', 10);
 const LOGDIR = new URL('./logs/', import.meta.url).pathname;
@@ -286,10 +312,16 @@ async function assetBriefScorecard(page, pid) {
 }
 
 async function step(page, persona, scenario, fn) {
+  if (!scenarioSelected(scenario)) {
+    tally.filtered++;
+    console.log(`  [filtered] ${persona} · ${scenario}`);
+    return true;
+  }
   currentScenario[persona] = scenario;
   if (process.env.QA_DEBUG) console.log(`  [dbg ${new Date().toISOString()}] step ${scenario}`);
   try {
     await fn();
+    tally.ok++;
     console.log(`  [ok] ${persona} · ${scenario}`);
     return true;
   } catch (e) {
@@ -10156,5 +10188,8 @@ if (CROSS_FILE) writeFileSync(CROSS_FILE, JSON.stringify(cross));
 
 const byKind = {};
 for (const i of issues) byKind[i.kind] = (byKind[i.kind] || 0) + 1;
-console.log(`\n── Round ${ROUND} complete: ${issues.length} issues ──`);
+const filterNote = ONLY.length || SKIP_UNTIL || UNTIL
+  ? ` · FILTERED RUN (${[ONLY.length ? `QA_ONLY=${ONLY.join(',')}` : '', SKIP_UNTIL ? `QA_SKIP_UNTIL=${SKIP_UNTIL}` : '', UNTIL ? `QA_UNTIL=${UNTIL}` : ''].filter(Boolean).join(' ')}), ${tally.filtered} scenario(s) not run`
+  : '';
+console.log(`\n── Round ${ROUND} complete: ${tally.ok} ok, ${issues.length} issues${filterNote} ──`);
 console.log(JSON.stringify(byKind, null, 2));
