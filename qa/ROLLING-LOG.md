@@ -102,8 +102,9 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   `client-schedule-cells-read-like-the-staff-view` through
   `client-deal-hides-mlro-and-billing-fields` all [ok]. The chunk
   self-backgrounded and ran to completion. `QA_PERSONAS=victoria` **141
-  [ok]**, exact baseline (6x400 + 1x409). woody/nick/sam not re-run (r594
-  had them 24/0 and nothing this round touched their surfaces).
+  [ok]** before the harness edit and **142 [ok]** after it, both exact
+  baseline (6x400 + 1x409, no [skip]). woody/nick/sam not re-run (r594 had
+  them 24/0 and nothing this round touched their surfaces).
 - **NEW PHANTOM — the third of the run-mark-without-victoria family, add it
   to the list beside `client-deal-detail-fee-stripped` and
   `client-brief-target-scope`: `client-comps-readonly · flow-failure: Net
@@ -176,7 +177,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   (the r593-cleanup shape, five projections). Also swept a leftover
   `QA-UNIT-R1` leasing row from the mark chunk — **a mark chunk drifts
   `leasing_schedule_units` 169 → 170**, same documented family as victoria's
-  169 → 172.
+  169 → 172. And note **each victoria chunk leaves one `QA-COMP` row in
+  `crm_comps`** (11 → 12 → 13 over two runs) — that is BY DESIGN,
+  `agent-add-scheme-comp` keeps it alive for mark's round, but it means a
+  comps census only reads 11 straight off a fresh restore.
 - Bugs deferred: none new. Still Woody's calls, NOT blind fixes: UX #297
   (scheme delete strands the investment position), the vacancy-basis
   question (#290/#286/#295), and **`add_property_imagery` still has NO scope
