@@ -13,6 +13,55 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+310. 2026-09-07 · Landsec client / phone 390px (QA r600, Mark Warne) · the
+   Messages tab carried an unread badge ("1", later "2"); tapping it landed on
+   the ALL chip, which read **"No conversations yet"**. ALL is people-only by
+   decision (Woody 2026-08-20), but the badge counts every unseen thread
+   membership including AI/ChatBGP threads, so the number and the screen
+   disagreed. The Unread chip now carries those threads (fixed this round),
+   but the badge still lands on ALL. Suggestion: when ALL would be empty and
+   the unread count is non-zero, open Messages on the **Unread** chip — or
+   show a one-line "2 unread in ChatBGP chats" row above the pinned ChatBGP
+   entry so the number always has somewhere to go.
+
+311. 2026-09-07 · Landsec client / phone 390px (QA r600) · in the CRM hub's
+   Brand Directory, tapping a brand CARD does nothing — only the brand-name
+   text (a ~16px-tall line) is a link (`people.tsx:1290`). On a phone, "I
+   tapped Amorino and nothing happened" reads as the app being broken.
+   Suggestion: make the whole card navigate to `/companies/:id`, with
+   `stopPropagation` on the inner contact link, edit pencil and "Add contact"
+   controls so those keep working.
+
+312. 2026-09-07 · Landsec client / phone 390px (QA r600) · the primary write
+   control on `/tasks` — the inline "Add a task… press Enter" input — measures
+   **32px tall** at 390px, under docs/DESIGN.md's 44px phone tap-target
+   minimum (it is an input, so the `rounded-full` button exemption doesn't
+   apply). The task write itself worked (1 open → 2 open, "Task created"
+   toast). Suggestion: bring it to h-11 on phone widths when that screen is
+   next touched.
+
+313. 2026-09-07 · Landsec client / phone 390px (QA r600) · on `/deals` the
+   deal cards read "In status" over "35d in Exchanged" — label and value both
+   say "in status", and the sibling card reads "In status / today". Suggestion:
+   keep the label and make the value bare ("35d", "today").
+
+314. 2026-09-07 · Landsec client / phone 390px (QA r600) · "Portfolio
+   activity" — the tier panel a landlord would use to ask "what is this brand
+   doing across my centres" — sits ONLY under the **Intel** pill on the phone
+   brand profile (`mobile-brand-view.tsx:391`, inside `sec("intel")`). Intel
+   is where the expansion score and requirements live; a landlord hunting for
+   tenancies/targets/pitches would not guess it. Suggestion: either rename the
+   pill (Intel → "Activity & intel") or put the three tier counts (Tenant at /
+   Targeted / Pitched) as a one-line strip under the header so the panel
+   advertises itself.
+
+315. 2026-09-07 · Landsec client / phone 390px (QA r600) · corroborates
+   **#308 from the client's own screen**: Testco Ramen's Portfolio activity
+   shows "TENANT AT 1 · Westgate Test Centre" with the green tenant badge
+   reading **"New Letting"** — i.e. a live DEAL, not a tenancy, presented to
+   the landlord as a sitting tenant. Same judgement call as #308; noting it
+   is visible to clients, not just staff.
+
 308. 2026-09-07 · BGP staff (QA r599, code read — the label-kind sweep) ·
    the brand profile's "Portfolio activity" panel promises three HONEST
    tiers, and its top tier "Tenant at" (green badge) is fed by the leasing

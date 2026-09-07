@@ -1575,6 +1575,40 @@ async function victoriaRound(page, cross) {
     cross.chatMsgId = r.msgId;
   });
 
+  // The Messages nav badge counts EVERY unseen chat_thread_members row, AI
+  // threads included (storage.getUnseenThreadCount). So an AI thread that
+  // carries an unseen member must still come back from /api/chat/threads
+  // with that member row flagged unseen — otherwise the badge points at a
+  // conversation no list or Unread filter can surface ("1 unread" over "No
+  // conversations yet", r600 on the client phone shell). Staff-side because
+  // add-member is staff-only (a client POST is a correct 403).
+  await step(page, p, 'staff-unread-ai-thread-stays-listable', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const users = await (await fetch('/api/users', { headers: auth })).json().catch(() => []);
+      const other = (Array.isArray(users) ? users : []).find((u) => u.id !== me.id && u.role !== 'Client');
+      if (!other) return { ok: false, why: 'no second staff user' };
+      const create = await fetch('/api/chat/threads', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ isAiChat: true, title: `QA-UNREAD listable R${round}` }) });
+      if (!create.ok) return { ok: false, why: `thread ${create.status}` };
+      const thread = await create.json();
+      const add = await fetch(`/api/chat/threads/${thread.id}/members`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ userId: other.id }) });
+      if (!add.ok) return { ok: false, why: `add member ${add.status}` };
+      const list = await (await fetch('/api/chat/threads', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(list) ? list : (list?.threads || []);
+      const row = rows.find((t) => t.id === thread.id);
+      const added = (row?.members || []).find((m) => m.id === other.id);
+      await fetch(`/api/chat/threads/${thread.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, listed: !!row, isAi: row?.isAiChat === true, unseen: added ? added.seen === false : null };
+    }, ROUND);
+    if (!r.ok) throw new Error(`staff unread-listable setup failed (${r.why})`);
+    if (!r.listed) throw new Error('an AI thread with an unseen member never comes back from /api/chat/threads — the Messages badge would point at nothing');
+    if (!r.isAi) throw new Error('the seeded thread did not come back flagged isAiChat');
+    if (r.unseen !== true) throw new Error('the thread list does not mark the added member unseen, so no Unread filter can find it');
+  });
+
   // 4k. Agent logs a viewing on a Landsec unit — the client round then checks
   // it shows up on THEIR letting activity (true cross-persona visibility).
   await step(page, p, 'agent-log-viewing', async () => {

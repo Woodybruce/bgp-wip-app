@@ -3863,7 +3863,12 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     let base: ThreadData[];
     if (chatChip === "ai") base = aiThreads.filter(t => !!(t.title || t.lastMessage));
     else if (chatChip === "groups") base = teamThreads.filter(t => t.members.filter(m => m.id !== currentUser?.id).length > 1);
-    else if (chatChip === "unread") base = teamThreads.filter(t => {
+    // Unread spans BOTH buckets: the Messages nav badge counts every unseen
+    // chat_thread_members row, AI threads included, so filtering only
+    // teamThreads left a badge with nothing behind it — "1 unread" over a
+    // list reading "No conversations yet" (r600, as the Landsec client on
+    // the phone). All stays people-only; Unread is where the badge lands.
+    else if (chatChip === "unread") base = [...teamThreads, ...aiThreads].filter(t => {
       const me = t.members.find(m => m.id === currentUser?.id);
       return me ? !me.seen : false;
     });

@@ -92,27 +92,89 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r600 · 2026-09-07 · FULL (r599 was light) · ROUND IN PROGRESS
+### r600 · 2026-09-07 · FULL · journey: **Landsec client · phone 390px** (rotation slot #3) · r599's hand-off ANSWERED · 1 bug fixed (the Messages unread badge with nothing behind it) · 6 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`.
-- Regression: victoria chunk running under `qa/with-server.sh` on
-  `QA_CROSS_FILE=/tmp/qa-cross-600.json` (moved to a background task file;
-  alive — chatbgp scenarios in flight at time of writing).
-- Journey (rotation slot #3, **Landsec client · phone 390px**, Mark Warne):
-  "a tenant rep rang about Bluewater" — home → /properties → Bluewater →
-  /companies CRM hub → brand profile → Tasks **write** (task created, toast
-  seen, "1 open" → "2 open"). Triage so far: only documented noise
-  (ai-briefing 503, hr photo 404, sharepoint/root 404, brand-gaps 503,
-  ai-take 503).
-- **r599 HAND-OFF ANSWERED: the Portfolio activity panel IS reachable.** On
-  the phone it lives under the **Intel** pill (`mobile-brand-view.tsx:391`,
-  inside `sec("intel")`); on desktop it is unconditional inside the
-  non-editing branch of `BrandProfilePanel`. Verified live for **Testco
-  Ramen** — "PORTFOLIO ACTIVITY / TENANT AT 1 / Westgate Test Centre / New
-  Letting" plus "SUGGESTED PITCHES 1". The server log confirms
-  `GET /api/brands/<amorino>/portfolio-activity 200` fires from that section,
-  so r599's Amorino blank was **empty arrays, not an unreachable panel**.
-  r599's crm.ts fix is therefore live on the UI, not latent.
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+- **REGRESSION AT BASELINE ON THE ok COUNT.** Note for future rounds: the
+  positional arg (`node qa/two-bot-round.mjs victoria`) does **NOT** filter
+  personas — the run did **all four personas in one process**, `358 ok` =
+  145 (victoria) + 189 (mark) + 24 (woody/nick/sam), exactly the r599
+  baseline sum. It took **~21 minutes** (browser journey sharing the same
+  server); it exceeded the 590s Bash cap and finished in a background task
+  file, with a closing tally line (the kill test passes). Issues **19 vs 18
+  baseline** — 6x400 + 1x409 + 10x403 + 1x503 as documented, plus **one new
+  404**, triaged below. **Streak 54** on the ok count.
+- **NEW FLAKE (run-order, not the app):** `mark ·
+  client-property-area-reads-the-schedule · GET /api/properties/<bluewater>/
+  brochures/<id>/file 404` (and its `/cover` twin). The brochure row
+  `7bab05cc…` no longer exists in the DB — an earlier scenario in the SAME
+  process created it and deleted it, and mark's later property-page load
+  still requested its bytes. Only reproduces when every persona runs in one
+  process; the chunked recipe (one persona per Bash call) does not show it.
+- **r599's HAND-OFF, ANSWERED: the "Portfolio activity" panel IS reachable.**
+  - **Phone:** it lives under the **Intel** pill — `mobile-brand-view.tsx:391`,
+    inside `sec("intel")`. Verified live for **Testco Ramen**: "PORTFOLIO
+    ACTIVITY / TENANT AT 1 / Westgate Test Centre / New Letting" +
+    "SUGGESTED PITCHES 1".
+  - **Desktop:** mounted unconditionally at `brand-profile-panel.tsx:2254`,
+    inside the `!editing` else-branch of `BrandProfilePanel` (the enclosing
+    element is the plain `<div className="w-full flex flex-col gap-2.5">` at
+    :1270 — no tab, no feature flag). Reachable.
+  - The server log confirms `GET /api/brands/<amorino>/portfolio-activity 200`
+    fires from that section, so **r599's Amorino blank was empty arrays, not
+    an unreachable panel** — the crm.ts fix is LIVE on the UI, not latent.
+    (r599's "overview showed BGP take / Stores / UK STORES" is the pill row of
+    the phone/desktop profile, not a different render branch.)
+- **JOURNEY (Mark Warne, iPhone UA, 390x844):** "a tenant rep rang about
+  Bluewater" — home (`MY PORTFOLIO — LETTING TRACKER 72 available / 1 under
+  offer / 0 let / 73 on tracker`, BGP team, My Tasks) → `/properties` (2
+  properties, map, phone card list) → **Bluewater** (six section pills:
+  Overview / Boards / Deals & Units / Files & Contacts / KYC / Activity;
+  tenancy schedule renders ~250 phone cards) → `/companies` CRM hub ("9
+  brands · 0 tenant rep agents · **3 of your contacts**" — r598's
+  `ownContacts` fix holds on the phone, the wide `/api/crm/contacts` array is
+  NOT rendered as Landsec's) → brand profile → `/tasks` **WRITE** (task
+  created, toast seen, "1 open" → "2 open") → `/deals` (2 deals + chips) →
+  `/news` → `/messages`. Triage: only documented noise (ai-briefing 503, hr
+  photo 404, sharepoint/root 404, brand-gaps 503, ai-take 503,
+  pipnet-not-configured).
+- **BUG FIXED — the unread badge with nothing behind it
+  (`client/src/components/mobile-app.tsx:3866`).** As Mark the Messages tab
+  carried an unread badge ("1"); tapping it showed **"No conversations
+  yet"**. `storage.getUnseenThreadCount` counts EVERY unseen
+  `chat_thread_members` row including **AI/ChatBGP threads**, but the phone
+  list buckets AI threads out of `teamThreads`, and the **Unread chip
+  filtered `teamThreads` only** — so an unseen AI thread was counted by the
+  badge and absent from both ALL (people-only by decision, Woody 2026-08-20)
+  and UNREAD. The Unread chip now filters `[...teamThreads, ...aiThreads]`;
+  ALL is untouched. The same list component already renders AI threads (the
+  AI chip sets `base = aiThreads`), so nothing else moves. `npx tsc --noEmit`
+  clean.
+  **VERIFIED VISUALLY at 390px:** with two unseen AI-thread memberships
+  seeded for mark, ALL reads "No conversations yet" with the badge on "2",
+  and **UNREAD now lists both** ("r600 unread-probe AI thread", "QA Thread
+  RNaN media") with unread dots — badge 2, two rows. Probe thread deleted
+  afterwards.
+- **NEW SCENARIO `staff-unread-ai-thread-stays-listable`** (victoria, just
+  after `agent-chat-msg-for-delete-guard`): creates an AI thread, adds a
+  second staff user, and asserts `/api/chat/threads` returns it flagged
+  `isAiChat` **with the added member's row `seen === false`** — the server
+  contract the Unread filter depends on. Deletes the thread, so no residue.
+  Ran `[ok]`, 0 issues. It had to be staff-side: a **client** POST to
+  `/api/chat/threads/:id/members` is a correct **403** (proven — the first
+  draft of this scenario failed exactly there). **victoria's baseline moves
+  145 → 146 [ok]**; the scenario makes no refused request, so the issue
+  tally is unchanged. Honest limit: it guards the API half, not the chip
+  filter — the chip fix is proven in the browser, above.
+- **SUGGESTIONS (qa/UX-NOTES.md #310-#315):** badge should land on Unread
+  when ALL is empty (#310); the phone Brand Directory card is only tappable
+  on its name line (#311); `/tasks` add-task input is 32px vs DESIGN.md's
+  44px (#312); "In status / 35d in Exchanged" duplicates its own label
+  (#313); Portfolio activity hides under "Intel" on the phone (#314); #308
+  corroborated from the client's own screen — a live "New Letting" deal shown
+  under "TENANT AT" with the green tenant badge (#315).
+- No navigation/page/control moved, so `server/chatbgp-app-map.ts` needed no
+  change this round.
 
 ### r599 · 2026-09-07 · LIGHT (r598 had the journey) · the UNCLAIMED `label`-kind sweep read end to end at last · 1 bug fixed (2 doors): a dead-deal filter written in legacy LABELS over a codes column, so WITHDRAWN deals rendered as "Tenant at" on brand profiles · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
