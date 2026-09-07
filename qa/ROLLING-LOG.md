@@ -98,14 +98,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - **REGRESSION AT BASELINE, four chunks on `QA_CROSS_FILE=/tmp/qa-cross-598.json`:**
   victoria FIRST **144 [ok]** / 6x400 + 1x409 · mark **176 + 12 = 188 [ok]** /
   9x403 + 1x503, chunked at `client-properties-table-readonly-cells` per
-  r597's hand-off (the tail is ~2 min, still exactly 12) · woody,nick,sam
+  r597's hand-off (the tail ran in ~2 min, exactly 12 — this round then added
+  a 13th to it, see below) · woody,nick,sam
   **24 [ok]**, 0 issues. All four closed with a tally line (not killed).
   **Streak 52.** Every issue is documented baseline noise.
-  - **BASELINE CORRECTIONS for the next round.** victoria is **144**, not the
-    stated 143 — same issue tally, so the brief's number was stale by one, not
-    a phantom. And mark's 403 count rises to **10x403** from now on: this
-    round's new scenario makes one DELIBERATE refused PUT (see below), the
-    same shape as victoria's deliberate probes.
+  - **NEW BASELINE for r599 onward — three numbers changed.** victoria is
+    **144**, not the stated 143 (same issue tally, so the brief's figure was
+    stale by one, not a phantom). mark's tail is now **13** scenarios, not 12
+    — this round's new scenario sits second-to-last, so mark is
+    **176 + 13 = 189 [ok]**. And mark's 403 count rises to **10x403**: the new
+    scenario makes one DELIBERATE refused PUT, the same shape as victoria's
+    deliberate probes. **Chunk mark exactly as before**
+    (`QA_UNTIL=`/`QA_SKIP_UNTIL=client-properties-table-readonly-cells`) — the
+    split point is unchanged, the tail just carries one more and still runs in
+    ~2 minutes. Re-verified after the fix: tail **13 [ok]**.
 - JOURNEY (client desktop 1440px, shots `qa/smoke-shots/r598*-*.png`),
   deliberately NOT r590's ground (r590 took dashboard → tracker → property →
   tenancy → focus task): **"Monday leasing meeting with BGP — who is looking
@@ -144,6 +150,8 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   count, the grid and the empty state. **Fails closed** — no scope, no cards,
   matching the Add button's existing gate. The endpoint is UNCHANGED on
   purpose; narrowing it would blank the Requirements board's contact columns.
+- Post-fix confirmation: `FRESH_BUILD=1 bash qa/run-smoke.sh` **GREEN 42/0**
+  again, and the mark tail re-run against the rebuilt tree **13 [ok]**.
 - **VISUALLY VERIFIED both directions:** after the fix the tab renders exactly
   **4 cards** and "4 of your contacts"; the agent and brand pencils are gone
   (`count() === 0`); the **Brand Directory tab still names Tom Barista and Sam
