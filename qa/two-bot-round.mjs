@@ -4240,6 +4240,57 @@ async function victoriaRound(page, cross) {
     if (!vacant) throw new Error('no AVA unit in the payload — vacancy would read 0 for a reason other than the bug');
   });
 
+  // r587: THE HOT FAULT LINE. The asset-brief funnel folds un-dealed letting
+  // units in by marketing status, but HOT (a legal available_units.marketing_
+  // status, sitting between NEG and SOL) was in NEITHER the hots arm nor the
+  // legals arm — so a unit at HOTs with no crm_deals row was counted in NO
+  // bucket at all, silently dropped at the stage just before signature.
+  // This drives one un-dealed unit AVA -> HOT -> back and asserts the funnel
+  // total gains it. The AVA baseline read is the control: without it a
+  // non-zero hots count proves nothing.
+  await step(page, p, 'staff-asset-brief-counts-hots-units', async () => {
+    const got = await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const units = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json().catch(() => null);
+      const rows = Array.isArray(units) ? units : (units?.data || units?.units || []);
+      const unit = rows.find(u => u.marketingStatus === 'AVA' && !u.dealId && u.propertyId);
+      if (!unit) return { skip: 'no un-dealed AVA unit' };
+      const brief = async () => {
+        const r = await fetch(`/api/properties/${unit.propertyId}/asset-brief`, { credentials: 'include', headers: h });
+        if (!r.ok) return { status: r.status };
+        const j = await r.json();
+        const p = j.pipeline || {};
+        return { hots: p.hots || 0, legals: p.legals || 0,
+                 total: ['engaged','viewed','pitch_out','hots','legals','signed'].reduce((a, k) => a + (p[k] || 0), 0),
+                 named: JSON.stringify((j.pipeline_items || {}).hots || []) };
+      };
+      const setStatus = (st) => fetch(`/api/available-units/${unit.id}`, {
+        method: 'PATCH', credentials: 'include', headers: h, body: JSON.stringify({ marketingStatus: st }) });
+      const before = await brief();
+      if (before.status) return { status: before.status };
+      const put = await setStatus('HOT');
+      if (!put.ok) return { skip: `cannot set HOT (${put.status})` };
+      const after = await brief();
+      await setStatus('AVA');
+      const restored = await brief();
+      return { unit: unit.unitName || unit.id, before, after, restored };
+    });
+    if (got.skip) return;            // fixture cannot support the probe
+    if (got.status) throw new Error(`asset-brief returned ${got.status}`);
+    if (got.after.hots !== got.before.hots + 1) {
+      throw new Error(`a HOTs unit with no deal row did not reach the funnel's hots bucket: hots ${got.before.hots} -> ${got.after.hots} on ${got.unit}`);
+    }
+    if (got.after.total !== got.before.total + 1) {
+      throw new Error(`the asset-brief funnel dropped a HOTs unit entirely: total ${got.before.total} -> ${got.after.total}`);
+    }
+    if (got.after.legals !== got.before.legals) {
+      throw new Error(`a HOTs unit leaked into legals: ${got.before.legals} -> ${got.after.legals}`);
+    }
+    if (got.restored.hots !== got.before.hots) {
+      throw new Error(`probe did not restore the unit: hots left at ${got.restored.hots}, expected ${got.before.hots}`);
+    }
+  });
+
   // r585: the My Portfolio dashboard widget was doubly broken.
   //   (a) /api/dashboard/my-portfolio selected `c.job_title` from crm_contacts,
   //       which has no such column (it is `role`) — so the endpoint 500'd for

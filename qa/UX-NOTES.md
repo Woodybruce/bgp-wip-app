@@ -13,6 +13,34 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+284. 2026-09-07 · Landsec client + BGP staff / desktop (QA r587) · reading the
+   PIPELINE & PERFORMANCE funnel on a property, drilling into the HOTS
+   lozenge to see what is about to sign · the drilldown lists un-dealed
+   letting units with the RAW STATUS CODE as the sub-line — the row reads
+   "BWREST Portakabin Bluewater / HOT" where every other surface in the app
+   says "HOTs" (DEAL_STATUS_LABELS already has HOT -> "HOTs"). Rows that came
+   from a crm_deals row show a tenant name and stage label instead, so the
+   two kinds of row in one list are formatted differently and the unit rows
+   look like a data leak. Same raw-code habit as the deferred
+   chatbgp.ts:2101 / property-asset-brief.ts:607 pair, but this one is on a
+   RENDERED, client-visible surface, which is why it is worth a number.
+   Suggestion: run the sub-line through DEAL_STATUS_LABELS, and prefix the
+   unit rows ("Unit · MSU9") so a landlord can tell an un-dealed tracker unit
+   from a live deal at a glance.
+
+285. 2026-09-07 · BGP staff / any surface (QA r587) · trusting the asset-brief
+   funnel as the count of what is transacting · the funnel silently folds
+   only SOME of a unit's possible statuses into buckets: this round found HOT
+   in neither arm (fixed), and OPP is still in neither — an OPP unit with no
+   deal row is counted in no bucket, exactly as HOT was. That is not itself a
+   bug (an opportunity arguably pre-dates the funnel) but the failure MODE is
+   the problem: a status that nobody maps just vanishes from the total, with
+   no "N units not in a stage" remainder to notice it by. The bug survived
+   from 2026-08-04 to now for precisely that reason. Suggestion: derive the
+   fold from LETTING_STATUSES so every code must be assigned a bucket or
+   explicitly excluded, and render an "N units not in a stage" footnote under
+   the funnel so an unmapped status is visible instead of invisible.
+
 281. 2026-09-07 · BGP staff / mobile 390px (QA r586) · Victoria just out of a
     viewing at Bluewater, logging it from the unit card's "Viewing" action ·
     the manual viewing form accepted a byte-identical second viewing on the

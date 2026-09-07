@@ -22,6 +22,7 @@
 import { pool } from "./db";
 import { lookupVoaByPostcode, voaSqliteAvailable } from "./voa-sqlite";
 import { resolveUnitCategory, type RetailCategory } from "./goad-taxonomy";
+import { legacyToCode } from "@shared/deal-status";
 
 export interface MappedUnit {
   // Identity
@@ -651,7 +652,7 @@ export async function buildMappedUnits(args: PlanDataArgs & {
         const cName = String(c.name || "").toLowerCase();
         const tName = String(u.tenantName || "").toLowerCase();
         if (cName && tName && (cName.includes(tName) || tName.includes(cName))) {
-          if ((c.marketing_status || "").toLowerCase() === "available") {
+          if (legacyToCode(c.marketing_status) === "AVA") {
             u.tradingStatus = "confirmed_vacant";
             u.statusReason = "Marketed as Available in BGP CRM";
             u.sourceLayers.push("crm");

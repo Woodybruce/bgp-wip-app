@@ -166,8 +166,9 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
         ORDER BY CASE lower(au.marketing_status)
                    WHEN 'exchanged' THEN 0 WHEN 'exc' THEN 0
                    WHEN 'solicitors' THEN 1 WHEN 'sol' THEN 1
-                   WHEN 'negotiating' THEN 2 WHEN 'neg' THEN 2
-                   WHEN 'under_offer' THEN 3 ELSE 4 END,
+                   WHEN 'hot' THEN 2 WHEN 'hots' THEN 2
+                   WHEN 'negotiating' THEN 3 WHEN 'neg' THEN 3
+                   WHEN 'under_offer' THEN 4 ELSE 5 END,
                  au.unit_name
         LIMIT 40`,
       [propertyId]
@@ -208,7 +209,8 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     for (const u of lettingsQ.rows as any[]) {
       if (u.deal_id) continue;
       const s = (u.marketing_status || "").toLowerCase();
-      if (s === "neg" || s === "negotiating" || s === "under_offer" || s === "und") {
+      if (s === "neg" || s === "negotiating" || s === "under_offer" || s === "und"
+          || s === "hot" || s === "hots" || s === "heads of terms") {
         pipeline.hots++;
         pipelineItems.hots.push({ label: u.operator_name || u.unit_name, sub: u.operator_name ? u.unit_name : u.marketing_status });
       } else if (s === "sol" || s === "solicitors" || s === "exc" || s === "exchanged") {
