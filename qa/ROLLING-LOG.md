@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r590 · 2026-09-07 · FULL (rotation #2 — Landsec client · desktop 1440px) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (seeding trap obeyed).
+- Two-bot, chunked, shared `QA_CROSS_FILE=/tmp/qa-cross-590.json`:
+  chunk 1 `QA_PERSONAS=victoria` **140 [ok]**, chunk 2
+  `QA_PERSONAS=mark,woody,nick,sam` **211 [ok]**. No flow failures.
+  Triage: every issue is documented baseline — victoria 4x400 (rocketreach x3
+  + the deliberate invalid POST /api/investment-tracker) + 1x409 (SOL+ AML
+  gate, correct) + 2x400 from `staff-unbalanced-fee-split-is-refused`'s own
+  probes; mark 9x403 + 1x503 (keyless AI regenerate) + 1x404 (listed brochure
+  file, logged twice, same URL); woody/nick/sam 0. **Streak 46.**
+- Journey + fixes to follow.
+
 ### r589 · 2026-09-07 · LIGHT (no journey — r588 had it) · 2 bugs fixed: the already-listed early return shipped snake_case so a re-add dropped the fee split, and the boot status-fix hook wrote LABELS into a codes column · 2 suggestions
 - Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`
   **GREEN 42/0**, then `node qa/apply-sql.mjs qa/seed-personas.sql` (the r587
