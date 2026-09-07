@@ -22,8 +22,9 @@ import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EvidencePlanReview } from "@/components/evidence-plan-review";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -34,12 +35,14 @@ type Pt = { x: number; y: number };
 type PlanLevel = {
   id: string; name: string; background_key: string | null;
   background_width: number | null; background_height: number | null;
+  source_pdf_url?: string | null;
 };
 type PlanUnit = {
   id: string; unit_ref: string; unit_norm?: string; ts_linked?: boolean; ts_row_id?: string | null;
   tenant_name: string | null; level_id: string | null; polygon: Pt[] | null; dot?: Pt | null;
   lease_expiry: string | null; break_date: string | null; review_date: string | null;
   erv: string | null; passing_rent: string | null; sqft: string | null; notes: string | null;
+  source?: string | null; ts_link_status?: string;
 };
 type Matter = { id: string; matter_type: string; status: string; acting_for: string | null; unit_name: string | null; unit_norm: string | null };
 type Entry = {
@@ -252,6 +255,11 @@ function PlanView({ planId }: { planId: string }) {
   const [redrawId, setRedrawId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [unitSearch, setUnitSearch] = useState("");
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [cleanPlan, setCleanPlan] = useState(false);
+  const [strongLines, setStrongLines] = useState(false);
+  const [hideRedInk, setHideRedInk] = useState(false);
+  const [numberLabels, setNumberLabels] = useState(false);
   const [cropping, setCropping] = useState(false);
   const [cropRect, setCropRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const cropStart = useRef<Pt | null>(null);
@@ -363,6 +371,15 @@ function PlanView({ planId }: { planId: string }) {
   }, [entries]);
   const [hover, setHover] = useState<{ unitId: string; x: number; y: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const measure = () => setCanvasSize({ width: canvas.clientWidth, height: canvas.clientHeight });
+    const observer = new ResizeObserver(measure);
+    observer.observe(canvas); measure();
+    return () => observer.disconnect();
+  }, [isLoading, isMobile]);
   const [dotDraft, setDotDraft] = useState<{ unitId: string; x: number; y: number } | null>(null);
   const dotGesture = useRef<{ unitId: string; start: Pt; point: Pt; moved: boolean } | null>(null);
   const [dotSaving, setDotSaving] = useState(false);
@@ -557,6 +574,10 @@ function PlanView({ planId }: { planId: string }) {
 
   const hasBg = !!activeLevel?.background_key;
   const aspect = hasBg && activeLevel?.background_width ? (activeLevel.background_height || 0) / activeLevel.background_width : 0.7;
+  const fitWidth = canvasSize.width && canvasSize.height ? Math.min(canvasSize.width * .94, canvasSize.height * .94 / Math.max(.1, aspect)) : null;
+  const actualSizeZoom = fitWidth ? (activeLevel?.background_width || fitWidth) / fitWidth : 1;
+  const maxZoom = Math.max(24, actualSizeZoom);
+  const overlaysVisible = !cleanPlan || drawing || tracing;
 
   return (
     <div ref={fsRef} className="flex flex-col h-[calc(100dvh-var(--mobile-top,0px))] md:h-full bg-background">
@@ -564,7 +585,7 @@ function PlanView({ planId }: { planId: string }) {
       <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap bg-background">
         <button onClick={() => navigate("/evidence-plans")} className="text-sm text-muted-foreground hover:text-foreground">←</button>
         <div className="min-w-0">
-          <h1 className="text-base font-bold tracking-tight truncate">{plan.name}</h1>
+          <h1 className="text-2xl font-bold tracking-tight truncate">{plan.name}</h1>
           <p className="text-[11px] text-muted-foreground">
             {units.length} units · {entries.length} evidence entries{unlinkedCount ? ` · ${unlinkedCount} unlinked` : ""} ·{" "}
             <button className="underline underline-offset-2 hover:text-foreground" onClick={() => setLinkingProperty(true)} data-testid="button-link-property">
@@ -575,7 +596,7 @@ function PlanView({ planId }: { planId: string }) {
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
           {detectRunning ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground rounded-full border border-border px-2.5 py-1" data-testid="detect-indicator">
-              <Sparkles className="w-3 h-3" /> AI reading the plan… units appear as it finishes
+              <Sparkles className="w-3 h-3" /> {scanJob?.status === "running" && scanJob.total_docs > 1 ? `Scanning · ${scanJob.done_docs} / ${scanJob.total_docs} sections` : "Reading the plan…"}
             </span>
           ) : hasBg ? (
             <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={busy !== null}
@@ -591,12 +612,12 @@ function PlanView({ planId }: { planId: string }) {
               <Sparkles className="w-3.5 h-3.5 mr-1" /> Refresh units
             </Button>
           ) : null}
-          <Pill active={tracing} disabled={!hasBg || traceBusy} onClick={() => { stopDrawing(); draftBackgroundKey.current = activeLevel?.background_key || null; setTracing(!tracing); setCropping(false); setDetailsOpen(false); }} data-testid="pill-trace-unit">
+          <Button variant={tracing ? "default" : "outline"} size="sm" disabled={!hasBg || traceBusy} onClick={() => { stopDrawing(); setCleanPlan(false); draftBackgroundKey.current = activeLevel?.background_key || null; setTracing(!tracing); setCropping(false); setDetailsOpen(false); }} data-testid="pill-trace-unit">
             {traceBusy ? "Tracing…" : "Trace unit"}
-          </Pill>
-          <Pill active={drawing} disabled={!hasBg} onClick={() => { stopDrawing(); draftBackgroundKey.current = activeLevel?.background_key || null; setDrawing(!drawing); setCropping(false); setDetailsOpen(false); }} data-testid="pill-draw-unit">
+          </Button>
+          <Button variant={drawing ? "default" : "outline"} size="sm" disabled={!hasBg} onClick={() => { stopDrawing(); setCleanPlan(false); draftBackgroundKey.current = activeLevel?.background_key || null; setDrawing(!drawing); setCropping(false); setDetailsOpen(false); }} data-testid="pill-draw-unit">
             <Pencil className="w-3 h-3 mr-1 inline" />{drawing ? "Drawing unit" : "Draw unit"}
-          </Pill>
+          </Button>
           {plan.property_id && (
             <Button variant="outline" size="sm" onClick={() => navigate(`/tenancy-schedule/${plan.property_id}`)} data-testid="button-open-ts">
               <FileSpreadsheet className="w-3.5 h-3.5 mr-1" /> Tenancy schedule
@@ -636,6 +657,22 @@ function PlanView({ planId }: { planId: string }) {
       </div>
 
       {scanReport && <div role="status" className="px-4 py-2 border-b border-border text-sm bg-card flex items-center gap-3" data-testid="scan-report"><p className="flex-1">{scanReport}</p><Button variant="ghost" size="sm" onClick={() => setScanReport(null)}>Dismiss</Button></div>}
+      {scanJob?.status === "running" && scanJob.error && <p role="status" className="px-4 py-2 text-sm text-muted-foreground border-b border-border">{scanJob.error}</p>}
+
+      <div className="px-4 py-2 border-b border-border flex items-center gap-2 flex-wrap">
+        <Pill active={!cleanPlan && !numberLabels} onClick={() => { setCleanPlan(false); setNumberLabels(false); }} data-testid="view-plan-units">Units & evidence</Pill>
+        <Pill active={!cleanPlan && numberLabels} onClick={() => { setCleanPlan(false); setNumberLabels(true); }} data-testid="view-unit-numbers">Unit numbers</Pill>
+        <Pill active={cleanPlan} disabled={drawing || tracing || cropping} onClick={() => { setCleanPlan(true); setDetailsOpen(false); setHover(null); }} data-testid="view-clean-plan">Clean plan</Pill>
+        <Pill active={hideRedInk} disabled={!hasBg} onClick={() => setHideRedInk(v => !v)} data-testid="view-hide-red">Hide red ink</Pill>
+        <Pill active={strongLines} disabled={!hasBg} onClick={() => setStrongLines(v => !v)} data-testid="view-strong-lines">Darker lines</Pill>
+        <Button variant="outline" size="sm" onClick={() => setReviewOpen(true)} data-testid="button-review-plan">Review & clean up</Button>
+        {activeLevel?.source_pdf_url && <Button variant="outline" size="sm" asChild><a href={activeLevel.source_pdf_url} target="_blank" rel="noreferrer" data-testid="link-original-plan">Original PDF</a></Button>}
+        <span className="text-[11px] text-muted-foreground">{hideRedInk ? "Hides red/orange ink, including text and symbols; original kept." : strongLines ? "Contrast enhanced for viewing; source unchanged." : "Original image tones."}</span>
+      </div>
+      {!cleanPlan && numberLabels && <p className="px-4 py-2 text-sm text-muted-foreground border-b border-border">Select a unit and use Edit to set its number. Drag its label to position it; numbers are not guessed from neighbouring shops.</p>}
+      <EvidencePlanReview open={reviewOpen} onOpenChange={setReviewOpen} units={units} levels={levels} activeLevelId={activeLevel?.id || null} propertyLinked={!!plan.property_id} unlinkedCount={unlinkedCount}
+        evidence={<UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} initiallyOpen />}
+        onSelect={id => { const unit = units.find(u => u.id === id); stopDrawing(); setCleanPlan(false); setActiveLevelId(unit?.level_id || levels[0]?.id || null); setZoom(1); setPan({ x: 0, y: 0 }); selectUnit(id); }} />
 
       <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />
 
@@ -646,7 +683,7 @@ function PlanView({ planId }: { planId: string }) {
           <DialogHeader>
             <DialogTitle className="text-base">{redrawId ? "Save corrected outline" : "Name this unit"}</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">{redrawId ? "The unit's information and evidence will stay linked." : "Check the boundary on the plan. You can add its information after saving."}</p>
+          <DialogDescription>{redrawId ? "The unit's information and evidence will stay linked." : "Check the boundary on the plan. You can add its information after saving."}</DialogDescription>
           <Input
             autoFocus
             placeholder="Unit reference (e.g. A15, N10, E7A)"
@@ -707,12 +744,11 @@ function PlanView({ planId }: { planId: string }) {
                 value={colourOf(k)} onChange={e => saveColour(k, e.target.value)} data-testid={`key-colour-${k}`} />
             </label>
           ))}
-          <button
-            className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${showZa ? "bg-foreground text-background border-foreground" : "border-border text-muted-foreground"}`}
+          <Pill active={showZa}
             onClick={() => setShowZa(s => { try { localStorage.setItem("bgp-ep-za", s ? "0" : "1"); } catch {} return !s; })}
             data-testid="button-toggle-za">
             £ ZA
-          </button>
+          </Pill>
         </div>
       )}
 
@@ -729,7 +765,7 @@ function PlanView({ planId }: { planId: string }) {
             const rect = canvasRef.current?.getBoundingClientRect();
             if (!rect) return;
             const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0022));
-            const nz = Math.min(12, Math.max(0.5, zoom * factor));
+            const nz = Math.min(maxZoom, Math.max(0.5, zoom * factor));
             if (nz === zoom) return;
             const k = nz / zoom;
             const mx = e.clientX - rect.left - rect.width / 2;
@@ -795,7 +831,7 @@ function PlanView({ planId }: { planId: string }) {
           ) : (
             <div
               className="absolute left-1/2 top-1/2"
-              style={{ transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center", width: "min(90%, 1400px)" }}
+              style={{ transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center", width: fitWidth ? `${fitWidth}px` : "90%" }}
             >
               <div
                 ref={surfaceRef}
@@ -815,9 +851,9 @@ function PlanView({ planId }: { planId: string }) {
                   if (drawing) finishOutline();
                 }}
               >
-                <img src={`/api/evidence-plans/levels/${activeLevel!.id}/background?v=${encodeURIComponent(activeLevel!.background_key || "")}`} alt="" className="absolute inset-0 w-full h-full" draggable={false} />
+                <img src={`/api/evidence-plans/levels/${activeLevel!.id}/background?v=${encodeURIComponent(activeLevel!.background_key || "")}${hideRedInk ? "&hideRed=1" : ""}`} alt={`${plan.name} — ${activeLevel?.name || "plan"}`} className="absolute inset-0 w-full h-full" style={{ filter: strongLines ? "contrast(1.7)" : "none" }} draggable={false} data-testid="plan-background-image" />
                 <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 ${aspect >= 1 ? 100 : 100} ${100 * aspect}`} preserveAspectRatio="none" style={{ pointerEvents: "none" }}>
-                  {levelUnits.filter(u => Array.isArray(u.polygon) && u.polygon.length >= 3).map(u => {
+                  {overlaysVisible && levelUnits.filter(u => Array.isArray(u.polygon) && u.polygon.length >= 3).map(u => {
                     const poly = u.polygon as Pt[];
                     const pts = poly.map(p => `${p.x * 100},${p.y * 100 * aspect}`).join(" ");
                     const isSel = u.id === selectedId;
@@ -842,7 +878,7 @@ function PlanView({ planId }: { planId: string }) {
                     );
                   })}
                   {/* Labels stay in their own demise, including units awaiting evidence. */}
-                  {levelUnits.filter(u => isValidPolygon(u.polygon)).map(u => {
+                  {overlaysVisible && levelUnits.filter(u => isValidPolygon(u.polygon)).map(u => {
                     const layout = markerLayout.get(u.id)!;
                     const isSel = u.id === selectedId;
                     const latest = latestEntryByUnit.get(u.id);
@@ -894,10 +930,10 @@ function PlanView({ planId }: { planId: string }) {
                         }}
                         onPointerCancel={() => { dotGesture.current = null; setDotDraft(null); }}>
                         <title>{label}{u.tenant_name ? ` · ${u.tenant_name}` : ""}{zaStr ? ` · ${zaStr} ZA` : " · Add evidence"}</title>
-                        <circle cx={cx} cy={cy} r={R} fill={typeColour} stroke={isSel ? "hsl(var(--foreground))" : "#FFFFFF"} strokeWidth={R * 0.09} />
-                        <text x={cx} y={cy - (zaStr ? R * 0.29 : 0)} textAnchor="middle" dominantBaseline="middle"
-                          style={{ fontSize: Math.min(R * 0.5, R * 2.7 / Math.max(3, label.length)), fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{label}</text>
-                        {zaStr && <text x={cx} y={cy + R * 0.37} textAnchor="middle" dominantBaseline="middle"
+                        <circle cx={cx} cy={cy} r={R} fill={numberLabels ? "transparent" : typeColour} stroke={numberLabels ? "none" : isSel ? "hsl(var(--foreground))" : "#FFFFFF"} strokeWidth={R * 0.09} />
+                        <text x={cx} y={cy - (!numberLabels && zaStr ? R * 0.29 : 0)} textAnchor="middle" dominantBaseline="middle"
+                          style={{ fontSize: Math.min(R * (numberLabels ? .75 : .5), R * 2.7 / Math.max(3, label.length)), fontWeight: 700, fill: numberLabels ? "hsl(var(--foreground))" : "#FFFFFF", stroke: numberLabels ? "hsl(var(--background))" : "none", strokeWidth: numberLabels ? R * .12 : 0, paintOrder: "stroke", pointerEvents: "none" }}>{label}</text>
+                        {!numberLabels && zaStr && <text x={cx} y={cy + R * 0.37} textAnchor="middle" dominantBaseline="middle"
                           style={{ fontSize: Math.min(R * 0.48, R * 2.7 / zaStr.length), fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{zaStr}</text>}
                       </g>
                     );
@@ -918,9 +954,10 @@ function PlanView({ planId }: { planId: string }) {
 
           {/* Zoom controls */}
           <div className="absolute right-3 top-3 flex flex-col gap-1">
-            <Button variant="outline" size="icon" className="h-11 w-11 bg-card" onClick={() => setZoom(z => Math.min(12, z * 1.3))} data-testid="button-zoom-in"><ZoomIn className="w-4 h-4" /></Button>
-            <Button variant="outline" size="icon" className="h-11 w-11 bg-card" onClick={() => setZoom(z => Math.max(0.5, z / 1.3))} data-testid="button-zoom-out"><ZoomOut className="w-4 h-4" /></Button>
-            <Button variant="outline" size="icon" className="h-11 w-11 bg-card text-[11px] font-semibold" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} data-testid="button-zoom-reset">1:1</Button>
+            <Button aria-label="Zoom in" variant="outline" size="icon" className="h-11 w-11 bg-card" onClick={() => setZoom(z => Math.min(maxZoom, z * 1.3))} data-testid="button-zoom-in"><ZoomIn className="w-4 h-4" /></Button>
+            <Button aria-label="Zoom out" variant="outline" size="icon" className="h-11 w-11 bg-card" onClick={() => setZoom(z => Math.max(0.5, z / 1.3))} data-testid="button-zoom-out"><ZoomOut className="w-4 h-4" /></Button>
+            <Button aria-label="Fit whole plan" variant="outline" size="icon" className="h-11 w-11 bg-card text-[11px] font-semibold" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} data-testid="button-zoom-reset">Fit</Button>
+            <Button aria-label="Actual image size" title="One source pixel per screen pixel" variant="outline" size="icon" className="h-11 w-11 bg-card text-[11px] font-semibold" onClick={() => { setZoom(actualSizeZoom); setPan({ x: 0, y: 0 }); }} data-testid="button-actual-size">100%</Button>
           </div>
           {(drawing || tracing) && (
             <div className="absolute left-3 right-16 top-3 max-w-lg rounded-xl bg-card border border-border p-3 text-sm shadow-sm">
@@ -943,7 +980,7 @@ function PlanView({ planId }: { planId: string }) {
           )}
 
           {/* Hover card — the artifact-style pop-up */}
-          {hover && !drawing && !tracing && !isMobile && !dotGesture.current && (() => {
+          {hover && overlaysVisible && !drawing && !tracing && !isMobile && !dotGesture.current && (() => {
             const u = units.find(x => x.id === hover.unitId);
             if (!u) return null;
             const latest = latestEntryByUnit.get(u.id);
@@ -989,7 +1026,7 @@ function PlanView({ planId }: { planId: string }) {
         </div>
 
         {/* Unit panel */}
-        {isMobile ? <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
+        {isMobile ? <Sheet open={detailsOpen && !cleanPlan} onOpenChange={setDetailsOpen}>
           <SheetContent side="bottom" hideClose={!!selected} className="max-h-[80dvh] overflow-y-auto p-0 rounded-t-2xl pb-[env(safe-area-inset-bottom)]">
             <SheetHeader className={selected ? "sr-only" : "px-4 pt-4"}><SheetTitle>{selected ? `Unit ${selected.unit_ref}` : "Units & evidence"}</SheetTitle></SheetHeader>
             {selected ? <UnitPanel key={selected.id} unit={selected} entries={selectedEntries} planId={planId} scheduleRows={data?.schedule_rows || []}
@@ -1000,7 +1037,7 @@ function PlanView({ planId }: { planId: string }) {
               onDeleted={() => { setSelectedId(null); invalidate(); }} />
               : <div className="p-4"><UnitList units={levelUnits} entries={entries} search={unitSearch} onSearch={setUnitSearch} onSelect={selectUnit} /><UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} /></div>}
           </SheetContent>
-        </Sheet> : <div className="w-[380px] shrink-0 border-l border-border overflow-y-auto bg-background">
+        </Sheet> : <div className={cleanPlan ? "hidden" : "w-[380px] shrink-0 border-l border-border overflow-y-auto bg-background"}>
           {!selected ? (
             <div className="p-4">
               {/* Mock-up style: the panel is the level's evidence list until
@@ -1073,18 +1110,26 @@ function LinkPropertyDialog({ open, onOpenChange, plan, onSaved }: {
   );
 }
 
-function UnlinkedEvidence({ entries, units, levels, onSaved }: { entries: Entry[]; units: PlanUnit[]; levels: PlanLevel[]; onSaved: () => void }) {
+function UnlinkedEvidence({ entries, units, levels, onSaved, initiallyOpen = false }: { entries: Entry[]; units: PlanUnit[]; levels: PlanLevel[]; onSaved: () => void; initiallyOpen?: boolean }) {
   const { toast } = useToast();
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [open, setOpen] = useState(initiallyOpen);
   const unlinkedCount = entries.filter(entry => !entry.unit_id).length;
+  const matches = entries.filter(entry => !entry.unit_id && `${entry.unit_ref || ""} ${entry.tenant || ""}`.toLowerCase().includes(search.toLowerCase()));
+  const pages = Math.max(1, Math.ceil(matches.length / 6));
+  const currentPage = Math.min(page, pages - 1);
   if (!unlinkedCount) return null;
   return (
-                <details className="mb-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground" data-testid="unlinked-evidence">
+                <details open={open} onToggle={e => setOpen(e.currentTarget.open)} className="mb-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground" data-testid="unlinked-evidence">
                   <summary className="cursor-pointer font-medium">
                     {unlinkedCount} evidence entr{unlinkedCount === 1 ? "y" : "ies"} not matched to a unit — open to match them
                   </summary>
-                  <p className="mt-1.5 mb-2 text-[11px] opacity-90">Their TAF unit refs don't match any drawn unit. They link themselves when a matching unit appears (Re-detect or Draw unit) — or pick the unit here.</p>
-                  <div className="space-y-1.5 max-h-72 overflow-y-auto">
-                    {entries.filter(e => !e.unit_id).map(e => (
+                  <p className="mt-1.5 mb-2 text-sm text-muted-foreground">Choose the correct unit for each entry. Clear, unique matches are linked automatically when an outline is added.</p>
+                  {open && <>
+                  <Input aria-label="Search unlinked evidence" placeholder="Find evidence by unit or tenant…" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} className="mb-2" />
+                  <div className="space-y-2">
+                    {matches.slice(currentPage * 6, currentPage * 6 + 6).map(e => (
                       <div key={e.id} className="rounded-md bg-card border border-border px-2 py-1.5 text-foreground">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-[11px] font-semibold truncate">{e.unit_ref || e.tenant || "—"}</span>
@@ -1092,7 +1137,7 @@ function UnlinkedEvidence({ entries, units, levels, onSaved }: { entries: Entry[
                         </div>
                         <div className="text-[11px] text-muted-foreground truncate">{EVIDENCE_TYPE_META[evidenceTypeKey(e.transaction_type)].label}{e.transaction_date ? ` · ${fmtDate(e.transaction_date)}` : ""}{e.tenant && e.tenant !== e.unit_ref ? ` · ${e.tenant}` : ""}</div>
                         <select
-                          className="mt-1 w-full min-h-11 rounded border border-input bg-background px-2 text-sm"
+                          aria-label={`Link evidence ${e.unit_ref || e.tenant || e.id} to unit`} className="mt-1 w-full min-h-11 rounded border border-input bg-background px-2 text-sm"
                           value=""
                           onChange={async ev => {
                             const unitId = ev.target.value;
@@ -1112,6 +1157,9 @@ function UnlinkedEvidence({ entries, units, levels, onSaved }: { entries: Entry[
                       </div>
                     ))}
                   </div>
+                  {!matches.length && <p className="text-sm text-muted-foreground">No evidence matches this search.</p>}
+                  {pages > 1 && <div className="mt-3 flex items-center justify-between gap-2"><Button variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous evidence</Button><span className="font-mono text-[11px]">{currentPage + 1} / {pages}</span><Button variant="outline" size="sm" disabled={currentPage + 1 >= pages} onClick={() => setPage(currentPage + 1)}>Next evidence</Button></div>}
+                  </>}
                 </details>
   );
 }
@@ -1153,7 +1201,15 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, onClose,
   const [saveError, setSaveError] = useState("");
   const [evidenceError, setEvidenceError] = useState("");
   const [scheduleId, setScheduleId] = useState("");
+  const [scheduleSearch, setScheduleSearch] = useState("");
   const [editScheduleId, setEditScheduleId] = useState<string | null>(null);
+  const scheduleChoice = scheduleRows.find(row => row.id === scheduleId);
+  const scheduleRefCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of scheduleRows) { const ref = normRef(row.unit_number || ""); if (ref) counts.set(ref, (counts.get(ref) || 0) + 1); }
+    return counts;
+  }, [scheduleRows]);
+  const ambiguousSchedule = !unit.ts_linked && (scheduleRefCounts.get(normRef(unit.unit_ref)) || 0) > 1;
 
   const startEdit = () => {
     setForm({
@@ -1279,11 +1335,18 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, onClose,
       </div>}
       {!editing && scheduleRows.length > 0 && <details className="rounded-xl border border-border p-3 text-sm">
         <summary className="cursor-pointer font-medium">{unit.ts_linked ? "Change schedule link" : "Link schedule row"}</summary>
+        {ambiguousSchedule && <p className="mt-2 text-sm" role="status">Multiple schedule rows use this unit reference. Compare their lease facts before choosing; a similar tenant name does not establish which row is current.</p>}
         <p className="text-muted-foreground mt-2">Choose the matching row. The unit adopts its reference and lease facts; evidence stays with this outline.</p>
+        <Input aria-label="Search tenancy schedule rows" placeholder="Find unit or tenant…" value={scheduleSearch} onChange={e => setScheduleSearch(e.target.value)} className="mt-2" />
         <select aria-label="Tenancy schedule row" className="w-full min-h-11 mt-2 rounded-md border border-input bg-background px-2" value={scheduleId} onChange={e => setScheduleId(e.target.value)} data-testid="select-unit-schedule">
           <option value="">Choose a schedule row…</option>
-          {scheduleRows.map(row => <option key={row.id} value={row.id}>{row.unit_number} · {row.trading_name || row.tenant_name || "No tenant"}{row.floor_level ? ` · ${row.floor_level}` : ""}</option>)}
+          {scheduleRows.filter(row => row.id === scheduleId || `${row.unit_number || ""} ${row.trading_name || ""} ${row.tenant_name || ""}`.toLowerCase().includes(scheduleSearch.toLowerCase())).map(row => <option key={row.id} value={row.id}>{row.unit_number} · {row.trading_name || row.tenant_name || "No tenant"}{row.floor_level ? ` · ${row.floor_level}` : ""} · {fmtMoney(row.passing_rent_pa)} · expires {fmtDate(row.lease_expiry)} · {row.id.slice(-6)}</option>)}
         </select>
+        {scheduleChoice && <div className="mt-3 border border-border rounded-lg p-3 space-y-2" data-testid="schedule-choice-preview">
+          <p className="font-semibold break-words">{scheduleChoice.unit_number} · {scheduleChoice.trading_name || "Trading name not entered"}</p>
+          <p className="text-[11px] text-muted-foreground break-words">Legal tenant: {scheduleChoice.tenant_name || "Not entered"}{scheduleChoice.floor_level ? ` · ${scheduleChoice.floor_level}` : ""}</p>
+          <div className="grid grid-cols-2 gap-2">{fact("Passing rent", fmtMoney(scheduleChoice.passing_rent_pa))}{fact("Lease expiry", fmtDate(scheduleChoice.lease_expiry))}{fact("ERV", fmtMoney(scheduleChoice.erv_pa))}{fact("Size", scheduleChoice.nia_sqft ?? scheduleChoice.gia_sqft ? `${Number(scheduleChoice.nia_sqft ?? scheduleChoice.gia_sqft).toLocaleString("en-GB")} sq ft` : "—")}</div>
+        </div>}
         <Button className="mt-2" size="sm" disabled={!scheduleId || saving} onClick={linkSchedule} data-testid="button-link-unit-schedule">Link schedule row</Button>
       </details>}
 

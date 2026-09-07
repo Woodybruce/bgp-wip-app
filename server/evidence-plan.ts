@@ -16,10 +16,6 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
 import crypto from "crypto";
-import { execFile } from "child_process";
-import fs from "fs";
-import os from "os";
-import path from "path";
 import multer from "multer";
 import ExcelJS from "exceljs";
 import Anthropic from "@anthropic-ai/sdk";
@@ -27,6 +23,8 @@ import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { saveFile, getFile } from "./file-storage";
 import { rasterisePdfPage } from "./pdf-image-extract";
+import { renderEvidencePlanPdf, originalPlanPdfKey } from "./plan-image-render";
+import { redInkHiddenPlanImage } from "./plan-display-image";
 import { isValidPolygon, pointInPolygon, interiorPoint } from "@shared/plan-geometry";
 import { resolveBrandIdSubquery } from "./tenant-brand-resolver";
 
@@ -339,26 +337,6 @@ async function planOr404(planId: string, res: Response): Promise<any | null> {
 // Lower / Upper / Restaurant). Every page becomes a level of the plan,
 // named from the page's own text where a level name can be found.
 
-async function pdfPageText(pdfBuffer: Buffer, page: number): Promise<string> {
-  const tmp = path.join(os.tmpdir(), `epl-${crypto.randomBytes(6).toString("hex")}.pdf`);
-  try {
-    fs.writeFileSync(tmp, pdfBuffer);
-    return await new Promise<string>((resolve) => {
-      execFile("pdftotext", ["-f", String(page), "-l", String(page), tmp, "-"], { timeout: 20000 },
-        (err, stdout) => resolve(err ? "" : String(stdout)));
-    });
-  } catch { return ""; } finally { try { fs.unlinkSync(tmp); } catch {} }
-}
-
-// Named levels ("Restaurant Level") win over bare "Level N" — plans note
-// car-park levels ("Car Parking Level 3") that would otherwise match first.
-const NAMED_LEVEL_RE = /\b((?:Lower|Upper|Ground|First|Second|Third|Basement|Mezzanine|Restaurant|Leisure|Terrace)\s+(?:Level|Floor|Mall))\b/i;
-const NUMBERED_LEVEL_RE = /(?<!Car\s?Parking\s)\b(Level\s+\d+)\b/i;
-function detectLevelName(text: string): string | null {
-  const m = text.match(NAMED_LEVEL_RE) || text.match(NUMBERED_LEVEL_RE);
-  return m ? m[1].replace(/\s+/g, " ").trim() : null;
-}
-
 type RenderedPage = { key: string; width: number; height: number; name: string | null };
 
 // Renders every page of a PDF (or a single image) into file_storage.
@@ -367,17 +345,14 @@ async function renderPlanPages(planId: string, file: Express.Multer.File): Promi
   const out: RenderedPage[] = [];
   const isPdf = /pdf/i.test(file.mimetype || "") || /\.pdf$/i.test(file.originalname || "");
   if (isPdf) {
-    for (let p = 1; p <= 10; p++) {
-      const page = await rasterisePdfPage({ pdfBuffer: file.buffer, page: p, dpi: 200 });
-      if (!page) break;
-      const meta = await sharp(page).metadata();
-      if (!meta.width || !meta.height) continue;
-      const key = `evidence-plans/${planId}/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.jpg`;
-      await saveFile(key, page, "image/jpeg", file.originalname);
-      const text = await pdfPageText(file.buffer, p);
-      out.push({ key, width: meta.width, height: meta.height, name: detectLevelName(text) });
+    const prefix = `evidence-plans/${planId}/pdf-${crypto.randomUUID()}`;
+    for await (const page of renderEvidencePlanPdf(file.buffer)) {
+      const key = `${prefix}/page-${page.page}.png`;
+      await saveFile(key, page.buffer, "image/png", file.originalname);
+      out.push({ key, width: page.width, height: page.height, name: page.name });
     }
     if (out.length === 0) throw new Error("Couldn't render the PDF — is it a valid plan?");
+    await saveFile(`${prefix}/original.pdf`, file.buffer, "application/pdf", file.originalname);
   } else if (/^image\//.test(file.mimetype || "")) {
     const meta = await sharp(file.buffer).metadata();
     if (!meta.width || !meta.height) throw new Error("Couldn't read the plan image dimensions");
@@ -512,7 +487,8 @@ router.get("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
     const units = unitsQ.rows.map(unit => presentEvidenceUnit(unit, scheduleRows));
     const matters = matterRows.rows.map((matter: any) => ({ ...matter,
       unit_norm: matter.unit_name ? normaliseUnitRef(matter.unit_name) : null }));
-    res.json({ plan: { ...plan, property_name: prop.rows[0]?.name || null }, levels, units,
+    res.json({ plan: { ...plan, property_name: prop.rows[0]?.name || null }, levels: levels.map((level: any) => ({ ...level,
+      source_pdf_url: originalPlanPdfKey(level.background_key) ? `/api/evidence-plans/levels/${level.id}/original` : null })), units,
       schedule_rows: scheduleRows, entries: entries.rows, matters, jobs: running.rows });
   } catch (e: any) { res.status(e instanceof EvidencePlanError ? e.status : 500).json({ error: e.message }); }
 });
@@ -585,7 +561,25 @@ router.get("/api/evidence-plans/levels/:levelId/background", requireAuth, async 
     if (!level?.background_key) return res.status(404).json({ error: "No plan image for this level" });
     const file = await getFile(level.background_key);
     if (!file) return res.status(404).json({ error: "Plan image missing" });
-    res.setHeader("Content-Type", file.contentType);
+    const hideRed = req.query.hideRed === "1";
+    const image = hideRed ? await redInkHiddenPlanImage(level.background_key, file.data) : file.data;
+    res.setHeader("Content-Type", hideRed ? "image/png" : file.contentType);
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.send(image);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/api/evidence-plans/levels/:levelId/original", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { rows: [level] } = await pool.query(`SELECT background_key FROM evidence_plan_levels WHERE id = $1`, [String(req.params.levelId)]);
+    if (!level) return res.status(404).json({ error: "Level not found" });
+    const key = originalPlanPdfKey(level.background_key);
+    if (!key) return res.status(404).json({ error: "The original PDF wasn't retained for this upload. Upload the original PDF again to keep a full-quality copy." });
+    const file = await getFile(key);
+    if (!file) return res.status(404).json({ error: "Original PDF missing" });
+    res.setHeader("Content-Type", "application/pdf");
+    const filename = encodeURIComponent(file.originalName || "original-plan.pdf").replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+    res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${filename}`);
     res.setHeader("Cache-Control", "private, max-age=3600");
     res.send(file.data);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -637,8 +631,10 @@ router.post("/api/evidence-plans/levels/:levelId/crop", requireAuth, async (req:
       left: Math.round(x0 * W), top: Math.round(y0 * H),
       width: Math.max(1, Math.round(sw * W)), height: Math.max(1, Math.round(sh * H)),
     };
-    const buf = await sharp(file.data).extract(region).jpeg({ quality: 90 }).toBuffer();
-    const key = `evidence-plans/${level.plan_id}/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.jpg`;
+    const buf = await sharp(file.data).extract(region).png().toBuffer();
+    const originalKey = originalPlanPdfKey(level.background_key);
+    const prefix = originalKey ? originalKey.slice(0, -"/original.pdf".length) : `evidence-plans/${level.plan_id}`;
+    const key = `${prefix}/crop-${crypto.randomUUID()}.png`;
     db = await pool.connect();
     await db.query("BEGIN");
     const current = (await db.query(`SELECT background_key FROM evidence_plan_levels WHERE id = $1 FOR UPDATE`, [levelId])).rows[0];
@@ -648,7 +644,7 @@ router.post("/api/evidence-plans/levels/:levelId/crop", requireAuth, async (req:
       point.x < x0 - 1e-6 || point.x > x1 + 1e-6 || point.y < y0 - 1e-6 || point.y > y1 + 1e-6))) {
       throw new EvidencePlanError(409, "This crop would cut off a saved unit outline. Keep all units inside the crop, or correct those outlines first.");
     }
-    await saveFile(key, buf, "image/jpeg", "cropped-plan.jpg");
+    await saveFile(key, buf, "image/png", "cropped-plan.png");
     await db.query(
       `UPDATE evidence_plan_levels SET background_key=$1, background_width=$2, background_height=$3 WHERE id=$4`,
       [key, region.width, region.height, levelId]);
@@ -810,6 +806,17 @@ export async function saveEvidenceUnit(
     const factKeys = Object.keys(factMap).filter(key => key in patch);
     if (matched && factKeys.length && (body.scheduleRowId !== matched.id || linking && current?.id !== matched.id)) {
       throw new EvidencePlanError(409, "These facts belong to the linked tenancy schedule. Review the current schedule row before saving.");
+    }
+    if (current && !linking && ("unitRef" in patch || "tenantName" in patch)) {
+      const prospectiveUnit = { ...unit,
+        unit_ref: "unitRef" in patch ? patch.unitRef : unit.unit_ref,
+        tenant_name: "tenantName" in patch ? patch.tenantName : unit.tenant_name };
+      const prospectiveSchedule = "tenantName" in patch
+        ? schedule.map((row: any) => row.id === current.id ? { ...row, trading_name: patch.tenantName } : row)
+        : schedule;
+      if (matchEvidenceScheduleRow(prospectiveUnit, prospectiveSchedule).row?.id !== current.id) {
+        throw new EvidencePlanError(409, "Changing this unit reference or tenant name would disconnect its tenancy schedule row. Keep a matching reference, or use Change schedule link to choose another row.");
+      }
     }
     const polygon = "polygon" in patch ? patch.polygon : unit.polygon;
     if ("dot" in patch && patch.dot && (!isValidPolygon(polygon) || !pointInPolygon(patch.dot, polygon))) {
@@ -1280,18 +1287,20 @@ function extractJsonObject(text: string): any | null {
   return null;
 }
 
-const DETECT_PROMPT = (known: string[], overview = false) => `This is ${overview ? "the whole level" : "part of one level"} of a UK shopping centre letting plan. Magenta grid lines mark 0.1 intervals of THIS image.
+const DETECT_PROMPT = (known: string[], overview = false) => `This is ${overview ? "the whole level" : "part of one level"} of a UK retail plan. It may be a coloured letting plan or a black-and-white architectural/site drawing. Magenta grid lines mark 0.1 intervals of THIS image. Blue numbered outlines show genuinely enclosed pixel regions detected on the original drawing, not inferred unit boundaries.
+
+Prefer selecting regionId for each numbered region that visibly represents one lettable shop/restaurant/kiosk demise. Read the original plan label, not the blue number. A shop can have no readable label: return unitRef:null and tenant:null WITH its regionId so a person can name it. Reject internal rooms, corridors, roads, surrounding buildings outside the marked retail site, title panels and fragmented parts of a larger shop. Do not treat every numbered region as a unit. If a true unit has no suitable numbered region, supply its printed label plus seed and optional visible outline as below.
 
 Find lettable shops, restaurants and kiosks, including white/pale units and large anchor stores. Give an interior seed on the unit's filled floor area, away from text, walls and the mall. The seed will be used to trace the actual enclosed pixels. ${overview ? "Include large units and units crossing the middle of the plan. Return seeds only; this pass covers units that may be cut across close-up tiles." : "A unit may cross the tile edge: report it if its label and a reliable interior seed are visible. Add a polygon following its visible walls ONLY if its complete outline is visible. Never substitute an approximate rectangle for an irregular outline."}
 
 Ignore page borders, legends, title/contact panels, text-only kiosk lists, malls, toilets, stairs, lifts, car parks, arrows and annotation boxes. Do not assign known refs to shapes by guesswork. Read the printed label; use null for a ref when only the tenant is visible.
 
 Return JSON only:
-{"units":[{"unitRef":"E7A","tenant":"Example tenant","seed":{"x":0.35,"y":0.47}${overview ? "" : ',"polygon":[{"x":0.31,"y":0.42},{"x":0.38,"y":0.42},{"x":0.38,"y":0.51},{"x":0.31,"y":0.51}]'}}]}
+{"units":[{"regionId":12,"unitRef":"E7A","tenant":"Example tenant","seed":{"x":0.35,"y":0.47}${overview ? "" : ',"polygon":[{"x":0.31,"y":0.42},{"x":0.38,"y":0.42},{"x":0.38,"y":0.51},{"x":0.31,"y":0.51}]'}}]}
 
 All x/y fractions are 0..1 in THIS image, x rightwards, y downwards. ${known.length ? `Known scheme refs (use only when the printed label matches): ${known.join(", ")}` : ""}`;
 
-async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, ox: number, oy: number, fw: number, fh: number, known: string[], overview = false): Promise<import("./plan-unit-detection").DetectedPlanUnit[]> {
+async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, ox: number, oy: number, fw: number, fh: number, known: string[], overview = false, regions: import("./plan-unit-detection").PlanUnitRegion[] = []): Promise<import("./plan-unit-detection").DetectedPlanUnit[]> {
   const { mapDetectedPlanUnits } = await import("./plan-unit-detection");
   const left = Math.round(ox * W), top = Math.round(oy * H);
   const width = Math.min(W - left, Math.round(fw * W)), height = Math.min(H - top, Math.round(fh * H));
@@ -1304,6 +1313,14 @@ async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, o
     lines.push(`<text x="${i / 10 * tw + 2}" y="12" font-size="11" fill="magenta">${(i / 10).toFixed(1)}</text>`);
     lines.push(`<text x="2" y="${i / 10 * th - 2}" font-size="11" fill="magenta">${(i / 10).toFixed(1)}</text>`);
   }
+  const visibleRegions = regions.filter(region => region.dot.x >= left / W && region.dot.x <= (left + width) / W
+    && region.dot.y >= top / H && region.dot.y <= (top + height) / H);
+  for (const region of visibleRegions) {
+    const points = region.polygon.map(p => `${(p.x * W - left) * scale},${(p.y * H - top) * scale}`).join(" ");
+    const x = (region.dot.x * W - left) * scale, y = (region.dot.y * H - top) * scale;
+    lines.push(`<polygon points="${points}" fill="none" stroke="#006ce0" stroke-width="1.2" opacity="0.7"/>`);
+    lines.push(`<text x="${x}" y="${y}" text-anchor="middle" font-size="11" font-weight="bold" fill="#0057bc" stroke="white" stroke-width="3" paint-order="stroke">${region.id}</text>`);
+  }
   const grid = Buffer.from(`<svg width="${tw}" height="${th}" xmlns="http://www.w3.org/2000/svg">${lines.join("")}</svg>`);
   const tile = await sharp(planImage).extract({ left, top, width, height })
     .resize({ width: tw, height: th }).composite([{ input: grid, top: 0, left: 0 }]).jpeg({ quality: 92 }).toBuffer();
@@ -1313,12 +1330,12 @@ async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, o
       { type: "image", source: { type: "base64", media_type: "image/jpeg", data: tile.toString("base64") } },
       { type: "text", text: DETECT_PROMPT(known, overview) },
     ] }],
-  });
+  }, { timeout: 75000, maxRetries: 0 });
   if (msg.stop_reason === "max_tokens") throw new Error("Detection reply was incomplete");
   const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
   const parsed = extractJsonObject(text);
   if (!parsed) throw new Error("Detection reply was not valid JSON");
-  return mapDetectedPlanUnits(parsed, { x: left / W, y: top / H, width: width / W, height: height / H });
+  return mapDetectedPlanUnits(parsed, { x: left / W, y: top / H, width: width / W, height: height / H }, visibleRegions);
 }
 
 // Place a unit's evidence dot at its FRONTAGE: sample thin strips just
@@ -1351,10 +1368,21 @@ function frontageDot(raw: Buffer, W: number, H: number, box: { x0: number; y0: n
 }
 
 async function runDetectJob(planId: string, jobId: string, level: any, propertyId: string | null, _refresh = false): Promise<void> {
-  const bump = (sets: string, vals: any[]) =>
-    pool.query(`UPDATE evidence_plan_jobs SET ${sets}, updated_at = now() WHERE id = $${vals.length + 1}`, [...vals, jobId]).catch(() => {});
+  let inactive = false;
+  const bump = async (sets: string, vals: any[]) => {
+    const result = await pool.query(`UPDATE evidence_plan_jobs SET ${sets}, updated_at = now()
+      WHERE id = $${vals.length + 1} AND status = 'running' AND updated_at > now() - interval '3 minutes' AND created_at > now() - interval '30 minutes' RETURNING id`, [...vals, jobId]);
+    if (!result.rows.length) inactive = true;
+    return !inactive;
+  };
+  const checkpoint = async (message: string, completed: number) => {
+    if (inactive || !await bump("error = $1, done_docs = $2, total_docs = 10", [message, completed])) throw new Error("This scan has expired or stopped. Start a new scan to continue.");
+  };
+  const heartbeat = setInterval(() => { void bump("error = error", []).catch(() => { inactive = true; }); }, 30000);
+  heartbeat.unref?.();
   try {
-    const { tracePlanUnit } = await import("./plan-unit-detection");
+    await checkpoint("Finding enclosed regions on the original plan…", 0);
+    const { findPlanUnitRegions, traceDetectedPlanUnit, planPolygonsOverlap } = await import("./plan-unit-detection");
     const { isValidPolygon, pointInPolygon, polygonArea, boundaryDistance } = await import("@shared/plan-geometry");
     const file = await getFile(level.background_key);
     if (!file) throw new Error("Level has no plan image");
@@ -1365,6 +1393,7 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
     const raster = await sharp(file.data).resize({ width: 3000, height: 3000, fit: "inside", withoutEnlargement: true })
       .toColourspace("srgb").removeAlpha().raw().toBuffer({ resolveWithObject: true });
     const raw = { data: raster.data, width: raster.info.width, height: raster.info.height };
+    const regions = findPlanUnitRegions(raw);
     const known = new Set<string>();
     const tenantToRef = new Map<string, string | null>();
     if (propertyId) {
@@ -1388,25 +1417,29 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       ...[0, .3, .6].flatMap(oy => [0, .3, .6].map(ox => ({ ox, oy, fw: .4, fh: .4, overview: false })))];
     const found: import("./plan-unit-detection").DetectedPlanUnit[] = [];
     let failedTiles = 0;
-    for (const frame of frames) {
+    for (const [index, frame] of frames.entries()) {
+      await checkpoint(`Reading image section ${index + 1} of ${frames.length} (${regions.length} enclosed regions to check)…`, index);
       let got: import("./plan-unit-detection").DetectedPlanUnit[] | null = null;
       for (let attempt = 0; attempt < 2 && got === null; attempt++) {
-        try { got = await detectTile(sharp, file.data, W, H, frame.ox, frame.oy, frame.fw, frame.fh, knownList, frame.overview); }
+        try { got = await detectTile(sharp, file.data, W, H, frame.ox, frame.oy, frame.fw, frame.fh, knownList, frame.overview, regions); }
         catch (error: any) {
+          if (inactive) throw error;
+          if (attempt === 0) await checkpoint(`Retrying image section ${index + 1} of ${frames.length}…`, index);
           if (attempt === 1) { failedTiles++; console.error(`[evidence-plan] tile failed twice:`, error?.message); }
         }
       }
       if (got) found.push(...got);
+      await checkpoint(`Read ${index + 1} of ${frames.length} image sections; ${found.length} unit observations to verify…`, index + 1);
     }
     if (!found.length) throw new Error("No units could be read on this level. Existing outlines and information are unchanged.");
     const candidates: { ref: string; printedRef: boolean; conflictingLabel: boolean; tenant: string | null; polygon: { x: number; y: number }[]; dot: { x: number; y: number } }[] = [];
     let untraced = 0;
     for (const candidate of found) {
-      let ref = candidate.unitRef || "";
+      let ref = candidate.unitRef || (!candidate.tenant && candidate.regionId ? `Unlabelled ${candidate.regionId}` : "");
       if (!ref && candidate.tenant) ref = tenantToRef.get(normTenantName(candidate.tenant)) || candidate.tenant;
       else if (ref && !/\d/.test(ref)) ref = tenantToRef.get(normTenantName(ref)) || ref;
       if (!normaliseUnitRef(ref)) continue;
-      const traced = tracePlanUnit(raw, candidate.seed, candidate.polygon);
+      const traced = traceDetectedPlanUnit(raw, candidate, regions);
       if (!traced) { untraced++; continue; }
       const duplicate = candidates.find(existing => pointInPolygon(traced.dot, existing.polygon)
         && pointInPolygon(existing.dot, traced.polygon));
@@ -1416,7 +1449,8 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
         if (candidate.unitRef && duplicate.printedRef && normaliseUnitRef(duplicate.ref) !== normaliseUnitRef(ref)) duplicate.conflictingLabel = true;
         else if (candidate.unitRef && !duplicate.printedRef) {
           duplicate.ref = ref.slice(0, 80); duplicate.printedRef = true;
-        }
+        } else if (!duplicate.printedRef && /^Unlabelled \d+$/.test(duplicate.ref) && candidate.tenant) duplicate.ref = ref.slice(0, 80);
+        if (!duplicate.tenant && candidate.tenant) duplicate.tenant = candidate.tenant;
         continue;
       }
       candidates.push({ ref: ref.slice(0, 80), printedRef: Boolean(candidate.unitRef), conflictingLabel: false, tenant: candidate.tenant, polygon: traced.polygon, dot: traced.dot });
@@ -1429,21 +1463,21 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
     }
     const ambiguous = new Set([...refCounts.entries()].filter(([, count]) => count > 1).map(([key]) => key));
     for (const candidate of candidates) if (candidate.conflictingLabel) ambiguous.add(normaliseUnitRef(candidate.ref));
+    await checkpoint("Checking labels and saving verified boundaries…", frames.length);
     const connection = await pool.connect();
-    let created = 0, refined = 0, preserved = 0;
+    let created = 0, refined = 0, preserved = 0, linked = 0;
     try {
       await connection.query("BEGIN");
       const liveLevel = (await connection.query("SELECT background_key FROM evidence_plan_levels WHERE id = $1 AND plan_id = $2 FOR UPDATE", [level.id, planId])).rows[0];
       if (!liveLevel || liveLevel.background_key !== level.background_key) throw new Error("The plan image changed during scanning. Existing units are unchanged; scan the current image again.");
+      const liveJob = (await connection.query(`SELECT id FROM evidence_plan_jobs WHERE id = $1 AND status = 'running'
+        AND updated_at > now() - interval '3 minutes' AND created_at > now() - interval '30 minutes' FOR UPDATE`, [jobId])).rows[0];
+      if (!liveJob || inactive) throw new Error("This scan expired before saving. Existing outlines and information are unchanged.");
       const existing = (await connection.query("SELECT id, unit_ref, polygon, source FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2 FOR UPDATE", [planId, level.id])).rows;
       for (const candidate of candidates) {
         if (ambiguous.has(normaliseUnitRef(candidate.ref))) { preserved++; continue; }
         const sameRef = existing.filter(row => normaliseUnitRef(row.unit_ref) === normaliseUnitRef(candidate.ref));
-        const overlaps = (row: any) => isValidPolygon(row.polygon) && (
-          boundaryDistance(candidate.dot, row.polygon) > 1e-6
-          || candidate.polygon.some(point => boundaryDistance(point, row.polygon) > 1e-6)
-          || row.polygon.some((point: { x: number; y: number }) => boundaryDistance(point, candidate.polygon) > 1e-6)
-        );
+        const overlaps = (row: any) => planPolygonsOverlap(candidate.polygon, row.polygon);
         if (sameRef.length) {
           const saved = sameRef.length === 1 ? sameRef[0] : null;
           const ratio = saved && isValidPolygon(saved.polygon) ? polygonArea(candidate.polygon) / polygonArea(saved.polygon) : 0;
@@ -1467,21 +1501,22 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
         [planId, level.id, candidate.ref, candidate.tenant, JSON.stringify(candidate.polygon), JSON.stringify(candidate.dot)])).rows[0];
         existing.push(inserted); created++;
       }
+      linked = await relinkAllEntries(planId, connection);
+      const details = [refined ? `${refined} existing AI outlines refined; saved information and marker positions kept` : "",
+        failedTiles ? `${failedTiles} image sections could not be read` : "",
+        untraced ? `${untraced} candidates lacked a reliable closed boundary` : "",
+        ambiguous.size ? `${ambiguous.size} conflicting or repeated unit labels need review` : ""].filter(Boolean).join("; ");
       await connection.query("UPDATE evidence_plans SET updated_at = now() WHERE id = $1", [planId]);
+      await connection.query(`UPDATE evidence_plan_jobs SET status = 'done', done_docs = total_docs, extracted = $1,
+        created = $2, linked = $3, error = $4, updated_at = now() WHERE id = $5 AND status = 'running'`, [found.length, created, linked, details || null, jobId]);
       await connection.query("COMMIT");
     } catch (error) { await connection.query("ROLLBACK"); throw error; }
     finally { connection.release(); }
-    const linked = await relinkAllEntries(planId);
-    const details = [refined ? `${refined} existing AI outlines refined; saved information and marker positions kept` : "",
-      failedTiles ? `${failedTiles} image sections could not be read` : "",
-      untraced ? `${untraced} candidates lacked a reliable closed boundary` : "",
-      ambiguous.size ? `${ambiguous.size} conflicting or repeated unit labels need review` : ""].filter(Boolean).join("; ");
-    await bump("status = 'done', done_docs = 1, extracted = $1, created = $2, linked = $3, error = $4", [found.length, created, linked, details || null]);
     console.log(`[evidence-plan] scan ${jobId}: ${created} added, ${refined} AI outlines refined, ${preserved} saved units preserved, ${linked} evidence links`);
   } catch (e: any) {
     console.error(`[evidence-plan] detect job ${jobId} failed:`, e?.message);
-    await bump(`status = 'error', error = $1`, [String(e?.message || e).slice(0, 500)]);
-  }
+    await bump(`status = 'error', error = $1`, [String(e?.message || e).slice(0, 500)]).catch(() => {});
+  } finally { clearInterval(heartbeat); }
 }
 
 // Click-to-trace is a preview only. The user supplies the unit reference
@@ -1504,6 +1539,25 @@ router.post("/api/evidence-plans/levels/:levelId/trace-unit", requireAuth, async
   } catch (error: any) { res.status(500).json({ error: error?.message || "Unit outline could not be traced." }); }
 });
 
+async function startDetectJob(planId: string, levelId: string, createdBy: string | null): Promise<{ jobId: string; reused: boolean }> {
+  const connection = await pool.connect();
+  try {
+    await connection.query("BEGIN");
+    const level = (await connection.query("SELECT id FROM evidence_plan_levels WHERE id = $1 AND plan_id = $2 FOR UPDATE", [levelId, planId])).rows[0];
+    if (!level) throw new Error("Plan level not found");
+    await connection.query(`UPDATE evidence_plan_jobs SET status = 'error', error = 'Scan stopped responding. Start a new scan to continue.', updated_at = now()
+      WHERE plan_id = $1 AND level_id = $2 AND kind = 'detect' AND status = 'running'
+        AND (updated_at < now() - interval '3 minutes' OR created_at < now() - interval '30 minutes')`, [planId, levelId]);
+    const running = (await connection.query(`SELECT id FROM evidence_plan_jobs WHERE plan_id = $1 AND level_id = $2
+      AND kind = 'detect' AND status = 'running' ORDER BY created_at LIMIT 1`, [planId, levelId])).rows[0];
+    const jobId = running?.id || (await connection.query(`INSERT INTO evidence_plan_jobs
+      (plan_id, status, total_docs, kind, level_id, created_by) VALUES ($1, 'running', 10, 'detect', $2, $3) RETURNING id`, [planId, levelId, createdBy])).rows[0].id;
+    await connection.query("COMMIT");
+    return { jobId, reused: Boolean(running) };
+  } catch (error) { await connection.query("ROLLBACK"); throw error; }
+  finally { connection.release(); }
+}
+
 // Detection runs AUTOMATICALLY — on plan upload, on property link, and
 // after TAF extraction — for every level that has an image but no units
 // yet ("thats the whole point? dont need a button" — Woody, 2026-09-02).
@@ -1519,14 +1573,8 @@ async function autoDetectEmptyLevels(planId: string): Promise<void> {
       const { rows: [{ n }] } = await pool.query(
         `SELECT count(*)::int AS n FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2`, [planId, level.id]);
       if (n > 0) continue;
-      const { rows: dupJob } = await pool.query(
-        `SELECT 1 FROM evidence_plan_jobs WHERE plan_id = $1 AND level_id = $2 AND kind = 'detect' AND status = 'running' LIMIT 1`,
-        [planId, level.id]);
-      if (dupJob[0]) continue;
-      const { rows } = await pool.query(
-        `INSERT INTO evidence_plan_jobs (plan_id, status, total_docs, kind, level_id) VALUES ($1, 'running', 1, 'detect', $2) RETURNING id`,
-        [planId, level.id]);
-      await runDetectJob(planId, rows[0].id, level, plan.property_id || null);
+      const started = await startDetectJob(planId, level.id, null);
+      if (!started.reused) await runDetectJob(planId, started.jobId, level, plan.property_id || null);
     }
   } catch (e: any) {
     console.error(`[evidence-plan] auto-detect for plan ${planId} failed:`, e?.message);
@@ -1543,16 +1591,17 @@ router.post("/api/evidence-plans/:id/detect-units", requireAuth, async (req: Req
     const levels = await healLevels(plan);
     const level = levels.find((l: any) => l.id === String(req.body?.levelId || "")) || levels[0];
     if (!level?.background_key) return res.status(400).json({ error: "No plan image on this level yet" });
-    const { rows } = await pool.query(
-      `INSERT INTO evidence_plan_jobs (plan_id, status, total_docs, kind, level_id, created_by) VALUES ($1, 'running', 1, 'detect', $2, $3) RETURNING id`,
-      [plan.id, level.id, (req as any).session?.userId || null]);
-    res.json({ jobId: rows[0].id });
-    void runDetectJob(plan.id, rows[0].id, level, plan.property_id || null, true);
+    const started = await startDetectJob(plan.id, level.id, (req as any).session?.userId || null);
+    res.json(started);
+    if (!started.reused) void runDetectJob(plan.id, started.jobId, level, plan.property_id || null, true);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 router.get("/api/evidence-plans/jobs/:jobId", requireAuth, async (req: Request, res: Response) => {
   try {
+    await pool.query(`UPDATE evidence_plan_jobs SET status = 'error', error = 'Scan stopped responding. Start a new scan to continue.', updated_at = now()
+      WHERE id = $1 AND kind = 'detect' AND status = 'running'
+        AND (updated_at < now() - interval '3 minutes' OR created_at < now() - interval '30 minutes')`, [String(req.params.jobId)]);
     const { rows } = await pool.query(`SELECT * FROM evidence_plan_jobs WHERE id = $1`, [String(req.params.jobId)]);
     if (!rows[0]) return res.status(404).json({ error: "Job not found" });
     res.json(rows[0]);

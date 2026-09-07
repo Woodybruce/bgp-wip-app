@@ -1,24 +1,26 @@
-import { interiorPoint, isValidPolygon, pointInPolygon, polygonArea } from "@shared/plan-geometry";
+import { boundaryDistance, interiorPoint, isValidPolygon, pointInPolygon, polygonArea } from "@shared/plan-geometry";
 
 type Point = { x: number; y: number };
 export type PlanRaster = { data: Buffer; width: number; height: number };
-export type DetectedPlanUnit = { unitRef: string | null; tenant: string | null; seed: Point; polygon: Point[] | null };
+export type DetectedPlanUnit = { unitRef: string | null; tenant: string | null; seed: Point; polygon: Point[] | null; regionId?: number };
+export type PlanUnitRegion = TracedPlanUnit & { id: number };
 export type TracedPlanUnit = { polygon: Point[]; dot: Point; pixels: number };
 
-export function mapDetectedPlanUnits(value: unknown, frame: { x: number; y: number; width: number; height: number }): DetectedPlanUnit[] {
+export function mapDetectedPlanUnits(value: unknown, frame: { x: number; y: number; width: number; height: number }, regions: PlanUnitRegion[] = []): DetectedPlanUnit[] {
   if (!value || typeof value !== "object" || !Array.isArray((value as any).units)) throw new Error("Detection returned no valid units array");
   const point = (p: any): Point | null => p && Number.isFinite(p.x) && Number.isFinite(p.y)
     && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1
     ? { x: frame.x + p.x * frame.width, y: frame.y + p.y * frame.height } : null;
   const result: DetectedPlanUnit[] = [];
   for (const row of (value as any).units) {
+    const region = Number.isInteger(row?.regionId) ? regions.find(item => item.id === row.regionId) : null;
     const polygon = Array.isArray(row?.polygon) ? row.polygon.map(point) : null;
     const validPolygon = polygon && polygon.every(Boolean) && isValidPolygon(polygon) ? polygon as Point[] : null;
-    const seed = point(row?.seed) || (validPolygon ? interiorPoint(validPolygon) : null);
-    if (!seed || (validPolygon && !pointInPolygon(seed, validPolygon))) continue;
+    const seed = region?.dot || point(row?.seed) || (validPolygon ? interiorPoint(validPolygon) : null);
+    if (!seed || (!region && validPolygon && !pointInPolygon(seed, validPolygon))) continue;
     const unitRef = typeof row?.unitRef === "string" ? row.unitRef.trim().slice(0, 80) || null : null;
     const tenant = typeof row?.tenant === "string" ? row.tenant.trim().slice(0, 160) || null : null;
-    if (unitRef || tenant) result.push({ unitRef, tenant, seed, polygon: validPolygon });
+    if (unitRef || tenant || region) result.push({ unitRef, tenant, seed, polygon: region?.polygon || validPolygon, ...(region ? { regionId: region.id } : {}) });
   }
   return result;
 }
@@ -183,4 +185,117 @@ export function tracePlanUnit(raster: PlanRaster, desired: Point, expected?: Poi
   const dot = interiorPoint(polygon);
   if (!dot || !pointInPolygon(dot, polygon)) return null;
   return { polygon, dot, pixels: count };
+}
+
+
+// Inventory actual enclosed fills before asking the model to identify shops.
+// These are geometric candidates, never automatically accepted as tenancies:
+// the vision pass must distinguish demises from rooms, roads and title panels.
+export function findPlanUnitRegions(raster: PlanRaster, limit = 400): PlanUnitRegion[] {
+  const { data, width: W, height: H } = raster;
+  if (W < 3 || H < 3 || data.length !== W * H * 3) return [];
+  const seen = new Uint8Array(W * H), queue = new Int32Array(W * H);
+  const minimum = Math.max(24, Math.round(W * H * .000015));
+  const components: { seed: Point; box: Point[]; pixels: number }[] = [];
+  const eligible = (i: number) => {
+    const r = data[i * 3], g = data[i * 3 + 1], b = data[i * 3 + 2];
+    const low = Math.min(r, g, b), high = Math.max(r, g, b);
+    return low > 205 || (high - low > 30 && high > 80 && low > 40)
+      || (high < 150 && low > 65 && high - low < 20);
+  };
+  for (let start = 0; start < W * H; start++) {
+    if (seen[start] || !eligible(start)) continue;
+    const colour = [data[start * 3], data[start * 3 + 1], data[start * 3 + 2]];
+    const tolerance = Math.max(...colour) < 150 && Math.max(...colour) - Math.min(...colour) < 30 ? 12 : 24;
+    let count = 1, cursor = 0, x0 = start % W, x1 = x0, y0 = Math.floor(start / W), y1 = y0, sumX = 0, sumY = 0;
+    seen[start] = 1; queue[0] = start;
+    while (cursor < count) {
+      const pos = queue[cursor++], x = pos % W, y = Math.floor(pos / W);
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); sumX += x; sumY += y;
+      const neighbours = [x ? pos - 1 : -1, x + 1 < W ? pos + 1 : -1, y ? pos - W : -1, y + 1 < H ? pos + W : -1];
+      for (const next of neighbours) {
+        if (next < 0 || seen[next] || !eligible(next)) continue;
+        const i = next * 3;
+        if (Math.max(Math.abs(data[i] - colour[0]), Math.abs(data[i + 1] - colour[1]), Math.abs(data[i + 2] - colour[2])) > tolerance) continue;
+        seen[next] = 1; queue[count++] = next;
+      }
+    }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    if (count < minimum || count > W * H * .42 || x0 === 0 || y0 === 0 || x1 === W - 1 || y1 === H - 1
+      || Math.min(bw, bh) < Math.max(4, Math.min(W, H) * .004) || Math.max(bw / bh, bh / bw) > 25 || count / (bw * bh) < .2) continue;
+    const cx = sumX / count, cy = sumY / count;
+    let best = start, score = Infinity;
+    for (let n = 0; n < count; n++) {
+      const pos = queue[n], x = pos % W, y = Math.floor(pos / W);
+      // Pick real floor pixels near the centre, clear of text and wall edges.
+      if (x <= x0 || x >= x1 || y <= y0 || y >= y1) continue;
+      const clearance = Math.max(1, Math.min(5, Math.floor(Math.min(bw, bh) / 6)));
+      if (x < x0 + clearance || x > x1 - clearance || y < y0 + clearance || y > y1 - clearance) continue;
+      const clear = [-clearance, 0, clearance].every(dy => [-clearance, 0, clearance].every(dx => {
+        const next = pos + dy * W + dx;
+        const i = next * 3;
+        return Math.max(Math.abs(data[i] - colour[0]), Math.abs(data[i + 1] - colour[1]), Math.abs(data[i + 2] - colour[2])) <= tolerance;
+      }));
+      if (!clear) continue;
+      const d = (x - cx) ** 2 + (y - cy) ** 2;
+      if (d < score) { score = d; best = pos; }
+    }
+    if (!Number.isFinite(score)) continue;
+    components.push({ seed: { x: (best % W + .5) / W, y: (Math.floor(best / W) + .5) / H }, pixels: count,
+      box: [{ x: x0 / W, y: y0 / H }, { x: (x1 + 1) / W, y: y0 / H }, { x: (x1 + 1) / W, y: (y1 + 1) / H }, { x: x0 / W, y: (y1 + 1) / H }] });
+  }
+  const regions: PlanUnitRegion[] = [];
+  for (const component of components.sort((a, b) => b.pixels - a.pixels).slice(0, Math.max(1, limit) * 2)) {
+    const traced = tracePlanUnit(raster, component.seed, component.box);
+    if (!traced || regions.some(row => pointInPolygon(traced.dot, row.polygon) && pointInPolygon(row.dot, traced.polygon))) continue;
+    regions.push({ ...traced, id: 0 });
+    if (regions.length >= limit) break;
+  }
+  return regions.filter(region => !regions.some(other => other !== region
+    && polygonArea(other.polygon) > polygonArea(region.polygon) * 1.25
+    && pointInPolygon(region.dot, other.polygon)
+    && region.polygon.every(point => pointInPolygon(point, other.polygon))))
+    .sort((a, b) => a.dot.y - b.dot.y || a.dot.x - b.dot.x).map((region, index) => ({ ...region, id: index + 1 }));
+}
+
+// Rescue a seed placed on lettering only when the supplied visible outline
+// supports exactly one enclosed region. Never snap an uncertain seed sideways
+// into a neighbouring shop merely because it is nearby.
+export function traceDetectedPlanUnit(raster: PlanRaster, candidate: DetectedPlanUnit, regions: PlanUnitRegion[]): TracedPlanUnit | null {
+  const region = candidate.regionId ? regions.find(item => item.id === candidate.regionId) : null;
+  if (region) return region;
+  const traced = tracePlanUnit(raster, candidate.seed, candidate.polygon);
+  if (traced) return traced;
+  const expected = candidate.polygon;
+  if (!expected || !isValidPolygon(expected)) return null;
+  const area = polygonArea(expected);
+  const matches = regions.filter(item => {
+    const ratio = polygonArea(item.polygon) / area;
+    return ratio >= .45 && ratio <= 1.8 && pointInPolygon(item.dot, expected)
+      && item.polygon.filter(point => pointInPolygon(point, expected)).length >= item.polygon.length * .5;
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
+
+export function planPolygonsOverlap(a: Point[], b: Point[]): boolean {
+  if (!isValidPolygon(a) || !isValidPolygon(b)) return false;
+  const epsilon = 1e-10;
+  const box = (polygon: Point[]) => ({ x0: Math.min(...polygon.map(p => p.x)), x1: Math.max(...polygon.map(p => p.x)),
+    y0: Math.min(...polygon.map(p => p.y)), y1: Math.max(...polygon.map(p => p.y)) });
+  const aa = box(a), bb = box(b);
+  if (Math.min(aa.x1, bb.x1) - Math.max(aa.x0, bb.x0) <= epsilon
+    || Math.min(aa.y1, bb.y1) - Math.max(aa.y0, bb.y0) <= epsilon) return false;
+  if (a.some(point => boundaryDistance(point, b) > epsilon) || b.some(point => boundaryDistance(point, a) > epsilon)) return true;
+  const side = (p: Point, q: Point, r: Point) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) {
+    const p = a[i], q = a[(i + 1) % a.length], r = b[j], t = b[(j + 1) % b.length];
+    const s1 = side(p, q, r), s2 = side(p, q, t), s3 = side(r, t, p), s4 = side(r, t, q);
+    // Proper crossings overlap interiors; touching or shared wall edges do not.
+    if (((s1 > epsilon && s2 < -epsilon) || (s1 < -epsilon && s2 > epsilon))
+      && ((s3 > epsilon && s4 < -epsilon) || (s3 < -epsilon && s4 > epsilon))) return true;
+  }
+  // Identical outlines or a polygon contained along shared wall edges can
+  // have no strictly interior vertex and no proper edge crossing.
+  return boundaryDistance(interiorPoint(a)!, b) > epsilon || boundaryDistance(interiorPoint(b)!, a) > epsilon;
 }

@@ -48,7 +48,7 @@ async function eventually(fn, label, timeout = 10000) {
 const unitRow = async unitId => (await db.query('SELECT * FROM evidence_plan_units WHERE id=$1 AND plan_id=$2', [unitId, PLAN])).rows[0];
 async function screenshot(page, name) {
   const file = `${name}.png`;
-  await page.screenshot({ path: join(OUTPUT, file), fullPage: false });
+  await page.screenshot({ path: join(OUTPUT, file), fullPage: false, animations: 'disabled' });
   results.screenshots.push(file);
 }
 async function api(page, path) {
@@ -84,6 +84,10 @@ async function login(context) {
   await page.getByTestId('card-login').waitFor({ state: 'hidden', timeout: 25000 });
   await page.goto(`${BASE.origin}/evidence-plans/${PLAN}`);
   await page.getByTestId('evidence-plan-surface').waitFor({ state: 'visible', timeout: 25000 });
+  await page.waitForFunction(() => {
+    const surface = document.querySelector('[data-testid="evidence-plan-surface"]');
+    return surface && getComputedStyle(surface).position === 'relative';
+  }, null, { timeout: 15000 });
   return page;
 }
 async function selectUnit(page, unitId) {
@@ -154,6 +158,56 @@ try {
     check('a unit without evidence has a visible marker', await page.getByTestId(`unit-marker-${EMPTY_UNIT}`).isVisible());
     await screenshot(page, 'desktop-original-plan');
 
+    const fit = await page.getByTestId('evidence-plan-surface').boundingBox();
+    const canvas = await page.getByTestId('evidence-plan-canvas').boundingBox();
+    check('Fit shows the whole drawing inside the canvas', fit.x >= canvas.x && fit.y >= canvas.y && fit.x + fit.width <= canvas.x + canvas.width + 1 && fit.y + fit.height <= canvas.y + canvas.height + 1);
+    const originalSrc = await page.getByTestId('plan-background-image').getAttribute('src');
+    await page.getByTestId('view-clean-plan').click();
+    check('Clean plan hides all labels and outlines without changing the background', await page.locator('[data-testid^="unit-marker-"]').count() === 0 && await page.locator('[data-testid^="unit-outline-"]').count() === 0 && await page.getByTestId('plan-background-image').getAttribute('src') === originalSrc);
+    await page.getByTestId('view-strong-lines').click();
+    check('Darker lines is a reversible display-only contrast control', await page.getByTestId('plan-background-image').evaluate(e => getComputedStyle(e).filter) === 'contrast(1.7)' && await page.getByTestId('plan-background-image').getAttribute('src') === originalSrc);
+    await page.getByTestId('view-strong-lines').click();
+    await page.getByTestId('button-actual-size').click();
+    await eventually(async () => Math.abs((await page.getByTestId('evidence-plan-surface').boundingBox()).width - 1707) < 2, 'actual image size');
+    check('Actual image size displays one source pixel per CSS pixel', true);
+    for (let n = 0; n < 8; n++) await page.getByTestId('button-zoom-in').click();
+    const magnifiedWidth = (await page.getByTestId('evidence-plan-surface').boundingBox()).width;
+    await page.mouse.move(canvas.x + canvas.width / 2, canvas.y + canvas.height / 2);
+    await page.mouse.wheel(0, -10);
+    await page.waitForTimeout(200);
+    check('Wheel zoom does not jump backwards after magnifying beyond twelve times', (await page.getByTestId('evidence-plan-surface').boundingBox()).width >= magnifiedWidth - 1);
+    await page.getByTestId('button-zoom-reset').click();
+    await page.getByTestId('view-plan-units').click();
+    check('Returning from Clean plan restores all unit controls', await page.locator('[data-testid^="unit-marker-"]').count() === 12);
+    await page.getByTestId('view-unit-numbers').click();
+    check('Unit numbers hides rent circles and leaves editable reference labels', (await page.getByTestId(`unit-marker-${id(106)}`).locator('text').allTextContents()).every(text => !text.includes('£')) && await page.getByTestId(`unit-marker-${id(106)}`).locator('circle').getAttribute('fill') === 'transparent');
+    await screenshot(page, 'desktop-unit-numbers');
+    await selectUnit(page, EMPTY_UNIT);
+    await page.getByTestId('button-edit-unit').click();
+    await page.getByTestId('unit-field-unitRef').fill('77');
+    await page.getByTestId('button-save-unit').click();
+    await eventually(async () => (await unitRow(EMPTY_UNIT)).unit_ref === '77', 'manual unit number saved');
+    await page.reload();
+    await page.getByTestId(`unit-marker-${EMPTY_UNIT}`).waitFor({state:'visible'});
+    check('A manually entered unit number survives reload on the same outline', (await unitRow(EMPTY_UNIT)).unit_ref === '77' && (await page.getByTestId(`unit-marker-${EMPTY_UNIT}`).locator('text').allTextContents()).includes('77'));
+    await selectUnit(page, EMPTY_UNIT);
+    await page.getByTestId('button-edit-unit').click();
+    await page.getByTestId('unit-field-unitRef').fill('QA-EMPTY');
+    await page.getByTestId('button-save-unit').click();
+    await page.getByTestId('button-edit-unit').waitFor({state:'visible'});
+    await page.getByTestId('button-close-unit').click();
+    const redResponse = page.waitForResponse(response => response.url().includes(`/levels/${LEVEL}/background`) && response.url().includes('hideRed=1'));
+    await page.getByTestId('view-hide-red').click();
+    const red = await redResponse;
+    check('Hide red ink loads a derived PNG at the original dimensions', red.ok() && red.headers()['content-type'].startsWith('image/png') && await page.getByTestId('plan-background-image').evaluate(e => e.naturalWidth === 1707 && e.naturalHeight === 1280));
+    await page.getByTestId('view-hide-red').click();
+    check('Turning Hide red ink off restores the original background URL', await page.getByTestId('plan-background-image').getAttribute('src') === originalSrc);
+    await page.getByTestId('button-review-plan').click();
+    await page.getByTestId('review-evidence').click();
+    await page.getByRole('textbox', {name: 'Search unlinked evidence', exact: true}).fill('QA-DRAW');
+    check('Review and clean up finds unlinked evidence and its unit chooser', await page.getByTestId(`link-entry-${UNMATCHED_ENTRY}`).isVisible());
+    await page.getByRole('dialog').getByRole('button', {name: 'Close', exact: true}).click();
+
     const panStart = await planPoint(page, { x: 0.312, y: 0.502 });
     await page.mouse.move(panStart.x, panStart.y);
     await page.mouse.down();
@@ -196,6 +250,10 @@ try {
     await page.getByTestId('button-edit-unit').click();
     await page.getByTestId('unit-field-notes').fill('QA draft retained after failed save');
     await page.getByTestId('unit-field-passingRent').fill('0');
+    await page.getByTestId('view-clean-plan').click();
+    await page.getByTestId('view-unit-numbers').click();
+    check('Changing plan display preserves an unfinished unit form', await page.getByTestId('unit-field-notes').inputValue() === 'QA draft retained after failed save' && await page.getByTestId('unit-field-passingRent').inputValue() === '0');
+    await page.getByTestId('view-plan-units').click();
     let failNext = true;
     const unitUrl = `**/api/evidence-plans/units/${EMPTY_UNIT}`;
     const failSave = route => route.request().method() === 'PUT' && failNext ? (failNext = false, route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Synthetic save failure' }) })) : route.continue();
@@ -233,6 +291,9 @@ try {
     await selectUnit(page, id(106));
     await page.getByTestId(`button-edit-evidence-${id(406)}`).click();
     await page.getByTestId('evidence-field-zoneA').fill('333');
+    await page.getByTestId('view-clean-plan').click();
+    await page.getByTestId('view-plan-units').click();
+    check('Changing plan display preserves an unfinished evidence form', await page.getByTestId('evidence-field-zoneA').inputValue() === '333');
     await page.getByTestId('button-save-evidence').click();
     await eventually(async () => Number((await db.query('SELECT zone_a FROM evidence_plan_entries WHERE id=$1', [id(406)])).rows[0].zone_a) === 333, 'existing evidence edit persisted');
     await page.getByTestId(`unit-marker-${id(106)}`).getByText('£333', { exact: true }).waitFor({ state: 'visible' });
@@ -388,6 +449,12 @@ try {
     const phone = await login(phoneContext);
     check('phone has no horizontal page overflow', await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await screenshot(phone, 'phone-original-plan');
+    await phone.getByTestId('view-clean-plan').click();
+    check('Phone Clean plan hides labels without horizontal overflow', await phone.locator('[data-testid^="unit-marker-"]').count() === 0 && await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    await phone.getByTestId('view-plan-units').click();
+    await phone.getByTestId('button-review-plan').click();
+    check('Phone review opens as a bounded dialog', await phone.getByTestId('plan-review-dialog').isVisible() && await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    await phone.getByRole('dialog').getByRole('button', {name: 'Close', exact: true}).click();
     await selectUnit(phone, EMPTY_UNIT);
     await phone.getByTestId('button-edit-unit').click();
     await phone.getByTestId('unit-field-notes').fill('QA phone edit');

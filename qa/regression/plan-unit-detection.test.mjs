@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 import sharp from 'sharp';
-import { tracePlanUnit, mapDetectedPlanUnits } from '../../server/plan-unit-detection.ts';
+import { tracePlanUnit, mapDetectedPlanUnits, findPlanUnitRegions, traceDetectedPlanUnit, planPolygonsOverlap } from '../../server/plan-unit-detection.ts';
 import * as geometry from '../../shared/plan-geometry.ts';
 const require = createRequire(import.meta.url);
 const { evaluate, find, ts } = require('./source-harness.cjs');
@@ -117,19 +117,21 @@ test('model parsing demands proper JSON shape and finite coordinates, and maps t
   assert.deepEqual(result[0].seed, { x: .5, y: .7 });
 });
 
-async function detectionJob({ existing = [], candidates, changedBackground = false } = {}) {
-  const image = raster(); rect(image, 20, 20, 75, 100, teal); rect(image, 90, 20, 140, 100, teal);
+async function detectionJob({ existing = [], candidates, changedBackground = false, expired = false, failTiles = false, customImage } = {}) {
+  const image = customImage || raster();
+  if (!customImage) { rect(image, 20, 20, 75, 100, teal); rect(image, 90, 20, 140, 100, teal); }
   const png = await sharp(image.data, { raw: { width: image.width, height: image.height, channels: 3 } }).png().toBuffer();
   const writes = [], refinements = [], updates = [], allQueries = [];
   const current = existing.map(row => ({ ...row }));
   let calls = 0, released = false;
   const jobSource = find('server/evidence-plan.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'runDetectJob');
   const { run } = evaluate(jobSource + '\nexports.run = runDetectJob;', {
+    setInterval, clearInterval,
     pool: {
       async query(sql, values) {
         allQueries.push(sql);
         if (sql.startsWith('SELECT DISTINCT unit_ref')) return { rows: [] };
-        if (sql.startsWith('UPDATE evidence_plan_jobs')) { updates.push({ sql, values }); return { rows: [] }; }
+        if (sql.startsWith('UPDATE evidence_plan_jobs')) { updates.push({ sql, values }); return { rows: [{ id: 'job' }] }; }
         assert.fail(`Unexpected pool query ${sql}`);
       },
       async connect() {
@@ -138,6 +140,8 @@ async function detectionJob({ existing = [], candidates, changedBackground = fal
             allQueries.push(sql);
             if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [] };
             if (sql.startsWith('SELECT background_key')) return { rows: [{ background_key: changedBackground ? 'changed' : 'original' }] };
+            if (sql.startsWith('SELECT id FROM evidence_plan_jobs')) return { rows: expired ? [] : [{ id: 'job' }] };
+            if (sql.startsWith('UPDATE evidence_plan_jobs')) { updates.push({ sql, values }); return { rows: [] }; }
             if (sql.startsWith('SELECT id, unit_ref')) return { rows: [...current] };
             if (sql.startsWith('INSERT INTO evidence_plan_units')) {
               writes.push(values);
@@ -158,15 +162,15 @@ async function detectionJob({ existing = [], candidates, changedBackground = fal
       },
     },
     getFile: async () => ({ data: png }),
-    detectTile: async () => calls++ === 0 ? (candidates || [
+    detectTile: async () => { if (failTiles) { calls++; throw new Error('provider timeout'); } return calls++ === 0 ? (candidates || [
       { unitRef: 'A1', tenant: 'Tenant A', seed: seed(image, 45, 60), polygon: null },
       { unitRef: 'A2', tenant: 'Tenant B', seed: seed(image, 115, 60), polygon: null },
-    ]) : [],
+    ]) : []; },
     normaliseUnitRef: value => String(value).trim().toUpperCase(), normTenantName: value => String(value || '').toUpperCase(),
     relinkAllEntries: async () => 0,
     require(name) {
       if (name === 'sharp') return { default: sharp };
-      if (name === './plan-unit-detection') return { tracePlanUnit };
+      if (name === './plan-unit-detection') return { tracePlanUnit, findPlanUnitRegions, traceDetectedPlanUnit, planPolygonsOverlap };
       if (name === '@shared/plan-geometry') return geometry;
       throw new Error(`Unexpected module ${name}`);
     },
@@ -237,4 +241,121 @@ test('a replaced image during scanning aborts before inserting geometry for the 
   assert.equal(result.writes.length, 0);
   assert.ok(result.allQueries.includes('ROLLBACK'));
   assert.equal(result.released, true);
+});
+
+test('a geometry inventory finds separate white and coloured closed regions without accepting the page', () => {
+  const image = raster();
+  rect(image, 20, 20, 80, 110, [30, 30, 30]); rect(image, 22, 22, 78, 108, [255, 255, 255]);
+  rect(image, 100, 20, 170, 110, teal);
+  const regions = findPlanUnitRegions(image);
+  assert.equal(regions.length, 2);
+  assert.equal(regions.some(row => pointInPolygon(seed(image, 45, 65), row.polygon)), true);
+  assert.equal(regions.some(row => pointInPolygon(seed(image, 140, 65), row.polygon)), true);
+  assert.equal(regions.some(row => pointInPolygon(seed(image, 200, 150), row.polygon)), false);
+  assert.deepEqual(findPlanUnitRegions(image), regions, 'numbered candidates are stable on the same image');
+});
+
+test('lettering inside a filled shop is removed from the geometric candidate list', () => {
+  const image = raster();
+  rect(image, 20, 20, 150, 150, teal);
+  rect(image, 55, 55, 105, 100, [255, 255, 255]);
+  const regions = findPlanUnitRegions(image);
+  assert.equal(regions.length, 1);
+  assert.ok(polygonArea(regions[0].polygon) > .35);
+});
+
+test('a selected real region supplies reliable coordinates, including genuinely unlabelled shops', () => {
+  const image = raster(); rect(image, 20, 20, 80, 120, teal);
+  const regions = findPlanUnitRegions(image);
+  const mapped = mapDetectedPlanUnits({ units: [
+    { regionId: regions[0].id, unitRef: null, tenant: null, seed: { x: .99, y: .99 } },
+    { regionId: 9000, unitRef: null, tenant: null },
+  ] }, { x: 0, y: 0, width: 1, height: 1 }, regions);
+  assert.equal(mapped.length, 1, 'unknown candidate numbers cannot create units');
+  assert.equal(mapped[0].unitRef, null, 'the overlay number is never mistaken for a printed reference');
+  assert.deepEqual(mapped[0].seed, regions[0].dot);
+  assert.deepEqual(traceDetectedPlanUnit(image, mapped[0], regions).polygon, regions[0].polygon);
+});
+
+test('a poor seed is rescued only by a unique region supported by the supplied visible outline', () => {
+  const image = raster(); rect(image, 20, 20, 80, 120, teal); rect(image, 90, 20, 150, 120, teal);
+  const regions = findPlanUnitRegions(image);
+  const candidate = { unitRef: 'A1', tenant: null, seed: seed(image, 84, 80), polygon: [
+    { x: 18 / 240, y: 18 / 180 }, { x: 83 / 240, y: 18 / 180 }, { x: 83 / 240, y: 123 / 180 }, { x: 18 / 240, y: 123 / 180 },
+  ] };
+  const out = traceDetectedPlanUnit(image, candidate, regions);
+  assert.ok(out);
+  assert.equal(pointInPolygon(seed(image, 50, 70), out.polygon), true);
+  const ambiguous = { ...candidate, polygon: [{ x: .075, y: .1 }, { x: .64, y: .1 }, { x: .64, y: .69 }, { x: .075, y: .69 }] };
+  assert.equal(traceDetectedPlanUnit(image, ambiguous, regions), null, 'never choose an adjacent shop arbitrarily');
+});
+
+test('an unlabelled observation can acquire its later printed label without a false conflict', async () => {
+  const result = await detectionJob({ candidates: [
+    { unitRef: null, tenant: null, regionId: 1, seed: seed(raster(), 45, 60), polygon: null },
+    { unitRef: 'A1', tenant: 'Tenant A', regionId: 1, seed: seed(raster(), 45, 60), polygon: null },
+  ] });
+  assert.equal(result.writes.length, 1);
+  assert.equal(result.writes[0][2], 'A1');
+  assert.equal(result.writes[0][3], 'Tenant A');
+});
+
+test('scan progress advances through all ten sections and retries are bounded', async () => {
+  const successful = await detectionJob();
+  const steps = successful.updates.filter(row => row.sql.includes('total_docs = 10')).map(row => row.values[1]);
+  assert.equal(steps[0], 0);
+  assert.equal(Math.max(...steps), 10);
+  assert.ok(successful.updates.at(-1).sql.includes("status = 'done'"));
+  const failed = await detectionJob({ failTiles: true });
+  assert.equal(failed.calls, 20, 'each section is tried at most twice');
+  assert.equal(failed.writes.length, 0);
+  assert.ok(failed.updates.at(-1).sql.includes("status = 'error'"));
+});
+
+test('a worker whose lease expired cannot write or relink when its provider eventually returns', async () => {
+  const result = await detectionJob({ expired: true });
+  assert.equal(result.writes.length, 0);
+  assert.equal(result.refinements.length, 0);
+  assert.ok(result.allQueries.includes('ROLLBACK'));
+  assert.ok(result.allQueries.some(sql => sql.includes('updated_at >') && sql.includes('FOR UPDATE')));
+});
+
+test('the vision SDK gets an explicit timeout with hidden retries disabled', async () => {
+  const detect = find('server/evidence-plan.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'detectTile');
+  const extract = find('server/evidence-plan.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'extractJsonObject');
+  let options;
+  const { run } = evaluate(extract + '\n' + detect + '\nexports.run = detectTile;', {
+    DETECT_PROMPT: () => 'Identify labelled shops',
+    anthropic: { messages: { create: async (_body, requestOptions) => { options = requestOptions; return { content: [{ type: 'text', text: '{"units":[]}' }], stop_reason: 'end_turn' }; } } },
+    require: name => { assert.equal(name, './plan-unit-detection'); return { mapDetectedPlanUnits }; },
+  });
+  const image = raster();
+  const png = await sharp(image.data, { raw: { width: image.width, height: image.height, channels: 3 } }).png().toBuffer();
+  await run(sharp, png, image.width, image.height, 0, 0, 1, 1, [], true, []);
+  assert.equal(options.timeout, 75000);
+  assert.equal(options.maxRetries, 0);
+});
+
+
+test('properly crossing outlines overlap even when every vertex and the candidate marker is outside the other shape', async () => {
+  const image = raster(200, 200); rect(image, 20, 90, 180, 110, teal);
+  const saved = { id: 'manual-vertical', unit_ref: 'Vertical', source: 'manual', polygon: [
+    { x: .25, y: .1 }, { x: .35, y: .1 }, { x: .35, y: .9 }, { x: .25, y: .9 },
+  ] };
+  const horizontal = [{ x: .1, y: .45 }, { x: .9, y: .45 }, { x: .9, y: .55 }, { x: .1, y: .55 }];
+  assert.equal(planPolygonsOverlap(saved.polygon, horizontal), true);
+  const result = await detectionJob({ customImage: image, existing: [saved], candidates: [
+    { unitRef: 'New horizontal', tenant: null, seed: { x: .6, y: .5 }, polygon: null },
+  ] });
+  assert.equal(result.writes.length, 0);
+  assert.deepEqual(result.current[0], saved);
+});
+
+test('shared wall edges remain valid neighbours while identical or contained demises overlap', () => {
+  const a = [{ x: .1, y: .1 }, { x: .3, y: .1 }, { x: .3, y: .7 }, { x: .1, y: .7 }];
+  const neighbour = a.map(p => ({ x: p.x + .2, y: p.y }));
+  assert.equal(planPolygonsOverlap(a, neighbour), false);
+  assert.equal(planPolygonsOverlap(a, a), true);
+  const contained = [{ x: .1, y: .2 }, { x: .3, y: .2 }, { x: .3, y: .5 }, { x: .1, y: .5 }];
+  assert.equal(planPolygonsOverlap(a, contained), true);
 });

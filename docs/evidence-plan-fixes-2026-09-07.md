@@ -30,6 +30,22 @@ After sign-in became available, read-only inspection of the displayed live plan 
 
 Local tracing against that exact displayed live JPEG also passed all **10 sampled units**, and rejected the mall seed. This comparison exposed a dark-grey D3 fill connecting to the plan's wall lines; tighter tolerance for neutral dark fills removed that erroneous extension while preserving the adjacent Lakeland, D2 and Superdrug contours. Saved full-plan and close-up overlays show those results. The sample verifies tracing on the current artwork; AI recognition completeness across the entire live plan remains untested.
 
+## Drawing quality, cleanup and unit numbers follow-up
+
+Brixton's faint plan was reproduced from the original `1820 Brixton - Market Row.pdf`: the old 200-DPI JPEG render followed by its JPEG crop matched the live asset byte for byte (SHA-256 `2d500c02042224f9c129aaaa78d1353eb12c4d93aad09d17036fe6969a8cd593`). The displayed image had no CSS opacity or contrast filter. A fresh lossless render and aligned crop preserve finer linework. The sharper Brixton restoration image has been prepared locally; it has not been substituted into the live plan.
+
+New PDF uploads now render PNG pages at a 300-DPI target, capped at 6000 pixels on the longest side, preserve the original PDF and expose **Original PDF**. Crops remain PNG and retain that source link. Legacy uploads cannot regain their discarded PDF detail automatically. Site-plan titles take precedence over incidental mentions of a basement elsewhere on the page.
+
+- **Units & evidence**, **Unit numbers** and **Clean plan** switch between summary circles, reference-only labels and the unobstructed drawing. Unit numbers use the saved unit reference: Edit or name a new traced/drawn unit to enter it; drag the label inside the boundary. No sequence of real unit numbers is invented. Clean plan preserves unfinished desktop unit/evidence forms.
+- **Hide red ink** creates an in-memory display PNG with red/orange pixels removed, including matching text and symbols. Switching it off restores the original bytes. It preserves neutral black/grey pixels and does not change the image used for tracing/detection. Opaque ink may have obscured detail that cannot be reconstructed. Actual Brixton comparison artifacts show the effect; 8,548,346 neutral pixels in the sharper crop were unchanged.
+- **Darker lines** applies display contrast. **Fit** fits both drawing dimensions; **100%** uses one source pixel per CSS pixel. Wheel and button zoom share a maximum that accommodates the actual image size.
+- **Review & clean up** provides searchable, paginated outline and schedule-link queues plus paginated unlinked evidence. Missing/unnamed/AI outlines are prompts to inspect the source, not a certification of the remaining outlines. The phone review opens at the bottom of the screen.
+- Schedule choices now show legal/trading names, rent, expiry, area and distinguishing row IDs. Duplicate references still cannot be persistently selected independently: a dedicated optional schedule-row link is awaiting approval, and no schema changes are included here. A reference/tenant edit that would disconnect an existing inferred match is rejected before either the unit or its schedule facts changes; ordinary fact edits and safe reference normalization remain available.
+
+Scanning now inventories closed geometric regions first and gives the vision model numbered region choices. The model must identify actual retail demises; roads, internal rooms and title panels are not automatically accepted. Unlabelled selected regions remain explicitly unnamed for manual numbering. Shared walls are allowed, but conflicting labels and overlapping demises are rejected. Provider calls have bounded retries/timeouts, progress reports sections, and scan jobs use heartbeats and a locked lease to prevent expired workers writing late results. Actual Brixton geometry produced 399 candidate regions, which is **not** a count of units. Complete external-provider classification remains unverified locally because no provider credentials are configured.
+
+The completed follow-up passed **167 standard regression tests**, **33 actual PostgreSQL data checks**, **7 actual PostgreSQL scan-concurrency checks**, **52 authenticated desktop/phone checks**, TypeScript and the production build. All database writes used disposable fixtures, which were removed. This verification covers local code and the drawing comparison artifacts; it does not claim deployment or a corrected live unit inventory.
+
 ## Reproduce
 
 ```sh
@@ -39,6 +55,9 @@ node --import tsx script/build.ts
 
 EVIDENCE_PLAN_DATABASE_URL='postgresql:///bgp_crm_directory_regression?host=/tmp/bgp-smoke-20260906/socket&port=55441&user=postgres' \
   node qa/regression/evidence-plan-data-postgres.mjs
+
+EVIDENCE_PLAN_DATABASE_URL='postgresql:///bgp_crm_directory_regression?host=/tmp/bgp-smoke-20260906/socket&port=55441&user=postgres' \
+  node --import tsx qa/regression/evidence-plan-detection-postgres.mjs
 
 EVIDENCE_SMOKE_DATABASE_URL='postgresql:///bgp_smoke?host=/tmp/bgp-smoke-20260906/socket&port=55441&user=postgres' \
 SMOKE_BASE='https://127.0.0.1:5446' SMOKE_LOCAL_TLS=1 \
