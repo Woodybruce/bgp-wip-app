@@ -9095,7 +9095,7 @@ Rules:
         SELECT d.id, d.name, d.deal_type, d.status, d.fee, d.property_id, d.landlord_id,
                d.internal_agent, d.team, d.target_date, d.exchanged_at, d.completed_at, d.invoiced_at
         FROM crm_deals d
-        WHERE d.status NOT IN ('Dead', 'Draft')
+        WHERE d.status NOT IN ('WIT')
           AND (
             $1 = ANY(d.internal_agent)
             OR $2 = ANY(d.team)
@@ -9140,7 +9140,7 @@ Rules:
 
       // Get contacts linked to properties via crm_contact_properties
       const { rows: propertyContacts } = await pool.query(`
-        SELECT cp.property_id, c.id AS contact_id, c.name, c.email, c.job_title
+        SELECT cp.property_id, c.id AS contact_id, c.name, c.email, c.role AS job_title
         FROM crm_contact_properties cp
         JOIN crm_contacts c ON c.id = cp.contact_id
         WHERE cp.property_id = ANY($1)

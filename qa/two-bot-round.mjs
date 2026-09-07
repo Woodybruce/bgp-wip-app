@@ -4209,6 +4209,51 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r585: the My Portfolio dashboard widget was doubly broken.
+  //   (a) /api/dashboard/my-portfolio selected `c.job_title` from crm_contacts,
+  //       which has no such column (it is `role`) — so the endpoint 500'd for
+  //       ANY user who had a deal, and the widget was dead for the whole team.
+  //   (b) it excluded dead deals with `NOT IN ('Dead','Draft')` — legacy labels
+  //       against a codes column, a no-op, so a WITHDRAWN deal (and the
+  //       property it drags in) stayed on the staff member's own dashboard.
+  // This guards both: the endpoint must answer 200 with an array, and a deal
+  // the user owns at WIT must not come back.
+  await step(page, p, 'staff-my-portfolio-drops-withdrawn-deals', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const first = await fetch('/api/dashboard/my-portfolio', { credentials: 'include', headers: auth });
+      if (!first.ok) return { ok: false, why: `my-portfolio ${first.status}` };
+      const baseline = await first.json();
+      if (!Array.isArray(baseline)) return { ok: false, why: 'my-portfolio did not return an array' };
+
+      const me = await (await fetch('/api/auth/me', { credentials: 'include', headers: auth })).json();
+      const props = await (await fetch('/api/crm/properties', { credentials: 'include', headers: auth })).json();
+      const rows = Array.isArray(props) ? props : (props.data || props.properties || []);
+      if (!me?.name || !rows.length) return { ok: true, skipped: 'no user name or no properties to attach to' };
+
+      const mk = async (status) => {
+        const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ name: `QA-PORTFOLIO-${status} R${round}`, status, dealType: 'New Letting',
+            propertyId: rows[0].id, internalAgent: [me.name] }) });
+        return res.ok ? await res.json() : null;
+      };
+      const live = await mk('SOL');
+      const dead = await mk('WIT');
+      const after = await fetch('/api/dashboard/my-portfolio', { credentials: 'include', headers: auth });
+      const body = after.ok ? await after.json() : null;
+      for (const d of [live, dead]) if (d?.id) await fetch(`/api/crm/deals/${d.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      if (!after.ok) return { ok: false, why: `my-portfolio (after) ${after.status}` };
+      const names = (Array.isArray(body) ? body : []).flatMap(x => (x.deals || []).map(d => d.name));
+      return { ok: true, live: !!live, dead: !!dead, sawLive: names.includes(`QA-PORTFOLIO-SOL R${round}`), sawDead: names.includes(`QA-PORTFOLIO-WIT R${round}`) };
+    }, ROUND);
+    if (!r.ok) throw new Error(r.why);
+    if (r.skipped) return;
+    if (!r.live || !r.dead) throw new Error('could not create the probe deals');
+    // control — without this the WIT assertion below is vacuous
+    if (!r.sawLive) throw new Error('my-portfolio dropped the LIVE deal too — the widget is not reading the user\'s own deals at all');
+    if (r.sawDead) throw new Error('my-portfolio still shows a WITHDRAWN deal — the dead-deal filter is comparing status against legacy LABELS again');
+  });
+
   await step(page, p, 'staff-digest-flags-kyc-on-a-solicitors-deal', async () => {
     const r = await page.evaluate(async (round) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
