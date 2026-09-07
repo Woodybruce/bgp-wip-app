@@ -92,6 +92,29 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r587 · 2026-09-07 · LIGHT (round in progress) — heartbeat
+- Bring-up: canonical recipe, `npm run qa:pg` once. Smoke GREEN 42 checks /
+  0 failures (regression clean).
+- Round type LIGHT per r586's hand-off: no journey, no new rotation surface.
+  r588 takes rotation #1 (BGP staff · desktop 1440px).
+- TRIAGE of r586's two nominated candidates — BOTH READ AND CONFIRMED OPEN:
+  * `server/goad-plan-data.ts:654` — the CRM vacancy override tests
+    `(c.marketing_status || "").toLowerCase() === "available"` over
+    available_units.marketing_status, a CODES column, so it is always false
+    and "Marketed as Available in BGP CRM" / confirmed_vacant NEVER fires on
+    a Goad / property-intelligence plan. Same shape as r586's bug 1.
+  * `server/property-asset-brief.ts:211` — the un-dealed-unit funnel fold has
+    `neg|negotiating|under_offer|und` -> hots and
+    `sol|solicitors|exc|exchanged` -> legals. HOT is a legal value of
+    available_units.marketing_status (LETTING_STATUSES includes it, sitting
+    between NEG and SOL) and it is in NEITHER arm, so a unit at HOTs with no
+    crm_deals row lands in no bucket at all. The ORDER BY at :165 also has no
+    'hot' arm, so such a unit sorts to the bottom with the AVA rows.
+- Both are this round's two fixes. Two-bot chunks (victoria + mark) to run —
+  r585 and r586 both dropped the mark chunk, so the clean-hand-off streak has
+  stood unextended at 43 for two rounds and this LIGHT round should run both.
+- Final entry replaces this one.
+
 ### r586 · 2026-09-07 · FULL (rotation #4 BGP staff · mobile 390px) · 2 bugs fixed, both the LEGACY-LABEL-vs-CODE class — pathway said every scheme was fully LET, ChatBGP put £456,789 of withdrawn fees in the firm pipeline · 3 suggestions
 - Bring-up: canonical recipe (qa:pg ONCE -> run-smoke -> seed-personas via
   qa/apply-sql.mjs). Smoke GREEN 42/0.
