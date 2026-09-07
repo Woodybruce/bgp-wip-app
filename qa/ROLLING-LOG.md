@@ -183,7 +183,9 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   crm_deals.status, tolerating the two 'Leasing Comps'/'Investment Comps'
   pseudo-statuses that shared/deal-status.ts still recognises). These guard
   the INVARIANT both fixes rest on rather than the fixes' output, because
-  the output is a prompt string with no endpoint.
+  the output is a prompt string with no endpoint. Fire-tested in situ:
+  victoria 20 [ok] / 0 failures (tally 2x400 + the tolerated 409),
+  mark 12 [ok] / 0 failures.
 - DEFERRED, same class, confirmed dead, nobody's yet:
   * server/goad-plan-data.ts:654 — the CRM vacancy override on the Goad plan
     tests `(marketing_status||"").toLowerCase() === "available"`, i.e.
@@ -215,8 +217,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   worth solving once for both shells); and `tasks.due_date` banks the typed
   wall clock as UTC, so a 17:00 BST task is really 18:00 and every
   now()-comparing consumer is an hour out for half the year (#278).
-- Fixture restored (probe deal back to NEG, verified in-script; the task the
-  journey created and the two-bot QA rows are swept by run-round.sh purge).
+- Fixture restored: probe deal back to NEG in-script, then qa/r584-restore.sql
+  swept this round's leftovers (the journey's task, 'QA Task R584',
+  'QA-COMP R584', 'QA-R584 FeeVisibility' and the QA-STAGE/QA-KYCGAP deals) —
+  worth keeping, because run-round.sh's purge shells out to `psql -U bgp` and
+  does NOT work under this container's postgres/bgpsmoke recipe. Verified back
+  to 6 deals, all canonical codes, no nulls. SMOKE RE-RUN AFTER THE FIXES:
+  GREEN 42 / 0.
   tsc clean. Scripts kept: qa/r584-probe.mjs, qa/r584-query.mjs (a read-only
   console.table query helper — handy, the round rules ban psql one-liners),
   qa/r584-client-mobile-journey.mjs, qa/r584-client-task-write.mjs,
