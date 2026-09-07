@@ -442,6 +442,9 @@ export function PropertyCombobox({
             filter={(value, searchStr) => {
               if (!searchStr) return 1;
               const v = value.toLowerCase();
+              // Same rule as EntityCombobox: the create-by-name row stays
+              // visible but never outranks a real property (UX #298).
+              if (v.startsWith("__create_by_name__")) return 0.0001;
               const s = searchStr.toLowerCase().trim();
               if (!s) return 1;
               if (v.startsWith(s)) return 2;

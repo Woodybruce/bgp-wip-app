@@ -12,6 +12,11 @@ import {
   CommandList,
 } from "@/components/ui/command";
 
+// Sentinel prefix for the inline-create row's cmdk value. It has to be a
+// real value (cmdk needs one to track selection) but it must never be
+// scored as a match — see the filter below.
+const CREATE_VALUE_PREFIX = "__create__";
+
 export type EntityComboboxItem = {
   id: string;
   label: string;
@@ -197,6 +202,13 @@ export function EntityCombobox({
             filter={(value, search) => {
               if (!search) return 1;
               const v = value.toLowerCase();
+              // The inline-create row must stay visible but must never
+              // outrank — or tie — a real match. cmdk keeps DOM order on a
+              // tie and auto-selects the first row, so typing a partial
+              // name ("Honi") put Create "Honi" under the cursor with
+              // "Honi Poke" beneath it, and the obvious action made a
+              // duplicate company (UX #298).
+              if (v.startsWith(CREATE_VALUE_PREFIX)) return 0.0001;
               const s = search.toLowerCase().trim();
               if (!s) return 1;
               if (v.startsWith(s)) return 2;
@@ -215,22 +227,6 @@ export function EntityCombobox({
               <CommandEmpty>
                 {loading ? "Loading…" : (onCreate && searchKey ? "No matches — create below?" : emptyText)}
               </CommandEmpty>
-              {onCreate && searchKey && !exactMatch && (
-                // Inline create row — same green pill treatment as
-                // CrmEntityPicker / TenantBrandPicker so the affordance
-                // is recognisable across every CRM picker.
-                <CommandGroup>
-                  <CommandItem
-                    value={`__create__ ${search}`}
-                    onSelect={handleCreate}
-                    disabled={creating}
-                    className="bg-emerald-50/60 dark:bg-emerald-950/30 data-[selected=true]:bg-emerald-100 dark:data-[selected=true]:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-medium"
-                  >
-                    {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                    <span>Create {createLabel} "{search.trim()}"</span>
-                  </CommandItem>
-                </CommandGroup>
-              )}
               <CommandGroup>
                 {sortedItems.map((it) => {
                   const cleanKeywords = (it.keywords ?? []).filter(
@@ -263,6 +259,22 @@ export function EntityCombobox({
                   );
                 })}
               </CommandGroup>
+              {onCreate && searchKey && !exactMatch && (
+                // Inline create row — same green pill treatment as
+                // CrmEntityPicker / TenantBrandPicker so the affordance
+                // is recognisable across every CRM picker.
+                <CommandGroup>
+                  <CommandItem
+                    value={`${CREATE_VALUE_PREFIX} ${search}`}
+                    onSelect={handleCreate}
+                    disabled={creating}
+                    className="bg-emerald-50/60 dark:bg-emerald-950/30 data-[selected=true]:bg-emerald-100 dark:data-[selected=true]:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-medium"
+                  >
+                    {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    <span>Create {createLabel} "{search.trim()}"</span>
+                  </CommandItem>
+                </CommandGroup>
+              )}
             </CommandList>
           </Command>
         </div>

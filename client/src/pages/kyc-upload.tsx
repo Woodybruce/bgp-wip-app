@@ -139,8 +139,17 @@ export default function KycUploadPage() {
               </div>
             )}
 
+            {/* This paragraph is a representation made to a third party about
+                their identity documents, so it must describe what the app
+                actually does. It used to promise storage "in BGP's UK
+                SharePoint, accessible only to the deal team and our MLRO" —
+                processInboundKycFile (server/aml-portal.ts) writes a metadata
+                row to kyc_upload_files, unlinks the temp file and keeps no
+                bytes at all, and nothing in the app reads that table. Whether
+                the file should be retained, and where, is UX #192 and Woody's
+                call; until then this says only what is true. */}
             <p className="text-xs text-muted-foreground mt-6 leading-relaxed">
-              Documents are stored securely in BGP's UK SharePoint, accessible only to the deal team and our MLRO.
+              Documents are sent over an encrypted link and used only for our anti-money-laundering checks.
               You can email us anytime if you'd rather send the docs directly — please keep the subject line of the original email so we can route the reply correctly.
             </p>
           </>

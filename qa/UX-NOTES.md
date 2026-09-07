@@ -49,6 +49,29 @@ what happened · concrete suggested improvement.
    un-QA'd, that will silently drift from `/available`. Suggestion: decide
    and act — either wire the tab back into the chat shell, or delete the
    dead branch and its queries so there is one phone tracker to maintain.
+   **r603 PROVED IT UNREACHABLE, and found it already rotten.** Reachability:
+   `App.tsx` mounts `MobileApp` at exactly two places (`:554` initialTab="ai",
+   `:562` initialTab="chats"); `setTab` has four call sites and can only
+   produce "chats", "ai" or `returnTabRef.current`, and `returnTabRef` is
+   *typed* `useRef<"chats" | "ai">` (`:3961`) — so no code path exists that
+   sets "menu". `mobile-bottom-nav.tsx` has no More/menu item on either the
+   staff or the client nav. Dead surface: **863 lines of JSX** (the More tab
+   `:4523-4981`, the deal drawer `:5090-5308`, the unit drawer `:5311-5493` —
+   the drawers only ever open from `setSelectedDealId`/`setSelectedUnitId` at
+   `:4748`/`:4783`, both inside the dead tab), plus ~10 queries and a news
+   DELETE mutation gated on `tab === "menu"`, plus its own state and colour
+   maps: ~1000 lines all told. Nothing leaks: every data query is gated too,
+   so no wasted requests. **The drift has already happened.** Its two status
+   maps (`:3725` `investmentStatusColors`, `:3735` `lettingStatusColors`) are
+   keyed by LABELS — "Available", "Under Offer", "Let", "Let Agreed" — but the
+   rows they colour carry CODES (`item.marketingStatus`, `LETTING_STATUSES` =
+   OPP/AVA/NEG/HOT/SOL/EXC/COM/WIT/INV), so every chip would fall through to
+   the grey default and print the raw code, and the status-filter chips and
+   dropdown would list codes. That is exactly the bug r602 fixed everywhere a
+   user can see — this copy never got it, because nobody can see it. The live
+   `/available` tracker normalises through `legacyToCode` +
+   `DEAL_STATUS_LABELS`/`DEAL_PIPELINE_LABELS` (available-units.tsx:62-70).
+   Deleting ~1000 lines is Woody's call, so r603 changed nothing here.
 
 316. 2026-09-07 · BGP staff / any PDF the app emails out (QA r601) · Woody
    opens a Heads of Terms or a weekly update to check it before it goes ·
@@ -1585,7 +1608,28 @@ what happened · concrete suggested improvement.
    Used · 1 upload" (qa/smoke-shots/r545-aml-upload-links.png). The portal
    meanwhile tells the customer in writing that "Documents are stored
    securely in BGP's UK SharePoint, accessible only to the deal team and our
-   MLRO", which is not currently true. Suggestion (needs Woody's call on
+   MLRO", which is not currently true.
+   **r603 re-read the byte path — unchanged — plus two facts that sharpen the
+   decision.** (1) `kyc_upload_files` still has exactly one writer and ZERO
+   readers app-wide: one CREATE TABLE (server/index.ts:1986), one INSERT
+   (aml-portal.ts:306), nothing else in server/, shared/, client/ or
+   migrations/. The bytes go to `os.tmpdir()`, are read once by the text
+   extractor, and are `fs.unlinkSync`-ed in a `finally`
+   (aml-portal.ts:280-301) — nothing is retained. (2) **"BGP's UK SharePoint"
+   would still be untrue after the obvious fix**: the app's own document store
+   is a Postgres `bytea` table — `saveFile()` INSERTs into `file_storage` and
+   serves it back at `/api/chat-media/<key>` (file-storage.ts:7) — and that is
+   where every staff-uploaded KYC document already lands
+   (`POST /api/kyc/documents/upload`, aml-compliance.ts:650-680). So r603
+   corrected only the customer-facing sentence to what is true today
+   (kyc-upload.tsx) and left retention alone. **The decision that actually
+   blocks the fix is not "where" but "whose":** `KycPanel` lists documents from
+   `GET /api/kyc/company/:id`, which filters `kyc_documents WHERE
+   company_id = $1` (aml-compliance.ts:739), while the portal link is issued
+   per DEAL and per contact email — so persisting a portal upload where the
+   MLRO can see it means choosing which counterparty company on the deal it
+   hangs off (landlord? tenant? both?), or teaching the panel to read
+   deal-scoped rows. Suggestion (needs Woody's call on
    WHERE the bytes land — SharePoint via Graph like the deal Files panel, or
    the existing kyc document store used by POST /api/kyc/documents/upload):
    (a) persist the uploaded file, (b) put an "Documents received" list on

@@ -244,8 +244,14 @@ export function CrmEntityPicker({
         onKeyDown={(e) => {
           if (e.key === "Escape") { setOpen(false); setSearch(""); }
           if (e.key === "Enter") {
+            // Never create while the list is still offering candidates —
+            // typing a partial name ("Honi") and pressing Enter used to make
+            // a duplicate company with "Honi Poke" sitting one row below
+            // (UX #298). Enter takes the one obvious match; creating needs
+            // the explicit green row.
             if (exactMatch) pick(exactMatch);
-            else if (onCreate && search.trim()) createMutation.mutate(search.trim());
+            else if (matches.length === 1) pick(matches[0]);
+            else if (matches.length === 0 && onCreate && search.trim()) createMutation.mutate(search.trim());
           }
         }}
         placeholder={searchPlaceholder}

@@ -4880,6 +4880,44 @@ async function victoriaRound(page, cross) {
     if (r.count > 0 && r.labelled === 0) throw new Error(`${r.count} alerts and not one carries a status label — did the label stop being rendered at all?`);
   });
 
+  // r603: every CRM picker offers `Create "<typed name>"` alongside the real
+  // rows. In EntityCombobox that row was rendered FIRST and cmdk auto-selects
+  // the first row, so typing "Honi" put Create "Honi" under the cursor with
+  // "Honi Poke" beneath it — r594 made a duplicate company that way. This
+  // censuses all four picker doors: the create affordance must sit BELOW the
+  // matches, must never be scored above them, and must never be what the
+  // Enter key does while candidates are still on screen.
+  await step(page, p, 'staff-picker-create-row-never-outranks-a-real-match', async () => {
+    const ROOT = new URL('../', import.meta.url).pathname.replace(/\/$/, '');
+    const read = (f) => readFileSync(`${ROOT}/${f}`, 'utf8');
+    const bad = [];
+
+    // door 1 — the shared EntityCombobox (deals, available-units, trading entities)
+    const ec = read('client/src/components/entity-combobox.tsx');
+    const ecCreate = ec.indexOf('Create {createLabel}');
+    const ecItems = ec.indexOf('{sortedItems.map((it) =>');
+    if (ecCreate < 0 || ecItems < 0) bad.push('entity-combobox.tsx: could not find the create row or the item map — the census is stale, re-read it');
+    else if (ecCreate < ecItems) bad.push('entity-combobox.tsx renders the create row ABOVE the matches, so cmdk auto-selects "create" on a partial name');
+    if (!/startsWith\(CREATE_VALUE_PREFIX\)\s*\)\s*return\s*0\.0*[1-9]/.test(ec)) bad.push('entity-combobox.tsx: the cmdk filter no longer pins the create row below every real match');
+
+    // door 2 — CrmEntityPicker's keyboard path
+    const cep = read('client/src/components/crm-entity-picker.tsx');
+    const enter = cep.slice(cep.indexOf('if (e.key === "Enter")'), cep.indexOf('if (e.key === "Enter")') + 700);
+    if (!enter.includes('matches.length === 0') || !enter.includes('createMutation.mutate')) bad.push('crm-entity-picker.tsx: Enter can create while matches are still listed (UX #298 came back on the keyboard path)');
+
+    // door 3 — PropertyCombobox shares the scoring function
+    const pc = read('client/src/components/property-combobox.tsx');
+    if (!/startsWith\("__create_by_name__"\)\s*\)\s*return\s*0\.0*[1-9]/.test(pc)) bad.push('property-combobox.tsx: the create-by-name row can outrank a mid-word property match again');
+
+    // door 4 — requirements.tsx's InlineCompanyPicker (was already correct; keep it that way)
+    const rq = read('client/src/pages/requirements.tsx');
+    const rqCreate = rq.indexOf('Create company "{search.trim()}"');
+    const rqItems = rq.indexOf('filtered.map((c) => (');
+    if (rqCreate > 0 && rqItems > 0 && rqCreate < rqItems) bad.push('requirements.tsx InlineCompanyPicker moved its create row above the matches');
+
+    if (bad.length) throw new Error(`a CRM picker offers "create a new one" ahead of the record the user was typing at: ${bad.join(' | ')}`);
+  });
+
   // r601: every per-page footer in the PDF generators was written at a y BELOW
   // the document's own bottom margin, so pdfkit closed the page and stamped
   // the footer onto a fresh one — one page of content shipped as a two-page

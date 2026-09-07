@@ -92,19 +92,103 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r603 · 2026-09-07 · LIGHT (r602 had the journey — no journey this round) · ROUND IN PROGRESS
+### r603 · 2026-09-07 · LIGHT (r602 had the journey — no journey this round) · 2 bugs fixed: every CRM picker ranked `Create "X"` at or above the record you were typing at (UX #298, 4 doors censused, 3 patched) · and the KYC portal told the customer in writing that BGP stores their passport somewhere it does not · UX #320 and #192 PROVEN and written up
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
-- Regression, chunked recipe, 45s settle, shared `QA_CROSS_FILE=/tmp/qa-cross-603.json`:
-  victoria **148 ok** / 6x400 + 1x409 — **exactly the r602 baseline**. mark head
-  chunk (`QA_UNTIL=client-properties-table-readonly-cells`) running; mark tail +
-  woody/nick/sam to follow.
-- Triage so far: **nothing new** — victoria's 7 issues are the known
-  deliberate-refusal signature, all listed in earlier rounds.
-- Targets this round (all three from the parent brief): UX #320 (prove the
-  second tracker's reachability), UX #298 (combobox ranks Create above the real
-  match), UX #192 (KYC portal drops the file it says it stores).
-- Provisional — replaced by the final entry at the end of the round.
+  `npx tsc --noEmit` clean after the fixes.
+- **REGRESSION AT BASELINE.** Chunked recipe, 45s settle, shared
+  `QA_CROSS_FILE=/tmp/qa-cross-603.json`: victoria **148 ok** / 6x400 + 1x409;
+  mark head (`QA_UNTIL=client-properties-table-readonly-cells`) **176 ok** /
+  9x403 + 1x503; mark tail + woody/nick/sam **38 ok** / 1x403. Sum **362 ok,
+  18 issues** — exactly the r602 baseline. **Streak 57.** Triage: nothing new.
+- **BUG FIXED (UX #298) — every CRM picker offered "make a new one" ahead of
+  the record the user was reaching for.** r594 lost a real company to this:
+  Victoria typed "Honi", `Create company "Honi"` sat in the first row with
+  "Honi Poke" beneath it, and the obvious action made a duplicate. Root cause
+  in `entity-combobox.tsx` was two-part: the create `CommandGroup` was
+  rendered BEFORE the item group (cmdk auto-selects the first row, so it was
+  under the cursor), and the custom scorer gave the sentinel value
+  `__create__ <search>` a word-start score of **1.5** — above the **1** a real
+  row scores on a mid-word substring match, so on those searches it outranked
+  the match outright rather than merely tying it. **Censused all four picker
+  doors** (grep for every create-row affordance):
+  1. `entity-combobox.tsx` — the damage door (deals landlord/tenant/vendor/
+     purchaser, available-units, trading entities: 11 call sites). Create
+     group moved BELOW the items; the scorer now pins the sentinel at 0.0001
+     via a named `CREATE_VALUE_PREFIX` — visible, never ranked, never the
+     default selection. **Patched.**
+  2. `crm-entity-picker.tsx` — create row was already DOM-last, but its
+     **Enter key** created whenever there was no EXACT match, with the real
+     candidates listed right underneath (`:246`). Enter now takes an exact
+     match, then the single match if there is exactly one, and only creates
+     when `matches.length === 0`. **Patched.**
+  3. `property-combobox.tsx` — DOM-last but shares the same scorer, so
+     `__create_by_name__` could outrank a mid-word property ("ross" scored
+     the create row 1.5 and "Brent Cross" 1). Same 0.0001 guard. **Patched.**
+  4. `requirements.tsx` `InlineCompanyPicker` — read end to end: create row is
+     DOM-last inside a plain (non-cmdk) list, suppressed on an exact match, no
+     keyboard create path. **Already correct, left alone**; the new scenario
+     now guards it against regressing.
+- **BUG FIXED — the KYC portal made a false statement to a third party about
+  their identity documents.** `kyc-upload.tsx:143` told the customer
+  "Documents are stored securely in BGP's UK SharePoint, accessible only to
+  the deal team and our MLRO". Nothing is stored: `processInboundKycFile`
+  writes the buffer to `os.tmpdir()`, extracts text, and `fs.unlinkSync`-es it
+  in a `finally` (aml-portal.ts:280-301); only a metadata row reaches
+  `kyc_upload_files`, which has ZERO readers app-wide. And the promise names
+  the wrong place regardless — the app's document store is a Postgres `bytea`
+  table (`saveFile` → `file_storage`, served at `/api/chat-media/<key>`),
+  which is where staff-uploaded KYC docs already land. Corrected the sentence
+  to what is true today ("sent over an encrypted link and used only for our
+  anti-money-laundering checks") and left a comment pointing at UX #192.
+  **Retention itself is NOT fixed and stays Woody's call** — see the #192
+  addendum: the blocker is not "where" but "whose", because `KycPanel` reads
+  `kyc_documents WHERE company_id = $1` while the portal link is per-DEAL.
+- **UX #320 PROVEN — the second tracker is genuinely unreachable, and has
+  already rotted.** `App.tsx` mounts `MobileApp` twice, both with a literal
+  initialTab ("ai" `:554`, "chats" `:562`); `setTab`'s four call sites can
+  only yield "chats"/"ai"/`returnTabRef.current`, and `returnTabRef` is typed
+  `useRef<"chats" | "ai">`; `mobile-bottom-nav.tsx` has no More item on either
+  nav. Dead surface: **863 lines of JSX** (`:4523-4981` + the two drawers
+  `:5090-5308`/`:5311-5493`, whose only openers sit inside the dead tab at
+  `:4748`/`:4783`), ~10 queries and a news DELETE mutation all gated on
+  `tab === "menu"`, ~1000 lines with state and colour maps. Nothing leaks —
+  the queries are gated too. **The drift is already there:** its two colour
+  maps (`:3725`/`:3735`) are keyed by LABELS while the rows carry CODES, so
+  every chip would grey out and print the raw code and the status filters
+  would list codes — precisely the bug r602 fixed on every visible surface.
+  ~1000 lines is Woody's delete to make, so **nothing was changed**.
+- **ONE NEW SCENARIO**, `[ok]`, 0 issues, makes no refused request so the issue
+  tally is unchanged: `staff-picker-create-row-never-outranks-a-real-match`
+  (victoria, before the PDF scenario) is a source census over all four picker
+  doors — create row below the matches, sentinel pinned in both scorers, no
+  keyboard create while matches are listed, and requirements.tsx held in
+  place. **Proved the assertion bites:** with the three patched files stashed
+  it fails and names all three doors; restored, it passes.
+  **NEW BASELINE: victoria 148 -> 149, sum 362 -> 363** (mark 190,
+  woody/nick/sam 24 unchanged). Issue signature unchanged.
+- **HONEST LIMIT — the #298 fix is NOT browser-verified.** The source census
+  bites and tsc is clean, but `qa/r603-combobox-order-probe.mjs` (staff
+  desktop, /deals) never got the create dialog open: `/deals?new=1` and
+  `toggle-deals-tabs` + `button-create-deal` both left `[role="dialog"]` at 0
+  after 4.5s, with only nav chrome in the testid dump
+  (`qa/smoke-shots/r603dbg-01-deals-new.png`, `r603post-01-*`). The probe is
+  committed for the next round to finish — the deals list body needs a longer
+  settle or a different door (available-units' unit-add dialog is likely
+  easier). **So: the DOM order was reasoned from the code and the scenario,
+  not seen.**
+- r601's other honest limit (the `unit-brief-doc.ts:173` /
+  `document-templates.ts:1144`/`:2975` footer patches, censused but not
+  endpoint-proven) was NOT closed — no time after the regression. Still open.
+- Deferred, untouched: UX #297, the vacancy-basis question (#290/#286/#295),
+  the two column DEFAULTs (#305 + schema.ts:1817), #304, #308/#315, #309,
+  #310-#314, #316-#319, `add_property_imagery`'s missing scope check, #171's
+  other half, the residual QA fixture rows. #320 and #192 are no longer
+  "unvisited" — both are written up with the facts Woody needs to decide.
+- No navigation/page/control moved, so `server/chatbgp-app-map.ts` needed no
+  change. `shared/schema.ts` and `migrations/` untouched.
+- Next round is **FULL with a journey**; rotation returns to **#1 BGP staff ·
+  desktop 1440px**.
 
 ### r602 · 2026-09-07 · FULL · journey: **BGP staff · phone 390px** (rotation slot #4) · 1 bug fixed (raw status CODES in the alert prose the team reads) · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
