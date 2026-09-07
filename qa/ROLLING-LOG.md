@@ -92,6 +92,28 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r600 · 2026-09-07 · FULL (r599 was light) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- Regression: victoria chunk running under `qa/with-server.sh` on
+  `QA_CROSS_FILE=/tmp/qa-cross-600.json` (moved to a background task file;
+  alive — chatbgp scenarios in flight at time of writing).
+- Journey (rotation slot #3, **Landsec client · phone 390px**, Mark Warne):
+  "a tenant rep rang about Bluewater" — home → /properties → Bluewater →
+  /companies CRM hub → brand profile → Tasks **write** (task created, toast
+  seen, "1 open" → "2 open"). Triage so far: only documented noise
+  (ai-briefing 503, hr photo 404, sharepoint/root 404, brand-gaps 503,
+  ai-take 503).
+- **r599 HAND-OFF ANSWERED: the Portfolio activity panel IS reachable.** On
+  the phone it lives under the **Intel** pill (`mobile-brand-view.tsx:391`,
+  inside `sec("intel")`); on desktop it is unconditional inside the
+  non-editing branch of `BrandProfilePanel`. Verified live for **Testco
+  Ramen** — "PORTFOLIO ACTIVITY / TENANT AT 1 / Westgate Test Centre / New
+  Letting" plus "SUGGESTED PITCHES 1". The server log confirms
+  `GET /api/brands/<amorino>/portfolio-activity 200` fires from that section,
+  so r599's Amorino blank was **empty arrays, not an unreachable panel**.
+  r599's crm.ts fix is therefore live on the UI, not latent.
+
 ### r599 · 2026-09-07 · LIGHT (r598 had the journey) · the UNCLAIMED `label`-kind sweep read end to end at last · 1 bug fixed (2 doors): a dead-deal filter written in legacy LABELS over a codes column, so WITHDRAWN deals rendered as "Tenant at" on brand profiles · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
