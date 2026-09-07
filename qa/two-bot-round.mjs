@@ -13,7 +13,7 @@
 //         names fall back to the legacy dev-fixture IDs.
 
 import { chromium } from '../node_modules/playwright/index.mjs';
-import { mkdirSync, appendFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, appendFileSync, existsSync, readFileSync, writeFileSync, readdirSync } from 'fs';
 import { createRequire } from 'module';
 
 const nodeRequire = createRequire(import.meta.url);
@@ -4557,6 +4557,44 @@ async function victoriaRound(page, cross) {
   // one-live-listing guard compared COMMA segments only, so a re-add of the
   // bare name never matched the scheme-prefixed row and the unit was listed —
   // and counted — twice. Both sides now read unitNameKey (server/unit-mirror).
+  // r597: the scenario above proves the STORAGE BOUNDARY canonicalises. It
+  // cannot prove every write path goes through that boundary — and two didn't.
+  // Both ChatBGP `create_available_unit` handlers inserted straight into the
+  // table with `marketingStatus: fnArgs.marketingStatus || "Available"`, a
+  // label into a codes column behind a fallback, unreachable from a browser
+  // (the tool only fires inside the model loop, and there is no AI key here).
+  // So guard the doors at the source: no writer of this column may hand it a
+  // literal that is not a canonical code.
+  await step(page, p, 'staff-unit-write-doors-carry-no-labels', async () => {
+    const CODES = ['OPP','AVA','NEG','HOT','SOL','EXC','COM','WIT','INV'];
+    const roots = ['server', 'shared', 'client/src'];
+    const files = [];
+    const walk = (d) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+        const f = `${d}/${e.name}`;
+        if (e.isDirectory()) walk(f);
+        else if (/\.(ts|tsx)$/.test(e.name)) files.push(f);
+      }
+    };
+    const ROOT = new URL('../', import.meta.url).pathname.replace(/\/$/, '');
+    for (const r of roots) walk(`${ROOT}/${r}`);
+    if (files.length < 100) throw new Error(`door census scanned only ${files.length} files — the walk is broken, not the app`);
+    // `marketing_status`/`marketingStatus` set to a quoted literal, allowing
+    // any number of `x || ` fallbacks between the operator and the literal.
+    const WRITE = /\b(?:marketing_status|marketingStatus)\s*(?::|=(?!=))\s*(?:[\w$.?[\]]+\s*\|\|\s*)*(['"`])([A-Za-z][A-Za-z ]{1,24})\1/g;
+    const bad = [];
+    for (const f of files) {
+      const text = readFileSync(f, 'utf8');
+      for (const m of text.matchAll(WRITE)) {
+        if (CODES.includes(m[2])) continue;
+        const line = text.slice(0, m.index).split('\n').length;
+        bad.push(`${f.slice(ROOT.length + 1)}:${line} writes ${JSON.stringify(m[2])}`);
+      }
+    }
+    if (bad.length) throw new Error(`available_units.marketing_status is a CODES column, but ${bad.length} write site(s) hand it a label — every code predicate then misses the row: ${bad.join(' | ')}`);
+  });
+
   await step(page, p, 'staff-unit-add-dedupes-scheme-prefixed-names', async () => {
     const got = await page.evaluate(async (round) => {
       const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };

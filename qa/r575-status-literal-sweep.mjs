@@ -183,7 +183,13 @@ for (const file of files) {
   // property (`marketingStatus: "Available"`, incl. Drizzle .set()/.values())
   // or a SQL/JS assignment (`marketing_status = 'Available'`). This is the
   // r588 shape the comparison-only sweep was blind to.
-  const ASSIGN = /\b(marketing_status|marketingStatus|deal_status|dealStatus|status)\s*(:|=(?!=))\s*(['"`])([A-Za-z][A-Za-z ]{1,24})\3/g;
+  // r597: the literal need not sit immediately after the operator. The two
+  // ChatBGP create_available_unit handlers wrote
+  // `marketingStatus: fnArgs.marketingStatus || "Available"` — a label into
+  // the codes column behind a FALLBACK, which the colon-then-quote pattern
+  // walked straight past. A fallback is the same write: it fires exactly when
+  // the caller supplied nothing, which is the common case.
+  const ASSIGN = /\b(marketing_status|marketingStatus|deal_status|dealStatus|status)\s*(:|=(?!=))\s*(?:[\w$.?\[\]]+\s*\|\|\s*)*(['"`])([A-Za-z][A-Za-z ]{1,24})\3/g;
   const assignedLines = new Set();
   for (let i = 0; i < lines.length; i++) {
     for (const m of lines[i].matchAll(ASSIGN)) {

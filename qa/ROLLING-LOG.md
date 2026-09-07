@@ -92,28 +92,105 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r597 · 2026-09-07 · LIGHT (no journey) · ROUND IN PROGRESS
+### r597 · 2026-09-07 · LIGHT (no journey) · 1 bug fixed: BOTH ChatBGP `create_available_unit` handlers stamped the label "Available" into the codes column, the SEVENTEENTH round of the label-vs-code class and the r595 bug in the two doors nobody checked · 2 harness fixes (scenario filters; two new sweep shapes) · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`.
-- **HARNESS FIX (the r596 hand-off, item A): `qa/two-bot-round.mjs` now takes
-  scenario filters** — `QA_ONLY=a,b`, `QA_SKIP_UNTIL=x` (skip the prefix) and
-  `QA_UNTIL=y` (stop before y, exclusive), all matching a scenario name
-  exactly or as a substring. Filtered steps print `[filtered]`, never `[ok]`,
-  and the closing line now reads `N ok, M issues · FILTERED RUN (…), K
-  scenario(s) not run` — so a partial run can never be banked as a full one,
-  and **a killed run has no closing line at all**, which is now the cheap
-  kill test (lesson 7).
-- **THE MARK TAIL IS BACK GREEN.** Split at the exact point r594/r596 both
-  died: `QA_UNTIL=client-properties-table-readonly-cells` = **176 [ok]**,
-  exact baseline (9x403 + 1x503), completed not killed; then
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+- **REGRESSION, all four chunks at EXACT baseline:** victoria FIRST **143
+  [ok]**, 0 [skip], 6x400 + 1x409, no phantoms · mark **176 + 12 = 188 [ok]**,
+  9x403 + 1x503 · woody,nick,sam **24 [ok]**, 0 issues. **Streak 51.**
+- **HARNESS FIX 1 (r596's hand-off item A) — `qa/two-bot-round.mjs` now takes
+  scenario filters.** `QA_ONLY=a,b` runs only those; `QA_SKIP_UNTIL=x` skips
+  the prefix; `QA_UNTIL=y` stops before y (exclusive), so `QA_UNTIL=y` then
+  `QA_SKIP_UNTIL=y` splits a persona into two chunks covering it exactly
+  once. All match a name exactly or as a substring. Filtered steps print
+  `[filtered]`, never `[ok]`, and the closing line now reads `N ok, M issues ·
+  FILTERED RUN (…), K scenario(s) not run` — a partial run cannot be banked
+  as a full one, and **a killed run has no closing line at all**, which is now
+  the cheap kill test (lesson 7).
+- **THE MARK TAIL IS BACK GREEN — the thing r594 and r596 both lost.** Split
+  at the exact death point: `QA_UNTIL=client-properties-table-readonly-cells`
+  = **176 [ok]**, completed not killed; then
   `QA_SKIP_UNTIL=client-properties-table-readonly-cells` = the 12-scenario
-  tail, **12 [ok], 0 issues, in ~2 minutes**. Total mark 188 [ok].
-- victoria FIRST: **143 [ok], 0 [skip]**, exact baseline (6x400 + 1x409), no
-  phantoms. woody,nick,sam **24 [ok], 0 issues**.
-- One ECONNRESET at `login()` on the first mark chunk (documented noise —
-  8s settle too short after a cold restart); **25s settle** cleared it.
-- Triage: nothing outside the documented baseline. Continuing on the sweep
-  shapes and the deferred pool.
+  tail, **12 [ok], 0 issues, in ~2 minutes** instead of a whole round. The
+  tail is exactly 12 scenarios, `client-properties-table-readonly-cells` →
+  `client-deal-hides-mlro-and-billing-fields`.
+- **HARNESS FIX 2 (item B, unclaimed for three rounds) — the sweep has a
+  SEVENTH and EIGHTH shape**, and gained a NINTH on the way:
+  - `regex` — an ALTERNATION over a status column, scored per ALTERNATIVE
+    against that column's own vocabulary. A dead alternative (matches nothing
+    the column can hold) is the r594 tell. It also resolves an alternation
+    held in a CONSTANT to the column its USE SITES read — the idiom r594's own
+    fix left behind (`IN_PLAY_STATUS_RX`, read by four queries), so the next
+    edit to that constant is watched. **CONTROLS: r594's pre-fix predicate,
+    inline AND behind a constant, both fire and both name `hots` dead and HOT
+    not-reached; a near-miss alternation over `use_class` stays silent.**
+    On the live tree: 1 hit, `property-asset-brief.ts:38`, `offer`/`terms`
+    dead — deliberate legacy-label tolerance per its own comment, NOT a bug.
+  - `default` — a column DEFAULT diffed against that column's vocabulary,
+    read from shared/schema.ts. 2 hits: the known deferred
+    `available_units.marketing_status = 'Available'` (a control that the
+    shape is not vacuous), and a NEW one, `investment_tracker.status =
+    'Reporting'` → triaged NOT a bug, see below.
+  - `assign` now sees a label behind a **FALLBACK**
+    (`marketingStatus: fnArgs.marketingStatus || "Available"`). The
+    colon-then-quote pattern walked straight past it — which is exactly how
+    this round's bug stayed hidden through sixteen rounds of this class.
+- **BUG FIXED (server/chatbgp.ts, TWO sites ~6452 and ~12132) — both
+  `create_available_unit` handlers INSERTed straight into `available_units`
+  with `marketingStatus: fnArgs.marketingStatus || "Available"`.** A label
+  into a codes column, bypassing `canonicaliseUnitStatus` AND r595's
+  `"AVA"`-when-absent boundary — so a unit Woody or Nick adds by asking
+  ChatBGP is invisible to `chatbgp.ts`'s own AVA available-count, the
+  `stat-card-<code>` tiles, every `IN ('AVA','NEG')` predicate and
+  `IN_PLAY_STATUS_RX`. **Lesson 11 exactly: r595 fixed the storage boundary
+  and one raw pull-in INSERT; these two were the paths nobody checked.**
+  Fix: both now go through `storage.createAvailableUnit` (r595's pattern),
+  which canonicalises what the model passes and supplies `AVA` when it passes
+  nothing. `npx tsc --noEmit` clean. The FOURTH door, `unit-mirror.ts:180`,
+  was censused and is healthy — its value comes from
+  `mapTenancyToMarketingStatus`, i.e. codes.
+- **NOT VISUALLY VERIFIED, and it cannot be from here (lesson 3):** the
+  ChatBGP tool handler only fires inside the model loop and there is no AI key
+  in this container. Proven instead at the boundary + the source: the three
+  unit-write scenarios re-run green against the fixed server
+  (`staff-unit-writes-canonicalise-status` with its four probes and its
+  global tracker invariant, `staff-units-ship-codes-so-vacancy-counts`,
+  `staff-unit-add-dedupes-scheme-prefixed-names`), and the new door guard
+  below fails on the pre-fix line.
+- **NEW SCENARIO `staff-unit-write-doors-carry-no-labels`** — the scenario
+  above proves the storage boundary canonicalises; it cannot prove every
+  writer USES that boundary, and two didn't. This one censuses every
+  `marketing_status`/`marketingStatus` write literal across server/, shared/
+  and client/src (fallbacks included) and fails naming file:line if any is
+  not a canonical code. **NOT VACUOUS: reintroducing the exact pre-fix line
+  failed it with `server/chatbgp.ts:6458 writes "Available"`; tree restored
+  and re-verified green.** It also guards its own walk (throws if it scans
+  <100 files).
+- TRIAGED, NOT A BUG: `investment_tracker.status`'s `'Reporting'` default.
+  The tracker page bridges it through `legacyToCode(x) || "REP"` at six call
+  sites, `STATUSES` and `SUMMARY_STATUSES` are both `INVESTMENT_STATUSES`, and
+  all five values the column actually holds (Live 56 · AVA 49 · COM 7 ·
+  SPEC 6 · SOL 1) resolve — so no row is countless and no tile is missing.
+  → UX #305. The one soft spot is the FILTER at :1198, the only one of the
+  seven without the `|| "REP"` fallback: latent tiles-vs-filter drift, not
+  reachable today → UX #304.
+- One ECONNRESET at `login()` on the first mark chunk (documented noise — 8s
+  settle too short after a cold restart); **25s settle** cleared it and every
+  chunk after. Recommend 25s as the standing settle.
+- Suggestions: **UX #304** (investment filter's missing `|| "REP"`),
+  **UX #305** (the `'Reporting'` default, to fold into the deferred
+  `'Available'::text` migration).
+- Deferred pool unchanged otherwise: UX #297, the vacancy-basis question
+  (#290/#286/#295), the two column defaults, `add_property_imagery`'s missing
+  scope check, the residual QA rows.
+- Fixture: untouched beyond the two-bot rounds' own writes (no destructive
+  probe run this round; no cleanup needed beyond the usual residual QA rows).
+- Next: **r598 takes rotation #2, Landsec client · desktop 1440px** — a FULL
+  round with a journey. **Use the new filters**: chunk mark as
+  `QA_UNTIL=client-properties-table-readonly-cells` then `QA_SKIP_UNTIL=` the
+  same, and re-run any single scenario with `QA_ONLY=` instead of a persona.
+  Worth a look with the new sweep shapes pointed at it: the `label` kind is
+  still 24 divergent and has never been read end to end.
 
 ### r596 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · journey: "Nick needs comparable evidence to support a quote", with a write · 1 bug fixed: the comps board's area tabs were a hardcoded London list and its "Other" tab matched nothing, so 8 of the 13 comps were unreachable by EVERY tab · 2 scope worries probed and CLEARED · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

@@ -13,6 +13,34 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+304. 2026-09-07 · BGP staff / desktop (QA r597, triage) · Woody or Nick
+   adding an investment asset, then clicking a stage pill on
+   /investment-tracker to see what is in that stage · the page bridges the
+   column's legacy free-text values through `legacyToCode(x) || "REP"` at
+   six call sites — tiles, sort, cards, table, edit form, board mapping — but
+   the FILTER at investment-tracker.tsx:1198 is the one that drops the
+   fallback: `list.filter(u => legacyToCode(u.status) === statusFilter)`.
+   Today no row diverges (the column holds Live 56 · AVA 49 · COM 7 ·
+   SPEC 6 · SOL 1, and all five resolve), so nothing is visibly wrong. But
+   the day a row carries a status `legacyToCode` does not know — or NULL,
+   which the column permits — the REP tile will COUNT it and clicking that
+   tile will HIDE it: the r556 tiles-vs-filter drift, pre-loaded. Suggestion:
+   give :1198 the same `|| "REP"` its six siblings have, so the pill that
+   counts a row is the pill that shows it. One-line change, no behaviour
+   change today.
+
+305. 2026-09-07 · (QA r597, sweep) · the schema default
+   `investment_tracker.status = "Reporting"` is a free-text LABEL on a column
+   whose other values are codes — a fourth vocabulary member that exists only
+   because a default supplies it (lesson 13). It is bridged on read
+   everywhere on the tracker page, so it is NOT a bug today, and two ChatBGP
+   creators deliberately pass the same string. But it means an asset created
+   with no status is the only row on the board whose stored value is not
+   what the UI would write back if you edited it (the edit form posts REP).
+   Suggestion: change the default to `"REP"` in the same migration that
+   fixes `available_units.marketing_status` (the deferred `'Available'::text`
+   default), so the two codes-ish columns stop defaulting to labels together.
+
 302. 2026-09-07 · BGP staff / desktop 1440px (QA r596, journey) · Victoria
    logging a comparable at Bluewater to support a quote, then opening the
    Bluewater property page to see the evidence in context · the comp she just

@@ -6448,14 +6448,16 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "create_available_unit") {
-    const { availableUnits } = await import("@shared/schema");
-    const [created] = await db.insert(availableUnits).values({
+    // Through storage.createAvailableUnit, not a raw insert: marketing_status
+    // is a CODES column, and the helper is what canonicalises whatever the
+    // model passes and supplies "AVA" when it passes nothing (r595).
+    const created = await storage.createAvailableUnit({
       propertyId: fnArgs.propertyId, unitName: fnArgs.unitName, floor: fnArgs.floor,
       sqft: fnArgs.sqft, askingRent: fnArgs.askingRent, ratesPa: fnArgs.ratesPa,
       serviceChargePa: fnArgs.serviceChargePa, useClass: fnArgs.useClass, condition: fnArgs.condition,
-      location: fnArgs.location, availableDate: fnArgs.availableDate, marketingStatus: fnArgs.marketingStatus || "Available",
+      location: fnArgs.location, availableDate: fnArgs.availableDate, marketingStatus: fnArgs.marketingStatus,
       epcRating: fnArgs.epcRating, notes: fnArgs.notes, fee: fnArgs.fee,
-    }).returning();
+    });
     return { data: { success: true, action: "created", entity: "available unit", id: created.id, name: created.unitName }, action: { type: "crm_created", entityType: "unit", id: created.id } };
   }
 
@@ -12128,8 +12130,9 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "create_available_unit") {
-    const { availableUnits } = await import("@shared/schema");
-    const [created] = await db.insert(availableUnits).values({
+    // Same door as the handler above — route the write through the helper so
+    // the codes column never takes a label (r595).
+    const created = await storage.createAvailableUnit({
       propertyId: fnArgs.propertyId,
       unitName: fnArgs.unitName,
       floor: fnArgs.floor,
@@ -12140,11 +12143,11 @@ export async function handleCrmToolCall(
       useClass: fnArgs.useClass,
       condition: fnArgs.condition,
       availableDate: fnArgs.availableDate,
-      marketingStatus: fnArgs.marketingStatus || "Available",
+      marketingStatus: fnArgs.marketingStatus,
       epcRating: fnArgs.epcRating,
       notes: fnArgs.notes,
       fee: fnArgs.fee,
-    }).returning();
+    });
     const reply = await summaryHelper({ success: true, action: "created", entity: "available unit", record: { id: created.id, name: created.unitName } });
     return { handled: true, response: { reply: reply || `Available unit "${created.unitName}" created.`, action: { type: "crm_created", entityType: "unit", id: created.id, name: created.unitName } } };
   }
