@@ -99,6 +99,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   baseline class (rocketreach discover x2 + the deliberate invalid POST
   probe; the 409 is r583's drilldown tolerating the SOL+ AML gate). The 8s
   settle in front of the command worked first time, no ECONNRESET.
+  RE-RUN AFTER THE FIXES (FRESH_BUILD=1 rebuild + re-seeded personas):
+  smoke GREEN 42/0 again and the victoria chunk again 0 flow failures at the
+  same 4x400 + 1x409 baseline, with the new
+  `staff-units-ship-codes-so-vacancy-counts` scenario [ok] — fire-tested in
+  situ, not just syntax-checked.
   **The mark chunk was NOT run** (budget went on the journey, which was this
   round's brief) — knowingly dropped, so the clean-hand-off streak stays
   unextended at 43. Both fixes are staff/AI-context paths, no client-scope
