@@ -4103,7 +4103,7 @@ async function victoriaRound(page, cross) {
       if (!rev.ok) return { ok: false, why: `review POST ${rev.status}` };
       const review = await rev.json();
       const dropReview = async () => { await fetch(`/api/hr/reviews/${review.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {}); };
-      const FEE = 5432;
+      const FEE = 6000;
       const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ name: `QA-REVIEW HOTs R${round}`, status: 'NEG', fee: FEE, dealType: 'New Letting',
           internalAgent: [name], targetDate: new Date().toISOString().slice(0, 10) }) });
@@ -4114,7 +4114,10 @@ async function victoriaRound(page, cross) {
         await dropReview();
       };
       const alloc = await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { method: 'PUT', credentials: 'include', headers: auth,
-        body: JSON.stringify({ allocations: [{ agentName: name, allocationType: 'percentage', percentage: 100, fixedAmount: null, isBgpHouse: false }] }) });
+        body: JSON.stringify({ allocations: [
+          { agentName: name, allocationType: 'percentage', percentage: 85, fixedAmount: null, isBgpHouse: false },
+          { agentName: 'BGP House', allocationType: 'percentage', percentage: 15, fixedAmount: null, isBgpHouse: true },
+        ] }) });
       if (!alloc.ok) { await cleanup(); return { ok: false, why: `fee-allocations PUT ${alloc.status}` }; }
       const sync = async () => {
         const s = await fetch(`/api/hr/reviews/${review.id}/sync-from-wip`, { method: 'POST', credentials: 'include', headers: auth });
@@ -4128,14 +4131,14 @@ async function victoriaRound(page, cross) {
       if (!put.ok) { await cleanup(); return { ok: false, why: `status PUT ${put.status}` }; }
       const atHot = await sync();
       await cleanup();
-      return { ok: true, fee: FEE * 100, atNeg, atHot };
+      return { ok: true, share: Math.round(FEE * 0.85 * 100), atNeg, atHot };
     }, ROUND);
     if (!r.ok) throw new Error(`could not stage a review sync (${r.why})`);
-    if (r.atNeg.neg < r.fee) throw new Error(`a 100%-allocated deal at NEG put only ${r.atNeg.neg}p in the review's negotiating pipeline (expected at least ${r.fee}p)`);
+    if (r.atNeg.neg < r.share) throw new Error(`a fee-allocated deal at NEG put only ${r.atNeg.neg}p in the review's negotiating pipeline (expected at least the agent's ${r.share}p)`);
     const negTotal = r.atNeg.under + r.atNeg.neg;
     const hotTotal = r.atHot.under + r.atHot.neg;
     if (hotTotal !== negTotal) throw new Error(`stepping the deal NEG -> HOTs moved the review's pipeline from ${negTotal}p to ${hotTotal}p — heads of terms is missing from the review's fee buckets`);
-    if (r.atHot.under < r.fee) throw new Error(`at HOTs the review's under-offer pipeline read ${r.atHot.under}p, not the ${r.fee}p heads-of-terms fee`);
+    if (r.atHot.under < r.share) throw new Error(`at HOTs the review's under-offer pipeline read ${r.atHot.under}p, not the agent's ${r.share}p heads-of-terms slice`);
     if (!r.atHot.matched) throw new Error(`at HOTs the sync reported ${r.atHot.matched} allocations matched — the agent's own allocation went missing from the match count`);
   });
 

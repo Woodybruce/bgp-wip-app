@@ -13,6 +13,41 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+265. 2026-09-07 · BGP staff / HR → a person → Reviews (QA r579) · Victoria
+    presses "Sync from WIP" on her own annual review to pull her fee figures
+    off the WIP report · the toast reads "Synced from WIP (0 allocations)"
+    and every money field lands on £0 whenever nothing matches — and "0
+    allocations" is the SAME message whether the agent genuinely has no
+    fee-allocated deals or the Sage agent-name spelling missed the name
+    variants the matcher tries. The reviewer has no way to tell an empty
+    pipeline from a broken name match, on the form that sets the agent's
+    target for the year. Suggestion: when the match count is 0, say so
+    loudly ("No fee allocations found for 'Victoria Broadhead' — check the
+    agent-name spelling on the WIP report") and, when it is not, name the
+    deals counted so the numbers can be checked against the report.
+
+266. 2026-09-07 · BGP staff / HR → a person → Reviews (QA r579) · same form,
+    reading the pipeline · the review carries exactly two pipeline columns,
+    under offer and negotiating, while the /hr commission card and the WIP
+    report on the same profile now both break the pipeline into three (Neg /
+    HOTs / Sol) since r578. r579 folded HOTs into "under offer" so no fee
+    goes missing, but the review and the card beside it now state the same
+    agent's pipeline in different shapes. Suggestion: either show the split
+    as a sub-line under the under-offer field ("of which HOTs £x"), or add a
+    third pipeline column — the latter needs a `staff_reviews` column, so
+    it is Woody's call, not a tidy-up.
+
+267. 2026-09-07 · BGP staff / HR → a person → Reviews (QA r579) · same sync ·
+    the sync buckets fee allocations as INV → achieved, HOT+SOL → under
+    offer, NEG → negotiating. A deal sitting at EXC (exchanged) or COM
+    (completed) but not yet invoiced therefore counts as NEITHER achieved
+    NOR pipeline — the agent's review shows a hole for exactly the deals
+    that are done bar the invoice, and the money reappears only when the
+    invoice is raised. Woody's 14 May 2026 spec says achieved = INV, so
+    this is a policy question rather than a defect. Suggestion: count EXC
+    and COM in the under-offer pipeline (the safe reading), or add them to
+    achieved if the firm treats a completed deal as banked.
+
 262. 2026-09-06 · BGP staff / phone home (QA r578) · Victoria opens the app on
     her phone and reads her money · the finance card headlines "MY BILLING —
     2026/27 · £0 Billed · £0 Commission · £0 Potential", and the very next

@@ -92,18 +92,78 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r579 · 2026-09-06/07 · LIGHT (r578 had the journey) · ROUND IN PROGRESS
-- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas).
-  Smoke GREEN 42 checks / 0 failures.
+### r579 · 2026-09-06/07 · LIGHT (r578 had the journey) · 1 bug fixed — an agent's ANNUAL REVIEW pipeline dropped their whole fee the moment a deal stepped forward into heads of terms · 3 suggestions
+- Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
+  qa/apply-sql.mjs; .env written; dev server via qa/with-server.sh). Smoke
+  GREEN 42 checks / 0 failures, and GREEN again after the fix.
 - Two-bot three-chunk pass (QA_CROSS_FILE shared): every scenario [ok].
   Tally victoria 4x400 (all POST /brand/:id/rocketreach/discover) / mark
   9x403 + 1x503 + 1x404 (listed brochure-file 404) / woody,nick,sam 0 —
   BASELINE CONFIRMED, thirty-eighth consecutive clean hand-off. The victoria
-  chunk died once at login on ECONNRESET (listed flake) and was clean on
-  re-run. 0 app bugs from the regression itself.
-- Triage: all logged issues are listed environment noise. Deep angle this
-  round = the remaining server-side status-literal divergences by user
-  impact (qa/r575-status-literal-sweep.mjs).
+  chunk died once at login on ECONNRESET against a just-booted server (same
+  class as the listed login flake) and was clean on re-run. 0 app bugs from
+  the regression itself.
+- DEEP ANGLE: took the r575 status-literal sweep's remaining SERVER
+  divergences and ranked them by user impact. The worst was UX #254's
+  half-described one — `server/review-wip-sync.ts`, the FIFTH round in a row
+  on the HOT fault line, and this time on the form that sets an agent's
+  target and bonus for the year.
+- BUG FIXED (server/review-wip-sync.ts, plus the label + comment in
+  client/src/pages/hr.tsx ~3169/3350/3415). "Sync from WIP" on a staff review
+  bucketed fee allocations to Woody's 14 May 2026 spec: INV -> achieved,
+  SOL -> pipeline under offer, NEG -> pipeline negotiating. HOT joined the
+  enum on 2026-08-12, three months after that spec, and sits BETWEEN NEG and
+  SOL — so a deal moving FORWARD out of Negotiating into heads of terms
+  matched no bucket at all and the agent's fee vanished from BOTH pipeline
+  figures until Solicitors. The diagnostic match COUNT filtered on the same
+  three codes, so the toast then said "Synced from WIP (0 allocations)" —
+  which reads as a failed agent-name match, not a missing status.
+- PROVEN in the browser as Victoria at 1440px on /hr?person=…&tab=reviews,
+  by stepping ONE probe deal (£120,000, 100% allocated to her) NEG -> HOT and
+  changing nothing else. BEFORE: "Pipeline — under offer £0 / negotiating
+  £120,000" became "£0 / £0". AFTER: "Pipeline — HOTs / under offer
+  £120,000 / negotiating £0". Shots qa/smoke-shots/r579-review-neg.png,
+  r579-review-hot.png, r579-review-hotfix.png.
+- Fix folds HOT into the under-offer bucket (heads of terms agreed IS "under
+  offer" in the field's own language) rather than adding a column — the
+  review form has only two pipeline columns and a third needs a
+  `staff_reviews` migration, filed as UX #266 instead. Field relabelled
+  "Pipeline — HOTs / under offer (£)" so the number states what it counts.
+- New two-bot scenario, FIRE-TESTED against the genuine pre-fix file
+  (git show bd7a283^): victoria ·
+  staff-review-pipeline-keeps-the-fee-through-hots — opens a review on the
+  agent's own record, stages an 85/15 fee-allocated deal at NEG, syncs,
+  steps the deal to HOT, syncs again, and fails if the pipeline total moves,
+  if the under-offer figure does not carry the agent's slice, or if the
+  match count drops to zero. Pre-fix reading: pipeline 510000p -> 0p and
+  matched 1 -> 0. Post-fix: [ok]. run-round.sh purge now sweeps
+  QA-REVIEW% deals and QA-REVIEW-R% review rows.
+- DEFERRED as suggestions, not fixed (UX #265-#267): the sync's "0
+  allocations" toast cannot be told apart from a failed agent-name match on
+  the form that sets the year's target (#265); the review states the pipeline
+  in two buckets while the commission card and WIP report on the SAME profile
+  now use three (#266); and EXC + COM allocations are in NO bucket at all, so
+  a deal that is done bar the invoice counts as neither achieved nor pipeline
+  (#267 — Woody's policy call, and the rest of the old #254).
+- CHECKED AND CLEAN, do not re-report: PUT /api/crm/deals/:id/fee-allocations
+  correctly 400s a 100%-single-row split — BGP House's 15% row is mandatory
+  on every deal (crm.ts ~4305), which is why the new scenario allocates
+  85/15. The fixture ships ZERO staff_reviews rows and ZERO
+  deal_fee_allocations rows, so this surface reads £0 for everyone until a
+  probe seeds it — that is why five rounds of status sweeps walked past it.
+- Fixture verified back to the shipped state (0 QA deals, 0 allocations, 0
+  reviews). tsc clean. Probe scripts kept: qa/r579-probe-setup.mjs,
+  qa/r579-probe-status.mjs, qa/r579-probe-restore.mjs,
+  qa/r579-review-probe.mjs.
+- FOR r580 (rotation #1 BGP STAFF DESKTOP 1440px): r578's next step is still
+  untaken — /api/hr/staff/:id/commission is right about HOT now, but
+  `topDeals` / `awaitingPayment` and the tier "scenarios" on the same payload
+  have never been read against real multi-stage data. The staff-desktop
+  equivalent of the r579 finding is the rest of the review form: the AI draft,
+  the generate-letter path and record-compensation all read these same
+  figures and none has been driven. Also still unswept: the staff phone WRITE
+  paths (r578 opened the Edit-unit and Add-unit dialogs at 390px but never
+  SUBMITTED either).
 
 ### r578 · 2026-09-06 · FULL (rotation #4 BGP staff · mobile 390px) · 1 bug fixed — an agent's OWN commission card dropped their deal the moment it moved FORWARD out of Negotiating into heads of terms · 3 suggestions
 - Bring-up: canonical recipe (qa:pg once -> run-smoke -> seed-personas via
