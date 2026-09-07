@@ -4,6 +4,7 @@ import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
+import { PortfolioContactsBoard } from "@/components/portfolio-contacts-board";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
   AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, RefreshCw,
@@ -248,6 +249,7 @@ export default function MobileHome() {
   // isClientHome (role OR scope), so Landsec-scoped staff (Victoria) got
   // the client phone shell. Real client logins only, as documented.
   const showPortfolioHome = user?.role === "Client";
+  const clientCompanyId = user?.companyScopeId || user?.clientTeamCompanyId || null;
   // Staff currently scoped into a client's view — show an exit banner so
   // a phone can escape without finding the desktop sidebar.
   const isViewingAsClient = user?.role !== "Client" && !!(user as any)?.companyScopeId;
@@ -356,9 +358,7 @@ export default function MobileHome() {
         <ChevronRight className="w-4 h-4 ml-auto opacity-70" />
       </button>
 
-      {/* Client homes (Landsec) — and staff previewing in the Landsec team
-          view: portfolio letting roll-up + jump-offs, the phone version of
-          the Landsec dashboard. */}
+      {/* Client homes: portfolio letting roll-up and linked contacts. */}
       {showPortfolioHome && (
         <>
           <Link
@@ -391,8 +391,13 @@ export default function MobileHome() {
             </div>
           </Link>
 
-          {!!(user as any)?.companyScopeId && (
-            <MobileBgpTeam clientCompanyId={(user as any).companyScopeId} />
+          {!!clientCompanyId && (
+            <>
+              <MobileBgpTeam clientCompanyId={clientCompanyId} />
+              <div className="h-[30rem] min-w-0 [&>div]:rounded-2xl" data-testid="mobile-home-portfolio-contacts">
+                <PortfolioContactsBoard companyId={clientCompanyId} />
+              </div>
+            </>
           )}
         </>
       )}

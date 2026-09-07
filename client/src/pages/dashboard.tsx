@@ -1,6 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { IntelligenceFooter } from "@/components/intelligence-footer";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
+import { PortfolioContactsBoard } from "@/components/portfolio-contacts-board";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -725,107 +726,6 @@ function ClientTeamWeekCalendar({ events }: { events: any[] }) {
   );
 }
 
-// Grouped account contacts for the client portfolio dashboard (Woody,
-// 2026-08-03: "include brands and agents"): the company's own people, one
-// contact per brand with a deal on the portfolio, and the agents working
-// those deals. Backed by /api/crm/companies/:id/contact-summary.
-function PortfolioContactsBoard({ companyId }: { companyId: string }) {
-  // Portfolio-wide Linked Contacts (Woody, 2026-08-05: "the Landsec board
-  // for Contacts should be linked contacts but across all of their
-  // properties combined") — the same groups as the per-property panel,
-  // unioned over every property, scheme attribution on the badges.
-  type Row = { id: string; name: string; role: string | null; email?: string | null; company_id?: string | null; company_name?: string | null; last_interaction?: string | null; via?: string; side?: string };
-  type Occ = { company_id: string; company_name: string; contact: { id: string; name: string; role: string | null; last_interaction: string | null } | null };
-  const { data } = useQuery<{ internal: Row[]; deals: Row[]; trackerUnlinked: Array<{ unit_name: string; status: string | null }>; tenants: Occ[]; consultants: Row[] }>({
-    queryKey: ["/api/company-portfolio", companyId, "linked-contacts"],
-    queryFn: async () => {
-      const r = await fetch(`/api/company-portfolio/${companyId}/linked-contacts`, { credentials: "include", headers: getAuthHeaders() });
-      if (!r.ok) return { internal: [], deals: [], trackerUnlinked: [], tenants: [], consultants: [] };
-      return r.json();
-    },
-    staleTime: 5 * 60_000,
-  });
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ internal: true, deals: true });
-  const groups: Array<{ key: string; title: string; tint: string; count: number; body: React.ReactNode }> = [];
-  const personRow = (c: Row) => (
-    <Link key={c.id} href={c.id.startsWith("u-") ? "/hr" : c.id.startsWith("co-") ? `/companies/${c.company_id}` : `/contacts/${c.id}`} className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-muted/50 min-w-0">
-      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-semibold shrink-0 ${c.side === "bgp" ? "bg-foreground text-background" : c.side === "client" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}>
-        {(c.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
-      </span>
-      <div className="flex-1 min-w-0">
-        <span className="text-xs font-medium truncate block">{c.name}</span>
-        <span className="text-[10px] text-muted-foreground truncate block">{[c.role, c.side === "bgp" ? "BGP" : c.company_name !== c.name ? c.company_name : null].filter(Boolean).join(" · ")}</span>
-      </div>
-      {c.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-primary border-primary/30">Client</Badge>}
-      {c.via && c.side !== "client" && c.side !== "bgp" && <Badge variant="outline" className="text-[9px] shrink-0 max-w-[130px] truncate" title={c.via}>{c.via}</Badge>}
-    </Link>
-  );
-  const internal = data?.internal || [];
-  const dealsRows = data?.deals || [];
-  const unlinked = data?.trackerUnlinked || [];
-  const occupiers = data?.tenants || [];
-  const consultants = data?.consultants || [];
-  groups.push({ key: "internal", title: "Internal team", tint: "text-foreground", count: internal.length, body: internal.map(personRow) });
-  groups.push({
-    key: "deals", title: "On deals & tracker", tint: "text-foreground", count: dealsRows.length + unlinked.length,
-    body: (<>
-      {dealsRows.map(personRow)}
-      {unlinked.map(u => (
-        <Link key={u.unit_name} href="/available" className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-amber-50 min-w-0">
-          <span className="w-5 h-5 rounded bg-amber-100 text-amber-700 flex items-center justify-center text-[8px] font-semibold shrink-0">!</span>
-          <div className="flex-1 min-w-0">
-            <span className="text-xs font-medium truncate block">{u.unit_name}</span>
-            <span className="text-[10px] text-amber-700 truncate block">{u.status || "active"} — no brand linked yet</span>
-          </div>
-        </Link>
-      ))}
-    </>),
-  });
-  groups.push({
-    key: "tenants", title: "In occupation", tint: "text-muted-foreground", count: occupiers.length,
-    body: occupiers.map(o => (
-      <div key={o.company_id} className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-muted/50 min-w-0">
-        <div className="flex-1 min-w-0">
-          <Link href={`/companies/${o.company_id}`} className="text-xs font-semibold truncate block hover:underline">{o.company_name}</Link>
-          {o.contact
-            ? <Link href={`/contacts/${o.contact.id}`} className="text-[10px] text-muted-foreground truncate block hover:underline">{[o.contact.name, o.contact.role].filter(Boolean).join(" · ")}</Link>
-            : <span className="text-[10px] text-muted-foreground/60 italic block">no contact on file</span>}
-        </div>
-      </div>
-    )),
-  });
-  groups.push({ key: "consultants", title: "Consultants", tint: "text-foreground", count: consultants.length, body: consultants.map(personRow) });
-
-  return (
-    <Card className="h-full flex flex-col">
-      <CardContent className="p-3 flex-1 overflow-hidden flex flex-col">
-        <div className="flex items-center gap-2 mb-1.5">
-          <Users className="w-4 h-4" />
-          <h3 className="text-sm font-semibold">Contacts — whole portfolio</h3>
-        </div>
-        <div className="space-y-1 flex-1 overflow-y-auto pr-1">
-          {groups.filter(g => g.count > 0).map(g => {
-            const isOpen = openGroups[g.key] ?? false;
-            return (
-              <div key={g.key}>
-                <button
-                  onClick={() => setOpenGroups(prev => ({ ...prev, [g.key]: !isOpen }))}
-                  className={`w-full flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-semibold py-1 rounded hover:bg-muted/50 transition-colors ${g.tint}`}
-                  data-testid={`portfolio-contacts-group-${g.key}`}
-                >
-                  {isOpen ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
-                  <span className="text-left flex-1">{g.title}</span>
-                  <Badge variant="outline" className="text-[9px] tabular-nums">{g.count}</Badge>
-                </button>
-                {isOpen && <div className="space-y-0.5 mt-0.5">{g.body}</div>}
-              </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 
 export default function Dashboard() {

@@ -30,3 +30,9 @@ The browser pass found a reactive session-verification bug and a second CRM writ
 `client-agent-directory.test.mjs` runs with the standard suite. It checks that named people retain their own brand links, duplicate relationship rows do not multiply people, same-name IDs remain distinct and missing employers are not invented. The persisted-cache suite rejects the previous agent response shape on restore.
 
 `client-agent-directory-postgres.mjs` runs the actual SQL and canonical client brand-slice helper on temporary tables in a separate disposable database. `qa/client-agent-directory-smoke.mjs` seeds exact synthetic IDs in the local smoke fixture and removes them after authenticated API and desktop/phone checks. Both require dedicated environment variables and enforce local Unix-socket/database guards. See `docs/client-agent-directory-2026-09-07.md` for commands and scope.
+
+## Portfolio contacts
+
+`portfolio-contacts.test.mjs` and `portfolio-contacts-filter.test.ts` run in the standard suite. The actual PostgreSQL checks in `portfolio-contacts-postgres.mjs` exercise temporary tables, including records past the previous 200-occupier cap. `qa/portfolio-contacts-smoke.mjs` uses authenticated client API calls and desktop/phone browsers against the disposable smoke fixture, covering linked records, paging, filters, errors and retained owned/shared-property editing. It removes its exact synthetic IDs in a finally block. Commands and limitations are documented in `docs/portfolio-contacts-2026-09-07.md`.
+
+`qa/client-brand-logo-smoke.mjs` uses the same local browser fixture without direct database access. It verifies the actual Landsec mark, light/dark palettes and opaque/broken/delayed fetched-logo responses.

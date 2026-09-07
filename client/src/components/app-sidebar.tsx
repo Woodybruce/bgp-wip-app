@@ -2,7 +2,7 @@ import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useRef, useEffect } from "react";
 import bgpLogoWhite from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
-import landsecLogo from "@assets/landsec-logo.png";
+import { ClientBrandLogo } from "@/components/client-brand-logo";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
 import {
   LayoutDashboard,
@@ -391,40 +391,6 @@ export function AppSidebar() {
     ? user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
     : "?";
 
-  // The client logo renders as a white silhouette (brightness-0 invert) so a
-  // dark wordmark reads on the navy sidebar — but only when the sidebar
-  // surface actually IS dark. A client account without the navy scheme (or a
-  // light brand colour from logo.dev) keeps the logo's own colours; a white
-  // silhouette on a light sidebar is invisible. Measured from the rendered
-  // background rather than assumed, so it tracks scheme + injected brand vars.
-  const logoBoxRef = useRef<HTMLDivElement>(null);
-  const [darkSidebar, setDarkSidebar] = useState(true);
-  useEffect(() => {
-    const measure = () => {
-      let el: Element | null = logoBoxRef.current;
-      while (el) {
-        const bg = getComputedStyle(el).backgroundColor;
-        const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
-        if (m && (m[4] === undefined || parseFloat(m[4]) > 0.1)) {
-          const lum = (0.2126 * +m[1] + 0.7152 * +m[2] + 0.0722 * +m[3]) / 255;
-          setDarkSidebar(lum < 0.5);
-          return;
-        }
-        el = el.parentElement;
-      }
-    };
-    // The scheme class and the injected brand CSS vars can land AFTER first
-    // paint (theme fetch, style effects), so a single measurement races them
-    // — re-measure a few times until the surface colour has settled.
-    const raf = requestAnimationFrame(measure);
-    const timers = [300, 1000, 2500].map((ms) => setTimeout(measure, ms));
-    return () => { cancelAnimationFrame(raf); timers.forEach(clearTimeout); };
-    // Depend on the brand OBJECT, not its fields: the fetched theme can echo
-    // the hardcoded fallback values exactly (Landsec navy, no logoUrl), in
-    // which case the fields never change while the injected CSS vars DO flip
-    // the sidebar dark after the timers above have already run.
-  }, [colorScheme, brand]);
-
   return (
     // collapsible="none" pins the left nav permanently open (the hover-peek
     // behaviour moved to the chat panel on the right edge — see App.tsx).
@@ -432,15 +398,8 @@ export function AppSidebar() {
       <SidebarHeader className="p-3 pt-5 pb-5">
         <Link href="/">
           {isLandsec ? (
-            <div ref={logoBoxRef} className="cursor-pointer flex flex-col items-center justify-center h-16 gap-1">
-              {/* Real client logo from logo.dev when we have it; else the
-                  bundled Landsec mark. object-contain keeps any aspect ratio. */}
-              <img
-                src={brand.logoUrl || landsecLogo}
-                alt={brand.name || "Landsec"}
-                className={`h-11 w-auto max-w-[150px] object-contain ${darkSidebar ? "brightness-0 invert" : ""}`}
-                onError={(e) => { if (brand.logoUrl) (e.currentTarget as HTMLImageElement).src = landsecLogo; }}
-              />
+            <div className="cursor-pointer flex flex-col items-center justify-center h-16 gap-1">
+              <ClientBrandLogo brand={brand} />
               <span className="text-[10px] text-sidebar-foreground/50">Powered by BGP</span>
             </div>
           ) : (
