@@ -13,6 +13,35 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+296. 2026-09-07 · BGP staff / API-level (QA r593) · an agent deletes a unit
+   from the Letting Tracker and later re-lists it · the listing comes back at
+   the next restart under a name no one typed — "Bluewater Shopping Centre –
+   MSU9" — because the boot auto-seed (routes.ts ~7676) names a resurrected
+   listing after its backing DEAL, and the deal was named "<Scheme> – <Unit>"
+   when the unit was first added. On a board where every other card reads
+   "MSU9", that row reads as a different unit, and the scheme name is repeated
+   in a column that is already inside that scheme's page. (r593 fixed the
+   DEDUPE hole this opened — the unit is no longer listed twice — but the odd
+   name is still what the agent sees.) · SUGGESTION: have the auto-seed name
+   the listing from the unit rather than the deal — strip the scheme prefix
+   the same way `unitNameKey` (server/unit-mirror.ts) already does — so a
+   resurrected row looks like every other row on the board. Cheap, and it
+   retires one of the three name conventions in UX #293.
+
+297. 2026-09-07 · BGP staff / API-level (QA r593) · staff deletes a scheme
+   from Properties · the delete cascade (`storage.deleteCrmProperty`) clears
+   the rent roll and both projections, but says nothing about what else goes,
+   and it leaves the scheme's INVESTMENT position behind entirely — the
+   Investment Tracker card, its viewings, offers and distributions survive
+   with a property_id pointing at a row that no longer exists (see the r593
+   log entry: all 119 fixture tracker rows are already in that state) · 
+   SUGGESTION: make the confirm dialog itemise what the delete will remove
+   ("3 units on the Letting Tracker, 12 tenancy rows, 1 investment position
+   with 4 viewings and 2 offers") and let staff see the investment side
+   before they commit. Whether the investment position should be deleted,
+   kept, or block the delete is Woody's call — but silently stranding it is
+   the one option nobody would choose.
+
 294. 2026-09-07 · Landsec client / mobile 390px (QA r592) · an operator
    stopped Mark in the mall at Bluewater; on his phone he typed their name
    into the search box at the top of /brands to see what BGP already knew ·

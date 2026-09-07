@@ -4453,6 +4453,65 @@ async function victoriaRound(page, cross) {
     if (got.noHouse !== 400) throw new Error(`a split with no BGP House row was accepted (HTTP ${got.noHouse})`);
   });
 
+  // r593: one physical unit, three name conventions in available_units.
+  // unit_name — bare, comma-joined, and scheme-prefixed with an EN DASH.
+  // The third has a live source: POST /api/available-units names the backing
+  // deal "<Scheme> – <Unit>", and the boot auto-seed spawns a listing for any
+  // NEG deal that has no listing, copying that deal name into unit_name. The
+  // one-live-listing guard compared COMMA segments only, so a re-add of the
+  // bare name never matched the scheme-prefixed row and the unit was listed —
+  // and counted — twice. Both sides now read unitNameKey (server/unit-mirror).
+  await step(page, p, 'staff-unit-add-dedupes-scheme-prefixed-names', async () => {
+    const got = await page.evaluate(async (round) => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const props = await (await fetch('/api/crm/properties', { credentials: 'include', headers: h })).json();
+      const rows = Array.isArray(props) ? props : (props.data || props.properties || []);
+      if (!rows.length) return { skip: 'no properties' };
+      const prop = rows[0];
+      const unit = `QA-R593-DUP R${round}`;
+      const mk = async (name) => {
+        const r = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: h,
+          body: JSON.stringify({ propertyId: prop.id, unitName: name, marketingStatus: 'AVA', sqft: 900 }) });
+        return r.ok ? await r.json() : { __status: r.status };
+      };
+      // The shape the boot auto-seed leaves behind.
+      const a = await mk(`${prop.name} – ${unit}`);
+      if (a.__status) return { skip: `POST refused (${a.__status})` };
+      const b = await mk(unit);                       // the agent's bare re-add
+      const c = await mk(`${unit}, ${prop.name}`);    // CONTROL: the comma convention
+      const d = await mk(`QA-R593-OTHER R${round}`);  // CONTROL: a different unit
+      const out = { aId: a.id, bId: b.id, bAlready: !!b.alreadyListed, cId: c.id, cAlready: !!c.alreadyListed,
+                    dId: d.id, dAlready: !!d.alreadyListed };
+      const units = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
+      const all = Array.isArray(units) ? units : (units?.data || units?.units || []);
+      out.liveForUnit = all.filter(u => String(u.unitName || '').includes(`QA-R593-DUP R${round}`)).length;
+      // Teardown, same three projections the r588 scenario clears.
+      for (const id of [...new Set([a.id, b.id, c.id, d.id].filter(Boolean))]) {
+        await fetch(`/api/available-units/${id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      }
+      const ls = await (await fetch(`/api/leasing-schedule/property/${prop.id}`, { credentials: 'include', headers: h })).json().catch(() => []);
+      for (const u of (Array.isArray(ls) ? ls : (ls?.units || ls?.data || []))
+        .filter(u => /QA-R593-/.test(String(u.unit_name || u.unitName || '')))) {
+        await fetch(`/api/leasing-schedule/unit/${u.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      }
+      const deals = await (await fetch('/api/crm/deals', { credentials: 'include', headers: h })).json().catch(() => []);
+      for (const x of (Array.isArray(deals) ? deals : (deals?.data || deals?.deals || []))
+        .filter(x => /QA-R593-/.test(String(x.name || '')))) {
+        await fetch(`/api/crm/deals/${x.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      }
+      const still = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
+      out.leaked = (Array.isArray(still) ? still : (still?.data || still?.units || []))
+        .filter(u => /QA-R593-/.test(String(u.unitName || ''))).length;
+      return out;
+    }, ROUND);
+    if (got.skip) { console.log(`  [skip] ${p} · staff-unit-add-dedupes-scheme-prefixed-names — ${got.skip}`); return; }
+    if (!got.bAlready || got.bId !== got.aId) throw new Error('a re-add of the bare unit name created a SECOND live listing for a unit already listed under its scheme-prefixed name — every vacancy counter over available_units now counts it twice');
+    if (!got.cAlready || got.cId !== got.aId) throw new Error('CONTROL failed: the comma convention was not deduped either — the one-live-listing guard is not running at all');
+    if (got.dAlready || got.dId === got.aId) throw new Error('CONTROL failed: a genuinely different unit was folded onto the first listing — the name key is over-collapsing');
+    if (got.liveForUnit !== 1) throw new Error(`${got.liveForUnit} live listings for one physical unit`);
+    if (got.leaked) throw new Error(`this scenario leaked ${got.leaked} listing(s) into the fixture`);
+  });
+
   // r585: the My Portfolio dashboard widget was doubly broken.
   //   (a) /api/dashboard/my-portfolio selected `c.job_title` from crm_contacts,
   //       which has no such column (it is `role`) — so the endpoint 500'd for

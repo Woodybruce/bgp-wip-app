@@ -92,16 +92,88 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r593 · 2026-09-07 · LIGHT (no journey — r592 took rotation #3) · ROUND IN PROGRESS
+### r593 · 2026-09-07 · LIGHT (no journey — r592 took rotation #3) · deferred pool: the en-dash guard hole PROMOTED TO A BUG and fixed, both sides · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
 - Two-bot chunked on `QA_CROSS_FILE=/tmp/qa-cross-593.json`: chunk 1
-  `QA_PERSONAS=victoria` **140 [ok]** (6x400 + 1x409, documented baseline);
-  chunk 2 `QA_PERSONAS=mark,woody,nick,sam` **212 [ok]** (exactly 9x403 +
-  1x503 + 1x404, documented baseline). No flow failures, no `[skip]` lines.
-  **Streak 49.** Chunk 2 hit the 600s Bash cap again; read from its file.
-- Triage: nothing new — every logged issue is documented noise/deliberate probe.
-- Working the deferred pool (tracker orphans, the en-dash guard hole).
+  `QA_PERSONAS=victoria` **140 [ok]** (6x400 + 1x409), chunk 2
+  `QA_PERSONAS=mark,woody,nick,sam` **212 [ok]** (exactly 9x403 + 1x503 +
+  1x404). Documented baseline both, no flow failures, no `[skip]` lines.
+  **Streak 49.** Chunk 2 hit the 600s cap again; read from its redirect file.
+- BUG FIXED (UX #289/#293's guard hole, now a bug — a unit listed, and
+  counted, TWICE). **The one-live-listing guard compared COMMA segments, and
+  the third name convention has no comma.** Proven live end to end, no
+  fixture-poking: (1) POST /api/available-units names the backing deal
+  `${property.name} – ${unit.unitName}` (EN DASH, routes.ts:4644); (2) the
+  agent moves the unit to NEG on the tracker and the mirror stamps the deal
+  NEG; (3) deleting the tracker listing leaves that deal (UX #292); (4) at the
+  NEXT BOOT the auto-seed at routes.ts:7676 — keyed on `deal_id` ALONE —
+  resurrects a listing named after the deal: `Bluewater Shopping Centre –
+  QA-R593-U1`; (5) the agent re-adds the unit under its bare name and the
+  guard's `split_part(unit_name, ',', 1)` compares `msu9`-style against the
+  WHOLE string, misses, and creates a SECOND live AVA listing for one physical
+  unit on a LANDSEC property — every counter over `available_units` (the
+  client's own vacancy tiles included) then counts it twice. Woody's
+  2026-08-04 "sort the double counting" mandate, through a door the guard
+  never covered.
+  FIX, both writers reading ONE exported key (r592's lesson): new
+  `unitNameKey(unitName, propertyName)` in `server/unit-mirror.ts` strips a
+  leading `<scheme> –/—/-` prefix, then takes the first comma segment, then
+  lowercases — folding all three conventions onto one key (and keeping a
+  listing named for the scheme ALONE on its own name, so those don't collapse
+  together). The POST guard now scans the property's live listings and matches
+  on that key; the boot auto-seed skips a deal whose unit already has a live
+  listing under any convention.
+  VERIFIED at API+DB level (not in a browser — LIGHT round, no journey), with
+  the same probes before and after: BEFORE `POST "QA-R593-U1"` →
+  `alreadyListed=false`, 2 live listings for one unit. AFTER →
+  `alreadyListed=true` returning the resurrected row, 1 live listing.
+  CONTROLS not vacuous: the comma form is still caught (same id), a genuinely
+  different unit is still created, and a NEG deal unlinked from its still-live
+  listing no longer spawns a twin at boot. Post-fix `bash qa/run-smoke.sh`
+  **GREEN 42/0**; victoria chunk re-run **141 [ok]** with the new scenario.
+- NEW SCENARIO: `victoria · staff-unit-add-dedupes-scheme-prefixed-names` in
+  `qa/two-bot-round.mjs` — posts the scheme-prefixed form, then the bare name
+  (must dedupe onto it), with the comma control and a different-unit control,
+  and tears down its own listings, leasing rows and auto-created deals.
+- DEFERRED, with the ground truth now established: **`investment_tracker`'s
+  119 property_id orphans are ALL of them — 119/119 rows, every one dated
+  2026-03-07/08, i.e. fixture debris dumped without its `crm_properties`.**
+  No live path creates one: both writers (POST /api/investment-tracker
+  routes.ts:7362 and ChatBGP's `create_investment_tracker`) find-or-CREATE the
+  property first. But one live path STRANDS them — `storage.deleteCrmProperty`
+  enumerates 34 property-keyed tables and nulls `crm_deals.property_id`, yet
+  never touches `investment_tracker` (or its viewings/offers/distributions),
+  and the column is NOT NULL so there is nothing to null. Deleting a scheme
+  therefore leaves its investment position on the board pointing at nothing.
+  NOT fixed blind: whether a scheme delete should delete the investment
+  history, keep it, or refuse is Woody's call → UX #297.
+  Consumers checked: the only tracker→property join is
+  `server/portfolio-properties.ts:130`, a LEFT JOIN (degrades to nulls,
+  staff-only), so nothing 500s or silently empties today.
+- DEFERRED, new, the label-vs-code class again: the admin route
+  `POST /api/admin/letting-tracker-focus` INSERTs `marketing_status` as the
+  literal **'Available'** (routes.ts:5916) with a raw `pool.query`, bypassing
+  `canonicaliseUnitStatus` — a LABEL into the codes column. Admin-only and
+  `dryRun` defaults to true, so it is behind two gates; the boot canonicaliser
+  cleans it at the NEXT restart but not before. Worth a one-line fix next
+  round (route it through `storage.createAvailableUnit`, as the same file's
+  other pull-in paths do).
+- SUGGESTIONS: UX **#296** (the auto-seed names a resurrected listing after
+  its deal — "Bluewater Shopping Centre – MSU9" on a board where every other
+  card reads "MSU9"; name it from the unit and one of #293's three
+  conventions retires) and **#297** (the scheme-delete confirm should itemise
+  what goes, and show the investment position it currently strands).
+- Assets: `qa/r593-probe.mjs` (phase A — build the state the resurrector
+  needs), `qa/r593-probe2.mjs` (phase B — what boot did, then the re-add with
+  both controls), `qa/r593-cleanup.mjs` (clears QA-R593 rows across all five
+  projections). Phase A and phase B must run in SEPARATE `with-server` calls —
+  the seed only fires at boot.
+- Fixture after cleanup + restore: au **76**, ts **201**, no stray QA deals.
+- FOR r594: rotation **#4, BGP staff · mobile 390px** — do the journey.
+  Deferred pool for after it: the 'Available' literal above (cheap), then the
+  residual QA leasing rows + 5 QA deals in the fixture. #297 and the
+  vacancy-basis question (#290/#286/#295) are Woody's calls, not blind fixes.
 
 ### r592 · 2026-09-07 · FULL (rotation #3 — Landsec client · mobile 390px) · journey: "an operator came to me direct", with a self-add write · 1 bug fixed, BOTH HALVES: the Letting Tracker stamped a value the LANDLORD'S OWN tenancy schedule buckets into no tile, and its delete stranded the stub · 2 suggestions
 - Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`

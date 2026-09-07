@@ -4502,19 +4502,26 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // the client-side "already listed" guards miss when names differ in
       // format ("MSU9" vs "MSU9, Bluewater, Bluewater"), so the server is
       // the guard: an existing non-closed listing on the same property whose
-      // first name segment matches returns that listing instead of creating
-      // a duplicate.
+      // unit-name key matches returns that listing instead of creating a
+      // duplicate. Comparing comma segments alone was not enough — the boot
+      // auto-seed names a resurrected listing after its deal
+      // ("Bluewater Shopping Centre – MSU9"), which has no comma at all, so a
+      // re-add of the bare name sailed straight past and the unit was listed
+      // twice (r593). unitNameKey folds all three conventions together.
       if (parsed.propertyId && parsed.unitName?.trim()) {
-        const seg = parsed.unitName.split(",")[0].trim().toLowerCase();
+        const { unitNameKey } = await import("./unit-mirror");
+        const propName = (await pool.query(
+          `SELECT name FROM crm_properties WHERE id = $1`, [parsed.propertyId]
+        )).rows[0]?.name || null;
+        const seg = unitNameKey(parsed.unitName, propName);
         if (seg.length >= 2) {
-          const dupe = await pool.query(
-            `SELECT id FROM available_units
+          const live = await pool.query(
+            `SELECT id, unit_name FROM available_units
              WHERE property_id = $1
-               AND lower(trim(split_part(coalesce(unit_name, ''), ',', 1))) = $2
-               AND coalesce(marketing_status, '') NOT IN ('Withdrawn', 'WIT')
-             LIMIT 1`,
-            [parsed.propertyId, seg]
+               AND coalesce(marketing_status, '') NOT IN ('Withdrawn', 'WIT')`,
+            [parsed.propertyId]
           );
+          const dupe = { rows: live.rows.filter((r: any) => unitNameKey(r.unit_name, propName) === seg).slice(0, 1) };
           if (dupe.rows.length > 0) {
             // Re-read through storage so this answers in the SAME camelCase
             // shape as the create path below. It used to ship the raw pg row
@@ -7675,15 +7682,31 @@ These terms are indicative only and do not constitute a binding agreement.`;
 
       const existingUnits = await db.select().from(availableUnits);
       const existingDealIds = new Set(existingUnits.filter(u => u.dealId).map(u => u.dealId));
+      const { unitNameKey } = await import("./unit-mirror");
 
       let migrated = 0;
       for (const deal of negDeals) {
         if (existingDealIds.has(deal.id)) continue;
 
         let useClass: string | null = deal.assetClass || null;
+        let propName: string | null = null;
         if (deal.propertyId) {
           const prop = await storage.getCrmProperty(deal.propertyId);
-          if (prop) useClass = useClass || prop.assetClass || null;
+          if (prop) { useClass = useClass || prop.assetClass || null; propName = prop.name; }
+        }
+
+        // The unit may already be listed under one of the other name
+        // conventions — this seed names its listing after the deal
+        // ("Bluewater Shopping Centre – MSU9") while the tracker lists the
+        // bare name, so keying only on deal_id spawned a second live listing
+        // for the same physical unit and the vacancy counters counted it
+        // twice (r593). Same key as the POST guard.
+        const dealKey = unitNameKey(deal.name, propName);
+        if (deal.propertyId && dealKey.length >= 2 && existingUnits.some(u =>
+          u.propertyId === deal.propertyId
+          && !["Withdrawn", "WIT"].includes(u.marketingStatus || "")
+          && unitNameKey(u.unitName, propName) === dealKey)) {
+          continue;
         }
 
         await storage.createAvailableUnit({

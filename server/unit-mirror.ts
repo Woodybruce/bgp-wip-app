@@ -335,3 +335,27 @@ export async function ensureTenancyRowForAvailableUnit(pool: Pool, availableUnit
     console.warn(`[unit-mirror] ensureTenancyRowForAvailableUnit(${availableUnitId}) failed:`, e?.message);
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// One physical unit, three name conventions in available_units.unit_name:
+// bare ("MSU9"), comma-joined ("MSU9, Bluewater, Bluewater") and
+// scheme-prefixed with an EN DASH ("Bluewater Shopping Centre – MSU9").
+// The third has a named source: POST /api/available-units names the backing
+// deal `${property.name} – ${unit.unitName}`, and the boot auto-seed spawns a
+// listing for any NEG deal without one, copying that deal name straight into
+// unit_name. Every dedupe over unit_name must reduce all three to the same
+// key or the unit gets listed — and counted — twice (r593).
+// ─────────────────────────────────────────────────────────────────────────
+export function unitNameKey(unitName: string | null | undefined, propertyName?: string | null): string {
+  let n = (unitName || "").trim();
+  if (!n) return "";
+  const prop = (propertyName || "").trim();
+  if (prop) {
+    const esc = prop.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const stripped = n.replace(new RegExp(`^${esc}\\s*[–—-]\\s*`, "i"), "").trim();
+    // A listing named for the scheme alone keeps its own name — stripping it
+    // to nothing would collapse every such row onto one key.
+    if (stripped) n = stripped;
+  }
+  return n.split(",")[0].trim().toLowerCase();
+}
