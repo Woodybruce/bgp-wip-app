@@ -92,27 +92,98 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r591 · 2026-09-07 · LIGHT (no journey — r590 had it) · ROUND IN PROGRESS
+### r591 · 2026-09-07 · LIGHT (no journey — r590 had it) · 2 bugs fixed: the Letting Tracker wrote marketing CODES into the leasing board's LABEL column, and deleting a scheme stranded its whole unit spine · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0** (3m38s),
   then `node qa/apply-sql.mjs qa/seed-personas.sql`.
-- Two-bot chunk 1 `QA_PERSONAS=victoria` on `QA_CROSS_FILE=/tmp/qa-cross-591.json`:
-  **140 [ok]**, exactly baseline — 6x400 (rocketreach x3, the deliberate invalid
-  POST /api/investment-tracker, the two deliberate fee-split probes) + 1x409
-  (SOL+ AML gate). No flow failures, no `[skip]`.
-- TRIAGE / deferred item 1 (the fixture leak) — **it is far bigger than r590
-  knew, and the door is an app cascade bug.** Pre-chunk `leasing_schedule_units`
-  = 169; post-chunk = **332**. Only 4 of the new rows match `%QA-R%`; the other
-  **157 were inserted in one minute against property
-  `e736402e-…` which does not exist in `crm_properties`.** That is
-  `staff-tenancy-reimports-its-own-export` (r551): it imports Bluewater's whole
-  rent roll into a throwaway property, and its teardown does
-  `tenancy-schedule/bulk-delete` + `DELETE /api/crm/properties/:id` — neither of
-  which touches the `leasing_schedule_units` rows the import fanned out.
-  `storage.deleteCrmProperty` (server/storage.ts:1015) nulls `crm_deals` and
-  clears 6 LINK tables, but 34 property-keyed DATA tables are left stranded.
-  Orphan census right now (`qa/r591-orphan-probe.mjs`): `leasing_schedule_units`
-  158, `investment_tracker` 119 (the tracker's are fixture-old, separate story).
-- Round in progress: chunk 2 next, then the leak fix.
+- Two-bot chunked on a shared `QA_CROSS_FILE=/tmp/qa-cross-591.json`:
+  chunk 1 `QA_PERSONAS=victoria` **140 [ok]** (run twice, pre- and post-fix,
+  identical), chunk 2 `QA_PERSONAS=mark,woody,nick,sam` **212 [ok]** (211 baseline + r590's new scenario), mark's exact
+  documented set of 9x403 + 1x503 + 1x404, woody/nick/sam 0. **Streak 47.**.
+  Every issue documented baseline — victoria 6x400 (rocketreach x3, the
+  deliberate invalid POST /api/investment-tracker, the two deliberate
+  fee-split probes) + 1x409 (SOL+ AML gate); no flow failures, no `[skip]`.
+- **DEFERRED ITEM 1 (the fixture leak) IS SOLVED, AND IT WAS AN APP BUG, NOT A
+  TEARDOWN GAP.** The leak was far bigger than r590 could see:
+  `leasing_schedule_units` went **169 -> 332** across one victoria chunk. Only
+  4 of the new rows matched `%QA-R%`; **157 were inserted in one minute against
+  a property that no longer existed.** That is
+  `staff-tenancy-reimports-its-own-export` (r551) importing Bluewater's whole
+  rent roll into a throwaway property — its teardown does
+  `tenancy-schedule/bulk-delete` + `DELETE /api/crm/properties/:id`, and
+  NEITHER touches the spine. `storage.deleteCrmProperty` nulled `crm_deals` and
+  cleared 6 LINK tables while leaving all 34 property-keyed DATA tables
+  stranded. Orphan census `qa/r591-orphan-probe.mjs`: `leasing_schedule_units`
+  158, `investment_tracker` 119 (the tracker's are fixture-old — a separate,
+  still-unexamined story).
+- BUG 1 FIXED — **every unit a BGP agent adds on the Letting Tracker landed on
+  the property's client-facing Leasing Schedule as a raw code chip.**
+  `POST /api/available-units` auto-creates the leasing-schedule row
+  (routes.ts:4567) and wrote `parsed.marketingStatus || "AVA"` straight into
+  `leasing_schedule_units.status` — a column whose live vocabulary is LABELS
+  (ground truth: 'Occupied' 88, 'Vacant' 77, nothing else). Downstream:
+  `STATUS_CHIP_COLORS` (leasing-schedule.tsx:723) has no 'AVA' key so the chip
+  renders the RAW CODE in fallback grey; `stats.vacant` (:2462) counts
+  `status === "Vacant"` so the Vacant tile MISSES the unit; the vacant filter
+  (:2478) hides it; the row tint (:2775) skips it; and `stats.total` still
+  counts it, so total no longer equals occupied+vacant. The PATCH path already
+  did this correctly through the shared bridge `codeToLeasingStatus`
+  (lease-status-mirror.ts:49) — only the CREATE path bypassed it, so the row
+  healed itself the first time anyone edited the status and looked wrong until
+  then. FIX: both write paths now go through `codeToLeasingStatus` — the create
+  path, and the admin `backfill-leasing-schedule` route (routes.ts:6410), whose
+  SQL now uses a CASE **derived from `DEAL_STATUS_CODES` + the shared bridge**
+  so the two sides cannot drift.
+  **VISUALLY VERIFIED** (`qa/r591-verify.mjs`, shot `r591-01-leasing-chips.png`):
+  posting AVA/NEG/HOT and the legacy label 'Available' now draws
+  **Vacant / In Negotiation / Under Offer / Vacant** on the board, and the
+  tracker keeps its own codes (AVA/NEG/HOT/AVA) — the two vocabularies stay in
+  their own columns. CONTROL: the fixture's 165 non-QA rows unchanged.
+- BUG 2 FIXED — **deleting a scheme left its whole unit spine behind.**
+  `storage.deleteCrmProperty` now also removes, in the same transaction, the
+  property's `available_units` (with `unit_marketing_files` / `unit_viewings` /
+  `unit_offers` first, mirroring `deleteAvailableUnit`), `leasing_schedule_audit`,
+  `leasing_schedule_units`, `tenancy_schedule_units` and `property_units`.
+  The stranded `available_units` half is the user-visible one: a card for a
+  deleted scheme stays on the firm-wide Letting Tracker.
+  VERIFIED end to end: before the DELETE `{ls:1, au:1, ts:1}`, after `{0,0,0}`,
+  `DELETE` 200. CONTROL: Bluewater's 168 leasing rows untouched by that delete.
+- **THE r590 BOOT MYSTERY, SOLVED (and it is NOT unit-mirror.ts:180).** The
+  available_units row that came back "with a new id each boot" is
+  re-materialised from a leaked **crm_deal**: `POST /api/available-units`
+  auto-creates a backing deal named `<Scheme> – <Unit>` (EN DASH), deleting the
+  tracker row does NOT delete the deal, and a boot hook then spawns a fresh
+  listing from any deal with no listing. Proof: after r589+r590's cleanups had
+  removed every QA row from both unit tables, the next server boot produced
+  `Bluewater Shopping Centre – QA-R588-LBL-N R1` in `available_units`, and the
+  three surviving `crm_deals` rows behind it. Filed as UX #292 (whether a deal
+  should outlive its listing is a data-model call, not a blind fix).
+- SCENARIOS: `staff-unit-writes-canonicalise-status` now also asserts the
+  auto-created leasing row carries a value from `LEASING_STATUSES` (with a
+  not-vacuous CONTROL: it fails if the POST created no row at all) and tears
+  down its own leasing rows AND its auto-created deals, failing loudly if any
+  survive. `agent-reimport-no-dup` now asserts the property DELETE takes its
+  leasing-schedule rows with it, counting them BEFORE the delete so the check
+  can't pass on an empty set.
+- **THE LEAK IS CLOSED, MEASURED.** Same victoria chunk, post-fix:
+  `available_units` 76 -> **76** (was 76 -> 77 with a phantom re-created at
+  boot), `leasing_schedule_units` 169 -> **172** (was 169 -> 332), orphan
+  leasing rows **158 -> 0**. `qa/r591-cleanup.mjs` restores the fixture exactly
+  (au 76 / ls 169). The 3 residual rows are the same class from OTHER
+  scenarios (`QA-HOTS Unit R1`, `QA-BIGNUM Unit R1`, `RU10 Test`) plus 5 QA
+  deals — DEFERRED, and note two of those rows still carry codes ('AVA','HOT')
+  because they predate the fix.
+- DEFERRED, unchanged from r590: (a) r589's `--kind=assign --all` 27-hit census
+  pass, still untouched after three rounds; (b) UX #289's en-dash guard hole —
+  and r591 gives it a NAMED SOURCE at last: the boot hook's deal-derived
+  `<Scheme> – <Unit>` name is where the en-dash form comes from (UX #293);
+  (c) UX #290/#286's vacancy-basis decision; (d) `investment_tracker`'s 119
+  property_id orphans, never examined. Plus: the residual QA leasing rows above.
+- Suggestions: UX #292 (deleting a tracker listing leaves its leasing row and
+  its backing deal, and the deal resurrects the listing at boot), UX #293 (one
+  unit, three name conventions — bare, comma-joined, en-dash-prefixed).
+- `npx tsc --noEmit` clean after both fixes. No new flakes; chunk 2 hit the
+  600s Bash cap and had to be read from its redirect file (the documented
+  harness trap — the run itself was fine).
 
 ### r590 · 2026-09-07 · FULL (rotation #2 — Landsec client · desktop 1440px) · journey: Mark Warne's Bluewater board paper, with a write · 1 bug fixed: the client's own vacancy counts double-counted five units · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

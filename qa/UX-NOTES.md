@@ -13,6 +13,34 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+292. 2026-09-07 · BGP staff / desktop (QA r591) · an agent removing a unit
+   from the Letting Tracker · `DELETE /api/available-units/:id` takes the
+   tracker card away, but the two rows the CREATE spawned on its behalf stay:
+   the property's leasing-schedule row and the auto-created backing CRM deal
+   (named "<Scheme> – <Unit>"). The deal is the worse half — a boot hook
+   re-materialises a tracker listing from any deal with no listing, so the
+   unit the agent deleted REAPPEARS on the Letting Tracker after the next
+   restart, with a new id and an en-dash scheme prefix in its name. This is
+   the "something re-creates the row at boot" r590 was chasing.
+   Suggestion: make the delete dialog say what else is attached ("this unit
+   also has a leasing-schedule row and a linked deal") and offer to remove
+   them, or at minimum stop the boot hook resurrecting a listing for a deal
+   whose only listing was deliberately deleted. Not blind-fixed: whether a
+   deal should outlive its listing is a data-model call for Woody.
+
+293. 2026-09-07 · BGP staff / desktop (QA r591) · same unit, two names ·
+   the app writes a unit's name three different ways depending on the door:
+   bare ("U062"), comma-joined with the scheme ("MSU9, Bluewater,
+   Bluewater"), and en-dash-prefixed ("Bluewater Shopping Centre – U062")
+   when the boot hook derives it from a deal name. Every guard, dedupe and
+   count that matches units BY NAME then has to guess which convention it
+   is looking at — UX #289's one-live-listing guard compares COMMA segments
+   and sails straight past the en-dash form, and r590's duplicate collapse
+   needed its own normaliser. Suggestion: normalise unit names at one write
+   boundary (scheme stored as a field, never inside `unit_name`) so the
+   name-matching guards have a single shape to match. Structural, so filed
+   rather than fixed.
+
 290. 2026-09-07 · Landsec client / desktop (QA r590) · Mark Warne pulling
    Bluewater's vacancy together for a board paper · three surfaces in one
    sitting gave him three different vacancy numbers, none of them labelled
