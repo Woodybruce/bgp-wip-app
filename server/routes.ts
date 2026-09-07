@@ -5934,15 +5934,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       for (const m of missing) {
         if (isJunkUnitName(m.unit_name || m.unit_number || m.premises)) continue;
         try {
-          const ins = await pool.query(
-            `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
-             VALUES ($1, $2, $3, $4, 'Available', $5) RETURNING id`,
-            [m.property_id, m.unit_name || m.unit_number || m.premises || "Unit",
-             m.nia_sqft ?? m.gia_sqft ?? null, m.marketing_rent_pa ?? null, m.tenancy_unit_id]
-          );
+          const created = await storage.createAvailableUnit({
+            propertyId: m.property_id,
+            unitName: m.unit_name || m.unit_number || m.premises || "Unit",
+            sqft: m.nia_sqft ?? m.gia_sqft ?? null,
+            askingRent: m.marketing_rent_pa ?? null,
+            marketingStatus: "AVA",
+            tenancyUnitId: m.tenancy_unit_id,
+          } as any);
           await pool.query(
             `UPDATE tenancy_schedule_units SET letting_tracker_unit_id = $1 WHERE id = $2`,
-            [ins.rows[0].id, m.tenancy_unit_id]
+            [created.id, m.tenancy_unit_id]
           );
           added++;
         } catch (e: any) {

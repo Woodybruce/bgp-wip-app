@@ -1374,7 +1374,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAvailableUnit(unit: InsertAvailableUnit): Promise<AvailableUnit> {
-    const [created] = await db.insert(availableUnits).values(canonicaliseUnitStatus(unit)).returning();
+    // An ABSENT marketingStatus is the one way a label still reaches this
+    // codes column: canonicaliseUnitStatus only rewrites a status that is
+    // there, so drizzle omits the column and postgres applies the table
+    // default — the literal 'Available'. Supply the code the default means.
+    const values = canonicaliseUnitStatus(unit) as InsertAvailableUnit;
+    const status = values.marketingStatus;
+    const [created] = await db.insert(availableUnits).values(
+      typeof status === "string" && status.trim() ? values : { ...values, marketingStatus: "AVA" }
+    ).returning();
     return created;
   }
 
