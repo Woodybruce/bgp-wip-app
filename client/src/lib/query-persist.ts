@@ -5,7 +5,7 @@ import type { PersistedClient, PersistQueryClientOptions } from "@tanstack/react
 // then refresh in the background. Bump BUSTER when payload shapes or cache
 // ownership rules change incompatibly.
 export const QUERY_PERSIST_KEY = "bgp-query-cache";
-const BUSTER = "bgp-q2";
+const BUSTER = "bgp-q3";
 let pendingClient: PersistedClient | undefined;
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
 

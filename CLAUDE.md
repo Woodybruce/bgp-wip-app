@@ -76,6 +76,15 @@ keep the slice: the canonical gates are `isClientVisibleBrand` and
 KYC panel STAYS visible on client brand profiles (landlords need tenant
 AML/financial standing); staff-only action buttons are hidden for clients.
 
+Woody clarified on 2026-09-07: client CRM **Agents are agents acting for
+brands actually in that client's Brand CRM**. Qualify through current
+tenant-rep representations or current visible leasing requirements with an
+explicit agent-contact link to a directory brand. Company/contact agent
+flags alone do not qualify. Show only the named linked contacts, not every
+employee at a qualifying firm. Preserve people whose firm is unconfirmed;
+do not infer an employer or change stored company attachments. The shared
+brand slice (including self-added brands) still defines eligible brands.
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document

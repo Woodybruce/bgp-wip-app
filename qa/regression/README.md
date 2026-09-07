@@ -24,3 +24,9 @@ Against a local app using `qa/smoke-fixture.sql.gz`, run `node qa/smoke.mjs` fol
 The local pass completed 53 desktop checks and 21 phone checks, plus 22 actual HTTP/database client-access checks. The phone suite verifies reload/history, profiles and same-document account isolation using a disposable self-only conversation, then deletes it. Screenshots/results are written below `qa/smoke-shots/`. CI runs both browser suites after regression tests and TypeScript.
 
 The browser pass found a reactive session-verification bug and a second CRM write gateway missed by the original isolated tests. The cache regression now covers structurally identical restored auth data; the access regression executes both gateways before scoped handlers. Live authenticated provider integrations and production deployment were not tested.
+
+## Client agent links
+
+`client-agent-directory.test.mjs` runs with the standard suite. It checks that named people retain their own brand links, duplicate relationship rows do not multiply people, same-name IDs remain distinct and missing employers are not invented. The persisted-cache suite rejects the previous agent response shape on restore.
+
+`client-agent-directory-postgres.mjs` runs the actual SQL and canonical client brand-slice helper on temporary tables in a separate disposable database. `qa/client-agent-directory-smoke.mjs` seeds exact synthetic IDs in the local smoke fixture and removes them after authenticated API and desktop/phone checks. Both require dedicated environment variables and enforce local Unix-socket/database guards. See `docs/client-agent-directory-2026-09-07.md` for commands and scope.

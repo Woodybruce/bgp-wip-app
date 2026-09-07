@@ -33,7 +33,8 @@ globalThis.fetch = async (input) => {
   return response;
 };
 
-const { QueryObserver, dehydrate } = await import("@tanstack/react-query");
+const { QueryClient, QueryObserver, dehydrate } = await import("@tanstack/react-query");
+const { persistQueryClientRestore } = await import("@tanstack/react-query-persist-client");
 const { queryClient, apiRequest, getQueryFn, isSessionVerified, refreshSession, subscribeSessionVerification, getSessionVerificationSnapshot, sessionIdentity } = await import("../../client/src/lib/queryClient");
 const { persistOptions, clearPersistedQueries, QUERY_PERSIST_KEY } = await import("../../client/src/lib/query-persist");
 // Disable only the day-long GC timers so cancelled queries cannot keep the
@@ -55,6 +56,25 @@ async function eventually(predicate: () => boolean) {
 after(() => {
   queryClient.clear();
   clearPersistedQueries();
+});
+
+test("pre-brand-link agent payloads are discarded on persisted-cache restore", async () => {
+  assert.ok(persistOptions);
+  const legacyClient = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
+  const freshClient = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
+  const agentKey = ["/api/client/agent-directory"];
+  legacyClient.setQueryData(agentKey, [{ id: "agency", name: "Legacy agency", contacts: [], represents: [{ brandId: "brand", brandName: "Brand", region: null }] }]);
+  clearPersistedQueries();
+  storage.setItem(QUERY_PERSIST_KEY, JSON.stringify({ timestamp: Date.now(), buster: "bgp-q2", clientState: dehydrate(legacyClient) }));
+  try {
+    await persistQueryClientRestore({ queryClient: freshClient, ...persistOptions });
+    assert.equal(freshClient.getQueryData(agentKey), undefined);
+    assert.equal(storage.getItem(QUERY_PERSIST_KEY), null);
+  } finally {
+    legacyClient.clear();
+    freshClient.clear();
+    clearPersistedQueries();
+  }
 });
 
 test("same-user hydration notifies verification even when React Query emits no tracked-prop change", async () => {
