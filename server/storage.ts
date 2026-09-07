@@ -46,7 +46,24 @@ import {
   availableUnits,
 } from "@shared/schema";
 import { escapeLike } from "./utils/escape-like";
+import { legacyToCode } from "@shared/deal-status";
 import { db, pool } from "./db";
+
+// available_units.marketing_status is a CODES column — its vocabulary is
+// LETTING_STATUSES, and the boot auto-migrate (server/index.ts) rewrites
+// any legacy label it finds. Writers that stamped a LABEL ("Available")
+// produced rows that were invisible to every code predicate — the AVA
+// available_count, the letting-tracker pills, the pathway vacancy, the
+// asset-brief funnel — until the next server start healed them. Canonicalise
+// at the single write boundary so no caller can reintroduce that (r588,
+// handed over by r587). Unknown values are left alone: legacyToCode returns
+// null for anything outside the vocabulary, and dropping it would lose data.
+function canonicaliseUnitStatus<T extends { marketingStatus?: string | null }>(v: T): T {
+  const raw = v?.marketingStatus;
+  if (typeof raw !== "string" || !raw.trim()) return v;
+  const code = legacyToCode(raw);
+  return code && code !== raw ? { ...v, marketingStatus: code } : v;
+}
 import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull, arrayContains } from "drizzle-orm";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1333,12 +1350,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAvailableUnit(unit: InsertAvailableUnit): Promise<AvailableUnit> {
-    const [created] = await db.insert(availableUnits).values(unit).returning();
+    const [created] = await db.insert(availableUnits).values(canonicaliseUnitStatus(unit)).returning();
     return created;
   }
 
   async updateAvailableUnit(id: string, updates: Partial<InsertAvailableUnit>): Promise<AvailableUnit> {
-    const [updated] = await db.update(availableUnits).set({ ...updates, updatedAt: new Date() }).where(eq(availableUnits.id, id)).returning();
+    const [updated] = await db.update(availableUnits).set({ ...canonicaliseUnitStatus(updates), updatedAt: new Date() }).where(eq(availableUnits.id, id)).returning();
     return updated;
   }
 

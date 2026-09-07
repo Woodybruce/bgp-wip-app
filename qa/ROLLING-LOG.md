@@ -92,12 +92,134 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r588 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · ROUND IN PROGRESS
-- Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`,
-  then `node qa/apply-sql.mjs qa/seed-personas.sql` (per r587's process miss).
-- Smoke GREEN 42/0. No new triage from smoke.
-- Plan: staff-desktop journey with a write; fix pile headed by r587's
-  hand-off (the sweep's SIXTH SHAPE — label WRITES at routes.ts:6005/:7673).
+### r588 · 2026-09-07 · FULL (rotation #1 BGP staff · desktop 1440px) · 2 bugs fixed: the add-unit dialog dropped a fee split SILENTLY, and r587's hand-off label-WRITE class killed at the write boundary · 2 suggestions
+- Bring-up: canonical recipe — `npm run qa:pg` ONCE, `bash qa/run-smoke.sh`
+  (GREEN 42/0), then `node qa/apply-sql.mjs qa/seed-personas.sql` (r587's
+  process miss, obeyed).
+- JOURNEY (staff desktop 1440px, a real task with a write): *"Bluewater have
+  released another unit — get it on the tracker, then tell the landlord where
+  the property stands on availability."* `/` -> `/properties` ->
+  `/properties/:id` -> `/available` -> Add unit dialog -> SAVE -> back to the
+  property page. No error boundaries, no horizontal overflow, no non-noise
+  HTTP failures on any surface. Shots qa/smoke-shots/r588-0*.png.
+  The write LANDED: tracker 81 -> 82 units, the row rendered as
+  `#1006 ANC1 Bluewater - Whole Demise · Available · Marketing · £92,000`,
+  the tracker pills stayed self-consistent (ALL 82 = MARKETING 80 +
+  NEGOTIATING 2), and the asset-brief funnel picked the auto-created deal up
+  (engaged 0 -> 1). Fixture restored afterwards (qa/r588-cleanup.mjs, back to
+  81 units / 81 AVA).
+- BUG 1 FIXED — **the Add-unit dialog told Victoria "Unit added" while the
+  fee split was silently thrown away.** Found by doing the journey, not by
+  grepping: the save fired `HTTP 400 PUT /api/crm/deals/:id/fee-allocations`
+  and the ONLY toast on screen was "Unit added"
+  (qa/smoke-shots/r588-08-after-save.png). Cause is a two-part compound:
+  the fee editor auto-inserts a LOCKED "BGP House 15%" row, so the split
+  posted totals 15% and crm.ts:4288 correctly refuses any percentage split
+  that does not sum to 100% — and available-units.tsx raised its
+  "fee split failed to save" warning INSIDE `mutationFn`, where
+  **`TOAST_LIMIT = 1`** (client/src/hooks/use-toast.ts:8) let `onSuccess`'s
+  unconditional "Unit added" evict it microseconds later. Net effect: the
+  deal lands with NO fee split — exactly the state the code comment says it
+  was written to prevent ("that's how deal 3511 ended up with none") — and
+  nobody knows. Fixed by carrying the failure OUT of `mutationFn` so the
+  toast that survives is the truthful one, at BOTH call sites: the create
+  path and `wipDealMutation` (the SOL promotion, where the split feeds the
+  WIP report's Agent column).
+  **VISUALLY VERIFIED** (qa/r588-visual3.mjs, kept): same 400, and the toast
+  now reads "Unit added — fee split NOT saved / 400: Percentage allocations
+  must sum to 100% — currently 15.00%. Adjust the agent rows to make the
+  total balance." Shot qa/smoke-shots/r588-feesplit-toast.png.
+  NOTE the repro is order-dependent: the PUT only fires once the fee editor
+  has materialised its BGP House row (click "Add agent", ~2s settle) AND the
+  POST actually creates a unit — a name that hits routes.ts:4499's
+  already-listed guard returns the RAW DB row (snake_case `deal_id`), so
+  `unit?.dealId` is undefined and no PUT is attempted at all. That
+  snake_case early-return is a latent bug of its own, DEFERRED below.
+- BUG 2 FIXED — **r587's hand-off: the label-WRITE shape, killed at the write
+  boundary rather than site by site.** `available_units.marketing_status` is
+  a codes column (LETTING_STATUSES), yet three writers stamped the LABEL
+  "Available" into it: `server/routes.ts:6005` and `:7673` (the two
+  deal->unit migration handlers) and
+  `client/src/components/unified-add-unit-dialog.tsx:142` — the last of which
+  is a LIVE user path once `VITE_UNIFIED_ADD_UNIT` is flipped in Railway
+  (docs/integrity-gate-results.md:158), and POST /api/available-units does
+  NOT canonicalise on write. Such a row is invisible to every code predicate
+  (routes.ts:177's AVA available_count, the tracker pills, the pathway
+  vacancy, r587's asset-brief funnel) until the next boot heals it.
+  Fixed in TWO layers: the three literals now say `"AVA"`, AND
+  `storage.createAvailableUnit` / `updateAvailableUnit` canonicalise through
+  `legacyToCode` (new `canonicaliseUnitStatus` helper in server/storage.ts)
+  so no future caller can reintroduce the shape. Deliberately NO blanket
+  default: an unrecognised value is left alone, because `legacyToCode`
+  returns null outside the vocabulary and dropping it would lose data.
+- PROVEN in qa/r588-probe.mjs (ALL PASS, `--restore` available) — END TO END
+  over HTTP against the real POST/PATCH, not at the predicate level:
+  a POST carrying the label "Available" stores `AVA` and routes.ts:177's
+  available_count moves 77 -> 78; a PATCH carrying "Solicitors" stores `SOL`.
+  CONTROLS, so the fix cannot pass by blanket-stamping: "Under Negotiation"
+  -> `NEG` (not AVA), an already-canonical `HOT` passes through untouched,
+  `"Something Else"` is left verbatim, and none of those three inflate the
+  AVA count.
+- NUMBERS JUDGED (the round's standing lesson 1): every headline figure on
+  the property page was checked against the board it claims to summarise.
+  The tracker pill row (0 Opportunity · 75 Available · 1 Negotiating · 0 the
+  rest) sums to exactly the 76 available_units rows on Bluewater and agrees
+  with the sidebar's "76 live lettings"; the tenancy card's OCCUPIED 124 +
+  VACANT 76 = its own "200 units"; the funnel's 3 ACTIVE = 1 hots + 2 legals.
+  ONE disagreement found and NOT blind-fixed: the funnel card says
+  "VACANCY 46.3% · 76 of 164 units" (leasing board) while the card directly
+  below says 76 of 200 (tenancy spine) — same numerator, denominators 36
+  apart, neither labelled. r571 chose the 164 basis deliberately, so this is
+  a vocabulary decision for Woody -> UX #286, not a fix.
+- TWO-BOT: **NOT RUN this round — said knowingly.** The journey plus two
+  verified fixes plus their proof harness took the budget; the clean-hand-off
+  streak stays at 44 rather than advancing. r589 is LIGHT and should run both
+  chunks. The two new scenarios below are syntax-checked (`node --check`) but
+  have NOT been executed, so treat their first run as fire-testing:
+  * `victoria · staff-unit-writes-canonicalise-status` — posts a label, a
+    legacy label, and an unrecognised value through POST /api/available-units
+    and asserts AVA / NEG / left-alone respectively, then deletes its rows.
+    Self-skips if there are no properties or the POST is refused.
+  * `victoria · staff-unbalanced-fee-split-is-refused` — asserts the server
+    still refuses a lone BGP House 15% split AND a split with no house row,
+    and that the 400 text explains the imbalance (the client now shows that
+    text to the user, so its wording is load-bearing).
+- SUGGESTIONS: UX #286 (two unlabelled vacancy denominators on one page —
+  label the basis, don't change the maths), #287 (the fee editor never warns
+  that the split as it stands will be rejected, and Save is not blocked; the
+  silent part is fixed but she is still told only after the unit exists).
+- NEW DEFERRED, and worth a look: **routes.ts:4499's already-listed
+  early-return ships the raw DB row** (`res.json({ ...dupe.rows[0], alreadyListed: true })`)
+  — snake_case, unlike every other response from that handler, which comes
+  back through Drizzle in camelCase. Any client reading `unit.dealId`,
+  `unit.propertyId` or `unit.marketingStatus` off that response gets
+  undefined, which is why the fee-split PUT is skipped entirely on a
+  re-add. Cheap fix, needs a caller sweep first.
+- STILL DEFERRED, unchanged: **the sweep's sixth shape is still not taught**
+  — `qa/r575-status-literal-sweep.mjs` looks for COMPARISONS, so it never
+  flagged the three assignments above; I fixed the sites and closed the class
+  at the write boundary, but the census still cannot find the next one.
+  r589: teach it the assignment shape. Also unchanged: chatbgp.ts:2101 and
+  property-asset-brief.ts:607 (raw code with a label fallback — cosmetic,
+  partly UX #284); chatbgp.ts:1852, tenancy-schedule.ts:1654/:1685,
+  daily-briefing.ts:179 (MIXED or NON-deal columns — vocabulary decision
+  first, do NOT blind-fix); unreviewed remainder kyc-orchestrator.ts:906,
+  index.ts:5949, hr-routes.ts:191, crm.ts:4679, microsoft.ts:1135; r581's
+  open Woody policy call (INVESTMENT_STATUSES missing HOT).
+- NOTED, not a bug: the boot canonicaliser's available_units arm
+  (index.ts:1479) omits HOT and OPP from its "already a code" list, but both
+  survive via `ELSE marketing_status`. Harmless as written — do not "fix" it
+  without checking that ELSE arm first.
+- New flakes: none. Radix `Select` options must be clicked via
+  `getByRole('option')` or `locator('[role="option"]').nth(i)` — a bare
+  `text="..."` locator matches a span behind the dialog overlay and times
+  out (cost this round two runs). Option labels concatenate their sub-line
+  ("ANC1 Bluewater - Whole Demisetenancy · 100 · 131,693 sq ft"), so an
+  `exact: true` name match on the visible label also fails; index or regex.
+- tsc clean (`npx tsc --noEmit`, exit 0) after both fixes.
+- FOR r589 (LIGHT): run BOTH two-bot chunks (the streak is owed one) and
+  fire-test the two new scenarios; then the sweep's assignment shape and
+  routes.ts:4499's snake_case early-return.
 
 ### r587 · 2026-09-07 · LIGHT (no journey — r586 had the rotation) · 2 bugs fixed: the asset-brief funnel silently DROPPED every HOTs unit, and the Goad plan's CRM vacancy override never fired · both two-bot chunks clean · 2 suggestions
 - Bring-up: canonical recipe, `npm run qa:pg` ONCE. Smoke GREEN 42/0.

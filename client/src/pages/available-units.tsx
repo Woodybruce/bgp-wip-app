@@ -846,6 +846,7 @@ export default function AvailableUnitsPage() {
     mutationFn: async ({ data, feeRows, feeAllocType }: { data: any; feeRows: FeeAllocationRow[]; feeAllocType: "percentage" | "fixed" }) => {
       const res = await apiRequest("POST", "/api/available-units", data);
       const unit = await res.json();
+      let feeSplitError: string | null = null;
       // The server auto-creates a backing deal and stamps its id on the
       // unit. Fold the user's fee split onto that deal so it lands with
       // BGP House + agents pre-baked instead of empty (which used to
@@ -865,17 +866,17 @@ export default function AvailableUnitsPage() {
           try {
             await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
           } catch (e: any) {
-            toast({
-              title: "Unit added, fee split failed to save",
-              description: e?.message || "Open the deal to set the split there.",
-              variant: "destructive",
-            });
+            // Carry the failure out to onSuccess instead of toasting here:
+            // TOAST_LIMIT is 1, so a toast raised inside mutationFn is
+            // evicted by onSuccess's a moment later and the user is told
+            // "Unit added" with no hint the split was dropped (r588).
+            feeSplitError = e?.message || "Open the deal to set the split there.";
           }
         }
       }
-      return unit;
+      return { unit, feeSplitError };
     },
-    onSuccess: () => {
+    onSuccess: ({ feeSplitError }: { unit: any; feeSplitError: string | null }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       invalidateDealCaches();
       setCreateOpen(false);
@@ -883,7 +884,15 @@ export default function AvailableUnitsPage() {
       setUnitFeeRows([]);
       setUnitFeeAllocType("percentage");
       setShowAllUnitFields(false);
-      toast({ title: "Unit added" });
+      if (feeSplitError) {
+        toast({
+          title: "Unit added — fee split NOT saved",
+          description: feeSplitError,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Unit added" });
+      }
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1079,11 +1088,9 @@ export default function AvailableUnitsPage() {
           try {
             await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
           } catch (e: any) {
-            toast({
-              title: "Promoted, but fee split failed to save",
-              description: e?.message || "Open the deal to set the split there.",
-              variant: "destructive",
-            });
+            // Same TOAST_LIMIT=1 eviction as the create path (r588) — hand
+            // the failure to onSuccess so it is the toast that survives.
+            json.feeSplitError = e?.message || "Open the deal to set the split there.";
           }
         }
       }
@@ -1096,7 +1103,13 @@ export default function AvailableUnitsPage() {
       // Surface the server's AML warn-but-allow result. Promotion went
       // through, but some counterparties are still missing KYC — flag it
       // so Layla can chase before the deal reaches exchange.
-      if (json?.amlWarning?.message) {
+      if (json?.feeSplitError) {
+        toast({
+          title: "Promoted — fee split NOT saved",
+          description: json.feeSplitError,
+          variant: "destructive",
+        });
+      } else if (json?.amlWarning?.message) {
         toast({
           title: "Promoted — AML follow-up needed",
           description: json.amlWarning.message,

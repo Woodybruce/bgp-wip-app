@@ -4291,6 +4291,75 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r588: available_units.marketing_status is a CODES column, but three
+  // writers stamped the LABEL "Available" into it (routes.ts's two
+  // deal->unit migration handlers and the unified add-unit dialog). Such a
+  // row is invisible to every code predicate — the AVA available_count, the
+  // tracker pills, the pathway vacancy, the asset-brief funnel — until the
+  // next boot canonicalises it. The write boundary now canonicalises
+  // (storage.createAvailableUnit / updateAvailableUnit), so a posted label
+  // must come back as a code. CONTROLS ride along so the guard cannot pass
+  // by blanket-stamping everything AVA.
+  await step(page, p, 'staff-unit-writes-canonicalise-status', async () => {
+    const got = await page.evaluate(async (round) => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const props = await (await fetch('/api/crm/properties', { credentials: 'include', headers: h })).json();
+      const rows = Array.isArray(props) ? props : (props.data || props.properties || []);
+      if (!rows.length) return { skip: 'no properties' };
+      const mk = async (name, marketingStatus) => {
+        const r = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: h,
+          body: JSON.stringify({ propertyId: rows[0].id, unitName: name, marketingStatus, sqft: 900 }) });
+        return r.ok ? await r.json() : { __status: r.status };
+      };
+      const made = [];
+      const label = await mk(`QA-R588-LBL-A R${round}`, 'Available');
+      if (label.__status) return { skip: `POST refused (${label.__status})` };
+      made.push(label.id);
+      const neg = await mk(`QA-R588-LBL-N R${round}`, 'Under Negotiation');
+      if (!neg.__status) made.push(neg.id);
+      const unknown = await mk(`QA-R588-LBL-U R${round}`, 'Something Else');
+      if (!unknown.__status) made.push(unknown.id);
+      // Read back through the tracker endpoint the pills read.
+      const units = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
+      const all = Array.isArray(units) ? units : (units?.data || units?.units || []);
+      const find = (id) => all.find(u => u.id === id)?.marketingStatus ?? null;
+      const out = { label: find(label.id), neg: neg.__status ? 'skipped' : find(neg.id), unknown: unknown.__status ? 'skipped' : find(unknown.id) };
+      for (const id of made) await fetch(`/api/available-units/${id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      return out;
+    }, ROUND);
+    if (got.skip) return;
+    if (got.label !== 'AVA') throw new Error(`a unit posted with the label "Available" came back as ${JSON.stringify(got.label)} — a label in a codes column is invisible to every code predicate`);
+    if (got.neg !== 'skipped' && got.neg !== 'NEG') throw new Error(`CONTROL failed: "Under Negotiation" came back as ${JSON.stringify(got.neg)}, not NEG — the canonicaliser is blanket-stamping`);
+    if (got.unknown !== 'skipped' && got.unknown !== 'Something Else') throw new Error(`CONTROL failed: an unrecognised status was rewritten to ${JSON.stringify(got.unknown)} instead of being left alone`);
+  });
+
+  // r588: the fee-allocation rule is that percentage rows must sum to 100%
+  // AND carry the BGP House slice. The add-unit dialog's auto-inserted lone
+  // BGP House row is 15%, so the split it posts is rejected — correctly. The
+  // bug was that the client raised its warning INSIDE mutationFn, where
+  // TOAST_LIMIT=1 let onSuccess's "Unit added" evict it, so the split was
+  // dropped silently. Guard the server rule itself (the client behaviour is
+  // covered visually): an unbalanced split must be refused, not accepted.
+  await step(page, p, 'staff-unbalanced-fee-split-is-refused', async () => {
+    const got = await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const deals = await (await fetch('/api/crm/deals', { credentials: 'include', headers: h })).json();
+      const rows = Array.isArray(deals) ? deals : (deals?.data || deals?.deals || []);
+      if (!rows.length) return { skip: 'no deals' };
+      const id = rows[0].id;
+      const put = (allocations) => fetch(`/api/crm/deals/${id}/fee-allocations`, {
+        method: 'PUT', credentials: 'include', headers: h, body: JSON.stringify({ allocations }) });
+      const lone = await put([{ agentName: 'BGP House', allocationType: 'percentage', percentage: 15, isBgpHouse: true }]);
+      const loneBody = await lone.json().catch(() => ({}));
+      const noHouse = await put([{ agentName: 'Someone', allocationType: 'percentage', percentage: 100, isBgpHouse: false }]);
+      return { lone: lone.status, loneErr: String(loneBody?.error || '').slice(0, 120), noHouse: noHouse.status };
+    });
+    if (got.skip) return;
+    if (got.lone !== 400) throw new Error(`a lone BGP House 15% split was accepted (HTTP ${got.lone}) — the 100% rule is not holding`);
+    if (!/sum to 100/i.test(got.loneErr)) throw new Error(`the 400 did not explain the imbalance: "${got.loneErr}" — the client surfaces this text to the user`);
+    if (got.noHouse !== 400) throw new Error(`a split with no BGP House row was accepted (HTTP ${got.noHouse})`);
+  });
+
   // r585: the My Portfolio dashboard widget was doubly broken.
   //   (a) /api/dashboard/my-portfolio selected `c.job_title` from crm_contacts,
   //       which has no such column (it is `role`) — so the endpoint 500'd for

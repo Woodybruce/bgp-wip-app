@@ -13,6 +13,39 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+286. 2026-09-07 · BGP staff / desktop 1440px (QA r588) · Victoria reading a
+   property page to tell a landlord where his scheme stands · the SAME page
+   prints two different vacancy rates from two different unit boards, one
+   above the other. The PIPELINE & PERFORMANCE card says "VACANCY 46.3% ·
+   76 of 164 units" (leasing_schedule_units, status='Occupied' exactly — a
+   denominator r571 chose deliberately so the client brief agrees with the
+   leasing board's own pills). The Tenancy Schedule card immediately below
+   says "200 units · OCCUPIED 124 · VACANT 76" — the same 76 vacant over a
+   200-unit denominator, i.e. 38%. Both are internally right; the page never
+   says which board each is counting, and the app's own Data linkage panel
+   calls the tenancy schedule "TENANCY SCHEDULE (SPINE)", so a reader would
+   assume 200 is the authoritative unit count and 46.3% is wrong.
+   Suggestion: label the basis on the funnel card the way the 2026-08-08
+   occupancy fix labelled the dashboard tiles ("board units only" vs "full
+   rent roll") — the numbers can stay as they are, the ambiguity is the bug.
+   NOT a blind fix: choosing one denominator is a vocabulary decision for
+   Woody, and r571 already made a deliberate call on the client-facing side.
+
+287. 2026-09-07 · BGP staff / desktop 1440px (QA r588) · adding a released
+   unit to the Letting Tracker and setting the fee split in the same dialog ·
+   the fee editor auto-inserts a locked "BGP House 15%" row, so the split it
+   posts totals 15% until an agent row is given a percentage — and the
+   server (correctly) refuses any percentage split that does not sum to 100%.
+   The dialog shows "Equal split (each 85.0%)" as a helper but nothing warns
+   that the split as it stands will be rejected, and Save is not blocked.
+   r588 fixed the silent part (the failure toast was being evicted — see the
+   round log), so she is now TOLD; but she is told after the unit is already
+   created, and has to reopen the deal to fix it. Suggestion: surface the
+   editor's own `staffPctIsBalanced` state in the dialog (an inline
+   "85% still unallocated" line) and either disable Save or skip the doomed
+   PUT while the split is unbalanced. Not implemented — needs Woody's call on
+   whether Save should be blocked or just warned.
+
 284. 2026-09-07 · Landsec client + BGP staff / desktop (QA r587) · reading the
    PIPELINE & PERFORMANCE funnel on a property, drilling into the HOTS
    lozenge to see what is about to sign · the drilldown lists un-dealed
