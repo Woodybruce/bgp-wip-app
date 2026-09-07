@@ -133,6 +133,21 @@ const TAG_TOKEN_REGEX = /@\[([^\]]+)\]\(tag:(user|company|property|deal|unit|con
 // Covers @ChatBGP / "chat bgp" / bare "@chat" / an AI user-tag token.
 const AI_MENTION_REGEX = /@?chat\s*(bgp|pave|landsec)\b|@chat\b|\(tag:user\/__chatbgp__\)/i;
 
+// A CRM picker that was never touched sends "" for its id, not undefined —
+// so a tracker viewing/offer logged without picking a company banked
+// company_id = '' rather than NULL. Consumers test IS NOT NULL (the asset
+// brief's "link the brand" gap list among them), so a blank string reads as
+// "counterparty recorded" while naming nobody, and the unit falls into the
+// hole between the parties group and the gap list (r594). The interest
+// writer already coalesced every field; these two did not.
+function blankToNull<T extends Record<string, any>>(body: T): T {
+  const out: Record<string, any> = { ...body };
+  for (const k of ["companyId", "contactId", "companyName", "contactName"]) {
+    if (out[k] === "") out[k] = null;
+  }
+  return out as T;
+}
+
 function stripTagTokens(text: string): string {
   return text.replace(TAG_TOKEN_REGEX, "@$1");
 }
@@ -7053,7 +7068,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       const { unitViewings, insertUnitViewingSchema } = await import("@shared/schema");
-      const parsed = insertUnitViewingSchema.safeParse({ ...req.body, unitId: req.params.id });
+      const parsed = insertUnitViewingSchema.safeParse({ ...blankToNull(req.body), unitId: req.params.id });
       if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
       const [row] = await db.insert(unitViewings).values(parsed.data).returning();
       res.json(row);
@@ -7071,7 +7086,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       if (await assertUnitInClientScope(req, vUnit?.propertyId)) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
-      const parsed = insertUnitViewingSchema.partial().omit({ unitId: true }).safeParse(req.body);
+      const parsed = insertUnitViewingSchema.partial().omit({ unitId: true }).safeParse(blankToNull(req.body));
       if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
       const [row] = await db.update(unitViewings).set(parsed.data).where(eq(unitViewings.id, req.params.viewingId as string)).returning();
       res.json(row);
@@ -7119,7 +7134,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       const { unitOffers, insertUnitOfferSchema } = await import("@shared/schema");
-      const parsed = insertUnitOfferSchema.safeParse({ ...req.body, unitId: req.params.id });
+      const parsed = insertUnitOfferSchema.safeParse({ ...blankToNull(req.body), unitId: req.params.id });
       if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
       const [row] = await db.insert(unitOffers).values(parsed.data).returning();
       res.json(row);
@@ -7137,7 +7152,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       if (await assertUnitInClientScope(req, oUnit?.propertyId)) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
-      const parsed = insertUnitOfferSchema.partial().omit({ unitId: true }).safeParse(req.body);
+      const parsed = insertUnitOfferSchema.partial().omit({ unitId: true }).safeParse(blankToNull(req.body));
       if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
       const [row] = await db.update(unitOffers).set(parsed.data).where(eq(unitOffers.id, req.params.offerId as string)).returning();
       res.json(row);

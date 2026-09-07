@@ -26,6 +26,17 @@ import { pool } from "./db";
 
 const router = Router();
 
+// Units "actively in play" on the Letting Tracker. available_units
+// .marketing_status holds CODES (boot canonicaliser + canonicaliseUnitStatus
+// on write), and the code for Heads of Terms is HOT — the alternation used to
+// offer 'hots', which needs a trailing s, so the hottest pre-solicitors stage
+// matched NOTHING: absent from the tracker-parties group AND absent from the
+// "link the brand" gap list built to catch exactly that silence (r594).
+// 'hot' also still matches the legacy labels "HOTs" / "Heads of Terms".
+// One constant, read by every query below — a value set that grows must not
+// leave four copies of a predicate behind.
+const IN_PLAY_STATUS_RX = "'(neg|offer|hot|sol|exc|terms)'";
+
 interface FocusItem {
   id: string;
   text: string;
@@ -1069,7 +1080,7 @@ router.get("/api/company-portfolio/:companyId/linked-contacts", requireAuth, asy
          SELECT au.id, au.unit_name, au.marketing_status, au.tenant_company_id, p.name AS property_name
            FROM available_units au JOIN crm_properties p ON p.id = au.property_id
           WHERE au.property_id IN (${PROPS})
-            AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+            AND lower(COALESCE(au.marketing_status,'')) ~ ${IN_PLAY_STATUS_RX}
        )
        SELECT DISTINCT ON (c.company_id) c.*, u.unit_name, u.marketing_status, u.property_name
          FROM active_units u JOIN crm_contacts c ON c.company_id = u.tenant_company_id
@@ -1096,7 +1107,7 @@ router.get("/api/company-portfolio/:companyId/linked-contacts", requireAuth, asy
       `SELECT au.unit_name, au.marketing_status, p.name AS property_name
          FROM available_units au JOIN crm_properties p ON p.id = au.property_id
         WHERE au.property_id IN (${PROPS})
-          AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+          AND lower(COALESCE(au.marketing_status,'')) ~ ${IN_PLAY_STATUS_RX}
           AND au.tenant_company_id IS NULL AND au.deal_id IS NULL
         ORDER BY p.name, au.unit_name LIMIT 15`,
       [cid]
@@ -1327,7 +1338,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
          SELECT au.id, au.unit_name, au.marketing_status, au.tenant_company_id, au.deal_id
            FROM available_units au
           WHERE au.property_id = $1
-            AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+            AND lower(COALESCE(au.marketing_status,'')) ~ ${IN_PLAY_STATUS_RX}
        ),
        parties AS (
          SELECT u.unit_name, u.marketing_status, u.tenant_company_id AS company_id
@@ -1373,7 +1384,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
     const unlinkedQ = pool.query(
       `SELECT au.unit_name, au.marketing_status FROM available_units au
         WHERE au.property_id = $1
-          AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+          AND lower(COALESCE(au.marketing_status,'')) ~ ${IN_PLAY_STATUS_RX}
           AND au.tenant_company_id IS NULL AND au.deal_id IS NULL
           AND NOT EXISTS (SELECT 1 FROM unit_offers o WHERE o.unit_id = au.id AND o.company_id IS NOT NULL)
         ORDER BY au.unit_name LIMIT 8`,

@@ -92,21 +92,145 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r594 · 2026-09-07 · FULL (rotation #4 BGP staff · mobile 390px) · ROUND IN PROGRESS
+### r594 · 2026-09-07 · FULL (rotation #4 BGP staff · mobile 390px) · 2 bugs fixed, both the LABEL-vs-CODE class landing in the SAME hole from two sides — the asset brief's four "in play" queries cannot match the code HOT, and the tracker's offer/viewing writers bank '' where every consumer tests IS NOT NULL · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
 - Two-bot on `QA_CROSS_FILE=/tmp/qa-cross-594.json`: chunk 1
   `QA_PERSONAS=victoria` **141 [ok]**, exact baseline (6x400 + 1x409), no
-  `[skip]`, no flow failures. Chunk 2 `mark,woody,nick,sam` was SIGTERMed at
-  the 600s cap with **179 [ok]** and 12 issue lines that are ALL
-  `Target page, context or browser has been closed` (the kill closing
-  chromium, incl. the three `login harness-crash` lines for woody/nick/sam
-  who never got to run) — its http tally to that point was 10x403 + 2x503,
-  the documented client class. Re-ran `QA_PERSONAS=woody,nick,sam` alone:
-  **24 [ok], 0 issues**, which confirms those three crashes were the kill.
-  mark's last 9 scenarios are UNVERIFIED this round.
-- Triage: nothing outside documented noise so far.
-- Journey + fixes in progress.
+  `[skip]`. Chunk 2 `mark,woody,nick,sam` was SIGTERMed at the 600s cap with
+  **179 [ok]** and 12 issue lines that are ALL `Target page, context or
+  browser has been closed` — the kill closing chromium, including the three
+  `login harness-crash` lines for woody/nick/sam who never ran. Its http
+  tally to that point was 10x403 + 2x503, the documented client class.
+  Re-ran `QA_PERSONAS=woody,nick,sam` alone: **24 [ok], 0 issues**, which
+  proves those crashes were the kill. **mark's last 9 scenarios are
+  UNVERIFIED this round** — `client-schedule-cells-read-like-the-staff-view`
+  onward; r595 should run `QA_PERSONAS=mark` on its own. NEW GOTCHA: the cap
+  no longer reliably backgrounds the chunk, so chunk 2 can die mid-run;
+  read the tally, never the exit code (lesson 7).
+  POST-FIX: smoke **GREEN 42/0**, victoria chunk **142 [ok]** at the same
+  baseline with the new scenario [ok] — fire-tested, not just syntax-checked.
+  **Streak 50.**
+- JOURNEY — Victoria on an iPhone UA at 390px, one-handed. "Month-end, on the
+  train: open the WIP report to see what's chaseable; then the agent rings —
+  the tenant at Bluewater has offered on a unit, log it and check it reaches
+  the deal." Deliberately different ground from r586 (which did the viewing
+  write, /available, /properties/:id, /deals). Screenshots
+  `qa/smoke-shots/r594-*.png` and `r594b-*.png`; harness
+  `qa/r594-staff-mobile-journey.mjs` + `qa/r594-leg2.mjs`, both built on
+  r592's phone harness (H-overflow / widest elements / sub-44px tap targets).
+  * **The WIP report is a genuinely good phone tool** — `/deals/report` at
+    390px: 7 transactions, total net fees £250,000, the eight filter
+    sections, NET FEES BY MONTH/CLIENT/PROPERTY/TEAM/CONTACT and a 7-row
+    deal detail, no H-overflow, no error boundary. Its numbers ADD UP:
+    the DEAL STATUS fold reads NEGOTIATING 2 · AVAILABLE 1 · EXCHANGED 1 ·
+    SOLICITORS 2 · HOTS 1 = 7, and £250K lands in Sep-26 and against the one
+    deal that carries it. HOT is present and labelled here.
+  * THE WRITE, works end to end: `unit-offer-<id>` on the NEG unit
+    "Bluewater MSU9 letting" → Add Offer → company picker, date, £62,500 rent,
+    10-yr term, 9 months rent free, Year 5 break, £15,000 premium, comments →
+    Save. Counter went "Offer (1)" → **"Offer (2)"**, survived a full reload,
+    the dialog reopens with both offers, every field intact in `unit_offers`,
+    no h-overflow in the 372px dialog inside 390px.
+  * `/deals` on the phone lands on the **Deals** tab (3 rows, chips ALL 3 /
+    SOLICITORS 2 / EXCHANGED 1) while the sibling WIP Report tab shows 7 and
+    `/api/crm/deals` returns 8 (NEG 2 · HOT 1 · SOL 2 · EXC 1 · AVA 1 ·
+    null 1). NOT a bug — `?excludeTrackerDeals=true`, the documented
+    "Deals CRM is for instructed deals" rule; pre-SOL work lives on the
+    tracker. Worth knowing before judging that count again.
+  * The WIP report's "— All Teams" label over a National-Leasing team context
+    is also NOT a bug: the server stopped scoping /api/wip by team and a
+    previous round deliberately fixed the label to say so (wip-report.tsx
+    ~1396). Checked so the next round doesn't re-report it.
+  * `[data-testid="toggle-deal-kyc"]` is in the DOM on the phone deal page
+    but was not clickable from a cold goto in leg 2 (visible-timeout); it
+    tapped fine when the page had settled in leg 1. Harness timing, logged as
+    a gotcha, not triaged as a bug.
+- BUG 1 FIXED — **a unit at Heads of Terms is invisible to the asset brief,
+  in both the group that names who is negotiating it AND the gap list built
+  to catch that silence.** `server/property-asset-brief.ts` gates "units
+  actively in play" with `lower(marketing_status) ~
+  '(neg|offer|sol|exc|hots|terms)'` in FOUR places (:1072 and :1099, the
+  brand-level brief; :1330 and :1376, the property-level one).
+  `available_units.marketing_status` holds CODES — boot canonicaliser plus
+  `canonicaliseUnitStatus` on write since r588 — and the code is **HOT**,
+  three letters, while the alternation offers `hots`, which needs a trailing
+  s. `'hot'` matches NOTHING in that set. So the hottest pre-solicitors stage
+  is absent from `parties` (nobody named as negotiating it) and absent from
+  the `unlinkedQ` "link the brand" gap list — the list that exists precisely
+  because Bluewater's NEG units once came up silently empty (2026-08-05).
+  It falls into the hole between the two. Fourteenth round of the
+  label-vs-code class; r587 fixed the asset-brief FUNNEL's HOT blindness and
+  these four predicates in the same file were never touched.
+  FIX: one module constant `IN_PLAY_STATUS_RX =
+  '(neg|offer|hot|sol|exc|terms)'` read by all four queries — lesson 11's
+  sharpened form, one shared constant instead of four copies.
+  PROVEN with controls, `qa/r594-probe.mjs` **16/16 PASS**: HOT is unmatched
+  by the old regex and matched by the new one; NEG/SOL/EXC match BOTH (the
+  in-play set is unchanged); **CONTROLS AVA, OPP and WIT match NEITHER**, so
+  the fix did not widen to every unit; the legacy labels "Heads of Terms" and
+  "HOTs" still match (`hot` is a substring of both) while legacy "Available"
+  still matches neither. Then over the real fixture: a Bluewater unit at NEG
+  IS on the gap list (baseline not vacuous) → stepped to HOT it **VANISHES**
+  under the old regex → **BACK** under the new one → and back at AVA it is
+  off the list under the new regex too. Same shape for the parties group:
+  brand "Testco Gym" on a HOT unit is named under the new regex and not the
+  old. Probe restores the fixture and re-reads to confirm.
+  NOT visually verified — the asset brief has no phone surface this journey
+  reached; predicate-level with near-miss controls, per lesson 3.
+- BUG 2 FIXED — **the same hole, from the write side: a tracker offer or
+  viewing logged without picking a company banks `company_id = ''`, and
+  every consumer tests `IS NOT NULL`.** A `CrmPicker` that was never touched
+  posts `""` (that IS the empty form state), and neither
+  `POST/PATCH /api/available-units/:id/offers` nor `.../viewings` coalesced
+  it — they hand `req.body` straight to the insert schema, which passes `''`
+  through. `''` then reads as "counterparty recorded" to
+  `unlinkedQ`'s `NOT EXISTS (… AND o.company_id IS NOT NULL)`, dropping the
+  unit off the gap list, while `parties`' LATERAL yields `''` and joins to
+  nothing — so the unit names nobody AND is not flagged as naming nobody.
+  Lesson 11 again, and the tell was in the file: the **interest** writer
+  (routes.ts:4276) already coalesces every field with `|| null`; its two
+  siblings never did. Found by reading back this round's own journey write,
+  which stored `contactId: ""` (lesson 8 — the toast said saved, the row said
+  `""`).
+  FIX: one `blankToNull()` helper in `server/routes.ts` over
+  companyId/contactId/companyName/contactName, applied to the offer and
+  viewing POST and PATCH — the write boundary, r588's lesson.
+  VERIFIED LIVE against the running server, `qa/r594-verify.mjs` (6 PASS +
+  the census note below): posting exactly what the phone dialog sends banks
+  **NULL** for both ids and both names, the sibling viewing writer too, and a
+  HOT unit whose only offer names no company **IS** on the gap list.
+  **CONTROL not vacuous**: PATCH that offer with a real `companyId` and the
+  unit correctly LEAVES the gap list — the coalesce is not eating good ids.
+  Census after cleanup au **76** / ts **201** / ls **172**; ls 172 is the
+  DOCUMENTED victoria-chunk drift from 169, not a regression (the verifier
+  asserts 169 and so reports one FAIL — read it as the known drift).
+  `npx tsc --noEmit` clean for both fixes.
+- NEW SCENARIO: `victoria · staff-tracker-activity-writes-null-not-blank` in
+  `qa/two-bot-round.mjs` — posts an offer and a viewing with the blank picker
+  ids the dialog really sends, fails loudly on a banked `''`, carries a
+  real-companyId control so the coalesce can't pass by blanking everything,
+  and tears down its own rows. [ok] in the post-fix chunk.
+- CLEANED UP after the journey: the journey's offer row and — worth its own
+  line — a **stray "Honi" company the journey itself created**, which is UX
+  #298: the picker ranked `Create company "Honi"` ABOVE the real match
+  "Honi Poke", and the obvious thumb tap made a duplicate brand. Fixture
+  restored to au 76.
+- SUGGESTIONS: **UX #298** (put the combobox's create row BELOW the matches,
+  or only offer it from the empty state — `EntityCombobox` suppresses it only
+  on an EXACT label match, so every partial type-ahead ranks "create new"
+  first; it cost this round a duplicate company). **UX #299** (the deal
+  behind a unit shows "Tenant not set" and nothing of the £62,500 offer just
+  logged one tap away — surface a "Latest offer" line with a one-tap
+  "make this the tenant").
+- DEFERRED, still: the admin `POST /api/admin/letting-tracker-focus`
+  'Available' literal (routes.ts:5916) — untouched this round, the journey
+  and its two fixes took the budget; still the cheapest one on the board.
+  Also #297 and the vacancy-basis question (#290/#286/#295) — Woody's calls.
+  And the residual QA leasing rows + 5 QA deals in the fixture.
+- FOR r595: LIGHT round. Run `QA_PERSONAS=mark` ON ITS OWN first — this
+  round never verified mark's last 9 scenarios. Then the 'Available' literal.
+  Note the sweep's `assign` kind is still fully read; don't re-run it.
 
 ### r593 · 2026-09-07 · LIGHT (no journey — r592 took rotation #3) · deferred pool: the en-dash guard hole PROMOTED TO A BUG and fixed, both sides · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

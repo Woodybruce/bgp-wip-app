@@ -4557,6 +4557,47 @@ async function victoriaRound(page, cross) {
     if (r.sawDead) throw new Error('my-portfolio still shows a WITHDRAWN deal — the dead-deal filter is comparing status against legacy LABELS again');
   });
 
+  // r594: a CRM picker that was never touched posts "" for its id, so a
+  // tracker offer/viewing logged without picking a company banked
+  // company_id = '' rather than NULL. Every consumer tests IS NOT NULL — the
+  // asset brief's "link the brand" gap list among them — so a blank string
+  // read as "counterparty recorded" while naming nobody, and the unit fell
+  // into the hole between the parties group and the gap list. Both writers
+  // now coalesce blanks (the interest writer always did).
+  await step(page, p, 'staff-tracker-activity-writes-null-not-blank', async () => {
+    const r = await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const units = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
+      const unit = (Array.isArray(units) ? units : []).find(u => u.marketingStatus === 'AVA');
+      if (!unit) return { skipped: 'no AVA unit' };
+      const blank = { companyId: '', contactId: '', companyName: '', contactName: '' };
+      const post = async (kind, extra) => {
+        const res = await fetch(`/api/available-units/${unit.id}/${kind}`, { method: 'POST', credentials: 'include',
+          headers: h, body: JSON.stringify({ ...blank, ...extra }) });
+        return res.ok ? await res.json() : { __status: res.status };
+      };
+      const offer = await post('offers', { offerDate: '2026-09-07', rentPa: 4321 });
+      const viewing = await post('viewings', { viewingDate: '2026-09-07' });
+      // control — a real id must still be stored, so the coalesce is not
+      // simply blanking every link.
+      const cos = await (await fetch('/api/crm/companies', { credentials: 'include', headers: h })).json();
+      const co = (Array.isArray(cos) ? cos : (cos.data || []))[0];
+      const named = co ? await post('offers', { offerDate: '2026-09-07', companyId: co.id }) : null;
+      for (const o of [offer, named]) if (o?.id) await fetch(`/api/available-units/offers/${o.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      if (viewing?.id) await fetch(`/api/available-units/viewings/${viewing.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      return { offer, viewing, named, coId: co?.id || null };
+    });
+    if (r.skipped) return;
+    if (r.offer?.__status || r.viewing?.__status) throw new Error(`write refused: offer ${r.offer?.__status} viewing ${r.viewing?.__status}`);
+    for (const [kind, row] of [['offer', r.offer], ['viewing', r.viewing]]) {
+      for (const k of ['companyId', 'contactId']) {
+        if (row?.[k] === '') throw new Error(`${kind}.${k} banked a BLANK STRING — every IS NOT NULL consumer now reads it as a recorded counterparty`);
+        if (row?.[k] !== null && row?.[k] !== undefined) throw new Error(`${kind}.${k} came back as ${JSON.stringify(row[k])}, expected null`);
+      }
+    }
+    if (r.coId && r.named?.companyId !== r.coId) throw new Error('CONTROL FAILED: a real companyId was not stored — the coalesce is eating good ids');
+  });
+
   await step(page, p, 'staff-digest-flags-kyc-on-a-solicitors-deal', async () => {
     const r = await page.evaluate(async (round) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };

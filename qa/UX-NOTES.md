@@ -13,6 +13,34 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+298. 2026-09-07 · BGP staff / mobile 390px (QA r594) · Victoria logging a
+   verbal offer on a Bluewater unit from her phone, thumb-typing the tenant's
+   name into the Company picker · she typed "Honi" and the panel put
+   **Create company "Honi"** in the FIRST row, with the actual match
+   "Honi Poke" second. The obvious thumb action created a DUPLICATE company
+   record — which is exactly what happened in this round's journey, and only
+   the DB read caught it (the offer then hung off a brand-new empty "Honi"
+   instead of Honi Poke). `EntityCombobox` suppresses the create row only on
+   an EXACT label match, so any partial-but-unambiguous type-ahead ranks
+   "create a new one" above the record you were looking for. Suggestion: move
+   the create row BELOW the matching items (it keeps its green pill, so it is
+   still findable), or hide it entirely while at least one item matches the
+   search and only offer it from the empty state. Highest value on the phone,
+   where the list is one thumb-width from the keyboard.
+
+299. 2026-09-07 · BGP staff / mobile 390px (QA r594) · Victoria took an offer
+   at the unit — £62,500 p.a., 10 years, Year 5 break, 9 months rent free —
+   then opened the deal behind that unit to move it on · the deal
+   ("Bluewater MSU9 letting", NEG) shows **"Tenant not set"** and a
+   "Link tenant" prompt, and nothing of the offer anywhere on it: no rent, no
+   term, no offeror, no hint that an offer exists. The two records live one
+   tap apart on the tracker card and neither knows about the other, so the
+   figures she just typed have to be re-typed onto the deal by hand.
+   Suggestion: a "Latest offer" line on the deal Overview (offeror · rent ·
+   term · date, linking back to the unit's Offers dialog) with a one-tap
+   "make this the tenant" that fills the tenant from the offer's company.
+   Cheap, and it closes the loop the phone journey walks every time.
+
 296. 2026-09-07 · BGP staff / API-level (QA r593) · an agent deletes a unit
    from the Letting Tracker and later re-lists it · the listing comes back at
    the next restart under a name no one typed — "Bluewater Shopping Centre –
