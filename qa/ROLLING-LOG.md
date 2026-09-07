@@ -92,6 +92,30 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r601 · 2026-09-07 · LIGHT (r600 had the journey) — ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- **REGRESSION AT BASELINE.** Chunked recipe, three Bash calls sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-601.json`: victoria **146 ok** / 6x400 + 1x409;
+  mark head (QA_UNTIL=client-properties-table-readonly-cells) **176 ok** /
+  9x403 + 1x503; mark tail + woody/nick/sam **37 ok** / 1x403. Sum **359 ok**,
+  **18 issues** — exactly the r600 baseline. **Streak 55.**
+- Triage: nothing new. All 18 are the documented set (fee-split 400s,
+  drilldown 409, client-gateway 403s, keyless-AI 503). r600's brochure-404
+  flake did NOT reproduce, as predicted — it needs all personas in one process.
+- Setup note: mark's first chunk died at `login()` with **ECONNRESET**
+  (two-bot-round.mjs:134) after a 25s settle; a 45s settle was clean, and 45s
+  was used for every later chunk. Treat 25s as too short on this container.
+- **HARNESS FIXED (r600's hand-off):** the positional arg was ONLY ever a
+  round number, so `node qa/two-bot-round.mjs victoria` parsed to `ROUND=NaN`
+  and ran all five personas. It now accepts **either** an integer round number
+  **or** a persona list (`victoria,mark` — same effect as QA_PERSONAS=), and
+  **exits 2 loudly** on anything else. Verified: `banana` and `victoria,marc`
+  both print usage + persona list and exit 2; `node qa/two-bot-round.mjs sam`
+  considered ONLY sam's 11 scenarios (1 ok + 10 filtered under QA_ONLY),
+  victoria/mark/woody/nick never ran; integer arg unchanged (all three
+  regression chunks above passed `601`).
+
 ### r600 · 2026-09-07 · FULL · journey: **Landsec client · phone 390px** (rotation slot #3) · r599's hand-off ANSWERED · 1 bug fixed (the Messages unread badge with nothing behind it) · 6 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).

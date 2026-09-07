@@ -5,7 +5,7 @@
 // on the client side. Logs every console error, failed request, blank page,
 // dead-end and broken flow to qa/logs/ as JSONL + screenshots.
 //
-// Usage:  node qa/two-bot-round.mjs [roundNumber]
+// Usage:  node qa/two-bot-round.mjs [roundNumber | persona[,persona...]]
 // Server: expects the dev server on http://localhost:5000 with a fixture DB.
 //         Entity IDs (Landsec, Bluewater, the in-slice brand) are resolved by
 //         NAME at startup — see resolveFixture — so the harness works against
@@ -21,8 +21,33 @@ const nodeRequire = createRequire(import.meta.url);
 // Chunked runs (600s foreground-exec cap, r447): QA_PERSONAS picks which
 // persona rounds run; QA_CROSS_FILE persists the shared `cross` state between
 // chunks so staff-creates → client-sees/rival-403 checks still line up.
-const PERSONAS = (process.env.QA_PERSONAS || 'victoria,mark,woody,nick,sam')
-  .split(',').map((s) => s.trim()).filter(Boolean);
+const KNOWN_PERSONAS = ['victoria', 'mark', 'woody', 'nick', 'sam'];
+// The positional arg is the ROUND NUMBER and used to be nothing else, so
+// `node qa/two-bot-round.mjs victoria` parsed to ROUND=NaN and ran ALL FIVE
+// personas in one process — it cost r600 its chunking and stamped "RNaN" into
+// the rows it created. It now also accepts a persona list (same effect as
+// QA_PERSONAS=…), and anything else exits 2 loudly rather than running wide.
+const ARG = (process.argv[2] || '').trim();
+let ROUND = 1;
+let argPersonas = null;
+if (ARG) {
+  if (/^\d+$/.test(ARG)) {
+    ROUND = parseInt(ARG, 10);
+  } else {
+    const names = ARG.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const unknown = names.filter((n) => !KNOWN_PERSONAS.includes(n));
+    if (unknown.length) {
+      console.error(`[two-bot] unrecognised argument: "${ARG}"`);
+      console.error('[two-bot] usage: node qa/two-bot-round.mjs [roundNumber | persona[,persona...]]');
+      console.error(`[two-bot] personas: ${KNOWN_PERSONAS.join(', ')}`);
+      process.exit(2);
+    }
+    argPersonas = names;
+  }
+}
+const PERSONAS = argPersonas
+  || (process.env.QA_PERSONAS || KNOWN_PERSONAS.join(','))
+    .split(',').map((s) => s.trim()).filter(Boolean);
 const CROSS_FILE = process.env.QA_CROSS_FILE || '';
 
 // Scenario filters (r597). A persona chunk that is killed at the Bash cap
@@ -52,7 +77,6 @@ function scenarioSelected(scenario) {
 }
 
 const BASE = 'http://localhost:5000';
-const ROUND = parseInt(process.argv[2] || '1', 10);
 const LOGDIR = new URL('./logs/', import.meta.url).pathname;
 mkdirSync(LOGDIR, { recursive: true });
 
