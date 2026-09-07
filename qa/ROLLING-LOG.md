@@ -181,6 +181,8 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - Suggestions: UX #292 (deleting a tracker listing leaves its leasing row and
   its backing deal, and the deal resurrects the listing at boot), UX #293 (one
   unit, three name conventions — bare, comma-joined, en-dash-prefixed).
+- POST-FIX: `bash qa/run-smoke.sh` re-run after both server changes —
+  **GREEN 42/0**.
 - `npx tsc --noEmit` clean after both fixes. No new flakes; chunk 2 hit the
   600s Bash cap and had to be read from its redirect file (the documented
   harness trap — the run itself was fine).
