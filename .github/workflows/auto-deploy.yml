@@ -48,6 +48,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Production (nixpacks.toml) ships poppler_utils; the evidence-plan PDF
+      # renderer and its regression test shell out to pdfinfo/pdftoppm, so
+      # the runner needs the same tools or the smoke goes red on every push.
+      - name: Install poppler (pdfinfo / pdftoppm)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+
       - name: Typecheck
         run: npm run check -- --incremental false
 
