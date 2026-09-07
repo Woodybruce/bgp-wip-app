@@ -66,7 +66,6 @@ const HuntersLetting = lazy(() => import("@/pages/hunters-letting"));
 const HuntersInvestment = lazy(() => import("@/pages/hunters-investment"));
 const Leads = lazy(() => import("@/pages/leads"));
 const Subscriptions = lazy(() => import("@/pages/subscriptions"));
-const ExperianAudit = lazy(() => import("@/pages/experian-audit"));
 const ChatBGP = lazy(() => import("@/pages/chatbgp"));
 const Instructions = lazy(() => import("@/pages/instructions"));
 const Enrichment = lazy(() => import("@/pages/enrichment"));
@@ -350,7 +349,6 @@ function Router() {
       <Route path="/investment-comps">{() => <InvestmentComps />}</Route>
       <Route path="/leads" component={Leads} />
       <Route path="/subscriptions" component={Subscriptions} />
-      <Route path="/experian-audit" component={ExperianAudit} />
       <Route path="/chatbgp" component={ChatBGP} />
       <Route path="/enrichment" component={Enrichment} />
       <Route path="/admin/dedupe" component={AdminDedupe} />

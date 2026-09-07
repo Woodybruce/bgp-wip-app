@@ -321,23 +321,10 @@ export async function runAllAmlChecks(
         (s: any) => s.status === "strong_match" || s.status === "potential_match",
       );
 
-      // Experian commercial credit — non-fatal, augments the investigation
-      let experianReport: any = null;
-      try {
-        const { fetchCommercialCredit, isExperianConfigured, persistExperianTurnover } = await import("./experian");
-        if (isExperianConfigured()) {
-          experianReport = await fetchCommercialCredit(company.companies_house_number);
-          if (experianReport && experianReport.turnover != null && experianReport.turnover > 0) {
-            await persistExperianTurnover(pool, {
-              companyId: company.id,
-              companyName: companyData.profile?.company_name || company.name,
-              report: experianReport,
-            });
-          }
-        }
-      } catch (e: any) {
-        warnings.push(`Experian credit lookup failed: ${e?.message || "unknown"}`);
-      }
+      // Experian removed 2026-09-07 (no account) — financial strength comes
+      // from the covenant engine below. `experian: null` keeps the stored
+      // investigation shape stable for readers of historical rows.
+      const experianReport: any = null;
 
       // House covenant score (free data: CH + Gazette + accounts) — non-fatal.
       // Every KYC'd counterparty is also added to the nightly covenant watch.

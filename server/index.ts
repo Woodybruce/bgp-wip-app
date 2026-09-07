@@ -3051,7 +3051,6 @@ import brandImagesRouter from "./brand-images";
 import instagramRouter from "./instagram";
 import pipnetRequirementsRouter from "./pipnet-requirements";
 import purgeApolloContactsRouter from "./purge-apollo-contacts";
-import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw, sandboxAudit } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
 import dealVerdictsRouter from "./deal-verdicts";
@@ -4004,81 +4003,9 @@ app.use("/api/branding/assets", express.static(
   app.get("/api/rocketreach/health", async (_req, res) => {
     res.json(await rocketreachHealth());
   });
-  app.get("/api/experian/health", async (_req, res) => {
-    res.json(await experianHealth());
-  });
-  app.post("/api/experian/credit-report", requireAuth, async (req, res) => {
-    try {
-      if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
-      const companyNumber = String(req.body?.companyNumber || "").trim();
-      if (!companyNumber) return res.status(400).json({ error: "companyNumber required" });
-      const report = await fetchCommercialCredit(companyNumber);
-      if (!report) return res.status(404).json({ error: "No Experian credit report found for that company" });
-      res.json(report);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || "Unknown error" });
-    }
-  });
-  // Temporary sandbox debug route — remove after testing
-  app.post("/api/experian/debug-raw", requireAuth, async (req, res) => {
-    try {
-      if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
-      const companyNumber = String(req.body?.companyNumber || "").trim();
-      if (!companyNumber) return res.status(400).json({ error: "companyNumber required" });
-      const result = await debugExperianRaw(companyNumber, {
-        path: req.body?.path,
-        method: req.body?.method,
-        reqBody: req.body?.reqBody,
-        extraHeaders: req.body?.extraHeaders,
-        baseOverride: req.body?.baseOverride,
-        noAuth: req.body?.noAuth,
-      });
-      res.json(result);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || "Unknown error" });
-    }
-  });
-  // Comprehensive sandbox audit — exercises every Experian product BGP cares
-  // about, returns a sales-ready buy list. Hit GET /api/experian/sandbox-audit
-  // (?regnum=XXXX optional, defaults to Experian's 99999999 dummy company).
-  app.get("/api/experian/sandbox-audit", requireAuth, async (req, res) => {
-    try {
-      const regnum = String(req.query?.regnum || "99999999");
-      const out = await sandboxAudit(regnum);
-      res.json(out);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || "Unknown error" });
-    }
-  });
-  // Business Profile endpoint discovery — hit once to find the correct path, then remove
-  app.get("/api/experian/discover-profile", requireAuth, async (req, res) => {
-    try {
-      if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
-      const regnum = String(req.query?.regnum || "99999999").trim().toUpperCase();
-      const candidates = [
-        { path: `/risk/business/v2/businessprofile/${regnum}`,                    method: "GET" },
-        { path: `/risk/business/v2/registeredbusinessprofile/${regnum}`,          method: "GET" },
-        { path: `/risk/business/v2/businessinformation/${regnum}`,                method: "GET" },
-        { path: `/business-information/businesses/uk/v1/profile/${regnum}`,       method: "GET" },
-        { path: `/business-information/businesses/uk/v2/profile/${regnum}`,       method: "GET" },
-        { path: `/kyb/businesses/uk/v1/profile/${regnum}`,                        method: "GET" },
-        { path: `/compliance/business/v1/company/${regnum}`,                      method: "GET" },
-        { path: `/risk/business/v2/businessprofile`,                              method: "POST", reqBody: { registrationNumber: regnum } },
-        { path: `/business-information/businesses/uk/v1/profile`,                 method: "POST", reqBody: { registrationNumber: regnum, country: "GB" } },
-      ];
-      // Run all in parallel — avoids sequential 30s timeouts stacking up
-      const settled = await Promise.allSettled(
-        candidates.map(c => debugExperianRaw(regnum, { path: c.path, method: c.method, reqBody: c.reqBody })
-          .then(r => ({ path: c.path, method: c.method, status: r.status, ok: r.status >= 200 && r.status < 300, preview: JSON.stringify(r.body).slice(0, 300) }))
-          .catch((e: any) => ({ path: c.path, method: c.method, status: null, ok: false, preview: e?.message }))
-        )
-      );
-      const results = settled.map(s => s.status === "fulfilled" ? s.value : { ok: false, preview: (s as any).reason?.message });
-      res.json({ regnum, results });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || "Unknown error" });
-    }
-  });
+  // Experian credit API removed (Woody, 2026-09-07: "we don't have an
+  // account") — covenant strength comes from the covenant engine
+  // (Companies House + The Gazette), which was always the primary source.
   app.use(propertyGapAnalysisRouter);
   app.use(brandPackRouter);
   app.use(dealVerdictsRouter);
