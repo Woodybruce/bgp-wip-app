@@ -92,6 +92,28 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r591 · 2026-09-07 · LIGHT (no journey — r590 had it) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0** (3m38s),
+  then `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- Two-bot chunk 1 `QA_PERSONAS=victoria` on `QA_CROSS_FILE=/tmp/qa-cross-591.json`:
+  **140 [ok]**, exactly baseline — 6x400 (rocketreach x3, the deliberate invalid
+  POST /api/investment-tracker, the two deliberate fee-split probes) + 1x409
+  (SOL+ AML gate). No flow failures, no `[skip]`.
+- TRIAGE / deferred item 1 (the fixture leak) — **it is far bigger than r590
+  knew, and the door is an app cascade bug.** Pre-chunk `leasing_schedule_units`
+  = 169; post-chunk = **332**. Only 4 of the new rows match `%QA-R%`; the other
+  **157 were inserted in one minute against property
+  `e736402e-…` which does not exist in `crm_properties`.** That is
+  `staff-tenancy-reimports-its-own-export` (r551): it imports Bluewater's whole
+  rent roll into a throwaway property, and its teardown does
+  `tenancy-schedule/bulk-delete` + `DELETE /api/crm/properties/:id` — neither of
+  which touches the `leasing_schedule_units` rows the import fanned out.
+  `storage.deleteCrmProperty` (server/storage.ts:1015) nulls `crm_deals` and
+  clears 6 LINK tables, but 34 property-keyed DATA tables are left stranded.
+  Orphan census right now (`qa/r591-orphan-probe.mjs`): `leasing_schedule_units`
+  158, `investment_tracker` 119 (the tracker's are fixture-old, separate story).
+- Round in progress: chunk 2 next, then the leak fix.
+
 ### r590 · 2026-09-07 · FULL (rotation #2 — Landsec client · desktop 1440px) · journey: Mark Warne's Bluewater board paper, with a write · 1 bug fixed: the client's own vacancy counts double-counted five units · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`.
