@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import {
   Printer,
@@ -17,6 +18,12 @@ import {
   Plus,
   Download,
   Search as SearchIcon,
+  MoreHorizontal,
+  SlidersHorizontal,
+  ChevronDown,
+  ArrowDown,
+  ArrowUp,
+  AlertCircle,
 } from "lucide-react";
 import { FilterDropdown } from "@/components/wip-filter-dropdown";
 import { Pill } from "@/components/ui/pill";
@@ -826,7 +833,7 @@ export default function WipReport() {
     return WIP_SENIOR_EMAILS.has(user.email.toLowerCase());
   }, [user?.email, WIP_SENIOR_EMAILS]);
 
-  const { data: wipResponse, isLoading } = useQuery<{ entries: WipDealEntry[]; isAdmin: boolean; userTeam: string | null } | WipDealEntry[]>({
+  const { data: wipResponse, isLoading, isError, isFetching, refetch } = useQuery<{ entries: WipDealEntry[]; isAdmin: boolean; userTeam: string | null } | WipDealEntry[]>({
     queryKey: ["/api/wip"],
   });
 
@@ -883,6 +890,9 @@ export default function WipReport() {
   // dropdowns for "find the Bluewater deal" on desktop, and the primary way
   // to navigate on the phone.
   const [searchText, setSearchText] = useState("");
+  const [phoneFiltersOpen, setPhoneFiltersOpen] = useState(false);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -1380,12 +1390,36 @@ export default function WipReport() {
     setSelectedStatuses(new Set());
   };
 
+  const teamLabel = isLandsecView
+    ? "Landsec"
+    : canSeeAll
+      ? "All Teams"
+      : isWipAdmin
+        ? (activeTeam === "all" ? "All Teams" : activeTeam)
+        : wipUserTeam;
+
   if (isLoading) {
     return (
       <div className="space-y-3 p-4">
         {Array.from({ length: 8 }).map((_, i) => (
           <Skeleton key={i} className="h-12 w-full rounded-lg" />
         ))}
+      </div>
+    );
+  }
+
+  if (isError && !wipResponse) {
+    return (
+      <div className="p-4 sm:p-6" data-testid="wip-load-error">
+        <div role="alert" className="rounded-2xl md:rounded-lg border border-border bg-card p-6 text-center space-y-3">
+          <AlertCircle className="h-6 w-6 text-muted-foreground mx-auto" aria-hidden="true" />
+          <h1 className="text-2xl font-bold tracking-tight">WIP report unavailable</h1>
+          <p className="text-sm text-muted-foreground">We couldn’t load the report. Try again to see your fees and deals.</p>
+          <Button onClick={() => void refetch()} disabled={isFetching} data-testid="wip-retry-button">
+            <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />
+            {isFetching ? "Retrying…" : "Retry"}
+          </Button>
+        </div>
       </div>
     );
   }
@@ -1400,18 +1434,27 @@ export default function WipReport() {
         }
       `}</style>
 
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between flex-shrink-0 mb-4">
-        <div className="flex items-center gap-4">
+      {isError && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card p-3 mb-4 no-print" data-testid="wip-refresh-error">
+          <p className="text-sm text-muted-foreground">We couldn’t refresh the report. Showing the last loaded figures.</p>
+          <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isFetching} data-testid="wip-refresh-retry-button">
+            {isFetching ? "Retrying…" : "Retry"}
+          </Button>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between flex-shrink-0 mb-4" data-testid="wip-header">
+        <div className="flex items-center gap-4 min-w-0">
           {isLandsec ? (
             <div
-              className="h-12 px-4 rounded flex items-center justify-center"
+              className="hidden md:flex h-12 px-4 rounded items-center justify-center"
               style={{ backgroundColor: brand.primaryColor }}
               data-testid="wip-landsec-logo"
             >
               <span className="text-white font-bold text-lg tracking-tight">Landsec</span>
             </div>
           ) : (
-            <img src={bgpLogo} alt="BGP" className="h-12 w-auto invert" data-testid="wip-bgp-logo" />
+            <img src={bgpLogo} alt="BGP" className="hidden md:block h-12 w-auto invert" data-testid="wip-bgp-logo" />
           )}
           <div>
             <h1
@@ -1420,28 +1463,19 @@ export default function WipReport() {
               data-testid="wip-report-title"
             >
               WIP Report
-              {(() => {
-                // Leadership always see the whole firm → "All Teams". A plain
-                // DB admin who has sliced to a team sees that team's name.
-                const teamLabel = isLandsecView
-                  ? "Landsec"
-                  : canSeeAll
-                    ? "All Teams"
-                    : isWipAdmin
-                      ? (activeTeam === "all" ? "All Teams" : activeTeam)
-                      : wipUserTeam;
-                return teamLabel ? (
-                  <span className="text-base font-normal text-muted-foreground ml-2 whitespace-nowrap">— {teamLabel}</span>
-                ) : null;
-              })()}
+              {teamLabel && <span className="hidden md:inline text-base font-normal text-muted-foreground ml-2 whitespace-nowrap">— {teamLabel}</span>}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {filteredEntries.length} transaction{filteredEntries.length !== 1 ? "s" : ""} · Total net fees: {formatFullCurrency(totalNetFees)}
-              <span className="ml-2 opacity-60">· Live data from CRM deals</span>
+              <span className="md:hidden">{teamLabel && `${teamLabel} · `}<span className="font-mono tabular-nums">{sortedDetailEntries.length}</span> deal{sortedDetailEntries.length !== 1 ? "s" : ""}</span>
+              <span className="hidden md:inline">
+                <span className="font-mono tabular-nums">{filteredEntries.length}</span> transaction{filteredEntries.length !== 1 ? "s" : ""} · Total net fees: <span className="font-mono tabular-nums">{formatFullCurrency(totalNetFees)}</span>
+                <span className="ml-2 opacity-60">· Live data from CRM deals</span>
+              </span>
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 no-print">
+        <div className="flex flex-wrap items-center justify-end gap-2 no-print">
+          <div className="hidden md:flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -1450,7 +1484,7 @@ export default function WipReport() {
             data-testid="wip-sync-xero-button"
           >
             {syncingXero ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
-            {syncingXero ? "Syncing..." : "Sync Xero"}
+            {syncingXero ? "Refreshing…" : "Refresh Xero"}
           </Button>
           <Button variant="outline" size="sm" onClick={handleExportExcel} data-testid="wip-export-excel-button">
             <Download className="h-4 w-4 mr-1" />
@@ -1460,12 +1494,44 @@ export default function WipReport() {
             <Printer className="h-4 w-4 mr-1" />
             Print
           </Button>
-          <Link href="/deals/list?new=1">
-            <Button size="sm" data-testid="wip-new-deal-button">
+          </div>
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="md:hidden" aria-label="More WIP actions" data-testid="wip-phone-actions-button">
+                <MoreHorizontal className="h-4 w-4 mr-1" aria-hidden="true" /> More
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="md:hidden"
+              data-testid="wip-phone-actions-menu"
+              onCloseAutoFocus={(event) => {
+                // Exit animations finish after another control may have opened.
+                // Keep its focus instead of dismissing that new filter popover.
+                const focused = document.activeElement;
+                if (focused && focused !== document.body && focused !== document.documentElement
+                  && !focused.closest('[data-testid="wip-phone-actions-menu"], [data-testid="wip-phone-actions-button"]')) {
+                  event.preventDefault();
+                }
+              }}
+            >
+              <DropdownMenuItem onSelect={() => void handleSyncXero()} disabled={syncingXero} className="min-h-11" data-testid="wip-phone-sync-xero-button">
+                <RefreshCw className="h-4 w-4 mr-2" aria-hidden="true" />{syncingXero ? "Refreshing…" : "Refresh Xero"}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void handleExportExcel()} className="min-h-11" data-testid="wip-phone-export-excel-button">
+                <Download className="h-4 w-4 mr-2" aria-hidden="true" />Download Excel
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={handlePrint} className="min-h-11" data-testid="wip-phone-print-button">
+                <Printer className="h-4 w-4 mr-2" aria-hidden="true" />Print
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button size="sm" asChild className="min-h-11 md:min-h-0" data-testid="wip-new-deal-button">
+            <Link href="/deals/list?new=1">
               <Plus className="h-4 w-4 mr-1" />
-              New Deal
-            </Button>
-          </Link>
+              Add deal
+            </Link>
+          </Button>
         </div>
       </div>
 
@@ -1498,10 +1564,23 @@ export default function WipReport() {
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
                 placeholder="Search deal, client, property…"
-                className="w-full h-8 pl-8 pr-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:border-ring"
+                className="w-full h-11 md:h-8 pl-8 pr-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:border-ring"
                 data-testid="wip-search-input"
               />
             </div>
+            <Pill
+              active={activeFilterCount > 0}
+              className="md:hidden"
+              onClick={() => setPhoneFiltersOpen(open => !open)}
+              aria-expanded={phoneFiltersOpen}
+              aria-controls="wip-filter-options"
+              data-testid="wip-phone-filters-button"
+            >
+              <SlidersHorizontal className="h-3 w-3" aria-hidden="true" />
+              Filters{activeFilterCount > 0 && <span className="font-mono tabular-nums">{activeFilterCount} active</span>}
+              <ChevronDown className={`h-3 w-3 transition-transform ${phoneFiltersOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+            </Pill>
+            <div id="wip-filter-options" className={`${phoneFiltersOpen ? "flex" : "hidden"} md:flex flex-wrap items-center gap-2 w-full sm:w-auto`} data-testid="wip-filter-options">
             {allFiscalYears.length > 0 && (
               <FilterDropdown
                 title="Fiscal Year"
@@ -1582,13 +1661,14 @@ export default function WipReport() {
                 <X className="h-3 w-3" /> Reset filters
               </button>
             )}
+            </div>
           </div>
 
           {/* Phone at-a-glance — the desktop report leans on the wide table;
               on a phone the story comes first: totals, fees by month, stage
               mix, each tappable to filter the deal list below (Woody,
               2026-08-31: "stopped being charts and now just lists"). */}
-          <div className="md:hidden space-y-3 no-print" data-testid="wip-phone-summary">
+          <div ref={summaryRef} tabIndex={-1} aria-label="WIP summary" className="md:hidden space-y-3 no-print scroll-mt-4 focus:outline-none" data-testid="wip-phone-summary">
             <div className="grid grid-cols-2 gap-2">
               <div className="bg-card border border-border rounded-lg p-3" data-testid="wip-phone-tile-wip">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">WIP</p>
@@ -1601,6 +1681,18 @@ export default function WipReport() {
                 <p className="text-[10px] text-muted-foreground">of {formatFullCurrency(totalNetFees)} total</p>
               </div>
             </div>
+            <Button
+              variant="outline"
+              className="w-full justify-between"
+              onClick={() => {
+                detailRef.current?.scrollIntoView({ block: "start" });
+                detailRef.current?.focus({ preventScroll: true });
+              }}
+              data-testid="wip-phone-view-deals"
+            >
+              <span>View <span className="font-mono tabular-nums">{sortedDetailEntries.length}</span> deal{sortedDetailEntries.length !== 1 ? "s" : ""}</span>
+              <ArrowDown className="h-4 w-4" aria-hidden="true" />
+            </Button>
             {monthlyFees.length > 0 && (
               <div className="bg-card border border-border rounded-lg overflow-hidden">
                 <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between">
@@ -1859,8 +1951,8 @@ export default function WipReport() {
             </div>
           </div>
 
-          <div className="print-break" data-testid="wip-detail-table">
-            <div className="border-b border-border pb-2 flex items-center justify-between">
+          <div ref={detailRef} tabIndex={-1} aria-label="WIP deals" className="print-break scroll-mt-4 focus:outline-none" data-testid="wip-detail-table">
+            <div className="border-b border-border pb-2 flex flex-wrap gap-2 items-center justify-between">
               <div>
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   Deal Detail
@@ -1868,12 +1960,24 @@ export default function WipReport() {
                 <span className="text-xs text-muted-foreground ml-2">({sortedDetailEntries.length} rows)</span>
               </div>
               <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="md:hidden no-print"
+                  onClick={() => {
+                    summaryRef.current?.scrollIntoView({ block: "start" });
+                    summaryRef.current?.focus({ preventScroll: true });
+                  }}
+                  data-testid="wip-phone-back-summary"
+                >
+                  <ArrowUp className="h-4 w-4 mr-1" aria-hidden="true" /> Summary
+                </Button>
                 {activeFilterCount > 0 && (
                   <Badge variant="secondary" className="text-[10px]">
                     {activeFilterCount} filter{activeFilterCount !== 1 ? "s" : ""} active
                   </Badge>
                 )}
-                <div className="relative no-print">
+                <div className="hidden md:block relative no-print">
                   <button
                     onClick={() => setColMenuOpen((o) => !o)}
                     className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground border border-border rounded px-2 py-1 bg-background"

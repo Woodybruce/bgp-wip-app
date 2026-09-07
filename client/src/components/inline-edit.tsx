@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback, useId } from "react";
 import ReactDOM from "react-dom";
 import { Check, X, ChevronDown, Pencil, Plus, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -13,19 +13,128 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+type InlineSave<T> = (value: T) => void | Promise<void>;
+
+function parseInlineNumber(draft: string): number | null {
+  const text = draft.trim();
+  if (!text) return null;
+  // Require the whole value, including valid thousands groups when commas
+  // are used. parseFloat silently turns entries such as "120k" into 120.
+  if (!/^[+-]?(?:(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d*)?|\.\d+)$/.test(text)) {
+    throw new Error("Enter a number, such as -1,200.50, or leave blank.");
+  }
+  const number = Number(text.replace(/,/g, ""));
+  if (!Number.isFinite(number)) throw new Error("Enter a finite number or leave blank.");
+  return number;
+}
+
+function useInlineDraft<T>(initial: string, value: T, onSave: InlineSave<T>, parse: (draft: string) => T, commitOnUnmount = false) {
+  const [state, setState] = useState({ editing: false, draft: initial, saving: false, error: null as string | null });
+  const stateRef = useRef(state);
+  const mounted = useRef(true);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  const errorId = useId();
+
+  const update = (patch: Partial<typeof state>) => {
+    // Event handlers can run before React renders (Enter followed by blur,
+    // or a popover unmount). Keep the save/cancel guard synchronous.
+    stateRef.current = { ...stateRef.current, ...patch };
+    if (mounted.current) setState(stateRef.current);
+  };
+  const close = () => {
+    update({ editing: false, saving: false, error: null });
+  };
+  const save = (draft = stateRef.current.draft, focus = false) => {
+    if (!stateRef.current.editing || stateRef.current.saving) return;
+    let next: T;
+    try {
+      next = parse(draft);
+    } catch (error) {
+      update({ error: error instanceof Error ? error.message : "Check this value and try again." });
+      return;
+    }
+    restoreFocus.current = focus;
+    if (next === value) { close(); return; }
+    update({ saving: true, error: null });
+    const failed = () => update({ saving: false, error: "Could not save. Try again or press Escape to cancel." });
+    try {
+      const result = onSave(next);
+      if (result && typeof result.then === "function") {
+        void Promise.resolve(result).then(close, failed);
+      } else {
+        close();
+      }
+    } catch {
+      failed();
+    }
+  };
+  const unmountRef = useRef({ save, commitOnUnmount });
+  unmountRef.current = { save, commitOnUnmount };
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      const current = stateRef.current;
+      // Number fields inside popovers retain their existing outside-click
+      // commit. Never retry a failed save, pending request or cancelled edit.
+      if (unmountRef.current.commitOnUnmount && current.editing && !current.saving && !current.error) {
+        unmountRef.current.save();
+      }
+    };
+  }, []);
+  useEffect(() => {
+    if (!state.editing && restoreFocus.current) {
+      restoreFocus.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [state.editing]);
+
+  return {
+    ...state, triggerRef, errorId, save,
+    begin: () => update({ editing: true, draft: initial, error: null }),
+    change: (draft: string) => { if (!stateRef.current.saving) update({ draft, error: null }); },
+    cancel: () => {
+      // A request already sent cannot be cancelled by hiding its editor.
+      if (!stateRef.current.saving) { restoreFocus.current = true; update({ draft: initial }); close(); }
+    },
+    blur: (event: React.FocusEvent<HTMLSpanElement>) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) {
+        restoreFocus.current = false;
+        if (!stateRef.current.error) save();
+      }
+    },
+  };
+}
+
+function InlineEditFeedback({ saving, error, errorId, retry, cancel }: {
+  saving: boolean; error: string | null; errorId: string; retry: () => void; cancel: () => void;
+}) {
+  if (saving) return <span role="status" className="block text-[11px] text-muted-foreground" data-testid="inline-edit-saving">Saving…</span>;
+  if (!error) return null;
+  return (
+    <span className="block text-[11px] text-destructive" data-testid="inline-edit-error">
+      <span id={errorId} role="alert">{error}</span>{" "}
+      <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={retry} className="underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" data-testid="inline-edit-retry">Save</button>{" "}
+      <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={cancel} className="underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">Cancel</button>
+    </span>
+  );
+}
+
 interface InlineTextProps {
   value: string | null | undefined;
-  onSave: (value: string) => void;
+  onSave: InlineSave<string>;
+  label?: string;
   placeholder?: string;
   className?: string;
   multiline?: boolean;
   maxLines?: number;
 }
 
-export function InlineText({ value, onSave, placeholder = "—", className = "", multiline = false, maxLines }: InlineTextProps) {
-  const [editing, setEditing] = useState(false);
+export function InlineText({ value, onSave, label, placeholder = "—", className = "", multiline = false, maxLines }: InlineTextProps) {
+  const editor = useInlineDraft(value || "", value || "", onSave, (draft) => draft.trim());
+  const { editing, draft, saving, error, errorId } = editor;
   const [expanded, setExpanded] = useState(false);
-  const [draft, setDraft] = useState(value || "");
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -35,56 +144,49 @@ export function InlineText({ value, onSave, placeholder = "—", className = "",
     }
   }, [editing]);
 
-  const save = () => {
-    const trimmed = draft.trim();
-    if (trimmed !== (value || "")) {
-      onSave(trimmed);
-    }
-    setEditing(false);
-  };
-
-  const cancel = () => {
-    setDraft(value || "");
-    setEditing(false);
-  };
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return;
     if (e.key === "Enter" && !multiline) {
       e.preventDefault();
-      save();
+      editor.save(undefined, true);
     }
     if (e.key === "Escape") {
       e.preventDefault();
-      cancel();
+      editor.cancel();
     }
   };
 
   if (editing) {
     const inputClass = "w-full px-1.5 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 " + className;
-    if (multiline) {
-      return (
-        <textarea
-          ref={inputRef as React.RefObject<HTMLTextAreaElement>}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={save}
-          onKeyDown={handleKeyDown}
-          className={inputClass + " min-h-[48px] resize-none"}
-          data-testid="inline-edit-textarea"
-        />
-      );
-    }
+    const inputProps = {
+      value: draft,
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => editor.change(e.target.value),
+      onKeyDown: handleKeyDown,
+      readOnly: saving,
+      "aria-label": label || "Text",
+      "aria-invalid": !!error,
+      "aria-describedby": error ? errorId : undefined,
+    };
     return (
-      <input
-        ref={inputRef as React.RefObject<HTMLInputElement>}
-        type="text"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={save}
-        onKeyDown={handleKeyDown}
-        className={inputClass}
-        data-testid="inline-edit-text"
-      />
+      <span className="inline-block w-full align-middle" onBlur={editor.blur} aria-busy={saving}>
+        {multiline ? (
+          <textarea
+            {...inputProps}
+            ref={inputRef as React.RefObject<HTMLTextAreaElement>}
+            className={inputClass + " min-h-[48px] resize-none"}
+            data-testid="inline-edit-textarea"
+          />
+        ) : (
+          <input
+            {...inputProps}
+            ref={inputRef as React.RefObject<HTMLInputElement>}
+            type="text"
+            className={inputClass}
+            data-testid="inline-edit-text"
+          />
+        )}
+        <InlineEditFeedback {...editor} retry={() => editor.save(undefined, true)} cancel={editor.cancel} />
+      </span>
     );
   }
 
@@ -100,17 +202,20 @@ export function InlineText({ value, onSave, placeholder = "—", className = "",
       className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block max-w-full align-bottom min-w-[2rem] transition-colors ${!value ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="inline-edit-display"
     >
-      <span
-        onClick={() => {
-          setDraft(value || "");
-          setEditing(true);
-        }}
+      <button
+        type="button"
+        ref={editor.triggerRef}
+        onClick={editor.begin}
+        aria-label={label ? `Edit ${label}` : "Edit text"}
+        className="text-left max-w-full rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
         style={clampStyle}
+        data-testid="inline-edit-trigger"
       >
         {value || placeholder}
-      </span>
+      </button>
       {maxLines && value && value.length > 60 && !expanded && (
         <button
+          type="button"
           onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
           className="text-[10px] text-primary hover:underline ml-1"
           data-testid="inline-edit-expand"
@@ -120,6 +225,7 @@ export function InlineText({ value, onSave, placeholder = "—", className = "",
       )}
       {maxLines && expanded && (
         <button
+          type="button"
           onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
           className="text-[10px] text-primary hover:underline ml-1"
           data-testid="inline-edit-collapse"
@@ -133,7 +239,8 @@ export function InlineText({ value, onSave, placeholder = "—", className = "",
 
 interface InlineNumberProps {
   value: number | null | undefined;
-  onSave: (value: number | null) => void;
+  onSave: InlineSave<number | null>;
+  label?: string;
   placeholder?: string;
   className?: string;
   prefix?: string;
@@ -141,9 +248,9 @@ interface InlineNumberProps {
   format?: (val: number) => string;
 }
 
-export function InlineNumber({ value, onSave, placeholder = "—", className = "", prefix = "", suffix = "", format }: InlineNumberProps) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value?.toString() || "");
+export function InlineNumber({ value, onSave, label, placeholder = "—", className = "", prefix = "", suffix = "", format }: InlineNumberProps) {
+  const editor = useInlineDraft(value?.toString() || "", value ?? null, onSave, parseInlineNumber, true);
+  const { editing, draft, saving, error, errorId } = editor;
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -153,58 +260,31 @@ export function InlineNumber({ value, onSave, placeholder = "—", className = "
     }
   }, [editing]);
 
-  const save = () => {
-    if (draft.trim() === "") {
-      if (value != null) onSave(null);
-      setEditing(false);
-      return;
-    }
-    const num = parseFloat(draft.replace(/,/g, ""));
-    if (!Number.isFinite(num)) {
-      setDraft(value?.toString() || "");
-      setEditing(false);
-      return;
-    }
-    if (num !== value) {
-      onSave(num);
-    }
-    setEditing(false);
-  };
-
-  // Commit a pending edit if the input is unmounted mid-edit. Inside a
-  // popover (e.g. the deals list Fee cell) clicking outside closes the
-  // popover and removes the input before blur can fire, so the typed value
-  // was silently lost. Escape/Enter set editing=false first, so cancelled
-  // or already-saved edits don't re-commit here.
-  const unmountCommitRef = useRef<{ editing: boolean; save: () => void }>({ editing: false, save: () => {} });
-  unmountCommitRef.current = { editing, save };
-  useEffect(() => () => {
-    if (unmountCommitRef.current.editing) unmountCommitRef.current.save();
-  }, []);
-
-  const cancel = () => {
-    setDraft(value?.toString() || "");
-    setEditing(false);
-  };
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") { e.preventDefault(); save(); }
-    if (e.key === "Escape") { e.preventDefault(); cancel(); }
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "Enter") { e.preventDefault(); editor.save(undefined, true); }
+    if (e.key === "Escape") { e.preventDefault(); editor.cancel(); }
   };
 
   if (editing) {
     return (
-      <input
-        ref={inputRef}
-        type="text"
-        inputMode="decimal"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={save}
-        onKeyDown={handleKeyDown}
-        className={"w-full px-1.5 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 " + className}
-        data-testid="inline-edit-number"
-      />
+      <span className="inline-block w-full align-middle" onBlur={editor.blur} aria-busy={saving}>
+        <input
+          ref={inputRef}
+          type="text"
+          inputMode="decimal"
+          value={draft}
+          onChange={(e) => editor.change(e.target.value)}
+          onKeyDown={handleKeyDown}
+          readOnly={saving}
+          aria-label={label || "Number"}
+          aria-invalid={!!error}
+          aria-describedby={error ? errorId : undefined}
+          className={"w-full px-1.5 py-0.5 text-xs font-mono tabular-nums border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 " + className}
+          data-testid="inline-edit-number"
+        />
+        <InlineEditFeedback {...editor} retry={() => editor.save(undefined, true)} cancel={editor.cancel} />
+      </span>
     );
   }
 
@@ -213,30 +293,32 @@ export function InlineNumber({ value, onSave, placeholder = "—", className = "
     : null;
 
   return (
-    <span
-      onClick={() => {
-        setDraft(value?.toString() || "");
-        setEditing(true);
-      }}
-      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!displayVal ? "text-muted-foreground italic" : ""} ${className}`}
+    <button
+      type="button"
+      ref={editor.triggerRef}
+      onClick={editor.begin}
+      aria-label={label ? `Edit ${label}` : "Edit number"}
+      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs text-left font-mono tabular-nums inline-block min-w-[2rem] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${!displayVal ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="inline-edit-display"
     >
       {displayVal || placeholder}
-    </span>
+    </button>
   );
 }
 
 interface InlineSelectProps {
   value: string | null | undefined;
   options: readonly string[] | string[];
-  onSave: (value: string) => void;
+  onSave: InlineSave<string>;
+  label?: string;
   placeholder?: string;
   className?: string;
   allowClear?: boolean;
 }
 
-export function InlineSelect({ value, options, onSave, placeholder = "—", className = "", allowClear = true }: InlineSelectProps) {
-  const [editing, setEditing] = useState(false);
+export function InlineSelect({ value, options, onSave, label, placeholder = "—", className = "", allowClear = true }: InlineSelectProps) {
+  const editor = useInlineDraft(value || "", value || "", onSave, (draft) => draft);
+  const { editing, draft, saving, error, errorId } = editor;
   const selectRef = useRef<HTMLSelectElement>(null);
 
   useEffect(() => {
@@ -247,38 +329,50 @@ export function InlineSelect({ value, options, onSave, placeholder = "—", clas
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newVal = e.target.value;
-    if (newVal !== (value || "")) {
-      onSave(newVal);
-    }
-    setEditing(false);
+    editor.change(newVal);
+    editor.save(newVal, true);
   };
 
   if (editing) {
     return (
-      <select
-        ref={selectRef}
-        value={value || ""}
-        onChange={handleChange}
-        onBlur={() => setEditing(false)}
-        className={"w-full px-1 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 " + className}
-        data-testid="inline-edit-select"
-      >
-        {allowClear && <option value="">— Clear —</option>}
-        {options.map((opt) => (
-          <option key={opt} value={opt}>{opt}</option>
-        ))}
-      </select>
+      <span className="inline-block w-full align-middle" onBlur={editor.blur} aria-busy={saving}>
+        <select
+          ref={selectRef}
+          value={draft}
+          onChange={handleChange}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return;
+            if (e.key === "Escape") { e.preventDefault(); editor.cancel(); }
+            if (e.key === "Enter") { e.preventDefault(); editor.save(undefined, true); }
+          }}
+          disabled={saving}
+          aria-label={label || "Selection"}
+          aria-invalid={!!error}
+          aria-describedby={error ? errorId : undefined}
+          className={"w-full px-1 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 " + className}
+          data-testid="inline-edit-select"
+        >
+          {allowClear && <option value="">— Clear —</option>}
+          {options.map((opt) => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </select>
+        <InlineEditFeedback {...editor} retry={() => editor.save(undefined, true)} cancel={editor.cancel} />
+      </span>
     );
   }
 
   return (
-    <span
-      onClick={() => setEditing(true)}
-      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block max-w-full align-bottom min-w-[2rem] transition-colors ${!value ? "text-muted-foreground italic" : ""} ${className}`}
+    <button
+      type="button"
+      ref={editor.triggerRef}
+      onClick={editor.begin}
+      aria-label={label ? `Edit ${label}` : "Edit selection"}
+      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs text-left inline-block max-w-full align-bottom min-w-[2rem] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${!value ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="inline-edit-display"
     >
       {value || placeholder}
-    </span>
+    </button>
   );
 }
 

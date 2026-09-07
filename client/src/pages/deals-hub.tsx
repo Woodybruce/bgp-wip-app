@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useMemo } from "react";
+import { lazy, Suspense, useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -65,6 +65,7 @@ export default function DealsHub() {
     getTabFromLocation(location) || ((typeof window !== "undefined" && window.innerWidth < 768) ? "deals" : "wip-report")
   );
   const isProfile = isDealProfile(location);
+  const activeTabButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (isProfile) return;
@@ -98,6 +99,16 @@ export default function DealsHub() {
     return allTabs;
   }, [activeTeam, allTabs, isClient]);
 
+  useEffect(() => {
+    const button = activeTabButton.current;
+    const scroller = button?.parentElement?.parentElement;
+    if (!button || !scroller) return;
+    const buttonBounds = button.getBoundingClientRect();
+    const scrollBounds = scroller.getBoundingClientRect();
+    if (buttonBounds.left < scrollBounds.left) scroller.scrollLeft -= scrollBounds.left - buttonBounds.left;
+    else if (buttonBounds.right > scrollBounds.right) scroller.scrollLeft += buttonBounds.right - scrollBounds.right;
+  }, [tab, tabs, isProfile]);
+
   if (isProfile) {
     return (
       <Suspense fallback={<PageLoader />}>
@@ -114,12 +125,14 @@ export default function DealsHub() {
 
   return (
     <div>
-      <div className={`flex items-center gap-1 px-4 pt-4 md:px-6 md:pt-6 shrink-0 ${tabs.length <= 1 ? "hidden" : ""}`}>
-        <div className="flex flex-wrap md:inline-flex md:min-w-max rounded-lg border bg-muted p-0.5 gap-0.5" data-testid="toggle-deals-tabs">
+      <div className={`mx-4 pt-3 md:mx-6 md:pt-6 overflow-x-auto overscroll-x-contain shrink-0 ${tabs.length <= 1 ? "hidden" : ""}`} data-testid="deals-tabs-scroll">
+        <div className="inline-flex min-w-max rounded-lg border bg-muted p-0.5 gap-0.5" role="group" aria-label="Deals sections" data-testid="toggle-deals-tabs">
           {tabs.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
+              ref={tab === key ? activeTabButton : undefined}
               onClick={() => switchTab(key)}
+              aria-pressed={tab === key}
               className={`inline-flex items-center gap-1.5 rounded-md px-2.5 md:px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
                 tab === key
                   ? "bg-background text-foreground shadow-sm"

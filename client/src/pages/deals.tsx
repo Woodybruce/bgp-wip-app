@@ -2266,13 +2266,17 @@ export function DealFormDialog({
   // Edit mode starts in "manual" so we never trample a saved name.
   const [nameAutoFilled, setNameAutoFilled] = useState<boolean>(!deal);
 
-  // Reset form whenever the dialog re-opens. Without this, the previous
-  // create attempt's values stick around — Layla hit 'New Deal' after
-  // creating one and saw the old property / counterparty still selected.
-  // Edit mode reloads from the deal prop so any uncommitted edits are
-  // dropped on reopen (acceptable — they weren't saved).
+  // A live query can replace the deal while this dialog is open. Keep the
+  // current draft until the user closes it or switches to another deal.
+  const draftSessionRef = useRef<{ dealId: string | null; source: string } | null>(null);
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      draftSessionRef.current = null;
+      return;
+    }
+    const dealId = deal?.id ?? null;
+    if (draftSessionRef.current?.dealId === dealId) return;
+    draftSessionRef.current = { dealId, source: JSON.stringify(deal ? dealToForm(deal) : freshForm()) };
     setForm(deal ? dealToForm(deal) : freshForm());
     setChangeReason("");
     setLearning("");
@@ -2281,6 +2285,9 @@ export function DealFormDialog({
     setFeeAllocType("percentage");
     setNameAutoFilled(!deal); // new = auto-managed; edit = treat name as user-owned
   }, [open, deal]);
+
+  const hasLiveChanges = isEdit && open && draftSessionRef.current?.dealId === deal?.id
+    && draftSessionRef.current.source !== JSON.stringify(dealToForm(deal));
 
   const statusChanged = isEdit && deal && form.status !== (deal.status || "");
   // Compare against canonical codes — form.status holds the code after the
@@ -2297,7 +2304,7 @@ export function DealFormDialog({
   // Clients can create deals but never set fees — the server strips every
   // fee field regardless, and here we hide the fee-exposing paths (Consultant
   // fee-only body + "Show all fields") so they only see the fee-less form.
-  const isClientCreate = currentUser?.role === "Client" || !!currentUser?.companyScopeId;
+  const isClientCreate = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
   const SENIOR_EMAILS = new Set([
     "woody@brucegillinghampollard.com",
     "charlotte@brucegillinghampollard.com",
@@ -2487,6 +2494,11 @@ export function DealFormDialog({
             {isEdit ? "Update deal details below." : "Fill in the details to create a new deal."}
           </DialogDescription>
         </DialogHeader>
+        {hasLiveChanges && (
+          <p role="status" className="rounded-md border border-border bg-muted p-3 text-sm" data-testid="deal-draft-update-notice">
+            This deal was updated while you were editing. Your draft is kept; saving it may replace those changes. Cancel and reopen to load the latest version.
+          </p>
+        )}
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* On CREATE, render a stripped-down form by default — just
               what the team needs to spin a deal up. Property, Deal
@@ -2935,21 +2947,25 @@ export function DealFormDialog({
                     </div>
                   )}
 
-                  <div>
-                    <Label>Fee ({"\u00A3"})</Label>
-                    <Input type="number" min="0" step="0.01" value={form.fee} onChange={(e) => set("fee", e.target.value)} data-testid="input-deal-fee" />
-                  </div>
+                  {!isClientCreate && (
+                    <>
+                      <div>
+                        <Label>Fee ({"\u00A3"})</Label>
+                        <Input type="number" min="0" step="0.01" value={form.fee} onChange={(e) => set("fee", e.target.value)} data-testid="input-deal-fee" />
+                      </div>
 
-                  <div>
-                    <Label>Fee Agreement</Label>
-                    <Select value={form.feeAgreement || undefined} onValueChange={(v) => set("feeAgreement", v === "__clear__" ? "" : v)}>
-                      <SelectTrigger data-testid="select-deal-fee-agreement"><SelectValue placeholder="Select" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__clear__">None</SelectItem>
-                        {CRM_OPTIONS.dealFeeAgreement.map((f) => (<SelectItem key={f} value={f}>{f}</SelectItem>))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                      <div>
+                        <Label>Fee Agreement</Label>
+                        <Select value={form.feeAgreement || undefined} onValueChange={(v) => set("feeAgreement", v === "__clear__" ? "" : v)}>
+                          <SelectTrigger data-testid="select-deal-fee-agreement"><SelectValue placeholder="Select" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__clear__">None</SelectItem>
+                            {CRM_OPTIONS.dealFeeAgreement.map((f) => (<SelectItem key={f} value={f}>{f}</SelectItem>))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </>
+                  )}
 
                   {showArea && (
                     <>
@@ -3090,7 +3106,7 @@ export function DealFormDialog({
           </DialogFooter>
         </form>
 
-        {isEdit && deal && (
+        {isEdit && deal && !isClientCreate && (
           <div className="px-6 pb-4">
             <FeeAllocationCard
               dealId={deal.id}
@@ -5578,6 +5594,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const { data: allFeeAllocations = {} } = useQuery<Record<string, DealFeeAllocation[]>>({
     queryKey: ["/api/crm/fee-allocations"],
+    enabled: !!currentUserForViews && !isClientDeals,
   });
 
 
@@ -7175,7 +7192,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         </>
       )}
 
-      <Dialog open={!!feeAllocEditDeal} onOpenChange={(open) => !open && setFeeAllocEditDeal(null)}>
+      <Dialog open={!!feeAllocEditDeal && !!currentUserForViews && !isClientDeals} onOpenChange={(open) => !open && setFeeAllocEditDeal(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm">{feeAllocEditDeal?.name || "Fee Split"}</DialogTitle>
@@ -7183,7 +7200,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               {feeAllocEditDeal?.fee != null ? `Total fee: ${formatCurrency(feeAllocEditDeal.fee)}` : "Set fee on the deal first"}
             </DialogDescription>
           </DialogHeader>
-          {feeAllocEditDeal && (
+          {feeAllocEditDeal && !!currentUserForViews && !isClientDeals && (
             <FeeAllocationCard
               dealId={feeAllocEditDeal.id}
               dealFee={feeAllocEditDeal.fee}

@@ -269,8 +269,8 @@ function ReferenceSection(props: {
 
 export function PropertyDetail({ id }: { id: string }) {
   const [, navigate] = useLocation();
-  // Client logins (e.g. Landsec) get a read-only view — no BGP staff tools
-  // (Image Studio, doc gen, folders, delete, KYC/risk/data-linkage panels).
+  // Clients can edit scoped business fields; internal tools and ownership
+  // controls retain their separate staff permissions.
   const { data: pdViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   // Fail CLOSED while /api/auth/me loads, and match the server's wider
   // definition of a client (any non-BGP login gets companyScopeId) —
@@ -385,6 +385,10 @@ export function PropertyDetail({ id }: { id: string }) {
 
   const inlineUpdate = (field: string, value: any) => {
     updateMutation.mutate({ [field]: value } as any);
+  };
+
+  const inlineUpdateAsync = async (field: string, value: any) => {
+    await updateMutation.mutateAsync({ [field]: value } as any);
   };
 
   const deleteMutation = useMutation({
@@ -502,15 +506,13 @@ export function PropertyDetail({ id }: { id: string }) {
                 </div>
               ) : (
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400" data-testid="property-eyebrow">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500" /> Property
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="property-eyebrow">
+                    Property
                   </span>
-                  <h1
-                    className="text-lg font-bold cursor-pointer hover:text-muted-foreground transition-colors"
-                    onClick={() => setEditingAddress(true)}
-                    data-testid="text-property-name"
-                  >
-                    {property.name}
+                  <h1 className="text-2xl font-bold tracking-tight" data-testid="text-property-name">
+                    <button type="button" className="text-left rounded hover:text-muted-foreground transition-colors" onClick={() => setEditingAddress(true)} aria-label={`Edit address for ${property.name}`}>
+                      {property.name}
+                    </button>
                   </h1>
                   {formatAddress(property.address) && (() => {
                     const mapsUrl = buildGoogleMapsUrl(property.address);
@@ -647,51 +649,26 @@ export function PropertyDetail({ id }: { id: string }) {
                       ~70px and 'BGP Instruction' truncated to 'B…'.
                       Two columns gives each pill ~140px which fits
                       every label comfortably. */}
-                  {/* UX #134 — client viewers skip valueless cells: four
-                      "—" rows filled the first phone screen before any
-                      real content. Staff keep every cell (they edit). */}
-                  {(() => {
-                    const assetClass = (Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass) || "";
-                    const bgpTeam = Array.isArray(property.bgpEngagement) ? property.bgpEngagement.join(", ") : (property.bgpEngagement || "");
-                    const clientCells = [
-                      { label: "Status", value: property.status || "" },
-                      { label: "Asset Class", value: assetClass },
-                      { label: "BGP Team", value: bgpTeam },
-                      { label: "Website", value: property.website || "" },
-                    ].filter(c => c.value);
-                    if (isClientViewer) {
-                      return clientCells.length > 0 ? (
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 min-w-0">
-                          {clientCells.map(c => (
-                            <div key={c.label} className="min-w-0">
-                              <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">{c.label}</p>
-                              <span className="text-sm truncate block">{c.value}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null;
-                    }
-                    return (
+                  {/* Business fields remain editable for clients with
+                      access to this property; the API checks record scope. */}
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 min-w-0">
-                    <div className="min-w-0">
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
+                    <div className="min-w-0" data-testid="property-field-status">
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Status</p>
                       <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Asset Class</p>
+                    <div className="min-w-0" data-testid="property-field-asset-class">
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Asset class</p>
                       <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">BGP Team</p>
+                    <div className="min-w-0" data-testid="property-field-team">
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">BGP team</p>
                       <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Website</p>
-                      <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate block" />
+                    <div className="min-w-0" data-testid="property-field-website">
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Website</p>
+                      <InlineText value={property.website || ""} onSave={(val) => inlineUpdateAsync("website", val)} label="Website" placeholder="Set website" className="text-sm truncate block" />
                     </div>
                   </div>
-                    );
-                  })()}
 
                 {(() => {
                   // Only render ownership rows that have a value
@@ -776,9 +753,9 @@ export function PropertyDetail({ id }: { id: string }) {
                     crm_companies row (company_type='Agent') with an
                     inline 'Add new agent' shortcut. */}
                 <div className="border-t pt-2 grid grid-cols-2 gap-x-4 gap-y-1">
-                  <div>
-                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Area</p>
-                    {isClientViewer ? <span className="text-sm font-mono font-medium">{property.sqft ? `${Number(property.sqft).toLocaleString()} sq ft` : "—"}</span> : <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />}
+                  <div data-testid="property-field-area">
+                    <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Area</p>
+                    <InlineNumber value={property.sqft} onSave={(val) => inlineUpdateAsync("sqft", val)} label="Area (sq ft)" suffix=" sq ft" className="text-sm font-mono tabular-nums font-medium" />
                   </div>
                   {/* Competitor intel is BGP-internal — never shown to clients. */}
                   {!isClientViewer && (
