@@ -139,7 +139,8 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   it to HOT, and fails if it leaves the forward book, lands in the wrong
   bucket, moves the unweighted pipeline, or fails to raise the weighted one.
   Pre-fix message: "stepping the deal NEG -> HOT dropped it out of the firm
-  forward book entirely". run-round.sh purge now sweeps QA-FWD% and R580%.
+  forward book entirely". Post-fix: [ok]. run-round.sh purge now sweeps
+  QA-FWD% and R580%.
 - Probe deal removed, fixture verified back to shipped state (0 R580 rows).
   tsc clean. Probe scripts kept: qa/r580-probe-setup.mjs,
   qa/r580-probe-restore.mjs, qa/r580-outlook-probe.mjs.
