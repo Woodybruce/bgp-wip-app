@@ -37,7 +37,24 @@
 // strictly worse than a dead read: a dead read matches nothing, a bad write
 // puts a value in the table that every code predicate then misses.
 //
-// Usage: node qa/r575-status-literal-sweep.mjs [--all] [--kind=keys,case,label,assign]
+// r597 adds the two shapes offered to (and declined by) three rounds running.
+// Both are status predicates that carry no quoted CODE and no operator, so
+// the six shapes above were structurally blind to them:
+//   regex   lower(marketing_status) ~ '(neg|offer|sol|exc|hots|terms)'   (r594)
+//   default text("marketing_status").default("Available")                (r595)
+// `regex` scores each ALTERNATIVE against the column's own vocabulary: an
+// alternative that matches no value the column can hold is DEAD, and a dead
+// alternative is almost always a code the author meant to catch and missed
+// (r594's `hots` could never match the code HOT, so the hottest stage was
+// absent from the asset brief AND from the gap list built to catch that
+// silence). It also names the codes no alternative reaches — informational,
+// since selecting a subset is what a predicate is for.
+// `default` reads shared/schema.ts and diffs each tracked status column's
+// DEFAULT against that column's vocabulary. A default is a write nobody
+// makes (lesson 13): omit the field and postgres supplies the literal,
+// straight past every canonicaliser on the write path.
+//
+// Usage: node qa/r575-status-literal-sweep.mjs [--all] [--kind=keys,case,label,assign,regex,default]
 //   default: only sets that DIVERGE from every canonical set (label: all)
 //   --all:   every set found
 
@@ -80,6 +97,14 @@ const COLUMN_TRUTH = {
   "crm_deals.status": "codes",
   "available_units.marketing_status": "codes",
   "investment_tracker.status": "mixed",
+};
+// What each tracked column can actually hold — the set a regex alternative or
+// a column DEFAULT has to hit to be alive. investment_tracker is mixed, so its
+// vocabulary is the canonical set PLUS the labels the column really carries.
+const COLUMN_VOCAB = {
+  "crm_deals.status": CANON.DEAL_STATUS_CODES,
+  "available_units.marketing_status": CANON.LETTING_STATUSES,
+  "investment_tracker.status": [...CANON.INVESTMENT_STATUSES, "Live", "SPEC"],
 };
 
 const walk = (dir, out = []) => {
@@ -199,6 +224,56 @@ for (const file of files) {
     at(i + 1, quoted.map((v) => LABELS.get(v.toLowerCase())), "label", { labels: [...new Set(quoted)], column, truth });
   }
 
+  const scoreAlternations = (line, lineNo, column, via) => {
+    const vocab = COLUMN_VOCAB[column];
+    if (!vocab) return; // undetermined column — a different enum, not our census
+    for (const m of line.matchAll(ALTERNATION)) {
+      const alts = m[1].split("|").map((a) => a.trim().toLowerCase()).filter(Boolean);
+      if (alts.length < 2) continue;
+      const lower = vocab.map((v) => v.toLowerCase());
+      const dead = alts.filter((a) => !lower.some((v) => v.includes(a)));
+      const unreachable = vocab.filter((v) => !alts.some((a) => v.toLowerCase().includes(a)));
+      at(lineNo, vocab.filter((v) => !unreachable.includes(v)), "regex", {
+        alts, dead, unreachable, column, truth: COLUMN_TRUTH[column] || "?", via,
+      });
+    }
+  };
+
+  // regex — an ALTERNATION over a status column. Carries no quoted code and no
+  // comparison operator, so every shape above walks straight past it. Score
+  // each alternative against the column's own vocabulary: one that matches
+  // nothing the column can hold is DEAD (r594's `hots` vs the code HOT).
+  const ALTERNATION = /\(\s*([A-Za-z][A-Za-z0-9_]{1,14}(?:\s*\|\s*[A-Za-z][A-Za-z0-9_]{1,14}){1,})\s*\)/g;
+  const REGEXISH = /(~\*?\s*['"`]|\.test\s*\(|\.match\s*\(|\bRegExp\b|\bREGEXP\b|\bSIMILAR\s+TO\b|=\s*\/|:\s*\/)/;
+  for (let i = 0; i < lines.length; i++) {
+    if (!REGEXISH.test(lines[i])) continue;
+    const win = lines.slice(Math.max(0, i - 3), i + 2).join("\n");
+    if (!STATUSISH.test(win)) continue;
+    const column = columnAt(i, win);
+    scoreAlternations(lines[i], i + 1, column);
+  }
+
+  // The same alternation held in a CONSTANT — the idiom r594's fix left behind
+  // (`const IN_PLAY_STATUS_RX = "'(neg|offer|hot|sol|exc|terms)'"`, read by
+  // four queries). The declaration line names no column, so score it against
+  // the column its USE sites read: one shared predicate is exactly the thing
+  // whose next edit must not go unwatched.
+  const CONST_ALT = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[`'"][^)\n]*\([A-Za-z][A-Za-z0-9_]*(?:\s*\|\s*[A-Za-z][A-Za-z0-9_]*)+\)/;
+  for (let i = 0; i < lines.length; i++) {
+    const d = lines[i].match(CONST_ALT);
+    if (!d) continue;
+    const name = d[1];
+    let column = "?";
+    for (let j = 0; j < lines.length && column === "?"; j++) {
+      if (j === i || !lines[j].includes(name)) continue;
+      if (!/~\*?\s*(\$\{|\+|\s*[A-Za-z_$])/.test(lines[j]) && !new RegExp(`~\\*?\\s*\\$\\{${name}`).test(lines[j])) continue;
+      const w = lines.slice(Math.max(0, j - 3), j + 2).join("\n");
+      if (!STATUSISH.test(w)) continue;
+      column = columnAt(j, w);
+    }
+    scoreAlternations(lines[i], i + 1, column, name);
+  }
+
   // case — a run of `case "CODE":` labels close together is one switch on status
   const cases = [...text.matchAll(CASE)]
     .filter((m) => ALL.has(m[2]))
@@ -213,6 +288,34 @@ for (const file of files) {
     run.push(c);
   }
   flush();
+}
+
+// default — a column DEFAULT is a write nobody makes (lesson 13, r595): omit
+// the field and postgres supplies the literal, past every canonicaliser on the
+// write path. Read the tracked status columns straight out of the schema.
+{
+  const schemaPath = path.join(ROOT, "shared", "schema.ts");
+  const schema = fs.readFileSync(schemaPath, "utf8");
+  const schemaLines = schema.split("\n");
+  let table = null;
+  for (let i = 0; i < schemaLines.length; i++) {
+    const t = schemaLines[i].match(/pgTable\(\s*["'`]([a-z0-9_]+)["'`]/);
+    if (t) table = t[1];
+    if (!table) continue;
+    const c = schemaLines[i].match(/["'`]([a-z0-9_]*status)["'`]\s*[,)][^\n]*\.default\(\s*["'`]([^"'`]+)["'`]/);
+    if (!c) continue;
+    const column = `${table}.${c[1]}`;
+    const vocab = COLUMN_VOCAB[column];
+    if (!vocab) continue;
+    const value = c[2];
+    const alive = vocab.some((v) => v === value);
+    push({
+      file: path.relative(ROOT, schemaPath), line: i + 1, kind: "default",
+      codes: LABELS.has(value.toLowerCase()) ? [LABELS.get(value.toLowerCase())] : [],
+      raw: schemaLines[i].trim().slice(0, 160),
+      column, truth: COLUMN_TRUTH[column] || "?", value, alive,
+    });
+  }
 }
 
 findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
@@ -232,12 +335,19 @@ const showAll = process.argv.includes("--all");
 // could NOT determine is usually a DIFFERENT enum (leasing-schedule
 // Occupied/Vacant, AML complete/incomplete), so it is noise by default and
 // only shows under --all. Determined-column hits are the candidate list.
-const diverge = findings.filter((x) => (x.kind === "label" || x.kind === "assign" ? x.truth !== "?" : x.matches.length === 0));
+// regex: divergent when an alternative is DEAD (matches nothing the column can
+// hold) — the r594 tell. default: divergent when the literal is not itself a
+// value the column's vocabulary contains — the r595 tell.
+const diverge = findings.filter((x) =>
+  x.kind === "label" || x.kind === "assign" ? x.truth !== "?"
+    : x.kind === "regex" ? x.dead.length > 0
+      : x.kind === "default" ? !x.alive
+        : x.matches.length === 0);
 let shown = showAll ? findings : diverge;
 if (kinds) shown = shown.filter((x) => kinds.includes(x.kind));
 
 const tally = (rows) =>
-  ["list", "keys", "union", "case", "label", "assign"].map((k) => `${k} ${rows.filter((r) => r.kind === k).length}`).join(" · ");
+  ["list", "keys", "union", "case", "label", "assign", "regex", "default"].map((k) => `${k} ${rows.filter((r) => r.kind === k).length}`).join(" · ");
 
 console.log(`canonical: ${CANON.DEAL_STATUS_CODES.join(",")}`);
 console.log(`${findings.length} hardcoded status set(s) in client/ + server/ + shared/  [${tally(findings)}]`);
@@ -262,6 +372,21 @@ for (const f of shown) {
         : f.truth === "mixed"
           ? `  MIXED column — decide the vocabulary before changing the write`
           : `  column undetermined — read it (may be a different enum entirely)`,
+    );
+  } else if (f.kind === "regex") {
+    console.log(`  alternation: ${f.alts.join(" | ")}${f.via ? `   (const ${f.via}, column resolved from its use sites)` : ""}`);
+    console.log(`  column: ${f.column}  [holds ${f.truth}]`);
+    console.log(`  code:   ${f.raw}`);
+    if (f.dead.length)
+      console.log(`  DEAD alternative(s): ${f.dead.join(", ")} — match no value this column can hold`);
+    console.log(`  not reached: ${f.unreachable.join(",") || "-"}${f.dead.length ? "  <- check these against the dead alternatives" : "  (selecting a subset is what a predicate is for)"}`);
+  } else if (f.kind === "default") {
+    console.log(`  DEFAULT ${JSON.stringify(f.value)} on ${f.column}  [holds ${f.truth}]`);
+    console.log(`  code:   ${f.raw}`);
+    console.log(
+      f.alive
+        ? `  in vocabulary — fine`
+        : `  BAD DEFAULT: omit the field and postgres stamps this literal, past every write-path canonicaliser${f.codes.length ? ` (means ${f.codes.join(",")})` : ""}`,
     );
   } else if (f.kind === "label") {
     console.log(`  labels: ${f.labels.join(" | ")}  ->  ${f.codes.join(",")}`);
