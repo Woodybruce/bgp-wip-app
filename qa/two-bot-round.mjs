@@ -1354,6 +1354,56 @@ async function victoriaRound(page, cross) {
     if (r.residue) throw new Error('deleted task still present in the task list');
   });
 
+  // A DAY read as a MOMENT, on the RENDERER this time: the property asset
+  // brief's "This week's focus" card measured user_tasks.due_date against
+  // Date.now(), so from 00:01 every label slid a day — a task due TODAY
+  // rendered "1d overdue" in rose (r615; the sixth reader of that column,
+  // missed when r610 censused the other five). The API was always right, so
+  // this asserts on the RENDERED label, not the endpoint.
+  await step(page, p, 'staff-property-focus-task-due-today-not-overdue', async () => {
+    const title = `QA-PROBE focus-due R${ROUND}`;
+    const setup = await page.evaluate(async (needle) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const props = await (await fetch('/api/crm/properties', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(props) ? props : (props?.data || []);
+      if (!rows.length) return { skip: true };
+      const d = new Date();
+      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const create = await fetch('/api/tasks', {
+        method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title: needle, dueDate: today, linkedPropertyId: rows[0].id }),
+      });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json();
+      return { ok: true, taskId: made.id, propertyId: rows[0].id };
+    }, title);
+    if (setup.skip) return;
+    if (!setup.ok) throw new Error(`focus-task setup failed (${setup.why})`);
+    let row = '';
+    let rendered = false;
+    try {
+      await page.goto(`${BASE}/properties/${setup.propertyId}`);
+      await page.waitForLoadState('networkidle');
+      await page.waitForTimeout(2500);
+      const box = page.locator(`[data-testid="task-complete-${setup.taskId}"]`).first();
+      if (await box.count()) {
+        rendered = true;
+        row = (await box.locator('xpath=ancestor::div[1]').innerText().catch(() => '')) || '';
+      }
+    } finally {
+      await page.evaluate(async (id) => {
+        await fetch(`/api/tasks/${id}`, {
+          method: 'DELETE', credentials: 'include',
+          headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        });
+      }, setup.taskId);
+    }
+    if (!rendered) throw new Error('focus card never rendered the probe task due today');
+    const seen = row.replace(/\s+/g, ' ').trim();
+    if (/overdue/i.test(seen)) throw new Error(`a task due TODAY is labelled overdue on the focus card: "${seen}"`);
+    if (!/today/i.test(seen)) throw new Error(`focus card shows no "today" label for a task due today: "${seen}"`);
+  });
+
   // Agent adds a contact ON the Landsec company — the client must then see it
   // in their own CRM (agent→client contact parity). Persisted (swept by the
   // round cleanup's 'QA Contact%' purge); the client-side check runs later.

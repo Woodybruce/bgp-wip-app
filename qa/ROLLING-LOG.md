@@ -92,14 +92,126 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r615 · 2026-09-08 · LIGHT (r614 had the journey) — ROUND IN PROGRESS
+### r615 · 2026-09-08 · LIGHT (r614 had the journey, no journey) · 2 bugs fixed: the property focus card's day maths + the commission statements' false 85%-split claim · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD.
-- Regression: head chunks running (three-way split, one `QA_CROSS_FILE`,
-  tail to follow in its own `with-server.sh` per the r614 login-trap note).
-- Triage so far: no app-level failures reported yet.
-- Census work (target #2, £/percentage computed in more than one file) has
-  already turned up two real bugs — see the final entry.
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD —
+  pushed with `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE.** Head split three ways sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-615.json`: 94 + 131 + 110 = **head 335 ok**
+  (r614's predicted 335 — its new `client-brands-hub-tiles-agree-with-categories`
+  took mark's chunk 130 → 131) + tail **39** = **374 ok**. Signature
+  **6x400 + 1x409 + 10x403 + 1x503 (identical to r614). **Streak 70.**** — the listed noise, unchanged, no 5xx beyond the keyless-AI 503.
+- **The r614 login trap did NOT recur**: the tail ran in its OWN
+  `with-server.sh` (fresh server = fresh rate-limit window). Keep doing that.
+  `qa/r615-focus-due-verify.mjs` also caches its token in `/tmp/r615-token.json`
+  so the fixed-vs-re-broken re-runs cost one login, not two.
+- **BUG 1 FIXED — a DAY read as a MOMENT, in the RENDERER, on the SIXTH door
+  of `user_tasks.due_date`** (r610 censused five and built `shared/task-due.ts`;
+  this one it never saw). `client/src/components/property-asset-brief.tsx:1179`
+  — the property Asset Brief's *This week's focus* card — computed
+  `Math.floor((new Date(iso).getTime() - Date.now()) / 86_400_000)`. Because
+  every writer stamps `due_date` at midnight, **every label slid a whole day
+  from 00:01 onwards**: a task due TODAY rendered **"1d overdue" in rose**,
+  tomorrow's rendered "today", the day after tomorrow's rendered "tomorrow".
+  Worse than r610's binary flag — the whole ladder was shifted, all day.
+  **Clients see and edit this card on their own property** (property-detail.tsx
+  :828, board parity, Woody 2026-08-03), so the false red was on the landlord's
+  screen too.
+  **FIX:** new `daysUntilDay()` on `shared/day-overdue.ts` (whole CALENDAR days,
+  both sides normalised to midnight, `Math.round` so DST days don't drift), and
+  `dueLabel` delegates to it. Same rule the two CORRECT doors already implement
+  by hand (`tasks.tsx:122` `formatDueDate`, `dashboard.tsx:244` `dueLabel`).
+  **PROVEN BOTH WAYS, VISUALLY, on the same seeded task** (Bluewater, due
+  2026-09-08, shots `r615-focus-due` / `r615-broken-focus-due`): fixed row reads
+  *"QA r615 focus due TODAY · Victoria · **today**"*; the same page with the old
+  one-line maths restored reads *"… **1d overdue**"*.
+- **BUG 2 FIXED — a UI that STATES A CONTRACT the engine never honoured.**
+  `server/commission-engine.ts:263`, printed verbatim on the Finance page
+  (`finance.tsx:239`, `commissions.assumptions.join(" ")`) under the commission
+  statements, told the equity group: *"deals with no explicit split default to
+  85% across the deal's agents."* **No such default has ever existed** — the
+  statements query `JOIN`s (inner) `deal_fee_allocations`, so a fee-due deal
+  with no split rows reaches **no agent at all**, and the file's own header
+  comment (:21-24) says that is deliberate ("a missing split is the correct
+  signal that the split needs entering, not something to guess"). An agent
+  reading their statement would think those fees were in their billings at 85%
+  when they are in at 0. The second assumption was wrong too — it said the FY
+  is set by "the earlier of exchange / completion" while `fee_due` takes the
+  `LEAST` of exchange, completion **and invoice** (:132-136). Both lines now
+  describe the code, with a comment saying why they must.
+- **CENSUS — the £-total / percentage class (this round's target #2). Result:
+  consistent, and here is the proof, so nobody re-runs it.**
+  - **An agent's £ share of a deal fee — SEVEN doors.** `commission-engine.ts`
+    :142 and :305, `hr-routes.ts` :818 / :1332 / :2054 / :2809,
+    `review-wip-sync.ts:78`. Two different precedences (`percentage` first in
+    hr-routes + review-wip-sync; `fixed_amount` first in commission-engine) —
+    **harmless by construction**: the only editor writer,
+    `crm.ts:4304-4307`, nulls whichever column is not the row's
+    `allocation_type`, and the other two writers (`crm.ts:737` fixed-only,
+    `brand-images.ts:1031` percentage-only) write exactly one. So no row ever
+    carries both and the precedence never fires. `review-wip-sync.ts:78` is the
+    only door that keys off `allocation_type` itself — the actual discriminator.
+    PROVED against the writers, not the data (fixture has 0
+    `deal_fee_allocations` rows).
+  - The **ELSE branches** genuinely differ (commission-engine: none;
+    hr-routes :1332/:2054/:2809: `fee / array_length(agents)`) and that is
+    documented on both sides as deliberate — commission BILLING vs the HR
+    pages' legacy equal-split credit. Left alone.
+  - **WAULT — three doors, agree by construction.**
+    `property-asset-brief.ts:406` (SQL) and
+    `PropertyTenancySchedule.tsx:985-993` (client) share the same rule —
+    rent-weighted, `0 < yrs <= 60`, simple mean when no rents — reconciled
+    deliberately in r571 and still matching. `data-room-reconcile.ts:108-204`
+    weights a *spec document's* figures, a different source.
+  - **Passing-rent totals agree**: `routes.ts:8072` (client dashboard headline,
+    SUM over `tenancy_schedule_units`) and
+    `PropertyTenancySchedule.tsx:952` (board KPI, reduce over the same rows,
+    NULL→0). Same basis. (`#327`'s 199-vs-200 COUNT question is untouched — not
+    this class, still Woody's call.)
+  - **Pipeline stage weights — three copies, same values, no divergence today.**
+    `PROJ_WEIGHTS` / `STAGE_WEIGHTS` / `FORWARD_WEIGHTS`. → **UX #349** (not a
+    bug; it is r580's HOT-enum failure waiting to happen again).
+- **CENSUS — target #1's last two candidates. Both CLOSED, neither a bug.**
+  - **"is this unit available" — there is no date to get wrong.** No
+    `available_from` / `date_available` / `availability_date` column exists
+    anywhere in `shared/schema.ts` or the auto-migrate; unit availability is a
+    status question only, and both status-literal sweeps are spent. Closed.
+  - **"is this invoice overdue" beyond Xero — no DB-column door exists.** Every
+    overdue/aged bucket reads the LIVE Xero API (`xero-financials.ts:483`,
+    `chatbgp.ts:11020`), the two r612 already censused. `xero_invoices.due_date`
+    is stored (`xero.ts:855`, day-sliced) but **nothing compares it to now** —
+    grep for `due_date` against `<`/`NOW()`/`CURRENT_DATE` across `server/`
+    returns only task/AML doors. Closed.
+  - **Bonus, and a genuine near-miss: `kyc-orchestrator.ts:774` and `:808` are
+    two MORE doors on `aml_recheck_reminders.due_date` that r612 did not see** —
+    `due_date <= NOW()`. **Checked, NOT a bug**: for a midnight-stamped due date
+    that fires the re-screen ON the due day, which is what a nightly job should
+    do, and it is a strict *superset* of `dayOverdueSql` so nothing is ever
+    missed. Only the SQL comment ("overdue recheck reminder") overstates it. No
+    user is told anything false. Left as is.
+  - **Future-facing day labels swept across the whole client: ONE was wrong.**
+    Correct by midnight-normalising both sides: `tasks.tsx:128`,
+    `dashboard.tsx:247`, `hr.tsx:1117-1118` (`today` is midnight at :1082),
+    `hr.tsx:4798`. Correct by arithmetic: `unit-brief-dialog.tsx:30` — `Math.ceil`
+    is exactly right for a midnight-stamped future date (today → 0, not -1).
+    Past-facing "Nd ago" floors (`interactions-board.tsx:83`,
+    `company-contacts-board.tsx:20`, `brands-hub.tsx:370`, `requirements.tsx:89`,
+    `property-asset-brief.tsx:64`) are all fine. Only `dueLabel` was broken.
+- **Harness: `staff-property-focus-task-due-today-not-overdue`** added to
+  victoria's chunk (immediately before `agent-add-client-contact`, so it lands in
+  head chunk 1: **94 → 95** next round). It seeds a task due TODAY on a property,
+  opens `/properties/<id>` in the browser and asserts on the **RENDERED row** —
+  fails on `/overdue/i`, fails if no "today" — then deletes the task in a
+  `finally`. Deliberately a DOM assertion, not an API one: the endpoint was
+  always right. **Proven NON-VACUOUS: with `dueLabel`'s old one-line maths restored the same scenario ran **0 ok, 1 flow-failure**; with the fix, **1 ok, 0 issues**.** Total scenarios now **375**.
+- Bugs deferred: none new. Suggestions added: **UX #348** (the missing-fee-split
+  warning covers the pipeline but not fee-due deals, so FYTD billings can
+  understate with no alarm — `FORWARD_WEIGHTS` filter at ~:333) and **UX #349**
+  (three copies of the stage-weight table).
+- New flakes: none. `npx tsc --noEmit` clean; `FRESH_BUILD=1 run-smoke.sh` **GREEN 42/0** after both fixes. Nothing near `shared/schema.ts`
+  tables or `migrations/` (the one shared-file change is a new pure function on
+  `shared/day-overdue.ts`).
+- Next round: **FULL, rotation #3 — Landsec client · mobile 390px.**
 
 ### r614 · 2026-09-08 · FULL · journey: **Landsec client · desktop 1440px** (rotation slot #2) · 1 bug fixed: the Brand Intelligence "Categories" tile was a hardcoded constant sitting in a row of live scoped counts · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
@@ -1900,7 +2012,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   question (#290/#286/#295), the `'Available'::text` column default (needs a
   migration), `add_property_imagery`'s missing scope check, and the residual
   QA rows above.
-- New flakes: none. `npx tsc --noEmit` clean.
+- New flakes: none. `npx tsc --noEmit` clean; `FRESH_BUILD=1 run-smoke.sh` **GREEN 42/0** after both fixes.
 - Next: **r597 is a LIGHT round** (this one had the journey). Re-run
   `QA_PERSONAS=mark` first thing to cover this round's unverified tail, and
   chunk it — it hit the cap again.
@@ -2010,7 +2122,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   comps are unreviewed AI leads — the CLIENT copy of the same empty state
   gets it right), #301 (tracker Focus reports a 12-name sample for 70
   deletions).
-- New flakes: none. `npx tsc --noEmit` clean.
+- New flakes: none. `npx tsc --noEmit` clean; `FRESH_BUILD=1 run-smoke.sh` **GREEN 42/0** after both fixes.
 - Next: **r596 takes rotation #1, BGP staff · desktop 1440px.** Run
   `QA_PERSONAS=victoria` BEFORE `QA_PERSONAS=mark` or accept the
   `client-comps-readonly` phantom above.
