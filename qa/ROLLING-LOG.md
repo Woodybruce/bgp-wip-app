@@ -92,17 +92,114 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r607 · 2026-09-08 · LIGHT (r606 had the journey) · ROUND IN PROGRESS
+### r607 · 2026-09-08 · LIGHT (r606 had the journey) · 2 bugs fixed: every AI write door put a LABEL in `crm_deals.status`, and ChatBGP's tenancy upsert skipped the unit-mirror fan-out
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD at fa98ca5 —
-  pushing via `git push origin HEAD:claude/qa-staging-20260810`.
-- Regression: head chunk (`QA_UNTIL=client-properties-table-readonly-cells`)
-  running; **victoria closed at 151 ok** exactly as predicted, mark in
-  progress. Triage so far: 7 logged issues, all listed noise (rocketreach-400
-  x N, keyless-AI 503, client 403s). No 5xx.
-- Two bugs fixed (details in the final entry): the deal-status write doors and
-  ChatBGP's tenancy upsert skipping the unit-mirror fan-out. `npx tsc
-  --noEmit` clean.
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Container
+  came up on a DETACHED HEAD at fa98ca5 — pushed with
+  `git push origin HEAD:claude/qa-staging-20260810`. `npx tsc --noEmit` clean
+  after both fixes.
+- **REGRESSION AT BASELINE.** Chunked, shared `QA_CROSS_FILE=/tmp/qa-cross-607.json`:
+  head (`QA_UNTIL=client-properties-table-readonly-cells`) **327 ok** / 6x400 +
+  1x409 + 9x403 + 1x503; tail (`QA_SKIP_UNTIL=` the same) **39 ok** / 1x403.
+  Sum **366 ok, 18 issues** — exactly r606's prediction, issue signature
+  unchanged (victoria 151 as predicted, mark 176 head + 15 tail). r606's two
+  added scenarios split head/tail 1-and-1, not both into the head. **Streak 61.**
+  Triage: nothing new, no 5xx. NOTE for the next round: the head chunk was
+  already running when this round edited two-bot-round.mjs, so the two NEW
+  scenarios did not appear in it — they were verified separately with
+  `QA_ONLY=` (both green, neither logs a request). Expect **head 329, sum 368**.
+- **BUG FIXED — every AI write door stored a LABEL in `crm_deals.status`, and
+  their own tool schemas taught the model to.** That column is the CODES
+  vocabulary (`DEAL_STATUS_CODES`) and the firm's WIP hero reads it with a raw
+  SQL code predicate — `hr-routes.ts:1256` `status IN ('AVA','NEG','HOT','SOL',
+  'EXC','COM')` inside `GET /api/dashboard/firm-summary` — so a label there
+  drops the deal out of WIP pounds AND out of `deal_count`: the firm's forecast
+  silently shrinks by that fee. **CENSUS, every door named.** Clean and PROVEN
+  clean: `POST /api/crm/deals` (crm.ts:3270 canonicalises inline), the deal
+  PUT and `POST /api/crm/deals/bulk-update` AML gates (both go through
+  `legacyToCode`, so no gate is bypassed by the fix), `lease-status-mirror.ts`
+  :70/:176 (write `code`), the boot canonicaliser (index.ts:1463), the WIP-sync
+  `status='ARCH'` (crm.ts:613 — a deliberate non-code the exclusion predicates
+  rely on), `crm.ts:1394` (writes `code`), `routes.ts` :4672/:4803/:5306
+  (`marketingStatus || 'AVA'`, checked r605). **Broken:** ChatBGP `create_deal`
+  (chatbgp.ts:6375 desktop, :11905 mobile) and `update_deal` (:6276, :11928)
+  did a raw `db.insert`/`db.update` of the model's free text; `bulk_update_crm`
+  (:10003) pushed it into raw SQL for up to 100 deals at once; the Models-page
+  agent `POST /api/models/claude-agent` (models.ts:3439/3455) did the same. And
+  the SCHEMAS: `"Status of the deal"` (chatbgp.ts:2582, models.ts:2738), a bare
+  `status: { type: "string" }` on both update_deal tools, and — third round
+  running that a schema taught the wrong vocabulary — `bulk_update_crm`'s own
+  example `e.g. { status: 'Under Offer', … }`. FIX: `canonicaliseDealStatus` at
+  the storage write boundary (storage.ts, beside r588's `canonicaliseUnitStatus`),
+  all six AI doors now call `storage.createCrmDeal` / `storage.updateCrmDeal`,
+  `bulk_update_crm` canonicalises inline (raw SQL, no boundary to use), and all
+  five schemas name the canonical codes. Unknown values are still stored
+  verbatim, so `'ARCH'`, `'UO'` (asserted by an existing scenario) and
+  `'leasing comps'` survive untouched.
+- **BUG FIXED — ChatBGP's `upsert_tenancy_schedule` wrote the god of truth and
+  fanned nothing out.** The tenancy spine drives three projections through
+  `unit-mirror.fanOutTenancyStatus`, and the schedule UI states that contract to
+  the user (`PropertyTenancySchedule.tsx`:229 "Editing any of these on a row
+  fans the change out to leasing_schedule_units, available_units, and
+  crm_deals"). **CENSUS:** every other door fans out — `tenancy-schedule.ts`
+  :364 (POST), :469 (PATCH), :952, :1612/:1634 (imports/backfill) and
+  `crm.ts`:3774 — and only ChatBGP's upsert (`chatbgp.ts`:6782 desktop, :12295
+  mobile twin) did not. So a datatape ChatBGP loaded, or "mark unit 12 let",
+  moved the rent roll while the landlord's leasing board and the internal
+  Letting Tracker stayed on the old status. Both dispatchers now collect the
+  touched row ids (`.returning()` on insert) and fan out best-effort per row,
+  exactly as the HTTP doors do; the tool's `status` description now names the
+  schedule's own eight-value vocabulary instead of "e.g. Occupied, Vacant".
+- **PROVEN**: `qa/r607-deal-status-probe.mjs` drives the REAL dispatchers
+  (`executeCrmToolRaw` desktop, `handleCrmToolCall` mobile) — create "Under
+  Offer"→SOL and the deal counts toward the WIP hero, update "exchanged"→EXC,
+  `bulk_update_crm` "Under Offer"→SOL, mobile "Negotiating"→NEG, `'ARCH'` left
+  alone, the pre-fix shape asserted directly (a raw label is invisible to the
+  hero), and the tenancy upsert now moves the spine to Under Offer AND the
+  tracker to SOL AND the leasing board to Under Offer. All green; it restores
+  every row it touches.
+- Harness: `staff-deal-status-stays-canonical` (probe deal created in-scenario:
+  create door label→NEG, bulk door label→AVA, deleted by response code so no
+  404 is logged) and its client half `client-deal-statuses-are-not-labels`
+  (nothing the landlord can see may carry a status a `legacyToCode` label list
+  would rewrite). Both green under `QA_ONLY=`.
+- Visual re-verify (1440px, staff): `/deals/list` renders human chips
+  (Solicitors, Exchanged) with no raw values — `qa/smoke-shots/r607-deals-list.png`;
+  Bluewater tenancy board tiles 124 + 75 + 1 = **200** = its own unit count,
+  so r606's fix holds after the fan-out change — `r607-tenancy-board.png`.
+- Target 4 (#327, the 200-vs-199 question) — the two queries are now written
+  into UX-NOTES so Woody's decision is a one-liner: **199** =
+  `routes.ts:8069` `COUNT(*) FROM tenancy_schedule_units` under
+  `GET /api/company-portfolio/:companyId`; **200** = `tenancy-schedule.ts:118`,
+  the same spine rows PLUS one row per Letting Tracker unit matching no spine
+  row. Measured today: Bluewater spine 199, projections 1, board 200.
+- Bugs DEFERRED (not fixed, deliberately):
+  · `POST /api/favorite-instructions/:propertyId` (crm.ts:8048) still has no
+  scope check — a client can favourite any property id. Re-read this round: the
+  rows are per-user and only ever read back as ids filtered against the
+  server-scoped lists, so it stays tidy-up, but a correct fix needs the
+  client-visible-property predicate plus a re-verify of Mark's dashboard tile,
+  which is more than the "few lines" the brief allowed.
+  · `leasing_schedule_units.status` census: the label-vocabulary column has ONE
+  code in the fixture (`AVA` on `RU10 Test`) — that is one of the residual QA
+  rows baked into `qa/smoke-fixture.sql.gz` (already answered, Woody's call).
+  All live writers are clean: `unit-mirror` and `lease-status-mirror` bridge
+  through `codeToLeasingStatus`, `routes.ts`:4596 and :6454 both translate and
+  say why, and the remaining doors are sheet imports that store whatever the
+  uploaded sheet holds.
+  · `investment_tracker.status` census: MIXED by design, every read site
+  bridges with `legacyToCode(x) || "REP"` (r605 fixed the one that didn't) and
+  the two tool schemas already name the canonical ten. No door to fix.
+- Suggestions added: **UX #328** (ChatBGP's `query_wip` advertises a `status`
+  filter but searches `group_name`, and buckets its summary by raw codes — a
+  decision, not a patch). #327 gained the query-level addendum above.
+- New flakes: none. Notes for the next round: (a) do NOT edit
+  two-bot-round.mjs while a chunk is running — the running node has the old
+  module and your new scenarios simply never appear; (b) a scenario that GETs a
+  just-deleted id logs a 404 as a round issue — assert on the DELETE response
+  instead.
+- Next journey: **rotation #3, Landsec client · mobile 390px** (r607 was LIGHT
+  → r608 FULL).
 
 ### r606 · 2026-09-08 · FULL · Landsec client · DESKTOP 1440px · 2 bugs fixed: ChatBGP's unit-status UPDATE bypassed the canonicalising write boundary, and the tenancy board's vacant projections shipped raw marketing CODES so its own tiles could not account for every unit
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

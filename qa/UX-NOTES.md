@@ -13,6 +13,21 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+328. 2026-09-08 · BGP staff / ChatBGP (QA r607, target-2 schema sweep) · a
+   user asks ChatBGP "which deals are under offer?" · the `query_wip` tool
+   (server/chatbgp.ts:4448) advertises `status` as "Filter by status/stage
+   e.g. Under Offer, Exchanged, Completed, New Instructions" but the handler
+   (:8441 desktop, :12768 mobile) applies it to `group_name ILIKE`, a
+   different column — and then buckets its own summary by the RAW code
+   (`byStage[d.status]`), so the reply speaks in AVA/NEG/SOL. Two mismatches
+   in one tool: the filter names one column and searches another, and the
+   answer names the codes rather than the labels the team uses. Not fixed
+   this round because it needs a decision, not a patch: on THIS tool, should
+   `status` mean the deal status code (crm_deals.status) or the pipeline
+   stage (group_name)? Suggestion: pick one, rename the other parameter
+   (`stage`), and pass the summary through `dealStatusLabel` so ChatBGP says
+   "Solicitors", not "SOL".
+
 325. 2026-09-08 · Landsec client / desktop (QA r606) · Mark Warne prepping a
    Thursday asset-management meeting · his "Portfolio activity — BGP team"
    panel on My Tasks — headed "What the BGP team is working on across the
@@ -46,6 +61,17 @@ what happened · concrete suggested improvement.
    vacancy-basis question (#290/#286/#295) — same root: which table is "the
    units" on this property. Suggestion: settle one basis and label it on
    both surfaces, as was done for the occupancy tiles.
+   · r607 pinned the two queries so the decision is a one-liner. **199** =
+   `GET /api/company-portfolio/:companyId` (server/routes.ts:8069) —
+   `SELECT COUNT(*) FROM tenancy_schedule_units WHERE property_id = ANY($1)`,
+   the spine and nothing else. **200** = `GET /api/tenancy-schedule/:id`
+   (server/tenancy-schedule.ts:118) — the same spine rows PLUS one row per
+   Letting Tracker unit whose unit_name matches no spine row
+   (`available_units … NOT EXISTS (tenancy_schedule_units …)`), de-duped on
+   the normalised name. Measured on the fixture today: Bluewater spine 199,
+   projections 1, board 200. So the choice is exactly: does an unmatched
+   Letting Tracker unit count as a unit of the property (200) or not (199)?
+   Whichever Woody picks, the OTHER surface is the one-line change.
 
 324. 2026-09-08 · BGP staff / ChatBGP (QA r605, triage of #304) · Woody tells
    ChatBGP "put the Croydon purchase on hold" · the tracker's own tool schema

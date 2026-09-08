@@ -913,6 +913,38 @@ async function victoriaRound(page, cross) {
     if (r.restoredStatus !== r.original) throw new Error(`fixture deal stuck in UO (restore failed: ${r.restoredStatus})`);
   });
 
+  // r607: `crm_deals.status` is the CODES column and the firm's WIP hero is a
+  // raw SQL code predicate (hr-routes.ts `status IN ('AVA','NEG','HOT','SOL',
+  // 'EXC','COM')`), so a LABEL stored there drops the deal out of WIP pounds
+  // AND the deal count. Every write door must canonicalise — the AI doors
+  // (ChatBGP create_deal/update_deal/bulk_update_crm, the Models-page agent)
+  // didn't, and their own tool schemas advertised labels. Probe deal only:
+  // created and deleted in-scenario, no fixture row touched, and AVA/NEG are
+  // below the SOL+ AML gate so nothing is refused.
+  await step(page, p, 'staff-deal-status-stays-canonical', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const made = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: 'QA r607 status probe', status: 'Under Negotiation', dealType: 'Letting' }) });
+      if (!made.ok) return { ok: false, why: `create ${made.status}` };
+      const deal = await made.json();
+      const read = async () => (await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json())?.status;
+      const created = await read();
+      const bulk = await fetch('/api/crm/deals/bulk-update', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ ids: [deal.id], field: 'status', value: 'available' }) });
+      const bulked = bulk.ok ? await read() : null;
+      // Delete by response code — a GET on the deleted id would log a 404 as
+      // a round issue.
+      const del = await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      return { ok: true, created, bulked, bulkStatus: bulk.status, delStatus: del.status };
+    });
+    if (!r.ok) throw new Error(`staff deal-status probe could not run (${r.why})`);
+    if (r.created !== 'NEG') throw new Error(`create door stored ${JSON.stringify(r.created)} for the label "Under Negotiation", expected the code NEG`);
+    if (!r.bulkStatus || r.bulkStatus >= 300) throw new Error(`bulk-update refused the probe deal (${r.bulkStatus})`);
+    if (r.bulked !== 'AVA') throw new Error(`bulk door stored ${JSON.stringify(r.bulked)} for "available", expected AVA`);
+    if (r.delStatus >= 300) throw new Error(`probe deal could not be deleted (${r.delStatus}) — it would sit in the WIP report`);
+  });
+
   // MLR scope suggestion on deal detail: must 200 with a suggestion, never
   // 500 (r237: the route SELECTed non-existent monthly_rent/annual_rent
   // columns, so every staff deal-detail open fired a raw 500).
@@ -7633,6 +7665,34 @@ async function markRound(page, cross) {
   // enrich / AI description writers (which rewrite CRM rows and spend model
   // credits). A client login must be refused every one — a 2xx here is a
   // client wiping or AI-rewriting the firm's CRM in bulk.
+  // r607, the client half of staff-deal-status-stays-canonical: whatever door
+  // a status came in through, nothing the landlord can see may carry a LABEL
+  // in the codes column — a label is invisible to every code predicate, so
+  // the deal silently leaves the WIP report and the firm's forecast.
+  await step(page, p, 'client-deal-statuses-are-not-labels', async () => {
+    const bad = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/deals', { headers: auth });
+      if (!res.ok) return { status: res.status };
+      const deals = await res.json();
+      // Labels LEGACY_MAP would rewrite into a code (shared/deal-status.ts).
+      const LABELS = ['under negotiation', 'in negotiation', 'negotiation', 'negotiating', 'hots',
+        'heads of terms', 'under offer', 'sols', 'solicitors', 'exchanged', 'completed', 'complete',
+        'let', 'invoiced', 'billed', 'opportunity', 'reporting', 'targeting', 'speculative', 'live',
+        'available', 'marketing', 'occupied', 'withdrawn', 'lost', 'dead'];
+      return {
+        status: 200,
+        offenders: (Array.isArray(deals) ? deals : [])
+          .filter((d) => LABELS.includes(String(d.status || '').trim().toLowerCase()))
+          .map((d) => `${d.name} = ${d.status}`).slice(0, 5),
+      };
+    });
+    if (bad.status !== 200) throw new Error(`client deals list returned ${bad.status}`);
+    if (bad.offenders.length) {
+      throw new Error(`deals visible to the client carry status LABELS, not codes: ${bad.offenders.join('; ')}`);
+    }
+  });
+
   await step(page, p, 'client-bulk-mutation-guard', async () => {
     const results = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
