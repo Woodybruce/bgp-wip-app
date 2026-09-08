@@ -92,16 +92,137 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r619 · 2026-09-08 · LIGHT (r618 did the journey) · ROUND IN PROGRESS
+### r619 · 2026-09-08 · LIGHT (r618 did the journey — no exploratory journey) · REGRESSION AT BASELINE · 2 bugs fixed: seven of nine Diary team-filter pills were off the phone screen, and two AML compliance card actions were clipped off it · 2 suggestions · 1 deferred
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushing with
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
   `git push origin HEAD:claude/qa-staging-20260810`.
-- Regression, head split three ways sharing `QA_CROSS_FILE=/tmp/qa-cross-619.json`,
-  each chunk in its own `with-server.sh`: **chunk 1 = 99 ok** (exactly r618's
-  prediction after its two new scenarios), **chunk 2 = 133 ok**. Chunk 3 + tail
-  in flight. Signature so far 6x400 + 1x409 + 9x403 — all listed noise.
-- Triage: no new issue classes. Targets under way — the control-reach
-  bounding-box sweep (r618's lesson) and the requireAdmin-panel census.
+- **REGRESSION AT BASELINE, exactly r618's prediction.** Head split three ways
+  sharing `QA_CROSS_FILE=/tmp/qa-cross-619.json`, each chunk in its OWN
+  `with-server.sh`: **99 + 133 + 110 = head 342** + tail **39** = **381 ok**.
+  Signature **6x400 + 1x409 + 10x403 + 1x503 — identical to r615/r616/r617/r618.
+  Streak 74.** All listed noise; no chunk died at `sam · login`.
+- **TARGET 1 DONE — r618's lesson turned into a reusable detector, and it paid
+  twice on its first run.** New `qa/r619-control-reach-sweep.mjs`: a real
+  iPhone context that walks 24 phone-reachable routes and measures **every
+  visible interactive control's boundingBox**, not `documentElement.scrollWidth`.
+  It **refuses to sweep a route whose phone shell did not render** (the r618
+  trap: a 390px *desktop* layout is a different, non-user-facing surface), and
+  it labels a hit `[CLIPPED — invisible to a scrollWidth sweep]` when
+  `scrollWidth` is still exactly 390. **22 of 24 routes clean; 2 real hits,
+  both clipped, both invisible to `qa/phone-overflow-sweep.mjs`.**
+- **BUG 1 FIXED — seven of the Diary's nine team-filter pills were off the
+  right edge of a phone screen, unreachably.** `client/src/pages/calendar.tsx:1606`,
+  `data-testid="team-filter-bar"`: nine `whitespace-nowrap` pills in a
+  `flex items-center gap-1 … shrink-0` row with **no wrap and no
+  `overflow-x-auto`**. At 390px only "Development" and "London F&B" were
+  reachable — "National Leasing" sat 158px out, "Landsec" **732px** out — and
+  the overflow was **CLIPPED**, so `documentElement.scrollWidth` stayed exactly
+  390 and every previous overflow sweep passed the page. **`showTeam` defaults
+  to `true` (`calendar.tsx:1383`)**, so this bar is on for every staff member
+  on every phone visit to the Diary, and filtering to a colleague's team is
+  the main reason to open it there. **FIX:** `overflow-x-auto` on the strip —
+  the house pattern for a pill strip (`evidence-plans.tsx:547`,
+  `mobile-expenses.tsx:1400`, `mobile-admin-expenses.tsx:123`); no new styles,
+  no tokens, desktop unchanged (all nine fit).
+- **BUG 2 FIXED — two `/aml-compliance` card actions were clipped off the phone
+  screen (the r618 Data Health shape, twice).** `aml-compliance.tsx:183` (Staff
+  AML Training Log) and `:491` (Firm-wide Risk Assessment): both are
+  `flex items-center justify-between` headers whose right-hand button cluster
+  cannot wrap. **"Create blank" sat at x=367 (78px past the edge, 23px of it
+  visible) and "Log Training" 30px out** — and again `scrollWidth` stayed 390,
+  which is exactly why **r618 recorded `/aml-compliance` at 390px as CLEAN**.
+  "Create blank" is the only way to start the firm-wide risk assessment.
+  **FIX:** `flex-wrap` + `gap-2` on both header rows and `flex-wrap` on both
+  button clusters — the same two-class fix r618 applied to Data Health.
+- **VERIFIED VISUALLY** by re-running the sweep against the fixed build:
+  `/aml-compliance` and `/diary` both **ok — all controls inside 390px**, and
+  the whole 24-route sweep back to 0 failures.
+- **Harness: two scenarios added to victoria's chunk**, immediately BEFORE
+  `staff-evidence-plan-lifecycle`, so **head chunk 1: 99 → 101 next round;
+  head 344, sum 383; total scenarios now 383.** Signature unchanged (neither
+  makes a refused request). `staff-calendar-team-pills-reachable-on-phone`
+  asserts **REACHABILITY, not containment** — it scrolls the strip to its end
+  and requires the LAST pill to land inside 390px, which is the honest test
+  for a scrollable strip and still fails dead on a clipped one.
+  `staff-aml-compliance-actions-reachable-on-phone` measures the two buttons'
+  boxes. Both throw rather than pass vacuously (no bar, too few pills, a
+  missing button, or a control with no box). **BOTH PROVEN NON-VACUOUS by
+  re-breaking:** with the fixes stashed the pair ran **0 ok / 2 issues**
+  (`team pill 10 of 10 … even after scrolling the strip: x=1043`;
+  `button-edit-risk-assessment at x=367`); with them restored, **2 ok / 0 issues.**
+- **SWEEP CORRECTNESS NOTE (matters for the next round):** the first fixed run
+  still flagged `/calendar`, because a control inside a strip that genuinely
+  **scrolls** is reachable even though its box is past the viewport. The sweep
+  now walks ancestors and skips a control whose ancestor has
+  `overflow-x: auto|scroll` **and** `scrollWidth > clientWidth`. Without that
+  it would report a permanent false FAIL on every scrollable pill row in the
+  app. Re-verified: 5/5 routes ok.
+- **TARGET 2 DONE — the requireAdmin-panel census is CLOSED, with one hit,
+  deferred.** Wider than r618 framed it: `client/src/lib/queryClient.ts:111`
+  sets a **default `refetchInterval` of 30s on EVERY query**, so an ungated
+  panel on a requireAdmin endpoint polls a 403 every 30s **whether or not it
+  declares one** — r618's bug did not need its explicit interval. Censused all
+  **109** requireAdmin routes (31 of them GET) against every client consumer in
+  `client/src/pages/**` **and** `client/src/components/**`. **Correctly gated:**
+  subscriptions' pipnet + logo-dev (`enabled: isAdmin`), settings'
+  EmailProcessor / UserActivity / EmailIntelligence (`{isAdmin && …}`, r618),
+  SortTeamsDialog's query (`enabled: open`), hr's XeroPayrollPanel
+  (`{isAdmin && <TabsContent>}`), available-units' letting-tracker-focus
+  (`{auUser?.isAdmin && …}`). The five component matches are all
+  `/api/expenses` **prefix** noise. **ONE real hit → #358 below.**
+- **CHECKED, NOT BUGS:** `crm.ts`'s **96 routes with no inline `requireAuth`**
+  are not an auth hole — probed unauthenticated against the live server,
+  `GET /api/crm/stats` and `POST /api/crm/duplicates/merge` both return **401**
+  (a global `/api` gate covers them). **Route-level guards are not this app's
+  convention** — only **5 of 104** `<Route>`s carry `AdminRoute`/`EquityRoute`;
+  admin pages are gated by nav visibility plus server middleware, so
+  `/m/team-expenses` and `/subscriptions` lacking `AdminRoute` is house style,
+  not a bug (the phone's "Team" link into `/m/team-expenses` is itself
+  `{me?.isAdmin && …}`). `/api/integrations/status` on `/subscriptions` has no
+  `enabled: isAdmin` unlike its two siblings, but the page is admin-nav-only —
+  noted, not landed.
+- **THE MULTI-TABLE / JOIN-UPDATE GAP r618 left open in the phantom-column
+  census: swept, clean.** 15 `UPDATE` statements in `server/**` carry a
+  subquery; **there are no `UPDATE … FROM` joins at all**. All 15 are the
+  r617/r618 merge re-points in `crm.ts:1666-1703` plus `tenancy-schedule.ts`'s
+  three `crm_deals.tenancy_unit_id` clears. No new phantom-column suspects.
+  What remains uncovered is only dynamically-built SQL.
+- Bugs deferred: **#358 — three of the six Data Health actions are admin-only,
+  in a card mounted for every staff member.** `settings.tsx:1054`,
+  `DataHealthSection` has no `isAdmin` prop while its siblings on :431/:432/:437
+  are all `{isAdmin && …}`. "Sync Tracker → Leasing Schedule"
+  (`POST /api/available-units/backfill-leasing-schedule`), "Renumber Units
+  (test)" (`POST /api/admin/number-test-units`) and "Sort Teams" (whose dialog
+  reads `/api/admin/users-by-team` and saves via
+  `/api/admin/users-bulk-reassign-team`) are **all `requireAdmin`**. **PROVEN
+  LIVE as Victoria** (`isAdmin: false`, "Head of National"): all four endpoints
+  **403**. Worst of the three is Sort Teams — its `queryFn` swallows `!r.ok`
+  into `[]`, so a non-admin opens the dialog on a **silently EMPTY firm
+  roster**; "Renumber Units" 403s only *after* a confirm that says it "destroys
+  existing unit names". **Not landed** because the fix (pass `isAdmin` down and
+  gate the three, exactly r618's shape) collides with a live question Woody
+  should settle first: `/settings` is **admin-only in the nav on both shells**
+  (#358 in UX-NOTES), so either the page is meant for admins — in which case
+  the gate is moot and four all-staff panels are stranded — or it is meant for
+  all staff, in which case the nav is what is wrong. Patch is one prop + three
+  `{isAdmin && …}` wrappers whenever he calls it. **Woody's call.**
+- Suggestions added: **UX #358** (Settings is admin-only in the nav yet is the
+  sole home of Team Folders, ChatBGP Learnings, App Feedback and Change
+  Requests — all `requireAuth`; companion to #355) and **UX #359** (even
+  scrolling, the Diary's nine-pill team filter shows two on a phone with no
+  affordance that it scrolls — suggest a dropdown pill on phone, or an
+  edge-fade).
+- New flakes: none. `npx tsc --noEmit` clean. `FRESH_BUILD=1 run-smoke.sh`
+  **GREEN 42/0** after both fixes. Nothing near `shared/schema.ts` tables or
+  `migrations/` — both fixes are Tailwind classes only. No nav change, so
+  `server/chatbgp-app-map.ts` is untouched and still accurate.
+- **LESSON: r618's detector lesson generalises, and the generalisation has a
+  second half.** Measuring CONTROL boxes instead of the document found two more
+  clipped rows on the first sweep — but a raw box test is WRONG for a
+  deliberately scrollable strip, and would have left a permanent false failure
+  behind. The honest question is not "is the box inside the viewport" but
+  **"can a thumb get to it"**: inside a scrolling ancestor, yes; inside a
+  clipping one, never.
 
 ### r618 · 2026-09-08 · FULL · journey: **BGP staff · phone 390px** (rotation slot #4) · 2 bugs fixed: five of six CRM data-hygiene actions were OFF the phone screen, and an admin-only email panel was mounted for every staff user · 2 suggestions · 1 deferred
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

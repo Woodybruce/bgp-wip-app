@@ -3315,6 +3315,79 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  await step(page, p, 'staff-calendar-team-pills-reachable-on-phone', async () => {
+    // r619: the Diary's team filter bar (calendar.tsx, data-testid
+    // team-filter-bar) laid nine team pills in one non-wrapping,
+    // non-scrolling flex row. showTeam defaults TRUE, so every staff member
+    // opening the Diary on a phone got a filter bar where seven of the nine
+    // teams sat off the right edge — "Landsec" 732px out — CLIPPED by an
+    // ancestor, so documentElement.scrollWidth stayed exactly 390 and the
+    // page-level overflow sweep passed it. The fix makes the strip
+    // overflow-x-auto (the house pattern: evidence-plans, mobile-expenses),
+    // so the durable assertion is REACHABILITY: scroll the strip to its end
+    // and the last pill must land inside the viewport. On the clipped build
+    // the scroll does nothing and the pill stays out of reach.
+    const phone = await page.context().browser().newContext({
+      viewport: { width: 390, height: 844 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    const ph = await phone.newPage();
+    try {
+      await ph.goto(`${BASE}/`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await ph.evaluate((t) => { localStorage.setItem('bgp_auth_token', t); localStorage.setItem('authToken', t); }, page.qaToken);
+      await ph.goto(`${BASE}/calendar`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await ph.waitForTimeout(8000);
+      const bar = ph.locator('[data-testid="team-filter-bar"]');
+      if (!(await bar.count())) throw new Error('the Diary team filter bar did not render — scenario would pass vacuously');
+      const pills = ph.locator('[data-testid^="team-pill-"]');
+      const n = await pills.count();
+      if (n < 3) throw new Error(`only ${n} team pill(s) — scenario would pass vacuously`);
+      // Reachable = the strip actually scrolls the overflow into view.
+      await bar.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+      await ph.waitForTimeout(400);
+      const last = await pills.nth(n - 1).boundingBox();
+      if (!last) throw new Error('the last team pill has no box — scenario would pass vacuously');
+      if (last.x < 0 || last.x + last.width > 391) {
+        throw new Error(`team pill ${n} of ${n} is unreachable on a 390px phone even after scrolling the strip: x=${Math.round(last.x)} w=${Math.round(last.width)}`);
+      }
+    } finally {
+      await phone.close().catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-aml-compliance-actions-reachable-on-phone', async () => {
+    // r619: two /aml-compliance card headers put their button cluster in a
+    // justify-between row that could not wrap — "Create blank" sat 78px past
+    // the right edge and "Log Training" 30px, both CLIPPED (scrollWidth 390),
+    // which is why r618 recorded /aml-compliance as clean at 390px. Measure
+    // the CONTROLS, not the document.
+    const phone = await page.context().browser().newContext({
+      viewport: { width: 390, height: 844 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    const ph = await phone.newPage();
+    try {
+      await ph.goto(`${BASE}/`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await ph.evaluate((t) => { localStorage.setItem('bgp_auth_token', t); localStorage.setItem('authToken', t); }, page.qaToken);
+      await ph.goto(`${BASE}/aml-compliance`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await ph.waitForTimeout(8000);
+      const ids = ['button-edit-risk-assessment', 'button-open-training-tab'];
+      const offscreen = [];
+      for (const id of ids) {
+        const el = ph.locator(`[data-testid="${id}"]`);
+        if (!(await el.count())) throw new Error(`${id} is not on /aml-compliance — scenario would pass vacuously`);
+        const b = await el.boundingBox().catch(() => null);
+        if (!b) throw new Error(`${id} has no box — scenario would pass vacuously`);
+        if (b.x < 0 || b.x + b.width > 391) offscreen.push(`${id} at x=${Math.round(b.x)} w=${Math.round(b.width)}`);
+      }
+      if (offscreen.length) throw new Error(`AML compliance actions off a 390px phone screen: ${offscreen.join(', ')}`);
+    } finally {
+      await phone.close().catch(() => {});
+    }
+  });
+
   await step(page, p, 'staff-evidence-plan-lifecycle', async () => {
     // r472: full CRUD sweep of the Evidence Plans API — create plan, draw
     // unit, add entry, delete plan (cascade must leave no orphan rows in

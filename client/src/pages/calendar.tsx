@@ -1604,7 +1604,7 @@ export default function Calendar() {
       </div>
 
       {showTeam && !isClientTeam && (
-        <div className="flex items-center gap-1 px-3 py-1.5 border-b bg-muted/20 shrink-0" data-testid="team-filter-bar">
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b bg-muted/20 shrink-0 overflow-x-auto" data-testid="team-filter-bar">
           {TEAMS.map(t => (
             <button
               key={t}

@@ -80,6 +80,15 @@ function measure(vw) {
     // Only controls that are laid out on the page, not ones parked off-canvas
     // by a closed drawer/sheet (those slide in when opened).
     if (el.closest('[data-state="closed"]')) continue;
+    // A control inside a strip that actually SCROLLS horizontally is
+    // reachable — the thumb drags the strip. Only a CLIPPED overflow (or one
+    // the page cannot scroll to) puts a control out of reach.
+    let scrollable = false;
+    for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+      const ov = getComputedStyle(a).overflowX;
+      if ((ov === 'auto' || ov === 'scroll') && a.scrollWidth > a.clientWidth + 1) { scrollable = true; break; }
+    }
+    if (scrollable) continue;
     if (rc.right > vw + 1 || rc.left < -1) {
       const id = el.getAttribute('data-testid') || '';
       const label = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40);

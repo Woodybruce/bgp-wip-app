@@ -181,12 +181,12 @@ function TrainingRecords() {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2 text-base">
             <GraduationCap className="w-4 h-4" />
             Staff AML Training Log
           </CardTitle>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button asChild size="sm" variant="outline" data-testid="button-open-training-tab">
               <a href="/kyc-clouseau?tab=training">
                 <GraduationCap className="w-3 h-3 mr-1" />
@@ -489,13 +489,13 @@ function FirmRiskAssessment() {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2 text-base">
             <AlertTriangle className="w-4 h-4" />
             Firm-wide Risk Assessment
           </CardTitle>
           {!editing && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {status === "approved" && (
                 <Badge className="bg-emerald-600">Approved</Badge>
               )}

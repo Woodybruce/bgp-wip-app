@@ -13,6 +13,37 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+358. 2026-09-08 · Victoria (BGP staff, non-admin "Head of National") /
+   desktop + phone · QA r619 · **Settings is admin-only in the nav, but it is
+   the sole home of four all-staff panels.** `/settings` sits in
+   `adminNavBase` (app-sidebar.tsx:154-162) and again as `adminOnly: true` in
+   the phone list (:680), and the whole Admin NavSection renders only
+   `{user?.isAdmin && …}` (:479) — so a non-admin staff member has **no link
+   to Settings anywhere, on either shell** (#355 found the phone has no link
+   even for an admin). Yet the page carries **Team Folders**, **ChatBGP
+   Learnings**, **App Feedback** and **Change Requests**, whose endpoints are
+   all `requireAuth`, not `requireAdmin` — deliberately open to every staff
+   member. Team Folders in particular is a shared per-team file area with
+   upload / download / delete (`routes.ts:8321-8404`) whose only UI is on
+   this page. Suggestion: decide the page's audience — either put Settings in
+   the core staff nav (every admin-only section inside it is already
+   `{isAdmin && …}` gated, and r619 gated the last un-gated admin actions, so
+   this is safe), or move Team Folders somewhere staff can reach. Today the
+   nav and the server disagree about who this page is for.
+
+359. 2026-09-08 · Victoria (BGP staff) / staff PHONE 390px · QA r619 · **the
+   Diary's team filter is nine pills on a strip that shows two.** Even after
+   this round made the strip scroll (it was clipped dead before — seven of
+   nine teams simply unreachable), a phone user still sees "Development" and
+   "London F&B" and has to drag sideways, with no affordance saying there is
+   anything to drag to: no fade, no chevron, no count. `showTeam` defaults
+   TRUE, so this bar is the first thing under the Diary header on every phone
+   visit, and picking a colleague's team is the main reason to open the Diary
+   on a phone at all. Suggestion: on phone, collapse the team filter to a
+   single dropdown pill showing the active team ("Team: London F&B ▾") — the
+   pattern the WIP filters already use — or at minimum add the standard
+   edge-fade so the strip reads as scrollable.
+
 355. 2026-09-08 · Victoria (BGP staff) / staff PHONE 390px · QA r618 · **the
    phone has no route to Settings at all.** Asked to tidy a duplicate
    property from her phone between viewings, Victoria could only get there by
