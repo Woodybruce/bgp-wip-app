@@ -191,6 +191,27 @@ export function CrmEntityPicker({
     }
   }, [open]);
 
+  // Close on Escape. On WINDOW in the capture phase, not on the input's own
+  // bubble handler: Radix Dialog's DismissableLayer listens for Escape on
+  // `document` with capture, so a bubble handler on the input never runs
+  // before the Dialog has already decided to close. Window is ahead of
+  // document in the capture path, so this gets first refusal and keeps the
+  // parent dialog (and the half-filled form) alive (r604).
+  useEffect(() => {
+    // alwaysOpen cells (the leasing-schedule target picker) have no closed
+    // state to return to, so they must not claim the key at all.
+    if (!open || alwaysOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      setOpen(false);
+      setSearch("");
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, alwaysOpen]);
+
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -242,7 +263,6 @@ export function CrmEntityPicker({
         value={search}
         onChange={e => setSearch(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Escape") { setOpen(false); setSearch(""); }
           if (e.key === "Enter") {
             // Never create while the list is still offering candidates —
             // typing a partial name ("Honi") and pressing Enter used to make

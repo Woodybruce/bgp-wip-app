@@ -2481,11 +2481,30 @@ async function victoriaRound(page, cross) {
       // Brief dialog read, and it rides the targets along.
       const list = await (await fetch('/api/unit-briefs', { headers: auth })).json().catch(() => []);
       const mine = (Array.isArray(list) ? list : []).find(b => b.id === brief.id);
-      return { briefId: brief.id, targetStatus: tRes.status, targets: (mine?.targets || []).map(t => t.operatorName) };
+      // Render the brief PDF too. r601 fixed every PDF footer loop writing
+      // below its own bottom margin, which made pdfkit tack a spurious blank
+      // page onto five document types; this is the one brief-shaped renderer
+      // that can prove it stays fixed. A one-section brief must come out at
+      // exactly one page, with the footer stamped on it.
+      const gRes = await fetch(`/api/unit-briefs/${brief.id}/generate-document`, { method: 'POST', credentials: 'include', headers: auth });
+      const gen = gRes.ok ? await gRes.json() : null;
+      let pdfPages = null, pdfFooter = null;
+      if (gen?.downloadUrl) {
+        const raw = await (await fetch(gen.downloadUrl, { credentials: 'include', headers: auth })).arrayBuffer();
+        const txt = new TextDecoder('latin1').decode(raw);
+        pdfPages = (txt.match(/\/Type\s*\/Page[^s]/g) || []).length;
+        // pdfkit writes standard-font text as hex TJ arrays interleaved with
+        // kerning offsets — join the hex runs WITHOUT the numbers to read it.
+        pdfFooter = /Bruce Gillingham Pollard/.test(txt) || /42007200750063006500/i.test(txt.replace(/\s/g, ''));
+      }
+      return { briefId: brief.id, targetStatus: tRes.status, targets: (mine?.targets || []).map(t => t.operatorName), genStatus: gRes.status, pdfPages, pdfFooter };
     }, ROUND);
     if (r.fail) throw new Error(r.fail);
     if (r.targetStatus !== 200) throw new Error(`target add failed (${r.targetStatus})`);
     if (!r.targets.includes(`QA-TGT-R${ROUND}`)) throw new Error('added target missing from brief read-back');
+    if (r.genStatus !== 200) throw new Error(`brief document generate failed (${r.genStatus})`);
+    if (r.pdfPages !== 1) throw new Error(`brief PDF should be 1 page, got ${r.pdfPages} (r601 blank-page regression?)`);
+    if (!r.pdfFooter) throw new Error('brief PDF has no BGP footer on its only page');
     cross.briefId = r.briefId;
   });
 

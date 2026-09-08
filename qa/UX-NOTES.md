@@ -13,6 +13,43 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+321. 2026-09-08 · BGP staff / desktop 1440px (QA r604, Victoria) · a new
+   requirement comes in and she opens New Deal to get it on the board · the
+   form asks for Property, Deal Type, Landlord, Tenant, Deal Name, BGP
+   Contact, Headline Rent, % Agency fee, Total fee, BGP fee split, Timing for
+   completion, Invoicing email, PO number and Comments — and the ONLY
+   required field that lives below the fold is "Timing for completion". Press
+   Create Deal with everything else filled and nothing visible happens: the
+   button does nothing, the page scrolls, and the only explanation is the
+   browser's own native "Please fill out this field" bubble, which looks
+   nothing like the app's own red toasts (every other missing field — no
+   landlord, no tenant, no unit — gets a proper destructive toast).
+   Suggestion: validate targetDate in the same submit guard as the others and
+   toast "Timing for completion required — it drives the WIP report bucket",
+   so all the create-deal failures speak with one voice.
+
+322. 2026-09-08 · BGP staff / desktop 1440px (QA r604, Victoria) · she opens
+   the Targeting Brief on a Letting Tracker unit to write the client's
+   instruction · the dialog opens completely empty with only "Draft with AI"
+   and "Upload client brief (AI extract)" offered; there is no Save button at
+   all until you have typed something, and no "Generate brief document"
+   button until the brief has been saved once. Both are correct, but a
+   first-time user reads the empty toolbar as "this screen is broken / I have
+   to use AI". Suggestion: show "Create brief" disabled from the start with a
+   hint ("type a title to start"), and show "Generate brief document" greyed
+   with "save the brief first" rather than hiding both.
+
+323. 2026-09-08 · BGP staff / desktop 1440px (QA r604, Victoria) · she picks
+   the tenant on a new deal and wants to see the counterparty on the board ·
+   the deal lands correctly, but the list row reads "#1038 Bluewater Shopping
+   Centre / British Land Rival / No Xero contact / Lease Acquisition /
+   Solicitors / Honi Poke" — the deal's own NAME ("Honi Poke – Bluewater
+   Shopping Centre"), which the dialog auto-composed and which is the only
+   thing she typed nothing into, is not a column on the schedule at all. She
+   has to reconstruct the deal from four separate cells. Suggestion: lead the
+   row with the deal name (property + counterparty are already its parts),
+   the way the global-search fix at r229 did for search results.
+
 318. 2026-09-07 · BGP staff / phone 390px (QA r602, Victoria) · a tenant rep
    rings about a unit; she opens the Letting Tracker on her phone and scans
    for it · each unit card carries ONLY the unit name, the scheme and the

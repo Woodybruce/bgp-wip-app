@@ -92,12 +92,69 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r604 · 2026-09-08 · FULL (round in progress) · rotation slot #1 BGP staff · desktop 1440px
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures). Two-bot round 604
-  in two chunks: 325 ok / 17 issues (head) + 38 ok / 1 issue (tail) =
-  **363 ok, 18 issues — exactly baseline** (victoria 149, mark 190, woody+
-  nick+sam 24; 6x400 + 1x409 + 10x403 + 1x503, all listed noise). Streak 58.
-- Triage: nothing new. Journey + hand-offs in progress.
+### r604 · 2026-09-08 · FULL · journey: **BGP staff · desktop 1440px** (rotation slot #1) · BOTH r603/r601 hand-offs CLOSED in the browser · 1 bug fixed (Escape on any CRM picker tore down the whole parent dialog and lost the form) · 3 suggestions
+- Regression: run-smoke.sh GREEN x2 (42 checks, 0 failures; the second with
+  FRESH_BUILD=1 after the fix). Two-bot round 604 in two chunks:
+  325 ok / 17 issues (head) + 38 ok / 1 issue (tail) = **363 ok, 18 issues —
+  exactly baseline** (victoria 149, mark 190, woody+nick+sam 24;
+  6x400 + 1x409 + 10x403 + 1x503, all listed noise). Streak 58. tsc clean.
+- Journey (Victoria, 1440px): "Honi Poke want space at Bluewater — get the
+  deal on the board and produce the paperwork". /deals WIP report →
+  /deals/list?new=1 → New Deal (type Lease Acquisition, tenant Honi Poke,
+  landlord Landsec, property Bluewater, timing Dec-26) → **deal #1038 created,
+  status SOL** → /deals/list shows it → /deals/letting → unit BX10 Targeting
+  Brief → Create brief → Generate brief document → PDF. Two real writes, both
+  landed. Only 4xx seen in the whole journey: 3x 401 /api/xero/contacts
+  (keyless Xero — add to noise if it recurs).
+- **r603 HAND-OFF 1 CLOSED — UX #298 is now BROWSER-PROVEN, on all three
+  doors.** r603's probe failed because it used `/deals?new=1`; the deals LIST
+  (and its create dialog) is `/deals/list?new=1` — `/deals` is the hub's WIP
+  Report tab. Typing a prefix now ranks the real record first AND leaves it
+  default-selected: tenant "Honi" → [Honi Poke*, Create tenant "Honi"];
+  landlord "Landsec" → [Landsec*]; property "Bluewater" → [Bluewater Shopping
+  Centre*, Create property "Bluewater"…]. Shots qa/smoke-shots/r604c-*.
+  qa/r603-combobox-order-probe.mjs is superseded by qa/r604-combobox-probe.mjs.
+- **r601 HAND-OFF 2 CLOSED — the PDF footer patch is ENDPOINT-PROVEN.**
+  Seeded a brief through the UI, POST /api/unit-briefs/:id/generate-document
+  → 200, fetched the PDF: **1 page**, footer present on it ("Bruce Gillingham
+  Pollard … Page 1 of 1"). unit-brief-doc.ts:173 is proven; the two
+  document-templates.ts sites (:1144/:2975) are still patched-only — no
+  template exists in the fixture to render.
+- **Bug fixed (1): Escape inside any CRM picker closed the WHOLE parent
+  dialog.** Found mid-probe: Victoria opens New Deal, half-fills it, opens the
+  tenant picker, presses Escape to dismiss just the dropdown — and the New
+  Deal dialog goes with it, form and all. Cause: all three pickers closed
+  themselves from a listener that could never win. Radix Dialog's
+  DismissableLayer listens for Escape on `document` with **capture**;
+  entity-combobox.tsx:132 and property-combobox.tsx:391 listened on `document`
+  in the **bubble** phase, and crm-entity-picker.tsx:243 on the input's own
+  React onKeyDown — every one of them runs after the Dialog has already
+  decided to close, and none called stopPropagation. Fix: each now listens on
+  **`window` with capture** (window is ahead of document in the capture path
+  whatever order the two mount in, so mount-order is not part of the
+  contract) and stops the key there. CENSUS: 3 doors, all 3 patched;
+  entity-combobox + property-combobox **proven visually** (tenant, landlord
+  and property pickers: dropdown closes, DIALOGS=1 survives), crm-entity-
+  picker patched-not-proven (identical idiom; its only in-dialog callers are
+  PropertyTenancySchedule + leasing-schedule). Its `alwaysOpen` cell variant
+  (leasing-schedule target picker) is explicitly excluded — it has no closed
+  state to return to and must not swallow the page's Escape.
+  Regression guard checked both ways: with no dropdown open, Escape still
+  closes the New Deal dialog (DIALOGS 1 → 0).
+- Harness growth: `staff-brief-target-create` now also renders the brief PDF
+  and asserts **200 + exactly 1 page + footer present** — the standing guard
+  that r601's blank-page fix stays fixed (the Escape fix is client-only, no
+  cheap API probe, same call as r227). Green in a filtered run alongside its
+  client cross-check `client-brief-target-scope`.
+- Suggestions: UX-NOTES **#321** (the one required New Deal field below the
+  fold, "Timing for completion", fails with the browser's native bubble while
+  every other missing field gets an app toast), **#322** (Targeting Brief
+  opens with no Save and no Generate button at all — hide-vs-disable), **#323**
+  (the deals schedule has no deal-NAME column; the row she just created reads
+  as four disconnected cells).
+- Bugs deferred: none new. New flakes: none.
+- Next journey: r604 had the journey → r605 may be LIGHT; then rotation #2
+  Landsec client · desktop.
 
 ### r603 · 2026-09-07 · LIGHT (r602 had the journey — no journey this round) · 2 bugs fixed: every CRM picker ranked `Create "X"` at or above the record you were typing at (UX #298, 4 doors censused, 3 patched) · and the KYC portal told the customer in writing that BGP stores their passport somewhere it does not · UX #320 and #192 PROVEN and written up
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
