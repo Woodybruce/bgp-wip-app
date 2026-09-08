@@ -92,21 +92,111 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r614 · 2026-09-08 · FULL (rotation #2, Landsec client · desktop 1440px) — **ROUND IN PROGRESS**
+### r614 · 2026-09-08 · FULL · journey: **Landsec client · desktop 1440px** (rotation slot #2) · 1 bug fixed: the Brand Intelligence "Categories" tile was a hardcoded constant sitting in a row of live scoped counts · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD —
-  pushing with `git push origin HEAD:claude/qa-staging-20260810`.
-- **REGRESSION: head AT BASELINE.** Four chunks sharing
-  `QA_CROSS_FILE=/tmp/qa-cross-614.json`: 94 + 130 + 110 = **head 334 ok**,
-  exactly r613's prediction. Signature so far **6x400 + 1x409 + 10x403 + 1x503**
-  — the listed noise, unchanged.
-- **Tail chunk truncated by the r572 LOGIN RATE LIMITER, not by the app.** All
-  four chunks ran back-to-back inside one `with-server.sh`, so by the tail
-  `sam.cole@hammerson.com` got *"Too many login attempts. Please try again in 15
-  minutes."* → `harness-crash` at `sam · login`, taking the 11 rival-isolation
-  scenarios with it (tail **28 ok** vs r613's 39). Environment noise; to be
-  re-run on its own once the window clears.
-- Triage: nothing new. Journey + bug work in progress.
+  pushed with `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE.** Four chunks sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-614.json`: 94 + 130 + 110 = **head 334 ok**
+  (exactly r613's prediction) + tail. Signature **6x400 + 1x409 + 10x403 +
+  1x503** — the listed noise, unchanged, no 5xx beyond the keyless-AI 503.
+  **Streak 69.**
+- **HARNESS TRAP, NOT AN APP BUG — running all four chunks back-to-back inside
+  ONE `with-server.sh` trips the r572 login rate limiter.** By the tail,
+  `sam.cole@hammerson.com` got *"Too many login attempts. Please try again in
+  15 minutes."* → `harness-crash` at `sam · login`, taking the 11
+  rival-isolation scenarios with it (tail read 28 instead of 39). **Re-run on
+  its own after the window cleared: all 11 GREEN, 0 issues.** So the true tally
+  is **334 + 39 = 373 ok / 18 issues**, the predicted number. *For next round:
+  either put a gap between chunks or run the tail in its own `with-server.sh`.*
+- **JOURNEY — Mark Warne, 1440px: "autumn brand-strategy review — show me my
+  brands, let me dig into one, then let me add one."** `/` dashboard →
+  `/brands` Overview → Brand Explorer → Honi Poke profile (`/companies/<id>`)
+  → Compliance & KYC panel → `/requirements` → the client's own self-add write.
+  Surfaces new to the rotation: Brand Intelligence **in depth** (hub tiles,
+  explorer categories, a full brand profile incl. the KYC panel) and the client
+  Requirements table. Shots `r614-*`.
+- **BUG FIXED — a COUNT next to a FILTERED LIST, and the count was a
+  CONSTANT.** `client/src/pages/brands-hub.tsx:277` rendered the fourth stats
+  tile as `{ label: "Categories", value: BRAND_CATEGORIES.length }` — the
+  length of BGP's static global taxonomy — in a bar whose other three tiles
+  (Total Brands, Brands with Live Requirements, With Turnover Data) are live,
+  **scope-filtered** counts off `/api/brands/hub`. The Brand Explorer directly
+  below it already hides empty categories for a client (`:916`,
+  `!isClientExplorer || catCounts[cat.key] > 0`). **Proven visually, pre-fix:**
+  Mark's tile read **Categories 5** while his own explorer offered **4** cards
+  — Fashion & Retail 1 · Food & Drink 6 · Leisure & Experience 1 · Health &
+  Wellness 1 = 9 = his Total Brands. A number about BGP's taxonomy presented to
+  a landlord as a number about his portfolio.
+  **FIX:** compute the tile from the scoped breakdown the endpoint *already
+  returns* and the page *already declares* in its type (`categoryCounts`,
+  unused until now) — count the `BRAND_CATEGORIES` with at least one brand
+  present, via the existing `catMatch`. No endpoint change, no new query.
+  `npx tsc --noEmit` clean; `FRESH_BUILD=1 run-smoke.sh` **GREEN 42/0** after.
+  **RE-VERIFIED VISUALLY** (shot `r614-01-hub-fixed`): tile now reads
+  **Categories 4**, matching the four explorer cards beside it.
+- Harness: **`client-brands-hub-tiles-agree-with-categories`** added (mark's
+  chunk, immediately before `client-brand-suggested-pitches-scoped`) — asserts
+  the hub's `stats.total_brands` equals the sum of its own `categoryCounts`
+  **and** that no zero-count category row is returned (the rows the Explorer
+  hides). Green with the rival block: **12 ok, 0 issues**. *Honest note: I did
+  NOT prove it non-vacuous by re-breaking the code — the tile bug itself was
+  client-side, so this scenario guards the endpoint's count-vs-breakdown
+  contract rather than the tile I fixed.*
+- **CHECKED, NOT A BUG — the day/moment class, `crm_deals.target_date`.**
+  Censused because "is this deal stale/needs attention" was on the uncensused
+  list. **All writers write a DAY**: `deals.tsx:1262/:1271/:1527/:2158` write
+  `` `${month}-01` ``, `:2747` is a `<input type="date">`, `crm.ts:1021`
+  writes `parseWipMonthToDate` (a month start), and the AI schema at
+  `crm.ts:4548` says *"ISO date string"* — a NINTH tool schema promising a day
+  into a TIMESTAMP column (`shared/schema.ts:904`). **Readers:**
+  `routes.ts:9658` (`target_date < CURRENT_DATE`) and `server/deal-verdicts.ts`
+  are already correct (both re-confirmed from r613); every client-side use is
+  display-only. The one moment-comparison is
+  `server/ai-intelligence.ts:79-100` — `Math.floor((targetDate - now)/86400e3)`,
+  which for a deal targeted TODAY yields −1 and files it under
+  `overdue_completion` ("Target date was 1 days ago"), while
+  `approaching_completion` can never fire on the day itself. **It is real but
+  it is DEAD CODE:** `/api/ai/deal-alerts` has **no consumer anywhere** in
+  `client/src` or `server/` (grep: only its own definition and error log), and
+  `/api/ai/` is not in `CLIENT_ALLOWED_API` so a client 403s on it — no leak
+  either, despite the route selecting every deal in the book under bare
+  `requireAuth`. Not fixed: fixing dead code spends a bug slot for no user.
+  **Logged here so the next round doesn't re-census `target_date`.**
+- Bugs deferred: none new. Deferred pool unchanged (UX #331/#332, #339-#341,
+  #343/#344, the two column DEFAULTs, #320's dead phone "More" tab).
+- Suggestions added: **UX #345** (the hub's "Who's Hot — last 90 days" ranks on
+  `updated_at` of deals/requirements/contacts, i.e. record edits, so the hub
+  called Honi Poke hot "today" while the brand's own relationship panel read
+  *Last touch —* / *Active (90d) 0*; plus a stale "60 days" comment over a
+  90-day query), **#346** (the Compliance panel hides the staff edit + rescrape
+  buttons from a client and says "BGP is identifying the UK trading entity",
+  then shows an un-gated *Search Companies House for "X"* link — asking the
+  landlord to do the job with nowhere to put the answer), **#347** (a brand
+  profile paints 218 chars of sidebar and nothing else for ~2s after the click
+  — no skeleton, unlike the hub).
+- **FIXTURE CAUTION for the next round:** a self-add round-trip is NOT
+  idempotent. `Testco Fashion` (`Tenant - Fashion`) is ALREADY in Mark's
+  `crm_extra_brand_ids`, and `/api/client/crm/global-brands?search=` still
+  offers it with no "already added" marker; my POST add → DELETE probe
+  therefore REMOVED a pre-existing extra (his total went 9 → 9 → 8). Restored
+  by the post-fix `run-smoke.sh` DB restore + `seed-personas.sql`, and the
+  re-run confirms 9. (The re-add path itself is r608's CHECKED-NOT-A-BUG — not
+  re-chased.)
+- `server/chatbgp-app-map.ts` NOT touched — no navigation, page or control
+  moved. `shared/schema.ts` and `migrations/` NOT touched.
+- **STILL UNCENSUSED in the day/moment class:** "is this invoice overdue"
+  beyond Xero, "is this unit available", and any £ total or percentage computed
+  in more than one file. (`target_date` is now DONE — see above.)
+- r612's patched-not-proven item **STILL STANDS**: the two
+  `xero-financials.ts` buckets, read and reasoned, never seen (no Xero key).
+- New flakes: none. The tail-chunk `harness-crash` above is the rate limiter,
+  not a flake — it reproduces whenever four chunks run without a gap.
+- Next journey: **rotation #3, Landsec client · phone 390px** (r614 was FULL →
+  r615 may be LIGHT; then #3).
+- Baseline for r615: r614 added one scenario (mark's chunk, makes no refused
+  request) — **expect head 334 / mark-chunk +1 / sum 374 with the signature
+  unchanged**, and re-run the rival tail separately or space the chunks.
 
 ### r613 · 2026-09-08 · LIGHT (r612 had the journey — no journey this round) · 1 bug fixed across FIVE doors: a lease event happening TODAY read as OVERDUE · 2 deferred scope write-ups finally written · 1 suggestion
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

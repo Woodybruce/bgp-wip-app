@@ -210,6 +210,19 @@ export default function BrandsHub() {
   const brandsWithTurnover = parseInt(data?.stats?.brands_with_turnover || "0");
   const activeReqs = parseInt(data?.stats?.brands_active_req || "0");
 
+  // "Categories" used to print BRAND_CATEGORIES.length — the size of BGP's
+  // global taxonomy, a constant — while the three tiles beside it are live,
+  // scope-filtered counts. On a client login that made it plainly wrong: the
+  // Brand Explorer next to it hides categories with no brands, so Mark's tile
+  // said 5 while his own explorer offered 4. Count the categories actually
+  // represented in the scoped brand set the server already returns.
+  const categoriesInView = useMemo(() => {
+    const types = (data?.categoryCounts || [])
+      .filter(r => parseInt(r.count || "0") > 0)
+      .map(r => r.company_type || "");
+    return BRAND_CATEGORIES.filter(cat => types.some(t => catMatch(t, cat))).length;
+  }, [data?.categoryCounts]);
+
   const filteredHot = useMemo(() => {
     if (!data?.hotBrands) return [];
     if (!search.trim()) return data.hotBrands;
@@ -274,7 +287,7 @@ export default function BrandsHub() {
           { label: "Total Brands", value: totalBrands },
           { label: "Brands with Live Requirements", value: activeReqs },
           { label: "With Turnover Data", value: brandsWithTurnover },
-          { label: "Categories", value: BRAND_CATEGORIES.length },
+          { label: "Categories", value: categoriesInView },
         ].map(s => (
           <Card key={s.label}>
             <CardContent className="p-4">

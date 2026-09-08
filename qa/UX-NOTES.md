@@ -13,6 +13,48 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+345. 2026-09-08 · Mark Warne (Landsec) · client desktop 1440px · QA r614 ·
+   Brand Intelligence hub · **"Who's Hot — last 90 days" ranks brands by
+   RECORD EDITS, not by anything that happened.** Mark's hub put Honi Poke and
+   Amorino at the top as active "today"; opening Honi Poke, its own BGP
+   RELATIONSHIP panel read *Last touch —* and *Active (90d) 0*. Both are
+   right: the hub's hot query (`server/crm.ts` ~8417) takes
+   `MAX(GREATEST(deal.updated_at, requirement.updated_at, contact.updated_at))`
+   — so a brand goes hot the moment anyone saves a row on it, including a
+   backfill or an AI enrichment write, with no human contact at all. Two
+   surfaces on the same brand tell the landlord opposite stories.
+   **Suggestion:** either rank on actual touches (the same source the
+   relationship panel's "last touch" uses) and keep the "last 90 days" label
+   honest, or relabel the tile "Recently updated" and drop the implication of
+   momentum. (Also: the code comment above the query still says "last 60 days"
+   while the SQL and the UI both say 90 — worth aligning while in there.)
+
+346. 2026-09-08 · Mark Warne (Landsec) · client desktop 1440px · QA r614 ·
+   brand profile → Compliance & KYC · **the client is invited to do BGP's job
+   on a panel that otherwise tells him to wait.** On Honi Poke the UK TRADING
+   ENTITY block correctly hides the staff edit pencil and the re-scrape button
+   from a client (`brand-profile-panel.tsx` ~4081/~4090) and shows the client
+   wording *"Not confirmed yet — BGP is identifying the UK trading entity."* —
+   but the link immediately below it, *Search Companies House for "Honi Poke"*
+   (~4147), is NOT client-gated. So the panel says "leave it with us" and then
+   hands the landlord a search box to go and find it himself, with nowhere to
+   put the answer (the save affordance is hidden). **Suggestion:** gate that
+   link on `!bcIsClient` like the two controls above it, or — if Woody would
+   rather clients could help — show it *with* a way to submit what they find.
+
+347. 2026-09-08 · Mark Warne (Landsec) · client desktop 1440px · QA r614 ·
+   brand profile first paint · **the profile renders empty for roughly the
+   first two seconds after the click, with no skeleton.** Clicking a brand tile
+   in Brand Explorer navigated to `/companies/<id>`; at networkidle + 1.6s the
+   page body was 218 characters — sidebar chrome and nothing else, no heading,
+   no spinner, no skeleton. Eight seconds later the full profile (relationship,
+   portfolio activity, compliance, news) was there. Nothing is broken, but the
+   first thing a client sees after clicking a brand is a blank page, which
+   reads as "this brand has nothing in it". **Suggestion:** give the profile
+   the same skeleton treatment the hub already has (`brands-hub.tsx` ~219
+   renders `<Skeleton>` blocks while loading) so the click has an immediate
+   answer.
+
 343. 2026-09-08 · SCOPE-MODEL WRITE-UP, not a suggestion (QA r613; deferred
    since r608 — parked four rounds as "if time remains", written up here so
    Woody can decide). **ChatBGP's `add_property_imagery` has no scope check at

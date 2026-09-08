@@ -6869,6 +6869,28 @@ async function markRound(page, cross) {
   // in the viewer's scope). A client sees it for a brand in their hospitality
   // slice (200 with {brandName, suggestions[]}) but is refused on an
   // out-of-slice brand — the handler's isClientVisibleBrand gate.
+  // The Brand Intelligence stats bar sits directly above the Brand Explorer's
+  // category cards, so its tiles are a claim about the SAME scoped brand set.
+  // (r614: "Categories" printed BRAND_CATEGORIES.length — a constant — so the
+  // client's tile said 5 while his explorer offered 4.) Assert the hub's own
+  // totals and its per-category breakdown are the same brand book.
+  await step(page, p, 'client-brands-hub-tiles-agree-with-categories', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const hub = await fetch('/api/brands/hub', { headers: auth }).catch(() => ({ ok: false }));
+      if (!hub.ok) return { ok: false };
+      const b = await hub.json();
+      const total = parseInt(b?.stats?.total_brands || '-1', 10);
+      const rows = Array.isArray(b?.categoryCounts) ? b.categoryCounts : null;
+      const sum = rows ? rows.reduce((a, x) => a + parseInt(x.count || '0', 10), 0) : -1;
+      return { ok: true, total, sum, nCats: rows ? rows.length : -1, zeroRows: rows ? rows.filter(x => parseInt(x.count || '0', 10) <= 0).length : -1 };
+    });
+    if (!r.ok) throw new Error('client cannot read /api/brands/hub');
+    if (r.total < 1) throw new Error(`hub total_brands unusable (${r.total})`);
+    if (r.sum !== r.total) throw new Error(`hub tile says ${r.total} brands but its category breakdown sums to ${r.sum}`);
+    if (r.zeroRows !== 0) throw new Error(`hub categoryCounts carried ${r.zeroRows} empty category row(s) the Explorer hides`);
+  });
+
   await step(page, p, 'client-brand-suggested-pitches-scoped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
