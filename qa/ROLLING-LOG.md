@@ -92,6 +92,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r604 · 2026-09-08 · FULL (round in progress) · rotation slot #1 BGP staff · desktop 1440px
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures). Two-bot round 604
+  in two chunks: 325 ok / 17 issues (head) + 38 ok / 1 issue (tail) =
+  **363 ok, 18 issues — exactly baseline** (victoria 149, mark 190, woody+
+  nick+sam 24; 6x400 + 1x409 + 10x403 + 1x503, all listed noise). Streak 58.
+- Triage: nothing new. Journey + hand-offs in progress.
+
 ### r603 · 2026-09-07 · LIGHT (r602 had the journey — no journey this round) · 2 bugs fixed: every CRM picker ranked `Create "X"` at or above the record you were typing at (UX #298, 4 doors censused, 3 patched) · and the KYC portal told the customer in writing that BGP stores their passport somewhere it does not · UX #320 and #192 PROVEN and written up
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
