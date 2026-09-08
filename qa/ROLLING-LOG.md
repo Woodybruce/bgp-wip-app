@@ -92,6 +92,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r614 · 2026-09-08 · FULL (rotation #2, Landsec client · desktop 1440px) — **ROUND IN PROGRESS**
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD —
+  pushing with `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION: head AT BASELINE.** Four chunks sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-614.json`: 94 + 130 + 110 = **head 334 ok**,
+  exactly r613's prediction. Signature so far **6x400 + 1x409 + 10x403 + 1x503**
+  — the listed noise, unchanged.
+- **Tail chunk truncated by the r572 LOGIN RATE LIMITER, not by the app.** All
+  four chunks ran back-to-back inside one `with-server.sh`, so by the tail
+  `sam.cole@hammerson.com` got *"Too many login attempts. Please try again in 15
+  minutes."* → `harness-crash` at `sam · login`, taking the 11 rival-isolation
+  scenarios with it (tail **28 ok** vs r613's 39). Environment noise; to be
+  re-run on its own once the window clears.
+- Triage: nothing new. Journey + bug work in progress.
+
 ### r613 · 2026-09-08 · LIGHT (r612 had the journey — no journey this round) · 1 bug fixed across FIVE doors: a lease event happening TODAY read as OVERDUE · 2 deferred scope write-ups finally written · 1 suggestion
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD at
