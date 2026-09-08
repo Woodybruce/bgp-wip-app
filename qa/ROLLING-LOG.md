@@ -92,6 +92,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r605 · 2026-09-08 · LIGHT (r604 had the journey) — ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+- Regression, head chunk (`QA_UNTIL=client-properties-table-readonly-cells`,
+  45s settle): **325 ok / 17 issues** — 6x400 + 1x409 + 9x403 + 1x503, all
+  listed noise, exactly the r604 head. Tail chunk running.
+- Triage: nothing new. No 5xx.
+- In flight: two bugs found by the LIGHT-round targets, fixes pending.
+
 ### r604 · 2026-09-08 · FULL · journey: **BGP staff · desktop 1440px** (rotation slot #1) · BOTH r603/r601 hand-offs CLOSED in the browser · 1 bug fixed (Escape on any CRM picker tore down the whole parent dialog and lost the form) · 3 suggestions
 - Regression: run-smoke.sh GREEN x2 (42 checks, 0 failures; the second with
   FRESH_BUILD=1 after the fix). Two-bot round 604 in two chunks:
