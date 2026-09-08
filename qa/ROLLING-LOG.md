@@ -92,6 +92,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r606 · 2026-09-08 · FULL (client desktop journey) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- **REGRESSION AT BASELINE.** Chunked, shared `QA_CROSS_FILE=/tmp/qa-cross-606.json`:
+  head (`QA_UNTIL=client-properties-table-readonly-cells`) **326 ok** / 6x400 +
+  1x409 + 9x403 + 1x503; tail **38 ok** / 1x403. Sum **364 ok, 18 issues** —
+  exactly the number the parent session predicted for r605's added scenario,
+  issue signature unchanged. **Streak 60.** Triage: nothing new, no 5xx.
+- Journey pending: Landsec client · desktop 1440px.
+
 ### r605 · 2026-09-08 · LIGHT (r604 had the journey — no journey this round) · 2 bugs fixed: the property-plan colour key drew every vacancy GREY, and the investment tracker's REP pill counted rows it then hid · r604's PDF hand-off CLOSED (both doors proven) · #297, #304 and the residual-QA-rows pool all ANSWERED
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Second

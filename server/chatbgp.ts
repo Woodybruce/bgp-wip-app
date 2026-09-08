@@ -3341,7 +3341,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           condition: { type: "string", description: "e.g. Shell & Core, Cat A, Fitted" },
           location: { type: "string", description: "Region/location: Clapham, East Anglia, Ireland, London, Midlands, N. Ireland, National, North East, North West, Scotland, South East, South West, Wales" },
           availableDate: { type: "string", description: "When available" },
-          marketingStatus: { type: "string", description: "e.g. Available, Under Offer, Let, Withdrawn" },
+          marketingStatus: { type: "string", description: "Letting status CODE: OPP, AVA, NEG, HOT, SOL, EXC, COM, WIT, INV (Opportunity, Available, Negotiating, HOTs, Solicitors, Exchanged, Completed, Withdrawn, Invoiced). A label is canonicalised to its code; anything outside this vocabulary is stored verbatim and the unit drops off availability lists." },
           epcRating: { type: "string" },
           notes: { type: "string" },
           fee: { type: "number", description: "Fee percentage" },
@@ -3473,7 +3473,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           useClass: { type: "string" },
           condition: { type: "string" },
           availableDate: { type: "string" },
-          marketingStatus: { type: "string" },
+          marketingStatus: { type: "string", description: "Letting status CODE — same vocabulary as create_available_unit: OPP, AVA, NEG, HOT, SOL, EXC, COM, WIT, INV." },
           epcRating: { type: "string" },
           notes: { type: "string" },
           fee: { type: "number" },
@@ -6630,8 +6630,11 @@ export async function executeCrmToolRaw(
     if (!existing.length) return { data: { success: false, error: `No available unit found with ID "${id}"` } };
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) { if (v !== undefined && v !== null) cleanUpdates[k] = v; }
-    cleanUpdates.updatedAt = new Date();
-    await db.update(availableUnits).set(cleanUpdates).where(eq(availableUnits.id, id));
+    // Through storage.updateAvailableUnit, not a raw db.update: marketing_status
+    // is a CODES column and the storage helper is the single write boundary
+    // that canonicalises a label the model passes (same reason as
+    // create_available_unit above).
+    await storage.updateAvailableUnit(id, cleanUpdates);
     return { data: { success: true, action: "updated", entity: "available unit", id, name: existing[0].unitName, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "unit", id } };
   }
 
@@ -12164,8 +12167,9 @@ export async function handleCrmToolCall(
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
-    cleanUpdates.updatedAt = new Date();
-    await db.update(availableUnits).set(cleanUpdates).where(eq(availableUnits.id, id));
+    // Codes column — go through the canonicalising write boundary, not a
+    // raw db.update (see the desktop twin).
+    await storage.updateAvailableUnit(id, cleanUpdates);
     const reply = await summaryHelper({ success: true, action: "updated", entity: "available unit", id, name: existing[0].unitName, fields: Object.keys(cleanUpdates) });
     return { handled: true, response: { reply: reply || `Unit "${existing[0].unitName}" updated.`, action: { type: "crm_updated", entityType: "unit", id } } };
   }
