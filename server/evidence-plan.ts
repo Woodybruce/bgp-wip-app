@@ -27,6 +27,8 @@ import { renderEvidencePlanPdf, originalPlanPdfKey } from "./plan-image-render";
 import { redInkHiddenPlanImage } from "./plan-display-image";
 import { isValidPolygon, pointInPolygon, interiorPoint } from "@shared/plan-geometry";
 import { resolveBrandIdSubquery } from "./tenant-brand-resolver";
+import type { ScanReviewCandidate } from "@shared/plan-scan-review";
+import { applyPlanScanReview, buildPlanScanReview, persistPlanScanReview, PlanScanReviewError, readPlanScanReview } from "./plan-scan-review";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
@@ -1523,12 +1525,24 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       const liveJob = (await connection.query(`SELECT id FROM evidence_plan_jobs WHERE id = $1 AND status = 'running'
         AND updated_at > now() - interval '3 minutes' AND created_at > now() - interval '30 minutes' FOR UPDATE`, [jobId])).rows[0];
       if (!liveJob || inactive) throw new Error("This scan expired before saving. Existing outlines and information are unchanged.");
-      const existing = (await connection.query("SELECT id, unit_ref, polygon, source FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2 FOR UPDATE", [planId, level.id])).rows;
-      for (const candidate of candidates) {
+      const existing = (await connection.query("SELECT id, unit_ref, tenant_name, polygon, dot, source FROM evidence_plan_units WHERE plan_id = $1 AND level_id = $2 ORDER BY id FOR UPDATE", [planId, level.id])).rows;
+      const reviewCandidates: ScanReviewCandidate[] = candidates.map((candidate, index) => ({
+        id: `candidate-${index + 1}`, unitRef: candidate.ref, tenantName: candidate.tenant, polygon: candidate.polygon,
+        dot: candidate.dot, status: "review", unitId: null, suggestedUnitIds: [], reason: "Choose the saved unit for this boundary, or add a new unit.",
+      }));
+      for (const [index, candidate] of candidates.entries()) {
+        const result = reviewCandidates[index];
         const sameRef = existing.filter(row => normaliseUnitRef(row.unit_ref) === normaliseUnitRef(candidate.ref));
+        result.suggestedUnitIds = sameRef.map(row => row.id);
         const overlaps = (row: any) => planPolygonsOverlap(candidate.polygon, row.polygon);
         if (sameRef.length) {
           const saved = sameRef.length === 1 ? sameRef[0] : null;
+          if (saved && JSON.stringify(saved.polygon) === JSON.stringify(candidate.polygon)) {
+            result.status = "current"; result.unitId = saved.id;
+            result.reason = "The saved unit already has this boundary.";
+            preserved++;
+            continue;
+          }
           const ratio = saved && isValidPolygon(saved.polygon) ? polygonArea(candidate.polygon) / polygonArea(saved.polygon) : 0;
           // Improve an earlier AI box only with one matching identity in
           // the same place. Preserve the row, saved marker and every fact /
@@ -1539,19 +1553,38 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
           if (canRefine && JSON.stringify(saved.polygon) !== JSON.stringify(candidate.polygon)) {
             await connection.query("UPDATE evidence_plan_units SET polygon = $1 WHERE id = $2 AND source = 'ai'", [JSON.stringify(candidate.polygon), saved.id]);
             saved.polygon = candidate.polygon; refined++;
-          } else preserved++;
+            result.status = "refined"; result.unitId = saved.id;
+            result.reason = "The existing AI boundary was improved; saved unit information was kept.";
+          } else {
+            preserved++;
+            result.reason = !saved ? "More than one saved unit has this reference. Choose the correct unit."
+              : saved.source === "manual" ? "The matching unit has been edited manually. Its saved boundary is protected."
+              : existing.some(row => row.id !== saved.id && overlaps(row)) ? "An old outline overlaps this boundary. Review the saved unit before replacing its outline."
+              : "This boundary differs from the saved outline. Confirm which unit it belongs to.";
+          }
           continue;
         }
-        if (existing.some(overlaps)) { preserved++; continue; }
-        if (polygonArea(candidate.polygon) <= 0) continue;
+        if (existing.some(overlaps)) {
+          preserved++;
+          result.reason = existing.some(row => row.source === "manual" && overlaps(row))
+            ? "This boundary overlaps a manually edited unit. The saved outline is protected."
+            : "An old outline overlaps this boundary. Choose the correct saved unit, or add a new unit.";
+          continue;
+        }
         const inserted = (await connection.query(`INSERT INTO evidence_plan_units
           (plan_id, level_id, unit_ref, tenant_name, polygon, source, dot)
-          VALUES ($1,$2,$3,$4,$5,'ai',$6) RETURNING id, unit_ref, polygon, source`,
+          VALUES ($1,$2,$3,$4,$5,'ai',$6) RETURNING id, unit_ref, tenant_name, polygon, dot, source`,
         [planId, level.id, candidate.ref, candidate.tenant, JSON.stringify(candidate.polygon), JSON.stringify(candidate.dot)])).rows[0];
         existing.push(inserted); created++;
+        result.status = "added"; result.unitId = inserted.id;
+        result.reason = "A new unit was added with this boundary.";
       }
       linked = await relinkAllEntries(planId, connection);
+      const review = buildPlanScanReview({ planId, jobId, levelId: level.id, backgroundKey: level.background_key,
+        candidates: reviewCandidates, existingUnits: existing });
+      await persistPlanScanReview(connection, review);
       const details = [refined ? `${refined} existing AI outlines refined; saved information and marker positions kept` : "",
+        `${review.summary.detected} verified boundaries detected; ${review.summary.current} already current; ${review.summary.needsReview} need review before they can be applied`,
         failedTiles ? `${failedTiles} image sections could not be read` : "",
         untraced ? `${untraced} candidates lacked a reliable closed boundary` : "",
         labelReviews ? `${labelReviews} outlines need a confirmed unit label; uncertain or repeated labels were left unlabelled` : ""].filter(Boolean).join("; ");
@@ -1646,6 +1679,25 @@ router.post("/api/evidence-plans/:id/detect-units", requireAuth, async (req: Req
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+router.get("/api/evidence-plans/:planId/scan-review", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    res.json(await readPlanScanReview(pool, String(req.params.planId), {
+      levelId: String(req.query.levelId || ""), ...(req.query.jobId ? { jobId: String(req.query.jobId) } : {}),
+    }, async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId)));
+  } catch (error: any) { res.status(error instanceof PlanScanReviewError ? error.status : 500).json({ error: error.message }); }
+});
+
+router.post("/api/evidence-plans/:planId/scan-review/:jobId/apply", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    res.json(await applyPlanScanReview(pool, String(req.params.planId), String(req.params.jobId), req.body,
+      async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId), normaliseUnitRef));
+  } catch (error: any) { res.status(error instanceof PlanScanReviewError ? error.status : 500).json({ error: error.message }); }
+});
+
 router.get("/api/evidence-plans/jobs/:jobId", requireAuth, async (req: Request, res: Response) => {
   try {
     await pool.query(`UPDATE evidence_plan_jobs SET status = 'error', error = 'Scan stopped responding. Start a new scan to continue.', updated_at = now()
@@ -1653,8 +1705,16 @@ router.get("/api/evidence-plans/jobs/:jobId", requireAuth, async (req: Request, 
         AND (updated_at < now() - interval '3 minutes' OR created_at < now() - interval '30 minutes')`, [String(req.params.jobId)]);
     const { rows } = await pool.query(`SELECT * FROM evidence_plan_jobs WHERE id = $1`, [String(req.params.jobId)]);
     if (!rows[0]) return res.status(404).json({ error: "Job not found" });
-    res.json(rows[0]);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+    const job = rows[0];
+    if (job.kind === "detect" && job.status === "done" && job.level_id) {
+      const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req as any);
+      const result = await readPlanScanReview(pool, job.plan_id, { levelId: job.level_id, jobId: job.id },
+        async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId));
+      job.reviewSummary = result.review?.summary || null;
+    }
+    res.json(job);
+  } catch (e: any) { res.status(e instanceof PlanScanReviewError ? e.status : 500).json({ error: e.message }); }
 });
 
 // Serve a stored TAF source PDF so an entry's analysis is one click from

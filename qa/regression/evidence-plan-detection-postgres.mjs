@@ -6,6 +6,7 @@ import pg from 'pg';
 import sharp from 'sharp';
 import * as detection from '../../server/plan-unit-detection.ts';
 import * as geometry from '../../shared/plan-geometry.ts';
+import { buildPlanScanReview, persistPlanScanReview, planScanReviewKey } from '../../server/plan-scan-review.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const supplied = process.env.EVIDENCE_PLAN_DATABASE_URL;
@@ -25,13 +26,14 @@ for (let y = 20; y < 120; y++) for (let x = 20; x < 90; x++) {
 const png = await sharp(raw, { raw: { width: 240, height: 180, channels: 3 } }).png().toBuffer();
 let checks = 0;
 function check(name, fn) { fn(); checks++; console.log(`PASS ${name}`); }
-async function runWorker(jobId, expireAtSave = false) {
+async function runWorker(jobId, expireAtSave = false, failArtifact = false) {
   let tiles = 0;
   const workerPool = {
     query: (sql, values) => db.query(sql, values),
     connect: async () => {
       const client = await db.connect();
       return { query: async (sql, values) => {
+        if (failArtifact && sql.startsWith('INSERT INTO file_storage')) throw new Error('Synthetic artifact persistence failure');
         const result = await client.query(sql, values);
         if (expireAtSave && sql.startsWith('SELECT background_key')) {
           await db.query("UPDATE evidence_plan_jobs SET status = 'error', error = 'Expired by a concurrent request' WHERE id = $1", [jobId]);
@@ -41,7 +43,7 @@ async function runWorker(jobId, expireAtSave = false) {
     },
   };
   const { run } = evaluate(declaration('runDetectJob') + '\nexports.run = runDetectJob;', {
-    pool: workerPool, setInterval, clearInterval,
+    pool: workerPool, setInterval, clearInterval, buildPlanScanReview, persistPlanScanReview,
     getFile: async () => ({ data: png }),
     detectTile: async () => tiles++ === 0 ? [{ unitRef: 'A1', tenant: 'Synthetic Shop', seed: { x: .2, y: .35 }, polygon: null }] : [],
     normaliseUnitRef: value => String(value).trim().toUpperCase(), normTenantName: value => String(value || '').toUpperCase(),
@@ -70,6 +72,7 @@ try {
     CREATE TABLE evidence_plan_units (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), plan_id uuid, level_id uuid,
       unit_ref text, tenant_name text, polygon jsonb, dot jsonb, source text);
     CREATE TABLE evidence_plan_entries (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), plan_id uuid, unit_ref text, unit_id uuid);
+    CREATE TABLE file_storage (storage_key text PRIMARY KEY, data bytea, content_type text, original_name text, size integer);
   `);
   await db.query('INSERT INTO evidence_plans (id) VALUES ($1)', [planId]);
   await db.query('INSERT INTO evidence_plan_levels VALUES ($1, $2, $3)', [levelId, planId, 'synthetic-plan']);
@@ -101,17 +104,30 @@ try {
     assert.equal(raceUnits, 0); assert.equal(raceEntry.unit_id, null); assert.equal(raceJob.status, 'error'); assert.equal(raceJob.error, 'Expired by a concurrent request');
   });
   const success = await start(planId, levelId, 'test-user');
-  await runWorker(success.jobId);
-  const finished = (await db.query('SELECT * FROM evidence_plan_jobs WHERE id = $1', [success.jobId])).rows[0];
+  await runWorker(success.jobId, false, true);
+  const failedArtifactJob = (await db.query('SELECT * FROM evidence_plan_jobs WHERE id=$1', [success.jobId])).rows[0];
+  check('failed scan-artifact persistence rolls back geometry, evidence links and the artifact', () => {
+    assert.equal(failedArtifactJob.status, 'error'); assert.match(failedArtifactJob.error, /Synthetic artifact persistence failure/);
+  });
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM evidence_plan_units')).rows[0].n, 0);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM file_storage')).rows[0].n, 0);
+  assert.equal((await db.query('SELECT unit_id FROM evidence_plan_entries')).rows[0].unit_id, null);
+  const completed = await start(planId, levelId, 'test-user');
+  await runWorker(completed.jobId);
+  const finished = (await db.query('SELECT * FROM evidence_plan_jobs WHERE id = $1', [completed.jobId])).rows[0];
   const unit = (await db.query('SELECT * FROM evidence_plan_units')).rows[0];
   const entry = (await db.query('SELECT * FROM evidence_plan_entries')).rows[0];
   check('verified geometry, evidence link and completion counters persist together', () => {
     assert.equal(finished.status, 'done'); assert.equal(finished.total_docs, 1); assert.equal(finished.done_docs, 1);
     assert.equal(finished.created, 1); assert.equal(finished.linked, 1); assert.equal(entry.unit_id, unit.id);
   });
+  const review = JSON.parse((await db.query('SELECT data FROM file_storage WHERE storage_key=$1', [planScanReviewKey(planId, completed.jobId)])).rows[0].data.toString());
+  check('completed worker persists the full review artifact in the same transaction', () => {
+    assert.equal(review.summary.detected, 1); assert.equal(review.summary.added, 1); assert.equal(review.candidates[0].unitId, unit.id);
+  });
   const completeBefore = JSON.stringify(finished);
-  await runWorker(success.jobId);
-  const completeAfter = (await db.query('SELECT * FROM evidence_plan_jobs WHERE id = $1', [success.jobId])).rows[0];
+  await runWorker(completed.jobId);
+  const completeAfter = (await db.query('SELECT * FROM evidence_plan_jobs WHERE id = $1', [completed.jobId])).rows[0];
   check('a duplicate worker cannot rewrite completed job data', () => assert.equal(JSON.stringify(completeAfter), completeBefore));
   console.log(`PASS ${checks} PostgreSQL detection concurrency checks`);
 } finally {

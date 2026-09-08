@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import sharp from 'sharp';
 import { tracePlanUnit, mapDetectedPlanUnits, findPlanUnitRegions, traceDetectedPlanUnit, planPolygonsOverlap } from '../../server/plan-unit-detection.ts';
 import * as geometry from '../../shared/plan-geometry.ts';
+import { buildPlanScanReview, persistPlanScanReview } from '../../server/plan-scan-review.ts';
 const require = createRequire(import.meta.url);
 const { evaluate, find, ts } = require('./source-harness.cjs');
 const { pointInPolygon, polygonArea, isValidPolygon } = geometry;
@@ -160,12 +161,12 @@ async function detectionJob({ existing = [], candidates, changedBackground = fal
   const image = customImage || raster();
   if (!customImage) { rect(image, 20, 20, 75, 100, teal); rect(image, 90, 20, 140, 100, teal); }
   const png = await sharp(image.data, { raw: { width: image.width, height: image.height, channels: 3 } }).png().toBuffer();
-  const writes = [], refinements = [], updates = [], allQueries = [];
+  const writes = [], refinements = [], updates = [], allQueries = [], artifacts = [];
   const current = existing.map(row => ({ ...row }));
   let calls = 0, released = false;
   const jobSource = find('server/evidence-plan.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'runDetectJob');
   const { run } = evaluate(jobSource + '\nexports.run = runDetectJob;', {
-    setInterval, clearInterval,
+    setInterval, clearInterval, buildPlanScanReview, persistPlanScanReview,
     pool: {
       async query(sql, values) {
         allQueries.push(sql);
@@ -182,9 +183,10 @@ async function detectionJob({ existing = [], candidates, changedBackground = fal
             if (sql.startsWith('SELECT id FROM evidence_plan_jobs')) return { rows: expired ? [] : [{ id: 'job' }] };
             if (sql.startsWith('UPDATE evidence_plan_jobs')) { updates.push({ sql, values }); return { rows: [] }; }
             if (sql.startsWith('SELECT id, unit_ref')) return { rows: [...current] };
+            if (sql.startsWith('INSERT INTO file_storage')) { artifacts.push(JSON.parse(values[1].toString())); return { rows: [], rowCount: 1 }; }
             if (sql.startsWith('INSERT INTO evidence_plan_units')) {
               writes.push(values);
-              const row = { id: 'new-unit', unit_ref: values[2], polygon: JSON.parse(values[4]), source: 'ai' };
+              const row = { id: `new-unit-${writes.length}`, unit_ref: values[2], tenant_name: values[3], polygon: JSON.parse(values[4]), dot: JSON.parse(values[5]), source: 'ai' };
               current.push(row); return { rows: [row] };
             }
             if (sql.startsWith('UPDATE evidence_plan_units SET polygon')) {
@@ -215,8 +217,22 @@ async function detectionJob({ existing = [], candidates, changedBackground = fal
     },
   });
   await run('plan', 'job', { id: 'level', background_key: 'original' }, null, true);
-  return { writes, refinements, updates, allQueries, current, released, calls };
+  return { writes, refinements, updates, allQueries, current, released, calls, artifacts };
 }
+
+test('overlapping legacy AI boxes retain every traced candidate in the saved review artifact', async () => {
+  const saved = { id: 'saved', unit_ref: 'Legacy box', source: 'ai', polygon: [
+    { x: .03, y: .03 }, { x: .8, y: .03 }, { x: .8, y: .8 }, { x: .03, y: .8 },
+  ], tenant_name: 'Old saved name', dot: { x: .4, y: .4 } };
+  const result = await detectionJob({ existing: [saved] });
+  assert.equal(result.writes.length, 0); assert.equal(result.refinements.length, 0);
+  assert.equal(result.artifacts.length, 1);
+  assert.deepEqual(result.artifacts[0].summary, { detected: 2, added: 0, refined: 0, current: 0, needsReview: 2 });
+  assert.equal(result.artifacts[0].candidates.length, 2);
+  assert.ok(result.artifacts[0].candidates.every(candidate => candidate.status === 'review' && candidate.reason));
+  assert.deepEqual(result.current, [saved]);
+  assert.ok(result.allQueries.indexOf(result.allQueries.find(sql => sql.startsWith('INSERT INTO file_storage'))) < result.allQueries.lastIndexOf('COMMIT'));
+});
 
 test('refresh keeps manually saved outlines, identifiers and attached data while adding a missing outline', async () => {
   const preserved = { id: 'saved', unit_ref: 'A1', polygon: [{ x: .08, y: .1 }, { x: .33, y: .1 }, { x: .33, y: .6 }, { x: .08, y: .6 }], source: 'manual', dot: { x: .2, y: .3 }, passing_rent: 120000, notes: 'Saved human facts' };

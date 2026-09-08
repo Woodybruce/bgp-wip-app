@@ -17,6 +17,7 @@ import sharp from 'sharp';
 import Anthropic from '@anthropic-ai/sdk';
 import * as detection from '../server/plan-unit-detection.ts';
 import * as geometry from '../shared/plan-geometry.ts';
+import { buildPlanScanReview, persistPlanScanReview, planScanReviewKey } from '../server/plan-scan-review.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./regression/source-harness.cjs');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -127,7 +128,7 @@ const manifest = {
   startedAt: new Date().toISOString(), case: args.case, name: selected.name,
   gitHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
   gitStatus: execFileSync('git', ['status', '--short'], { cwd: root, encoding: 'utf8' }).trim(),
-  sourceSha256: Object.fromEntries(['server/evidence-plan.ts', 'server/plan-unit-detection.ts', 'shared/plan-geometry.ts', 'qa/evidence-plan-automatic-eval.mjs'].map(file => [file, digest(fs.readFileSync(path.join(root, file)))])),
+  sourceSha256: Object.fromEntries(['server/evidence-plan.ts', 'server/plan-unit-detection.ts', 'server/plan-scan-review.ts', 'shared/plan-geometry.ts', 'shared/plan-scan-review.ts', 'qa/evidence-plan-automatic-eval.mjs'].map(file => [file, digest(fs.readFileSync(path.join(root, file)))])),
   image: { path: imagePath, sha256: digest(imageBytes), width: meta.width, height: meta.height, bytes: imageBytes.length },
   maxProviderRequests: cap, provider: replay ? 'Recorded Anthropic responses; no external provider calls' : 'Anthropic Messages API', model: 'from actual detectTile source (no override)',
   executionMode: replay ? 'recorded_response_replay' : 'live_provider',
@@ -138,6 +139,7 @@ const manifest = {
 };
 write('manifest.json', manifest);
 write('executed-scanner-source.ts', commonSource + '\n' + tileSource + '\n' + workerSource);
+write('executed-scan-review-source.ts', source('server/plan-scan-review.ts'));
 const capturedConsole = {
   log: (...values) => { console.log(...values); append('pipeline-log.jsonl', { at: new Date().toISOString(), level: 'log', values }); },
   warn: (...values) => { console.warn(...values); append('pipeline-log.jsonl', { at: new Date().toISOString(), level: 'warn', values }); },
@@ -224,7 +226,7 @@ const pool = {
 const backgroundKey = `audit/${args.case}/${manifest.image.sha256}`;
 const helpers = evaluate(commonSource + '\nexports.relinkAllEntries = relinkAllEntries; exports.startDetectJob = startDetectJob; exports.normaliseUnitRef = normaliseUnitRef; exports.normTenantName = normTenantName;', { pool, console: capturedConsole });
 const { runDetectJob } = evaluate(workerSource + '\nexports.runDetectJob = runDetectJob;', {
-  ...helpers, pool, setInterval, clearInterval, require: runtimeRequire, console: capturedConsole,
+  ...helpers, pool, setInterval, clearInterval, buildPlanScanReview, persistPlanScanReview, require: runtimeRequire, console: capturedConsole,
   getFile: async key => { if (key !== backgroundKey) throw new Error('Unexpected file key in isolated scanner'); return { data: imageBytes }; },
   detectTile: async (...args) => {
     const requestStart = usage.requests;
@@ -249,6 +251,7 @@ try {
     CREATE TABLE evidence_plan_units (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), plan_id uuid, level_id uuid,
       unit_ref text, tenant_name text, polygon jsonb, dot jsonb, source text);
     CREATE TABLE evidence_plan_entries (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), plan_id uuid, unit_ref text, unit_id uuid, tenant text);
+    CREATE TABLE file_storage (storage_key text PRIMARY KEY, data bytea, content_type text, original_name text, size integer);
   `.replaceAll('DEFAULT0', 'DEFAULT 0'));
   const planId = crypto.randomUUID(), levelId = crypto.randomUUID();
   await db.query('INSERT INTO evidence_plans (id) VALUES ($1)', [planId]);
@@ -259,6 +262,8 @@ try {
   const job = (await db.query('SELECT * FROM evidence_plan_jobs WHERE id = $1', [started.jobId])).rows[0];
   const units = (await db.query('SELECT * FROM evidence_plan_units WHERE plan_id = $1 ORDER BY unit_ref, id', [planId])).rows;
   write('job-result.json', job); write('automatically-saved-units.json', units);
+  const reviewFile = (await db.query('SELECT data FROM file_storage WHERE storage_key=$1', [planScanReviewKey(planId, started.jobId)])).rows[0];
+  if (reviewFile) write('scan-review-artifact.json', JSON.parse(reviewFile.data.toString()));
   if (replay) {
     if (replayMismatch || usage.failed || usage.requests !== replay.requests.length || usage.completed !== replay.requests.length
       || job.status !== 'done' || budgetExhausted) throw new Error('Replay did not consume every donor request exactly once and complete the worker successfully');
