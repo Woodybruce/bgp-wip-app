@@ -1442,6 +1442,55 @@ export function setupCrmRoutes(app: Express) {
   // Landlord board — aggregated view of every Landlord company with WIP
   // fees, active deal count, properties, contacts, and last touchpoint.
   // All data is already in the CRM; this endpoint just rolls it up.
+  // ── Landlord type normalisation ──────────────────────────────────────────
+  // The Landlord CRM list decides "landlord" from deal/property links, but
+  // the rest of the app (filters, reports, the profile header) reads
+  // company_type — and many landlords were untyped or carried legacy
+  // synonyms ("Investor", "Developer", "Fund", "REIT", "Landlord/Freeholder")
+  // that the dropdown no longer offers. Woody, 2026-09-08: "CRM type should
+  // be Landlord for all landlords." Blanks and synonyms become "Landlord";
+  // Agents and lender types are never touched, just reported for review.
+  const normaliseLandlordTypes = async () => {
+    const landlordRule = `
+      LOWER(COALESCE(c.company_type, '')) NOT LIKE 'tenant%%'
+      AND (
+        EXISTS (SELECT 1 FROM crm_deals d WHERE d.landlord_id = c.id AND d.status NOT IN ('ARCH'))
+        OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id)
+      )`.replace(/%%/g, "%");
+    const updated = await pool.query(
+      `UPDATE crm_companies c SET company_type = 'Landlord', updated_at = now()
+        WHERE ${landlordRule}
+          AND (COALESCE(TRIM(c.company_type), '') = ''
+               OR LOWER(c.company_type) IN ('landlord/freeholder', 'investor', 'reit', 'developer', 'fund'))
+        RETURNING c.id, c.name`
+    );
+    const review = await pool.query(
+      `SELECT c.id, c.name, c.company_type FROM crm_companies c
+        WHERE ${landlordRule} AND LOWER(COALESCE(c.company_type, '')) <> 'landlord'
+        ORDER BY c.name`
+    );
+    if (updated.rowCount) {
+      console.log(`[landlords] typed ${updated.rowCount} landlord(s) as "Landlord": ${updated.rows.map((r: any) => r.name).join(", ")}`);
+    }
+    if (review.rowCount) {
+      console.log(`[landlords] ${review.rowCount} landlord-by-rule companies keep a non-Landlord type (review): ${review.rows.map((r: any) => `${r.name} [${r.company_type}]`).join(", ")}`);
+    }
+    return { updated: updated.rows, reviewNeeded: review.rows };
+  };
+  // Once per boot, off the request path; the endpoint below re-runs it on demand.
+  setTimeout(() => { normaliseLandlordTypes().catch(e => console.warn("[landlords] type normalisation failed:", e?.message)); }, 20_000);
+
+  app.post("/api/crm/landlords/normalise-types", async (req, res) => {
+    try {
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId;
+      const u = userId ? await pool.query(`SELECT is_admin FROM users WHERE id = $1`, [userId]) : { rows: [] as any[] };
+      if (!u.rows[0]?.is_admin) return res.status(403).json({ error: "Admin access required" });
+      res.json(await normaliseLandlordTypes());
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/crm/landlords", async (req, res) => {
     try {
       // Staff-only board: rolls up every landlord BGP works with, including
