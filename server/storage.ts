@@ -64,6 +64,23 @@ function canonicaliseUnitStatus<T extends { marketingStatus?: string | null }>(v
   const code = legacyToCode(raw);
   return code && code !== raw ? { ...v, marketingStatus: code } : v;
 }
+
+// Same boundary for `crm_deals.status`, which is the SAME codes vocabulary
+// (DEAL_STATUS_CODES) and read by raw SQL code predicates — the firm's WIP
+// hero is `status IN ('AVA','NEG','HOT','SOL','EXC','COM')` (hr-routes.ts).
+// A label stored there ("Under Offer") drops the deal out of WIP pounds AND
+// the deal count, so the firm's forecast silently shrinks by that fee. The
+// AI write doors (ChatBGP create_deal/update_deal, the Models-page agent)
+// take a free-text status straight from the model, so canonicalise here
+// rather than at each door. Unknown values are left alone: legacyToCode
+// returns null outside the vocabulary, and 'ARCH' / 'leasing comps' are
+// deliberately-stored non-codes that the exclusion predicates rely on.
+function canonicaliseDealStatus<T extends { status?: string | null }>(v: T): T {
+  const raw = v?.status;
+  if (typeof raw !== "string" || !raw.trim()) return v;
+  const code = legacyToCode(raw);
+  return code && code !== raw ? { ...v, status: code } : v;
+}
 import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull, arrayContains } from "drizzle-orm";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1098,7 +1115,7 @@ export class DatabaseStorage implements IStorage {
         coerced[f] = new Date(coerced[f]);
       }
     }
-    const normalised = await normaliseInternalAgents(coerced);
+    const normalised = canonicaliseDealStatus(await normaliseInternalAgents(coerced));
     const [d] = await db.insert(crmDeals).values(normalised).returning();
     return d;
   }
@@ -1112,7 +1129,7 @@ export class DatabaseStorage implements IStorage {
         coerced[f] = new Date(coerced[f]);
       }
     }
-    const normalised = await normaliseInternalAgents(coerced);
+    const normalised = canonicaliseDealStatus(await normaliseInternalAgents(coerced));
     const [d] = await db.update(crmDeals).set({ ...normalised, updatedAt: new Date() }).where(eq(crmDeals.id, id)).returning();
     return d;
   }

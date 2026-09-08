@@ -2735,7 +2735,7 @@ CRITICAL RULES:
               team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
               groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
               dealType: { type: "string", description: "Type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
-              status: { type: "string", description: "Status of the deal" },
+              status: { type: "string", description: "Deal status CODE: OPP, REP, SPEC, LIVE, AVA, NEG, HOT, SOL, EXC, COM, WIT (Opportunity, Reporting, Speculative, Live, Available, Negotiating, HOTs, Solicitors, Exchanged, Completed, Withdrawn). INV is system-set by the Xero sync. A label is canonicalised to its code; anything else is stored verbatim and the deal drops out of the WIP report." },
               pricing: { type: "number", description: "Deal value/price in GBP" },
               fee: { type: "number", description: "BGP fee in GBP" },
               rentPa: { type: "number", description: "Annual rent in GBP" },
@@ -2756,7 +2756,7 @@ CRITICAL RULES:
               team: { type: "array", items: { type: "string" } },
               groupName: { type: "string" },
               dealType: { type: "string" },
-              status: { type: "string" },
+              status: { type: "string", description: "Deal status CODE — same vocabulary as create_deal: OPP, REP, SPEC, LIVE, AVA, NEG, HOT, SOL, EXC, COM, WIT." },
               pricing: { type: "number" },
               fee: { type: "number" },
               rentPa: { type: "number" },
@@ -3437,7 +3437,10 @@ CRITICAL RULES:
           }
 
           case "create_deal": {
-            const [created] = await db.insert(crmDeals).values({
+            // Via the write boundary, which canonicalises `status` — the
+            // model hands over free text and a label in that codes column
+            // drops the deal out of the firm's WIP hero (hr-routes.ts).
+            const created = await storage.createCrmDeal({
               name: input.name,
               team: input.team || [],
               groupName: input.groupName || "New Instructions",
@@ -3448,7 +3451,7 @@ CRITICAL RULES:
               rentPa: input.rentPa,
               totalAreaSqft: input.totalAreaSqft,
               comments: input.comments,
-            }).returning();
+            } as any);
             return JSON.stringify({ success: true, action: "created", entity: "deal", id: created.id, name: created.name });
           }
 
@@ -3458,7 +3461,8 @@ CRITICAL RULES:
             for (const [k, v] of Object.entries(updates)) {
               if (v !== undefined && v !== null) cleanUpdates[k] = v;
             }
-            await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
+            // Through the same boundary as create_deal above.
+            await storage.updateCrmDeal(id, cleanUpdates);
             return JSON.stringify({ success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) });
           }
 

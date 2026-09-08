@@ -2579,7 +2579,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
           groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
           dealType: { type: "string", description: "Type: New Letting, Lease Acquisition, Lease Disposal, Lease Renewal, Rent Review, Sale, Purchase" },
-          status: { type: "string", description: "Status of the deal" },
+          status: { type: "string", description: "Deal status CODE: OPP, REP, SPEC, LIVE, AVA, NEG, HOT, SOL, EXC, COM, WIT (Opportunity, Reporting, Speculative, Live, Available, Negotiating, HOTs, Solicitors, Exchanged, Completed, Withdrawn). INV (Invoiced) is system-set when a Xero invoice syncs — never set it here. A label is canonicalised to its code; anything outside this vocabulary is stored verbatim and the deal drops out of the WIP report and the firm's forecast." },
           pricing: { type: "number", description: "Deal value/price in GBP" },
           fee: { type: "number", description: "BGP fee in GBP" },
           rentPa: { type: "number", description: "Annual rent in GBP" },
@@ -2602,9 +2602,9 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           id: { type: "string", description: "The deal ID (UUID)" },
           name: { type: "string" },
           team: { type: "array", items: { type: "string" } },
-          groupName: { type: "string" },
+          groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc. — NOT the status code." },
           dealType: { type: "string" },
-          status: { type: "string" },
+          status: { type: "string", description: "Deal status CODE — same vocabulary as create_deal: OPP, REP, SPEC, LIVE, AVA, NEG, HOT, SOL, EXC, COM, WIT." },
           pricing: { type: "number" },
           fee: { type: "number" },
           rentPa: { type: "number" },
@@ -4692,7 +4692,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           ids: { type: "array", items: { type: "string" }, description: "Array of record IDs to update" },
           updates: {
             type: "object",
-            description: "Fields to update on all records. Keys are field names, values are the new values. e.g. { status: 'Under Offer', notes: 'Updated by ChatBGP' }",
+            description: "Fields to update on all records. Keys are field names, values are the new values. e.g. { status: 'SOL', notes: 'Updated by ChatBGP' }. On deals, `status` is a CODE — OPP, REP, SPEC, LIVE, AVA, NEG, HOT, SOL, EXC, COM, WIT — not a label like 'Under Offer'.",
           },
         },
         required: ["entityType", "ids", "updates"],
@@ -5025,7 +5025,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
                 niaSqft: { type: "number", description: "Net internal area (sq ft)" },
                 giaSqft: { type: "number", description: "Gross internal area (sq ft)" },
                 rateableValue: { type: "number", description: "Rateable value (£)" },
-                status: { type: "string", description: "e.g. Occupied, Vacant" },
+                status: { type: "string", description: "Unit state, from the schedule's own vocabulary: Vacant, Opportunity, In Negotiation, Under Offer, Occupied, Trading, Lease Event, Archived. Defaults to Occupied when a tenant is named, Vacant otherwise. Anything outside this set is stored but mirrors nowhere and sits in no KPI tile." },
                 comments: { type: "string", description: "Free-text commentary for this unit" },
               },
             },
@@ -6274,14 +6274,13 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "update_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
     const { id, ...updates } = fnArgs;
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
-    await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
+    // Through the write boundary — see create_deal above.
+    await storage.updateCrmDeal(id, cleanUpdates);
     return { data: { success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "deal", id } };
   }
 
@@ -6373,8 +6372,10 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "create_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const [created] = await db.insert(crmDeals).values({
+    // storage.createCrmDeal is the write boundary that canonicalises
+    // `status` — the model hands us a free-text status and a label stored
+    // in that codes column drops the deal out of the firm's WIP hero.
+    const created = await storage.createCrmDeal({
       name: fnArgs.name,
       propertyId: fnArgs.propertyId || null,
       landlordId: fnArgs.landlordId || null,
@@ -6390,7 +6391,7 @@ export async function executeCrmToolRaw(
       rentPa: fnArgs.rentPa,
       totalAreaSqft: fnArgs.totalAreaSqft,
       comments: fnArgs.comments,
-    }).returning();
+    } as any);
     return { data: { success: true, action: "created", entity: "deal", id: created.id, name: created.name }, action: { type: "crm_created", entityType: "deal", id: created.id } };
   }
 
@@ -6788,6 +6789,7 @@ export async function executeCrmToolRaw(
     if (!rows.length) return { data: { success: false, error: "No tenancy rows provided" } };
     const toDate = (v: any) => (v ? new Date(v) : null);
     let inserted = 0, updated = 0;
+    const touched: string[] = [];
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       const values: any = {
@@ -6804,12 +6806,26 @@ export async function executeCrmToolRaw(
         const clean: any = { updatedAt: new Date() };
         for (const [k, v] of Object.entries(values)) { if (v !== undefined && v !== null && k !== "propertyId") clean[k] = v; }
         await db.update(tenancyScheduleUnits).set(clean).where(eq(tenancyScheduleUnits.id, r.id));
+        touched.push(String(r.id));
         updated++;
       } else {
         values.sortOrder = i;
-        await db.insert(tenancyScheduleUnits).values(values);
+        const [row] = await db.insert(tenancyScheduleUnits).values(values).returning({ id: tenancyScheduleUnits.id });
+        if (row?.id) touched.push(String(row.id));
         inserted++;
       }
+    }
+
+    // The tenancy schedule is the god of truth: every OTHER write door on it
+    // (tenancy-schedule.ts POST/PATCH/import, crm.ts) fans the status out to
+    // available_units, leasing_schedule_units and crm_deals via unit-mirror,
+    // and the schedule UI documents that contract to the user. This door
+    // didn't — so a unit ChatBGP marked Occupied from a datatape stayed
+    // "Vacant" on the landlord's leasing board and on the Letting Tracker.
+    // Best-effort per row, exactly as the HTTP doors do it.
+    const { fanOutTenancyStatus } = await import("./unit-mirror");
+    for (const tid of touched) {
+      try { await fanOutTenancyStatus(pool, tid); } catch {}
     }
     return { data: { success: true, action: "upserted", entity: "tenancy schedule", propertyId, name: prop[0].name, inserted, updated }, action: { type: "crm_updated", entityType: "property", id: propertyId } };
   }
@@ -10029,7 +10045,17 @@ Be thorough — include every unit row you can classify, across all properties i
         const col = allowedFields[key];
         if (col) {
           sets.push(`${col} = $${paramIdx}`);
-          params.push(value);
+          // `crm_deals.status` is the canonical CODES column read by raw SQL
+          // code predicates (the firm's WIP hero). This is the one write door
+          // that can't go through storage.updateCrmDeal, so canonicalise the
+          // model's free-text status here — 100 deals at a time otherwise
+          // land as labels no code predicate matches. Unknown values are
+          // stored verbatim (legacyToCode returns null), so 'ARCH' survives.
+          params.push(
+            entityType === "deal" && key === "status" && typeof value === "string"
+              ? legacyToCode(value) || value
+              : value,
+          );
           paramIdx++;
         }
       }
@@ -11903,8 +11929,10 @@ export async function handleCrmToolCall(
   };
 
   if (fnName === "create_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const [created] = await db.insert(crmDeals).values({
+    // storage.createCrmDeal is the write boundary that canonicalises
+    // `status` — the model hands us a free-text status and a label stored
+    // in that codes column drops the deal out of the firm's WIP hero.
+    const created = await storage.createCrmDeal({
       name: fnArgs.name,
       propertyId: fnArgs.propertyId || null,
       landlordId: fnArgs.landlordId || null,
@@ -11920,20 +11948,19 @@ export async function handleCrmToolCall(
       rentPa: fnArgs.rentPa,
       totalAreaSqft: fnArgs.totalAreaSqft,
       comments: fnArgs.comments,
-    }).returning();
+    } as any);
     const reply = await summaryHelper({ success: true, action: "created", entity: "deal", record: { id: created.id, name: created.name } });
     return { handled: true, response: { reply: reply || `Deal "${created.name}" created.`, action: { type: "crm_created", entityType: "deal", id: created.id, name: created.name } } };
   }
 
   if (fnName === "update_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
     const { id, ...updates } = fnArgs;
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
-    await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
+    // Through the write boundary — see create_deal above.
+    await storage.updateCrmDeal(id, cleanUpdates);
     const reply = await summaryHelper({ success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) });
     return { handled: true, response: { reply: reply || `Deal updated.`, action: { type: "crm_updated", entityType: "deal", id } } };
   }
@@ -12290,6 +12317,7 @@ export async function handleCrmToolCall(
     if (!rows.length) return { handled: true, response: { reply: "No tenancy rows provided." } };
     const toDate = (v: any) => (v ? new Date(v) : null);
     let inserted = 0, updated = 0;
+    const touched: string[] = [];
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       const values: any = {
@@ -12306,12 +12334,26 @@ export async function handleCrmToolCall(
         const clean: any = { updatedAt: new Date() };
         for (const [k, v] of Object.entries(values)) { if (v !== undefined && v !== null && k !== "propertyId") clean[k] = v; }
         await db.update(tenancyScheduleUnits).set(clean).where(eq(tenancyScheduleUnits.id, r.id));
+        touched.push(String(r.id));
         updated++;
       } else {
         values.sortOrder = i;
-        await db.insert(tenancyScheduleUnits).values(values);
+        const [row] = await db.insert(tenancyScheduleUnits).values(values).returning({ id: tenancyScheduleUnits.id });
+        if (row?.id) touched.push(String(row.id));
         inserted++;
       }
+    }
+
+    // The tenancy schedule is the god of truth: every OTHER write door on it
+    // (tenancy-schedule.ts POST/PATCH/import, crm.ts) fans the status out to
+    // available_units, leasing_schedule_units and crm_deals via unit-mirror,
+    // and the schedule UI documents that contract to the user. This door
+    // didn't — so a unit ChatBGP marked Occupied from a datatape stayed
+    // "Vacant" on the landlord's leasing board and on the Letting Tracker.
+    // Best-effort per row, exactly as the HTTP doors do it.
+    const { fanOutTenancyStatus } = await import("./unit-mirror");
+    for (const tid of touched) {
+      try { await fanOutTenancyStatus(pool, tid); } catch {}
     }
     const reply = await summaryHelper({ success: true, action: "upserted", entity: "tenancy schedule", name: prop[0].name, inserted, updated });
     return { handled: true, response: { reply: reply || `Tenancy schedule updated for "${prop[0].name}" (${inserted} added, ${updated} updated).`, action: { type: "crm_updated", entityType: "property", id: propertyId } } };

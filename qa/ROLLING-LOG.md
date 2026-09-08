@@ -92,6 +92,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r607 · 2026-09-08 · LIGHT (r606 had the journey) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD at fa98ca5 —
+  pushing via `git push origin HEAD:claude/qa-staging-20260810`.
+- Regression: head chunk (`QA_UNTIL=client-properties-table-readonly-cells`)
+  running; **victoria closed at 151 ok** exactly as predicted, mark in
+  progress. Triage so far: 7 logged issues, all listed noise (rocketreach-400
+  x N, keyless-AI 503, client 403s). No 5xx.
+- Two bugs fixed (details in the final entry): the deal-status write doors and
+  ChatBGP's tenancy upsert skipping the unit-mirror fan-out. `npx tsc
+  --noEmit` clean.
+
 ### r606 · 2026-09-08 · FULL · Landsec client · DESKTOP 1440px · 2 bugs fixed: ChatBGP's unit-status UPDATE bypassed the canonicalising write boundary, and the tenancy board's vacant projections shipped raw marketing CODES so its own tiles could not account for every unit
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
