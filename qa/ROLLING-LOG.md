@@ -92,6 +92,25 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r612 · 2026-09-08 · FULL (round IN PROGRESS — provisional entry)
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD
+  at b9b8058 — pushing with `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE.** Four chunks sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-612.json`: 92 + 130 + 110 (head **332 ok**) +
+  tail **39 ok** = **371 ok / 18 issues**, signature **6x400 + 1x409 +
+  10x403 + 1x503** — exactly the r611 prediction (head 332 after r611's new
+  scenario, signature unchanged). No 5xx beyond the keyless-AI 503.
+  **Streak 67.** All 18 are the listed noise signature.
+- Triage: nothing new. 6x400 = rocketreach/negative-probe 400s; 1x409 =
+  duplicate-probe; 10x403 = deliberate client-scope refusals
+  (incl. the wide-contacts PUT guard and the chat-members 403); 1x503 =
+  keyless commentary regen.
+- Journey planned: **BGP staff · desktop 1440px** — Victoria doing AML/KYC
+  housekeeping on the compliance/MLRO surfaces (ground not walked recently),
+  with a write, plus a census of the "is this KYC expired / is this re-check
+  overdue" derived rule across all its doors.
+
 ### r611 · 2026-09-08 · LIGHT (r610 had the journey — no journey this round) · 1 bug fixed across TWO doors: "expiring soon" counted leases that had ALREADY expired · 2 harness assertions strengthened from exists-only · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD
