@@ -1,0 +1,10 @@
+import pg from '../node_modules/pg/lib/index.js';
+const { Pool } = pg;
+const pool = new Pool({ connectionString: 'postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke' });
+const q = async (s, p=[]) => (await pool.query(s, p)).rows;
+const PID='cccccccc-0000-0000-0000-000000000001';
+console.log('TS starbucks/linked:', JSON.stringify(await q(`SELECT unit_number, tenant_name, trading_name, tenant_company_id FROM tenancy_schedule_units WHERE property_id=$1 AND (tenant_name ILIKE '%starbuck%' OR trading_name ILIKE '%starbuck%' OR tenant_company_id IS NOT NULL) LIMIT 10`,[PID])));
+console.log('TS totals:', JSON.stringify(await q(`SELECT count(*)::int n, count(tenant_company_id)::int linked, count(tenant_name)::int named FROM tenancy_schedule_units WHERE property_id=$1`,[PID])));
+console.log('sample names:', JSON.stringify((await q(`SELECT tenant_name FROM tenancy_schedule_units WHERE property_id=$1 AND tenant_name IS NOT NULL LIMIT 12`,[PID])).map(r=>r.tenant_name)));
+console.log('deals here:', JSON.stringify(await q(`SELECT d.name, d.status, c.name tenant FROM crm_deals d LEFT JOIN crm_companies c ON c.id=d.tenant_id WHERE d.property_id=$1`,[PID])));
+await pool.end();

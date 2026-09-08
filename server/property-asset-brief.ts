@@ -1652,6 +1652,14 @@ router.get("/api/company-portfolio/:companyId/tasks", requireAuth, async (req: R
          LEFT JOIN crm_deals d ON d.id = t.linked_deal_id
         WHERE (t.linked_property_id IN (${PROPS})
                OR t.linked_deal_id IN (SELECT id FROM crm_deals WHERE property_id IN (${PROPS})))
+          -- BGP tasks only. The board this feeds is headed "Portfolio
+          -- activity — BGP team / What the BGP team is working on", and it
+          -- was also counting tasks the CLIENT's own logins had written: a
+          -- landlord who typed a focus item on his own property page saw it
+          -- come straight back as BGP work in progress, and the count
+          -- over-reported BGP effort (r616). Client-authored tasks already
+          -- show on My Tasks directly above this board.
+          AND COALESCE(u.role, '') <> 'Client'
           AND (t.status <> 'done' OR t.completed_at > NOW() - INTERVAL '60 days')
         ORDER BY (t.status = 'done'), COALESCE(t.due_date, t.created_at), t.created_at
         LIMIT 300`,

@@ -1,0 +1,11 @@
+import pg from '../node_modules/pg/lib/index.js';
+const { Pool } = pg;
+const pool = new Pool({ connectionString: 'postgresql://postgres:qa-local-pg@127.0.0.1:5432/bgpsmoke' });
+const q = async (s, p=[]) => (await pool.query(s, p)).rows;
+const PID='cccccccc-0000-0000-0000-000000000001';
+console.log('LSU cols:', (await q(`SELECT column_name FROM information_schema.columns WHERE table_name='leasing_schedule_units' AND (column_name LIKE 'tenant%' OR column_name='property_id')`)).map(r=>r.column_name).join(', '));
+console.log('LSU rows for property:', JSON.stringify(await q(`SELECT count(*)::int n FROM leasing_schedule_units WHERE property_id=$1`,[PID])));
+console.log('LSU rows total:', JSON.stringify(await q(`SELECT count(*)::int n, count(tenant_name)::int named FROM leasing_schedule_units`)));
+console.log('TSU named for property:', JSON.stringify(await q(`SELECT count(*)::int n FROM tenancy_schedule_units WHERE property_id=$1 AND tenant_name IS NOT NULL`,[PID])));
+console.log('brand_stores starbucks:', JSON.stringify(await q(`SELECT c.name, count(*)::int stores FROM brand_stores s JOIN crm_companies c ON c.id=s.brand_company_id WHERE c.name ILIKE '%starbucks%' GROUP BY c.name`)));
+await pool.end();

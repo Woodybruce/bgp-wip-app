@@ -92,17 +92,109 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r616 · 2026-09-08 · FULL · ROUND IN PROGRESS
+### r616 · 2026-09-08 · FULL · journey: **Landsec client · phone 390px** (rotation slot #3) · 2 bugs fixed: Brand Gap called the property's OWN occupier "not here"; the "BGP team" board counted the client's own tasks · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD.
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD —
+  pushed with `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE.** Head split three ways sharing
   `QA_CROSS_FILE=/tmp/qa-cross-616.json`: 95 + 131 + 110 = **head 336 ok**
-  (exactly r615's prediction — its new `staff-property-focus-task-due-today-not-overdue`
-  took victoria's chunk 94 -> 95) + tail **39** = **375 ok**. Signature
+  (exactly r615's prediction — its new
+  `staff-property-focus-task-due-today-not-overdue` took victoria's chunk
+  94 → 95) + tail **39** = **375 ok**. Signature
   **6x400 + 1x409 + 10x403 + 1x503 — identical to r615/r614. Streak 71.**
-  All listed noise; no 5xx beyond the keyless-AI 503. Tail ran in its OWN
-  `with-server.sh` (as did each head chunk) — the r614 login trap did not recur.
-- Triage: nothing to triage. Journey (Landsec client - phone 390px) in progress.
+  Every chunk in its OWN `with-server.sh`; the r614 login trap did not recur.
+- **JOURNEY (client phone, Mark Warne):** Portfolio home tiles → Tracker
+  (`/available`, 73 unit cards) → header search → **Bluewater property page**
+  → all six section pills (Overview / Boards / Deals & units / Files &
+  contacts / KYC / Activity) → the tenancy-schedule card list (199 units,
+  **no h-overflow, correct phone card list per DESIGN.md**) → **the write**:
+  added "Agenda: Q3 vacancy plan for the upper level" to *This week's focus*
+  from the phone → verified it on My Tasks with its property name. Shots
+  `r616*`. r615's `dueLabel` fix holds (no false red).
+- **BUG 1 FIXED — TWO DOORS OF "IS THIS BRAND ALREADY ON THIS SCHEME", ON THE
+  SAME PAGE, DISAGREEING — and the wrong one is the landlord's pitch list.**
+  `server/property-gap-analysis.ts:350` overrides the geocode-distance model
+  with the tenancy schedule ("the tenancy schedule is the on-scheme truth …
+  had 'Chicken — missing' showing on a centre with Nando's in occupation").
+  It read **`leasing_schedule_units`** — the *marketing* board of units being
+  let, which by its nature almost never carries an occupier's name (fixture:
+  165 rows on Bluewater, **1 named tenant in the entire table**) — instead of
+  **`tenancy_schedule_units`**, the tenancy schedule the property page, the
+  WAULT, passing rent and the phone tenancy cards all read (**74 named
+  tenants on Bluewater, Starbucks in two units**). So the override never
+  fired. On Mark's own property, on his phone: Boards → Brand Gap said
+  *"At other UK schemes, not here (2): **Starbucks**, Amorino"*, *"Coffee &
+  café — **0 here** — Starbucks"*, *"On-scheme & nearby detail (**0 on
+  scheme**)"* — while **Files & contacts on the same page listed Starbucks
+  under "In occupation"** (`property-asset-brief.ts:1227`, the CORRECT door:
+  `tenancy_schedule_units` matched on FK **or** `tenant_name`/`trading_name`
+  **or** a legal-name prefix). The landlord's gap read was recommending a
+  brand he already has, and telling him it wasn't there.
+  **FIX:** the occupancy read now UNIONs `tenancy_schedule_units`
+  (tenant_name **and** trading_name — the brand name is usually the trading
+  one) with `leasing_schedule_units` (kept, so anything that did resolve
+  before still does). **PROVEN BOTH WAYS, VISUALLY, on the phone** (shots
+  `r616i-*` pre / `r616v-02-gap-fixed` post): before — 2 "not here", "0 here",
+  "0 on scheme"; after — **"not here (1): Amorino"**, **"Coffee & café — 1
+  here — Starbucks"**, **"(1 on scheme)"**.
+- **BUG 2 FIXED — a printed claim about WHOSE work it is, that the query
+  didn't honour** (r615's class again). `/api/company-portfolio/:id/tasks`
+  (`property-asset-brief.ts:1637`) feeds the board headed *"Portfolio activity
+  — BGP team / **What the BGP team is working on** across the portfolio"*
+  (`client-tasks.tsx:93-96`, rendered both at `/client-tasks` and inside My
+  Tasks, `tasks.tsx:992`). Its own comment says "roll-up of **BGP** tasks",
+  but the query had **no author filter** — so the focus item Mark had just
+  typed on his own property page came straight back to him as *IN PROGRESS 1*
+  under "what the BGP team is working on", and the count over-reported BGP
+  effort by however many tasks the client's own logins had written.
+  **FIX:** `AND COALESCE(u.role,'') <> 'Client'` (client-authored tasks
+  already show on My Tasks directly above the board). **PROVEN BOTH WAYS,
+  VISUALLY** (`r616g-03-my-tasks` pre → *IN PROGRESS 1 · Agenda: Q3 vacancy
+  plan… · Mark Warne*; `r616v-03-my-tasks-fixed` post → *IN PROGRESS 0 ·
+  Nothing open right now*, with Mark's task still on My Tasks above).
+- **APP MAP corrected in the same commit** (CLAUDE.md's standing rule).
+  `chatbgp-app-map.ts:26` told ChatBGP the phone header carries search +
+  the bell on **"every page"**. It does not: the Dashboard/Portfolio home
+  (`App.tsx:566`), `/messages` and `/m/*` render their own chrome and have
+  **neither**. ChatBGP would have told a phone user sitting on the home
+  screen to "tap the search icon in the header". The line now names the
+  exceptions and says how a phone actually reaches a property page.
+- **CHECKED, NOT BUGS:** the focus card's "0" on Bluewater (the fixture's
+  "Review Bluewater Q3 leasing plan" has `linked_property_id = NULL` — the
+  endpoint's OR-triple is right); `/api/users` for a client (properly narrowed
+  by `getClientVisibleUserIds` — assigned BGP team, property/unit agents, own
+  team only, id+name); the client tracker's Edit/Viewing/Offer/Interest
+  buttons (`available-units.tsx` gates on `isClientTracker` throughout —
+  landlord activity logging is deliberate); the phone tenancy board (card
+  list, no overflow). The risk register's "76 units vacant" vs the tracker
+  tiles' 73 is the **#327/#290 vacancy-basis family — still Woody's call**,
+  untouched.
+- **Harness: two scenarios added to mark's chunk** (immediately before
+  `client-brand-suggested-pitches-scoped`, so head chunk 2: **131 → 133**
+  next round; total scenarios now **377**).
+  `client-brand-gap-agrees-with-its-own-occupiers` compares the two doors
+  against each other — no brand in `/properties/:id/linked-contacts`'
+  `tenants[]` may appear in any of brand-gaps' `gap`/`peerGaps`/
+  `competitorGaps`/`localMarket` buckets, `onScheme` must be non-empty and
+  sector `on_scheme` must total ≥ 1 — and refuses to pass vacuously (throws
+  if the property lists no occupiers). `client-own-task-stays-off-the-bgp-team-board`
+  creates a client task on the property, asserts it is absent from the BGP
+  board **and present on My Tasks**, and deletes it in a `finally`.
+  **Both PROVEN NON-VACUOUS**: with each fix re-broken the pair ran
+  **0 ok, 2 flow-failures** ("Brand Gap calls 1 of the property's own
+  occupier(s) \"not here\": starbucks" / "a task the CLIENT wrote is listed on
+  the \"what the BGP team is working on\" board"); with the fixes, **2 ok, 0 issues**.
+- Bugs deferred: none new. Suggestions added: **UX #350** (the phone's landing
+  page is the ONE page with no search/bell, and the phone has no other route
+  to a property — no Properties tile, tracker cards' property name is plain
+  text, dashboard task not tappable) and **UX #351** (a phone property page
+  prints its own name twice and "Properties" twice — six lines of chrome
+  before the pills).
+- New flakes: none. `npx tsc --noEmit` clean; `FRESH_BUILD=1 run-smoke.sh`
+  **GREEN 42/0** after both fixes. Nothing near `shared/schema.ts` tables or
+  `migrations/` (both fixes are single SQL predicates in existing handlers).
+- Next round: **LIGHT** (r616 had the journey). Then rotation #4 —
+  **BGP staff · phone 390px**.
 
 ### r615 · 2026-09-08 · LIGHT (r614 had the journey, no journey) · 2 bugs fixed: the property focus card's day maths + the commission statements' false 85%-split claim · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

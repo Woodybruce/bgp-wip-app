@@ -13,6 +13,36 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+350. 2026-09-08 · Mark Warne (Landsec) / client PHONE 390px · QA r616 ·
+   opening his own property from the phone · **the phone's landing page is the
+   one page with no search, and the phone has no other route to a property.**
+   The Portfolio home (`App.tsx:566` — `location === "/"` renders `MobileHome`
+   with its own chrome) sits OUTSIDE the generic phone shell that carries
+   `<GlobalSearch compact />` + `<NotificationCenter />` (`App.tsx:656`, added
+   for UX #156). So the bell and the search icon are on every page EXCEPT the
+   one the user lands on. The home tile grid has Tracker / Requirements /
+   Brands / Deals / Images / CRM / Calendar / News and no Properties tile, and
+   the tracker's unit cards print "Bluewater Shopping Centre" as plain text
+   with no link — so to reach his own property page Mark had to open some
+   other page first, just to get a header with a search icon. His dashboard
+   task "Review Bluewater Q3 leasing plan" isn't tappable either.
+   **Suggestion:** put the search icon + bell on the phone home too (a compact
+   row next to the greeting, or reuse the shell header there), and/or make the
+   tracker card's property name a link to the property page. Either one gives
+   the phone a first-class route to a property.
+
+351. 2026-09-08 · Mark Warne (Landsec) / client PHONE 390px · QA r616 ·
+   reading a property page on a 390px screen · **the page prints its own name
+   twice and "Properties" twice before any content.** Top of every property
+   page on the phone: "Property" (shell title) / "Properties" (breadcrumb) /
+   "Bluewater Shopping Centre" (breadcrumb) / "PROPERTY" (eyebrow) /
+   "Bluewater Shopping Centre" (h1) / "Properties" (back button) — six lines
+   of chrome, ~90px of a 844px viewport, before the section pills. Desktop can
+   carry it; the phone can't. **Suggestion:** on the phone collapse to one
+   identity line — let the shell header hold the property NAME (it already
+   special-cases detail routes to a generic "Property" label,
+   `App.tsx:636`) and drop the in-page breadcrumb + eyebrow there.
+
 348. 2026-09-08 · Woody / equity group · staff desktop · QA r615 ·
    Finance → commission statements · **the "missing fee split" alarm covers
    the PROJECTION but not the money already earned.** `buildCommissionOutlook`

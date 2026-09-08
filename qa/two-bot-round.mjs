@@ -6941,6 +6941,81 @@ async function markRound(page, cross) {
     if (r.zeroRows !== 0) throw new Error(`hub categoryCounts carried ${r.zeroRows} empty category row(s) the Explorer hides`);
   });
 
+  // Brand Gap's "on scheme" vs the property's own occupier list — TWO DOORS
+  // OF ONE RULE, and they disagreed (r616). The gap panel's occupancy
+  // override read leasing_schedule_units (the MARKETING board, which almost
+  // never carries an occupier name) instead of tenancy_schedule_units, so on
+  // Bluewater it told the landlord Starbucks was "at other UK schemes, not
+  // here" and "Coffee & café — 0 here" while the Files & Contacts panel on the
+  // same page listed Starbucks under In occupation. Assert the two doors
+  // agree: no brand the property has in occupation may sit in any
+  // "not here" bucket. Non-vacuous — needs a real occupier list to compare.
+  await step(page, p, 'client-brand-gap-agrees-with-its-own-occupiers', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const pid = window.QA_FIX.bluewater;
+      const lcRes = await fetch(`/api/properties/${pid}/linked-contacts`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!lcRes.ok) return { ok: false, where: 'linked-contacts', status: lcRes.status };
+      const lc = await lcRes.json().catch(() => null);
+      const occ = (lc?.tenants || []).map((t) => String(t.company_name || '').toLowerCase()).filter(Boolean);
+      const gapRes = await fetch(`/api/property/${pid}/brand-gaps`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!gapRes.ok) return { ok: false, where: 'brand-gaps', status: gapRes.status };
+      const g = await gapRes.json().catch(() => null);
+      const names = (k) => (Array.isArray(g?.[k]) ? g[k] : []).map((b) => String(b.brand_name || '').toLowerCase());
+      const notHere = new Set([...names('gap'), ...names('peerGaps'), ...names('competitorGaps'), ...names('localMarket')]);
+      const onScheme = new Set(names('onScheme'));
+      const sectorHere = (Array.isArray(g?.sectors) ? g.sectors : [])
+        .reduce((a, sct) => a + (parseInt(sct.on_scheme || 0, 10) || 0), 0);
+      return {
+        ok: true, occCount: occ.length,
+        contradicted: occ.filter((n) => notHere.has(n)),
+        onSchemeCount: onScheme.size, sectorHere,
+      };
+    });
+    if (!r.ok) throw new Error(`client cannot read ${r.where} on their own property (${r.status})`);
+    if (r.occCount < 1) throw new Error('fixture regression: the property lists no tenants in occupation, so this check would be vacuous');
+    if (r.contradicted.length) throw new Error(`Brand Gap calls ${r.contradicted.length} of the property's own occupier(s) "not here": ${r.contradicted.join(', ')}`);
+    if (r.onSchemeCount < 1) throw new Error('Brand Gap reports nothing on scheme on a property with tenants in occupation');
+    if (r.sectorHere < 1) throw new Error('Brand Gap sector coverage says 0 brands here while the property has occupiers');
+  });
+
+  // "Portfolio activity — BGP team / What the BGP team is working on" is a
+  // printed claim about WHOSE tasks those are. It was counting the client's
+  // own tasks too, so a landlord who typed a focus item on his property page
+  // saw it come back as BGP work in progress (r616). Client-creates → must
+  // NOT appear on the BGP board (it still shows on My Tasks); the staff
+  // cross-check that a BGP task on the same property DOES appear is
+  // established by the agent chunk's own property tasks.
+  await step(page, p, 'client-own-task-stays-off-the-bgp-team-board', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const title = `QA r616 client focus ${Date.now()}`;
+      const mk = await fetch('/api/tasks', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title, linkedPropertyId: window.QA_FIX.bluewater, priority: 'medium' }) }).catch(() => ({ ok: false, status: 0 }));
+      if (!mk.ok) return { ok: false, status: mk.status };
+      const created = await mk.json().catch(() => ({}));
+      const id = created?.id || created?.task?.id || null;
+      try {
+        const board = await fetch(`/api/company-portfolio/${window.QA_FIX.landsec}/tasks`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+        if (!board.ok) return { ok: false, status: board.status, where: 'board' };
+        const b = await board.json().catch(() => ({}));
+        const open = Array.isArray(b?.open) ? b.open : [];
+        const mine = await fetch('/api/tasks', { headers: auth }).catch(() => ({ ok: false }));
+        const mineRows = mine.ok ? await mine.json().catch(() => []) : [];
+        return {
+          ok: true,
+          onBgpBoard: open.some((t) => t.title === title),
+          onMyTasks: (Array.isArray(mineRows) ? mineRows : (mineRows?.tasks || [])).some((t) => t.title === title),
+        };
+      } finally {
+        if (id) await fetch(`/api/tasks/${id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }
+    });
+    if (!r.ok) throw new Error(`client task/board probe unhealthy (${r.where || 'create'} ${r.status})`);
+    if (r.onBgpBoard) throw new Error('a task the CLIENT wrote is listed on the "what the BGP team is working on" board');
+    if (!r.onMyTasks) throw new Error("the client's own task vanished from My Tasks");
+  });
+
   await step(page, p, 'client-brand-suggested-pitches-scoped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
