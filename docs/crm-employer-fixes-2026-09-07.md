@@ -7,6 +7,8 @@ An agent's employer and the brands they represent are separate relationships. Th
 - Staff CRM shows one latest actionable finding per contact. Older duplicates, superseded verdicts, corrected employer snapshots and suggestions already equal to the recorded employer are excluded.
 - Review employer shows recorded employment, the suggested employer, the evidence and current brand links. Requirement and tenant-rep sources for the same brand are combined visually.
 - Saving requires a real selected CRM company, or an unambiguous exact match for older API callers. Missing/ambiguous matches remain pending; adding a note never counts as a correction.
+- Missing companies can be added within the review: **Add employer**, check its name, explicitly choose a company type, then **Create company**. The selected company is saved to the contact only after a separate **Save employer** action. The picker includes legal billing entities, explains absent/ambiguous matches and offers a refresh action. On phones the creation form scrolls into view and its action remains visible.
+- Creation first refreshes companies and reuses one exact name match. Failed requests retain the entered fields; retrying after a lost success response selects the existing company. In-flight duplicate clicks share the same request. These checks do not provide database-wide uniqueness across simultaneous reviewers.
 - Apply/Dismiss lock the contact and its findings in a consistent order and run atomically. An outdated review cannot overwrite a newer employer correction. Historical pending rows are superseded together.
 - The contact ID and its requirement, representation and deal links are retained. The verifier includes represented brands as context, explicitly separate from employer evidence. New evidence snapshots include employer ID without a schema migration; slow AI lookups cannot reopen a finding reviewed while they ran.
 - The desktop dialog and phone sheet use search and six-person pages. The main CRM preview shows three people on desktop and one on phones. Employer actions remain visible while the phone sheet content scrolls; errors preserve the selected employer.
@@ -35,6 +37,12 @@ Provider evidence is not independently certified by these tests. Imports may int
 - TypeScript checking and the production build passed.
 
 These checks used a disposable local database and synthetic provider responses. They verify the implemented flows, not the accuracy of live provider evidence or the state of production records.
+
+## Missing employer diagnosis — 8 September 2026
+
+A read-only production check found no company matching Leslie or Perkins, including merged and billing records. Guy Maude's pending suggestion therefore had no real company ID to select; the disabled Save employer button was expected, but the UI left no way to complete the correction. The inline creation flow removes that dead end. No live company was created and no live contact was reassigned during this fix.
+
+Validation passed 87 authenticated desktop/phone browser and API checks and 16 focused regression tests. The browser checks used the real local app and disposable database, including creating a company, preserving the contact until the separate save, preserving existing relationship links, and reusing a company after a simulated lost success response. There were no uncaught browser errors or horizontal overflow; creation and save actions stayed visible on the phone. TypeScript and the production build passed after the final changes.
 
 ## Reproduce local checks
 

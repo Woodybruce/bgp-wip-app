@@ -17,6 +17,7 @@ const smoke = readFileSync(new URL('./smoke.mjs',import.meta.url),'utf8');
 const fixture = name => smoke.match(new RegExp(`const ${name} = '([^']+)'`))[1];
 const id = n => `ed00ed00-0907-4000-8000-${String(n).padStart(12,'0')}`;
 const companies = [id(1),id(2),id(3)];
+const addedCompanyNames = ['desktop','phone'].flatMap(label => [`QA ${label} Missing Employer Company`, `QA ${label} Retry Employer Company`]);
 const allContacts = [], allRequirements = [], allRepresentations = [];
 const results = { checks:[], screenshots:[], pageErrors:[] };
 let browser, seeded = false;
@@ -57,6 +58,7 @@ await db.connect();
 try {
   const prior=await db.query('SELECT id FROM crm_companies WHERE id=ANY($1::varchar[])',[companies]);
   assert.equal(prior.rowCount,0,'Refusing to overwrite existing fixture companies');
+  assert.equal((await db.query('SELECT id FROM crm_companies WHERE name=ANY($1::text[])',[addedCompanyNames])).rowCount,0,'Refusing existing add-employer fixture names');
   await db.query('BEGIN');
   for (const [co,name,type] of [[id(1),'QA Employer Brand','Tenant - Restaurant'],[id(2),'QA Employer Agency','Agent'],[id(3),'QA Employer Other Agency','Agent']]) {
     await db.query('INSERT INTO crm_companies (id,name,company_type,industry,domain) VALUES ($1,$2,$3,$4,$5)',[co,name,type,'Hospitality','example.test']);
@@ -74,7 +76,7 @@ try {
       people[n]={id:contact,name}; allContacts.push(contact);
       await db.query('INSERT INTO crm_contacts (id,name,email,company_id,company_name,role) VALUES ($1,$2,$3,$4,$5,$6)',[contact,name,`qa-employer-${offset+n}@example.test`,id(1),'QA Employer Brand','Property Agent']);
       for (let repeat=0;repeat<(n===1||n===4?2:1);repeat++) {
-        const v=await db.query('INSERT INTO contact_verifications (contact_id,status,confidence,current_company_name,suggested_company_name,reasoning,evidence) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',[contact,'mismatch','high','QA Employer Brand',n===2?'QA Employer Agency Limited':'QA Employer Agency','Synthetic evidence: the person works for an agency and represents the brand.',JSON.stringify({companyIdAtVerification:id(1)})]);
+        const v=await db.query('INSERT INTO contact_verifications (contact_id,status,confidence,current_company_name,suggested_company_name,reasoning,evidence) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',[contact,'mismatch','high','QA Employer Brand',n===5?`QA ${label} Missing Employer Company`:n===2?'QA Employer Agency Limited':'QA Employer Agency','Synthetic evidence: the person works for an agency and represents the brand.',JSON.stringify({companyIdAtVerification:id(1)})]);
         findingIds[n]=v.rows[0].id;
       }
     }
@@ -136,6 +138,45 @@ try {
     await openReview(page,people[4].name,findingIds[4]);
     await page.getByRole('button',{name:'Dismiss finding'}).click(); await page.getByTestId('dh-employer-editor').waitFor({state:'hidden'});
     check(`${label}: dismiss clears old duplicate findings`,!(await api(page,'/api/crm/data-health')).body.pending.some(v=>v.contact_id===people[4].id));
+
+    await openReview(page,people[5].name,findingIds[5]);
+    check(`${label}: missing employer explains the disabled save`,await page.getByTestId('dh-save-employer').isDisabled() && (await page.getByTestId('dh-employer-match-help').innerText()).includes('No CRM company named'));
+    await page.getByTestId('dh-add-employer').click();
+    check(`${label}: adding an employer requires a reviewed name and company type`,await page.getByLabel('Company name',{exact:true}).inputValue()===`QA ${label} Missing Employer Company` && await page.getByTestId('dh-create-employer').isDisabled());
+    await page.getByTestId('dh-new-employer-type').selectOption('Agent');
+    const createBounds=await page.getByTestId('dh-create-employer').boundingBox();
+    check(`${label}: Create company remains visible while the form scrolls`,createBounds.y>=0 && createBounds.y+createBounds.height<=(await page.evaluate(()=>innerHeight)));
+    await noOverflow(page,`${label} add employer`); await shot(page,`${label}-add-employer`);
+    await page.getByTestId('dh-create-employer').click();
+    await page.getByTestId('dh-add-employer-form').waitFor({state:'hidden'});
+    const createdEmployer=(await db.query('SELECT id,company_type FROM crm_companies WHERE name=$1',[`QA ${label} Missing Employer Company`])).rows;
+    check(`${label}: explicit creation selects the returned CRM employer with the chosen type`,createdEmployer.length===1 && createdEmployer[0].company_type==='Agent' && (await page.getByTestId('dh-employer-picker').innerText()).includes(`QA ${label} Missing Employer Company`) && await page.getByTestId('dh-save-employer').isEnabled());
+    const beforeEmployerSave=(await db.query('SELECT c.company_id,v.resolution FROM crm_contacts c JOIN contact_verifications v ON v.contact_id=c.id WHERE v.id=$1',[findingIds[5]])).rows[0];
+    check(`${label}: creating a company leaves the contact and review unchanged until Save employer`,beforeEmployerSave.company_id===id(1) && beforeEmployerSave.resolution===null);
+    await page.getByTestId('dh-save-employer').click(); await page.getByTestId('dh-employer-editor').waitFor({state:'hidden'});
+    check(`${label}: separate save applies the newly created employer`,(await db.query('SELECT company_id FROM crm_contacts WHERE id=$1',[people[5].id])).rows[0].company_id===createdEmployer[0].id);
+
+    await openReview(page,people[6].name,findingIds[6]);
+    await page.getByTestId('dh-add-employer').click();
+    await page.getByLabel('Company name',{exact:true}).fill(`QA ${label} Retry Employer Company`);
+    await page.getByTestId('dh-new-employer-type').selectOption('Agent');
+    let createPosts=0;
+    const lostCreateResponse=async route=>{
+      if(route.request().method()==='POST' && route.request().postDataJSON()?.name===`QA ${label} Retry Employer Company`) {
+        createPosts++;
+        const created=await route.fetch(); assert.equal(created.status(),201);
+        await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'The company was created but this synthetic response was interrupted. Retry to select its existing record.'})});
+      } else await route.continue();
+    };
+    await page.route('**/api/crm/companies',lostCreateResponse);
+    await page.getByTestId('dh-create-employer').click(); await page.getByTestId('dh-create-employer-error').waitFor();
+    check(`${label}: failed company response keeps an actionable retry and reviewed inputs`,(await page.getByTestId('dh-create-employer-error').innerText()).includes('Retry') && await page.getByLabel('Company name',{exact:true}).inputValue()===`QA ${label} Retry Employer Company` && await page.getByTestId('dh-save-employer').count()===0);
+    await page.getByTestId('dh-create-employer').click(); await page.getByTestId('dh-add-employer-form').waitFor({state:'hidden'});
+    const retried=(await db.query('SELECT id FROM crm_companies WHERE name=$1',[`QA ${label} Retry Employer Company`])).rows;
+    check(`${label}: retry reuses the existing company without a duplicate POST`,createPosts===1 && retried.length===1 && (await page.getByTestId('dh-employer-picker').innerText()).includes(`QA ${label} Retry Employer Company`));
+    await page.unroute('**/api/crm/companies',lostCreateResponse);
+    check(`${label}: retry still leaves the actual contact unchanged`,(await db.query('SELECT company_id FROM crm_contacts WHERE id=$1',[people[6].id])).rows[0].company_id===id(1));
+    await page.getByRole('button',{name:'Back',exact:true}).click();
     await page.getByRole('button',{name:'Close',exact:true}).click();
 
     // Actual import endpoint, provider discovery mocked to avoid external calls.
@@ -216,6 +257,8 @@ try {
     await db.query('DELETE FROM brand_agent_representations WHERE id=ANY($1::varchar[])',[allRepresentations]);
     await db.query('DELETE FROM crm_requirements_leasing WHERE id=ANY($1::varchar[])',[allRequirements]);
     await db.query('DELETE FROM crm_contacts WHERE id=ANY($1::varchar[])',[allContacts]);
+    const added=(await db.query('SELECT id FROM crm_companies WHERE name=ANY($1::text[])',[addedCompanyNames])).rows;
+    added.forEach(company=>companies.push(company.id));
     await db.query('DELETE FROM crm_companies WHERE id=ANY($1::varchar[])',[companies]);
   }
   await db.end();
