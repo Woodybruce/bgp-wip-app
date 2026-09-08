@@ -13,6 +13,36 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+348. 2026-09-08 · Woody / equity group · staff desktop · QA r615 ·
+   Finance → commission statements · **the "missing fee split" alarm covers
+   the PROJECTION but not the money already earned.** `buildCommissionOutlook`
+   computes `missingSplits` (count + fee of deals with no non-house
+   fee-allocation rows) and the Company outlook shows it as a warning — but
+   the loop skips any deal whose status has no forward weight
+   (`server/commission-engine.ts` ~330, `FORWARD_WEIGHTS` = NEG/HOT/SOL only).
+   So a deal at EXCHANGED / COMPLETED / INVOICED with no split entered is
+   credited to nobody in the FYTD statements (the query INNER JOINs
+   `deal_fee_allocations`) **and raises no warning anywhere** — exactly the
+   deals whose fees decide commission owed now. **Suggestion:** count fee-due
+   deals with no split in the same warning (or a second line next to the
+   statements), so an agent's billings can't silently understate. Cheap: the
+   `missingRes` query already returns every unsplit fee-bearing deal; only
+   the status filter excludes them.
+
+349. 2026-09-08 · maintenance / all money screens · QA r615 ·
+   **the firm's pipeline stage weights live in three separate files.**
+   `PROJ_WEIGHTS` (`server/cashflow-board.ts:72`, NEG .5 / HOT .6 / SOL .75 /
+   EXC .9 / COM 1), `STAGE_WEIGHTS` (`server/xero-financials.ts:501`, same
+   minus COM) and `FORWARD_WEIGHTS` (`server/commission-engine.ts:282`, same
+   minus EXC/COM) — and the commission one's comment claims it uses "the same
+   weights as the income projection", which is true today only by hand. The
+   COM/EXC differences are deliberate and documented; the shared NEG/HOT/SOL
+   numbers are not shared, just duplicated. Nothing is wrong right now — this
+   is the r580 HOT-enum failure waiting to happen again. **Suggestion:** one
+   exported weight table (plus each door's own documented inclusion rule), so
+   a re-weighting can't leave the WIP report, the cashflow board and the
+   commission outlook disagreeing about the same deal book.
+
 345. 2026-09-08 · Mark Warne (Landsec) · client desktop 1440px · QA r614 ·
    Brand Intelligence hub · **"Who's Hot — last 90 days" ranks brands by
    RECORD EDITS, not by anything that happened.** Mark's hub put Honi Poke and

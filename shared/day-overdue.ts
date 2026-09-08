@@ -29,3 +29,18 @@ export function startOfToday(): number {
   const n = new Date();
   return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
 }
+
+// Whole CALENDAR days from today to a DAY-stamped due date: 0 = today,
+// -1 = yesterday, 1 = tomorrow. The naive
+// `Math.floor((new Date(due) - Date.now()) / 86400000)` is off by a whole day
+// for every hour after midnight — a task due today reads "1d overdue", one
+// due tomorrow reads "today" — because it measures a moment-to-moment gap
+// against a date written at 00:00 (r615, the property asset brief's
+// This-week's-focus card).
+export function daysUntilDay(due: string | Date | null | undefined): number | null {
+  if (!due) return null;
+  const d = new Date(due);
+  if (Number.isNaN(d.getTime())) return null;
+  const dueDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return Math.round((dueDay - startOfToday()) / 86_400_000);
+}
