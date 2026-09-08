@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r617 · 2026-09-08 · LIGHT (r616 had the journey) — **ROUND IN PROGRESS**
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD again.
+- **REGRESSION AT BASELINE.** Head split three ways sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-617.json`, each chunk in its OWN
+  `with-server.sh`: 95 + 133 + 110 = **head 338** (exactly r616's prediction —
+  its two new mark scenarios took chunk 2 from 131 to 133) + tail **39** =
+  **377 ok**. Signature **6x400 + 1x409 + 10x403 + 1x503 — identical to
+  r616/r615. Streak 72.** All listed noise; no 5xx beyond the keyless-AI 503.
+- Triage: nothing new to triage — every logged issue is on the noise list.
+- Targets this round: the parent brief's #1 (two doors, one page, one question,
+  two sources) and #3 (`server/chatbgp-app-map.ts` read against the routes).
+
 ### r616 · 2026-09-08 · FULL · journey: **Landsec client · phone 390px** (rotation slot #3) · 2 bugs fixed: Brand Gap called the property's OWN occupier "not here"; the "BGP team" board counted the client's own tasks · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD —
