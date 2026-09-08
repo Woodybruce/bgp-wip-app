@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r620 · 2026-09-08 · FULL (round in progress) · REGRESSION AT BASELINE
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushing with
+  `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE, exactly r619's prediction.** Head split three ways
+  sharing `QA_CROSS_FILE=/tmp/qa-cross-620.json`, each chunk in its OWN
+  `with-server.sh`: **101 + 133 + 110 = head 344** + tail **39** = **383 ok**.
+  Signature **6x400 + 1x409 + 10x403 + 1x503 — identical to r615-r619.
+  Streak 75.** All listed noise; no chunk died at `sam · login`.
+- Journey in progress: staff desktop 1440px as Victoria — ground not recently
+  walked (WIP/billing, comps, contacts/data health, landlord board, desktop
+  ChatBGP, tenancy schedule as editor).
+
 ### r619 · 2026-09-08 · LIGHT (r618 did the journey — no exploratory journey) · REGRESSION AT BASELINE · 2 bugs fixed: seven of nine Diary team-filter pills were off the phone screen, and two AML compliance card actions were clipped off it · 2 suggestions · 1 deferred
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
