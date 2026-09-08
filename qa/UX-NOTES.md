@@ -13,6 +13,21 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+324. 2026-09-08 · BGP staff / ChatBGP (QA r605, triage of #304) · Woody tells
+   ChatBGP "put the Croydon purchase on hold" · the tracker's own tool schema
+   (server/chatbgp.ts, create_ and update_investment_tracker) advertised
+   "On Hold" as an example status and wrote it to the column verbatim — but
+   "On Hold" is not one of the ten investment codes and `legacyToCode` has no
+   mapping for it, so the row rendered as "Reporting" and counted in the
+   Reporting tile while sitting in a stage nobody can see. r605 fixed the
+   filter half (the tile that counts a row now shows it) and pointed the two
+   tool descriptions at the canonical ten. What is NOT fixed: there is no
+   "On Hold" stage at all, and the team clearly wants one — it was written
+   into the AI's own vocabulary. Suggestion: decide whether "On Hold" earns a
+   real code (paused, still live, excluded from WIP) or whether the answer is
+   Withdrawn plus a note; today the phrase is accepted and quietly loses the
+   asset's real position.
+
 321. 2026-09-08 · BGP staff / desktop 1440px (QA r604, Victoria) · a new
    requirement comes in and she opens New Deal to get it on the board · the
    form asks for Property, Deal Type, Landlord, Tenant, Deal Name, BGP

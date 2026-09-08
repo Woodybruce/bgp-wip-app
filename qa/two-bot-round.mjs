@@ -4991,6 +4991,53 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r605: the property-plan colour key read available_units.marketing_status
+  // with LABEL regexes (/under offer/i, /available|vacant/i) over a CODES
+  // column, so both matched nothing and every vacancy on a plan drew grey
+  // "unknown" instead of rose "vacant". Seeds one polygon over a real AVA
+  // unit, reads the endpoint, and tears the plan down again.
+  await step(page, p, 'staff-plan-colours-a-vacant-unit-vacant', async () => {
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const units = await (await fetch(`${BASE}/api/available-units`, { headers: auth })).json();
+    const list = Array.isArray(units) ? units : (units.units || units.data || []);
+    const ava = list.find((u) => u.unitId && (u.marketingStatus === 'AVA' || u.marketing_status === 'AVA'));
+    if (!ava) throw new Error('no AVA tracker unit with a linked property unit to draw a plan over');
+    const propertyId = ava.propertyId || ava.property_id;
+    // The plan create route is multipart (it stores the plan IMAGE), so the
+    // probe has to post a real file, not JSON.
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64');
+    const fd = new FormData();
+    fd.append('floor', 'QA-R605');
+    fd.append('file', new Blob([png], { type: 'image/png' }), 'r605.png');
+    const createRes = await fetch(`${BASE}/api/properties/${propertyId}/plans`, {
+      method: 'POST', headers: { Authorization: 'Bearer ' + page.qaToken }, body: fd,
+    });
+    if (!createRes.ok) throw new Error(`plan upload returned ${createRes.status}`);
+    const plan = await createRes.json();
+    const planId = plan.id || plan.planId;
+    if (!planId) throw new Error('plan upload returned no id');
+    try {
+      const poly = await (await fetch(`${BASE}/api/plans/${planId}/units`, {
+        method: 'POST', headers: auth,
+        body: JSON.stringify({ unit_id: ava.unitId || ava.unit_id, label: 'QA-R605 poly',
+                               polygon: { points: [[0, 0], [1, 0], [1, 1]] } }),
+      })).json();
+      const read = await (await fetch(`${BASE}/api/plans/${planId}/units`, { headers: auth })).json();
+      const row = (read.units || []).find((x) => x.id === poly.id);
+      if (!row) throw new Error('the polygon just created did not come back from the plan');
+      // Only assert on a unit nothing else can claim: no tenant on the
+      // leasing schedule and no lease event pending. Such a unit at AVA is
+      // vacant by definition — pre-fix it came back "unknown".
+      if (!row.tenant_name && !row.lease_expiry && !row.lease_break && row.status !== 'vacant') {
+        throw new Error(`an AVA unit with no tenant drew as "${row.status}", not "vacant" — the plan colour key is reading labels off a codes column`);
+      }
+    } finally {
+      await fetch(`${BASE}/api/plans/${planId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
+
 }
 
 async function trackerStatusDeepLink(page, who) {

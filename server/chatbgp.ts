@@ -2755,7 +2755,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         properties: {
           id: { type: "string", description: "The investment tracker item ID (UUID)" },
           assetName: { type: "string" },
-          status: { type: "string", description: "e.g. Reporting, Under Offer, Exchanged, Completed, Withdrawn, On Hold" },
+          status: { type: "string", description: "One of: Reporting, Speculative, Live, Available, Negotiating, Solicitors, Exchanged, Completed, Withdrawn, Invoiced. Anything else is stored but cannot be filtered on the tracker." },
           client: { type: "string" },
           clientContact: { type: "string" },
           vendor: { type: "string" },
@@ -3296,7 +3296,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         properties: {
           assetName: { type: "string", description: "Property/asset name" },
           address: { type: "string", description: "Full address" },
-          status: { type: "string", description: "e.g. Reporting, Under Offer, Exchanged, Completed, Withdrawn, On Hold" },
+          status: { type: "string", description: "One of: Reporting, Speculative, Live, Available, Negotiating, Solicitors, Exchanged, Completed, Withdrawn, Invoiced. Anything else is stored but cannot be filtered on the tracker." },
           boardType: { type: "string", enum: ["Purchases", "Sales"], description: "Which board" },
           client: { type: "string", description: "Client name" },
           clientContact: { type: "string" },

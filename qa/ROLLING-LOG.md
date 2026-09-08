@@ -92,14 +92,97 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r605 · 2026-09-08 · LIGHT (r604 had the journey) — ROUND IN PROGRESS
+### r605 · 2026-09-08 · LIGHT (r604 had the journey — no journey this round) · 2 bugs fixed: the property-plan colour key drew every vacancy GREY, and the investment tracker's REP pill counted rows it then hid · r604's PDF hand-off CLOSED (both doors proven) · #297, #304 and the residual-QA-rows pool all ANSWERED
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
-- Regression, head chunk (`QA_UNTIL=client-properties-table-readonly-cells`,
-  45s settle): **325 ok / 17 issues** — 6x400 + 1x409 + 9x403 + 1x503, all
-  listed noise, exactly the r604 head. Tail chunk running.
-- Triage: nothing new. No 5xx.
-- In flight: two bugs found by the LIGHT-round targets, fixes pending.
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Second
+  smoke with `FRESH_BUILD=1` after the fixes. `npx tsc --noEmit` clean.
+- **REGRESSION AT BASELINE.** Chunked, 45s settle, shared
+  `QA_CROSS_FILE=/tmp/qa-cross-605.json`: head
+  (`QA_UNTIL=client-properties-table-readonly-cells`) **325 ok** / 6x400 +
+  1x409 + 9x403 + 1x503; tail (`QA_SKIP_UNTIL=` the same) **38 ok** / 1x403.
+  Sum **363 ok, 18 issues** — exactly the r604 baseline. **Streak 59.**
+  Triage: nothing new, no 5xx. The r604 "possible new noise" (3x 401
+  /api/xero/contacts) did NOT recur — it was journey-only, not round noise.
+- **BUG FIXED — every vacant unit on a property PLAN drew grey "Unknown"
+  instead of rose "Vacant".** `server/property-plans.ts` decorates each
+  polygon with the colour key the panel renders, and its own header documents
+  step 4 as "au.marketing_status → vacant / under_offer". Both predicates
+  were LABEL regexes over a CODES column: `/under offer/i` against "SOL" and
+  `/available|vacant/i` against "AVA" — neither matches, so step 4 never
+  fired once. The fixture proves the column: `available_units.marketing_status`
+  holds **AVA x75 · NEG x1**, zero labels. A vacant unit fell through to
+  `tenant_name ? "occupied" : "unknown"` → grey, on the one panel whose whole
+  job is showing what is empty. Both predicates now go through `legacyToCode`
+  ("vacant" kept as a literal alternative — legacyToCode has no mapping for
+  it). **PROVEN** end-to-end: `qa/r605-plan-colour-probe.mjs` seeds a polygon
+  over a real AVA unit with no tenant and the endpoint returns
+  `status: "vacant"`. This is the DOMINANT CLASS again, a new face: a label
+  regex whose column the file's own header names correctly.
+- **BUG FIXED (UX #304) — the tracker pill that COUNTED a row then HID it.**
+  `investment-tracker.tsx` bridges the column's mixed vocabulary through
+  `legacyToCode(x) || "REP"` at six sites; the FILTER (:1198) was the one
+  without the fallback. r597 logged it as pre-loaded, "no row diverges today".
+  **It is reachable today, through a door the app itself opens**:
+  ChatBGP's `create_investment_tracker` / `update_investment_tracker` tool
+  schemas advertised `"e.g. … Withdrawn, On Hold"` and wrote the value
+  verbatim (`server/chatbgp.ts` :2758/:3299, handlers :6272/:6437 and the
+  mobile twins :12005/:12103) — and `legacyToCode("On Hold")` is **null**.
+  Filter given the fallback; both tool descriptions now name the canonical
+  ten and say plainly that anything else is stored but cannot be filtered.
+  **PROVEN in the browser** (`qa/r605-tracker-filter-probe.mjs`, 1440px):
+  seed "Burberry HQ" to 'On Hold' → renders "Reporting", Reporting pill reads
+  1, clicking it shows the row (pre-fix: "No assets match your filters.").
+  Shot `qa/smoke-shots/r605-tracker-rep-filter.png`.
+- **r604 HAND-OFF CLOSED — both remaining PDF footer doors are PROVEN.**
+  r604 could not render them for want of a fixture template; neither needs
+  one. `qa/r605-pdf-footer-probe.mjs`: `exportDocumentToPdf`
+  (document-templates.ts:1144) reached by direct import — **1 page, footer on
+  it**; `POST /api/doc-runs/export` (:2975) takes content in the BODY —
+  **200, 1 page, footer on it**. All FOUR r601 footer sites are now proven.
+- **CENSUS — crm-entity-picker.tsx:243 (r604's third Escape door) has NO
+  in-dialog caller at all.** Read end to end: `leasing-schedule.tsx:957` is
+  the `alwaysOpen` variant (deliberately excluded, left alone) and
+  `PropertyTenancySchedule.tsx:1679` renders on a PAGE (property detail tab,
+  the available-units accordion, `/tenancy-schedule-full`) — never inside a
+  Radix Dialog. So the patch is correct hardening with no parent dialog to
+  save today; the r604 note's "in-dialog callers" is the part to correct.
+  Not re-proven in the browser: there is nothing there to prove.
+- **DEFERRED #297 REPRODUCED IN THE CODE.** `storage.deleteCrmProperty`
+  (server/storage.ts:1015) nulls `crm_deals.property_id` and deletes the unit
+  spine, both schedules, agents, tenants, leads and links — and never
+  mentions `investment_tracker`. No delete, no null. Field evidence: **all
+  119 fixture tracker rows already carry a property_id pointing at no
+  crm_properties row.** Still Woody's call (delete / keep / block), but it is
+  now proven, not suspected.
+- **RESIDUAL QA ROWS — ANSWERED, and they are not leaks.**
+  `qa/r605-qa-row-census.mjs` (new, read-only). Excluding this round's own
+  in-flight rows, what is left is `RU10 Test` (available_units,
+  leasing_schedule_units, one crm_deal), `RU10` (leasing_schedule_units),
+  `QA Retail Brand` and 8x `Testco *` (crm_companies) — and **every one of
+  them is inside `qa/smoke-fixture.sql.gz` itself** (`zgrep`: Testco Ramen x6,
+  RU10 x16). They are restored fresh by every run-smoke, which is why
+  `qa/r591-cleanup.mjs` and `qa/r595-cleanup.mjs` "removed 0". Nothing is
+  leaking; deleting them would only survive until the next restore. Closing
+  this item needs a new fixture dump, not a cleanup script — Woody's call.
+- **DEFERRED SWEEP PASS DONE (r589's `--kind=assign --all`, untouched for
+  four rounds).** 27 hits read: 26 are false positives (local display
+  variables, MCP/model job status, a pipnet payload, a SQL COUNT FILTER over
+  leasing_schedule_units' own label vocabulary). The 27th,
+  `server/property-plans.ts:199`, was flagged BAD WRITE and is also a false
+  positive — but reading it is what found the real bug above. The `assign`
+  pass is now SPENT; `label` was spent at r599.
+- Harness growth: `staff-plan-colours-a-vacant-unit-vacant` in
+  two-bot-round.mjs — uploads a plan, draws one polygon over a real AVA unit
+  and fails if a unit with no tenant and no lease event comes back anything
+  but "vacant"; tears the plan down in a `finally`. Green in a filtered run.
+- Suggestions: UX-NOTES **#324** (the team wrote "On Hold" into ChatBGP's own
+  vocabulary — there is no such stage; decide whether it earns a real code or
+  whether the answer is Withdrawn plus a note).
+- Bugs deferred: none new. New flakes: none — the ECONNRESET at `login()`
+  after two prior logins in one server lifetime is the r572 rate-limiter
+  class already listed; the re-run on a fresh server was clean.
+- Next journey: r605 was LIGHT → **r606 is FULL, rotation #2 Landsec client ·
+  desktop 1440px.**
 
 ### r604 · 2026-09-08 · FULL · journey: **BGP staff · desktop 1440px** (rotation slot #1) · BOTH r603/r601 hand-offs CLOSED in the browser · 1 bug fixed (Escape on any CRM picker tore down the whole parent dialog and lost the form) · 3 suggestions
 - Regression: run-smoke.sh GREEN x2 (42 checks, 0 failures; the second with
