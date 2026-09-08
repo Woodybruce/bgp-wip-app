@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r609 · 2026-09-08 · LIGHT (r608 had the journey) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- **REGRESSION AT BASELINE.** Four chunks sharing `QA_CROSS_FILE=/tmp/qa-cross-609.json`
+  per r608's split: 89 + 130 + 110 (head **329 ok**) + tail **39 ok** =
+  **368 ok / 18 issues**, signature **6x400 + 1x409 + 10x403 + 1x503** —
+  identical to r608. No 5xx, nothing new. **Streak 63.**
+- Triage: all 18 are the listed noise signature (rocketreach-400 family,
+  the client-gateway 403 guards the scenarios assert on, keyless-AI 503,
+  the intended 409 dedupe). Nothing to chase.
+- Work in progress: count-vs-list and stated-contract censuses, plus a
+  read-only pass over the KYC/AML path.
+
 ### r608 · 2026-09-08 · FULL · Landsec client · PHONE 390px · 0 bugs found to fix — four count-vs-list checks and the client's own self-add write all came back clean · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Container on
