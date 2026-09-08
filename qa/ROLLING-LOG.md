@@ -92,6 +92,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r621 · 2026-09-08 · LIGHT · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushing with
+  `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE, exactly r620's prediction.** Head split three ways
+  sharing `QA_CROSS_FILE=/tmp/qa-cross-621.json`, each chunk in its OWN
+  `with-server.sh`: **103 + 133 + 110 = head 346** + tail **39** = **385 ok**.
+  Signature **6x400 + 1x409 + 10x403 + 1x503 — identical to r615-r620.
+  Streak 76.** All listed noise; no chunk died at `sam · login`.
+- Probe in progress: census of `updatedAt`/`createdAt` fallbacks used as
+  business dates (r620's shape #2).
+
 ### r620 · 2026-09-08 · FULL · journey: BGP staff · DESKTOP 1440px (month-end WIP/billing as Victoria) · REGRESSION AT BASELINE · 1 bug fixed (3 sites): the WIP report's month-end billing forecast was built from the deal row's `updated_at` · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
