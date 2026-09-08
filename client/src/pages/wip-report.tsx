@@ -1357,7 +1357,18 @@ export default function WipReport() {
       const data = await res.json();
       const parts = [`Synced ${data.synced} invoice${data.synced !== 1 ? "s" : ""}`];
       if (data.promoted) parts.push(`${data.promoted} deal${data.promoted !== 1 ? "s" : ""} auto-invoiced`);
-      if (data.errors?.length) parts.push(`${data.errors.length} failed`);
+      if (data.errors?.length) {
+        // Say WHY, not just how many — "12 failed" with no reason sent
+        // Woody hunting (2026-09-08; they were all Xero rate-limit 429s).
+        const reasons = new Map<string, number>();
+        for (const e of data.errors as string[]) {
+          const r = String(e).replace(/^Invoice [^:]+:\s*/, "");
+          reasons.set(r, (reasons.get(r) || 0) + 1);
+        }
+        const top = [...reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2)
+          .map(([r, n]) => (n > 1 ? `${r} (×${n})` : r)).join("; ");
+        parts.push(`${data.errors.length} failed — ${top}`);
+      }
       toast({
         title: "Xero sync complete",
         description: parts.join(", "),
