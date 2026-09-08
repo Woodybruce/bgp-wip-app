@@ -17,6 +17,7 @@ import { Calendar, Plus, Trash2, ExternalLink, AlertTriangle, Clock, Flame, Eye,
 import { buildUserIdColorMap } from "@/lib/agent-colors";
 import { cn } from "@/lib/utils";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
+import { isDayOverdue } from "@shared/day-overdue";
 
 type LeaseEvent = {
   id: string;
@@ -48,7 +49,9 @@ function urgencyFor(dateStr?: string | null): { label: string; cls: string; icon
   const d = new Date(dateStr);
   const now = new Date();
   const months = (d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24 * 30);
-  if (months < 0) return { label: "Overdue", cls: "bg-red-100 text-red-700 border-red-200", icon: AlertTriangle };
+  // event_date is a day (the form below is <Input type="date">), so it lands
+  // at midnight — an event happening TODAY is not overdue. shared/day-overdue.
+  if (isDayOverdue(dateStr)) return { label: "Overdue", cls: "bg-red-100 text-red-700 border-red-200", icon: AlertTriangle };
   if (months < 3) return { label: "< 3 mo", cls: "bg-orange-100 text-orange-700 border-orange-200", icon: Flame };
   if (months < 6) return { label: "< 6 mo", cls: "bg-amber-100 text-amber-700 border-amber-200", icon: Clock };
   if (months < 18) return { label: "< 18 mo", cls: "bg-emerald-100 text-emerald-700 border-emerald-200", icon: Eye };
@@ -130,7 +133,7 @@ export default function LeaseEventsPage({ embedded }: { embedded?: boolean } = {
     for (const e of events) {
       if (!e.eventDate || e.status === "Dormant" || e.status === "Instructed") continue;
       const months = (new Date(e.eventDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 30);
-      if (months < 0) c.overdue++;
+      if (isDayOverdue(e.eventDate)) c.overdue++;
       else if (months < 3) c.imminent++;
       else if (months < 6) c.near++;
       else if (months < 18) c.watching++;

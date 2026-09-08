@@ -2712,6 +2712,42 @@ async function victoriaRound(page, cross) {
   // is a TIMESTAMP but the MLRO's own form is <input type="date">, so every
   // reminder lands at midnight — the overdue count and the red OVERDUE card
   // used to fire from 00:00 on the day the re-check was scheduled (r612).
+  // lease_events.event_date is a TIMESTAMP and every writer stores a DAY (the
+  // board's own form is <Input type="date">, ChatBGP's tool schema asks for
+  // "YYYY-MM-DD", legal-dd inserts a regex-matched YYYY-MM-DD), so a rent
+  // review happening TODAY lands at midnight. Five of seven readers called it
+  // late from 00:00 — the red Overdue badge and KPI tile, the digest's
+  // urgency bucket, the nightly auto-assign to lease advisory (which skipped
+  // it entirely) and the letting hunter's upcoming-events score (r613).
+  await step(page, p, 'staff-lease-event-due-today-is-not-overdue', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+      const mk = async (tenant, eventDate) => {
+        const res = await fetch('/api/lease-events', {
+          method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ eventType: 'Rent Review', status: 'Monitoring', sourceEvidence: 'Manual', address: `QA-PROBE R${round} ${tenant}`, tenant, eventDate }),
+        });
+        return res.ok ? (await res.json())?.id : null;
+      };
+      const todayId = await mk(`QA-R${round} review today`, day(0));
+      const lateId = await mk(`QA-R${round} review 3 days ago`, day(-3));
+      const digest = await (await fetch('/api/lease-events/digest', { headers: auth })).json();
+      const urgency = (id) => (digest || []).find((e) => e.id === id)?.urgency ?? 'not-in-digest';
+      const out = { todayId, lateId, todayUrgency: urgency(todayId), lateUrgency: urgency(lateId), del: [] };
+      for (const id of [todayId, lateId]) if (id) out.del.push((await fetch(`/api/lease-events/${id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status);
+      return out;
+    }, ROUND);
+    if (!r.todayId || !r.lateId) throw new Error('lease event create failed — cannot judge the urgency bucket');
+    if (r.todayUrgency === 'overdue')
+      throw new Error('a lease event happening TODAY bucketed as "overdue" — it is not late until the day has passed');
+    if (r.todayUrgency !== 'imminent')
+      throw new Error(`a lease event today should bucket "imminent" (<3 months), got "${r.todayUrgency}"`);
+    if (r.lateUrgency !== 'overdue')
+      throw new Error(`a lease event 3 days past bucketed "${r.lateUrgency}", expected "overdue"`);
+    if (r.del.some((c) => c !== 200 && c !== 204)) throw new Error(`probe lease event cleanup failed (${r.del.join(',')})`);
+  });
+
   await step(page, p, 'staff-aml-recheck-due-today-is-not-overdue', async () => {
     const r = await page.evaluate(async (round) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };

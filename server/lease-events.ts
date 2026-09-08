@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { db, pool } from "./db";
 import { leaseEvents, insertLeaseEventSchema, type InsertLeaseEvent } from "@shared/schema";
+import { dayOverdueSql } from "../shared/day-overdue";
 import { eq, and, gte, lte, or, isNull, asc } from "drizzle-orm";
 
 const LEASE_ADVISORY_TEAM = [
@@ -129,7 +130,7 @@ export function registerLeaseEventRoutes(app: Express) {
                current_rent AS "currentRent", estimated_erv AS "estimatedErv",
                CASE
                  WHEN event_date IS NULL THEN 'undated'
-                 WHEN event_date < NOW() THEN 'overdue'
+                 WHEN ${dayOverdueSql('event_date')} THEN 'overdue'
                  WHEN event_date < NOW() + INTERVAL '3 months' THEN 'imminent'
                  WHEN event_date < NOW() + INTERVAL '6 months' THEN 'near'
                  WHEN event_date < NOW() + INTERVAL '18 months' THEN 'watching'
@@ -158,7 +159,7 @@ export async function runLeaseEventMonitoring(): Promise<void> {
        WHERE status = 'Monitoring'
          AND (assigned_to IS NULL OR assigned_to = '')
          AND event_date IS NOT NULL
-         AND event_date >= NOW()
+         AND NOT (${dayOverdueSql('event_date')})
          AND event_date <= NOW() + INTERVAL '${WATCH_WINDOW_MONTHS} months'
        RETURNING id`,
       [assignee]
