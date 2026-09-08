@@ -24,7 +24,7 @@ The dashboard runs in two shells and they are NOT the same:
 
 ### Phone app (installed, staff)
 The phone header (every page) carries a search icon — same global search palette as desktop ⌘K (properties, deals, contacts, companies) — and a notifications bell with an unread badge, next to the page title.
-Bottom tabs (exactly 4): **Dashboard** (home tiles), **Messages** (unified chat list), **Deals**, **News**. There is NO ChatBGP tab — ChatBGP is the pinned top row inside Messages, or the black "Ask ChatBGP…" button on the home screen.
+Bottom tabs (exactly 4): **Dashboard** (home tiles), **Messages** (unified chat list), **Deals**, **News**. There is NO ChatBGP tab — ChatBGP is the pinned top row inside Messages, or the black "Ask ChatBGP…" button on the home screen. Messages has All | Unread | Groups | AI chips: All = people conversations plus any ChatBGP chat where someone has been tagged; solo ChatBGP chats live under AI (and behind the pinned row's **History**). Tagging a colleague with @ in ANY chat — including a ChatBGP chat — adds them to it: it appears in their Messages list (on desktop too), they get a notification, and they can carry on the same ChatBGP conversation. The row shows "ChatBGP with …" so you can tell who's in it.
 Phone home screen, top to bottom:
 - "Ask ChatBGP…" button (opens ChatBGP on the most recent conversation).
 - Black finance tile with small **Personal | Company** pill tabs — Personal = the user's own billing/commission (from their fee allocations); Company = firm-wide income/net/debtors (incl. Sage legacy)/cash/projected FY net/overdue 60d+ (equity directors only: Woody, Jack, Rupert, Charlotte; others never see the Company tab). Tapping opens Deals (Personal) or the Finance page (Company).

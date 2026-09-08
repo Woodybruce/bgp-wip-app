@@ -132,6 +132,39 @@ const TAG_TOKEN_REGEX = /@\[([^\]]+)\]\(tag:(user|company|property|deal|unit|con
 // Covers @ChatBGP / "chat bgp" / bare "@chat" / an AI user-tag token.
 const AI_MENTION_REGEX = /@?chat\s*(bgp|pave|landsec)\b|@chat\b|\(tag:user\/__chatbgp__\)/i;
 
+// Who did this message tag? Ids arrive three ways: the client's
+// mentionedUserIds (it knows which @-menu rows were picked), durable
+// @[Name](tag:user/<id>) tokens, and — the phone inserts plain "@Charlotte" —
+// a first name that matches exactly one active colleague.
+async function resolveMentionedUserIds(content: unknown, explicit: unknown): Promise<string[]> {
+  const ids = new Set<string>();
+  if (Array.isArray(explicit)) {
+    for (const v of explicit) if (typeof v === "string" && v && v !== "__chatbgp__") ids.add(v);
+  }
+  if (typeof content !== "string" || !content.includes("@")) return [...ids];
+  for (const m of content.matchAll(TAG_TOKEN_REGEX)) {
+    if (m[2] === "user" && m[3] !== "__chatbgp__") ids.add(m[3]);
+  }
+  const plain = content.replace(TAG_TOKEN_REGEX, "");
+  const firsts = new Set<string>();
+  for (const m of plain.matchAll(/(?:^|[\s(])@([A-Za-z][A-Za-z'-]{1,30})/g)) {
+    const f = m[1].toLowerCase();
+    if (!/^chat/.test(f)) firsts.add(f);
+  }
+  if (firsts.size) {
+    const r = await pool.query<{ id: string; first: string }>(
+      `SELECT id, lower(split_part(name, ' ', 1)) AS first
+         FROM users
+        WHERE COALESCE(is_active, true) AND lower(split_part(name, ' ', 1)) = ANY($1::text[])`,
+      [[...firsts]],
+    );
+    const byFirst = new Map<string, string[]>();
+    for (const row of r.rows) byFirst.set(row.first, [...(byFirst.get(row.first) || []), row.id]);
+    for (const [, list] of byFirst) if (list.length === 1) ids.add(list[0]);
+  }
+  return [...ids];
+}
+
 function stripTagTokens(text: string): string {
   return text.replace(TAG_TOKEN_REGEX, "@$1");
 }
@@ -2471,6 +2504,26 @@ export async function registerRoutes(
         const sender = await storage.getUser(userId);
         const senderName = sender?.name || "Someone";
         emitNewMessage(thread.id, message, senderName);
+        // Tagging a colleague pulls them into the conversation (the WhatsApp
+        // model) — and for a ChatBGP thread that's what makes it appear in
+        // their Messages list (Woody, 2026-09-08). Runs before the
+        // notification fan-out so the tagged person is pinged too.
+        try {
+          const mentioned = await resolveMentionedUserIds(content, req.body.mentionedUserIds);
+          if (mentioned.length) {
+            const current = new Set(threadMembers.map(m => m.userId));
+            for (const uid of mentioned) {
+              if (uid === userId || uid === thread.createdBy || current.has(uid)) continue;
+              const added = await storage.getUser(uid);
+              if (!added) continue;
+              await storage.addChatThreadMember({ threadId: thread.id, userId: uid, addedBy: userId, seen: false });
+              current.add(uid);
+              emitMemberAdded(thread.id, uid, added.name || "Unknown");
+            }
+          }
+        } catch (e: any) {
+          console.error("[chat] Failed to auto-join tagged user:", e?.message);
+        }
         const members = await storage.getChatThreadMembers(thread.id);
         const preview = content?.substring(0, 80) || "New message";
         const threadTitle = thread.title || "Chat";

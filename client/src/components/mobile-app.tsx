@@ -146,6 +146,12 @@ type ThreadData = {
   }>;
 };
 
+// A ChatBGP thread becomes "shared" the moment someone is tagged in it — the
+// tagged person is added as a member. Shared AI chats sit in everyone's All
+// list alongside human conversations (Woody, 2026-09-08); solo AI chats stay
+// under the AI chip so they don't drown the people.
+const isSharedAiThread = (t: { isAiChat: boolean; members: Array<{ id: string }> }) => t.isAiChat && t.members.length > 0;
+
 const AI_SUGGESTIONS: Array<{ label: string; icon: typeof Sparkles }> = [
   { label: "Show me live deals", icon: BarChart3 },
   { label: "What's in my calendar today?", icon: CalendarDays },
@@ -804,6 +810,13 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive,
   const hasUnseen = thread.members.some(m => m.id === currentUserId && !m.seen);
   const isAi = thread.isAiChat;
   const otherMembers = thread.members.filter(m => m.id !== currentUserId);
+  // Shared ChatBGP chat (someone was tagged): show it like a group — avatar,
+  // and the people in it — instead of the bare AI text row.
+  const sharedAi = isAi && thread.members.length > 0;
+  const sharedAiPeople = sharedAi
+    ? [thread.createdBy !== currentUserId ? thread.creatorName : null, ...otherMembers.map(m => m.name)]
+        .filter((n): n is string => !!n).map(n => n.split(" ")[0])
+    : [];
   const isDm = !isAi && otherMembers.length === 1;
   const dmName = isDm ? otherMembers[0].name : null;
   const dmInitials = dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
@@ -921,13 +934,13 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive,
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
-        className={`w-full flex items-center ${isAi ? "gap-0 px-5 py-3.5" : "gap-3 px-5 py-3.5"} active:bg-[#F5F5F4] border-b border-[#E7E5E4]/60 select-none bg-[#FAF9F7] relative z-10 transition-transform duration-200`}
+        className={`w-full flex items-center ${isAi && !sharedAi ? "gap-0 px-5 py-3.5" : "gap-3 px-5 py-3.5"} active:bg-[#F5F5F4] border-b border-[#E7E5E4]/60 select-none bg-[#FAF9F7] relative z-10 transition-transform duration-200`}
         style={{ WebkitTouchCallout: "none", WebkitUserSelect: "none", transform: `translateX(${swipeX}px)` }}
         data-testid={`mobile-thread-${thread.id}`}
       >
         {/* For AI (ChatBGP) threads — no avatar, Claude-style minimal text row.
             For DMs and group chats keep a small avatar so you can tell who's talking. */}
-        {!isAi && (
+        {(!isAi || sharedAi) && (
           <div className="relative shrink-0">
             {renderAvatar()}
             {renderAiMemberBadge()}
@@ -966,6 +979,11 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive,
               </span>
             )}
           </div>
+          {sharedAi && sharedAiPeople.length > 0 && (
+            <p className="text-[11px] text-[#78716C] mt-1 truncate">
+              <Sparkles className="w-3 h-3 inline -mt-0.5 mr-1" />ChatBGP with {sharedAiPeople.join(", ")}
+            </p>
+          )}
           {!isAi && (thread.propertyName || thread.linkedName) && (
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               {thread.propertyName && (
@@ -1603,10 +1621,10 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   }, [messagesKey, threadId, userNameMap]);
 
   const saveMessageMutation = useMutation({
-    mutationFn: async ({ threadId: tid, role, content, actionData, attachments }: {
-      threadId: string; role: string; content: string; actionData?: string; attachments?: string[];
+    mutationFn: async ({ threadId: tid, role, content, actionData, attachments, mentionedUserIds }: {
+      threadId: string; role: string; content: string; actionData?: string; attachments?: string[]; mentionedUserIds?: string[];
     }) => {
-      const res = await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { role, content, actionData, attachments });
+      const res = await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { role, content, actionData, attachments, mentionedUserIds });
       return res.json();
     },
   });
@@ -1631,7 +1649,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const [confirmUnlink, setConfirmUnlink] = useState(false);
 
   const aiSendMutation = useMutation({
-    mutationFn: async ({ newMessages, files, tid }: { newMessages: LocalChatMessage[]; files: File[]; tid: string | null }) => {
+    mutationFn: async ({ newMessages, files, tid, mentionedUserIds }: { newMessages: LocalChatMessage[]; files: File[]; tid: string | null; mentionedUserIds?: string[] }) => {
       inFlightEpochRef.current = chatEpochRef.current;
       const plainMessages = newMessages.map(m => {
         let content = m.content;
@@ -1667,6 +1685,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         role: "user",
         content: lastUserMsg.content,
         attachments: lastUserMsg.attachments,
+        mentionedUserIds,
       });
 
       if (files.length > 0) {
@@ -1917,8 +1936,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   });
 
   const teamSendMutation = useMutation({
-    mutationFn: async ({ content, tid, attachments }: { content: string; tid: string; attachments?: string[] }) => {
-      const res = await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { role: "user", content, attachments });
+    mutationFn: async ({ content, tid, attachments, mentionedUserIds }: { content: string; tid: string; attachments?: string[]; mentionedUserIds?: string[] }) => {
+      const res = await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { role: "user", content, attachments, mentionedUserIds });
       return res.json();
     },
     onSuccess: () => {
@@ -1969,6 +1988,16 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   // @[Name](tag:type/id) tokens at send time.
   const [tagEntities, setTagEntities] = useState<Array<{ type: TagType; id: string; name: string; subtitle?: string }>>([]);
   const pendingTagsRef = useRef<Map<string, { type: TagType; id: string; name: string }>>(new Map());
+  // People picked from the @ menu ("@Charlotte" → user id). Sent as
+  // mentionedUserIds so the server adds them to the thread — that's how a
+  // ChatBGP chat reaches the tagged person's Messages list.
+  const pendingUserTagsRef = useRef<Map<string, string>>(new Map());
+  const takeMentionedUserIds = (content: string): string[] | undefined => {
+    if (pendingUserTagsRef.current.size === 0) return undefined;
+    const ids = [...pendingUserTagsRef.current.entries()].filter(([key]) => content.includes(key)).map(([, id]) => id);
+    pendingUserTagsRef.current.clear();
+    return ids.length ? Array.from(new Set(ids)) : undefined;
+  };
 
   useEffect(() => {
     if (mentionQuery === null || mentionQuery.length < 2) {
@@ -2039,6 +2068,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       inserted = "@ChatBGP";
     } else if (opt.kind === "user") {
       inserted = `@${opt.name.split(" ")[0]}`;
+      pendingUserTagsRef.current.set(inserted, opt.id);
     } else {
       const clean = opt.name.replace(/[\[\]()]/g, "").trim();
       inserted = `@${clean}`;
@@ -2299,7 +2329,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       const newMessages = [...messages, userMessage];
       setMessages(newMessages);
       setInput("");
-      aiSendMutation.mutate({ newMessages, files: originalFiles, tid: threadId });
+      aiSendMutation.mutate({ newMessages, files: originalFiles, tid: threadId, mentionedUserIds: takeMentionedUserIds(content) });
     } else {
       let content = text || (uploadedAttachments.length > 0 ? "Shared files" : "");
       // Swap readable "@Name" inserts for durable tag tokens (longest first).
@@ -2316,7 +2346,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       // The server owns AI replies in team threads (auto-join on @mention) —
       // the old client-side mention path double-replied once auto-join landed.
       if (threadId) {
-        teamSendMutation.mutate({ content, tid: threadId, attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined });
+        teamSendMutation.mutate({ content, tid: threadId, attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined, mentionedUserIds: takeMentionedUserIds(content) });
       }
     }
     if (textareaRef.current) textareaRef.current.style.height = "auto";
@@ -3814,8 +3844,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     const ai: ThreadData[] = [];
     const other: ThreadData[] = [];
     for (const t of (threads || [])) {
-      if (t.isAiChat) ai.push(t);
-      else {
+      if (t.isAiChat) {
+        ai.push(t);
+        if (isSharedAiThread(t)) team.push(t);
+      } else {
         // Show every conversation the user belongs to — the old "2+ other
         // members" rule hid 1:1 threads from the mobile list entirely. Only
         // your own empty, member-less drafts stay hidden.
@@ -3847,7 +3879,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   const filteredTeamThreads = useMemo(() => {
     let base: ThreadData[];
     if (chatChip === "ai") base = aiThreads.filter(t => !!(t.title || t.lastMessage));
-    else if (chatChip === "groups") base = teamThreads.filter(t => t.members.filter(m => m.id !== currentUser?.id).length > 1);
+    else if (chatChip === "groups") base = teamThreads.filter(t => t.members.filter(m => m.id !== currentUser?.id).length > (t.isAiChat ? 0 : 1));
     else if (chatChip === "unread") base = teamThreads.filter(t => {
       const me = t.members.find(m => m.id === currentUser?.id);
       return me ? !me.seen : false;
