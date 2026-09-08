@@ -1,9 +1,13 @@
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import Placeholder from "../components/Placeholder";
-import { caseStudyBySlug, INVESTMENT_CONTACTS, INVESTMENT_DEALS, SERVICES } from "../lib/content";
+import { INVESTMENT_DEALS, SERVICES } from "../lib/content";
+import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
 export default function Investment() {
+  const content = useSiteContent();
+  const INVESTMENT_CONTACTS = content.contacts.investment;
+  const caseStudyBySlug = (slug: string) => findCaseStudy(content, slug);
   const service = SERVICES.find((s) => s.slug === "investment")!;
   return (
     <div>

@@ -97,6 +97,9 @@ const coreNavBase = [
   // Leasing Schedule, Lease Advisory, London Restaurants) moved to the
   // "Unfinished" group below so the everyday Core nav stays clean.
   { title: "Brand Intelligence", url: "/brands", icon: Store },
+  // Public website content (bgp.uk.com team / case studies / news) — also
+  // editable through ChatBGP's manage_website_content tool.
+  { title: "Website", url: "/website", icon: Globe },
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
@@ -593,6 +596,7 @@ export const mobileOverlayItems = [
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
+  { title: "Website", url: "/website", icon: Globe },
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },

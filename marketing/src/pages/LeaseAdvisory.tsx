@@ -3,16 +3,14 @@ import KeyContacts from "../components/KeyContacts";
 import { Link } from "wouter";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
-import {
-  LEASE_ADVISORY_CASE_STUDIES,
-  LEASE_ADVISORY_CLIENTS,
-  LEASE_ADVISORY_CONTACTS,
-  LEASE_ADVISORY_SERVICES,
-  SERVICES,
-} from "../lib/content";
+import { LEASE_ADVISORY_CLIENTS, LEASE_ADVISORY_SERVICES, SERVICES } from "../lib/content";
+import { useSiteContent } from "../lib/site-content";
 
 export default function LeaseAdvisory() {
   const service = SERVICES.find((s) => s.slug === "lease-advisory")!;
+  const { caseStudies, contacts } = useSiteContent();
+  const LEASE_ADVISORY_CASE_STUDIES = caseStudies.filter((c) => c.service === "Lease Advisory");
+  const LEASE_ADVISORY_CONTACTS = contacts.lease_advisory;
   const [selected, setSelected] = useState(0);
 
   return (

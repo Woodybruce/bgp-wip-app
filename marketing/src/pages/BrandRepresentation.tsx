@@ -2,10 +2,14 @@ import { Link } from "wouter";
 import KeyContacts from "../components/KeyContacts";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
-import { BRAND_REP_CASE_STUDIES, BRAND_REP_CLIENTS, BRAND_REP_CONTACTS, SERVICES } from "../lib/content";
+import { BRAND_REP_CLIENTS, SERVICES } from "../lib/content";
+import { useSiteContent } from "../lib/site-content";
 
 export default function BrandRepresentation() {
   const service = SERVICES.find((s) => s.slug === "brand-representation")!;
+  const { caseStudies, contacts } = useSiteContent();
+  const BRAND_REP_CASE_STUDIES = caseStudies.filter((c) => c.service === "Brand Representation");
+  const BRAND_REP_CONTACTS = contacts.brand_representation;
   return (
     <div>
       <section className="mx-auto max-w-6xl px-4 pt-14">

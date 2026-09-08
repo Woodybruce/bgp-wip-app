@@ -1,6 +1,7 @@
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { ARTICLES, HERO_STATEMENT, HOME_INTRO, SERVICES, TESTIMONIAL } from "../lib/content";
+import { HERO_STATEMENT, HOME_INTRO, SERVICES, TESTIMONIAL } from "../lib/content";
+import { useSiteContent } from "../lib/site-content";
 
 // Per-section stats per the v2c layout. All figures real: transactions/brands
 // from brucegillinghampollard.com, £62m = LondonMetric Waitrose portfolio,
@@ -14,6 +15,11 @@ const SERVICE_STATS: Record<string, { value: string; caption: string }> = {
 };
 
 export default function Home() {
+  const { articles } = useSiteContent();
+  const featured = ["behind-the-brand-yolk", "ardent-royal-exchange", "enduring-appeal-portman-estate"]
+    .map((slug) => articles.find((x) => x.slug === slug))
+    .filter((a): a is NonNullable<typeof a> => !!a);
+  const homeArticles = featured.length === 3 ? featured : articles.slice(0, 3);
   return (
     <div>
       {/* Hero — full-bleed photo, giant wordmark */}
@@ -122,7 +128,7 @@ export default function Home() {
           </p>
         </div>
         <div className="mt-10 card-strip sm:grid-cols-3 sm:gap-8">
-          {["behind-the-brand-yolk", "ardent-royal-exchange", "enduring-appeal-portman-estate"].map((slug) => ARTICLES.find((x) => x.slug === slug)!).map((a) => (
+          {homeArticles.map((a) => (
             <Link key={a.slug} href={`/news/${a.slug}`} className="group block border-t border-bgp-wine/40 pt-3">
               <p className="label-caps text-bgp-wine mb-3">{a.category}</p>
               <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>

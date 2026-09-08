@@ -1,5 +1,6 @@
 import Placeholder from "../components/Placeholder";
-import { TEAM, type Person } from "../lib/content";
+import { type Person } from "../lib/content";
+import { useSiteContent } from "../lib/site-content";
 import { useTeamPhoto } from "../lib/team-photos";
 
 function Avatar({ person }: { person: Person }) {
@@ -9,7 +10,8 @@ function Avatar({ person }: { person: Person }) {
 }
 
 export default function Team() {
-  const sorted = [...TEAM].sort((a, b) => {
+  const { team } = useSiteContent();
+  const sorted = [...team].sort((a, b) => {
     const surname = (n: string) => n.split(" ").slice(-1)[0];
     return surname(a.name).localeCompare(surname(b.name));
   });

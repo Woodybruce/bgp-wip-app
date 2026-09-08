@@ -2,18 +2,14 @@ import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
-import {
-  caseStudyBySlug,
-  CONSULTANCY_BODY,
-  CONSULTANCY_CLIENTS,
-  CONSULTANCY_CONTACTS,
-  CONSULTANCY_SERVICES,
-  SERVICES,
-  TESTIMONIAL,
-} from "../lib/content";
+import { CONSULTANCY_BODY, CONSULTANCY_CLIENTS, CONSULTANCY_SERVICES, SERVICES, TESTIMONIAL } from "../lib/content";
+import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
 export default function Consultancy() {
   const service = SERVICES.find((s) => s.slug === "consultancy")!;
+  const content = useSiteContent();
+  const CONSULTANCY_CONTACTS = content.contacts.consultancy;
+  const caseStudyBySlug = (slug: string) => findCaseStudy(content, slug);
   return (
     <div>
       <section className="relative">

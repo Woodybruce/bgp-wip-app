@@ -4336,6 +4336,28 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   tools.push({
     type: "function",
     function: {
+      name: "manage_website_content",
+      description: "Read and change the public website (bgp.uk.com) content that lives in the dashboard: team members (name, title, phone, email, photo, key-contact groups, visible), case studies (slug, title, service, blurb, body paragraphs, facts, image, published) and news articles (slug, title, category, date, author, standfirst, body, image, published). Changes go live on the site within a minute — no deploy. Use list/get to read, create/update to edit (pass fields in data), publish/unpublish to show or hide, delete to remove. Confirm with the user before deleting. Listings and headshot files are handled elsewhere (Letting Tracker Website pill; share-drive 'For website' folder).",
+      parameters: {
+        type: "object",
+        properties: {
+          kind: { type: "string", enum: ["team", "case_study", "news"], description: "Which content type" },
+          action: { type: "string", enum: ["list", "get", "create", "update", "delete", "publish", "unpublish"] },
+          id: { type: "string", description: "Row id (from list/get) — for update/delete/publish/unpublish" },
+          slug: { type: "string", description: "Alternative to id: the case study / article slug, or a team member's name" },
+          data: {
+            type: "object",
+            description: "Fields for create/update. Team: name, title, phone, email, photoUrl, groups (array of leasing|investment|lease_advisory|brand_representation|consultancy), sortOrder, visible. Case study: slug, title, service, blurb, body (array of paragraphs), facts (array of [label, value] pairs), imageUrl, sortOrder, published. News: slug, title, category, date, author, standfirst, body (array of paragraphs), imageUrl, sortOrder, published.",
+          },
+        },
+        required: ["kind", "action"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "export_to_excel",
       description: "Generate a downloadable Excel (.xlsx) file from structured table data. Use when you extract comps tables, schedules, financial data, or any tabular information from brochures, PDFs, or documents and the user wants it as an Excel file. Also use proactively when presenting tabular data that would be useful to download. Returns a download link.",
       parameters: {
@@ -8301,6 +8323,17 @@ export async function executeCrmToolRaw(
       } };
     } catch (err: any) {
       return { data: { error: `Failed to ingest URL: ${err.message}` } };
+    }
+  }
+
+  if (fnName === "manage_website_content") {
+    try {
+      const { websiteContentAction } = await import("./website-content");
+      const actor = (req as any)?.user?.email || (req as any)?.user?.name || "chatbgp";
+      const result = await websiteContentAction(fnArgs.kind, fnArgs.action, { id: fnArgs.id, slug: fnArgs.slug, data: fnArgs.data }, actor);
+      return { data: { success: true, kind: fnArgs.kind, action: fnArgs.action, result, note: "Changes are live on bgp.uk.com within a minute." } };
+    } catch (err: any) {
+      return { data: { error: err.message } };
     }
   }
 
@@ -12645,6 +12678,26 @@ export async function handleCrmToolCall(
       return { handled: true, response: { reply: reply || `I've read "${title}" (${extractedText.length} characters).${fnArgs.addToNews ? " Saved to news feed." : ""}` } };
     } catch (err: any) {
       return { handled: true, response: { reply: `Sorry, I couldn't read that URL: ${err.message}` } };
+    }
+  }
+
+  if (fnName === "manage_website_content") {
+    try {
+      const { websiteContentAction } = await import("./website-content");
+      const actor = (req as any)?.user?.email || (req as any)?.user?.name || "chatbgp";
+      const result = await websiteContentAction(fnArgs.kind, fnArgs.action, { id: fnArgs.id, slug: fnArgs.slug, data: fnArgs.data }, actor);
+      const kindLabel = fnArgs.kind === "case_study" ? "case study" : fnArgs.kind === "news" ? "article" : "team member";
+      if (fnArgs.action === "list") {
+        const rows = result as any[];
+        const lines = rows.map((r: any) => `- ${r.title || r.name}${r.service ? ` (${r.service})` : ""}${r.published === false || r.visible === false ? " — hidden" : ""}${r.slug ? ` · ${r.slug}` : ""}`);
+        return { handled: true, response: { reply: `${rows.length} ${kindLabel}${rows.length === 1 ? "" : "s"} on the website:\n${lines.join("\n")}` } };
+      }
+      if (fnArgs.action === "delete") return { handled: true, response: { reply: `Deleted that ${kindLabel} from the website.` } };
+      const name = (result as any)?.title || (result as any)?.name;
+      const verb = fnArgs.action === "create" ? "Added" : fnArgs.action === "publish" ? "Published" : fnArgs.action === "unpublish" ? "Hidden" : fnArgs.action === "get" ? "Here is" : "Updated";
+      return { handled: true, response: { reply: `${verb} ${kindLabel} **${name}** on bgp.uk.com.${fnArgs.action === "get" ? "\n\n```json\n" + JSON.stringify(result, null, 2) + "\n```" : " Live within a minute."}` } };
+    } catch (err: any) {
+      return { handled: true, response: { reply: `Couldn't change the website content: ${err.message}` } };
     }
   }
 

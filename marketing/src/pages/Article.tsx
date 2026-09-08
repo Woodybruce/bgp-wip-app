@@ -1,11 +1,12 @@
 import { useEffect } from "react";
 import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { ARTICLES } from "../lib/content";
+import { useSiteContent } from "../lib/site-content";
 
 export default function ArticlePage() {
   const [, params] = useRoute("/news/:slug");
-  const article = ARTICLES.find((a) => a.slug === params?.slug);
+  const { articles } = useSiteContent();
+  const article = articles.find((a) => a.slug === params?.slug);
 
   useEffect(() => {
     window.scrollTo(0, 0);

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
-import { caseStudyBySlug, LEASING_CONTACTS } from "../lib/content";
+import { findCaseStudy, useSiteContent } from "../lib/site-content";
 import { Listing, fetchListings } from "../lib/api";
 
 const SIZE_BANDS = [
@@ -45,6 +45,7 @@ function FilterSelect({
 }
 
 export default function Leasing() {
+  const content = useSiteContent();
   const [listings, setListings] = useState<Listing[]>([]);
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -141,9 +142,9 @@ export default function Leasing() {
       </section>
 
       <div className="mt-16">
-        <CaseStudyStrip caseStudy={caseStudyBySlug("lucent-piccadilly")} />
+        <CaseStudyStrip caseStudy={findCaseStudy(content, "lucent-piccadilly")} />
       </div>
-      <KeyContacts people={LEASING_CONTACTS} />
+      <KeyContacts people={content.contacts.leasing} />
     </div>
   );
 }
