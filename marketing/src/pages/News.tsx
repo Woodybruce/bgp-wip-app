@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { ARTICLES } from "../lib/content";
+import { useSiteContent } from "../lib/site-content";
 
 const INITIAL_VISIBLE = 6;
 
@@ -10,13 +10,14 @@ export default function News() {
   const [kind, setKind] = useState<"" | "News" | "Opinion">("");
   const [category, setCategory] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const { articles } = useSiteContent();
 
   const types = useMemo(
-    () => Array.from(new Set(ARTICLES.map((a) => a.category).filter((c) => c !== "News" && c !== "Opinion"))),
-    [],
+    () => Array.from(new Set(articles.map((a) => a.category).filter((c) => c !== "News" && c !== "Opinion"))),
+    [articles],
   );
 
-  const filtered = ARTICLES.filter((a) => {
+  const filtered = articles.filter((a) => {
     if (kind && a.category !== kind) return false;
     if (category && a.category !== category) return false;
     return true;

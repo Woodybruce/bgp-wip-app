@@ -5,6 +5,7 @@ import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
 import ListingMap from "../components/ListingMap";
 import { CONTACT, LEASING_CONTACTS, OFFICE_PHONE, type Person } from "../lib/content";
+import { useSiteContent } from "../lib/site-content";
 import { Listing, fetchListing, fetchListings, fileUrl, focalPosition, formatSqft, isImage, rentLabel } from "../lib/api";
 import { downloadParticulars } from "../lib/particulars-pdf";
 
@@ -19,6 +20,7 @@ const waLink = (unitName: string) =>
 export default function ListingDetail() {
   const [, params] = useRoute("/leasing/:id");
   const id = params?.id ?? "";
+  const siteContent = useSiteContent();
   const [listing, setListing] = useState<Listing | null>(null);
   const [similar, setSimilar] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,7 +92,7 @@ export default function ListingDetail() {
     phone: a.phone || OFFICE_PHONE,
     email: a.email || CONTACT.email,
   }));
-  const contacts = unitAgents.length ? unitAgents : LEASING_CONTACTS.slice(0, 3);
+  const contacts = unitAgents.length ? unitAgents : siteContent.contacts.leasing.slice(0, 3);
 
   const onDownload = async () => {
     setGenerating(true);

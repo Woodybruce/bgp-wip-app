@@ -97,6 +97,10 @@ Team Photos / For website" is served at
 https://chatbgp.app/api/public/team-photos/<Name> and appears on the site
 for anyone whose bundled photo is missing (10-minute cache) — so to put a
 headshot on the website, copy the file into that folder with the person's
-exact name; no deploy needed. Everything else on the site (copy, case
-studies, service pages) is code — changes go to Woody / Claude Code.
+exact name; no deploy needed. Team members, case studies and news articles on the site are CONTENT IN
+THIS APP: edit them with the manage_website_content tool (list / get /
+create / update / publish / unpublish / delete) or on the /website page
+(Team, Case studies, News tabs — edit dialog, publish toggle). Changes are
+live within a minute. Design, layout and the service-page copy are still
+code — those changes go to Woody / Claude Code.
 `;

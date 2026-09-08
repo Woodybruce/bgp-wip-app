@@ -43,6 +43,7 @@ import { MobileBottomNav, BOTTOM_NAV_PATHS } from "@/components/mobile-bottom-na
 import type { User } from "@shared/schema";
 
 const NotFound = lazy(() => import("@/pages/not-found"));
+const WebsitePage = lazy(() => import("@/pages/website"));
 const CovenantWatch = lazy(() => import("@/pages/covenant-watch"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
@@ -383,6 +384,7 @@ function Router() {
       {/* Deep-link for a specific training module needs the legacy component */}
       <Route path="/aml-training/:id" component={AmlTraining} />
       <Route path="/brands" component={BrandsHub} />
+      <Route path="/website" component={WebsitePage} />
       <Route path="/property-pathway" component={PropertyPathway} />
       <Route path="/pathway-review" component={PathwayReview} />
       <Route path="/pathway-portfolio" component={PathwayPortfolio} />

@@ -768,6 +768,9 @@ installGoogleBudgetGuard();
     `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS lease_terms TEXT`,
     `ALTER TABLE unit_marketing_files ADD COLUMN IF NOT EXISTS focal_x REAL`,
     `ALTER TABLE unit_marketing_files ADD COLUMN IF NOT EXISTS focal_y REAL`,
+    `CREATE TABLE IF NOT EXISTS website_team (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, title TEXT NOT NULL, phone TEXT, email TEXT, photo_url TEXT, groups TEXT[], sort_order INTEGER DEFAULT 0, visible BOOLEAN DEFAULT true, updated_by TEXT, updated_at TIMESTAMP DEFAULT NOW())`,
+    `CREATE TABLE IF NOT EXISTS website_case_studies (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), slug TEXT NOT NULL UNIQUE, title TEXT NOT NULL, service TEXT NOT NULL, blurb TEXT NOT NULL, body TEXT[], facts JSONB, image_url TEXT, sort_order INTEGER DEFAULT 0, published BOOLEAN DEFAULT false, updated_by TEXT, updated_at TIMESTAMP DEFAULT NOW())`,
+    `CREATE TABLE IF NOT EXISTS website_news (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), slug TEXT NOT NULL UNIQUE, title TEXT NOT NULL, category TEXT, date TEXT, author TEXT, standfirst TEXT, body TEXT[], image_url TEXT, sort_order INTEGER DEFAULT 0, published BOOLEAN DEFAULT false, updated_by TEXT, updated_at TIMESTAMP DEFAULT NOW())`,
     `CREATE INDEX IF NOT EXISTS kyc_audit_log_company_id_idx ON kyc_audit_log (company_id)`,
     `CREATE TABLE IF NOT EXISTS deal_audit_log (id SERIAL PRIMARY KEY, deal_id VARCHAR NOT NULL, field TEXT NOT NULL, old_value TEXT, new_value TEXT, reason TEXT, changed_by VARCHAR, changed_by_name VARCHAR, created_at TIMESTAMP DEFAULT now())`,
     `CREATE TABLE IF NOT EXISTS kyc_documents (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), company_id VARCHAR, contact_id VARCHAR, deal_id VARCHAR, doc_type TEXT NOT NULL, file_url TEXT NOT NULL, file_name TEXT NOT NULL, file_size INTEGER, mime_type TEXT, certified_by TEXT, certified_at TIMESTAMP, expires_at TIMESTAMP, notes TEXT, uploaded_by VARCHAR, uploaded_at TIMESTAMP DEFAULT now(), deleted_at TIMESTAMP)`,
@@ -3028,6 +3031,7 @@ import { registerMapLayerRoutes } from "./map-layers";
 import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
+import websiteContentRouter from "./website-content";
 import veriffRouter from "./veriff";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
@@ -3976,6 +3980,7 @@ app.use("/api/branding/assets", express.static(
   app.use(sanctionsRouter);
   app.use(kycClouseauRouter);
   app.use(amlComplianceRouter);
+  app.use(websiteContentRouter);
   app.use(veriffRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);

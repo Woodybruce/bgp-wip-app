@@ -2,27 +2,21 @@ import { useEffect } from "react";
 import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import KeyContacts from "../components/KeyContacts";
-import {
-  BRAND_REP_CONTACTS,
-  CASE_STUDIES,
-  CONSULTANCY_CONTACTS,
-  INVESTMENT_CONTACTS,
-  LEASE_ADVISORY_CONTACTS,
-  LEASING_CONTACTS,
-  Person,
-} from "../lib/content";
+import { type SiteContent, useSiteContent } from "../lib/site-content";
 
-const CONTACTS_BY_SERVICE: Record<string, Person[]> = {
-  Leasing: LEASING_CONTACTS.slice(0, 3),
-  Investment: INVESTMENT_CONTACTS.slice(0, 3),
-  "Brand Representation": BRAND_REP_CONTACTS,
-  Consultancy: CONSULTANCY_CONTACTS,
-  "Lease Advisory": LEASE_ADVISORY_CONTACTS,
-};
+const contactsFor = (c: SiteContent["contacts"], service: string) =>
+  ({
+    Leasing: c.leasing.slice(0, 3),
+    Investment: c.investment.slice(0, 3),
+    "Brand Representation": c.brand_representation,
+    Consultancy: c.consultancy,
+    "Lease Advisory": c.lease_advisory,
+  })[service] ?? c.leasing.slice(0, 3);
 
 export default function CaseStudyPage() {
   const [, params] = useRoute("/case-studies/:slug");
-  const caseStudy = CASE_STUDIES.find((c) => c.slug === params?.slug);
+  const content = useSiteContent();
+  const caseStudy = content.caseStudies.find((c) => c.slug === params?.slug);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -39,8 +33,8 @@ export default function CaseStudyPage() {
     );
   }
 
-  const others = CASE_STUDIES.filter((c) => c.slug !== caseStudy.slug).slice(0, 3);
-  const contacts = CONTACTS_BY_SERVICE[caseStudy.service] ?? LEASING_CONTACTS.slice(0, 3);
+  const others = content.caseStudies.filter((c) => c.slug !== caseStudy.slug).slice(0, 3);
+  const contacts = contactsFor(content.contacts, caseStudy.service);
 
   return (
     <div>

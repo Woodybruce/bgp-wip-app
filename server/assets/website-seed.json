@@ -1,0 +1,877 @@
+{
+  "team": [
+    {
+      "name": "Woody Bruce",
+      "title": "Managing Director",
+      "phone": "+44 (0)7980 313 675",
+      "email": "woody@brucegillinghampollard.com",
+      "photoUrl": null,
+      "groups": [],
+      "sortOrder": 0,
+      "visible": true
+    },
+    {
+      "name": "Tracey Pollard",
+      "title": "Founding Director",
+      "phone": "+44 (0)7779 323 306",
+      "email": "tracey@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/tracey-pollard.jpg",
+      "groups": [
+        "consultancy"
+      ],
+      "sortOrder": 1,
+      "visible": true
+    },
+    {
+      "name": "Charlotte Roberts",
+      "title": "Equity Director, Co-Head London Estates",
+      "phone": "+44 (0)7738 448 338",
+      "email": "charlotte@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/charlotte-roberts.jpg",
+      "groups": [
+        "leasing"
+      ],
+      "sortOrder": 2,
+      "visible": true
+    },
+    {
+      "name": "Rupert Bentley-Smith",
+      "title": "Equity Director, Co-Head London Estates",
+      "phone": "+44 (0)7876 354 160",
+      "email": "rupert@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/rupert-bentley-smith.jpg",
+      "groups": [
+        "leasing"
+      ],
+      "sortOrder": 3,
+      "visible": true
+    },
+    {
+      "name": "Jack Barratt",
+      "title": "Equity Director, Head of Investment",
+      "phone": "+44 (0)7788 215 044",
+      "email": "jack@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/jack-barratt.jpg",
+      "groups": [
+        "investment"
+      ],
+      "sortOrder": 4,
+      "visible": true
+    },
+    {
+      "name": "Victoria Broadhead",
+      "title": "Head of National",
+      "phone": "+44 (0)7793 158 133",
+      "email": "victoria@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/victoria-broadhead.jpg",
+      "groups": [
+        "leasing"
+      ],
+      "sortOrder": 5,
+      "visible": true
+    },
+    {
+      "name": "Peter Wood",
+      "title": "Head of Lease Consultancy and Asset Management",
+      "phone": "+44 (0)7872 602 336",
+      "email": "peter@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/peter-wood.jpg",
+      "groups": [
+        "lease_advisory"
+      ],
+      "sortOrder": 6,
+      "visible": true
+    },
+    {
+      "name": "Nick Halley",
+      "title": "Director, Investment",
+      "phone": "+44 (0)7766 042 736",
+      "email": "nick@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/nick-halley.jpg",
+      "groups": [
+        "investment"
+      ],
+      "sortOrder": 7,
+      "visible": true
+    },
+    {
+      "name": "Lucy Gardiner",
+      "title": "Director, National Leasing",
+      "phone": "+44 (0)7741 877 452",
+      "email": "lucyg@brucegillinghampollard.com",
+      "photoUrl": null,
+      "groups": [],
+      "sortOrder": 8,
+      "visible": true
+    },
+    {
+      "name": "Lizzie Knights",
+      "title": "Director, London Leasing",
+      "phone": "+44 (0)7511 902 073",
+      "email": "lizzie@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/lizzie-knights.jpg",
+      "groups": [
+        "leasing"
+      ],
+      "sortOrder": 9,
+      "visible": true
+    },
+    {
+      "name": "Harry Elliott",
+      "title": "Director, Brand Representation",
+      "phone": "+44 (0)7568 367 777",
+      "email": "harrye@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/harry-elliott.jpg",
+      "groups": [
+        "brand_representation"
+      ],
+      "sortOrder": 10,
+      "visible": true
+    },
+    {
+      "name": "Emily Dumbell",
+      "title": "Director, National Leasing",
+      "phone": "+44 (0)7805 259 793",
+      "email": "emily@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/emily-dumbell.jpg",
+      "groups": [
+        "leasing"
+      ],
+      "sortOrder": 11,
+      "visible": true
+    },
+    {
+      "name": "Nick Goodman",
+      "title": "Consultant, Investment",
+      "phone": "+44 (0)7818 012 432",
+      "email": "nickgoodman@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/nick-goodman.jpg",
+      "groups": [],
+      "sortOrder": 12,
+      "visible": true
+    },
+    {
+      "name": "Tom Cater",
+      "title": "Associate Director, Lease Advisory",
+      "phone": "+44 (0)7947 484 902",
+      "email": "tom@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/tom-cater.jpg",
+      "groups": [
+        "lease_advisory"
+      ],
+      "sortOrder": 13,
+      "visible": true
+    },
+    {
+      "name": "Lucy Cope",
+      "title": "Associate Director, London Leasing",
+      "phone": "+44 (0)7595 267 866",
+      "email": "lucy@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/lucy-cope.jpg",
+      "groups": [
+        "leasing"
+      ],
+      "sortOrder": 14,
+      "visible": true
+    },
+    {
+      "name": "Evie North",
+      "title": "Associate Director, Brand Representation",
+      "phone": "+44 (0)7595 349 057",
+      "email": "evie@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/evie-north.jpg",
+      "groups": [
+        "brand_representation"
+      ],
+      "sortOrder": 15,
+      "visible": true
+    },
+    {
+      "name": "Alex Todd",
+      "title": "Senior Surveyor, Development",
+      "phone": "+44 (0)7526 504 806",
+      "email": "alext@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/alex-todd.jpg",
+      "groups": [
+        "consultancy"
+      ],
+      "sortOrder": 16,
+      "visible": true
+    },
+    {
+      "name": "Millie Edwards",
+      "title": "Leasing",
+      "phone": "+44 (0)20 3551 5260",
+      "email": null,
+      "photoUrl": null,
+      "groups": [],
+      "sortOrder": 17,
+      "visible": true
+    },
+    {
+      "name": "Emily Cann",
+      "title": "Graduate Surveyor, London Leasing",
+      "phone": "+44 (0)7516 660 791",
+      "email": "emilyc@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/emily-cann.jpg",
+      "groups": [],
+      "sortOrder": 18,
+      "visible": true
+    },
+    {
+      "name": "Will Penfold",
+      "title": "Graduate Surveyor, London Leasing",
+      "phone": "+44 (0)7760 881 270",
+      "email": "willp@brucegillinghampollard.com",
+      "photoUrl": null,
+      "groups": [],
+      "sortOrder": 19,
+      "visible": true
+    },
+    {
+      "name": "Luke Donohoe",
+      "title": "Graduate Surveyor, National Leasing",
+      "phone": "+44 (0)7983 855 926",
+      "email": "luke@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/luke-donohoe.jpg",
+      "groups": [],
+      "sortOrder": 20,
+      "visible": true
+    },
+    {
+      "name": "Libby Evans",
+      "title": "Graduate Surveyor, Development",
+      "phone": "+44 (0)7931 462 768",
+      "email": "libbye@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/libby-evans.jpg",
+      "groups": [
+        "consultancy"
+      ],
+      "sortOrder": 21,
+      "visible": true
+    },
+    {
+      "name": "Jonny Palmer",
+      "title": "Graduate, Investment",
+      "phone": "+44 (0)7506 439 429",
+      "email": "jonny@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/jonny-palmer.jpg",
+      "groups": [
+        "investment"
+      ],
+      "sortOrder": 22,
+      "visible": true
+    },
+    {
+      "name": "Harriette Walker-Clark",
+      "title": "PA & Office Manager",
+      "phone": "+44 (0)20 3551 5260",
+      "email": "harriette@brucegillinghampollard.com",
+      "photoUrl": null,
+      "groups": [],
+      "sortOrder": 23,
+      "visible": true
+    },
+    {
+      "name": "Layla O'Driscoll",
+      "title": "PA & Office Manager",
+      "phone": "+44 (0)20 3551 5260",
+      "email": "layla@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/layla-odriscoll.jpg",
+      "groups": [],
+      "sortOrder": 24,
+      "visible": true
+    },
+    {
+      "name": "Cara Milligan",
+      "title": "PA — National",
+      "phone": "+44 (0)20 3551 5260",
+      "email": "cara@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/cara-milligan.jpg",
+      "groups": [],
+      "sortOrder": 25,
+      "visible": true
+    }
+  ],
+  "caseStudies": [
+    {
+      "slug": "lucent-piccadilly",
+      "title": "Lucent, Piccadilly Lights",
+      "service": "Leasing",
+      "blurb": "Restaurant leasing for Landsec at Lucent W1 — the landmark development behind the world-famous Piccadilly Lights.",
+      "body": [
+        "Lucent is Landsec's 144,000 sq ft development behind the Piccadilly Lights — office, retail and restaurant space on one of the most famous corners in the world, completed in 2023.",
+        "BGP advised Landsec on the food & beverage leasing of the scheme, shaping the restaurant strategy and securing occupiers for space that sits directly behind the Lights, with some of the highest footfall in the West End.",
+        "Photograph: Thomas Dahlstrøm Nielsen, CC BY-SA 4.0."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Leasing"
+        ],
+        [
+          "Client",
+          "Landsec"
+        ],
+        [
+          "Scheme",
+          "Lucent W1 — 144,000 sq ft"
+        ],
+        [
+          "Sector",
+          "Restaurant & leisure"
+        ],
+        [
+          "Location",
+          "Piccadilly Circus, W1"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/stills-preview-piccadilly.jpg",
+      "sortOrder": 0,
+      "published": true
+    },
+    {
+      "slug": "20-hanover-square",
+      "title": "20 Hanover Square",
+      "service": "Leasing",
+      "blurb": "A 10,000 sq ft Mayfair restaurant opportunity for Great Portland Estates — one of the West End's landmark restaurant lettings.",
+      "body": [
+        "A 10,000 sq ft restaurant opportunity at 20 Hanover Square, acting for Great Portland Estates — one of the West End's landmark restaurant lettings.",
+        "[Sample] Full case study copy to follow from the leasing team."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Leasing"
+        ],
+        [
+          "Client",
+          "Great Portland Estates"
+        ],
+        [
+          "Size",
+          "10,000 sq ft"
+        ],
+        [
+          "Sector",
+          "Restaurant"
+        ],
+        [
+          "Location",
+          "Mayfair"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/hanover-square.jpg",
+      "sortOrder": 1,
+      "published": true
+    },
+    {
+      "slug": "19-golden-square",
+      "title": "19 Golden Square, Soho",
+      "service": "Investment",
+      "blurb": "Acquired for Vectis Property Group for £10.5m, with redevelopment potential at the heart of Soho.",
+      "body": [
+        "Acquired on behalf of Vectis Property Group for £10.5m, 19 Golden Square offers redevelopment potential at the heart of Soho.",
+        "[Sample] Full case study copy to follow from the investment team."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Investment"
+        ],
+        [
+          "Client",
+          "Vectis Property Group"
+        ],
+        [
+          "Status",
+          "Acquired"
+        ],
+        [
+          "Price",
+          "£10,500,000"
+        ],
+        [
+          "Location",
+          "Soho"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/city-towers.jpg",
+      "sortOrder": 2,
+      "published": true
+    },
+    {
+      "slug": "213-214-upper-street",
+      "title": "213–214 Upper Street",
+      "service": "Investment",
+      "blurb": "Sold on behalf of a private client for £5.35m, reflecting a 3.62% cap rate on Islington's prime retail pitch.",
+      "body": [
+        "Sold on behalf of a private client for £5,350,000, reflecting a 3.62% cap rate on Islington's prime retail pitch.",
+        "[Sample] Full case study copy to follow from the investment team."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Investment"
+        ],
+        [
+          "Strategy",
+          "Value add"
+        ],
+        [
+          "Status",
+          "Sold (March 2024)"
+        ],
+        [
+          "Sector",
+          "Retail"
+        ],
+        [
+          "Price",
+          "£5,350,000 / cap rate 3.62%"
+        ],
+        [
+          "Location",
+          "Islington"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/shop-boutique.jpg",
+      "sortOrder": 3,
+      "published": true
+    },
+    {
+      "slug": "heddon-street",
+      "title": "Heddon Street, The Crown Estate",
+      "service": "Consultancy",
+      "blurb": "Long-term advice to The Crown Estate on one of the West End's best-loved restaurant and bar destinations, off Regent Street.",
+      "body": [
+        "Long-term advice to The Crown Estate on Heddon Street — one of the West End's best-loved restaurant and bar destinations, just off Regent Street.",
+        "[Sample] Full case study copy to follow from the consultancy team."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Consultancy"
+        ],
+        [
+          "Client",
+          "The Crown Estate"
+        ],
+        [
+          "Sector",
+          "Restaurant & bar"
+        ],
+        [
+          "Location",
+          "West End"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/heddon-street.jpg",
+      "sortOrder": 4,
+      "published": true
+    },
+    {
+      "slug": "hammerson-lease-advisory",
+      "title": "Hammerson",
+      "service": "Lease Advisory",
+      "blurb": "Lease advisory instruction for Hammerson — rent reviews, renewals and restructuring aligned to the asset strategy.",
+      "body": [
+        "BGP's Lease Advisory team acts for Hammerson, providing evidence-led advice across rent reviews, renewals and lease restructuring.",
+        "[Sample] Full case study copy to follow from the Lease Advisory team."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Lease Advisory"
+        ],
+        [
+          "Client",
+          "Hammerson"
+        ]
+      ],
+      "imageUrl": null,
+      "sortOrder": 5,
+      "published": true
+    },
+    {
+      "slug": "land-securities-lease-advisory",
+      "title": "Land Securities",
+      "service": "Lease Advisory",
+      "blurb": "Lease advisory instruction for Land Securities — rent reviews, renewals and restructuring aligned to the asset strategy.",
+      "body": [
+        "BGP's Lease Advisory team acts for Land Securities, providing evidence-led advice across rent reviews, renewals and lease restructuring.",
+        "[Sample] Full case study copy to follow from the Lease Advisory team."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Lease Advisory"
+        ],
+        [
+          "Client",
+          "Land Securities"
+        ]
+      ],
+      "imageUrl": null,
+      "sortOrder": 6,
+      "published": true
+    },
+    {
+      "slug": "bloomberg-lease-advisory",
+      "title": "Bloomberg",
+      "service": "Lease Advisory",
+      "blurb": "Lease advisory instruction for Bloomberg — rent reviews, renewals and restructuring aligned to the asset strategy.",
+      "body": [
+        "BGP's Lease Advisory team acts for Bloomberg, providing evidence-led advice across rent reviews, renewals and lease restructuring.",
+        "[Sample] Full case study copy to follow from the Lease Advisory team."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Lease Advisory"
+        ],
+        [
+          "Client",
+          "Bloomberg"
+        ]
+      ],
+      "imageUrl": null,
+      "sortOrder": 7,
+      "published": true
+    },
+    {
+      "slug": "royal-exchange-lease-advisory",
+      "title": "The Royal Exchange",
+      "service": "Lease Advisory",
+      "blurb": "Lease advisory instruction for The Royal Exchange — rent reviews, renewals and restructuring aligned to the asset strategy.",
+      "body": [
+        "BGP's Lease Advisory team acts for The Royal Exchange, providing evidence-led advice across rent reviews, renewals and lease restructuring.",
+        "[Sample] Full case study copy to follow from the Lease Advisory team."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Lease Advisory"
+        ],
+        [
+          "Client",
+          "The Royal Exchange"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/stills-preview-royal-exchange.jpg",
+      "sortOrder": 8,
+      "published": true
+    },
+    {
+      "slug": "atis",
+      "title": "ATIS",
+      "service": "Brand Representation",
+      "blurb": "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building.",
+      "body": [
+        "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building, also serving cold press juices, artisanal coffees and kombucha on tap."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Brand Representation"
+        ],
+        [
+          "Client",
+          "ATIS"
+        ],
+        [
+          "Sector",
+          "F&B — healthy grab & go"
+        ],
+        [
+          "First site",
+          "City Road, Atlas Building"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/stills-preview-central-cafe.jpg",
+      "sortOrder": 9,
+      "published": true
+    },
+    {
+      "slug": "fred-perry",
+      "title": "Fred Perry",
+      "service": "Brand Representation",
+      "blurb": "One of the UK's most iconic brands, steeped in a rich history of music, sport and culture.",
+      "body": [
+        "One of the UK's most iconic brands, steeped in a rich history of music, sport and culture. With stores worldwide and a cult following, Fred Perry continues to increase its presence in key locations."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Brand Representation"
+        ],
+        [
+          "Client",
+          "Fred Perry"
+        ],
+        [
+          "Sector",
+          "Fashion retail"
+        ],
+        [
+          "Coverage",
+          "UK & international"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/shop-menswear.jpg",
+      "sortOrder": 10,
+      "published": true
+    },
+    {
+      "slug": "barrys-bootcamp",
+      "title": "Barry's Bootcamp",
+      "service": "Brand Representation",
+      "blurb": "Described as the 'hardest workout in the world' — acquisition strategy throughout London.",
+      "body": [
+        "Described as the 'hardest workout in the world', BGP have been working with Barry's Bootcamp for several years to help with their acquisition strategy throughout London."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Brand Representation"
+        ],
+        [
+          "Client",
+          "Barry's Bootcamp"
+        ],
+        [
+          "Sector",
+          "Fitness & wellness"
+        ],
+        [
+          "Coverage",
+          "London & UK"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/stills-preview-gym.jpg",
+      "sortOrder": 11,
+      "published": true
+    },
+    {
+      "slug": "yolk",
+      "title": "YOLK",
+      "service": "Brand Representation",
+      "blurb": "Fine fast food, freshly prepared — from a 2014 pop-up to ten permanent locations across London.",
+      "body": [
+        "Fine fast food, freshly prepared. From a 2014 pop-up to ten permanent locations across London — most recently Holborn, launched under the brand's refreshed 'Good Bites Only' identity.",
+        "The brand team focuses on visible, high footfall areas. For expansion opportunities, contact Jamie Orme or Evie North."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Brand Representation"
+        ],
+        [
+          "Client",
+          "YOLK"
+        ],
+        [
+          "Sector",
+          "F&B — fine fast food"
+        ],
+        [
+          "Locations",
+          "10+ across London"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/food-hall.jpg",
+      "sortOrder": 12,
+      "published": true
+    }
+  ],
+  "news": [
+    {
+      "slug": "ardent-royal-exchange",
+      "title": "Ardent UK Completes Royal Exchange Acquisition",
+      "category": "Investment",
+      "date": "2026",
+      "author": "BGP",
+      "standfirst": "Ardent UK has completed its acquisition of the Royal Exchange.",
+      "body": null,
+      "imageUrl": "https://www.bgp.uk.com/images/royal-exchange.jpg",
+      "sortOrder": 0,
+      "published": true
+    },
+    {
+      "slug": "adieu-2025",
+      "title": "Adieu 2025…",
+      "category": "News",
+      "date": "05.01.26",
+      "author": "Woody Bruce",
+      "standfirst": "Well that's that for 2025. And I don't think anyone in this industry can claim that it didn't have its challenges.",
+      "body": [
+        "Well that's that for 2025. And I don't think anyone in this industry can claim that it didn't have its challenges. But looking back, there's a lot to be positive about.",
+        "We've grown the team and strengthened the way our divisions work together — Investment, Leasing, Lease Consultancy and Brand Representation. We've had some brilliant deals across the board – well done team – all of which contributed to 2026 being our best year to date.",
+        "We've got a lot lined up for 2026 – our 15th birthday year. A new website, a complete rebrand and even… a new name?!",
+        "Hugest thanks to our clients, colleagues and associates. Wishing you all the best for 2026."
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/hero-london.jpg",
+      "sortOrder": 1,
+      "published": true
+    },
+    {
+      "slug": "get-ready-for-the-queues",
+      "title": "Get Ready for the Queues: How Digital-First Brands are Turning Followers into Footfall",
+      "category": "Breakthrough brands",
+      "date": "2026",
+      "author": "Millie Edwards",
+      "standfirst": "Edikted's UK expansion to Carnaby Street exemplifies how DTC brands leverage digital communities to drive physical retail success through experiential design.",
+      "body": null,
+      "imageUrl": "https://www.bgp.uk.com/images/shop-rails.jpg",
+      "sortOrder": 2,
+      "published": true
+    },
+    {
+      "slug": "enduring-appeal-portman-estate",
+      "title": "The Enduring Appeal of the Portman Estate",
+      "category": "Opinion",
+      "date": "05.11.25",
+      "author": "Lucy Cope",
+      "standfirst": "Chiltern Firehouse has been back in the news recently, having reopened for a couple of high profile celebrity parties. Sadly, the world famous hotel, restaurant and bar remains closed to the public for now.",
+      "body": [
+        "Dating back to 2010, the role of the Portman Estate's partnership with the Chiltern Firehouse in transforming Chiltern Street into one of London's most recognisable destinations can't be overstated. But the really positive news is that since the hotel's temporary closure, a series of dynamic new openings have reinforced the vibrancy of the area. The retail and F&B scene continues to thrive, offering some of the most coveted new retail and restaurant experiences in London.",
+        "## Chiltern Street and its surroundings are at historically low vacancy levels",
+        "As sole agents on the Portman Estate, our team is tasked with curating a vibrant mix of independent retailers and market leading F&B operators to cater to the tourists, office workers and locals of Marylebone. Having worked on the instruction for 3 years, I've seen the market evolve — and I can confidently say that operator demand for space across the Estate is stronger than ever. Over the past six months, every available unit on Chiltern Street has received multiple competitive offers — often eight or more — reflecting the exceptional popularity of the location. Chiltern Street today is fully let or under offer, while the surrounding Portman Marylebone area encompassing Dorset Street, Blandford Street, Seymour Place and New Quebec Street are at a historically low vacancy rate.",
+        "## Character and community drive leasing activity",
+        "The footfall statistics for Chiltern Street are good, but footfall is not the key driver of tenant demand at this location. The independent retailers and restaurateurs who choose to open here are not just looking for a site — they're looking for a setting that values their individuality and tells their story. The street offers a distinct character within London's retail environment, fostering a sense of destination rather than a transaction — a key consideration as the 'flight to quality' trend sees brands continue to seek out fewer, often smaller sites in premium locations.",
+        "## Footfall driving F&B lettings",
+        "Maset is a new Mediterranean restaurant and wine bar inspired by the Occitan region, currently soft-launching at 40–42 Chiltern Street. Created by the owners of the successful Michelin Guide restaurants Lurra and Donostia on Seymour Place, Maset opened last week in a unit which was subject to considerable interest from both retail and restaurant operators. As the only restaurant on the iconic red-bricked street, the site was destined for something special which Maset absolutely delivers.",
+        "Similarly, the old Flower House pub at 56 Blandford Street has been let to Public House Group for their new pub 'The Hart' following an incredibly competitive bidding war among London's best restaurant and pub operators.",
+        "Renowned hospitality name Angela Hartnett recently chose Portman's Dorset Street as the location for the fourth Cafe Murano restaurant. The arrival of such a prestigious name has enhanced the F&B offering across the estate, with the restaurant being especially popular with locals.",
+        "Cafe Murano and The Hart book-end The Portman Estate's Chiltern Street holdings with two fantastic all-day dining venues, whilst Maset offers a third option situated centrally between the two. This bolstered food and beverage offering, bringing three new and diverse cuisines to the area, supports and complements the curated boutique retail that Chiltern Street is well-known for.",
+        "## Distinctive international operators diversifying retail",
+        "When it comes to retail, Chiltern Street continues to attract distinctive, design-led brands; Amsterdam brand Anna & Nina brought its first London store to 54 Chiltern Street last year, and has landed with a pop of colour creating an eye-catching cherry red frontage.",
+        "Jacques Marie Mage has also opened its first London store at 20–22 Chiltern Street, on the Estate and is proving a very successful addition. Behind the scenes we are working with a number of international fashion and lifestyle brands which will broaden the retail offering to a rounded mix of beauty, lifestyle, accessories and apparel.",
+        "Although we all look forward to the return of Chiltern Firehouse, the ongoing strength of demand across the Portman Estate speaks for itself. Chiltern Street's blend of authenticity, individuality and quality continues to attract operators who want to be part of something distinctive. I look forward to seeing its uniquely vibrant mix of independent F&B and retail continue to thrive."
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/anna-nina.jpg",
+      "sortOrder": 3,
+      "published": true
+    },
+    {
+      "slug": "millie-edwards-joins-leasing-team",
+      "title": "Bruce Gillingham Pollard Appoints Millie Edwards to Leasing Team and Announces Promotions",
+      "category": "News",
+      "date": "2025",
+      "author": "BGP",
+      "standfirst": "Staff announcement regarding new appointments and team promotions.",
+      "body": null,
+      "imageUrl": null,
+      "sortOrder": 4,
+      "published": true
+    },
+    {
+      "slug": "spotlight-on-the-grads",
+      "title": "Spotlight on: The Grads!",
+      "category": "News",
+      "date": "2025",
+      "author": "Emily Mitchell",
+      "standfirst": "A feature highlighting the graduates driving BGP's teams forward.",
+      "body": null,
+      "imageUrl": null,
+      "sortOrder": 5,
+      "published": true
+    },
+    {
+      "slug": "kilburn-mews",
+      "title": "Bruce Gillingham Pollard Appointed to Lease Kilburn Mews",
+      "category": "News",
+      "date": "2025",
+      "author": "BGP",
+      "standfirst": "BGP has been appointed leasing agents on the Kilburn Mews scheme.",
+      "body": null,
+      "imageUrl": null,
+      "sortOrder": 6,
+      "published": true
+    },
+    {
+      "slug": "why-part-time-staff-are-key",
+      "title": "Why Part Time Staff are Key to the In Store Experience",
+      "category": "Opinion",
+      "date": "2025",
+      "author": "Paris Fixman",
+      "standfirst": "The critical role of part-time retail workers amid employment cost pressures affecting experiential retail.",
+      "body": null,
+      "imageUrl": "https://www.bgp.uk.com/images/shop-boutique.jpg",
+      "sortOrder": 7,
+      "published": true
+    },
+    {
+      "slug": "wellness-placemaking-essential",
+      "title": "Wellness is No Longer an Afterthought; It's a Placemaking Essential",
+      "category": "Opinion",
+      "date": "28.07.25",
+      "author": "Evie North",
+      "standfirst": "Karve opened in Victoria — the third location for the premium pilates studio that offers its clients everything from classes and coffee to a strong community.",
+      "body": [
+        "Karve opened in Victoria – the third location for the premium pilates studio that offers its clients everything from classes and coffee to a strong community. Our recent client work demonstrates a significant shift: wellness is no longer an add on to placemaking schemes. In fact in many mixed use developments, wellness businesses are becoming the anchor.",
+        "When it comes to London leasing, BGP was ahead of the wellness trend. We advised on some of the first and most progressive wellness tenant mixes.",
+        "Wellness operators are now a key element when creating a place that people want to travel to. They bring footfall daily, and consistently throughout the day — unlike dining, which peaks around mealtimes.",
+        "The pub is no longer the default place to meet and socialise, particularly for Gen Z. Instead, wellness studios and cafes are leaping into the (alcohol free) mixer.",
+        "Wellness is no longer an afterthought for landlords – it's part of a habitual human lifestyle change."
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/gym.jpg",
+      "sortOrder": 8,
+      "published": true
+    },
+    {
+      "slug": "behind-the-brand-yolk",
+      "title": "Behind the Brand | YOLK",
+      "category": "Retail",
+      "date": "24.06.25",
+      "author": "BGP",
+      "standfirst": "From a 2014 pop-up to ten permanent locations across London — how YOLK built 'fine fast food' into a breakthrough brand.",
+      "body": [
+        "YOLK recently opened its tenth location, in Holborn. The brand began as a pop-up venture in 2014, when founder Nick Philpot realised there was a gap in the market between basic fast food and time-intensive dining experiences.",
+        "YOLK's appeal stems from offering freshly prepared, premium food options with quality ingredients — distinguishing it from typical grab-and-go venues. Menu items like the Flying Tiger Steak showcase this elevated approach.",
+        "Store design prioritises efficiency through click and collect and digital ordering screens, serving office workers and tourists seeking convenient meals of real quality.",
+        "The Holborn location features the brand's refreshed identity — 'Good Bites Only' — louder, bolder and built to match the energy, with digital menu boards and an open kitchen concept.",
+        "The brand team focuses on visible, high footfall areas. For expansion opportunities, contact Jamie Orme or Evie North."
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/news-yolk.jpg",
+      "sortOrder": 9,
+      "published": true
+    },
+    {
+      "slug": "pride-doesnt-end-in-july",
+      "title": "Pride doesn't end in July. How London's Queer Spaces Make Inclusivity Part of our London Neighbourhoods",
+      "category": "Opinion",
+      "date": "2025",
+      "author": "Harry Elliott",
+      "standfirst": "How London's queer spaces make inclusivity part of our neighbourhoods, all year round.",
+      "body": null,
+      "imageUrl": null,
+      "sortOrder": 10,
+      "published": true
+    },
+    {
+      "slug": "salad-project-nova-victoria",
+      "title": "The Salad Project set to Open in Nova Victoria",
+      "category": "News",
+      "date": "2025",
+      "author": "BGP",
+      "standfirst": "The Salad Project is set to open at Nova Victoria.",
+      "body": null,
+      "imageUrl": "https://www.bgp.uk.com/images/food-hall.jpg",
+      "sortOrder": 11,
+      "published": true
+    },
+    {
+      "slug": "wimbledon-aldi-for-sale",
+      "title": "New Wimbledon Aldi Store Offered for Sale",
+      "category": "News",
+      "date": "2025",
+      "author": "BGP",
+      "standfirst": "A new Wimbledon Aldi store has been brought to market.",
+      "body": null,
+      "imageUrl": null,
+      "sortOrder": 12,
+      "published": true
+    }
+  ]
+}

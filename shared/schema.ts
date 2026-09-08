@@ -3637,3 +3637,62 @@ export type DeckCard = typeof deckCards.$inferSelect;
 export type InsertDeckCard = typeof deckCards.$inferInsert;
 export type DeckTemplate = typeof deckTemplates.$inferSelect;
 export type InsertDeckTemplate = typeof deckTemplates.$inferInsert;
+
+// ── Public website content (bgp.uk.com) ────────────────────────────────
+// Team, case studies and news for the marketing site live here so the
+// dashboard's Website page and ChatBGP can change the site without a
+// deploy. The site reads /api/public/website/* and falls back to its
+// bundled copy if the API is unreachable. Seeded once from that bundle
+// (server/assets/website-seed.json) when the tables are empty.
+export const websiteTeam = pgTable("website_team", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  title: text("title").notNull(),
+  phone: text("phone"),
+  email: text("email"),
+  photoUrl: text("photo_url"),
+  // Key-contact panels this person appears in: leasing | investment |
+  // lease_advisory | brand_representation | consultancy
+  groups: text("groups").array(),
+  sortOrder: integer("sort_order").default(0),
+  visible: boolean("visible").default(true),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertWebsiteTeamSchema = createInsertSchema(websiteTeam).omit({ id: true, updatedAt: true });
+export type WebsiteTeamMember = typeof websiteTeam.$inferSelect;
+
+export const websiteCaseStudies = pgTable("website_case_studies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  slug: text("slug").notNull().unique(),
+  title: text("title").notNull(),
+  service: text("service").notNull(), // Leasing | Investment | Brand Representation | Lease Advisory | Consultancy
+  blurb: text("blurb").notNull(),
+  body: text("body").array(),
+  facts: jsonb("facts"), // [["Client", "Landsec"], ...]
+  imageUrl: text("image_url"),
+  sortOrder: integer("sort_order").default(0),
+  published: boolean("published").default(false),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertWebsiteCaseStudySchema = createInsertSchema(websiteCaseStudies).omit({ id: true, updatedAt: true });
+export type WebsiteCaseStudy = typeof websiteCaseStudies.$inferSelect;
+
+export const websiteNews = pgTable("website_news", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  slug: text("slug").notNull().unique(),
+  title: text("title").notNull(),
+  category: text("category"),
+  date: text("date"), // display date as written, e.g. "12 June 2026"
+  author: text("author"),
+  standfirst: text("standfirst"),
+  body: text("body").array(),
+  imageUrl: text("image_url"),
+  sortOrder: integer("sort_order").default(0),
+  published: boolean("published").default(false),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertWebsiteNewsSchema = createInsertSchema(websiteNews).omit({ id: true, updatedAt: true });
+export type WebsiteNewsItem = typeof websiteNews.$inferSelect;
