@@ -248,7 +248,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
 
   if (isLoading) {
     return (
-      <Card className="p-4 space-y-3" data-testid="wip-dashboard-card">
+      <Card className="p-4 space-y-3 h-full" data-testid="wip-dashboard-card">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-8 w-full" />
         <Skeleton className="h-48 w-full" />
@@ -258,7 +258,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
 
   if (wipEntries.length === 0) {
     return (
-      <Card className="p-8 text-center" data-testid="wip-dashboard-card">
+      <Card className="p-8 text-center h-full flex flex-col items-center justify-center" data-testid="wip-dashboard-card">
         <BarChart3 className="w-8 h-8 mx-auto mb-2 text-muted-foreground/70" />
         <p className="text-sm text-muted-foreground">No deals with fees found</p>
         <p className="text-xs text-muted-foreground/70 mt-1">Add fees to deals on the WIP board to see data here</p>
@@ -273,7 +273,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
 
   if (teamEntries.length === 0) {
     return (
-      <Card className="p-8 text-center" data-testid="wip-dashboard-card">
+      <Card className="p-8 text-center h-full flex flex-col items-center justify-center" data-testid="wip-dashboard-card">
         <BarChart3 className="w-8 h-8 mx-auto mb-2 text-muted-foreground/70" />
         <p className="text-sm text-muted-foreground">No WIP entries found for {displayTeam}</p>
         <p className="text-xs text-muted-foreground/70 mt-1">Try selecting a different team</p>
@@ -282,7 +282,11 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
   }
 
   return (
-    <Card className="p-4 space-y-3" data-testid="wip-dashboard-card">
+    // h-full + flex column: the dashboard grid cell for this widget is
+    // ~22 rows tall and the card used to stop at a fixed 400px table,
+    // leaving a band of bare page inside the cell ("whats this gap",
+    // Woody 2026-09-08). The deal table now takes whatever height is left.
+    <Card className="p-4 flex flex-col gap-3 h-full min-h-0" data-testid="wip-dashboard-card">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-bold text-foreground" data-testid="wip-dash-title">{title}</h2>
@@ -366,7 +370,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
         )}
       </div>
 
-      <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid="wip-dash-detail-table">
+      <div className="bg-card border border-border rounded-lg overflow-hidden flex-1 min-h-0 flex flex-col" data-testid="wip-dash-detail-table">
         <button
           onClick={() => setDetailOpen(prev => !prev)}
           className="w-full bg-muted/50 border-b px-3 py-1.5 flex items-center justify-between hover:bg-muted transition-colors"
@@ -430,7 +434,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
               </div>
             </div>
           </div>
-          <div className="hidden md:block overflow-x-auto max-h-[400px] overflow-y-auto">
+          <div className="hidden md:block overflow-x-auto flex-1 min-h-0 overflow-y-auto">
             <table className="w-full text-[11px]">
               <thead className="bg-muted/50 border-b sticky top-0 z-10">
                 <tr>
