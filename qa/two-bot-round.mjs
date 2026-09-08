@@ -3499,6 +3499,41 @@ async function victoriaRound(page, cross) {
     if (out.mismatches.length) throw new Error(`units whose viewingsCount disagrees with the live count: ${out.mismatches.join(', ')}`);
   });
 
+  // r606 staff half of client-tenancy-tiles-account-for-every-unit: the
+  // vacant-projection rows (Letting Tracker units with no tenancy row) must
+  // reach BOTH boards in the schedule's vocabulary, not as marketing codes —
+  // a code sits in no KPI bucket, so the header count stops agreeing with
+  // Occupied + Vacant and the negotiated unit is counted nowhere.
+  await step(page, p, 'staff-tenancy-tiles-account-for-every-unit', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    const seen = await page.evaluate(async (pid) => {
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+      const tile = (id) => {
+        const el = document.querySelector(`[data-testid="tenancy-stat-${id}"]`);
+        return el ? parseInt(el.innerText.replace(/[^0-9]/g, ''), 10) : 0;
+      };
+      return {
+        status: 200,
+        total: units.length,
+        codes: units.filter((u) => /^(OPP|REP|SPEC|LIVE|AVA|NEG|HOT|SOL|EXC|COM|INV|WIT)$/.test(String(u.status || '').trim()))
+          .map((u) => `${u.unit_number || u.premises}=${u.status}`).slice(0, 3),
+        bucketed: tile('occupied') + tile('vacant') + tile('in-negotiation') + tile('under-offer') + tile('lease-event'),
+      };
+    }, BLUEWATER);
+    if (seen.status !== 200) throw new Error(`staff tenancy payload returned ${seen.status}`);
+    if (seen.codes.length) throw new Error(`staff tenancy rows ship raw status codes: ${seen.codes.join(', ')}`);
+    if (seen.bucketed !== seen.total) {
+      throw new Error(`staff tenancy board has ${seen.total} units but its tiles account for ${seen.bucketed}`);
+    }
+  });
+
   await step(page, p, 'staff-tenancy-tile-filters-its-own-count', async () => {
     // r556: the Occupied tile counted Occupied+Trading+Let+Not Vacant (124)
     // but clicking it filtered on exact equality (87 rows); Vacant read 76
@@ -9633,6 +9668,45 @@ async function markRound(page, cross) {
     }
     if (r.expectOcc != null && r.occ !== r.expectOcc) {
       throw new Error(`client asset brief says ${r.occ} occupied of ${r.total} but the leasing board it counts says ${r.expectOcc} of ${r.leasingTotal}`);
+    }
+  });
+
+  // r606: the tenancy board projects Letting Tracker units onto the spine
+  // for the units with no tenancy row, and it used to hand the client the
+  // raw marketing_status CODE. A code is in no KPI bucket, so Bluewater's one
+  // NEG unit made the header read "200 units" over tiles summing to 199 and
+  // the unit under negotiation was counted nowhere. The projection now
+  // bridges through codeToLeasingStatus.
+  await step(page, p, 'client-tenancy-tiles-account-for-every-unit', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    const r = await page.evaluate(async (pid) => {
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      return { status: 200, rows: Array.isArray(j) ? j : (j.units || j.rows || []) };
+    }, BLUEWATER);
+    if (r.status !== 200) throw new Error(`client tenancy payload returned ${r.status}`);
+    const rows = r.rows || [];
+    if (!rows.length) throw new Error('client tenancy payload came back empty');
+    const CODES = /^(OPP|REP|SPEC|LIVE|AVA|NEG|HOT|SOL|EXC|COM|INV|WIT)$/;
+    const raw = rows.filter((u) => CODES.test(String(u.status || '').trim()));
+    if (raw.length) {
+      throw new Error(`${raw.length} tenancy row(s) ship a raw status code (e.g. ${raw[0].unit_number || raw[0].premises} = ${raw[0].status})`);
+    }
+    const BUCKETS = {
+      Occupied: ['Occupied', 'Trading', 'Let', 'Not Vacant'],
+      Vacant: ['Vacant', 'Void', 'Available', 'AVA', 'Marketing'],
+      'In Negotiation': ['In Negotiation'],
+      'Under Offer': ['Under Offer'],
+      'Lease Event': ['Lease Event'],
+    };
+    const bucketed = rows.filter((u) => Object.values(BUCKETS).some((v) => v.includes(String(u.status || '').trim())));
+    if (bucketed.length !== rows.length) {
+      const orphan = rows.find((u) => !Object.values(BUCKETS).some((v) => v.includes(String(u.status || '').trim())));
+      throw new Error(`${rows.length - bucketed.length} of ${rows.length} tenancy rows sit in no KPI tile (e.g. status "${orphan?.status}") — the header count cannot agree with Occupied + Vacant`);
     }
   });
 

@@ -92,15 +92,97 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r606 · 2026-09-08 · FULL (client desktop journey) · ROUND IN PROGRESS
+### r606 · 2026-09-08 · FULL · Landsec client · DESKTOP 1440px · 2 bugs fixed: ChatBGP's unit-status UPDATE bypassed the canonicalising write boundary, and the tenancy board's vacant projections shipped raw marketing CODES so its own tiles could not account for every unit
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap).
+  `npx tsc --noEmit` clean after both fixes.
 - **REGRESSION AT BASELINE.** Chunked, shared `QA_CROSS_FILE=/tmp/qa-cross-606.json`:
   head (`QA_UNTIL=client-properties-table-readonly-cells`) **326 ok** / 6x400 +
-  1x409 + 9x403 + 1x503; tail **38 ok** / 1x403. Sum **364 ok, 18 issues** —
-  exactly the number the parent session predicted for r605's added scenario,
-  issue signature unchanged. **Streak 60.** Triage: nothing new, no 5xx.
-- Journey pending: Landsec client · desktop 1440px.
+  1x409 + 9x403 + 1x503; tail (`QA_SKIP_UNTIL=` the same) **38 ok** / 1x403.
+  Sum **364 ok, 18 issues** — exactly the predicted number (325 + r605's added
+  scenario) with the issue signature unchanged. **Streak 60.** Triage: nothing
+  new, no 5xx. Head chunk took ~20 min and buffers its output — a background
+  task file stays 0 bytes until it exits; that is NOT a kill (no tally line is).
+- **JOURNEY (Mark Warne, client desktop 1440px):** "Thursday asset-management
+  meeting — what's empty, what's under offer, what's expiring." Dashboard →
+  EXPIRING (6M) popover → an expiring lease → the centre's full tenancy
+  schedule → the In Negotiation tile → back to the dashboard and a task on
+  the BGP team. Surfaces: `/`, `/deals/letting`, `/tenancy-schedule/:id`,
+  `/tasks`. The **write** (dashboard quick-add task → visible on My Tasks)
+  worked first time; shots `r606-task-write.png`, `r606-my-tasks.png`. Only
+  listed noise throughout (ai-briefing 503, sharepoint/root 404, ai-take 503,
+  hr/photo 404).
+- **BUG FIXED — ChatBGP's `update_available_unit` wrote LABELS into a CODES
+  column, at both doors.** `storage.updateAvailableUnit` is documented (r588)
+  as "the single write boundary so no caller can reintroduce" a label in
+  `available_units.marketing_status`; `create_available_unit` goes through it
+  and says so in a comment (r595). Both **update** handlers
+  (`server/chatbgp.ts` :6634 desktop, :12168 mobile twin) did a raw
+  `db.update(availableUnits)` instead — and the tool schema (:3344) actively
+  taught the model the wrong vocabulary: `"e.g. Available, Under Offer, Let,
+  Withdrawn"`. So "mark Unit 12 under offer" stored the literal string, and
+  every consumer reading codes drops the unit: the client availability
+  queries (`crm.ts` :4807/:4958/:5003 `IN ('AVA','NEG')`), the AI context
+  (:1851), the per-property `available_count` (:14755). **CENSUS: every other
+  door PROVED clean** — the only writers of that column are storage.ts (both
+  canonicalised), the boot canonicaliser (`index.ts`:1479, writes codes), and
+  `lease-status-mirror.ts` :110/:169 (writes `code`); `routes.ts` :4693/:4854,
+  `index.ts`:2910 and `tenancy-schedule.ts`:1753 touch other columns only.
+  Both handlers now call `storage.updateAvailableUnit`; both tool schemas name
+  the canonical nine and say an out-of-vocabulary value is stored but drops
+  the unit off availability. **PROVEN**: `qa/r606-unit-status-probe.mjs`
+  drives both dispatchers — "Under Offer"→SOL, "Available"→AVA (still visible
+  to AVA/NEG), mobile "Under Negotiation"→NEG, "On Hold" still stored verbatim
+  (data not dropped), and the pre-fix shape asserted directly (a label in the
+  column hides the unit).
+- **BUG FIXED (the journey's own find) — the client's tenancy board counted
+  200 units and its tiles accounted for 199.** `server/tenancy-schedule.ts`
+  projects Letting Tracker units with no tenancy row onto the spine and set
+  `status: v.marketing_status || "AVA"` — a raw CODE onto a board whose
+  buckets are LABELS (`STATUS_BUCKETS` in `PropertyTenancySchedule.tsx`:253,
+  which had "AVA" but none of the other codes; the In Negotiation tile counts
+  `status === "In Negotiation"`). Bluewater's single projection is its one
+  **NEG** unit — "Bluewater MSU9 letting", the most commercially interesting
+  row on a landlord's board — so it sat in NO tile: OCCUPIED 124 + VACANT 75
+  = 199 under a "200 units" header, no In Negotiation tile at all. The
+  projection now bridges through `codeToLeasingStatus` (COM/INV/WIT collapse
+  to Vacant: these rows have no tenancy row so the rent roll has no tenant
+  for them, and "Archived" would hide the unit off the default filters).
+  **PROVEN in the browser at 1440px** as Mark: header 200 = OCCUPIED 124 +
+  VACANT 75 + **IN NEGOTIATION 1**, and clicking the new tile shows exactly
+  1 of 200 — count and list agree. Shot
+  `qa/smoke-shots/r606-ts-in-negotiation-after.png`. Only door: the
+  projection is built once and served at :168, and the Excel export runs off
+  the same fetched rows.
+- **DOMINANT CLASS, two new faces** (r582-r606, still producing): a write
+  path that skipped its own documented canonicalising boundary while its
+  sibling create path went through it *and said why*; and a projection that
+  hands one surface's CODES to another surface's LABEL buckets, where a
+  previous round had patched in exactly one code ("AVA") and not the rest.
+- **CHECKED, NOT A BUG** (so the next round doesn't re-chase them):
+  `property-pathway.ts` :1977/:3079 `/vacant/i.test(u.marketingStatus)` reads
+  the *extractor's* own label shape (`pathway-tenancy-extractor.ts`:171
+  writes "Vacant"/"Let" into a local type, never the DB column) — correct as
+  written. `routes.ts` :4672/:4803/:5306 `status: unit.marketingStatus || "AVA"`
+  writes into `crm_deals.status`, also a codes column — correct.
+- SCENARIOS ADDED (the staff-creates → client-sees cross-check pair):
+  `client-tenancy-tiles-account-for-every-unit` and its staff half
+  `staff-tenancy-tiles-account-for-every-unit` — no tenancy row may ship a
+  raw status code, and the board's tiles must account for every unit it says
+  it has. Both **[ok]** on the fixed build.
+- NOTED, NOT FIXED: `POST /api/favorite-instructions/:propertyId` (crm.ts:8048)
+  has no scope check, so a client can favourite any property id — read-only
+  impact confirmed (the dashboard tile filters favourites *client-side* over
+  `/api/available-units`, which is server-scoped by `auScope`, so nothing
+  out-of-portfolio can render). Tidy-up, not a leak.
+- SUGGESTIONS: **#325** (the client's "Portfolio activity — BGP team" panel
+  reads "Nothing open right now" beside 4 active deals and 73 live lettings),
+  **#326** (the expiring-lease deep link lands on an unfiltered 200-row board;
+  popover property names truncated at 1440px), **#327** (the board's 200 and
+  the dashboard's 199 for the same centre — the projections; same root as the
+  open vacancy-basis question).
+- New flakes: none. Journey used `/tmp/r606-token.json` token reuse to stay
+  clear of the login rate limiter.
 
 ### r605 · 2026-09-08 · LIGHT (r604 had the journey — no journey this round) · 2 bugs fixed: the property-plan colour key drew every vacancy GREY, and the investment tracker's REP pill counted rows it then hid · r604's PDF hand-off CLOSED (both doors proven) · #297, #304 and the residual-QA-rows pool all ANSWERED
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

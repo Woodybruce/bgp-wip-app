@@ -3,6 +3,14 @@ import { requireAuth } from "./auth";
 import multer from "multer";
 import { backfillPropertyTenants, backfillPropertyUnitFks, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import { fanOutTenancyStatus } from "./unit-mirror";
+import { codeToLeasingStatus } from "@shared/lease-status-mirror";
+
+// A Letting Tracker unit projected onto the tenancy spine, in the schedule's
+// vocabulary rather than the tracker's codes.
+function projectedScheduleStatus(marketingStatus: string | null | undefined): string {
+  const bridged = codeToLeasingStatus(marketingStatus);
+  return bridged === "In Negotiation" || bridged === "Under Offer" ? bridged : "Vacant";
+}
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -137,7 +145,15 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
       gia_sqft: v.sqft || null,
       passing_rent_pa: null,
       erv_pa: v.asking_rent || null,
-      status: v.marketing_status || "AVA",
+      // marketing_status is a CODES column; this board speaks the schedule's
+      // own vocabulary (Vacant / In Negotiation / Under Offer / Occupied),
+      // and a raw code lands the row in NO KPI tile at all — Bluewater's one
+      // NEG unit made the header read "200 units" over tiles summing to 199,
+      // and the unit under negotiation was counted nowhere (r606). Bridge
+      // through the canonical translator. COM/INV/WIT collapse to Vacant:
+      // these rows have no tenancy row, so the rent roll has no tenant for
+      // them, and "Archived" would hide the unit off the default filters.
+      status: projectedScheduleStatus(v.marketing_status),
       is_vacant: true,
       available_unit_id: v.available_unit_id,
       deal_id: v.deal_id,

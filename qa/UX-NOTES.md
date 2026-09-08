@@ -13,6 +13,40 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+325. 2026-09-08 · Landsec client / desktop (QA r606) · Mark Warne prepping a
+   Thursday asset-management meeting · his "Portfolio activity — BGP team"
+   panel on My Tasks — headed "What the BGP team is working on across the
+   portfolio — and what's been done" — reads "IN PROGRESS 0 · Nothing open
+   right now" while the same login's dashboard shows 4 active deals and 73
+   live lettings on his two centres. It is counting BGP *tasks* assigned
+   against his portfolio, and BGP works those deals off the boards, not off
+   task rows. To the landlord paying the fee the panel says his agents are
+   idle. Suggestion: either feed it the live deals/lettings activity it
+   promises, or retitle it to what it actually counts ("Tasks your BGP team
+   has logged") and give the empty state a line that doesn't imply nothing
+   is happening.
+
+326. 2026-09-08 · Landsec client / desktop (QA r606) · same journey · the
+   EXPIRING (6M) tile is the best thing on the client dashboard — 7 leases,
+   soonest 15 Sept 26, one week out — and every row deep-links to the right
+   centre's tenancy schedule. But it lands on the full 200-row board with no
+   filter, so Mark arrives at the schedule and has to find Future 62 Ltd
+   himself; the property name in the popover is truncated to
+   "Bluewater Shopping Cen…" on a 1440px screen with room to spare.
+   Suggestion: carry the unit through in the link (a search/filter param the
+   board already supports) and let the popover row wrap or widen.
+
+327. 2026-09-08 · Landsec client / desktop (QA r606) · same journey · the
+   tenancy board's own header count (200 units) is one more than the
+   dashboard's total for the same centre (199 of the portfolio's 201),
+   because the board projects Letting Tracker units with no tenancy row onto
+   the spine and the dashboard counts tenancy rows only. r606 made the board
+   internally consistent (its tiles now account for all 200), but the two
+   surfaces still disagree by the projections. Related to the open
+   vacancy-basis question (#290/#286/#295) — same root: which table is "the
+   units" on this property. Suggestion: settle one basis and label it on
+   both surfaces, as was done for the occupancy tiles.
+
 324. 2026-09-08 · BGP staff / ChatBGP (QA r605, triage of #304) · Woody tells
    ChatBGP "put the Croydon purchase on hold" · the tracker's own tool schema
    (server/chatbgp.ts, create_ and update_investment_tracker) advertised
