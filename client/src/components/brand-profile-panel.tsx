@@ -101,6 +101,7 @@ interface BrandProfile {
     investment_hunter_flag: boolean | null;
     investment_hunter_notes: string | null;
   };
+  isLandlord?: boolean;
   signals: Array<any>;
   representedBy: Array<any>;
   representing: Array<any>;
@@ -1093,7 +1094,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   // Menu intel is hidden (irrelevant for investors), and the right
   // sidebar shows a SharePoint Folders panel like the property page so
   // we can drop legal-DD / accounts / cash-flow packs into one place.
-  const isLandlord = (() => {
+  // Server-decided (same rule as the Landlord CRM list); the type heuristic
+  // is only a fallback for stale cached responses without the flag.
+  const isLandlord = typeof (data as any).isLandlord === "boolean" ? (data as any).isLandlord : (() => {
     const t = (c.company_type || "").toLowerCase();
     if (!t) return false;
     return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund");
@@ -1148,7 +1151,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
           {(() => {
             const t = (c.company_type || "").toLowerCase();
             if (t === "agent" || t.includes("agent")) return "Agent Profile";
-            if (t.includes("landlord")) return "Landlord Profile";
+            if (isLandlord) return "Landlord Profile";
             return "Brand Profile";
           })()}
           {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
@@ -1203,7 +1206,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         {!editing && (
           <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
             <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">Profile</Pill>
-            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">Stores</Pill>
+            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Ownership" : "Stores"}</Pill>
             <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">Relationship</Pill>
             <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
             <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">Contacts &amp; media</Pill>
@@ -1593,6 +1596,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               >
                 <Plus className="w-3 h-3" /> Add to deal
               </button>
+              {!isLandlord && (
               <button
                 type="button"
                 onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}
@@ -1601,6 +1605,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               >
                 <Building2 className="w-3 h-3" /> Pitch property
               </button>
+              )}
               </>)}
             </div>
 
@@ -1612,14 +1617,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 chat backend enforces the client tool allowlist. */}
             <div className="mt-2 order-2 space-y-3 empty:hidden">
               <BgpTakeStrip companyId={companyId} tab="brand" />
-              <AskChatBGPInline brandName={c.name} />
+              <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
             </div>
 
             {/* Properties board — for landlords it sits directly under Ask ChatBGP
                 and above the BGP Relationship zone (order-4, between order-2 and
                 order-6). Rendered inside the panel flex (rather than page-level)
                 so it slots into the section order Woody asked for. */}
-            {showPropertiesBoard && (
+            {(showPropertiesBoard || isLandlord) && (
               <div className="mt-2 order-4">
                 <CompanyPropertiesBoard companyId={companyId} kind="landlord" />
               </div>
@@ -2360,6 +2365,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                  AI narrative → flags → internal requirements → Pipnet
                  requirements → signals feed → represented by → represents. */}
             <div className="border-t border-border/40 mt-3 pt-2 order-9">
+            {/* Expansion score + brand narrative are occupier concepts — a
+                landlord board keeps the signals/agents below but not these
+                (Woody, 2026-09-08: the brand board was "infiltrating" it). */}
+            {!isLandlord && (<>
               <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <Flame className="w-3.5 h-3.5 text-amber-600" />
@@ -2427,10 +2436,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 </div>
                 )}
               </div>
+            </>)}
               <div className="space-y-2.5">
                 {/* v2 sub-scores — four evidence buckets with why-lines
                     (Woody, 2026-08-03: "we need a much better approach"). */}
-                {hunter?.subScores && (
+                {!isLandlord && hunter?.subScores && (
                   <div className="rounded-md border p-2 space-y-1.5">
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                       {([
@@ -2473,7 +2483,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     )}
                   </div>
                 )}
-                {c.brand_analysis ? (
+                {isLandlord ? null : c.brand_analysis ? (
                   <div className="rounded-md border border-border bg-muted/40 p-2">
                     <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
                       <Sparkles className="w-3 h-3" /> Brand expansion
@@ -3135,8 +3145,16 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
 // right underneath. Click X to collapse, or "Open in chat" to continue
 // the conversation in the main panel. Avoids context-switch to the full
 // chat for one-shot questions.
-export function AskChatBGPInline({ brandName }: { brandName: string }) {
-  const topics: { label: string; question: string }[] = [
+export function AskChatBGPInline({ brandName, isLandlord = false }: { brandName: string; isLandlord?: boolean }) {
+  const topics: { label: string; question: string }[] = isLandlord ? [
+    { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as a landlord before a first call` },
+    { label: "Portfolio", question: `What does ${brandName} own, where is BGP already active on their estate, and where aren't we?` },
+    { label: "Opportunities", question: `Which of ${brandName}'s assets have vacancies, lease events or repositioning going on that BGP could act on?` },
+    { label: "Signals", question: `What are the key signals about ${brandName} right now (acquisitions, disposals, refinancing, leadership) and what should BGP do?` },
+    { label: "Contacts", question: `Who are the decision-makers at ${brandName} BGP should be talking to, and what's the best approach?` },
+    { label: "Covenant", question: `How financially strong is ${brandName} as a landlord — debt, lenders, recent transactions?` },
+    { label: "Email", question: `Draft a brief introductory email from BGP to ${brandName}'s asset management team` },
+  ] : [
     { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} before a first call` },
     { label: "Covenant", question: `What's ${brandName}'s covenant risk? How should we position this to a landlord?` },
     { label: "Signals", question: `What are the key signals about ${brandName} right now and what should BGP do?` },
@@ -4990,7 +5008,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   // a SharePoint Folders panel (like the property page) instead of the
   // brand-style Documents & Gallery block. Same heuristic as the main
   // panel so the two halves agree.
-  const isLandlord = (() => {
+  // Server-decided (same rule as the Landlord CRM list); the type heuristic
+  // is only a fallback for stale cached responses without the flag.
+  const isLandlord = typeof (data as any).isLandlord === "boolean" ? (data as any).isLandlord : (() => {
     const t = (c.company_type || "").toLowerCase();
     if (!t) return false;
     return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund");

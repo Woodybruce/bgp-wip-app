@@ -1070,8 +1070,30 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       ).catch(() => {});
     }
 
+    // One definition of "landlord" for the whole app: the same rule the
+    // Landlord CRM list (/api/crm/landlords) uses — typed as a landlord, OR
+    // the landlord on a live deal, OR the freeholder / long leaseholder of a
+    // property — never a tenant/brand type. The profile page used to decide
+    // from company_type alone, so a landlord typed as anything else fell
+    // into the BRAND layout (UK stores, Apollo momentum, brand expansion —
+    // "landlords don't have stores, they have properties", Woody 2026-09-08).
+    let isLandlord = false;
+    try {
+      const ll = await pool.query(
+        `SELECT (LOWER(COALESCE(c.company_type, '')) NOT LIKE 'tenant%' AND (
+                  LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit', 'developer', 'fund')
+                  OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.landlord_id = c.id AND d.status NOT IN ('ARCH'))
+                  OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id)
+                )) AS is_landlord
+           FROM crm_companies c WHERE c.id = $1`, [companyId]);
+      isLandlord = !!ll.rows[0]?.is_landlord;
+    } catch (e: any) {
+      console.warn(`[brand-profile] landlord flag failed for ${companyId}:`, e?.message);
+    }
+
     res.json({
       company: c,
+      isLandlord,
       signals: filteredSignals,
       // Client accounts only see tenant-rep representation — landlord-side
       // and investment agent relationships are BGP-internal.
