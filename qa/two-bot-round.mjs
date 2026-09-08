@@ -3181,6 +3181,72 @@ async function victoriaRound(page, cross) {
     if (!Array.isArray(body)) throw new Error('staff GET /api/evidence-plans did not return an array');
   });
 
+  await step(page, p, 'staff-duplicate-property-merge', async () => {
+    // r617: Settings -> CRM data hygiene -> Property Duplicates -> Merge.
+    // The property branch of /api/crm/duplicates/merge named two columns that
+    // do not exist (crm_property_agents.agent_id, crm_property_tenants.tenant_id),
+    // so EVERY property merge 500'd and both duplicates survived. Merge the
+    // pair and assert the loser is gone and its agent link moved across.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const me = await (await fetch(`${BASE}/api/auth/me`, { headers: auth })).json();
+    const mkProp = async (name) => {
+      const r = await fetch(`${BASE}/api/crm/properties`, { method: 'POST', headers: auth, body: JSON.stringify({ name }) });
+      if (r.status !== 200 && r.status !== 201) throw new Error(`property create expected 200/201, got ${r.status}`);
+      return (await r.json()).id;
+    };
+    const name = `QA r${ROUND} Dup Merge Park`;
+    const keepId = await mkProp(name);
+    const goneId = await mkProp(name);
+    try {
+      const link = await fetch(`${BASE}/api/crm/properties/${goneId}/agents`, { method: 'POST', headers: auth, body: JSON.stringify({ userId: me.id, role: 'Leasing' }) });
+      if (link.status !== 200 && link.status !== 201) throw new Error(`agent link expected 200/201, got ${link.status}`);
+      const m = await fetch(`${BASE}/api/crm/duplicates/merge`, { method: 'POST', headers: auth, body: JSON.stringify({ entity: 'property', keepId, deleteIds: [goneId] }) });
+      const body = await m.text();
+      if (m.status !== 200) throw new Error(`property merge expected 200, got ${m.status} ${body.slice(0, 140)}`);
+      if (JSON.parse(body).merged !== 1) throw new Error(`property merge reported merged=${JSON.parse(body).merged}, expected 1`);
+      const loser = await fetch(`${BASE}/api/crm/properties/${goneId}`, { headers: auth });
+      if (loser.status === 200 && (await loser.json())?.id === goneId) throw new Error('the merged-away property is still readable — the merge did not delete it');
+      const agents = await (await fetch(`${BASE}/api/crm/properties/${keepId}/agents`, { headers: auth })).json();
+      if (!Array.isArray(agents) || !agents.some((a) => a.id === me.id)) throw new Error(`the loser's agent link did not move onto the keeper (keeper agents: ${JSON.stringify(agents).slice(0, 120)})`);
+    } finally {
+      await fetch(`${BASE}/api/crm/properties/${keepId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+      await fetch(`${BASE}/api/crm/properties/${goneId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-brand-dedupe-merge-repoints-refs', async () => {
+    // r617: /api/brand/dedupe/merge rewrites every column that points at
+    // crm_companies.id from a hand-kept list (COMPANY_REFS). One entry named
+    // a column that does not exist (crm_comps.company_id — the real columns
+    // are tenant_company_id / landlord_company_id), so EVERY brand merge
+    // 500'd and rolled back. Merge a pair and assert the secondary is
+    // soft-deleted, then undo so the fixture is unchanged.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const mkCo = async (name) => {
+      const r = await fetch(`${BASE}/api/crm/companies`, { method: 'POST', headers: auth, body: JSON.stringify({ name }) });
+      if (r.status !== 200 && r.status !== 201) throw new Error(`company create expected 200/201, got ${r.status}`);
+      return (await r.json()).id;
+    };
+    const primaryId = await mkCo(`QA r${ROUND} Dedupe Brand`);
+    const secondaryId = await mkCo(`QA r${ROUND} Dedupe Brand Ltd`);
+    let mergeId = null;
+    try {
+      const m = await fetch(`${BASE}/api/brand/dedupe/merge`, { method: 'POST', headers: auth, body: JSON.stringify({ primaryId, secondaryId }) });
+      const body = await m.text();
+      if (m.status !== 200) throw new Error(`brand dedupe merge expected 200, got ${m.status} ${body.slice(0, 140)}`);
+      const j = JSON.parse(body);
+      if (!j.ok || !j.mergeId) throw new Error(`brand dedupe merge returned ${body.slice(0, 140)}`);
+      mergeId = j.mergeId;
+      const sec = await fetch(`${BASE}/api/crm/companies/${secondaryId}`, { headers: auth });
+      const secBody = sec.status === 200 ? await sec.json() : null;
+      if (secBody && !secBody.mergedIntoId && !secBody.merged_into_id) throw new Error('the secondary company was not soft-deleted by the merge');
+    } finally {
+      if (mergeId) await fetch(`${BASE}/api/brand/dedupe/undo/${mergeId}`, { method: 'POST', headers: auth }).catch(() => {});
+      await fetch(`${BASE}/api/crm/companies/${secondaryId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+      await fetch(`${BASE}/api/crm/companies/${primaryId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
+
   await step(page, p, 'staff-evidence-plan-lifecycle', async () => {
     // r472: full CRUD sweep of the Evidence Plans API — create plan, draw
     // unit, add entry, delete plan (cascade must leave no orphan rows in

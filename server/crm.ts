@@ -1689,9 +1689,9 @@ export function setupCrmRoutes(app: Express) {
             count++;
           } else if (entity === "property") {
             await tx.update(crmDeals).set({ propertyId: keepId }).where(eq(crmDeals.propertyId, deleteId));
-            await tx.execute(sql`UPDATE crm_property_agents SET property_id = ${keepId} WHERE property_id = ${deleteId} AND agent_id NOT IN (SELECT agent_id FROM crm_property_agents WHERE property_id = ${keepId})`);
+            await tx.execute(sql`UPDATE crm_property_agents SET property_id = ${keepId} WHERE property_id = ${deleteId} AND user_id NOT IN (SELECT user_id FROM crm_property_agents WHERE property_id = ${keepId})`);
             await tx.delete(crmPropertyAgents).where(eq(crmPropertyAgents.propertyId, deleteId));
-            await tx.execute(sql`UPDATE crm_property_tenants SET property_id = ${keepId} WHERE property_id = ${deleteId} AND tenant_id NOT IN (SELECT tenant_id FROM crm_property_tenants WHERE property_id = ${keepId})`);
+            await tx.execute(sql`UPDATE crm_property_tenants SET property_id = ${keepId} WHERE property_id = ${deleteId} AND company_id NOT IN (SELECT company_id FROM crm_property_tenants WHERE property_id = ${keepId})`);
             await tx.delete(crmPropertyTenants).where(eq(crmPropertyTenants.propertyId, deleteId));
             await tx.execute(sql`UPDATE crm_property_clients SET property_id = ${keepId} WHERE property_id = ${deleteId} AND contact_id NOT IN (SELECT contact_id FROM crm_property_clients WHERE property_id = ${keepId})`);
             await tx.delete(crmPropertyClients).where(eq(crmPropertyClients.propertyId, deleteId));

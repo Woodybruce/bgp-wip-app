@@ -20,7 +20,11 @@ const HELPER_MODEL = "claude-haiku-4-5-20251001";
 
 // Every table+column that points at crm_companies.id. Merge rewrites
 // each of these to the primary id.
-const COMPANY_REFS: Array<{ table: string; column: string }> = [
+// `pairColumn` marks a junction table carrying a UNIQUE (column, pairColumn)
+// constraint: if the primary already holds the same pairing, re-pointing the
+// secondary's row would violate it and abort the whole merge, so those rows
+// are left on the (soft-deleted) secondary instead.
+const COMPANY_REFS: Array<{ table: string; column: string; pairColumn?: string }> = [
   { table: "crm_companies",            column: "parent_company_id" },
   { table: "crm_companies",            column: "brand_group_id" },
   { table: "crm_contacts",             column: "company_id" },
@@ -37,12 +41,13 @@ const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "crm_properties",           column: "long_leaseholder_id" },
   { table: "crm_properties",           column: "senior_lender_id" },
   { table: "crm_properties",           column: "junior_lender_id" },
-  { table: "crm_company_properties",   column: "company_id" },
-  { table: "crm_company_deals",        column: "company_id" },
+  { table: "crm_company_properties",   column: "company_id", pairColumn: "property_id" },
+  { table: "crm_company_deals",        column: "company_id", pairColumn: "deal_id" },
   { table: "crm_property_tenants",     column: "company_id" },
   { table: "crm_trading_entities",     column: "parent_company_id" },
   { table: "crm_requirements_leasing", column: "company_id" },
-  { table: "crm_comps",                column: "company_id" },
+  { table: "crm_comps",                column: "tenant_company_id" },
+  { table: "crm_comps",                column: "landlord_company_id" },
   { table: "kyc_documents",            column: "company_id" },
   { table: "kyc_investigations",       column: "crm_company_id" },
   { table: "veriff_sessions",          column: "company_id" },
@@ -51,6 +56,20 @@ const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "brand_agent_representations", column: "agent_company_id" },
   { table: "brand_signals",            column: "brand_company_id" },
 ];
+
+// Re-point one reference column from $2 to $1.
+function repointSql(ref: { table: string; column: string; pairColumn?: string }): string {
+  if (ref.table === "crm_companies") {
+    // Self-ref on crm_companies is the merge target itself — skip those rows
+    return `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2 AND id <> $2`;
+  }
+  if (ref.pairColumn) {
+    return `UPDATE ${ref.table} SET ${ref.column} = $1
+             WHERE ${ref.column} = $2
+               AND ${ref.pairColumn} NOT IN (SELECT ${ref.pairColumn} FROM ${ref.table} WHERE ${ref.column} = $1)`;
+  }
+  return `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2`;
+}
 
 // Legal-form suffixes stripped for name normalisation
 const NORMALISE_SUFFIXES = [
@@ -312,9 +331,7 @@ router.post("/api/brand/dedupe/merge", requireAuth, async (req: Request, res: Re
     const referenceUpdates: Record<string, number> = {};
     for (const ref of COMPANY_REFS) {
       // Self-ref on crm_companies is the merge target itself — skip those rows
-      const sql = ref.table === "crm_companies"
-        ? `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2 AND id <> $2`
-        : `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2`;
+      const sql = repointSql(ref);
       const r = await client.query(sql, [primaryId, secondaryId]);
       if (r.rowCount) referenceUpdates[`${ref.table}.${ref.column}`] = r.rowCount;
     }
@@ -383,9 +400,7 @@ router.post("/api/brand/dedupe/undo/:mergeId", requireAuth, async (req: Request,
     // Warn the user in the UI that undo may affect unrelated rows.
     const referenceUpdates: Record<string, number> = {};
     for (const ref of COMPANY_REFS) {
-      const sql = ref.table === "crm_companies"
-        ? `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2 AND id <> $2`
-        : `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2`;
+      const sql = repointSql(ref);
       const r = await client.query(sql, [m.secondary_id, m.primary_id]);
       if (r.rowCount) referenceUpdates[`${ref.table}.${ref.column}`] = r.rowCount;
     }
