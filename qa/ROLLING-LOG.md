@@ -92,15 +92,122 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r610 · 2026-09-08 · FULL · ROUND IN PROGRESS
+### r610 · 2026-09-08 · FULL · journey: **BGP staff · phone 390px** (rotation slot #4) · 2 bugs fixed: a task due TODAY read as OVERDUE in five of its six readers, and the diary's Busiest Agent tile printed a raw UUID at the user while splitting one agent across two keys · 4 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`.
-- **REGRESSION AT BASELINE.** Four chunks sharing `QA_CROSS_FILE=/tmp/qa-cross-610.json`:
-  90 + 130 + 110 (head **330 ok**) + tail **39 ok** = **369 ok / 18 issues**,
-  signature **6x400 + 1x409 + 10x403 + 1x503** — exactly the number r609
-  predicted after adding `staff-aml-gate-blocks-sol` to the negative probes.
-  No 5xx, nothing new. **Streak 64.** All 18 are the listed noise signature.
-- Triage: nothing to chase. Journey next — rotation #4, BGP staff · phone 390px.
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Container on
+  a DETACHED HEAD at eb388f2 — pushed with `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE.** Four chunks sharing `QA_CROSS_FILE=/tmp/qa-cross-610.json`
+  on r608's split: 90 + 130 + 110 (head **330 ok**) + tail **39 ok** =
+  **369 ok / 18 issues**, signature **6x400 + 1x409 + 10x403 + 1x503** —
+  exactly the number r609 predicted after registering `staff-aml-gate-blocks-sol`
+  in `NEGATIVE_PROBE_SCENARIOS`. No 5xx, nothing new. **Streak 64.**
+  Re-run after both fixes (`/tmp/qa-cross-610b.json`): 91 + 130 + 110 + 39 =
+  **370 ok / 18 issues**, signature **identical**. **Streak 65.**
+  New baseline for r611: head **331**, sum **370 / 18**.
+- **JOURNEY — Victoria, iPhone UA at 390px, task framing: "Monday, sat in
+  reception waiting for the Landsec meeting. Woody's put a task on me over the
+  weekend — what is it? Check today's diary, then actually DO it: get the
+  bakery's requirement onto the requirements board from my phone, and tick it
+  off."** Ground the rotation had never walked: tasks assigned by someone
+  else, the diary, the requirements board, and a requirements WRITE from the
+  phone. Seeded one colleague-assigned task (`assigned_by_name = 'Woody
+  Bruce'`) so the assignment path was real.
+  · `/` home → `/tasks` → `/calendar` → `/requirements` → create → back to `/`
+  and tick. **The write worked end-to-end**: requirement saved, the board's
+  own counters moved with it (`1 active` → `2 active in the last 90 days`,
+  `0 / 1` → `1 / 2 fit your available units`, the hottest-location tile
+  appeared), and completing the task from the home card cleared it to
+  "Nothing outstanding — nice. 🎉". No h-overflow on any of the four
+  surfaces; no 5xx; the only noise was the keyless `ai-briefing` 503 and a
+  `401 /api/microsoft/calendar/summary` (no Graph token locally).
+- **BUG 1 FIXED — a task due TODAY read as OVERDUE, in five of its six readers.**
+  `user_tasks.due_date` is a TIMESTAMP, but every door that WRITES it writes a
+  DAY: ChatBGP's `create_task` schema asks the model for `"YYYY-MM-DD"`
+  (`chatbgp.ts:3631`), so a chat-created task lands at midnight — and no
+  surface in the app ever renders the time-of-day. Five readers compared that
+  date-only value against **`new Date()`**, i.e. now, so from 00:00 on the day
+  it was set for the task was late:
+  `tasks.tsx:652` (the red **Overdue** card **and** the header count),
+  `tasks.tsx:142` (the row's red styling),
+  `client-tasks.tsx:48` (the CLIENT's red due badge),
+  `daily-briefing.ts:65` (the briefing's overdue count + its `OVERDUE (n):`
+  prose, which the tasks page also renders as a red pill), and
+  `chatbgp.ts:10623` (what ChatBGP answers when you ask what's overdue).
+  · **PROVEN ON THE PHONE, pre-fix**: header read **"1 open · 1 overdue · 1
+  due today"** for ONE task, and that task sat inside the red
+  **"Overdue (1)"** card carrying the label **"Today"** — the screen
+  contradicting itself twice over. Screenshots `r610-03/04`.
+  · **The sixth door settled the semantics — no judgement call needed.**
+  `today.tsx:103` already had it right (`due_date.split("T")[0] < todayStr`,
+  pure date), as does `formatDueDate` on the very row the red card was
+  wrapping. The app already had an answer; five readers just didn't use it.
+  · **FIX:** one shared `isTaskOverdue(dueDate)` in **`shared/task-due.ts`**
+  (date-only, local midnight) wired into all five wrong doors, and
+  `today.tsx` switched onto it too so the rule now has exactly one home and
+  cannot drift again. `npx tsc --noEmit` clean.
+  · **RE-VERIFIED VISUALLY** on the staff phone with a due-today AND a
+  due-yesterday task seeded: header **"2 open · 1 overdue · 1 due today"** —
+  now two different tasks — the red card holding only the genuinely late one
+  ("1d overdue") and the due-today one sitting in the main list labelled
+  "Today". Screenshot `r610v-02`.
+- **BUG 2 FIXED — the diary's Busiest Agent tile printed a raw UUID, and
+  undercounted.** Walking the diary as Victoria, the insight strip read
+  **"BUSIEST AGENT 72715f6f-905d-40f4-bded-5275175f3e2b — 2 events in 30
+  days"**. `team_events.created_by` carries **three vocabularies**: a user id
+  (what `POST /api/team-events` stamps today, deliberately, for the delete
+  gate at `routes.ts:1519`), the creator's **email** on older rows, and the
+  literal sentinel **`'client-events-sync'`** from
+  `client-team-events-sync.ts:193`. `microsoft.ts:1083` buckets on the raw
+  key and `:1128` prints `top[0]` as if it were a person's name — so the tile
+  showed an id, and **one person split across two keys**: Victoria's 3
+  in-window events were counted as 2 + 1, and the tile quoted the larger
+  half. (The file's own comment claimed the column was "the raw created_by
+  email" — it hasn't been for a while.)
+  · **FIX:** resolve every key to a person (one `WHERE id::text = ANY($1) OR
+  lower(email) = ANY($2)` lookup) and bucket on the resolved name, so the
+  email row and the id row for the same agent merge; a key with no person
+  behind it (sentinel, deleted user) is **skipped**, and if nothing resolves
+  the tile is omitted rather than shown with a raw id. Client scoping
+  untouched — the tile is still `!insightsScope` only (the r536 leaderboard
+  block).
+  · **RE-VERIFIED VISUALLY**: **"BUSIEST AGENT Victoria Broadhead — 3 events
+  in 30 days"**, and the 3 is right — confirmed against the DB that the
+  30-day window holds 2 id-keyed + 1 email-keyed rows for her.
+- Harness: **`staff-task-due-today-not-overdue`** added (staff chunk) — posts
+  a due-today and a due-yesterday task through `POST /api/tasks`, loads
+  `/tasks`, asserts the Overdue card contains the late one and **not** the
+  due-today one, asserts the header counts exactly one overdue, then deletes
+  both and asserts the DELETE codes (the r607 trap). **Proven non-vacuous:**
+  reverting `tasks.tsx:653` to the old comparison makes it fail with
+  *"a task due TODAY was filed under Overdue"*.
+  For bug 2 no new scenario — `staff-calendar-insights-keep-busiest-agent`
+  already existed and asserted only that the tile *exists*, never what it
+  says (a "UI that states a contract" gap, r603's lesson). Folded the name
+  assertions into it instead: no raw UUID, no `client-events-sync`. Both
+  green alone: **2 ok, 0 issues**.
+- **CHECKED, NOT BUGS** (don't re-chase): the other nine
+  `… < new Date()` comparisons in the tree are all on real TIMESTAMPS
+  (`kyc_expires_at`, aml link `expires_at`, `starts_at`) where comparing
+  against now is correct — left alone; `team_events`' delete gate compares
+  strictly against the user id, which is the column's intended vocabulary
+  (the legacy email rows being undeletable by their author is a data
+  legacy, and `routes.ts:1497` documents why the stamping was added).
+- Bugs deferred: none new. Deferred pool unchanged (UX #331/#332's
+  compliance-flag changes, `POST /api/favorite-instructions/:propertyId`
+  scope, `add_property_imagery` scope, the two column DEFAULTs, #320's dead
+  phone "More" tab — **not** deleted this round despite being on the staff
+  phone, as instructed).
+- Suggestions added: **UX #333** (requirement card prints the brand name
+  twice), **#334** (the most-wanted-size tile buckets on bands the form
+  doesn't offer, + "1 requirements"), **#335** (phone home task card doesn't
+  say who assigned it, though `/tasks` does), **#336** (staff diary at 390px
+  puts ten team pills + a month grid above today's schedule).
+- `server/chatbgp-app-map.ts` NOT touched — no navigation, page or control
+  moved. `shared/schema.ts` and `migrations/` NOT touched (`shared/task-due.ts`
+  is a new pure helper module, not a schema change).
+- New flakes: none.
+- Next journey: **rotation #1, BGP staff · desktop 1440px** (r610 was FULL →
+  r611 may be LIGHT; then #1).
 
 ### r609 · 2026-09-08 · LIGHT (r608 had the journey — no journey this round) · 1 bug fixed across THREE doors: ChatBGP could move a deal into SOL+ with no AML counterparty check at all · 2 compliance write-ups deferred (UX #331, #332)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

@@ -29,6 +29,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isTaskOverdue } from "@shared/task-due";
 
 const SHOW_NOTE_PICKER = false;
 
@@ -139,7 +140,7 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
 }) {
   const isDone = task.status === "done";
   const dueInfo = formatDueDate(task.due_date);
-  const isOverdue = task.due_date && new Date(task.due_date) < new Date() && !isDone;
+  const isOverdue = isTaskOverdue(task.due_date) && !isDone;
   const [showSubtasks, setShowSubtasks] = useState(subtasks.length > 0);
   const subtasksDone = subtasks.filter(s => s.status === "done").length;
 
@@ -649,7 +650,7 @@ export default function TasksPage() {
 
   const activeTasks = tasks.filter(t => t.status !== "done");
   const completedTasks = tasks.filter(t => t.status === "done");
-  const overdueTasks = activeTasks.filter(t => t.due_date && new Date(t.due_date) < new Date());
+  const overdueTasks = activeTasks.filter(t => isTaskOverdue(t.due_date));
   const todayTasks = activeTasks.filter(t => {
     if (!t.due_date) return false;
     return new Date(t.due_date).toDateString() === new Date().toDateString();

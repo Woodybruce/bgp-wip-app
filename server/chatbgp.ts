@@ -48,6 +48,7 @@ import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
 import { legacyToCode, isExcludedLegacyStatus, TERMINAL_STATUSES } from "@shared/deal-status";
+import { isTaskOverdue } from "@shared/task-due";
 import { amlBlockForDealStatus } from "./deal-gates";
 
 // Told to the model verbatim when the AML gate refuses a deal-status move, so
@@ -10620,7 +10621,7 @@ Be thorough — include every unit row you can classify, across all properties i
            ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, due_date ASC NULLS LAST`,
           [userId]
         );
-        const overdue = result.rows.filter((t: any) => t.due_date && new Date(t.due_date) < new Date());
+        const overdue = result.rows.filter((t: any) => isTaskOverdue(t.due_date));
         return {
           data: {
             tasks: result.rows.map((t: any) => ({

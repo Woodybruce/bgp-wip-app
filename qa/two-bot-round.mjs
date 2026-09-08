@@ -2666,6 +2666,48 @@ async function victoriaRound(page, cross) {
     if (r.deleteStatus !== 200 && r.deleteStatus !== 204) throw new Error(`probe deal cleanup failed (${r.deleteStatus})`);
   });
 
+  // A task due TODAY is due today, not late. Every reader of
+  // user_tasks.due_date shares isTaskOverdue (shared/task-due.ts) — before
+  // r610 five of the six compared a date-only due_date against `now`, so a
+  // task landed in the red Overdue card, and in the header's overdue count,
+  // from 00:00 on the day it was set for.
+  await step(page, p, 'staff-task-due-today-not-overdue', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return d.toISOString().slice(0, 10); };
+      const mk = async (title, dueDate) => {
+        const res = await fetch('/api/tasks', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ title, dueDate, priority: 'medium' }) });
+        return res.ok ? (await res.json())?.id : null;
+      };
+      const todayId = await mk(`QA-R${round} due today`, day(0));
+      const lateId = await mk(`QA-R${round} due yesterday`, day(-1));
+      return { todayId, lateId };
+    }, ROUND);
+    if (!r.todayId || !r.lateId) throw new Error('task create failed');
+    await page.goto(`${BASE}/tasks`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1800);
+    const seen = await page.evaluate((round) => {
+      const card = [...document.querySelectorAll('div')].find(d => /^Overdue \(\d+\)/.test((d.innerText || '').trim()) && (d.innerText || '').trim().length > 24);
+      return {
+        overdueText: card ? (card.innerText || '').replace(/\s+/g, ' ') : '',
+        header: ([...document.querySelectorAll('p')].map(e => (e.textContent || '').trim()).find(t => / open/.test(t)) || ''),
+        marker: round,
+      };
+    }, ROUND);
+    if (!seen.overdueText) throw new Error('no Overdue card rendered for a genuinely late task');
+    if (!seen.overdueText.includes(`QA-R${ROUND} due yesterday`)) throw new Error(`yesterday's task missing from the Overdue card (${seen.overdueText.slice(0, 160)})`);
+    if (seen.overdueText.includes(`QA-R${ROUND} due today`)) throw new Error("a task due TODAY was filed under Overdue");
+    if (!/1 overdue/.test(seen.header)) throw new Error(`header should count exactly one overdue task (got "${seen.header}")`);
+    const cleanup = await page.evaluate(async (ids) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const out = [];
+      for (const id of ids) out.push((await fetch(`/api/tasks/${id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status);
+      return out;
+    }, [r.todayId, r.lateId]);
+    if (cleanup.some(c => c !== 200 && c !== 204)) throw new Error(`probe task cleanup failed (${cleanup.join(',')})`);
+  });
+
   // Staff logs turnover entries — one on an in-slice brand, one on an
   // out-of-slice company (Hammerson) — so Mark's round can prove the client
   // turnover read is sliced and the write staff-only. run-round.sh purges
@@ -3954,7 +3996,16 @@ async function victoriaRound(page, cross) {
     });
     const insights = d.insights || [];
     if (!insights.length) throw new Error(`staff calendar insights came back empty (${JSON.stringify(d).slice(0, 160)})`);
-    if (!insights.some((i) => i.type === 'busiestAgent')) throw new Error('staff strip lost its Busiest Agent insight');
+    const agent = insights.find((i) => i.type === 'busiestAgent');
+    if (!agent) throw new Error('staff strip lost its Busiest Agent insight');
+    // It must name a COLLEAGUE. team_events.created_by carries user ids,
+    // legacy emails and the 'client-events-sync' sentinel, so the tile has to
+    // resolve every key to a person — before r610 it printed the raw key
+    // (a UUID at the user) and split one agent's events across two of them.
+    if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(agent.detail || '')) {
+      throw new Error(`Busiest Agent printed a raw id: ${agent.detail}`);
+    }
+    if (/client-events-sync/.test(agent.detail || '')) throw new Error(`Busiest Agent named the sync sentinel: ${agent.detail}`);
     const portfolio = insights.find((i) => i.title === 'Portfolio');
     if (!portfolio) throw new Error('staff strip lost its Portfolio insight');
     if (/, 0 currently available/.test(portfolio.detail)) {

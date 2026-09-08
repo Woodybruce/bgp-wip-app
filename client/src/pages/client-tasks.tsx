@@ -4,6 +4,7 @@ import { useTeam } from "@/lib/team-context";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, Circle, ClipboardList } from "lucide-react";
 import type { User } from "@shared/schema";
+import { isTaskOverdue } from "@shared/task-due";
 
 // Client-facing portfolio tasks (Messages Phase 2, Woody 2026-08-05:
 // "being able to see tasks and see who has done what"). Read-only roll-up
@@ -45,7 +46,7 @@ function TaskRow({ t, done }: { t: PortfolioTask; done: boolean }) {
         </div>
       </div>
       {!done && t.due_date && (
-        <Badge variant="outline" className={`text-[10px] shrink-0 ${new Date(t.due_date) < new Date() ? "text-red-600 border-red-200" : ""}`}>
+        <Badge variant="outline" className={`text-[10px] shrink-0 ${isTaskOverdue(t.due_date) ? "text-red-600 border-red-200" : ""}`}>
           {shortDate(t.due_date)}
         </Badge>
       )}

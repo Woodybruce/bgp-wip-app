@@ -13,6 +13,44 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+336. 2026-09-08 · BGP staff / phone 390px (QA r610) · Victoria opens the diary
+   on her phone to see today · above the day column sit the Day/Work week/Week
+   switch, a CRM toggle, TEN team pills wrapping to three rows, and a full
+   month grid — so the actual schedule for today starts roughly a screen and
+   a half down, and on a day with a 09:00 meeting she scrolls to find it.
+   Suggestion: on the phone shell collapse the team pills and the month grid
+   behind one "Filters" / "Jump to date" disclosure (closed by default) and
+   open on the day column. Same family as #17 (the tenancy header's eight
+   stacked controls).
+
+335. 2026-09-08 · BGP staff / phone 390px (QA r610) · Victoria glances at MY
+   TASKS on the phone home to see what's landed on her · the card shows the
+   title, a High chip and the linked deal/property/contact, but not WHO put
+   the task on her — the /tasks page says "from Woody Bruce" and the home card
+   does not. On a phone the home card is the one she actually reads.
+   Suggestion: add the assigner as a sub-line on the mobile-home task card
+   when `assigned_by_name` is set (it is already on the API payload), so a
+   colleague's ask is distinguishable from her own to-do at a glance.
+
+334. 2026-09-08 · BGP staff / phone 390px (QA r610) · Victoria adds a bakery's
+   requirement from her phone and reads the summary tiles · the "most-wanted
+   size" tile reported "1,000–3,000 sq ft most-wanted size (1 requirements)"
+   for a requirement saved in the "2,000 - 3,500 sq ft" band — the tile's own
+   buckets are not the bands the form offers, so the number it quotes back
+   matches nothing the user chose. Plus "1 requirements".
+   Suggestion: bucket the tile on the form's own size bands (so it can quote
+   the band the user picked), and pluralise the count.
+
+333. 2026-09-08 · BGP staff / phone 390px (QA r610) · Victoria checks the
+   requirement she just saved on the requirements board · the card prints the
+   brand name twice on consecutive lines ("Testco Bakery / Testco Bakery") —
+   the requirement's own name and the linked company's name are both rendered
+   and for a brand requirement they are the same string, which on a 390px
+   card spends two of about eight visible lines saying one thing.
+   Suggestion: render the second line only when it differs from the first
+   (fall back to the company's category, which is what a reader actually
+   wants there).
+
 329. 2026-09-08 · Landsec client / phone 390px (QA r608) · Mark scans live
    deal activity on the Deals tab · the two deal cards label the same row
    "In status" but fill it two different ways — "today" on one and "35d in
