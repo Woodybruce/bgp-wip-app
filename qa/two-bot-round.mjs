@@ -3247,6 +3247,74 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  await step(page, p, 'staff-settings-data-health-reachable-on-phone', async () => {
+    // r618: the Data Health card put SIX action buttons in one non-wrapping
+    // flex row. At 390px the row is ~1270px wide and CLIPPED by an ancestor
+    // (documentElement.scrollWidth stayed 390, which is why the phone
+    // overflow sweep never saw it), so five of the six — including
+    // "Scan for Duplicates", the ONLY entry point to the duplicate-merge
+    // tools — sat off the right edge with no way to reach them by thumb.
+    // Assert every Data Health action lies inside the phone viewport.
+    // The phone SHELL keys off the user agent, not the viewport alone, so
+    // this needs a real iPhone context — a 390px desktop layout is a
+    // different (and not user-facing) surface.
+    const phone = await page.context().browser().newContext({
+      viewport: { width: 390, height: 844 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    const ph = await phone.newPage();
+    try {
+      await ph.goto(`${BASE}/`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await ph.evaluate((t) => { localStorage.setItem('bgp_auth_token', t); localStorage.setItem('authToken', t); }, page.qaToken);
+      await ph.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await ph.waitForTimeout(6000);
+      if (!(await ph.locator('nav [data-testid^="mobile-"], [data-testid^="mobile-home-"]').count())
+          && !(await ph.evaluate(() => !!document.querySelector('nav.fixed.bottom-0, nav[class*="fixed bottom"]')))) {
+        throw new Error('the phone shell did not render — scenario would measure the desktop layout instead');
+      }
+      const card = ph.locator('[data-testid="card-data-health"]');
+      if (!(await card.count())) throw new Error('the Data Health card is not on /settings for staff — scenario would pass vacuously');
+      await card.scrollIntoViewIfNeeded();
+      const ids = ['button-backfill-tracker-deals', 'button-sync-leasing-schedule', 'button-number-units', 'button-split-teams', 'button-scan-duplicates'];
+      const offscreen = [];
+      for (const id of ids) {
+        const b = await ph.locator(`[data-testid="${id}"]`).boundingBox().catch(() => null);
+        if (!b) throw new Error(`Data Health action ${id} has no box — scenario would pass vacuously`);
+        if (b.x < 0 || b.x + b.width > 391) offscreen.push(`${id} at x=${Math.round(b.x)} w=${Math.round(b.width)}`);
+      }
+      if (offscreen.length) throw new Error(`Data Health actions off a 390px phone screen: ${offscreen.join(', ')}`);
+    } finally {
+      await phone.close().catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-settings-hides-admin-only-email-panel', async () => {
+    // r618: every /api/email-processor/* endpoint is requireAdmin, but
+    // settings.tsx mounted EmailProcessorSection for EVERYONE — so a
+    // non-admin staff member got a dead panel (a "Scan Now" button that can
+    // only 403, plus the monitored mailbox address) and a 403 pair every 30s
+    // from its refetchInterval. Victoria is non-admin: prove that, then
+    // prove the panel and its polling are gone.
+    const auth = { Authorization: 'Bearer ' + page.qaToken };
+    const me = await (await fetch(`${BASE}/api/auth/me`, { headers: auth })).json();
+    if (me.isAdmin || me.is_admin) throw new Error('victoria is an admin in this fixture — the scenario cannot test the non-admin path');
+    const hits = [];
+    const watch = (res) => { if (/\/api\/email-processor\//.test(res.url())) hits.push(`${res.status()} ${res.url().replace(BASE, '')}`); };
+    page.on('response', watch);
+    try {
+      await page.goto(`${BASE}/settings`);
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(3500);
+      if (await page.locator('[data-testid="button-run-email-processor"]').count()) {
+        throw new Error('the admin-only email-processor panel is mounted for a non-admin staff user');
+      }
+      if (hits.length) throw new Error(`a non-admin /settings still calls the admin-only email-processor: ${hits.slice(0, 3).join(' | ')}`);
+    } finally {
+      page.off('response', watch);
+    }
+  });
+
   await step(page, p, 'staff-evidence-plan-lifecycle', async () => {
     // r472: full CRUD sweep of the Evidence Plans API — create plan, draw
     // unit, add entry, delete plan (cascade must leave no orphan rows in

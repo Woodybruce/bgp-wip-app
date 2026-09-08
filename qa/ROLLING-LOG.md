@@ -92,18 +92,135 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r618 · 2026-09-08 · FULL · ROUND IN PROGRESS
+### r618 · 2026-09-08 · FULL · journey: **BGP staff · phone 390px** (rotation slot #4) · 2 bugs fixed: five of six CRM data-hygiene actions were OFF the phone screen, and an admin-only email panel was mounted for every staff user · 2 suggestions · 1 deferred
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD.
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
+  `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE, exactly r617's prediction.** Head split three
   ways sharing `QA_CROSS_FILE=/tmp/qa-cross-618.json`, each chunk in its OWN
   `with-server.sh`: **97 + 133 + 110 = head 340** + tail **39** = **379 ok**.
   Signature **6x400 + 1x409 + 10x403 + 1x503 — identical to r615/r616/r617.
-  Streak 73.** All listed noise; no login-rate-limiter trap. Nothing new to
-  triage.
-- Journey to come: rotation #4, **BGP staff · phone 390px** — Settings / CRM
-  data-hygiene surfaces on a phone (ground never walked), plus the
-  never-clicked-door census r617's brief asks for.
+  Streak 73.** All listed noise; the r614 login trap did not recur.
+- **JOURNEY (`qa/r618-staff-phone-journey.mjs`, shots `/tmp/r618-*`).**
+  Victoria, between viewings on her phone, asked to merge a duplicate
+  property out of the Bluewater CRM — the Settings / CRM data-hygiene ground
+  the brief flagged as never walked on a phone. Home → (hunt for Settings) →
+  `/settings` → Data Health → Scan → merge, then Image Studio, `/aml-compliance`
+  and News. **No page-level h-overflow on any of the five surfaces**; the
+  merge itself worked from the phone (r617's fix holds on this surface: 2 rows
+  → 1, agent link moved onto the keeper).
+- **BUG 1 FIXED — five of the six CRM data-hygiene actions were off the right
+  edge of a phone screen, unreachably.** `client/src/pages/settings.tsx:1170`,
+  the Data Health card header: a `justify-between` row with **six** buttons in
+  a single `flex items-center gap-2` child — **no `flex-wrap`, no
+  `overflow-x-auto`**. At 390px the row measures ~1270px, so only "Backfill
+  Tracker Deals" and a sliver of the next were visible; **"Scan for
+  Duplicates" sat at x=1100**, i.e. 710px past the edge. The overflow is
+  **CLIPPED by an ancestor, not scrolled** — `documentElement.scrollWidth`
+  stayed exactly 390 — which is **why `qa/phone-overflow-sweep.mjs` and 617
+  rounds never saw it**, and why a thumb has no way to reach the buttons at
+  all. "Scan for Duplicates" is the **only** entry point to the property /
+  company / contact duplicate tools, so **r617's merge fix was unreachable on
+  the phone the round after it landed.** Playwright's click auto-scrolls,
+  which is exactly how the journey nearly missed it too — the boundingBox is
+  what caught it. **FIX:** `flex-wrap` + `gap-2` on the header row and
+  `flex-wrap` on the button row (no new styles, no tokens touched).
+  **VERIFIED VISUALLY** (`qa/r618-verify.mjs`, `/tmp/r618v-datahealth.png`):
+  all five measured actions now **x=41-173, inside the viewport, 44px tall**,
+  wrapping cleanly, card 358px wide, still no page overflow.
+- **BUG 2 FIXED — an admin-only panel mounted for every staff user, polling
+  403s forever (the r344 shape).** `settings.tsx:437` mounted
+  `<EmailProcessorSection />` **unconditionally**, while its two immediate
+  siblings on :431/:432 are correctly `{isAdmin && …}` — and **all five**
+  `/api/email-processor/*` endpoints are `requireAuth, requireAdmin`
+  (`server/email-processor.ts:1608-1673`). So for every non-admin staff
+  member (Victoria included — `isAdmin: false`, confirmed) opening Settings:
+  **two 403s on mount and two more every 30 seconds forever** (both queries
+  carry `refetchInterval: 30000`), plus a **dead panel** showing the monitored
+  mailbox address `chatbgp@brucegillinghampollard.com` and a "Scan Now"
+  button that can only ever 403. **FIX:** `{isAdmin && <EmailProcessorSection />}`,
+  matching its siblings. **VERIFIED:** panel absent, mailbox blurb gone, and
+  **0 email-processor 4xx across a full 35s window** (one whole refetch
+  interval) where the re-broken build fired four.
+- **THE NEVER-CLICKED-DOOR CENSUS the brief asked for — done, and it is now
+  CLOSED for single-table SQL.** Built the real column map from
+  `shared/schema.ts` (brace-matched, so tables that declare indexes are no
+  longer truncated — the naive parser gives false positives) **plus** every
+  raw `CREATE TABLE` / `ALTER TABLE … ADD COLUMN` in `server/**` and
+  `migrations/` — **250 tables** — then swept **every** `UPDATE` / `INSERT
+  INTO` / `DELETE FROM` in `server/**` for bare column names the table does
+  not have, and separately every `table.column` reference. **`table.column`
+  form: 0 suspects.** Bare-column form: 66 candidates, all but one prose,
+  JS interpolation or JSON-string false positives, **checked against the live
+  migrated DB** (`information_schema`) not just the source. **PROVED CLEAN:**
+  `crm_properties.strategic_principles`, `crm_interactions.deal_id`, all four
+  `leasing_schedule_units` late columns, `evidence_plan_units.dot`/`.source`,
+  `evidence_plan_jobs.level_id`, `team_events.company_name`/`.event_type`,
+  `crm_client_team_members.is_lead`, `data_room_files.enrichment`,
+  `covenant_watch.label`/`.added_by`, `map_layers.shared_with_team`.
+  **ONE real hit, deferred below (#357).**
+- **CHECKED, NOT BUGS:** the Settings page itself on a phone (properly
+  phone-adapted — back arrow, native header, cards stack, 0 h-overflow); the
+  property merge from the phone (r617's fix holds on this surface);
+  `/m/images`, `/aml-compliance` and `/news` at 390px (0 h-overflow, phone
+  shell on all three); `crm_deals.completion_target_date` in `crm.ts:1317`
+  (a legacy-backfill branch **guarded by an `information_schema` `has()`
+  check** — deliberately tolerant of a column that no longer exists).
+- **Harness: two scenarios added to victoria's chunk**, immediately BEFORE
+  `staff-evidence-plan-lifecycle`, so **head chunk 1: 97 → 99 next round;
+  head 342, sum 381; total scenarios now 381.** Signature unchanged — neither
+  makes a refused request (the second one *asserts* no request is made).
+  `staff-settings-data-health-reachable-on-phone` opens `/settings` in a
+  **real iPhone context** and fails if any Data Health action's boundingBox
+  falls outside 390px — it **throws rather than passing vacuously** if the
+  card is absent, if any button has no box, or **if the phone shell did not
+  render** (the trap this scenario walked into first time round: a 390px
+  *desktop* layout is a different, non-user-facing surface, and measuring it
+  reported a failure the fix could not fix — the shell keys off the **user
+  agent**, not the viewport). `staff-settings-hides-admin-only-email-panel`
+  asserts Victoria is non-admin **first** (else it cannot test the path),
+  then that the panel is unmounted and that `/settings` fires **no**
+  `/api/email-processor/*` request at all. **BOTH PROVEN NON-VACUOUS by
+  re-breaking:** with the fixes reverted the pair ran **0 ok, 6 issues** —
+  the two flow-failures plus **four raw `http-403`s**, i.e. the re-break
+  reproduced the polling storm independently; the layout one alone went
+  **0 ok / 1 issue** (`button-sync-leasing-schedule at x=438 … 4 of 5 off a
+  390px phone screen`) against the phone shell. With the fixes: **2 ok, 0
+  issues.**
+- Bugs deferred: **#357 — the HR admin "deactivate user" action 500s on a
+  column that does not exist, and has never been clicked.**
+  `server/hr-routes.ts:5037`, `POST /api/hr/diagnostics/deactivate-user/:id`
+  (`requireAdmin`) runs `UPDATE users SET is_active = false, updated_at =
+  now() WHERE id = $1` — **`users` has no `updated_at` column** (confirmed
+  against the live migrated DB). It is the **only one of 34 `UPDATE users`
+  statements** in `server/**` that names it, so it is a lone typo, and the
+  statement is first in the handler, so the soft-delete **and** the
+  `staff_profiles` leaver-stamp both roll back and the admin gets a bare 500.
+  **Not landed** because the door has **no UI caller anywhere** — it and its
+  sibling `/api/hr/diagnostics/duplicate-users` are API-only, so no user can
+  currently reach it, and the fix is one word in a table Woody may prefer to
+  give a real `updated_at` instead. **Woody's call.** Read-only census only.
+- Suggestions added: **UX #355** (the staff phone has **no route to Settings
+  at all** — not one `<a href="/settings">` in the whole phone shell, though
+  the page works fine once you type the URL; this is the same hole that
+  produced `chatbgp-app-map.ts`) and **UX #356** (Data Health is six
+  identical shields with no description, no row counts and no undo — Victoria
+  would not press five of the six without ringing someone, and one still
+  ships labelled "(test)").
+- New flakes: none. `npx tsc --noEmit` clean. Nothing near `shared/schema.ts`
+  tables or `migrations/` — both fixes are two Tailwind classes and one
+  `isAdmin &&` guard inside an existing page.
+- **LESSON FOR FUTURE ROUNDS: a CLIPPED overflow is invisible to a
+  `scrollWidth` sweep.** `qa/phone-overflow-sweep.mjs` asserts
+  `documentElement.scrollWidth <= innerWidth` and passed this page every
+  round for 617 rounds while five controls sat 700px off the edge, because an
+  ancestor's `overflow-hidden` absorbed it. **The durable detector is a
+  boundingBox on the CONTROLS, not the document** — and Playwright's own
+  auto-scroll on `click()` hides it from any scenario that only clicks. Worth
+  a sweep of other non-wrapping `justify-between` header rows on pages the
+  phone can reach.
+- Next round: **LIGHT** (r618 had the journey). Then rotation #1, **BGP staff
+  · desktop**.
 
 ### r617 · 2026-09-08 · LIGHT (r616 had the journey, no journey) · 2 bugs fixed: **BOTH CRM merge tools were 100% dead on columns that do not exist** · app map corrected · 2 suggestions · 1 deferred
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

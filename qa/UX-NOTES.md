@@ -13,6 +13,36 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+355. 2026-09-08 · Victoria (BGP staff) / staff PHONE 390px · QA r618 · **the
+   phone has no route to Settings at all.** Asked to tidy a duplicate
+   property from her phone between viewings, Victoria could only get there by
+   typing `/settings` from memory: there is not one `<a href="/settings">`
+   anywhere in the phone shell — not on the home grid, not in the boards row,
+   not on the bottom nav, not on `/m/profile`. The page itself is
+   phone-adapted and works fine once you land on it (back arrow, native
+   header, cards stack), and it holds the CRM data-hygiene tools, team
+   structure, team folders and ChatBGP memory. This is the same hole that
+   produced `server/chatbgp-app-map.ts` in the first place (ChatBGP sent
+   Woody to a Settings page the phone can't reach, 2026-08-23) — the app map
+   now describes the phone home honestly, but the route is still missing.
+   Suggestion: a Settings tile on the phone home (or a gear on `/m/profile`,
+   which is the natural place a phone user looks).
+
+356. 2026-09-08 · Victoria (BGP staff) / staff PHONE 390px · QA r618 · **Data
+   Health is six identical shields with no idea what any of them does.** All
+   six actions ("Backfill Tracker Deals", "Rename Legacy Teams", "Sync
+   Tracker → Leasing Schedule", "Renumber Units (test)", "Sort Teams", "Scan
+   for Duplicates") carry the same ShieldCheck icon, sit in one undifferentiated
+   row, and say nothing about what they touch, how many rows they will
+   rewrite, or whether they can be undone. Only "Scan for Duplicates" is
+   obviously safe. "Renumber Units (test)" ships to production with "(test)"
+   in its label sitting next to bulk rewrites. Judged as Victoria: she would
+   not press any of the other five without ringing someone first — which
+   makes five bulk maintenance tools effectively unusable. Suggestion: one
+   line of description per action, a confirm dialog naming the row count for
+   the four that write, and either finish or hide the "(test)" one.
+
+
 352. 2026-09-08 · Victoria (BGP staff) / desktop · QA r617 · Settings ->
    CRM data hygiene -> merging duplicate properties · **a merge that failed
    looked exactly like a merge that worked.** The property branch of
