@@ -2708,6 +2708,25 @@ export async function registerRoutes(
     }
   });
 
+  // "Are notifications working?" — sends a real push to the caller's own
+  // devices and reports exactly what happened per device, so the phone can
+  // show the answer instead of everyone guessing (Woody, 2026-09-08).
+  app.post("/api/push/test", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const user = await storage.getUser(userId);
+      const result = await sendPushNotification(userId, {
+        title: "BGP test notification",
+        body: `Hi ${user?.name?.split(" ")[0] || "there"} — notifications are reaching this phone.`,
+        tag: "push-test",
+        url: "/messages",
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to send test notification" });
+    }
+  });
+
   app.post("/api/push/unsubscribe", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
