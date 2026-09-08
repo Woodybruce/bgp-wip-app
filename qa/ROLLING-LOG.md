@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r611 · 2026-09-08 · LIGHT (r610 had the journey) — ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD
+  at dcdca90.
+- **REGRESSION AT BASELINE.** Four chunks sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-611.json`: 91 + 130 + 110 (head **331 ok**) +
+  tail **39 ok** = **370 ok / 18 issues**, signature
+  **6x400 + 1x409 + 10x403 + 1x503** — identical to r610's post-fix baseline.
+  No 5xx, nothing new. **Streak 66.**
+- Triage: all 18 are the listed noise signature; nothing to chase.
+- Work in progress: derived-rule census (target #1) + strengthening
+  presence-only assertions in `qa/two-bot-round.mjs` (target #2).
+
 ### r610 · 2026-09-08 · FULL · journey: **BGP staff · phone 390px** (rotation slot #4) · 2 bugs fixed: a task due TODAY read as OVERDUE in five of its six readers, and the diary's Busiest Agent tile printed a raw UUID at the user while splitting one agent across two keys · 4 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Container on
