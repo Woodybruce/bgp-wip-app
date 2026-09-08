@@ -92,6 +92,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r615 · 2026-09-08 · LIGHT (r614 had the journey) — ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD.
+- Regression: head chunks running (three-way split, one `QA_CROSS_FILE`,
+  tail to follow in its own `with-server.sh` per the r614 login-trap note).
+- Triage so far: no app-level failures reported yet.
+- Census work (target #2, £/percentage computed in more than one file) has
+  already turned up two real bugs — see the final entry.
+
 ### r614 · 2026-09-08 · FULL · journey: **Landsec client · desktop 1440px** (rotation slot #2) · 1 bug fixed: the Brand Intelligence "Categories" tile was a hardcoded constant sitting in a row of live scoped counts · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD —
