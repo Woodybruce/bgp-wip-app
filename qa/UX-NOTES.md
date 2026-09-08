@@ -35,6 +35,33 @@ what happened · concrete suggested improvement.
    self-added — the endpoint and the `added` flag the dialog already reads
    are enough to render it.
 
+331. 2026-09-08 · BGP staff / compliance (QA r609) · Layla runs the auto-KYC
+   on a brand profile and it comes back clean · the brand's `kyc_status` goes
+   to `approved`, but the notification bell keeps shouting "KYC not approved:
+   <deal>" at *urgent* severity for every deal that brand is a counterparty
+   on. The alert reads `crm_deals.kyc_approved`, and only the two manual MLRO
+   endpoints (`aml-compliance.ts:820`/`:845`) call `recomputeDealKycApproved`
+   — the auto-KYC writer (`companies-house.ts:952`) does not, so the flag
+   stays false until somebody happens to save that deal (`crm.ts:3644`
+   re-derives it on any PUT). Suggestion: call `recomputeDealKycApproved`
+   from the auto-KYC path too, the same way approve/reject do — it is the
+   contract the function's own comment states. Written up rather than landed
+   this round because it changes when a compliance flag flips.
+
+332. 2026-09-08 · BGP staff / compliance (QA r609) · a deal with a brand whose
+   `kyc_status` reads `verified` will never pass the AML gate · the gate
+   (`deal-gates.ts:54`) treats anything but `approved` as not ready, and
+   reports the reason as the raw value, so the team is told "AML not
+   complete: <brand> (verified)" — a sentence that reads like a
+   contradiction. Nothing in the codebase writes `verified` any more (a
+   reader was already fixed 2026-08-18), but the fixture still carries one
+   row (Hammerson SubCo Ltd), so production data of the same vintage will
+   too. Suggestion: a one-off normalise of the legacy values into the
+   canonical set `pending | in_review | approved | rejected | expired`
+   (+ `not_found`), and a CHECK constraint so a sixth value can't appear
+   again. Not touched this round — it is a data migration, and the
+   `verified` → `approved` mapping is a compliance judgement, not a QA one.
+
 328. 2026-09-08 · BGP staff / ChatBGP (QA r607, target-2 schema sweep) · a
    user asks ChatBGP "which deals are under offer?" · the `query_wip` tool
    (server/chatbgp.ts:4448) advertises `status` as "Filter by status/stage

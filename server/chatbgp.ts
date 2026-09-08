@@ -48,6 +48,11 @@ import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
 import { legacyToCode, isExcludedLegacyStatus, TERMINAL_STATUSES } from "@shared/deal-status";
+import { amlBlockForDealStatus } from "./deal-gates";
+
+// Told to the model verbatim when the AML gate refuses a deal-status move, so
+// chat gives the same way out the HTTP 409 does rather than just failing.
+const AML_OVERRIDE_HINT = "MLRO override: set the deal's AML check completed = YES to bypass.";
 
 const CHATBGP_MODEL = "claude-sonnet-4-6";      // Lightweight sub-tasks only — the main chat defaults to Fable 5 via chatbgp-model-router.
 const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning fallback tier.
@@ -6279,6 +6284,11 @@ export async function executeCrmToolRaw(
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
+    // Same AML counterparty gate PUT /api/crm/deals/:id enforces for SOL+.
+    const amlBlocked = await amlBlockForDealStatus(id, cleanUpdates.status);
+    if (amlBlocked) {
+      return { data: { success: false, error: amlBlocked, code: "AML_GATE_FAILED", hint: AML_OVERRIDE_HINT } };
+    }
     // Through the write boundary — see create_deal above.
     await storage.updateCrmDeal(id, cleanUpdates);
     return { data: { success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "deal", id } };
@@ -10060,8 +10070,24 @@ Be thorough — include every unit row you can classify, across all properties i
         }
       }
       if (sets.length === 0) return { data: { error: "No valid fields to update" } };
-      const placeholders = ids.map((_, i) => `$${paramIdx + i}`).join(", ");
-      params.push(...ids);
+      // Same AML counterparty gate the deals-list bulk update enforces: a
+      // bulk move into SOL+ is still a move into SOL+. Blocked ids are left
+      // alone and named back, so 99 clean deals still go through.
+      let targetIds = ids;
+      const amlBlocked: { id: string; reason: string }[] = [];
+      if (entityType === "deal" && typeof updates.status === "string") {
+        for (const id of ids) {
+          const reason = await amlBlockForDealStatus(id, updates.status);
+          if (reason) amlBlocked.push({ id, reason });
+        }
+        const blockedIds = new Set(amlBlocked.map(b => b.id));
+        targetIds = ids.filter(id => !blockedIds.has(id));
+        if (targetIds.length === 0) {
+          return { data: { success: false, error: "AML gate failed on every deal", code: "AML_GATE_FAILED", blocked: amlBlocked, hint: AML_OVERRIDE_HINT } };
+        }
+      }
+      const placeholders = targetIds.map((_, i) => `$${paramIdx + i}`).join(", ");
+      params.push(...targetIds);
       const result = await pool.query(
         `UPDATE ${table} SET ${sets.join(", ")} WHERE id IN (${placeholders})`,
         params
@@ -10074,6 +10100,7 @@ Be thorough — include every unit row you can classify, across all properties i
           requestedCount: ids.length,
           fieldsUpdated: Object.keys(updates),
           message: `Updated ${result.rowCount} ${entityType}(s)`,
+          ...(amlBlocked.length > 0 ? { blockedByAml: amlBlocked, hint: AML_OVERRIDE_HINT } : {}),
         },
       };
     } catch (err: any) {
@@ -11958,6 +11985,11 @@ export async function handleCrmToolCall(
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
+    }
+    // Same AML counterparty gate PUT /api/crm/deals/:id enforces for SOL+.
+    const amlBlocked = await amlBlockForDealStatus(id, cleanUpdates.status);
+    if (amlBlocked) {
+      return { handled: true, response: { reply: `${amlBlocked} ${AML_OVERRIDE_HINT}` } };
     }
     // Through the write boundary — see create_deal above.
     await storage.updateCrmDeal(id, cleanUpdates);

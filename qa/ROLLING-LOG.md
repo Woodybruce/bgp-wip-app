@@ -92,18 +92,82 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r609 · 2026-09-08 · LIGHT (r608 had the journey) · ROUND IN PROGRESS
+### r609 · 2026-09-08 · LIGHT (r608 had the journey — no journey this round) · 1 bug fixed across THREE doors: ChatBGP could move a deal into SOL+ with no AML counterparty check at all · 2 compliance write-ups deferred (UX #331, #332)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`.
 - **REGRESSION AT BASELINE.** Four chunks sharing `QA_CROSS_FILE=/tmp/qa-cross-609.json`
-  per r608's split: 89 + 130 + 110 (head **329 ok**) + tail **39 ok** =
+  on r608's split: 89 + 130 + 110 (head **329 ok**) + tail **39 ok** =
   **368 ok / 18 issues**, signature **6x400 + 1x409 + 10x403 + 1x503** —
-  identical to r608. No 5xx, nothing new. **Streak 63.**
-- Triage: all 18 are the listed noise signature (rocketreach-400 family,
-  the client-gateway 403 guards the scenarios assert on, keyless-AI 503,
-  the intended 409 dedupe). Nothing to chase.
-- Work in progress: count-vs-list and stated-contract censuses, plus a
-  read-only pass over the KYC/AML path.
+  identical to r608. No 5xx, nothing new. **Streak 63.** All 18 are the listed
+  noise signature; nothing to chase.
+- **Target picked: the KYC/AML path** (the parent brief's #2 — never had a
+  proper read). It paid immediately, on the "census every door" shape.
+- **BUG FIXED — the AML gate was enforced on the HTTP doors only.**
+  `deal-gates.ts` names its own callers: `PUT /api/crm/deals/:id`, the
+  `deal-stages.ts` SOL+ transition, the available-units promote
+  (warn-but-allow) and the deals-list bulk update. All four are real and all
+  four gate correctly. But **ChatBGP is a fifth door and it had no gate at
+  all**: `update_deal` on BOTH dispatchers (`chatbgp.ts` executeCrmToolRaw
+  ~6276 and handleCrmToolCall ~11956) writes `status` straight through
+  `storage.updateCrmDeal`, and `bulk_update_crm` (~10019, 100 deals a call)
+  writes it by raw SQL. Both paths canonicalise the vocabulary (r606/r607)
+  but run **no compliance check** — so "move the Bluewater deal to
+  solicitors" in chat landed **SOL with no counterparty KYC, no 409, and no
+  MLRO override recorded**, while the same move on the deals board is
+  refused. The bulk door is the worse of the two: its HTTP twin gates
+  explicitly ("Without this, bulk-flipping rows on the deals list bypassed
+  both gates entirely") and it moves 100 deals at a time.
+  · **PROVEN BEFORE THE FIX**, driving the real dispatchers
+  (`qa/r609-aml-gate-probe.mjs`): deal at NEG with a landlord whose
+  `kyc_status` is unset → `checkCounterpartyAml` correctly refuses it →
+  `update_deal {status:'SOL'}` returned success and the row read **SOL** on
+  both dispatchers. 2 FAILURES.
+  · **FIX:** one shared guard `amlBlockForDealStatus(dealId, targetStatus)`
+  in `deal-gates.ts` (+ exported `AML_GATED_CODES`) — canonicalises the
+  target, no-ops when it isn't a move or isn't SOL+, honours the
+  `aml_check_completed = 'YES'` MLRO override, else returns the same
+  `formatAmlWarning` string the 409 carries. Wired into all three ChatBGP
+  doors; the HTTP doors keep their existing inline checks untouched (no
+  regression surface). The bulk door **skips only the blocked ids** and names
+  them back to the model, so 99 clean deals still go through.
+  · **RE-VERIFIED:** probe now **all green — 11 checks**: refused on both
+  dispatchers (row stays NEG), an **ungated** move (HOT) still lands, the
+  **MLRO override still reaches SOL**, and bulk blocks one / passes the
+  cleared one / reports `blockedByAml`. `npx tsc --noEmit` clean.
+  · **NOT verified in a browser, and it has no browser surface**: the three
+  doors are ChatBGP tool dispatchers, unreachable locally without an
+  Anthropic key. Verified through the real dispatchers plus the HTTP twin.
+- **CHECKED, NOT BUGS** (don't re-chase): the gate's four HTTP callers all
+  enforce correctly, including the bulk-update mirror of both gates;
+  `POST /api/crm/deals` does NOT gate a deal created directly at SOL — but
+  neither does any other create door, so the AI door now **matches** HTTP
+  rather than diverging (left alone deliberately); the two `kyc_approved`
+  count queries (`routes.ts:8977`, `:9638`) are canonical codes with a
+  LIMIT and no count claim beside them.
+- Harness: **`staff-aml-gate-blocks-sol`** added to `qa/two-bot-round.mjs`
+  (staff chunk, registered in `NEGATIVE_PROBE_SCENARIOS` so its deliberate
+  409 does not move the tally) — 409 + `AML_GATE_FAILED` on the blocked move,
+  200 on the ungated one, 200 + row at SOL on the MLRO override, asserts the
+  DELETE code per the r607 trap. Verified alone: `QA_ONLY=…` → **1 ok, 0
+  issues**. The tool doors themselves stay locked in by
+  `qa/r609-aml-gate-probe.mjs` (they need the dispatcher, not HTTP).
+- Bugs **DEFERRED with the fix written out** (both compliance-flag changes,
+  deliberately not landed silently): **UX #331** — the auto-KYC writer
+  (`companies-house.ts:952`) sets `kyc_status='approved'` but never calls
+  `recomputeDealKycApproved`, which only the two manual MLRO endpoints call,
+  so the bell keeps shouting *urgent* "KYC not approved: <deal>" until
+  someone next saves that deal (`crm.ts:3644` re-derives on any PUT).
+  **UX #332** — `kyc_status='verified'` exists in the data (Hammerson SubCo
+  Ltd) though nothing writes it any more; the gate treats it as not ready and
+  prints "AML not complete: <brand> (verified)". Needs a data normalise + a
+  CHECK constraint, and the mapping is a compliance judgement.
+- Deferred pool otherwise unchanged (`POST /api/favorite-instructions/:propertyId`
+  scope, `add_property_imagery` scope, the two column DEFAULTs).
+- `server/chatbgp-app-map.ts` NOT touched — no navigation, page or control
+  moved. `shared/schema.ts` and `migrations/` NOT touched.
+- New flakes: none.
+- Next journey: **rotation #4, BGP staff · mobile 390px** (r609 was LIGHT →
+  r610 is FULL).
 
 ### r608 · 2026-09-08 · FULL · Landsec client · PHONE 390px · 0 bugs found to fix — four count-vs-list checks and the client's own self-add write all came back clean · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

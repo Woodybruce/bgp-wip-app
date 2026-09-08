@@ -1,6 +1,7 @@
 // Shared AML / KYC counterparty gate. Used by PUT /api/crm/deals/:id, the
 // deal-stages.ts SOL+ transition handler, the available-units promote
-// (warn-but-allow), and the bulk-status update.
+// (warn-but-allow), the bulk-status update, and — via amlBlockForDealStatus
+// at the foot of this file — ChatBGP's update_deal and bulk_update_crm.
 //
 // KYC scope: brand-level only. The deal table carries `*EntityId` columns
 // (landlordEntityId etc.) for Xero billing context — those are Xero
@@ -105,4 +106,44 @@ export async function recomputeDealKycApproved(companyId: string, approvedBy?: s
     changed++;
   }
   return changed;
+}
+
+// The gated codes: SOL onwards. Every door that moves a deal into one of
+// these must satisfy the counterparty gate (or carry the MLRO override).
+export const AML_GATED_CODES = new Set(["SOL", "EXC", "COM", "INV"]);
+
+// One-call guard for a status change, for write doors that do NOT go through
+// PUT /api/crm/deals/:id. Returns the blocking message, or null to allow.
+// The HTTP doors keep their inline checks; this exists so ChatBGP's tool
+// doors (update_deal on both dispatchers, bulk_update_crm) enforce the same
+// gate they always advertised — they wrote status straight through
+// storage.updateCrmDeal / raw SQL, which canonicalise the vocabulary but run
+// no compliance check, so "move the deal to solicitors" in chat landed SOL
+// with no AML check and no override recorded (r609).
+export async function amlBlockForDealStatus(
+  dealId: string,
+  targetStatus: unknown,
+): Promise<string | null> {
+  if (!dealId || typeof targetStatus !== "string" || !targetStatus.trim()) return null;
+  const { legacyToCode } = await import("../shared/deal-status");
+  const targetCode = legacyToCode(targetStatus);
+  if (!targetCode || !AML_GATED_CODES.has(targetCode)) return null;
+
+  const { rows } = await pool.query(
+    `SELECT status, landlord_id, tenant_id, vendor_id, purchaser_id, aml_check_completed
+       FROM crm_deals WHERE id = $1`,
+    [dealId],
+  );
+  const deal = rows[0];
+  if (!deal) return null; // let the caller fail on its own missing-row path
+  if (legacyToCode(deal.status) === targetCode) return null; // not a move
+  if (deal.aml_check_completed === "YES") return null; // MLRO override
+
+  const result = await checkCounterpartyAml({
+    landlordId: deal.landlord_id,
+    tenantId: deal.tenant_id,
+    vendorId: deal.vendor_id,
+    purchaserId: deal.purchaser_id,
+  });
+  return formatAmlWarning(result);
 }

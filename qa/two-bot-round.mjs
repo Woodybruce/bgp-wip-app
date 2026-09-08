@@ -128,7 +128,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-no-tenancy-import', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'rival-comp-files-and-reqinv-guard', 'rival-chat-media-and-deal-subreads-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard', 'staff-crm-leads-and-packs-kept']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-no-tenancy-import', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'rival-comp-files-and-reqinv-guard', 'rival-chat-media-and-deal-subreads-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'staff-aml-gate-blocks-sol', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard', 'staff-crm-leads-and-packs-kept']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -2630,6 +2630,39 @@ async function victoriaRound(page, cross) {
     if (r.slipStatus !== 200) throw new Error(`slipping verdict failed (${r.slipStatus})`);
     if (r.stillListed) throw new Error('deal still pending after a verdict this month');
     if (!r.newTarget || new Date(r.newTarget) < new Date()) throw new Error(`slipping did not re-date the deal (targetDate ${r.newTarget})`);
+    if (r.deleteStatus !== 200 && r.deleteStatus !== 204) throw new Error(`probe deal cleanup failed (${r.deleteStatus})`);
+  });
+
+  // The AML counterparty gate on SOL+ (r609). ChatBGP's update_deal and
+  // bulk_update_crm wrote crm_deals.status straight through the storage
+  // layer, so the gate every HTTP door enforces was skippable from chat.
+  // The tool doors are locked in by qa/r609-aml-gate-probe.mjs (they need
+  // the dispatcher, not HTTP); this covers the HTTP door it must match:
+  // refuse the move, keep ungated moves working, honour the MLRO override.
+  await step(page, p, 'staff-aml-gate-blocks-sol', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const cRes = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ name: `QA-R${round} AML gate probe`, dealType: 'Letting', status: 'NEG' }) });
+      const deal = cRes.ok ? await cRes.json() : null;
+      if (!deal?.id) return { fail: `deal create ${cRes.status}` };
+      const out = { dealId: deal.id };
+      const put = (body) => fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify(body) });
+      const blocked = await put({ status: 'SOL' });
+      out.blockedStatus = blocked.status;
+      out.blockedCode = (await blocked.json().catch(() => ({}))).code;
+      out.ungatedStatus = (await put({ status: 'HOT' })).status;
+      out.overrideStatus = (await put({ amlCheckCompleted: 'YES', status: 'SOL' })).status;
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json().catch(() => []);
+      out.finalStatus = (Array.isArray(deals) ? deals : []).find(d => d.id === deal.id)?.status || null;
+      out.deleteStatus = (await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status;
+      return out;
+    }, ROUND);
+    if (r.fail) throw new Error(r.fail);
+    if (r.blockedStatus !== 409) throw new Error(`SOL with no cleared counterparty should 409 (got ${r.blockedStatus})`);
+    if (r.blockedCode !== 'AML_GATE_FAILED') throw new Error(`409 body missing AML_GATE_FAILED (got ${r.blockedCode})`);
+    if (r.ungatedStatus !== 200) throw new Error(`ungated move to HOT should pass (got ${r.ungatedStatus})`);
+    if (r.overrideStatus !== 200) throw new Error(`MLRO override should reach SOL (got ${r.overrideStatus})`);
+    if (r.finalStatus !== 'SOL') throw new Error(`deal should sit at SOL after the override (got ${r.finalStatus})`);
     if (r.deleteStatus !== 200 && r.deleteStatus !== 204) throw new Error(`probe deal cleanup failed (${r.deleteStatus})`);
   });
 
