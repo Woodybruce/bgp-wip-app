@@ -92,18 +92,120 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r617 · 2026-09-08 · LIGHT (r616 had the journey) — **ROUND IN PROGRESS**
+### r617 · 2026-09-08 · LIGHT (r616 had the journey, no journey) · 2 bugs fixed: **BOTH CRM merge tools were 100% dead on columns that do not exist** · app map corrected · 2 suggestions · 1 deferred
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD again.
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
+  `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE.** Head split three ways sharing
-  `QA_CROSS_FILE=/tmp/qa-cross-617.json`, each chunk in its OWN
-  `with-server.sh`: 95 + 133 + 110 = **head 338** (exactly r616's prediction —
-  its two new mark scenarios took chunk 2 from 131 to 133) + tail **39** =
-  **377 ok**. Signature **6x400 + 1x409 + 10x403 + 1x503 — identical to
-  r616/r615. Streak 72.** All listed noise; no 5xx beyond the keyless-AI 503.
-- Triage: nothing new to triage — every logged issue is on the noise list.
-- Targets this round: the parent brief's #1 (two doors, one page, one question,
-  two sources) and #3 (`server/chatbgp-app-map.ts` read against the routes).
+  `QA_CROSS_FILE=/tmp/qa-cross-617.json`, **each chunk in its OWN
+  `with-server.sh`**: 95 + 133 + 110 = **head 338** (exactly r616's
+  prediction — its two new mark scenarios took chunk 2 from 131 to 133) +
+  tail **39** = **377 ok**. Signature **6x400 + 1x409 + 10x403 + 1x503 —
+  identical to r616/r615. Streak 72.** All listed noise; the r614 login trap
+  did not recur. Nothing new to triage.
+- **BUG 1 FIXED — the Settings property-duplicate merge had NEVER worked.**
+  `server/crm.ts:1692`/`:1694`, the `entity === "property"` branch of
+  `POST /api/crm/duplicates/merge`, named **two columns that do not exist**:
+  `crm_property_agents.agent_id` (the column is **`user_id`**) and
+  `crm_property_tenants.tenant_id` (the column is **`company_id`**). Postgres
+  parses the statement whether or not any row matches, so **every** property
+  merge 500'd with `column "agent_id" does not exist`, the transaction rolled
+  back, and **both duplicates survived**. Settings → CRM data hygiene →
+  Property Duplicates → *Merge* / *Merge All* was therefore dead for every
+  group, always. The company and contact branches of the same endpoint work
+  (control: company merge 200) — which is why nobody noticed.
+  **FIX:** the two column names. **PROVEN BOTH WAYS, VISUALLY** as Victoria
+  at 1440px (`qa/r617-visual.mjs`, shots `/tmp/r617v-*` fixed,
+  `/tmp/r617broken-*` re-broken): fixed — the group leaves the list, DB
+  collapses 2 rows → 1, **and the loser's agent link moves onto the keeper**;
+  re-broken — group still listed, 2 rows left, agent link lost.
+- **BUG 2 FIXED — the OTHER merge door had never worked either, for a
+  different phantom column.** `server/brand-dedupe.ts` re-points every
+  reference to `crm_companies.id` from a hand-kept list, `COMPANY_REFS`
+  (29 entries). One named **`crm_comps.company_id`** — `crm_comps` has no
+  such column; the real FKs are **`tenant_company_id`** and
+  **`landlord_company_id`** (schema.ts:1117-1118, "FK overlay added later").
+  So `POST /api/brand/dedupe/merge` 500'd on **every pair**, rolled back, and
+  `/admin-dedupe` → Brand duplicates → *Merge* could never merge anything;
+  the undo loop shares the same list and was equally dead.
+  A **second** fault sat one line earlier: the loop blanket-updated
+  `crm_company_properties` and `crm_company_deals`, both of which carry
+  **UNIQUE (company_id, pair)** constraints (`uq_crm_company_properties_pair`,
+  `uq_crm_company_deals_pair`) — so whenever primary and secondary were both
+  linked to the same property or deal (**the likeliest shape for a real
+  duplicate**) the merge died on a unique violation instead.
+  **FIX:** the two real `crm_comps` columns, plus an optional `pairColumn` on
+  a `COMPANY_REFS` entry and one `repointSql()` helper (shared by the merge
+  and undo loops) that skips rows the primary already holds. Colliding rows
+  are **left on the soft-deleted secondary rather than deleted**, so undo
+  stays lossless. All four pair columns are `NOT NULL` (checked), so the
+  `NOT IN` guard cannot silently skip everything.
+  **PROVEN BOTH WAYS** (`qa/r617-dedupe-probe.mjs`): before —
+  `500 uq_crm_company_properties_pair` then, past that, `500 column
+  "company_id" does not exist`, secondary not merged; after — **200**,
+  secondary soft-deleted, the shared deal link present **exactly once** on
+  the primary, **the solo link and the comp both moved across**
+  (`referenceUpdates: {crm_company_deals.company_id: 1,
+  crm_comps.tenant_company_id: 1}`) — i.e. the guard does not over-skip.
+- **APP MAP corrected** (`server/chatbgp-app-map.ts`, target #3 of the brief).
+  Read the whole file against `App.tsx`: **all 37 paths it names are real
+  routes** — no path drift. The drift was structural: the "Phone home screen,
+  top to bottom" list describes the **STAFF** home only, while a client's
+  Portfolio home (`mobile-home.tsx:174` `PORTFOLIO_LINKS`,
+  `:314` drops `/brands` from Boards) is a different eight-tile grid with no
+  Expenses tile, no finance tile and no billing tile. ChatBGP would have sent
+  a Landsec user to "Expenses" (staff-only) and to a Brand Intelligence board
+  tile that isn't on their home, while missing the **Tracker tile that is the
+  first thing on their screen**. Line 40 now spells the client home out.
+  Verified correct and left alone: the 4 staff / 5 client bottom tabs
+  (`mobile-bottom-nav.tsx:10`/`:17`), the staff quick links and the
+  `CORE_BOARD_URLS` boards row.
+- **CHECKED, NOT BUGS:** `/property-intelligence` on the client phone Boards
+  row (it IS in `CLIENT_ALLOWED_ROUTES`, `App.tsx:270` — deliberate, not a
+  leak); the contact branch of the duplicates merge (all its columns exist);
+  `crm_company_deals`/`crm_company_properties` in the Settings merge (already
+  guarded against the unique pairs, which is what the brand-dedupe door was
+  missing).
+- **Harness: two scenarios added to victoria's chunk**, immediately BEFORE
+  `staff-evidence-plan-lifecycle`, so **head chunk 1: 95 → 97 next round;
+  head 340, sum 379; total scenarios now 379.** Signature unchanged — neither
+  makes a refused request. `staff-duplicate-property-merge` creates two
+  same-named properties over HTTP, links an agent to the loser, merges, and
+  asserts 200 + `merged:1` + the loser unreadable + **the agent link present
+  on the keeper**; `staff-brand-dedupe-merge-repoints-refs` creates a pair,
+  merges via `/api/brand/dedupe/merge`, asserts 200 + the secondary
+  soft-deleted, then **undoes the merge** in a `finally` and deletes both.
+  **Both PROVEN NON-VACUOUS**: with each fix re-broken the pair ran
+  **0 ok, 2 flow-failures** (`property merge expected 200, got 500 column
+  "agent_id" does not exist` / `brand dedupe merge expected 200, got 500
+  column "company_id" does not exist`); with the fixes, **2 ok, 0 issues**.
+- Bugs deferred: **#354 — the Settings company merge orphans most of what
+  points at the company it deletes.** `crm.ts:1663-1672` re-points **7**
+  columns (crm_contacts.company_id, crm_deals.landlord_id/tenant_id,
+  crm_properties.landlord_id, crm_company_deals, crm_company_properties,
+  image_studio_images) and then **HARD-deletes** the row — while the sibling
+  door's `COMPANY_REFS` enumerates **30**. The **23** left pointing at a dead
+  id include `crm_deals.vendor_id`/`purchaser_id`/all four agent ids,
+  `crm_properties.freeholder_id`/`long_leaseholder_id`/`senior_lender_id`/
+  `junior_lender_id`, `crm_property_tenants.company_id` (so the brand drops
+  off the property page's tenant list), `crm_requirements_leasing`,
+  `crm_comps.tenant_company_id`/`landlord_company_id`, `kyc_documents`,
+  `kyc_investigations.crm_company_id`, `veriff_sessions`,
+  `aml_recheck_reminders`, `brand_agent_representations`, `brand_signals`,
+  and the `parent_company_id`/`brand_group_id` self-refs. **Not landed**
+  because the right fix is a decision, not a patch: either share
+  `COMPANY_REFS` between the two doors, or retire the Settings company merge
+  in favour of the undoable brand-dedupe path (see UX #353). **Woody's call.**
+  Read-only census only — nothing exploited, nothing written.
+- Suggestions added: **UX #352** (a failed merge is indistinguishable from a
+  successful one — raw SQL in the toast, "N merged, M failed" with no idea
+  which) and **UX #353** (two "Merge" buttons, one permanent and one
+  undoable, with nothing on screen saying which).
+- New flakes: none. `npx tsc --noEmit` clean. `FRESH_BUILD=1 run-smoke.sh`
+  **GREEN 42/0** after both fixes. Nothing near `shared/schema.ts` tables or
+  `migrations/` — both fixes are column names and one SQL guard inside
+  existing handlers.
+- Next round: **FULL** — rotation #4, **BGP staff · phone 390px**.
 
 ### r616 · 2026-09-08 · FULL · journey: **Landsec client · phone 390px** (rotation slot #3) · 2 bugs fixed: Brand Gap called the property's OWN occupier "not here"; the "BGP team" board counted the client's own tasks · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

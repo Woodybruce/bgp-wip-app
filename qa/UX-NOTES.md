@@ -13,6 +13,34 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+352. 2026-09-08 · Victoria (BGP staff) / desktop · QA r617 · Settings ->
+   CRM data hygiene -> merging duplicate properties · **a merge that failed
+   looked exactly like a merge that worked.** The property branch of
+   `POST /api/crm/duplicates/merge` 500'd on every call (r617 bug 1). The
+   only feedback was a red "Merge failed" toast carrying the raw Postgres
+   string `column "agent_id" does not exist`, and "Merge All" reports
+   `N merged, M failed` with no indication of WHICH groups failed — the list
+   simply re-scans and the un-merged groups are still sitting there, looking
+   identical to the ones that went through. Woody would have read that as
+   "the scan is picking up things it can't merge", not "the endpoint is
+   broken". **Suggestion:** on merge failure keep the failed group in the
+   list with an inline error badge on that row (and drop the raw SQL text in
+   favour of "couldn't merge — the BGP team has been notified"); log the
+   server error so a broken branch surfaces without a person reading a toast.
+
+353. 2026-09-08 · Victoria (BGP staff) / desktop · QA r617 · the two merge
+   tools · **there are two dedupe tools and they behave differently in a way
+   nothing on screen explains.** Settings -> CRM data hygiene HARD-deletes
+   the loser (`crm.ts:1690` — `tx.delete(crmProperties/crmCompanies)`, no
+   undo, no record). `/admin-dedupe` -> Brand duplicates SOFT-deletes it
+   (`brand-dedupe.ts` — sets `merged_into_id`, writes a `dedupe_merges` row,
+   and offers an Undo button for the last N merges). Same word, "Merge", on
+   both screens; one is reversible and one is not. **Suggestion:** say so on
+   the Settings buttons ("Merge (permanent — no undo)") or, better, route the
+   Settings company merges through the brand-dedupe path so every merge is
+   undoable. Related: see r617's deferred #354 — the Settings company branch
+   also re-points far fewer references than the brand-dedupe path does.
+
 350. 2026-09-08 · Mark Warne (Landsec) / client PHONE 390px · QA r616 ·
    opening his own property from the phone · **the phone's landing page is the
    one page with no search, and the phone has no other route to a property.**
