@@ -27,6 +27,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
+import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
 import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, User, Handshake,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
@@ -280,35 +281,6 @@ const ROLLOUT_OPTIONS = [
   { value: "entering_uk",  label: "Entering UK" },
   { value: "rumoured",     label: "Rumoured entry" },
 ];
-
-// Brand-expansion narratives arrive as light markdown with research
-// citation markers ("**bold**", " - **" bullet joints, "[1][3]") — render
-// them styled instead of as a raw asterisk wall (Woody, 2026-09-06).
-function boldSpans(s: string) {
-  return s.split(/\*\*([^*]+)\*\*/g).map((part, i) =>
-    i % 2 ? <strong key={i} className="font-semibold">{part}</strong> : part
-  );
-}
-
-function BrandNarrative({ text }: { text: string }) {
-  const cleaned = String(text)
-    .replace(/\[\d+\](?:\[\d+\])*/g, "")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
-  const blocks = cleaned
-    .split(/\n+|\s+-\s+(?=\*\*)/g)
-    .map(b => b.trim().replace(/^-\s+/, ""))
-    .filter(Boolean);
-  if (blocks.length <= 1) return <p className="text-xs leading-snug text-foreground/90">{boldSpans(cleaned)}</p>;
-  return (
-    <div className="text-xs leading-snug text-foreground/90 space-y-1.5">
-      <p>{boldSpans(blocks[0])}</p>
-      <ul className="space-y-1 pl-3.5 list-disc marker:text-muted-foreground/50">
-        {blocks.slice(1).map((b, i) => <li key={i}>{boldSpans(b)}</li>)}
-      </ul>
-    </div>
-  );
-}
 
 function RolloutBadge({ status }: { status: string | null }) {
   if (!status) return null;
@@ -1120,6 +1092,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const parentGroup = data.parentGroup || null;
   const isBrand = /^tenant/i.test(c.company_type || "");
   const isAgent = !!c.agent_type;
+  // Everything the AI commentary might name, so mentions become links.
+  const commentaryEntities: CommentaryEntity[] = [
+    ...data.contacts.filter((ct: any) => ct.name).map((ct: any) => ({ name: ct.name, href: `/contacts/${ct.id}`, kind: "contact" as const })),
+    ...[...bgpDeals, ...activeDeals, ...completedDeals].filter((d: any) => d?.name && d?.id).map((d: any) => ({ name: d.name, href: `/deals?id=${d.id}`, kind: "deal" as const })),
+    ...(data.ownedProperties || []).filter((p: any) => p.name).map((p: any) => ({ name: p.name, href: `/properties/${p.id}`, kind: "property" as const })),
+    ...pitchedTo.filter((p: any) => p.property_name && p.property_id).map((p: any) => ({ name: p.property_name, href: `/properties/${p.property_id}`, kind: "property" as const })),
+    ...siblingBrands.filter((sb: any) => sb?.name && sb?.id).map((sb: any) => ({ name: sb.name, href: `/companies/${sb.id}`, kind: "company" as const })),
+    ...(parentGroup?.name ? [{ name: parentGroup.name, href: `/companies/${parentGroup.id}`, kind: "company" as const }] : []),
+  ];
 
   const startEdit = () => {
     setForm({
@@ -1616,7 +1597,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 "can't see the pills on ask chat bgp" — parity rule); the
                 chat backend enforces the client tool allowlist. */}
             <div className="mt-2 order-2 space-y-3 empty:hidden">
-              <BgpTakeStrip companyId={companyId} tab="brand" />
+              <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
               <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
             </div>
 
@@ -2036,7 +2017,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             {/* AI relationship read — the calendar/interaction commentary.
                 Consolidated away in the single-strip pass, missed and asked
                 back (Woody, 2026-07-30). */}
-            <BgpTakeStrip companyId={companyId} tab="activity" />
+            <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} />
             {/* BGP coverage — who covers this brand internally, plus
                 a click-to-edit role per person so we can label
                 Charlotte = Investment lead, Harriette = Leasing. */}
@@ -2496,7 +2477,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     {/* The generator ends with BGP-internal pitch guidance
                         ("Recommendation: do not pitch until…") — strip it
                         for client viewers (UX #40). */}
-                    <BrandNarrative
+                    <AiCommentary
+                      entities={commentaryEntities}
                       text={isClientViewer
                         ? String(c.brand_analysis).split(/\*{0,2}Recommendation\b/i)[0].replace(/[\s*—:-]+$/, "")
                         : String(c.brand_analysis)}

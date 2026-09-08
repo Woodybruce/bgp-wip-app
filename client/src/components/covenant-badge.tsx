@@ -5,6 +5,7 @@
  * breakdown of flags + verdict. Drop it anywhere a company number appears.
  */
 import { useQuery } from "@tanstack/react-query";
+import { AiCommentary } from "@/components/ai-commentary";
 import { apiRequest } from "@/lib/queryClient";
 
 const GRADE_STYLE: Record<string, string> = {
@@ -111,7 +112,7 @@ export function CovenantCommentary({ companyNumber, className = "" }: { companyN
   return (
     <div className={`rounded-md border border-border bg-muted/40 p-3 ${className}`} data-testid="covenant-commentary">
       {data.verdict ? (
-        <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">{data.verdict}</p>
+        <AiCommentary text={data.verdict} />
       ) : (
         <p className="text-xs italic text-muted-foreground">Grade {data.grade} ({data.score}/100) — AI commentary unavailable.</p>
       )}

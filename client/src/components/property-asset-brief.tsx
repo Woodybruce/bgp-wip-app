@@ -12,6 +12,7 @@
 // scrubbed for clients is email body content (the activity feed
 // returns sanitised summaries, not message bodies).
 import { useState, useEffect } from "react";
+import { AiCommentary } from "@/components/ai-commentary";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1080,16 +1081,10 @@ export function PropertyRecentActivityCard({ propertyId }: { propertyId: string 
 // Minimal markdown for the AI commentary — paragraph spacing + **bold**
 // (Landsec, 2026-08-04: the prose wall was "hard to read"). Same treatment
 // as the mobile briefing renderer.
+// Delegates to the shared styled renderer so property commentary looks the
+// same as brand/landlord takes (bullets, coloured lead-ins, entity links).
 export function renderAiCommentary(text: string) {
-  return text.split(/\n+/).filter(l => l.trim()).map((para, i) => (
-    <p key={i} className="text-sm leading-relaxed text-foreground/90 mb-2 last:mb-0">
-      {para.split(/(\*\*[^*]+\*\*)/g).map((p, j) =>
-        p.startsWith("**") && p.endsWith("**")
-          ? <strong key={j}>{p.slice(2, -2)}</strong>
-          : <span key={j}>{p}</span>
-      )}
-    </p>
-  ));
+  return <AiCommentary text={text} size="sm" />;
 }
 
 export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { propertyId: string; commentary: string | null; updatedAt: string | null }) {
