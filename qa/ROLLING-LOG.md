@@ -92,18 +92,102 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r611 · 2026-09-08 · LIGHT (r610 had the journey) — ROUND IN PROGRESS
+### r611 · 2026-09-08 · LIGHT (r610 had the journey — no journey this round) · 1 bug fixed across TWO doors: "expiring soon" counted leases that had ALREADY expired · 2 harness assertions strengthened from exists-only · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD
-  at dcdca90.
+  at dcdca90 — pushed with `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE.** Four chunks sharing
-  `QA_CROSS_FILE=/tmp/qa-cross-611.json`: 91 + 130 + 110 (head **331 ok**) +
-  tail **39 ok** = **370 ok / 18 issues**, signature
+  `QA_CROSS_FILE=/tmp/qa-cross-611.json` on r608's split: 91 + 130 + 110
+  (head **331 ok**) + tail **39 ok** = **370 ok / 18 issues**, signature
   **6x400 + 1x409 + 10x403 + 1x503** — identical to r610's post-fix baseline.
-  No 5xx, nothing new. **Streak 66.**
-- Triage: all 18 are the listed noise signature; nothing to chase.
-- Work in progress: derived-rule census (target #1) + strengthening
-  presence-only assertions in `qa/two-bot-round.mjs` (target #2).
+  No 5xx, nothing new. **Streak 66.** All 18 are the listed noise signature.
+  Smoke re-run after the fix: **GREEN 42/0**.
+- **TARGET #1 PAID — the "derived rule with several readers, one already
+  correct" shape, five rounds running.** Census of **"is this lease expiring
+  soon"**, every door:
+  · ✅ `server/crm.ts:9139` (landlord board's expiring units) — `>= NOW() AND
+    <= NOW() + 12 months`, both bounds.
+  · ✅ `client/src/pages/leasing-schedule.tsx:95` — `monthsAway > 0 && <= 12`.
+  · ✅ `client/src/components/CompanyPropertiesBoard.tsx:131` — `>= 0 && <= 12`.
+  · ✅ `client/src/pages/dashboard.tsx:1442` — `>= now && <= +6mo`, a
+    deliberately different window and **labelled** "Expiring (6m)".
+  · ✅ `server/daily-briefing.ts:187` — `BETWEEN NOW() AND NOW() + 6 months`.
+  · ❌ **`server/leasing-schedule.ts:85` and `:102`** (`expiring_soon`, the
+    per-property count behind the board) — `< NOW() + INTERVAL '12 months'`
+    with **no lower bound**, so every lease that had already run out counted
+    as "expiring".
+  · ❌ **`server/chatbgp.ts:9416`** (`search_leasing_schedule`'s
+    `expiringWithinMonths`) — same missing lower bound, while its own tool
+    schema promises "within this many months **from now**". **Seven rounds
+    running a ChatBGP tool schema is in the blast radius.**
+- **PROVEN VISUALLY, pre-fix.** `leasing_schedule_units` carries no
+  `lease_expiry` in the fixture, so seeded 7 Bluewater units — 3 expiring in
+  4 months, 4 that expired 30 months ago. `/api/leasing-schedule/properties`
+  returned **`expiring_soon = 7`**; the board printed the property card badge
+  **"7 expiring"** and the board-wide tile **"7 Expiring Soon"** — while
+  Bluewater's OWN page split the same units correctly into **"3 Expiring
+  <12m"** and **"4 Expired"**. The screen contradicted itself one click
+  apart. Shots `r611-01/02`, `r611-board-prefix`.
+- **FIX:** one shared home, **`shared/lease-expiry.ts`** — `isLeaseExpiringSoon(d, months = 12)`
+  for the JS readers and `leaseExpiringSoonSql(col, months)` for the SQL ones
+  (months coerced to a clamped integer, so it is safe to interpolate; `col`
+  is caller-supplied, never user input). Wired into **all seven doors**: the
+  two `expiring_soon` counts, the ChatBGP tool filter, and the three client
+  copies (dashboard passing `6` so its explicit window survives). Nothing
+  else changed. `npx tsc --noEmit` clean.
+- **RE-VERIFIED VISUALLY:** the same seeded data now renders **"3 expiring"**
+  on the property card and **"3 Expiring Soon"** on the board tile, matching
+  the property page's own "3 Expiring <12m", with the four dead leases where
+  they belong under "4 Expired". Shot `r611v-board-prefix` (post-fix despite
+  the tag). Seeded expiries then cleared — `qa/r611-probe-restore.mjs`,
+  fixture back to 0 rows with `lease_expiry`.
+- **DOORS PROVED vs PATCHED:** all seven were READ and classified; the two
+  wrong ones were fixed and the five correct ones were moved onto the shared
+  helper so the rule can no longer drift. The ChatBGP door was proved by SQL
+  (its answer path needs an AI key), the two HTTP doors and three client
+  doors were proved in the browser / through the API.
+- **TARGET #2 — assertions that only check a thing EXISTS.** Swept
+  `qa/two-bot-round.mjs` and strengthened the two that guard user-facing text:
+  · `client-dashboard-map-and-relationship` asserted the **BGP Relationship**
+    card existed and nothing about what it said. Now asserts it names a
+    person, and fails on a raw UUID or on `undefined`/`null`/`Unknown`/
+    `[object Object]` — the exact r610 Busiest Agent failure mode, one
+    surface over and client-facing.
+  · The same scenario now checks the **"Expiring (6m)" KPI's NUMBER** against
+    the portfolio payload recomputed with this round's rule, instead of the
+    tile merely being on screen (7 in the fixture, 3 already-expired leases
+    correctly excluded). **Trap worth remembering:** the first version read
+    the tile's first digit and got **6** — out of the label "Expiring (6m)" —
+    and reported a false bug; read the count element, not the tile's text.
+- Harness: **`staff-leasing-board-expiring-excludes-expired`** added (staff
+  chunk, before `staff-turnover-entries`) — creates one unit expiring in 4
+  months and one that expired 30 months ago on Bluewater, asserts
+  `expiring_soon` moved by **exactly 1**, bulk-deletes both and asserts the
+  DELETE code (the r607 trap) plus that the count returned to its start.
+  **Proven non-vacuous:** dropping the lower bound back out of
+  `leaseExpiringSoonSql` makes it fail with *"expiring_soon moved by 2 …
+  before 0, after 2"*. Both scenarios green together: **2 ok, 0 issues**.
+- Bugs deferred: none new. Deferred pool unchanged (UX #331/#332, the
+  favorite-instructions and `add_property_imagery` scope write-ups — no time
+  this round, still open —, the two column DEFAULTs, #320's dead phone
+  "More" tab).
+- Suggestions added: **UX #337** (ChatBGP's leasing tool can no longer be
+  asked for already-lapsed leases — add `expiredWithinMonths`/`includeExpired`
+  rather than leaving it to a missing bound), **UX #338** (the leasing board
+  shows "N expiring" but never "N expired", though the property page does —
+  a landlord with four dead leases looks quiet from the board).
+- `server/chatbgp-app-map.ts` NOT touched — no navigation, page or control
+  moved. `shared/schema.ts` and `migrations/` NOT touched
+  (`shared/lease-expiry.ts` is a new pure helper module).
+- Note for future rounds: the **Leasing Schedule Board is flagged ARCHIVED**
+  in the UI ("retired — day-to-day leasing lives on the property Tenancy
+  Schedule and the Letting Tracker"), so the badge's blast radius is smaller
+  than the ChatBGP door's. Also `leasing_schedule_units.lease_expiry` is
+  **entirely NULL in the fixture** — any expiry work on that table has to
+  seed first (`qa/r611-probe-setup.mjs` / `qa/r611-probe-restore.mjs`).
+- New flakes: none.
+- Next journey: **rotation #1, BGP staff · desktop 1440px** (r611 was LIGHT →
+  r612 is FULL).
 
 ### r610 · 2026-09-08 · FULL · journey: **BGP staff · phone 390px** (rotation slot #4) · 2 bugs fixed: a task due TODAY read as OVERDUE in five of its six readers, and the diary's Busiest Agent tile printed a raw UUID at the user while splitting one agent across two keys · 4 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

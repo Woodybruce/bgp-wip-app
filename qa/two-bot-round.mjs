@@ -2708,6 +2708,48 @@ async function victoriaRound(page, cross) {
     if (cleanup.some(c => c !== 200 && c !== 204)) throw new Error(`probe task cleanup failed (${cleanup.join(',')})`);
   });
 
+  // "Expiring soon" means the lease still runs and runs out inside the window.
+  // Two units seeded on the same property — one expiring in 4 months, one that
+  // expired 30 months ago — must move the board's expiring_soon count by
+  // exactly ONE. The count used to have no lower bound, so the property card's
+  // "N expiring" badge summed expiring AND long-dead leases while the same
+  // property's own page listed them under separate "Expiring <12m" /
+  // "Expired" tiles (r611).
+  await step(page, p, 'staff-leasing-board-expiring-excludes-expired', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const props = await (await fetch('/api/leasing-schedule/properties', { headers: auth })).json();
+      const prop = (props || []).find((x) => /Bluewater/i.test(x.name || ''));
+      if (!prop) return { skip: 'no Bluewater on the leasing board' };
+      const before = prop.expiring_soon;
+      const iso = (months) => { const d = new Date(); d.setMonth(d.getMonth() + months); return d.toISOString().slice(0, 10); };
+      const mk = async (unit_name, lease_expiry) => {
+        const res = await fetch('/api/leasing-schedule/unit', {
+          method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ property_id: prop.id, unit_name, lease_expiry, status: 'Occupied' }),
+        });
+        return res.ok ? (await res.json())?.id : null;
+      };
+      const soonId = await mk(`QA-R${round} expiring soon`, iso(4));
+      const goneId = await mk(`QA-R${round} long expired`, iso(-30));
+      const after = ((await (await fetch('/api/leasing-schedule/properties', { headers: auth })).json()) || [])
+        .find((x) => x.id === prop.id)?.expiring_soon;
+      const del = await fetch('/api/leasing-schedule/bulk-delete', {
+        method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ propertyId: prop.id, ids: [soonId, goneId].filter(Boolean) }),
+      });
+      const restored = ((await (await fetch('/api/leasing-schedule/properties', { headers: auth })).json()) || [])
+        .find((x) => x.id === prop.id)?.expiring_soon;
+      return { before, after, soonId, goneId, delStatus: del.status, restored };
+    }, ROUND);
+    if (r.skip) return;
+    if (!r.soonId || !r.goneId) throw new Error('leasing unit create failed — cannot judge the expiring count');
+    if (r.after !== r.before + 1)
+      throw new Error(`expiring_soon moved by ${r.after - r.before} for one expiring + one long-expired unit — an already-expired lease is being counted as expiring (before ${r.before}, after ${r.after})`);
+    if (r.delStatus !== 200 && r.delStatus !== 204) throw new Error(`probe unit cleanup failed (HTTP ${r.delStatus})`);
+    if (r.restored !== r.before) throw new Error(`expiring_soon did not return to ${r.before} after cleanup (got ${r.restored})`);
+  });
+
   // Staff logs turnover entries — one on an in-slice brand, one on an
   // out-of-slice company (Hammerson) — so Mark's round can prove the client
   // turnover read is sliced and the write staff-only. run-round.sh purges
@@ -7079,6 +7121,20 @@ async function markRound(page, cross) {
     await page.waitForTimeout(3000);
     if (!(await page.getByText('BGP Relationship', { exact: false }).count()))
       throw new Error('BGP Relationship card missing from client dashboard');
+    // Presence is not the contract — the card promises the client WHO at BGP
+    // looks after them. Assert it names a person and prints no raw key
+    // (r610's Busiest Agent tile shipped a UUID behind an exists-only check).
+    const rel = await page.evaluate(() => {
+      const head = [...document.querySelectorAll('*')].find(e => /BGP Relationship/i.test(e.textContent || '') && e.children.length < 6);
+      let box = head; for (let i = 0; i < 6 && box; i++) { if ((box.innerText || '').length > 40) break; box = box.parentElement; }
+      return (box?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+    });
+    if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(rel))
+      throw new Error(`BGP Relationship card is printing a raw UUID at the client: ${rel.slice(0, 140)}`);
+    if (/\b(undefined|null|NaN|Unknown|\[object Object\])\b/.test(rel))
+      throw new Error(`BGP Relationship card is printing a placeholder value: ${rel.slice(0, 140)}`);
+    if (!/[A-Z][a-z]+\s+[A-Z][a-z]+/.test(rel))
+      throw new Error(`BGP Relationship card names nobody — the client is told who looks after them, so it must show a person: ${rel.slice(0, 140)}`);
     // The map widget was renamed "Properties & Deals" in the canonical-family
     // rework (2026-08-03) — accept either label; the leaflet assertions below
     // are the real substance.
@@ -7088,6 +7144,30 @@ async function markRound(page, cross) {
       throw new Error('portfolio map widget missing from client dashboard');
     if (!(await page.locator('.leaflet-container').count()))
       throw new Error('portfolio map did not initialise (no leaflet container)');
+    // The "Expiring (6m)" KPI is a derived rule with several readers (r611).
+    // Check the number it prints, not that the tile is on screen: an already
+    // expired lease is expired, not expiring.
+    const exp = await page.evaluate(async () => {
+      const tile = document.querySelector('[data-testid="kpi-expiring"]');
+      if (!tile) return { missing: true };
+      // Read the count element itself — the label is "Expiring (6m)", whose
+      // own digit would otherwise be mistaken for the number.
+      const shown = parseInt((tile.querySelectorAll('p')[1]?.textContent || '').trim(), 10);
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const cid = me.companyScopeId;
+      if (!cid) return { shown, truth: null };
+      const pf = await (await fetch(`/api/company-portfolio/${cid}`, { headers: auth })).json();
+      const now = Date.now();
+      const horizon = new Date(); horizon.setMonth(horizon.getMonth() + 6);
+      const units = pf.leasingUnits || [];
+      const truth = units.filter((u) => u.lease_expiry && new Date(u.lease_expiry).getTime() > now && new Date(u.lease_expiry).getTime() <= horizon.getTime()).length;
+      const expired = units.filter((u) => u.lease_expiry && new Date(u.lease_expiry).getTime() <= now).length;
+      return { shown, truth, expired };
+    });
+    if (exp.missing) throw new Error('client dashboard "Expiring (6m)" KPI tile missing');
+    if (exp.truth !== null && exp.shown !== exp.truth)
+      throw new Error(`"Expiring (6m)" tile says ${exp.shown}, the portfolio payload holds ${exp.truth} leases running out inside 6 months (${exp.expired} already expired) — the tile is counting on a different rule`);
     const coords = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const me = await (await fetch('/api/auth/me', { headers: auth })).json();

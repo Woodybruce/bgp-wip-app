@@ -13,6 +13,30 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+338. 2026-09-08 · BGP staff / desktop (QA r611) · Victoria looks at the
+   Leasing Schedule Board to see which properties need attention · the board
+   gives each property one amber "N expiring" badge and one board-wide
+   "Expiring Soon" tile, and nothing at all for leases that have ALREADY
+   lapsed — but open the property and its own header splits the same units
+   into "Expiring <12m" AND "Expired" tiles. So a landlord with four dead
+   leases and none expiring looks completely quiet from the board.
+   Suggestion: give the board an "Expired" column/badge next to "Expiring",
+   fed by the same per-property query, so the board and the property page
+   count the same two things. (The board is flagged ARCHIVED/retired, so this
+   may be worth doing only if it stays reachable.)
+
+337. 2026-09-08 · BGP staff / ChatBGP (QA r611) · Victoria asks ChatBGP for
+   leasing-schedule units by lease expiry · the `search_leasing_schedule`
+   tool's only date filter is `expiringWithinMonths` — "within this many
+   months from now", now correctly forward-only — so there is no way to ask
+   it the other obvious question, "which leases have already lapsed?". Before
+   r611 that question accidentally worked (the filter had no lower bound) but
+   silently mixed live and dead leases into one answer.
+   Suggestion: add an `expiredWithinMonths` (or an `includeExpired` boolean)
+   to the same tool schema so the lapsed set is askable on purpose rather
+   than by accident, and say in the description which side of today each
+   filter covers.
+
 336. 2026-09-08 · BGP staff / phone 390px (QA r610) · Victoria opens the diary
    on her phone to see today · above the day column sit the Day/Work week/Week
    switch, a CRM toggle, TEN team pills wrapping to three rows, and a full

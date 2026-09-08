@@ -29,6 +29,7 @@ import {
   Sparkles, Circle, ThumbsUp, ThumbsDown, UserPlus, RefreshCw, Pencil,
 } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { isLeaseExpiringSoon } from "@shared/lease-expiry";
 
 interface LeasingProperty {
   id: string;
@@ -93,11 +94,7 @@ function formatDate(d: string | null) {
 }
 
 function isExpiringSoon(d: string | null) {
-  if (!d) return false;
-  const expiry = new Date(d);
-  const now = new Date();
-  const monthsAway = (expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24 * 30);
-  return monthsAway <= 12 && monthsAway > 0;
+  return isLeaseExpiringSoon(d);
 }
 
 function isExpired(d: string | null) {

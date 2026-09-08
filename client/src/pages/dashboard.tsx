@@ -105,6 +105,7 @@ import {
 import type { CrmStats, NewsArticle, DashboardIntelligence, CalendarEvent } from "@/components/dashboard";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import type { CrmComp } from "@shared/schema";
+import { isLeaseExpiringSoon } from "@shared/lease-expiry";
 
 
 // Merged "Activity Feed" = Daily Digest alerts (proactive) + System Activity (automated background processes).
@@ -1439,14 +1440,7 @@ export default function Dashboard() {
       </div>
 
       {isLandsecTeam && portfolioData && (() => {
-        const isExpiringSoon = (d: string | null) => {
-          if (!d) return false;
-          const exp = new Date(d);
-          const now = new Date();
-          const sixMonths = new Date();
-          sixMonths.setMonth(sixMonths.getMonth() + 6);
-          return exp >= now && exp <= sixMonths;
-        };
+        const isExpiringSoon = (d: string | null) => isLeaseExpiringSoon(d, 6);
 
         const leasingByProperty = new Map<string, { name: string; id: string; units: any[] }>();
         for (const u of (portfolioData.leasingUnits || [])) {

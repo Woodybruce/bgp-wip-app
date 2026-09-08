@@ -50,6 +50,7 @@ import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
 import { legacyToCode, isExcludedLegacyStatus, TERMINAL_STATUSES } from "@shared/deal-status";
 import { isTaskOverdue } from "@shared/task-due";
 import { amlBlockForDealStatus } from "./deal-gates";
+import { leaseExpiringSoonSql } from "@shared/lease-expiry";
 
 // Told to the model verbatim when the AML gate refuses a deal-status move, so
 // chat gives the same way out the HTTP 409 does rather than just failing.
@@ -9413,7 +9414,7 @@ export async function executeCrmToolRaw(
         idx++;
       }
       if (fnArgs.expiringWithinMonths) {
-        conditions.push(`u.lease_expiry IS NOT NULL AND u.lease_expiry <= NOW() + INTERVAL '${Math.min(parseInt(fnArgs.expiringWithinMonths), 60)} months'`);
+        conditions.push(leaseExpiringSoonSql('u.lease_expiry', Math.min(parseInt(fnArgs.expiringWithinMonths), 60)));
       }
       conditions.push(`(c.ai_disabled IS NULL OR c.ai_disabled = FALSE)`);
       const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
