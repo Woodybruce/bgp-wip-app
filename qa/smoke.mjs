@@ -16,9 +16,10 @@
 import { chromium } from '../node_modules/playwright/index.mjs';
 import { mkdirSync, existsSync } from 'fs';
 import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'node:url';
 
 const BASE = process.env.SMOKE_BASE || 'http://localhost:5000';
-const SHOTS = new URL('./smoke-shots/', import.meta.url).pathname;
+const SHOTS = fileURLToPath(new URL('./smoke-shots/', import.meta.url));
 mkdirSync(SHOTS, { recursive: true });
 
 const PASSWORD = 'B@nd0077!';
@@ -32,7 +33,6 @@ const BRAND_CO = '11110000-0000-0000-0000-000000000201';      // Starbucks fixtu
 
 // Environment noise, mirrored from two-bot-round — never a smoke failure.
 const IGNORED_RESPONSES = [
-  /\/api\/auth\/me$/,
   /\/api\/microsoft\//,
   /\/api\/chatbgp\/status/,
   /\/api\/hr\/photo\//,
@@ -73,8 +73,9 @@ function watchPage(page, label) {
 
 // Real form login — token injection doesn't hydrate the production build
 // (secure-cookie sessions), and the form path is what users actually hit.
-async function apiLogin(context, username) {
+async function apiLogin(context, username, label) {
   const page = await context.newPage();
+  watchPage(page, label);
   await page.goto(BASE, { waitUntil: 'networkidle' });
   const guest = page.locator('text=Client / guest sign in').first();
   if (await guest.count()) { await guest.click(); await page.waitForTimeout(500); }
@@ -102,7 +103,12 @@ async function settle(page, ms = 6000) {
 }
 
 async function noCrash(page, label) {
-  const boundary = await page.locator('text=/Something went wrong|component crashed/i').count();
+  const signedInUser = page.getByTestId('text-current-user');
+  const authenticated = await signedInUser.waitFor({ state: 'visible', timeout: 20000 })
+    .then(() => signedInUser.innerText()).catch(() => '');
+  check(`${label}: authenticated app renders`, !!authenticated && !/^Loading/i.test(authenticated));
+  const boundary = await page.locator('[data-testid="error-boundary-fallback"]').count()
+    + await page.locator('text=/Something went wrong|component crashed/i').count();
   check(`${label}: no error boundary`, boundary === 0);
 }
 
@@ -127,14 +133,13 @@ console.log('── staff (Victoria) ──');
 {
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   let page, token;
-  try { ({ page, token } = await apiLogin(ctx, STAFF)); check('staff: login', true); }
+  try { ({ page, token } = await apiLogin(ctx, STAFF, 'staff')); check('staff: login', true); }
   catch (e) { check('staff: login', false, e.message); }
 
   if (page) {
-    watchPage(page, 'staff');
-
     await settle(page);
     await noCrash(page, 'staff dashboard');
+    check('staff dashboard: page content renders', await page.getByTestId('dashboard-page').isVisible());
     await page.screenshot({ path: `${SHOTS}/staff-dashboard.png` }).catch(() => {});
 
     // Property page — the busiest surface in the app.
@@ -142,7 +147,7 @@ console.log('── staff (Victoria) ──');
     await settle(page, 6000);
     await noCrash(page, 'staff property page');
     check('property: tenancy schedule renders', await page.locator('[data-testid="btn-open-letting-tracker"]').count() > 0);
-    check('property: tracker strip renders', await page.locator('[data-testid="tracker-summary-strip"]').count() > 0);
+    check('property: unified tenancy schedule renders', await page.getByTestId('property-tenancy-schedule').isVisible());
     check('property: tracker card renders', await page.locator('[data-testid="tracker-summary-card"]').count() > 0);
     check('property: linked contacts panel', await page.locator('[data-testid="linked-contacts-panel"]').count() > 0);
     check('property: linked deals panel', await page.locator('[data-testid="deals-summary-card"]').count() > 0);
@@ -153,7 +158,7 @@ console.log('── staff (Victoria) ──');
     await page.goto(`${BASE}/deals/letting?propertyId=${BLUEWATER}&status=AVA`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page, 7000);
     await noCrash(page, 'staff letting tracker');
-    const trackerRows = await page.locator('table tbody tr').first().waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
+    const trackerRows = await page.locator('[data-testid^="row-unit-"]').first().waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
     check('tracker: unit rows render', trackerRows);
 
     // Deals board deep link.
@@ -184,6 +189,7 @@ console.log('── staff (Victoria) ──');
     await page.goto(`${BASE}/tasks`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page);
     await noCrash(page, 'staff tasks');
+    check('staff tasks: page content renders', await page.getByTestId('tasks-page').isVisible());
 
     // Pathway board — its table is bootstrapped at runtime, so a fresh DB
     // used to 500 here until /api/portfolios had been opened once (r205).
@@ -200,12 +206,10 @@ console.log('── client (Mark, Landsec) ──');
 {
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   let page, token;
-  try { ({ page, token } = await apiLogin(ctx, CLIENT)); check('client: login', true); }
+  try { ({ page, token } = await apiLogin(ctx, CLIENT, 'client')); check('client: login', true); }
   catch (e) { check('client: login', false, e.message); }
 
   if (page) {
-    watchPage(page, 'client');
-
     await settle(page, 6000);
     await noCrash(page, 'client dashboard');
     check('client dashboard: portfolio section', await page.locator('[data-testid="portfolio-overview"]').count() > 0);
@@ -269,7 +273,7 @@ await browser.close();
 // DB access, so it only runs when DATABASE_URL is provided (CI does).
 if (process.env.DATABASE_URL) {
   console.log('── tracker sync (viewings + offers) ──');
-  const r = spawnSync('npx', ['tsx', new URL('./tracker-sync-check.ts', import.meta.url).pathname], {
+  const r = spawnSync('npx', ['tsx', fileURLToPath(new URL('./tracker-sync-check.ts', import.meta.url))], {
     env: process.env, encoding: 'utf8', timeout: 120000,
   });
   if (r.stdout) process.stdout.write(r.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));

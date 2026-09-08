@@ -2,8 +2,8 @@
 // interactive replacement for the annotated-PowerPoint evidence plan.
 // List page + full-screen plan viewer/editor:
 //   • background scheme plan (PDF/image) with zoom + pan
-//   • unit outlines drawn once (click corners, double-click to close);
-//     labels sit at each unit's centroid — inside the unit, not scattered
+//   • trace closed demises or draw/correct their corners
+//   • editable, contained summary labels on every unit
 //   • per-unit facts editable in place; tenancy-schedule import fills
 //     expiry / break / review / ERV / passing for matched units only
 //   • TAF PDFs (single or tranche scans) AI-extract into evidence entries
@@ -13,14 +13,19 @@ import { Link, useLocation, useRoute } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { containedMarker, isValidPolygon, moveMarkerInside } from "@shared/plan-geometry";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EvidencePlanReview } from "@/components/evidence-plan-review";
+import { EvidencePlanScanReview } from "@/components/evidence-plan-scan-review";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -31,12 +36,14 @@ type Pt = { x: number; y: number };
 type PlanLevel = {
   id: string; name: string; background_key: string | null;
   background_width: number | null; background_height: number | null;
+  source_pdf_url?: string | null;
 };
 type PlanUnit = {
-  id: string; unit_ref: string; unit_norm?: string; ts_linked?: boolean;
+  id: string; unit_ref: string; unit_norm?: string; ts_linked?: boolean; ts_row_id?: string | null;
   tenant_name: string | null; level_id: string | null; polygon: Pt[] | null; dot?: Pt | null;
   lease_expiry: string | null; break_date: string | null; review_date: string | null;
   erv: string | null; passing_rent: string | null; sqft: string | null; notes: string | null;
+  source?: string | null; ts_link_status?: string;
 };
 type Matter = { id: string; matter_type: string; status: string; acting_for: string | null; unit_name: string | null; unit_norm: string | null };
 type Entry = {
@@ -47,8 +54,9 @@ type Entry = {
 };
 
 const fmtMoney = (v: any) => {
+  if (v == null || v === "") return "—";
   const n = Number(v);
-  return Number.isFinite(n) && n !== 0 ? `£${n.toLocaleString("en-GB", { maximumFractionDigits: 2 })}` : "—";
+  return Number.isFinite(n) ? `£${n.toLocaleString("en-GB", { maximumFractionDigits: 2 })}` : "—";
 };
 const fmtDate = (v: any) => {
   if (!v) return "—";
@@ -56,10 +64,6 @@ const fmtDate = (v: any) => {
   if (isNaN(d.getTime())) return "—";
   const sameYear = d.getFullYear() === new Date().getFullYear();
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" as const }) });
-};
-const centroid = (poly: Pt[]): Pt => {
-  const n = poly.length || 1;
-  return { x: poly.reduce((s, p) => s + p.x, 0) / n, y: poly.reduce((s, p) => s + p.y, 0) / n };
 };
 // Mirrors normaliseUnitRef in server/evidence-plan.ts — used to resolve a
 // ?unit= deep link against the plan's units.
@@ -83,9 +87,9 @@ const MATTER_TYPE_LABELS: Record<string, string> = {
 const evidenceTypeKey = (t: string | null | undefined): "OML" | "LR" | "RR" | "RG" | "OTHER" => {
   const s = String(t || "").toLowerCase();
   if (/oml|open market/.test(s)) return "OML";
-  if (/renewal/.test(s)) return "LR";
-  if (/review/.test(s)) return "RR";
-  if (/re-?gear/.test(s)) return "RG";
+  if (/renewal|^lr$/.test(s)) return "LR";
+  if (/review|^rr$/.test(s)) return "RR";
+  if (/re-?gear|^rg$/.test(s)) return "RG";
   return "OTHER";
 };
 // Defaults picked to CONTRAST with typical letting-plan artwork (teal
@@ -223,8 +227,9 @@ function PlanList() {
 // ── Plan viewer / editor ──────────────────────────────────────────────────
 function PlanView({ planId }: { planId: string }) {
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [, navigate] = useLocation();
-  const { data, isLoading } = useQuery<{ plan: any; levels: PlanLevel[]; units: PlanUnit[]; entries: Entry[]; matters: Matter[]; jobs: any[] }>({
+  const { data, isLoading } = useQuery<{ plan: any; levels: PlanLevel[]; units: PlanUnit[]; entries: Entry[]; matters: Matter[]; jobs: any[]; schedule_rows?: any[] }>({
     queryKey: ["/api/evidence-plans", planId],
     queryFn: async () => {
       const r = await fetch(`/api/evidence-plans/${planId}`, { credentials: "include", headers: getAuthHeaders() });
@@ -240,14 +245,30 @@ function PlanView({ planId }: { planId: string }) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Pt>({ x: 0, y: 0 });
   const dragging = useRef<null | { start: Pt; panStart: Pt; moved: boolean }>(null);
+  const suppressClick = useRef(false);
   const surfaceRef = useRef<HTMLDivElement>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drawing, setDrawing] = useState(false);
+  const [tracing, setTracing] = useState(false);
+  const [traceBusy, setTraceBusy] = useState(false);
+  const traceGeneration = useRef(0);
+  const [redrawId, setRedrawId] = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [unitSearch, setUnitSearch] = useState("");
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [scanReviewOpen, setScanReviewOpen] = useState(false);
+  const [cleanPlan, setCleanPlan] = useState(false);
+  const [strongLines, setStrongLines] = useState(false);
+  const [hideRedInk, setHideRedInk] = useState(false);
+  const [numberLabels, setNumberLabels] = useState(false);
   const [cropping, setCropping] = useState(false);
   const [cropRect, setCropRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const cropStart = useRef<Pt | null>(null);
   const [draft, setDraft] = useState<Pt[]>([]);
+  const draftRef = useRef<Pt[]>([]);
+  const draftBackgroundKey = useRef<string | null>(null);
+  const setPoints = (points: Pt[]) => { draftRef.current = points; setDraft(points); };
   const [busy, setBusy] = useState<string | null>(null);
   const bgInputRef = useRef<HTMLInputElement>(null);
   const tsInputRef = useRef<HTMLInputElement>(null);
@@ -260,6 +281,14 @@ function PlanView({ planId }: { planId: string }) {
   const entries = data?.entries || [];
   const matters = data?.matters || [];
   const detectRunning = (data?.jobs || []).some((j: any) => j.kind === "detect");
+  const [scanJobId, setScanJobId] = useState<string | null>(null);
+  const [scanReport, setScanReport] = useState<string | null>(null);
+  const completedScan = useRef<string | null>(null);
+  const { data: scanJob } = useQuery<any>({
+    queryKey: ["/api/evidence-plans/jobs", scanJobId], enabled: !!scanJobId,
+    queryFn: async () => (await apiRequest("GET", `/api/evidence-plans/jobs/${scanJobId}`)).json(),
+    refetchInterval: query => query.state.data?.status === "running" ? 2000 : false,
+  });
   const [activeLevelId, setActiveLevelId] = useState<string | null>(null);
   const [linkingProperty, setLinkingProperty] = useState(false);
   const [tafJob, setTafJob] = useState<any>(null);
@@ -299,11 +328,32 @@ function PlanView({ planId }: { planId: string }) {
     deepLinked.current = true;
   }, [units]);
   const selected = units.find(u => u.id === selectedId) || null;
+  const selectUnit = (id: string) => { setSelectedId(id); setDetailsOpen(true); setHover(null); };
   const selectedEntries = useMemo(
     () => entries.filter(e => (selected ? e.unit_id === selected.id : false)),
     [entries, selected]);
   const unlinkedCount = entries.filter(e => !e.unit_id).length;
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/evidence-plans", planId] });
+  useEffect(() => {
+    const job = data?.jobs?.find((item: any) => item.kind === "detect");
+    if (job && job.id !== scanJobId) { setScanJobId(job.id); setScanReport(null); }
+  }, [data?.jobs, scanJobId]);
+  useEffect(() => {
+    if (!scanJob || scanJob.status === "running" || completedScan.current === scanJob.id) return;
+    completedScan.current = scanJob.id;
+    const summary = scanJob.reviewSummary;
+    setScanReport(scanJob.status === "error" ? `Scan couldn't finish: ${scanJob.error || "Try again or trace a unit individually."}`
+      : summary ? `${summary.detected} boundaries detected · ${summary.added} added · ${summary.refined} refined · ${summary.current} already current · ${summary.needsReview} awaiting review. Existing unit information has been kept.`
+      : `Scan finished. ${scanJob.created || 0} units added. ${scanJob.error || "Review scan to inspect the detected outlines and any boundaries awaiting review."}`);
+    invalidate();
+  }, [scanJob]);
+  const refreshUnits = async () => {
+    try {
+      const r = await apiRequest("POST", `/api/evidence-plans/${planId}/detect-units`, { levelId: activeLevel?.id || null });
+      const started = await r.json(); setScanJobId(started.jobId); setScanReport(null);
+      invalidate();
+    } catch (e: any) { toast({ title: "Couldn't start detection", description: e.message, variant: "destructive" }); }
+  };
 
   // Latest Zone A per unit — drives the dot's figure on the plan.
   const latestZaByUnit = useMemo(() => {
@@ -333,12 +383,24 @@ function PlanView({ planId }: { planId: string }) {
   }, [entries]);
   const [hover, setHover] = useState<{ unitId: string; x: number; y: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const measure = () => setCanvasSize({ width: canvas.clientWidth, height: canvas.clientHeight });
+    const observer = new ResizeObserver(measure);
+    observer.observe(canvas); measure();
+    return () => observer.disconnect();
+  }, [isLoading, isMobile]);
   const [dotDraft, setDotDraft] = useState<{ unitId: string; x: number; y: number } | null>(null);
+  const dotGesture = useRef<{ unitId: string; start: Pt; point: Pt; moved: boolean } | null>(null);
+  const [dotSaving, setDotSaving] = useState(false);
   // UX #137 — the unit-ref used to come from a raw window.prompt(); Esc
   // silently threw the just-drawn outline away. App dialog keeps the
   // polygon on Cancel so it can be re-named rather than redrawn.
   const [pendingPoly, setPendingPoly] = useState<Pt[] | null>(null);
   const [pendingRef, setPendingRef] = useState("");
+  const pendingTarget = useRef<{ unitId: string | null; levelId: string | null; backgroundKey: string | null } | null>(null);
   // Per-plan key colours: defaults from EVIDENCE_TYPE_META, overridable by
   // clicking a swatch in the key (saved on the plan, shared by everyone).
   const colourOf = (k: string) => (plan?.dot_colours?.[k] as string) || EVIDENCE_TYPE_META[k]?.colour || EVIDENCE_TYPE_META.OTHER.colour;
@@ -351,73 +413,35 @@ function PlanView({ planId }: { planId: string }) {
   };
   const [showZa, setShowZa] = useState<boolean>(() => { try { return localStorage.getItem("bgp-ep-za") !== "0"; } catch { return true; } });
 
-  // Marker declutter (Woody, 2026-09-04: "overlapping") — map-app style.
-  // Working in viewBox coordinates (isotropic on screen): higher Zone A
-  // places first; a colliding disc is nudged away a little; if there's
-  // still no room it collapses to a small plain dot at its true anchor.
-  // Radii shrink as you zoom in, so minis graduate to full discs.
+  // Each label belongs to its own demise. Never nudge it into another
+  // shop to resolve overlap; fit the disc to the available interior space.
   const markerLayout = useMemo(() => {
-    const aspect = activeLevel?.background_width ? (activeLevel.background_height || 0) / activeLevel.background_width : 0.7;
-    const out = new Map<string, { x: number; y: number; r: number; mini: boolean }>();
-    const items = levelUnits
-      .filter(u => (evidenceCountByUnit.get(u.id) || 0) > 0 && Array.isArray(u.polygon) && (u.polygon as Pt[]).length >= 3)
-      .map(u => {
-        const poly = u.polygon as Pt[];
-        const dp = dotDraft?.unitId === u.id ? dotDraft
-          : (u.dot && typeof u.dot.x === "number" ? u.dot : centroid(poly));
-        const za = latestZaByUnit.get(u.id);
-        const label = String(u.unit_ref || "");
-        const isRealRef = /\d/.test(label) && label.length <= 8;
-        const twoLine = isRealRef && showZa && za != null;
-        const R = (twoLine ? 1.0 : 0.85) * Math.max(1.15, Math.min(1.9, 2.3 / Math.sqrt(zoom)));
-        return { id: u.id, ox: dp.x * 100, oy: dp.y * 100 * aspect, R, za: za ?? -1 };
-      })
-      .sort((a, b) => b.za - a.za);
-    const placed: Array<{ x: number; y: number; r: number }> = [];
-    for (const m of items) {
-      let x = m.ox, y = m.oy;
-      const r = m.R;
-      for (let iter = 0; iter < 4; iter++) {
-        const hit = placed.find(p => Math.hypot(p.x - x, p.y - y) < p.r + r + 0.15);
-        if (!hit) break;
-        const d = Math.hypot(hit.x - x, hit.y - y) || 0.01;
-        const need = hit.r + r + 0.2 - d;
-        x += ((x - hit.x) / d) * need;
-        y += ((y - hit.y) / d) * need;
-        if (Math.hypot(x - m.ox, y - m.oy) > r * 1.6) break; // don't wander off the unit
-      }
-      const collides = placed.some(p => Math.hypot(p.x - x, p.y - y) < p.r + r + 0.1);
-      const tooFar = Math.hypot(x - m.ox, y - m.oy) > r * 1.6;
-      if (collides || tooFar) {
-        const miniR = Math.max(0.3, r * 0.3);
-        out.set(m.id, { x: m.ox, y: m.oy, r: miniR, mini: true });
-        placed.push({ x: m.ox, y: m.oy, r: miniR });
-      } else {
-        out.set(m.id, { x, y, r, mini: false });
-        placed.push({ x, y, r });
-      }
-    }
-    return out;
-  }, [levelUnits, evidenceCountByUnit, latestZaByUnit, dotDraft, zoom, activeLevel, showZa]);
-
+    const aspect = activeLevel?.background_width ? (activeLevel.background_height || 1) / activeLevel.background_width : 0.7;
+    return new Map(levelUnits.filter(u => isValidPolygon(u.polygon)).map(u => {
+      const desired = dotDraft?.unitId === u.id ? dotDraft : u.dot;
+      return [u.id, containedMarker(u.polygon!, desired, 0.019 / Math.sqrt(zoom), aspect)];
+    }));
+  }, [levelUnits, dotDraft, zoom, activeLevel]);
 
   const toPlanCoords = (clientX: number, clientY: number): Pt | null => {
     const el = surfaceRef.current;
     if (!el) return null;
     const rect = el.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
     return { x: (clientX - rect.left) / rect.width, y: (clientY - rect.top) / rect.height };
   };
 
   const addUnit = useMutation({
-    mutationFn: async ({ polygon, unitRef }: { polygon: Pt[]; unitRef: string }) => {
-      const r = await apiRequest("POST", `/api/evidence-plans/${planId}/units`, { unitRef, polygon, levelId: activeLevel?.id || null });
+    mutationFn: async ({ polygon, unitRef, levelId, backgroundKey }: { polygon: Pt[]; unitRef: string; levelId: string | null; backgroundKey: string | null }) => {
+      const r = await apiRequest("POST", `/api/evidence-plans/${planId}/units`, { unitRef, polygon, levelId, expectedBackgroundKey: backgroundKey });
       return r.json();
     },
     onSuccess: (u: any) => {
       setPendingPoly(null);
       setPendingRef("");
+      stopDrawing();
       invalidate();
-      setSelectedId(u.id);
+      selectUnit(u.id);
       if (u.adopted > 0) toast({ title: `Unit ${u.unit_ref} added`, description: `${u.adopted} waiting evidence entr${u.adopted === 1 ? "y" : "ies"} linked to it.` });
     },
     onError: (e: any) => toast({ title: "Couldn't add unit", description: e.message, variant: "destructive" }),
@@ -432,6 +456,56 @@ function PlanView({ planId }: { planId: string }) {
     onSuccess: invalidate,
     onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
+
+  const stopDrawing = () => { traceGeneration.current++; setTraceBusy(false); setDrawing(false); setTracing(false); setRedrawId(null); setPoints([]); pendingTarget.current = null; };
+  const finishOutline = () => {
+    const points = draftRef.current;
+    if (!isValidPolygon(points)) {
+      toast({ title: "Check the outline", description: "Use at least three distinct corners without crossing the boundary lines.", variant: "destructive" });
+      return;
+    }
+    setPendingPoly(points);
+    pendingTarget.current = { unitId: redrawId, levelId: activeLevel?.id || null, backgroundKey: draftBackgroundKey.current };
+    setPendingRef(redrawId ? units.find(u => u.id === redrawId)?.unit_ref || "" : "");
+    setDrawing(false);
+    setTracing(false);
+  };
+  const saveOutline = async () => {
+    const target = pendingTarget.current;
+    if (!pendingPoly || !pendingRef.trim() || !target) return;
+    if (!target.unitId) { addUnit.mutate({ polygon: pendingPoly, unitRef: pendingRef.trim(), levelId: target.levelId, backgroundKey: target.backgroundKey }); return; }
+    try {
+      await saveUnit.mutateAsync({ id: target.unitId, patch: { polygon: pendingPoly, dot: null, expectedBackgroundKey: target.backgroundKey } });
+      selectUnit(target.unitId);
+      setPendingPoly(null); setPendingRef(""); stopDrawing();
+    } catch { /* Keep the complete outline available for retry. */ }
+  };
+  const traceAt = async (point: Pt) => {
+    if (traceBusy || !activeLevel) return;
+    const generation = ++traceGeneration.current;
+    const target = { unitId: redrawId, levelId: activeLevel.id, backgroundKey: activeLevel.background_key };
+    setTraceBusy(true);
+    try {
+      const result = await apiRequest("POST", `/api/evidence-plans/levels/${activeLevel.id}/trace-unit`, point);
+      const candidate = await result.json();
+      if (generation !== traceGeneration.current) return;
+      if (candidate.backgroundKey !== target.backgroundKey) throw new Error("The plan image changed while tracing. Reload this level before tracing its current boundaries.");
+      if (!isValidPolygon(candidate.polygon)) throw new Error("No closed unit boundary found here. Try a clear part of the unit fill, or use Draw unit.");
+      draftBackgroundKey.current = candidate.backgroundKey;
+      pendingTarget.current = { ...target, backgroundKey: candidate.backgroundKey };
+      setPoints(candidate.polygon);
+      setPendingPoly(candidate.polygon);
+      setPendingRef(redrawId ? units.find(u => u.id === redrawId)?.unit_ref || "" : "");
+      setTracing(false);
+    } catch (error: any) { if (generation === traceGeneration.current) toast({ title: "Couldn't trace this unit", description: error.message, variant: "destructive" }); }
+    finally { if (generation === traceGeneration.current) setTraceBusy(false); }
+  };
+  const saveMarker = async (unitId: string, point: Pt) => {
+    setDotDraft({ unitId, ...point }); setDotSaving(true);
+    try { await saveUnit.mutateAsync({ id: unitId, patch: { dot: point, expectedBackgroundKey: activeLevel?.background_key || null } }); }
+    catch { /* Server coordinates remain authoritative if saving fails. */ }
+    finally { setDotSaving(false); setDotDraft(null); }
+  };
 
   const uploadFile = async (kind: "background" | "import-tenancy", file: File) => {
     setBusy(kind);
@@ -512,6 +586,10 @@ function PlanView({ planId }: { planId: string }) {
 
   const hasBg = !!activeLevel?.background_key;
   const aspect = hasBg && activeLevel?.background_width ? (activeLevel.background_height || 0) / activeLevel.background_width : 0.7;
+  const fitWidth = canvasSize.width && canvasSize.height ? Math.min(canvasSize.width * .94, canvasSize.height * .94 / Math.max(.1, aspect)) : null;
+  const actualSizeZoom = fitWidth ? (activeLevel?.background_width || fitWidth) / fitWidth : 1;
+  const maxZoom = Math.max(24, actualSizeZoom);
+  const overlaysVisible = !cleanPlan || drawing || tracing;
 
   return (
     <div ref={fsRef} className="flex flex-col h-[calc(100dvh-var(--mobile-top,0px))] md:h-full bg-background">
@@ -519,7 +597,7 @@ function PlanView({ planId }: { planId: string }) {
       <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap bg-background">
         <button onClick={() => navigate("/evidence-plans")} className="text-sm text-muted-foreground hover:text-foreground">←</button>
         <div className="min-w-0">
-          <h1 className="text-base font-bold tracking-tight truncate">{plan.name}</h1>
+          <h1 className="text-2xl font-bold tracking-tight truncate">{plan.name}</h1>
           <p className="text-[11px] text-muted-foreground">
             {units.length} units · {entries.length} evidence entries{unlinkedCount ? ` · ${unlinkedCount} unlinked` : ""} ·{" "}
             <button className="underline underline-offset-2 hover:text-foreground" onClick={() => setLinkingProperty(true)} data-testid="button-link-property">
@@ -530,25 +608,22 @@ function PlanView({ planId }: { planId: string }) {
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
           {detectRunning ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground rounded-full border border-border px-2.5 py-1" data-testid="detect-indicator">
-              <Sparkles className="w-3 h-3" /> AI reading the plan… units appear as it finishes
+              <Sparkles className="w-3 h-3" /> {scanJob?.status === "running" && scanJob.total_docs > 1 ? `Scanning · ${scanJob.done_docs} / ${scanJob.total_docs} sections` : "Reading the plan…"}
             </span>
           ) : hasBg ? (
-            <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={busy !== null}
-              onClick={async () => {
-                if (!window.confirm(`Re-detect the units on ${activeLevel?.name || "this level"}? AI-drawn outlines are replaced (their evidence relinks to the new ones); hand-drawn units are kept.`)) return;
-                try {
-                  const r = await apiRequest("POST", `/api/evidence-plans/${planId}/detect-units`, { levelId: activeLevel?.id || null });
-                  if (!r.ok) throw new Error((await r.json()).error || "failed");
-                  invalidate();
-                } catch (e: any) { toast({ title: "Couldn't start detection", description: e.message, variant: "destructive" }); }
-              }}
+            <Button variant="outline" size="sm" disabled={busy !== null}
+              onClick={refreshUnits}
               data-testid="button-redetect">
-              <Sparkles className="w-3.5 h-3.5 mr-1" /> Re-detect
+              <Sparkles className="w-3.5 h-3.5 mr-1" /> Refresh units
             </Button>
           ) : null}
-          <Pill active={drawing} onClick={() => { setDrawing(d => !d); setDraft([]); }} data-testid="pill-draw-unit">
-            <Pencil className="w-3 h-3 mr-1 inline" />{drawing ? "Drawing… (double-click to close)" : "Draw unit"}
-          </Pill>
+          <Button variant="outline" size="sm" disabled={!hasBg} onClick={() => setScanReviewOpen(true)} data-testid="button-review-scan">Review scan</Button>
+          <Button variant={tracing ? "default" : "outline"} size="sm" disabled={!hasBg || traceBusy} onClick={() => { stopDrawing(); setCleanPlan(false); draftBackgroundKey.current = activeLevel?.background_key || null; setTracing(!tracing); setCropping(false); setDetailsOpen(false); }} data-testid="pill-trace-unit">
+            {traceBusy ? "Tracing…" : "Trace unit"}
+          </Button>
+          <Button variant={drawing ? "default" : "outline"} size="sm" disabled={!hasBg} onClick={() => { stopDrawing(); setCleanPlan(false); draftBackgroundKey.current = activeLevel?.background_key || null; setDrawing(!drawing); setCropping(false); setDetailsOpen(false); }} data-testid="pill-draw-unit">
+            <Pencil className="w-3 h-3 mr-1 inline" />{drawing ? "Drawing unit" : "Draw unit"}
+          </Button>
           {plan.property_id && (
             <Button variant="outline" size="sm" onClick={() => navigate(`/tenancy-schedule/${plan.property_id}`)} data-testid="button-open-ts">
               <FileSpreadsheet className="w-3.5 h-3.5 mr-1" /> Tenancy schedule
@@ -569,12 +644,12 @@ function PlanView({ planId }: { planId: string }) {
               <DropdownMenuItem onClick={() => tafFolderRef.current?.click()}>A whole folder…</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant={cropping ? "default" : "outline"} size="icon" className="h-8 w-8"
-            onClick={() => { setCropping(c => !c); setCropRect(null); setDrawing(false); setDraft([]); }}
+          <Button variant={cropping ? "default" : "outline"} size="icon" className="h-11 w-11"
+            onClick={() => { setCropping(c => !c); setCropRect(null); stopDrawing(); }}
             title="Crop plan — drag the area to keep" disabled={!hasBg} data-testid="button-crop-plan">
             <CropIcon className="w-3.5 h-3.5" />
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={toggleFullscreen} title={isFullscreen ? "Exit full screen" : "Full screen"} data-testid="button-fullscreen">
+          <Button variant="outline" size="icon" className="h-11 w-11" onClick={toggleFullscreen} title={isFullscreen ? "Exit full screen" : "Full screen"} data-testid="button-fullscreen">
             {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </Button>
           <Button variant="outline" size="sm" onClick={() => bgInputRef.current?.click()} disabled={busy !== null} data-testid="button-replace-bg">
@@ -587,29 +662,51 @@ function PlanView({ planId }: { planId: string }) {
         <input ref={tafFolderRef} type="file" hidden multiple {...({ webkitdirectory: "" } as any)} onChange={e => { const fs = Array.from(e.target.files || []).filter(f => /\.(pdf|zip)$/i.test(f.name)); if (fs.length) uploadTafs(fs); else toast({ title: "No TAFs found", description: "That folder has no PDFs or zips in it.", variant: "destructive" }); e.target.value = ""; }} />
       </div>
 
+      {scanReport && <div role="status" className="px-4 py-2 border-b border-border text-sm bg-card flex items-center gap-3 flex-wrap" data-testid="scan-report"><p className="flex-1 min-w-48">{scanReport}</p><Button variant="outline" size="sm" disabled={!hasBg} onClick={() => setScanReviewOpen(true)} data-testid="button-review-completed-scan">Review scan</Button><Button variant="ghost" size="sm" onClick={() => setScanReport(null)}>Dismiss</Button></div>}
+      {scanJob?.status === "running" && scanJob.error && <p role="status" className="px-4 py-2 text-sm text-muted-foreground border-b border-border">{scanJob.error}</p>}
+
+      <div className="px-4 py-2 border-b border-border flex items-center gap-2 flex-wrap">
+        <Pill active={!cleanPlan && !numberLabels} onClick={() => { setCleanPlan(false); setNumberLabels(false); }} data-testid="view-plan-units">Units & evidence</Pill>
+        <Pill active={!cleanPlan && numberLabels} onClick={() => { setCleanPlan(false); setNumberLabels(true); }} data-testid="view-unit-numbers">Unit numbers</Pill>
+        <Pill active={cleanPlan} disabled={drawing || tracing || cropping} onClick={() => { setCleanPlan(true); setDetailsOpen(false); setHover(null); }} data-testid="view-clean-plan">Clean plan</Pill>
+        <Pill active={hideRedInk} disabled={!hasBg} onClick={() => setHideRedInk(v => !v)} data-testid="view-hide-red">Hide red ink</Pill>
+        <Pill active={strongLines} disabled={!hasBg} onClick={() => setStrongLines(v => !v)} data-testid="view-strong-lines">Darker lines</Pill>
+        <Button variant="outline" size="sm" onClick={() => setReviewOpen(true)} data-testid="button-review-plan">Review & clean up</Button>
+        {activeLevel?.source_pdf_url && <Button variant="outline" size="sm" asChild><a href={activeLevel.source_pdf_url} target="_blank" rel="noreferrer" data-testid="link-original-plan">Original PDF</a></Button>}
+        <span className="text-[11px] text-muted-foreground">{hideRedInk ? "Hides red/orange ink, including text and symbols; original kept." : strongLines ? "Contrast enhanced for viewing; source unchanged." : "Original image tones."}</span>
+      </div>
+      {!cleanPlan && numberLabels && <p className="px-4 py-2 text-sm text-muted-foreground border-b border-border">Select a unit and use Edit to set its number. Drag its label to position it; numbers are not guessed from neighbouring shops.</p>}
+      <EvidencePlanReview open={reviewOpen} onOpenChange={setReviewOpen} units={units} levels={levels} activeLevelId={activeLevel?.id || null} propertyLinked={!!plan.property_id} unlinkedCount={unlinkedCount}
+        evidence={<UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} initiallyOpen />}
+        onSelect={id => { const unit = units.find(u => u.id === id); stopDrawing(); setCleanPlan(false); setActiveLevelId(unit?.level_id || levels[0]?.id || null); setZoom(1); setPan({ x: 0, y: 0 }); selectUnit(id); }} />
+      {activeLevel && <EvidencePlanScanReview key={activeLevel.id} open={scanReviewOpen} onOpenChange={setScanReviewOpen} planId={planId} level={activeLevel} onSaved={invalidate} onRefresh={refreshUnits} scanRunning={detectRunning} />}
+
       <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />
 
       {/* UX #137 — unit-ref dialog for a just-drawn outline. Closing keeps
           the polygon pending until Discard is chosen explicitly. */}
       <Dialog open={!!pendingPoly} onOpenChange={(o) => { if (!o) { /* keep polygon; just hide */ } }}>
-        <DialogContent className="max-w-xs" onEscapeKeyDown={(e) => e.preventDefault()} onPointerDownOutside={(e) => e.preventDefault()}>
+        <DialogContent className="max-w-sm max-md:top-auto max-md:bottom-0 max-md:translate-y-0 max-md:rounded-b-none" onEscapeKeyDown={(e) => e.preventDefault()} onPointerDownOutside={(e) => e.preventDefault()}>
           <DialogHeader>
-            <DialogTitle className="text-sm">Name this unit</DialogTitle>
+            <DialogTitle className="text-base">{redrawId ? "Save corrected outline" : "Name this unit"}</DialogTitle>
           </DialogHeader>
+          <DialogDescription>{redrawId ? "The unit's information and evidence will stay linked." : "Check the boundary on the plan. You can add its information after saving."}</DialogDescription>
           <Input
             autoFocus
             placeholder="Unit reference (e.g. A15, N10, E7A)"
             value={pendingRef}
+            disabled={!!redrawId}
             onChange={(e) => setPendingRef(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && pendingRef.trim() && pendingPoly) addUnit.mutate({ polygon: pendingPoly, unitRef: pendingRef.trim() }); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && !addUnit.isPending && !saveUnit.isPending) saveOutline(); }}
             data-testid="input-unit-ref"
           />
           <DialogFooter className="gap-2">
-            <Button variant="ghost" size="sm" onClick={() => { setPendingPoly(null); setPendingRef(""); }} data-testid="button-discard-outline">
+            <Button variant="ghost" size="sm" onClick={() => { setPendingPoly(null); setPendingRef(""); stopDrawing(); }} data-testid="button-discard-outline">
               Discard outline
             </Button>
-            <Button size="sm" disabled={!pendingRef.trim() || addUnit.isPending} onClick={() => pendingPoly && addUnit.mutate({ polygon: pendingPoly, unitRef: pendingRef.trim() })} data-testid="button-save-unit-ref">
-              {addUnit.isPending ? "Saving…" : "Save unit"}
+            <Button variant="outline" size="sm" onClick={() => { setPendingPoly(null); setDrawing(true); }} data-testid="button-adjust-outline">Adjust corners</Button>
+            <Button size="sm" disabled={!pendingRef.trim() || addUnit.isPending || saveUnit.isPending} onClick={saveOutline} data-testid="button-save-unit-ref">
+              {addUnit.isPending || saveUnit.isPending ? "Saving…" : redrawId ? "Save outline" : "Save unit"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -620,7 +717,7 @@ function PlanView({ planId }: { planId: string }) {
         <div className="px-4 py-1.5 border-b border-border flex items-center gap-1.5 overflow-x-auto bg-background">
           {levels.map(l => (
             <Pill key={l.id} active={l.id === activeLevel?.id}
-              onClick={() => { setActiveLevelId(l.id); setSelectedId(null); setDrawing(false); setDraft([]); setZoom(1); setPan({ x: 0, y: 0 }); }}
+              onClick={() => { setActiveLevelId(l.id); setSelectedId(null); stopDrawing(); setZoom(1); setPan({ x: 0, y: 0 }); }}
               data-testid={`pill-level-${l.id}`}>
               {l.name}
             </Pill>
@@ -654,12 +751,11 @@ function PlanView({ planId }: { planId: string }) {
                 value={colourOf(k)} onChange={e => saveColour(k, e.target.value)} data-testid={`key-colour-${k}`} />
             </label>
           ))}
-          <button
-            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${showZa ? "bg-foreground text-background border-foreground" : "border-border text-muted-foreground"}`}
+          <Pill active={showZa}
             onClick={() => setShowZa(s => { try { localStorage.setItem("bgp-ep-za", s ? "0" : "1"); } catch {} return !s; })}
             data-testid="button-toggle-za">
             £ ZA
-          </button>
+          </Pill>
         </div>
       )}
 
@@ -667,7 +763,7 @@ function PlanView({ planId }: { planId: string }) {
         {/* Plan canvas */}
         <div
           ref={canvasRef}
-          className="relative flex-1 min-h-[45dvh] overflow-hidden bg-muted/30 select-none touch-none"
+          className="relative flex-1 min-w-0 min-h-[45dvh] overflow-hidden bg-muted/30 select-none touch-none"
           onWheel={e => {
             e.preventDefault();
             // Cursor-anchored zoom (the point under the mouse stays put) with
@@ -676,7 +772,7 @@ function PlanView({ planId }: { planId: string }) {
             const rect = canvasRef.current?.getBoundingClientRect();
             if (!rect) return;
             const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0022));
-            const nz = Math.min(12, Math.max(0.5, zoom * factor));
+            const nz = Math.min(maxZoom, Math.max(0.5, zoom * factor));
             if (nz === zoom) return;
             const k = nz / zoom;
             const mx = e.clientX - rect.left - rect.width / 2;
@@ -685,17 +781,18 @@ function PlanView({ planId }: { planId: string }) {
             setZoom(nz);
           }}
           onPointerDown={e => {
-            if (drawing) return;
+            if (drawing || tracing) return;
+            suppressClick.current = false;
             if (cropping) {
               const pt = toPlanCoords(e.clientX, e.clientY);
               if (pt) { cropStart.current = pt; setCropRect({ x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y }); }
               (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
               return;
             }
-            (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
             dragging.current = { start: { x: e.clientX, y: e.clientY }, panStart: pan, moved: false };
           }}
           onPointerUp={async () => {
+            suppressClick.current = !!dragging.current?.moved;
             dragging.current = null;
             if (!cropping || !cropRect || !cropStart.current) return;
             cropStart.current = null;
@@ -726,6 +823,7 @@ function PlanView({ planId }: { planId: string }) {
             if (!d) return;
             const dx = e.clientX - d.start.x, dy = e.clientY - d.start.y;
             if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
+            if (d.moved) e.currentTarget.setPointerCapture(e.pointerId);
             setPan({ x: d.panStart.x + dx, y: d.panStart.y + dy });
           }}
           data-testid="evidence-plan-canvas"
@@ -740,29 +838,29 @@ function PlanView({ planId }: { planId: string }) {
           ) : (
             <div
               className="absolute left-1/2 top-1/2"
-              style={{ transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center", width: "min(90%, 1400px)" }}
+              style={{ transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center", width: fitWidth ? `${fitWidth}px` : "90%" }}
             >
               <div
                 ref={surfaceRef}
+                data-testid="evidence-plan-surface"
                 className="relative w-full"
                 style={{ aspectRatio: `${activeLevel?.background_width || 10} / ${activeLevel?.background_height || 7}` }}
                 onClick={e => {
-                  if (!drawing) return;
+                  if (!drawing && !tracing) return;
                   const pt = toPlanCoords(e.clientX, e.clientY);
-                  if (pt) setDraft(d => [...d, pt]);
+                  if (!pt || pt.x < 0 || pt.x > 1 || pt.y < 0 || pt.y > 1) return;
+                  if (tracing) { traceAt(pt); return; }
+                  if (e.detail > 1) return;
+                  const last = draftRef.current.at(-1);
+                  if (!last || Math.hypot(last.x - pt.x, last.y - pt.y) > 0.00001) setPoints([...draftRef.current, pt]);
                 }}
                 onDoubleClick={() => {
-                  if (!drawing || draft.length < 3) return;
-                  setDrawing(false);
-                  const poly = draft;
-                  setDraft([]);
-                  setPendingRef("");
-                  setPendingPoly(poly);
+                  if (drawing) finishOutline();
                 }}
               >
-                <img src={`/api/evidence-plans/levels/${activeLevel!.id}/background?v=${encodeURIComponent(activeLevel!.background_key || "")}`} alt="" className="absolute inset-0 w-full h-full" draggable={false} />
+                <img src={`/api/evidence-plans/levels/${activeLevel!.id}/background?v=${encodeURIComponent(activeLevel!.background_key || "")}${hideRedInk ? "&hideRed=1" : ""}`} alt={`${plan.name} — ${activeLevel?.name || "plan"}`} className="absolute inset-0 w-full h-full" style={{ filter: strongLines ? "contrast(1.7)" : "none" }} draggable={false} data-testid="plan-background-image" />
                 <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 ${aspect >= 1 ? 100 : 100} ${100 * aspect}`} preserveAspectRatio="none" style={{ pointerEvents: "none" }}>
-                  {levelUnits.filter(u => Array.isArray(u.polygon) && u.polygon.length >= 3).map(u => {
+                  {overlaysVisible && levelUnits.filter(u => Array.isArray(u.polygon) && u.polygon.length >= 3).map(u => {
                     const poly = u.polygon as Pt[];
                     const pts = poly.map(p => `${p.x * 100},${p.y * 100 * aspect}`).join(" ");
                     const isSel = u.id === selectedId;
@@ -772,94 +870,84 @@ function PlanView({ planId }: { planId: string }) {
                     // only on hover (light) or selection (strong, so a wrong
                     // box can be seen and redrawn).
                     return (
-                      <g key={u.id} style={{ pointerEvents: "auto", cursor: "pointer" }}
-                        onClick={e => { e.stopPropagation(); if (!drawing && !dragging.current?.moved) setSelectedId(u.id); }}
+                      <g key={u.id} style={{ pointerEvents: drawing || tracing || cropping ? "none" : "auto", cursor: "pointer" }}
+                        onClick={e => { e.stopPropagation(); if (!suppressClick.current) selectUnit(u.id); }}
                         onMouseMove={e => {
                           const rect = canvasRef.current?.getBoundingClientRect();
                           if (rect) setHover({ unitId: u.id, x: e.clientX - rect.left, y: e.clientY - rect.top });
                         }}
                         onMouseLeave={() => setHover(h => (h?.unitId === u.id ? null : h))}>
-                        <polygon points={pts}
-                          fill="transparent"
-                          stroke={isSel ? "hsl(17 60% 45%)" : isHover ? "hsl(220 10% 35% / 0.6)" : "transparent"}
-                          strokeWidth={isSel ? 0.3 : 0.16} strokeDasharray={isSel ? "1 0.5" : undefined} vectorEffect="non-scaling-stroke" />
+                        <polygon points={pts} data-testid={`unit-outline-${u.id}`}
+                          fill={isSel ? "hsl(var(--primary) / 0.1)" : "transparent"}
+                          stroke={isSel ? "hsl(var(--primary))" : isHover ? "hsl(var(--foreground))" : "hsl(var(--primary) / 0.45)"}
+                          strokeWidth={isSel ? 2.5 : 1} vectorEffect="non-scaling-stroke" />
                       </g>
                     );
                   })}
-                  {/* Markers render in their own layer ABOVE every polygon —
-                      when each disc lived inside its unit's <g>, a later big
-                      unit's transparent polygon sat on top of earlier units'
-                      discs and swallowed their clicks (D15 selecting M&S). */}
-                  {levelUnits.filter(u => Array.isArray(u.polygon) && u.polygon.length >= 3 && (evidenceCountByUnit.get(u.id) || 0) > 0).map(u => {
-                    const poly = u.polygon as Pt[];
-                    const c = centroid(poly);
+                  {/* Labels stay in their own demise, including units awaiting evidence. */}
+                  {overlaysVisible && levelUnits.filter(u => isValidPolygon(u.polygon)).map(u => {
+                    const layout = markerLayout.get(u.id)!;
                     const isSel = u.id === selectedId;
-                    const za = latestZaByUnit.get(u.id);
                     const latest = latestEntryByUnit.get(u.id);
-                    const typeColour = colourOf(evidenceTypeKey(latest?.transaction_type));
-                    // Contained marker (Woody, 2026-09-04): a coloured
-                    // disc holding the unit ref and Zone A — neater
-                    // than dot + floating figure. Anchored to the
-                    // frontage; draggable when the unit is selected.
-                    const layout = markerLayout.get(u.id);
-                    const label = String(u.unit_ref || "");
-                    const isRealRef = /\d/.test(label) && label.length <= 8;
-                    const zaStr = za != null ? `£${za.toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
-                    const showFig = showZa && zaStr != null;
-                    // A decluttered-away marker renders as a small plain
-                    // dot at its true anchor — unless selected, which
-                    // always earns the full disc.
-                    const mini = !!layout?.mini && !isSel;
-                    const twoLine = !mini && isRealRef && showFig;
-                    const R = (mini ? layout!.r : (layout?.r ?? (twoLine ? 1.0 : 0.85) * Math.max(1.15, Math.min(1.9, 2.3 / Math.sqrt(zoom))))) * (isSel ? 1.15 : 1);
-                    const dp = dotDraft?.unitId === u.id ? { x: dotDraft.x * 100, y: dotDraft.y * 100 * aspect }
-                      : isSel && u.dot && typeof u.dot.x === "number" ? { x: u.dot.x * 100, y: u.dot.y * 100 * aspect }
-                      : layout ? { x: layout.x, y: layout.y }
-                      : { x: c.x * 100, y: c.y * 100 * aspect };
-                    const cx = dp.x, cy = dp.y;
-                    // Sized down ~18% (Woody, 2026-09-04: "font size is too
-                    // large for the dots") — the disc, not the text, is the
-                    // marker; the hover card carries the readable figures.
-                    const refFont = Math.min(R * 0.48, (R * 2.15) / Math.max(2, label.length));
-                    const zaFont = zaStr ? Math.min(R * (twoLine ? 0.43 : 0.5), (R * 2.15) / zaStr.length) : 0;
+                    const za = latestZaByUnit.get(u.id);
+                    const label = String(u.unit_ref || "Unit");
+                    const zaStr = showZa && za != null ? `£${za.toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
+                    const R = layout.radius * 100;
+                    const cx = layout.x * 100, cy = layout.y * 100 * aspect;
+                    const typeColour = latest ? colourOf(evidenceTypeKey(latest.transaction_type)) : "hsl(var(--muted-foreground))";
                     return (
-                      <g key={`marker-${u.id}`} style={{ pointerEvents: "auto", cursor: isSel ? "grab" : "pointer" }}
-                        onClick={e => { e.stopPropagation(); if (!drawing && !dragging.current?.moved) setSelectedId(u.id); }}
-                        onMouseMove={e => {
-                          const rect = canvasRef.current?.getBoundingClientRect();
-                          if (rect) setHover({ unitId: u.id, x: e.clientX - rect.left, y: e.clientY - rect.top });
+                      <g key={`marker-${u.id}`} role="button" tabIndex={drawing || tracing || cropping ? -1 : 0}
+                        aria-label={`Unit ${label}${zaStr ? `, ${zaStr} Zone A` : ", no Zone A evidence"}. Select to edit; drag or use arrow keys to move its label.`}
+                        data-testid={`unit-marker-${u.id}`}
+                        style={{ pointerEvents: drawing || tracing || cropping ? "none" : "auto", cursor: dotSaving ? "wait" : "grab" }}
+                        onClick={e => { e.stopPropagation(); if (!suppressClick.current) selectUnit(u.id); }}
+                        onKeyDown={e => {
+                          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectUnit(u.id); return; }
+                          if (!e.key.startsWith("Arrow") || dotSaving) return;
+                          e.preventDefault();
+                          const step = e.shiftKey ? 0.01 : 0.002;
+                          const point = moveMarkerInside(u.polygon!, { x: layout.x + (e.key === "ArrowRight" ? step : e.key === "ArrowLeft" ? -step : 0), y: layout.y + (e.key === "ArrowDown" ? step : e.key === "ArrowUp" ? -step : 0) / aspect }, 0.019 / Math.sqrt(zoom), aspect);
+                          saveMarker(u.id, point);
                         }}
-                        onMouseLeave={() => setHover(h => (h?.unitId === u.id ? null : h))}
-                        onPointerDown={e => { if (!isSel) return; e.stopPropagation(); (e.target as Element).setPointerCapture(e.pointerId); }}
+                        onPointerDown={e => {
+                          if (e.button !== 0 || dotSaving || drawing || tracing || cropping) return;
+                          e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId);
+                          suppressClick.current = false;
+                          dotGesture.current = { unitId: u.id, start: { x: e.clientX, y: e.clientY }, point: layout, moved: false };
+                        }}
                         onPointerMove={e => {
-                          if (!isSel || e.buttons !== 1) return;
+                          const gesture = dotGesture.current;
+                          if (!gesture || gesture.unitId !== u.id) return;
                           e.stopPropagation();
+                          if (Math.hypot(e.clientX - gesture.start.x, e.clientY - gesture.start.y) < 4 && !gesture.moved) return;
                           const pt = toPlanCoords(e.clientX, e.clientY);
-                          if (pt) setDotDraft({ unitId: u.id, x: pt.x, y: pt.y });
+                          if (!pt) return;
+                          gesture.moved = true;
+                          gesture.point = moveMarkerInside(u.polygon!, pt, 0.019 / Math.sqrt(zoom), aspect);
+                          setSelectedId(u.id); setHover(null);
+                          setDotDraft({ unitId: u.id, ...gesture.point });
                         }}
                         onPointerUp={e => {
-                          if (dotDraft?.unitId !== u.id) return;
-                          e.stopPropagation();
-                          saveUnit.mutate({ id: u.id, patch: { dot: { x: dotDraft.x, y: dotDraft.y } } });
-                          setDotDraft(null);
-                        }}>
-                        <circle cx={cx} cy={cy} r={R} fill={typeColour} stroke="#FFFFFF" strokeWidth={R * 0.09} />
-                        {mini ? null : twoLine ? (
-                          <>
-                            <text x={cx} y={cy - R * 0.32} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: refFont, fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{label}</text>
-                            <text x={cx} y={cy + R * 0.38} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: zaFont, fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{zaStr}</text>
-                          </>
-                        ) : (
-                          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: showFig ? zaFont : (isRealRef ? refFont : Math.min(R * 0.46, (R * 2.15) / 3)), fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>
-                            {showFig ? zaStr : (isRealRef ? label : "£")}
-                          </text>
-                        )}
+                          const gesture = dotGesture.current;
+                          if (!gesture || gesture.unitId !== u.id) return;
+                          e.stopPropagation(); dotGesture.current = null;
+                          suppressClick.current = gesture.moved;
+                          if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+                          if (gesture.moved) saveMarker(u.id, gesture.point);
+                        }}
+                        onPointerCancel={() => { dotGesture.current = null; setDotDraft(null); }}>
+                        <title>{label}{u.tenant_name ? ` · ${u.tenant_name}` : ""}{zaStr ? ` · ${zaStr} ZA` : " · Add evidence"}</title>
+                        <circle cx={cx} cy={cy} r={R} fill={numberLabels ? "transparent" : typeColour} stroke={numberLabels ? "none" : isSel ? "hsl(var(--foreground))" : "#FFFFFF"} strokeWidth={R * 0.09} />
+                        <text x={cx} y={cy - (!numberLabels && zaStr ? R * 0.29 : 0)} textAnchor="middle" dominantBaseline="middle"
+                          style={{ fontSize: Math.min(R * (numberLabels ? .75 : .5), R * 2.7 / Math.max(3, label.length)), fontWeight: 700, fill: numberLabels ? "hsl(var(--foreground))" : "#FFFFFF", stroke: numberLabels ? "hsl(var(--background))" : "none", strokeWidth: numberLabels ? R * .12 : 0, paintOrder: "stroke", pointerEvents: "none" }}>{label}</text>
+                        {!numberLabels && zaStr && <text x={cx} y={cy + R * 0.37} textAnchor="middle" dominantBaseline="middle"
+                          style={{ fontSize: Math.min(R * 0.48, R * 2.7 / zaStr.length), fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{zaStr}</text>}
                       </g>
                     );
                   })}
                   {draft.length > 0 && (
                     <polygon points={draft.map(p => `${p.x * 100},${p.y * 100 * aspect}`).join(" ")}
-                      fill="hsl(17 60% 45% / 0.15)" stroke="hsl(17 60% 45%)" strokeWidth={0.3} strokeDasharray="1 0.6" vectorEffect="non-scaling-stroke" />
+                      fill="hsl(var(--primary) / 0.15)" stroke="hsl(var(--primary))" strokeWidth={2} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
                   )}
                   {cropRect && (
                     <rect x={Math.min(cropRect.x0, cropRect.x1) * 100} y={Math.min(cropRect.y0, cropRect.y1) * 100 * aspect}
@@ -873,16 +961,24 @@ function PlanView({ planId }: { planId: string }) {
 
           {/* Zoom controls */}
           <div className="absolute right-3 top-3 flex flex-col gap-1">
-            <Button variant="outline" size="icon" className="h-9 w-9 bg-card" onClick={() => setZoom(z => Math.min(12, z * 1.3))} data-testid="button-zoom-in"><ZoomIn className="w-4 h-4" /></Button>
-            <Button variant="outline" size="icon" className="h-9 w-9 bg-card" onClick={() => setZoom(z => Math.max(0.5, z / 1.3))} data-testid="button-zoom-out"><ZoomOut className="w-4 h-4" /></Button>
-            <Button variant="outline" size="icon" className="h-9 w-9 bg-card text-[10px] font-semibold" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} data-testid="button-zoom-reset">1:1</Button>
+            <Button aria-label="Zoom in" variant="outline" size="icon" className="h-11 w-11 bg-card" onClick={() => setZoom(z => Math.min(maxZoom, z * 1.3))} data-testid="button-zoom-in"><ZoomIn className="w-4 h-4" /></Button>
+            <Button aria-label="Zoom out" variant="outline" size="icon" className="h-11 w-11 bg-card" onClick={() => setZoom(z => Math.max(0.5, z / 1.3))} data-testid="button-zoom-out"><ZoomOut className="w-4 h-4" /></Button>
+            <Button aria-label="Fit whole plan" variant="outline" size="icon" className="h-11 w-11 bg-card text-[11px] font-semibold" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} data-testid="button-zoom-reset">Fit</Button>
+            <Button aria-label="Actual image size" title="One source pixel per screen pixel" variant="outline" size="icon" className="h-11 w-11 bg-card text-[11px] font-semibold" onClick={() => { setZoom(actualSizeZoom); setPan({ x: 0, y: 0 }); }} data-testid="button-actual-size">100%</Button>
           </div>
-          {drawing && (
-            <div className="absolute left-3 top-3 rounded-md bg-card border border-border px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm">
-              Click the unit's corners · double-click to close · {draft.length} point{draft.length === 1 ? "" : "s"}
-              {draft.length > 0 && <button className="ml-2 underline" onClick={() => setDraft([])}>clear</button>}
+          {(drawing || tracing) && (
+            <div className="absolute left-3 right-16 top-3 max-w-lg rounded-xl bg-card border border-border p-3 text-sm shadow-sm">
+              <p>{tracing ? "Click a clear area inside the unit to trace its boundary." : `${redrawId ? "Redraw the unit" : "Draw a unit"}: click each corner, then Finish outline.`}</p>
+              <div className="mt-2 flex gap-2 flex-wrap">
+                {drawing && <><Button size="sm" disabled={draft.length < 3} onClick={finishOutline} data-testid="button-finish-outline">Finish outline</Button>
+                <Button variant="outline" size="sm" disabled={!draft.length} onClick={() => setPoints(draftRef.current.slice(0, -1))} data-testid="button-undo-point">Undo point</Button>
+                <span className="font-mono text-muted-foreground self-center">{draft.length} points</span></>}
+                <Button variant="ghost" size="sm" onClick={stopDrawing} data-testid="button-cancel-drawing">Cancel</Button>
+              </div>
             </div>
           )}
+          {dotSaving && <div className="absolute bottom-3 left-3 rounded-lg bg-card border border-border px-3 py-2 text-sm" role="status">Saving label…</div>}
+          {isMobile && !drawing && !tracing && <Button variant="outline" className="absolute bottom-3 left-3 bg-card" onClick={() => setDetailsOpen(true)} data-testid="button-plan-details">{selected ? `Unit ${selected.unit_ref}` : "Units & evidence"}</Button>}
           {cropping && (
             <div className="absolute left-3 top-3 rounded-md bg-card border border-border px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm">
               Crop: drag over the part of the plan to keep — release to confirm.
@@ -891,7 +987,7 @@ function PlanView({ planId }: { planId: string }) {
           )}
 
           {/* Hover card — the artifact-style pop-up */}
-          {hover && !drawing && (() => {
+          {hover && overlaysVisible && !drawing && !tracing && !isMobile && !dotGesture.current && (() => {
             const u = units.find(x => x.id === hover.unitId);
             if (!u) return null;
             const latest = latestEntryByUnit.get(u.id);
@@ -906,7 +1002,7 @@ function PlanView({ planId }: { planId: string }) {
                 }}>
                 <div className="flex items-center gap-1.5">
                   {latest && (
-                    <span className="text-[9px] font-bold uppercase tracking-wider text-white rounded px-1 py-0.5"
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-white rounded px-1 py-0.5"
                       style={{ background: colourOf(tk) }}>
                       {EVIDENCE_TYPE_META[tk].label}
                     </span>
@@ -919,12 +1015,12 @@ function PlanView({ planId }: { planId: string }) {
                     <span className="text-lg font-bold tabular-nums" style={{ color: colourOf(tk) }}>
                       £{za.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>{" "}
-                    <span className="text-[10px] text-muted-foreground">Zone A</span>
+                    <span className="text-[11px] text-muted-foreground">Zone A</span>
                   </div>
                 ) : (
                   <div className="mt-1 text-[11px] text-muted-foreground">No evidence yet</div>
                 )}
-                <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+                <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
                   {latest?.transaction_date && <><span>Evidence date</span><span className="text-foreground">{fmtDate(latest.transaction_date)}</span></>}
                   {latest?.size_sqft != null && <><span>Size</span><span className="text-foreground">{Number(latest.size_sqft).toLocaleString("en-GB")} sq ft</span></>}
                   {u.lease_expiry && <><span>Lease expiry</span><span className="text-foreground">{fmtDate(u.lease_expiry)}</span></>}
@@ -937,84 +1033,37 @@ function PlanView({ planId }: { planId: string }) {
         </div>
 
         {/* Unit panel */}
-        <div className="w-full md:w-[380px] border-t md:border-t-0 md:border-l border-border overflow-y-auto bg-background">
+        {isMobile ? <Sheet open={detailsOpen && !cleanPlan} onOpenChange={setDetailsOpen}>
+          <SheetContent side="bottom" hideClose={!!selected} className="max-h-[80dvh] overflow-y-auto p-0 rounded-t-2xl pb-[env(safe-area-inset-bottom)]">
+            <SheetHeader className={selected ? "sr-only" : "px-4 pt-4"}><SheetTitle>{selected ? `Unit ${selected.unit_ref}` : "Units & evidence"}</SheetTitle></SheetHeader>
+            {selected ? <UnitPanel key={selected.id} unit={selected} entries={selectedEntries} planId={planId} scheduleRows={data?.schedule_rows || []}
+              matters={matters.filter(m => m.unit_norm && m.unit_norm === (selected.unit_norm || normRef(selected.unit_ref)))}
+              onClose={() => { setSelectedId(null); setDetailsOpen(false); }}
+              onSave={patch => saveUnit.mutateAsync({ id: selected.id, patch })}
+              onRedraw={mode => { stopDrawing(); draftBackgroundKey.current = activeLevel?.background_key || null; setRedrawId(selected.id); setDrawing(mode === "draw"); setTracing(mode === "trace"); setDetailsOpen(false); }}
+              onDeleted={() => { setSelectedId(null); invalidate(); }} />
+              : <div className="p-4"><UnitList units={levelUnits} entries={entries} search={unitSearch} onSearch={setUnitSearch} onSelect={selectUnit} /><UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} /></div>}
+          </SheetContent>
+        </Sheet> : <div className={cleanPlan ? "hidden" : "w-[380px] shrink-0 border-l border-border overflow-y-auto bg-background"}>
           {!selected ? (
             <div className="p-4">
               {/* Mock-up style: the panel is the level's evidence list until
                   a unit is picked — hover or tap a marker, or pick a row. */}
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">Evidence · {activeLevel?.name || "this level"}</h3>
-              <p className="text-[11px] text-muted-foreground mb-3">Hover or tap a marker on the plan, or pick from the list.</p>
-              {unlinkedCount > 0 && (
-                <details className="mb-3 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300" data-testid="unlinked-evidence">
-                  <summary className="cursor-pointer font-medium">
-                    {unlinkedCount} evidence entr{unlinkedCount === 1 ? "y" : "ies"} not matched to a unit — open to match them
-                  </summary>
-                  <p className="mt-1.5 mb-2 text-[10px] opacity-90">Their TAF unit refs don't match any drawn unit. They link themselves when a matching unit appears (Re-detect or Draw unit) — or pick the unit here.</p>
-                  <div className="space-y-1.5 max-h-72 overflow-y-auto">
-                    {entries.filter(e => !e.unit_id).map(e => (
-                      <div key={e.id} className="rounded-md bg-card border border-border px-2 py-1.5 text-foreground">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-semibold truncate">{e.unit_ref || e.tenant || "—"}</span>
-                          <span className="text-[11px] font-bold tabular-nums shrink-0">{e.zone_a != null ? `£${Number(e.zone_a).toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : "—"}</span>
-                        </div>
-                        <div className="text-[10px] text-muted-foreground truncate">{EVIDENCE_TYPE_META[evidenceTypeKey(e.transaction_type)].label}{e.transaction_date ? ` · ${fmtDate(e.transaction_date)}` : ""}{e.tenant && e.tenant !== e.unit_ref ? ` · ${e.tenant}` : ""}</div>
-                        <select
-                          className="mt-1 w-full h-6 rounded border border-input bg-background px-1 text-[10px]"
-                          value=""
-                          onChange={async ev => {
-                            const unitId = ev.target.value;
-                            if (!unitId) return;
-                            try {
-                              const r = await apiRequest("PUT", `/api/evidence-plans/entries/${e.id}`, { unitId });
-                              if (!r.ok) throw new Error((await r.json()).error || "failed");
-                              invalidate();
-                            } catch (err: any) { toast({ title: "Couldn't link", description: err.message, variant: "destructive" }); }
-                          }}
-                          data-testid={`link-entry-${e.id}`}>
-                          <option value="">Link to unit…</option>
-                          {[...units].sort((a, b) => String(a.unit_ref).localeCompare(String(b.unit_ref), undefined, { numeric: true })).map(u => (
-                            <option key={u.id} value={u.id}>{u.unit_ref}{levels.length > 1 ? ` (${levels.find(l => l.id === u.level_id)?.name || "?"})` : ""}</option>
-                          ))}
-                        </select>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              )}
-              {(() => {
-                const levelUnitIds = new Set(levelUnits.map(u => u.id));
-                const list = entries.filter(e => e.unit_id && levelUnitIds.has(e.unit_id));
-                if (list.length === 0) return <p className="text-xs text-muted-foreground">No evidence on this level yet — Add TAFs or add it on a unit.</p>;
-                return (
-                  <div className="space-y-1.5">
-                    {list.map(e => {
-                      const tk = evidenceTypeKey(e.transaction_type);
-                      const unit = units.find(u => u.id === e.unit_id);
-                      return (
-                        <button key={e.id} onClick={() => setSelectedId(e.unit_id)}
-                          className="w-full text-left rounded-xl border border-border bg-card px-3 py-2 hover:border-primary/40 transition-colors flex items-center gap-2.5"
-                          data-testid={`evidence-row-${e.id}`}>
-                          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: colourOf(tk) }} />
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-xs font-semibold truncate">{unit?.unit_ref || e.unit_ref || e.tenant}</span>
-                            <span className="block text-[10px] text-muted-foreground truncate">{EVIDENCE_TYPE_META[tk].label}{e.transaction_date ? ` · ${fmtDate(e.transaction_date)}` : ""}{e.tenant && unit?.unit_ref !== e.tenant ? ` · ${e.tenant}` : ""}</span>
-                          </span>
-                          <span className="text-sm font-bold tabular-nums shrink-0">{e.zone_a != null ? `£${Number(e.zone_a).toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : "—"}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
+              <h3 className="text-sm font-semibold mb-1">Units · {activeLevel?.name || "this level"}</h3>
+              <p className="text-sm text-muted-foreground mb-3">Select a boundary or label to enter information. Drag a label to move it within its unit.</p>
+              <UnitList units={levelUnits} entries={entries} search={unitSearch} onSearch={setUnitSearch} onSelect={selectUnit} />
+              <UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} />
+
             </div>
           ) : (
-            <UnitPanel key={selected.id} unit={selected} entries={selectedEntries} planId={planId}
+            <UnitPanel key={selected.id} unit={selected} entries={selectedEntries} planId={planId} scheduleRows={data?.schedule_rows || []}
               matters={matters.filter(m => m.unit_norm && m.unit_norm === (selected.unit_norm || normRef(selected.unit_ref)))}
               onClose={() => setSelectedId(null)}
-              onSave={(patch) => saveUnit.mutate({ id: selected.id, patch })}
+              onSave={(patch) => saveUnit.mutateAsync({ id: selected.id, patch })}
+              onRedraw={mode => { stopDrawing(); draftBackgroundKey.current = activeLevel?.background_key || null; setRedrawId(selected.id); setDrawing(mode === "draw"); setTracing(mode === "trace"); }}
               onDeleted={() => { setSelectedId(null); invalidate(); }} />
           )}
-        </div>
+        </div>}
       </div>
     </div>
   );
@@ -1057,7 +1106,7 @@ function LinkPropertyDialog({ open, onOpenChange, plan, onSaved }: {
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
-          <p className="text-[11px] text-muted-foreground">When linked, lease expiry / break / review / ERV / passing rent on every matched unit read live from that property's tenancy schedule — the plan stops keeping its own copy. Lease advisory jobs on the property show on their units too.</p>
+          <p className="text-sm text-muted-foreground">Matched units use this property's tenancy schedule. You can select a schedule row and edit its lease facts from the unit panel. Unmatched units keep their manually entered information.</p>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -1068,24 +1117,116 @@ function LinkPropertyDialog({ open, onOpenChange, plan, onSaved }: {
   );
 }
 
+function UnlinkedEvidence({ entries, units, levels, onSaved, initiallyOpen = false }: { entries: Entry[]; units: PlanUnit[]; levels: PlanLevel[]; onSaved: () => void; initiallyOpen?: boolean }) {
+  const { toast } = useToast();
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [open, setOpen] = useState(initiallyOpen);
+  const unlinkedCount = entries.filter(entry => !entry.unit_id).length;
+  const matches = entries.filter(entry => !entry.unit_id && `${entry.unit_ref || ""} ${entry.tenant || ""}`.toLowerCase().includes(search.toLowerCase()));
+  const pages = Math.max(1, Math.ceil(matches.length / 6));
+  const currentPage = Math.min(page, pages - 1);
+  if (!unlinkedCount) return null;
+  return (
+                <details open={open} onToggle={e => setOpen(e.currentTarget.open)} className="mb-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground" data-testid="unlinked-evidence">
+                  <summary className="cursor-pointer font-medium">
+                    {unlinkedCount} evidence entr{unlinkedCount === 1 ? "y" : "ies"} not matched to a unit — open to match them
+                  </summary>
+                  <p className="mt-1.5 mb-2 text-sm text-muted-foreground">Choose the correct unit for each entry. Clear, unique matches are linked automatically when an outline is added.</p>
+                  {open && <>
+                  <Input aria-label="Search unlinked evidence" placeholder="Find evidence by unit or tenant…" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} className="mb-2" />
+                  <div className="space-y-2">
+                    {matches.slice(currentPage * 6, currentPage * 6 + 6).map(e => (
+                      <div key={e.id} className="rounded-md bg-card border border-border px-2 py-1.5 text-foreground">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-semibold truncate">{e.unit_ref || e.tenant || "—"}</span>
+                          <span className="text-[11px] font-bold tabular-nums shrink-0">{e.zone_a != null ? `£${Number(e.zone_a).toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : "—"}</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground truncate">{EVIDENCE_TYPE_META[evidenceTypeKey(e.transaction_type)].label}{e.transaction_date ? ` · ${fmtDate(e.transaction_date)}` : ""}{e.tenant && e.tenant !== e.unit_ref ? ` · ${e.tenant}` : ""}</div>
+                        <select
+                          aria-label={`Link evidence ${e.unit_ref || e.tenant || e.id} to unit`} className="mt-1 w-full min-h-11 rounded border border-input bg-background px-2 text-sm"
+                          value=""
+                          onChange={async ev => {
+                            const unitId = ev.target.value;
+                            if (!unitId) return;
+                            try {
+                              const r = await apiRequest("PUT", `/api/evidence-plans/entries/${e.id}`, { unitId });
+                              if (!r.ok) throw new Error((await r.json()).error || "failed");
+                              onSaved();
+                            } catch (err: any) { toast({ title: "Couldn't link", description: err.message, variant: "destructive" }); }
+                          }}
+                          data-testid={`link-entry-${e.id}`}>
+                          <option value="">Link to unit…</option>
+                          {[...units].sort((a, b) => String(a.unit_ref).localeCompare(String(b.unit_ref), undefined, { numeric: true })).map(u => (
+                            <option key={u.id} value={u.id}>{u.unit_ref}{levels.length > 1 ? ` (${levels.find(l => l.id === u.level_id)?.name || "?"})` : ""}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                  {!matches.length && <p className="text-sm text-muted-foreground">No evidence matches this search.</p>}
+                  {pages > 1 && <div className="mt-3 flex items-center justify-between gap-2"><Button variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous evidence</Button><span className="font-mono text-[11px]">{currentPage + 1} / {pages}</span><Button variant="outline" size="sm" disabled={currentPage + 1 >= pages} onClick={() => setPage(currentPage + 1)}>Next evidence</Button></div>}
+                  </>}
+                </details>
+  );
+}
+
+function UnitList({ units, entries, search, onSearch, onSelect }: {
+  units: PlanUnit[]; entries: Entry[]; search: string; onSearch: (value: string) => void; onSelect: (id: string) => void;
+}) {
+  const [page, setPage] = useState(0);
+  useEffect(() => setPage(0), [search, units.length]);
+  const matches = units.filter(u => `${u.unit_ref} ${u.tenant_name || ""}`.toLowerCase().includes(search.toLowerCase()));
+  return <div className="space-y-2 mb-4">
+    <Input aria-label="Search units" placeholder="Find unit or tenant…" value={search} onChange={e => onSearch(e.target.value)} data-testid="input-unit-search" />
+    <p className="text-[11px] text-muted-foreground font-mono">{matches.length} units</p>
+    {matches.slice(page * 12, page * 12 + 12).map(unit => {
+      const evidence = entries.filter(e => e.unit_id === unit.id);
+      return <button key={unit.id} data-testid={`unit-row-${unit.id}`} onClick={() => onSelect(unit.id)} className="w-full min-h-11 text-left border border-border rounded-xl bg-card p-3 hover:border-primary">
+        <span className="block font-semibold text-sm">{unit.unit_ref}</span>
+        <span className="block text-[11px] text-muted-foreground">{unit.tenant_name || "Tenant not entered"} · {evidence.length ? `${evidence.length} evidence entries` : "Add information"}</span>
+      </button>;
+    })}
+    {!matches.length && <p className="text-sm text-muted-foreground">{units.length ? "No units match your search." : "No units yet — trace a unit or draw its boundary."}</p>}
+    {matches.length > 12 && <div className="flex items-center gap-2"><Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>Previous</Button><span className="font-mono text-[11px]">{page + 1} / {Math.ceil(matches.length / 12)}</span><Button variant="outline" size="sm" disabled={(page + 1) * 12 >= matches.length} onClick={() => setPage(p => p + 1)}>Next</Button></div>}
+  </div>;
+}
+
 // ── Unit side panel ───────────────────────────────────────────────────────
-function UnitPanel({ unit, entries, planId, matters = [], onClose, onSave, onDeleted }: {
-  unit: PlanUnit; entries: Entry[]; planId: string; matters?: Matter[];
-  onClose: () => void; onSave: (patch: any) => void; onDeleted: () => void;
+function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, onClose, onSave, onDeleted, onRedraw }: {
+  unit: PlanUnit; entries: Entry[]; planId: string; matters?: Matter[]; scheduleRows: any[];
+  onClose: () => void; onSave: (patch: any) => Promise<unknown>; onDeleted: () => void; onRedraw: (mode: "draw" | "trace") => void;
 }) {
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<any>({});
   const [addingEvidence, setAddingEvidence] = useState(false);
   const [ev, setEv] = useState<any>({});
+  const [editingEvidenceId, setEditingEvidenceId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [evidenceSaving, setEvidenceSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [evidenceError, setEvidenceError] = useState("");
+  const [scheduleId, setScheduleId] = useState("");
+  const [scheduleSearch, setScheduleSearch] = useState("");
+  const [editScheduleId, setEditScheduleId] = useState<string | null>(null);
+  const scheduleChoice = scheduleRows.find(row => row.id === scheduleId);
+  const scheduleRefCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of scheduleRows) { const ref = normRef(row.unit_number || ""); if (ref) counts.set(ref, (counts.get(ref) || 0) + 1); }
+    return counts;
+  }, [scheduleRows]);
+  const ambiguousSchedule = !unit.ts_linked && (scheduleRefCounts.get(normRef(unit.unit_ref)) || 0) > 1;
 
   const startEdit = () => {
     setForm({
       unitRef: unit.unit_ref, tenantName: unit.tenant_name || "",
       leaseExpiry: unit.lease_expiry?.slice(0, 10) || "", breakDate: unit.break_date?.slice(0, 10) || "",
-      reviewDate: unit.review_date?.slice(0, 10) || "", erv: unit.erv || "", passingRent: unit.passing_rent || "",
-      sqft: unit.sqft || "", notes: unit.notes || "",
+      reviewDate: unit.review_date?.slice(0, 10) || "", erv: unit.erv ?? "", passingRent: unit.passing_rent ?? "",
+      sqft: unit.sqft ?? "", notes: unit.notes || "",
     });
+    setEditScheduleId(unit.ts_row_id || null);
+    setSaveError("");
     setEditing(true);
   };
 
@@ -1095,16 +1236,35 @@ function UnitPanel({ unit, entries, planId, matters = [], onClose, onSave, onDel
     onDeleted();
   };
 
+  const saveFacts = async () => {
+    setSaving(true); setSaveError("");
+    try { await onSave({ ...form, scheduleRowId: editScheduleId }); setEditing(false); }
+    catch (error: any) { setSaveError(error.message || "Couldn't save. Your changes are kept here."); }
+    finally { setSaving(false); }
+  };
+  const linkSchedule = async () => {
+    if (!scheduleId) return;
+    setSaving(true); setSaveError("");
+    try { await onSave({ linkScheduleRowId: scheduleId, expectedScheduleRowId: unit.ts_row_id || null }); setScheduleId(""); }
+    catch (error: any) { setSaveError(error.message); }
+    finally { setSaving(false); }
+  };
+  const startEvidence = (entry?: Entry) => {
+    setEditingEvidenceId(entry?.id || null); setEvidenceError("");
+    setEv(entry ? { tenant: entry.tenant || "", transactionType: entry.transaction_type || "", transactionDate: entry.transaction_date?.slice(0, 10) || "", sizeSqft: entry.size_sqft ?? "", zoneA: entry.zone_a ?? "", itza: entry.itza ?? "", headlineRent: entry.headline_rent ?? "", netEffective: entry.net_effective ?? "", notes: entry.notes || "" } : {});
+    setAddingEvidence(true);
+  };
   const addEvidence = async () => {
+    setEvidenceSaving(true); setEvidenceError("");
     try {
-      const r = await apiRequest("POST", `/api/evidence-plans/${planId}/entries`, { ...ev, unitId: unit.id, unitRef: unit.unit_ref });
+      const r = await apiRequest(editingEvidenceId ? "PUT" : "POST", editingEvidenceId ? `/api/evidence-plans/entries/${editingEvidenceId}` : `/api/evidence-plans/${planId}/entries`, { ...ev, unitId: unit.id, unitRef: unit.unit_ref });
       if (!r.ok) throw new Error((await r.json()).error || "failed");
       setAddingEvidence(false);
       setEv({});
       queryClient.invalidateQueries({ queryKey: ["/api/evidence-plans", planId] });
     } catch (e: any) {
-      toast({ title: "Couldn't add evidence", description: e.message, variant: "destructive" });
-    }
+      setEvidenceError(e.message);
+    } finally { setEvidenceSaving(false); }
   };
 
   const fact = (label: string, value: string) => (
@@ -1115,14 +1275,14 @@ function UnitPanel({ unit, entries, planId, matters = [], onClose, onSave, onDel
   );
   const field = (label: string, key: string, type: "text" | "date" | "number" = "text") => (
     <div>
-      <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</label>
-      <Input type={type} value={form[key] ?? ""} onChange={e => setForm((f: any) => ({ ...f, [key]: e.target.value }))} className="mt-0.5 h-8 text-xs" />
+      <label htmlFor={`unit-field-${key}`} className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</label>
+      <Input id={`unit-field-${key}`} data-testid={`unit-field-${key}`} type={type} step={type === "number" ? "any" : undefined} value={form[key] ?? ""} onChange={e => setForm((f: any) => ({ ...f, [key]: e.target.value }))} className="mt-0.5 min-h-11 text-sm" />
     </div>
   );
   const evField = (label: string, key: string, type: "text" | "date" | "number" = "text") => (
     <div>
-      <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</label>
-      <Input type={type} value={ev[key] ?? ""} onChange={e => setEv((f: any) => ({ ...f, [key]: e.target.value }))} className="mt-0.5 h-8 text-xs" />
+      <label htmlFor={`evidence-field-${key}`} className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</label>
+      <Input id={`evidence-field-${key}`} data-testid={`evidence-field-${key}`} type={type} step={type === "number" ? "any" : undefined} value={ev[key] ?? ""} onChange={e => setEv((f: any) => ({ ...f, [key]: e.target.value }))} className="mt-0.5 min-h-11 text-sm" />
     </div>
   );
 
@@ -1130,13 +1290,13 @@ function UnitPanel({ unit, entries, planId, matters = [], onClose, onSave, onDel
     <div className="p-4 space-y-4">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <h2 className="text-lg font-bold tracking-tight">{unit.unit_ref}</h2>
+          <h2 className="text-lg font-bold tracking-tight break-words">{unit.unit_ref}</h2>
           <p className="text-[11px] text-muted-foreground">{unit.tenant_name || "No tenant on record"}{unit.sqft ? ` · ${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : ""}</p>
         </div>
         <div className="flex items-center gap-1">
-          {!editing && <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={startEdit} data-testid="button-edit-unit">Edit</Button>}
-          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={removeUnit} data-testid="button-delete-unit"><Trash2 className="w-3.5 h-3.5" /></Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}><X className="w-4 h-4" /></Button>
+          {!editing && <Button variant="ghost" size="sm" className="min-h-11 px-2" onClick={startEdit} data-testid="button-edit-unit">Edit</Button>}
+          <Button aria-label="Delete unit" variant="ghost" size="icon" className="h-11 w-11 text-muted-foreground" onClick={removeUnit} data-testid="button-delete-unit"><Trash2 className="w-4 h-4" /></Button>
+          <Button aria-label="Close unit" variant="ghost" size="icon" className="h-11 w-11" onClick={onClose} data-testid="button-close-unit"><X className="w-4 h-4" /></Button>
         </div>
       </div>
 
@@ -1144,21 +1304,21 @@ function UnitPanel({ unit, entries, planId, matters = [], onClose, onSave, onDel
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-2">
             {field("Unit ref", "unitRef")}
-            {!unit.ts_linked && <>
-              {field("Tenant", "tenantName")}
+            <>
+              {field(unit.ts_linked ? "Trading name" : "Tenant", "tenantName")}
               {field("Lease expiry", "leaseExpiry", "date")}
               {field("Break", "breakDate", "date")}
               {field("Next review", "reviewDate", "date")}
               {field("Size sq ft", "sqft", "number")}
               {field("ERV £pa", "erv", "number")}
               {field("Passing £pa", "passingRent", "number")}
-            </>}
+            </>
           </div>
-          {unit.ts_linked && <p className="text-[11px] text-muted-foreground">Lease facts come from the property's tenancy schedule — edit them there.</p>}
+          {unit.ts_linked && <p className="text-sm text-muted-foreground">Saving these lease facts updates this unit's linked tenancy-schedule row.</p>}
           {field("Notes", "notes")}
           <div className="flex justify-end gap-2 pt-1">
-            <Button variant="outline" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
-            <Button size="sm" onClick={() => { onSave(unit.ts_linked ? { unitRef: form.unitRef, notes: form.notes } : form); setEditing(false); }} data-testid="button-save-unit">Save</Button>
+            <Button variant="outline" size="sm" disabled={saving} onClick={() => setEditing(false)}>Cancel</Button>
+            <Button size="sm" disabled={saving} onClick={saveFacts} data-testid="button-save-unit">{saving ? "Saving…" : "Save"}</Button>
           </div>
         </div>
       ) : (
@@ -1171,9 +1331,31 @@ function UnitPanel({ unit, entries, planId, matters = [], onClose, onSave, onDel
             {fact("Passing rent", fmtMoney(unit.passing_rent))}
             {fact("Size", unit.sqft ? `${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : "—")}
           </div>
-          {unit.ts_linked && <p className="text-[10px] text-muted-foreground mt-2">Live from the property's tenancy schedule</p>}
+          {unit.ts_linked && <p className="text-[11px] text-muted-foreground mt-2">Live from the property's tenancy schedule</p>}
         </div>
       )}
+      {saveError && <p role="alert" className="text-sm text-destructive" data-testid="unit-save-error">{saveError}</p>}
+      {!editing && unit.notes && <div className="rounded-xl border border-border p-3"><h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Notes</h3><p className="text-sm whitespace-pre-wrap break-words">{unit.notes}</p></div>}
+      {!editing && <div className="flex gap-2 flex-wrap">
+        <Button variant="outline" size="sm" onClick={() => onRedraw("draw")} data-testid="button-redraw-unit">Redraw boundary</Button>
+        <Button variant="outline" size="sm" onClick={() => onRedraw("trace")} data-testid="button-trace-boundary">Trace boundary</Button>
+      </div>}
+      {!editing && scheduleRows.length > 0 && <details className="rounded-xl border border-border p-3 text-sm">
+        <summary className="cursor-pointer font-medium">{unit.ts_linked ? "Change schedule link" : "Link schedule row"}</summary>
+        {ambiguousSchedule && <p className="mt-2 text-sm" role="status">Multiple schedule rows use this unit reference. Compare their lease facts before choosing; a similar tenant name does not establish which row is current.</p>}
+        <p className="text-muted-foreground mt-2">Choose the matching row. The unit adopts its reference and lease facts; evidence stays with this outline.</p>
+        <Input aria-label="Search tenancy schedule rows" placeholder="Find unit or tenant…" value={scheduleSearch} onChange={e => setScheduleSearch(e.target.value)} className="mt-2" />
+        <select aria-label="Tenancy schedule row" className="w-full min-h-11 mt-2 rounded-md border border-input bg-background px-2" value={scheduleId} onChange={e => setScheduleId(e.target.value)} data-testid="select-unit-schedule">
+          <option value="">Choose a schedule row…</option>
+          {scheduleRows.filter(row => row.id === scheduleId || `${row.unit_number || ""} ${row.trading_name || ""} ${row.tenant_name || ""}`.toLowerCase().includes(scheduleSearch.toLowerCase())).map(row => <option key={row.id} value={row.id}>{row.unit_number} · {row.trading_name || row.tenant_name || "No tenant"}{row.floor_level ? ` · ${row.floor_level}` : ""} · {fmtMoney(row.passing_rent_pa)} · expires {fmtDate(row.lease_expiry)} · {row.id.slice(-6)}</option>)}
+        </select>
+        {scheduleChoice && <div className="mt-3 border border-border rounded-lg p-3 space-y-2" data-testid="schedule-choice-preview">
+          <p className="font-semibold break-words">{scheduleChoice.unit_number} · {scheduleChoice.trading_name || "Trading name not entered"}</p>
+          <p className="text-[11px] text-muted-foreground break-words">Legal tenant: {scheduleChoice.tenant_name || "Not entered"}{scheduleChoice.floor_level ? ` · ${scheduleChoice.floor_level}` : ""}</p>
+          <div className="grid grid-cols-2 gap-2">{fact("Passing rent", fmtMoney(scheduleChoice.passing_rent_pa))}{fact("Lease expiry", fmtDate(scheduleChoice.lease_expiry))}{fact("ERV", fmtMoney(scheduleChoice.erv_pa))}{fact("Size", scheduleChoice.nia_sqft ?? scheduleChoice.gia_sqft ? `${Number(scheduleChoice.nia_sqft ?? scheduleChoice.gia_sqft).toLocaleString("en-GB")} sq ft` : "—")}</div>
+        </div>}
+        <Button className="mt-2" size="sm" disabled={!scheduleId || saving} onClick={linkSchedule} data-testid="button-link-unit-schedule">Link schedule row</Button>
+      </details>}
 
       {matters.length > 0 && (
         <div>
@@ -1192,7 +1374,7 @@ function UnitPanel({ unit, entries, planId, matters = [], onClose, onSave, onDel
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Evidence · <span className="font-mono">{entries.length}</span></h3>
-          <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => setAddingEvidence(a => !a)} data-testid="button-add-evidence">
+          <Button variant="ghost" size="sm" className="min-h-11 px-2" onClick={() => startEvidence()} data-testid="button-add-evidence">
             <Plus className="w-3 h-3 mr-0.5" /> Add evidence
           </Button>
         </div>
@@ -1201,7 +1383,11 @@ function UnitPanel({ unit, entries, planId, matters = [], onClose, onSave, onDel
           <div className="rounded-xl border border-border bg-card p-3 mb-2 space-y-2">
             <div className="grid grid-cols-2 gap-2">
               {evField("Tenant", "tenant")}
-              {evField("Type (OML/LR/RR)", "transactionType")}
+              <div><label htmlFor="evidence-field-transactionType" className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Transaction type</label>
+                <select id="evidence-field-transactionType" data-testid="evidence-field-transactionType" className="w-full min-h-11 rounded-md border border-input bg-background px-2 text-sm mt-0.5" value={ev.transactionType || ""} onChange={e => setEv((v: any) => ({ ...v, transactionType: e.target.value }))}>
+                  <option value="">Choose type…</option><option value="OML">Open market letting</option><option value="Lease renewal">Lease renewal</option><option value="Rent review">Rent review</option><option value="Re-gear">Re-gear</option><option value="Other">Other</option>
+                  {ev.transactionType && !["OML", "Lease renewal", "Rent review", "Re-gear", "Other"].includes(ev.transactionType) && <option value={ev.transactionType}>{ev.transactionType}</option>}
+                </select></div>
               {evField("Date", "transactionDate", "date")}
               {evField("Size sq ft", "sizeSqft", "number")}
               {evField("Zone A £psf", "zoneA", "number")}
@@ -1210,9 +1396,10 @@ function UnitPanel({ unit, entries, planId, matters = [], onClose, onSave, onDel
               {evField("Net effective £pa", "netEffective", "number")}
             </div>
             {evField("Notes", "notes")}
+            {evidenceError && <p role="alert" className="text-sm text-destructive">{evidenceError}</p>}
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setAddingEvidence(false)}>Cancel</Button>
-              <Button size="sm" onClick={addEvidence} data-testid="button-save-evidence">Save evidence</Button>
+              <Button variant="outline" size="sm" disabled={evidenceSaving} onClick={() => setAddingEvidence(false)}>Cancel</Button>
+              <Button size="sm" disabled={evidenceSaving} onClick={addEvidence} data-testid="button-save-evidence">{evidenceSaving ? "Saving…" : "Save evidence"}</Button>
             </div>
           </div>
         )}
@@ -1236,6 +1423,7 @@ function UnitPanel({ unit, entries, planId, matters = [], onClose, onSave, onDel
                   </div>
                 )}
                 <div className="flex items-center gap-2 mt-1">
+                  <Button variant="ghost" size="sm" onClick={() => startEvidence(e)} data-testid={`button-edit-evidence-${e.id}`}>Edit evidence</Button>
                   {e.source_key && (
                     <a href={`/api/evidence-plans/source?key=${encodeURIComponent(e.source_key)}`} target="_blank" rel="noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">Open source TAF</a>
                   )}
@@ -1259,6 +1447,6 @@ function UnitPanel({ unit, entries, planId, matters = [], onClose, onSave, onDel
 
 export default function EvidencePlansPage() {
   const [matched, params] = useRoute("/evidence-plans/:id");
-  if (matched && params?.id) return <PlanView planId={params.id} />;
+  if (matched && params?.id) return <PlanView key={params.id} planId={params.id} />;
   return <PlanList />;
 }

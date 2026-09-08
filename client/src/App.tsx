@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore, lazy, Suspense } from "react";
 import { Switch, Route, useLocation } from "wouter";
-import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
+import { queryClient, getQueryFn, apiRequest, refreshSession, sessionIdentity, subscribeSessionVerification, getSessionVerificationSnapshot } from "./lib/queryClient";
 import { isEquityUser } from "./lib/utils";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
@@ -15,7 +15,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ColorSchemeSelector } from "@/components/color-scheme-selector";
-import { TeamProvider, useTeam } from "@/lib/team-context";
+import { TeamProvider, useTeam, TEAMS } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { BrandProvider } from "@/lib/brand-context";
 import { EntitySidebarProvider } from "@/components/crm/entity-sidebar";
@@ -61,13 +61,13 @@ const Models = lazy(() => import("@/pages/models"));
 // (client/src/pages/document-briefs.tsx); /templates and /decks redirect in.
 const DeckDetail = lazy(() => import("@/pages/deck-detail"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
+const ProfileSettingsPage = lazy(() => import("@/components/profile-photo-card").then(module => ({ default: module.ProfileSettingsPage })));
 const Comps = lazy(() => import("@/pages/comps"));
 const InvestmentComps = lazy(() => import("@/pages/investment-comps"));
 const HuntersLetting = lazy(() => import("@/pages/hunters-letting"));
 const HuntersInvestment = lazy(() => import("@/pages/hunters-investment"));
 const Leads = lazy(() => import("@/pages/leads"));
 const Subscriptions = lazy(() => import("@/pages/subscriptions"));
-const ExperianAudit = lazy(() => import("@/pages/experian-audit"));
 const ChatBGP = lazy(() => import("@/pages/chatbgp"));
 const Instructions = lazy(() => import("@/pages/instructions"));
 const Enrichment = lazy(() => import("@/pages/enrichment"));
@@ -342,16 +342,13 @@ function Router() {
       <Route path="/decks/:id" component={DeckDetail} />
       <Route path="/image-studio">{() => <StudioRoute><ImageStudio /></StudioRoute>}</Route>
       <Route path="/settings" component={SettingsPage} />
-      {/* /settings/profile is on the client allow-list (mobile shell links
-          it) but had no route — pasted links landed on NotFound. */}
-      <Route path="/settings/profile" component={SettingsPage} />
+      <Route path="/settings/profile" component={ProfileSettingsPage} />
       <Route path="/comps" component={Comps} />
       <Route path="/comps/:id" component={Comps} />
       <Route path="/admin/comps-leads">{() => <AdminRoute><CompsLeadsRedirect /></AdminRoute>}</Route>
       <Route path="/investment-comps">{() => <InvestmentComps />}</Route>
       <Route path="/leads" component={Leads} />
       <Route path="/subscriptions" component={Subscriptions} />
-      <Route path="/experian-audit" component={ExperianAudit} />
       <Route path="/chatbgp" component={ChatBGP} />
       <Route path="/enrichment" component={Enrichment} />
       <Route path="/admin/dedupe" component={AdminDedupe} />
@@ -628,6 +625,7 @@ function AuthenticatedApp() {
               // render their UUID as the title — show a friendly section
               // label instead and let the inner page own the real heading.
               if (location === "/") return "Dashboard";
+              if (location === "/settings/profile") return "My Profile";
               const seg = location.replace(/^\//, "").split("/");
               const root = seg[0];
               const hasId = seg.length > 1 && seg[1] && !["letting", "investment", "report", "properties", "list"].includes(seg[1]);
@@ -821,7 +819,7 @@ function AddinRouter() {
 }
 
 function AppContent() {
-  const { setUserTeam, setUserId, setAdditionalTeams, setTeamLocked } = useTeam();
+  const { setUserTeam, setUserId, setAdditionalTeams, setTeamLocked, setServerActiveTeam } = useTeam();
   const [location] = useLocation();
   // Also check window.location directly — wouter's location may not reflect
   // the initial pathname in iframe contexts (Office task panes).
@@ -832,31 +830,39 @@ function AppContent() {
   // to the login page.
   const isPublicKycUpload = location.startsWith("/kyc-upload/") ||
     (typeof window !== "undefined" && window.location.pathname.startsWith("/kyc-upload/"));
-  const { data: user, isLoading } = useQuery<User | null>({
+  const { data: user, isLoading, isError, refetch } = useQuery<User | null>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     retry: false,
     enabled: !isAddin && !isPublicKycUpload,
   });
+  const verifiedIdentity = useSyncExternalStore(subscribeSessionVerification, getSessionVerificationSnapshot, getSessionVerificationSnapshot);
+  const sessionVerified = user !== undefined && verifiedIdentity !== undefined && verifiedIdentity === sessionIdentity(user);
 
   useEffect(() => {
-    if (user?.id) {
-      setUserId(user.id);
-      // Lock the team switcher for real client logins only. Staff viewing
-      // as a client also carry companyScopeId, and locking on it made
-      // setActiveTeam("all") a no-op — the Exit button looked dead and
-      // staff were trapped in client-view mode.
-      const isBgpStaff = ((user as any)?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
-      setTeamLocked(((user as any)?.role === "Client" || !!(user as any)?.companyScopeId) && !isBgpStaff);
-    }
-    if (user?.team) {
-      setUserTeam(user.team as TeamName);
-    }
+    if (!sessionVerified) return;
+    setUserId(user?.id ?? null);
+    // Staff can leave a client preview; real client accounts stay pinned.
+    const isBgpStaff = ((user as any)?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+    setTeamLocked(!!user && ((user as any)?.role === "Client" || !!(user as any)?.companyScopeId) && !isBgpStaff);
+    setUserTeam((user?.team as TeamName) || null);
+    const activeTeam = (user as any)?.activeTeam;
+    setServerActiveTeam(activeTeam === null || activeTeam === "all" ? "all"
+      : TEAMS.includes(activeTeam) ? activeTeam as TeamName : undefined);
     const extra = (user as any)?.additionalTeams;
-    if (extra && Array.isArray(extra)) {
-      setAdditionalTeams(extra as TeamName[]);
-    }
-  }, [user?.team, user?.id, (user as any)?.additionalTeams, setUserTeam, setUserId, setAdditionalTeams]);
+    setAdditionalTeams(Array.isArray(extra) ? extra as TeamName[] : []);
+  }, [user, sessionVerified, setUserTeam, setUserId, setAdditionalTeams, setTeamLocked, setServerActiveTeam]);
+
+  useEffect(() => {
+    if (isAddin || isPublicKycUpload) return;
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "bgp_auth_token" || event.key === null) {
+        void refreshSession().catch(() => {});
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [isAddin, isPublicKycUpload]);
 
   if (isAddin) {
     return <AddinRouter />;
@@ -866,7 +872,16 @@ function AppContent() {
     return <PublicKycUploadRoute />;
   }
 
-  if (isLoading) {
+  if (!sessionVerified && isError) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-background text-foreground">
+        <p className="text-sm">Could not check your session. Please try again.</p>
+        <button className="rounded-md border border-border px-4 py-2 text-sm" onClick={() => void refetch()}>Try again</button>
+      </div>
+    );
+  }
+
+  if (isLoading || !sessionVerified) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="space-y-4 text-center">
@@ -884,14 +899,15 @@ function AppContent() {
     return (
       <LoginPage
         onLogin={() => {
-          queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+          void refreshSession().catch(() => {});
         }}
       />
     );
   }
 
   return (
-    <ChatBGPProvider>
+    <ChatBGPProvider key={sessionIdentity(user)}>
+      <EntitySidebarProvider>
       <ConnectionStatus />
       {/* Invoice-verdict alarm: un-dismissable nag for agents with deals due
           to exchange/complete this month and no verdict — renders on every
@@ -910,6 +926,7 @@ function AppContent() {
       <ErrorBoundary name="App">
         <AuthenticatedApp />
       </ErrorBoundary>
+      </EntitySidebarProvider>
     </ChatBGPProvider>
   );
 }
@@ -954,8 +971,8 @@ function OldUrlBanner() {
 }
 
 function App() {
-  // Persisted cache = instant paint from last-known data on open; plain
-  // in-memory provider when localStorage is unavailable (private mode).
+  // Restore page data for reuse after AppContent validates the session;
+  // use memory only when localStorage is unavailable.
   const Provider: any = persistOptions ? PersistQueryClientProvider : QueryClientProvider;
   const providerProps: any = persistOptions ? { client: queryClient, persistOptions } : { client: queryClient };
   return (
@@ -964,13 +981,11 @@ function App() {
         <TeamProvider>
           <BrandProvider>
             <TooltipProvider>
-              <EntitySidebarProvider>
-                <AppContent />
-                <OldUrlBanner />
-                <Toaster />
-                <GlobalPdfHandler />
-                <HandwritingPanel />
-              </EntitySidebarProvider>
+              <AppContent />
+              <OldUrlBanner />
+              <Toaster />
+              <GlobalPdfHandler />
+              <HandwritingPanel />
             </TooltipProvider>
           </BrandProvider>
         </TeamProvider>

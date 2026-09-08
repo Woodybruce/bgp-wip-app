@@ -5,7 +5,7 @@
 # client critical paths, hard assertions). A red smoke blocks the deploy.
 #
 # deploy: calls the app's own deploy endpoint (server/auto-deploy.ts), which
-# syncs the server checkout with GitHub, rebuilds and restarts. Requires two
+# verifies the tested SHA, stages the build and restarts. Requires two
 # repo secrets:
 #   DEPLOY_URL             e.g. https://app.yourdomain.com  (no trailing slash)
 #   DEPLOY_WEBHOOK_SECRET  same value as the Railway env var of that name
@@ -48,6 +48,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Production (nixpacks.toml) ships poppler_utils; the evidence-plan PDF
+      # renderer and its regression test shell out to pdfinfo/pdftoppm, so
+      # the runner needs the same tools or the smoke goes red on every push.
+      - name: Install poppler (pdfinfo / pdftoppm)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+
+      - name: Typecheck
+        run: npm run check -- --incremental false
+
+      - name: Regression tests
+        run: npm run qa:regression
+
       # Playwright is deliberately not in package.json (kept out of the app's
       # dependency tree); the QA harnesses expect it in node_modules.
       - name: Install Playwright
@@ -76,6 +88,9 @@ jobs:
       - name: Run smoke suite
         run: SMOKE_BASE=http://localhost:5000 DATABASE_URL="postgresql://postgres@localhost:5432/bgpsmoke" node qa/smoke.mjs
 
+      - name: Run phone session smoke suite
+        run: SMOKE_BASE=http://localhost:5000 node qa/phone-session-smoke.mjs
+
       - name: App log on failure
         if: failure()
         run: tail -200 /tmp/smoke-app.log || true
@@ -96,6 +111,7 @@ jobs:
         env:
           DEPLOY_URL: ${{ secrets.DEPLOY_URL }}
           DEPLOY_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
+          DEPLOY_SHA: ${{ github.sha }}
         run: |
           if [ -z "$DEPLOY_URL" ] || [ -z "$DEPLOY_SECRET" ]; then
             echo "DEPLOY_URL / DEPLOY_WEBHOOK_SECRET repo secrets not set — skipping."
@@ -103,10 +119,25 @@ jobs:
           fi
           code=$(curl -sS -o response.json -w "%{http_code}" --max-time 120 \
             -X POST "$DEPLOY_URL/api/admin/deploy" \
-            -H "x-deploy-secret: $DEPLOY_SECRET")
+            -H "x-deploy-secret: $DEPLOY_SECRET" \
+            -H "x-deploy-sha: $DEPLOY_SHA")
           echo "HTTP $code"
           cat response.json || true
-          # 200 = deploying/up-to-date, 409 = a deploy is already running
-          # (this push will be picked up by that deploy's git sync) — both fine.
-          if [ "$code" = "200" ] || [ "$code" = "409" ]; then exit 0; fi
+          # A conflict is a real failure: another deployment never promises
+          # to include this tested commit. Poll the restarted bundle's SHA.
+          if [ "$code" != "200" ] && [ "$code" != "202" ]; then exit 1; fi
+          for attempt in $(seq 1 100); do
+            if curl -fsS --max-time 15 "$DEPLOY_URL/api/admin/deploy/status" \
+                -H "x-deploy-secret: $DEPLOY_SECRET" -o status.json; then
+              state=$(jq -r '.status' status.json)
+              running_sha=$(jq -r '.sha' status.json)
+              if [ "$state" = "deployed" ] && [ "$running_sha" = "$DEPLOY_SHA" ]; then
+                echo "Verified running commit $DEPLOY_SHA"
+                exit 0
+              fi
+              if [ "$state" = "failed" ]; then cat status.json; exit 1; fi
+            fi
+            sleep 10
+          done
+          echo "Deployment did not confirm the tested SHA before timeout"
           exit 1

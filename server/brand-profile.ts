@@ -825,6 +825,28 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     const c = company.rows[0];
 
+    // Self-heal a stale store undercount HERE, not just in the client (a
+    // long-lived browser tab runs an old bundle and never fires its
+    // trigger): a chain left with a couple of stray rows by the old strict
+    // name matcher (Greggs: 1 row for 2,600 shops) re-scans in the
+    // background. startJob dedupes concurrent kicks; the 7-day recency
+    // guard stops genuinely small footprints re-burning Places quota.
+    try {
+      const found = stores.rows.length;
+      const claimed = Number(c.store_count) || 0;
+      const freshest = Math.max(0, ...stores.rows.map((s: any) => (s.researched_at ? new Date(s.researched_at).getTime() : 0)));
+      if (found > 0 && found <= 3 && claimed >= 25 && Date.now() - freshest > 7 * 24 * 3600_000) {
+        const { startJob } = await import("./brand-jobs");
+        const { alreadyRunning } = startJob(`research-stores:${companyId}:uk`, async () => {
+          const out = await researchBrandStores(String(companyId), { scope: "uk" });
+          return { ...out, scope: "uk", company: { id: companyId, name: (out as any).companyName } };
+        });
+        if (!alreadyRunning) console.log(`[brand-profile] store undercount self-heal: re-scanning ${c.name} (${found} stored vs store_count ${claimed})`);
+      }
+    } catch (e: any) {
+      console.warn(`[brand-profile] store self-heal kick failed: ${e?.message}`);
+    }
+
     // Resolve bgp_contact_user_ids → user display names + per-account
     // roles from crm_company_bgp_roles (Charlotte = Investment lead).
     let coverers: Array<{ id: string; name: string; email: string | null; role: string | null }> = [];
@@ -1048,8 +1070,30 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       ).catch(() => {});
     }
 
+    // One definition of "landlord" for the whole app: the same rule the
+    // Landlord CRM list (/api/crm/landlords) uses — typed as a landlord, OR
+    // the landlord on a live deal, OR the freeholder / long leaseholder of a
+    // property — never a tenant/brand type. The profile page used to decide
+    // from company_type alone, so a landlord typed as anything else fell
+    // into the BRAND layout (UK stores, Apollo momentum, brand expansion —
+    // "landlords don't have stores, they have properties", Woody 2026-09-08).
+    let isLandlord = false;
+    try {
+      const ll = await pool.query(
+        `SELECT (LOWER(COALESCE(c.company_type, '')) NOT LIKE 'tenant%' AND (
+                  LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit', 'developer', 'fund')
+                  OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.landlord_id = c.id AND d.status NOT IN ('ARCH'))
+                  OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id)
+                )) AS is_landlord
+           FROM crm_companies c WHERE c.id = $1`, [companyId]);
+      isLandlord = !!ll.rows[0]?.is_landlord;
+    } catch (e: any) {
+      console.warn(`[brand-profile] landlord flag failed for ${companyId}:`, e?.message);
+    }
+
     res.json({
       company: c,
+      isLandlord,
       signals: filteredSignals,
       // Client accounts only see tenant-rep representation — landlord-side
       // and investment agent relationships are BGP-internal.

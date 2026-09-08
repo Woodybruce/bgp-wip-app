@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useMemo } from "react";
+import { lazy, Suspense, useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,17 +28,24 @@ type TabKey = "deals" | "letting" | "investment" | "wip-report" | "properties";
 
 const TAB_PATHS = new Set(["letting", "investment", "report", "properties", "list"]);
 
-function getTabFromLocation(loc: string): TabKey | null {
+export function getTabFromLocation(loc: string): TabKey | null {
   if (loc.startsWith("/deals/letting")) return "letting";
   if (loc.startsWith("/deals/investment") || loc.startsWith("/investment-tracker")) return "investment";
   if (loc.startsWith("/deals/report") || loc.startsWith("/wip-report")) return "wip-report";
   if (loc.startsWith("/deals/properties") || loc === "/properties" || loc.startsWith("/properties/")) return "properties";
   if (loc.startsWith("/deals/list")) return "deals";
   // Bare /deals → null so the component picks the landing tab by device:
-  // WIP Report on desktop (the financial roll-up), Deals on mobile (WIP is
-  // hidden there). The Deals schedule lives at /deals/list.
+  // WIP Report on desktop, Deals on mobile. Explicit tab URLs work on both.
   return null;
 }
+
+export const DEAL_TAB_ROUTES: Record<TabKey, string> = {
+  "wip-report": "/deals/report",
+  deals: "/deals/list",
+  letting: "/deals/letting",
+  investment: "/deals/investment",
+  properties: "/deals/properties",
+};
 
 function isDealProfile(loc: string): boolean {
   const match = loc.match(/^\/deals\/([^/]+)/);
@@ -58,6 +65,7 @@ export default function DealsHub() {
     getTabFromLocation(location) || ((typeof window !== "undefined" && window.innerWidth < 768) ? "deals" : "wip-report")
   );
   const isProfile = isDealProfile(location);
+  const activeTabButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (isProfile) return;
@@ -71,7 +79,7 @@ export default function DealsHub() {
       if (t === "investment" || t === "wip-report") setLocation("/deals/list", { replace: true });
       return;
     }
-    if (t) setTab(t);
+    setTab(t || ((typeof window !== "undefined" && window.innerWidth < 768) ? "deals" : "wip-report"));
   }, [location, isProfile, isClient]);
 
   // WIP Report — the financial roll-up every agent wants. Now shown on both
@@ -91,6 +99,16 @@ export default function DealsHub() {
     return allTabs;
   }, [activeTeam, allTabs, isClient]);
 
+  useEffect(() => {
+    const button = activeTabButton.current;
+    const scroller = button?.parentElement?.parentElement;
+    if (!button || !scroller) return;
+    const buttonBounds = button.getBoundingClientRect();
+    const scrollBounds = scroller.getBoundingClientRect();
+    if (buttonBounds.left < scrollBounds.left) scroller.scrollLeft -= scrollBounds.left - buttonBounds.left;
+    else if (buttonBounds.right > scrollBounds.right) scroller.scrollLeft += buttonBounds.right - scrollBounds.right;
+  }, [tab, tabs, isProfile]);
+
   if (isProfile) {
     return (
       <Suspense fallback={<PageLoader />}>
@@ -101,25 +119,20 @@ export default function DealsHub() {
 
   const switchTab = (t: TabKey) => {
     setTab(t);
-    const routes: Record<TabKey, string> = {
-      "wip-report": "/deals",
-      deals: "/deals/list",
-      letting: "/deals/letting",
-      investment: "/deals/investment",
-      properties: "/deals/properties",
-    };
-    const target = routes[t];
+    const target = DEAL_TAB_ROUTES[t];
     if (location !== target) setLocation(target);
   };
 
   return (
     <div>
-      <div className={`flex items-center gap-1 px-4 pt-4 md:px-6 md:pt-6 shrink-0 ${tabs.length <= 1 ? "hidden" : ""}`}>
-        <div className="flex flex-wrap md:inline-flex md:min-w-max rounded-lg border bg-muted p-0.5 gap-0.5" data-testid="toggle-deals-tabs">
+      <div className={`mx-4 pt-3 md:mx-6 md:pt-6 overflow-x-auto overscroll-x-contain shrink-0 ${tabs.length <= 1 ? "hidden" : ""}`} data-testid="deals-tabs-scroll">
+        <div className="inline-flex min-w-max rounded-lg border bg-muted p-0.5 gap-0.5" role="group" aria-label="Deals sections" data-testid="toggle-deals-tabs">
           {tabs.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
+              ref={tab === key ? activeTabButton : undefined}
               onClick={() => switchTab(key)}
+              aria-pressed={tab === key}
               className={`inline-flex items-center gap-1.5 rounded-md px-2.5 md:px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
                 tab === key
                   ? "bg-background text-foreground shadow-sm"

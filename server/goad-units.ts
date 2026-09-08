@@ -1,9 +1,10 @@
 /**
  * Shared data layer for the occupier plan (goad_units).
  *
- * Both sources — Edozo (live WFS) and Experian (shapefile import) — normalise
- * into the same `goad_units` rows through here, so the map/renderer never has
- * to care where a unit came from. Responsibilities:
+ * Edozo (live WFS) is the sole source — a planned direct Experian shapefile
+ * import was never built and was dropped 2026-09-07 ("we use Edozo").
+ * Everything normalises into the same `goad_units` rows through here, so the
+ * map/renderer never has to care where a unit came from. Responsibilities:
  *   - British National Grid (EPSG:27700) → WGS84 reprojection
  *   - runtime table + index creation (mirrors the voa_*_cache pattern so we
  *     don't depend on the drizzle migration journal in production)
@@ -20,7 +21,7 @@ import {
 
 export interface NormalisedUnit {
   externalKey: string;
-  source: "edozo" | "experian";
+  source: "edozo";
   toid?: string | null;
   goadNumber?: string | null;
   centreCode?: string | null;
@@ -294,7 +295,7 @@ export function normaliseCategory(opts: {
   if (["OFFICE", "DWELLINGS", "DWLLINGS", "ENT", "ENTRANCE", "CAR PARK", "SERVICE AREA", "STORES"].includes(nameUpper)) return "other";
   const byBrand = categoriseFromBrand(name);
   if (byBrand) return byBrand;
-  // Experian carries a rich category string; run it through the VOA-text matcher.
+  // The feed carries a rich category string; run it through the VOA-text matcher.
   const byCat = categoriseFromVoaDescription(opts.rawCategory);
   if (byCat && byCat !== "other") return byCat;
   // A real fascia we can't classify is still a retail unit, not "other".

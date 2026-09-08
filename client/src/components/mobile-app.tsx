@@ -4067,7 +4067,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             )}
             {tab === "chats" && (
               <button
-                onClick={() => navigate("/m/profile")}
+                onClick={() => navigate(currentUser?.role === "Client" ? "/settings/profile" : "/m/profile")}
                 className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:opacity-80 overflow-hidden"
                 data-testid="button-mobile-my-profile"
                 aria-label="My profile"

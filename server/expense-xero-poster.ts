@@ -13,7 +13,8 @@
  *     is allocated to). An unsplit expense posts a single line off the parent.
  */
 import { xeroApi } from "./xero";
-import { db } from "./db";
+import { db, pool } from "./db";
+import pLimit from "p-limit";
 import { expenses, stripeCardholders, expenseReceipts, expenseSplits, users } from "@shared/schema";
 import { eq, inArray } from "drizzle-orm";
 import {
@@ -35,13 +36,61 @@ const STRIPE_CARDS_ACCOUNT_CODE = "1230";
 // feed is reconciled. Xero find-or-creates this contact by name on first post.
 const CARD_SPEND_XERO_CONTACT = "Revolut Expenses";
 
+const expensePosts = new Map<string, Promise<{ xeroTransactionId: string }>>();
+// Advisory locks hold a connection while Xero responds. Keep room in the
+// shared pool for the category/tracking queries each post also needs.
+const expensePostLimit = pLimit(4);
+
 export async function postExpenseToXero(args: {
+  session: any;
+  expenseId: string;
+}): Promise<{ xeroTransactionId: string }> {
+  const pending = expensePosts.get(args.expenseId);
+  if (pending) return pending;
+  const post = expensePostLimit(() => postExpenseToXeroLocked(args));
+  expensePosts.set(args.expenseId, post);
+  try {
+    return await post;
+  } finally {
+    expensePosts.delete(args.expenseId);
+  }
+}
+
+async function postExpenseToXeroLocked(args: {
+  session: any;
+  expenseId: string;
+}): Promise<{ xeroTransactionId: string }> {
+  const client = await pool.connect();
+  const lockKey = `expense-xero:${args.expenseId}`;
+  let locked = false;
+  let discardConnection = false;
+  try {
+    const result = await client.query(
+      "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked", [lockKey],
+    );
+    locked = result.rows[0]?.locked === true;
+    if (!locked) throw new Error("This expense is already being posted to Xero; retry shortly");
+    return await postExpenseToXeroOnce(args);
+  } finally {
+    if (locked) {
+      try {
+        await client.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [lockKey]);
+      } catch {
+        discardConnection = true;
+      }
+    }
+    client.release(discardConnection);
+  }
+}
+
+async function postExpenseToXeroOnce(args: {
   session: any;
   expenseId: string;
 }): Promise<{ xeroTransactionId: string }> {
   const [exp] = await db.select().from(expenses).where(eq(expenses.id, args.expenseId)).limit(1);
   if (!exp) throw new Error(`Expense ${args.expenseId} not found`);
-  if (exp.xeroExpenseId) throw new Error(`Expense already posted to Xero: ${exp.xeroExpenseId}`);
+  if (exp.xeroExpenseId) return { xeroTransactionId: exp.xeroExpenseId };
+  if (exp.status !== "approved") throw new Error("Expense must be fully approved before posting to Xero");
 
   const [ch] = exp.cardholderId
     ? await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, exp.cardholderId)).limit(1)
@@ -161,11 +210,13 @@ export async function postExpenseToXero(args: {
 
   // Spend Money via /BankTransactions. LineAmountTypes=Inclusive: the amounts
   // are gross (what actually left the card), matching the receipt total.
+  const transactionDate = exp.transactionDate || exp.createdAt;
+  if (!transactionDate) throw new Error("Set the expense transaction date before posting to Xero");
   const body = {
     Type: "SPEND",
     Contact: { Name: CARD_SPEND_XERO_CONTACT },
     BankAccount: { Code: STRIPE_CARDS_ACCOUNT_CODE },
-    Date: exp.transactionDate ? new Date(exp.transactionDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+    Date: new Date(transactionDate).toISOString().slice(0, 10),
     Reference: exp.merchant?.slice(0, 50) || "BGP Card",
     LineAmountTypes: "Inclusive",
     LineItems: lineItems,
@@ -174,6 +225,9 @@ export async function postExpenseToXero(args: {
 
   const result = await xeroApi(args.session, "/BankTransactions", {
     method: "PUT",
+    // Xero retains this key for six minutes: protects overlapping replicas
+    // and prompt retries after a lost response, alongside the local guard.
+    headers: { "Idempotency-Key": `bgp-expense-${exp.id}` },
     body: JSON.stringify(body),
   });
 

@@ -4,6 +4,7 @@ import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
+import { PortfolioContactsBoard } from "@/components/portfolio-contacts-board";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
   AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, RefreshCw,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import { legacyToCode } from "@shared/deal-status";
 import { isEquityUser } from "@/lib/utils";
+import { useTeam } from "@/lib/team-context";
 
 type BriefingData = { briefing: string; generatedAt: string };
 
@@ -197,6 +199,7 @@ function alertHref(a: Alert): string {
 
 export default function MobileHome() {
   const [, navigate] = useLocation();
+  const { exitClientView } = useTeam();
   const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   // Client logins (e.g. Landsec): no Expenses tile, and skip the BGP
   // commission/WIP queries entirely — they're staff-only and would 403.
@@ -246,20 +249,10 @@ export default function MobileHome() {
   // isClientHome (role OR scope), so Landsec-scoped staff (Victoria) got
   // the client phone shell. Real client logins only, as documented.
   const showPortfolioHome = user?.role === "Client";
+  const clientCompanyId = user?.companyScopeId || user?.clientTeamCompanyId || null;
   // Staff currently scoped into a client's view — show an exit banner so
   // a phone can escape without finding the desktop sidebar.
   const isViewingAsClient = user?.role !== "Client" && !!(user as any)?.companyScopeId;
-  const exitClientView = async () => {
-    try {
-      if ((user as any)?.canViewAsClient) {
-        await apiRequest("POST", "/api/auth/client-view-mode", { enabled: false }).catch(() => {});
-      }
-      await apiRequest("POST", "/api/auth/active-team", { team: "all" });
-      localStorage.setItem("bgp_active_team", "all");
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
-      queryClient.invalidateQueries();
-    } catch { /* refetch will reflect whatever stuck */ }
-  };
   const { data: alerts = [] } = useQuery<Alert[]>({ queryKey: ["/api/daily-digest"] });
   const { data: tasks = [] } = useQuery<Task[]>({ queryKey: ["/api/tasks"] });
   const { data: commission, isFetched: commissionFetched } = useQuery<Commission>({
@@ -365,9 +358,7 @@ export default function MobileHome() {
         <ChevronRight className="w-4 h-4 ml-auto opacity-70" />
       </button>
 
-      {/* Client homes (Landsec) — and staff previewing in the Landsec team
-          view: portfolio letting roll-up + jump-offs, the phone version of
-          the Landsec dashboard. */}
+      {/* Client homes: portfolio letting roll-up and linked contacts. */}
       {showPortfolioHome && (
         <>
           <Link
@@ -400,8 +391,13 @@ export default function MobileHome() {
             </div>
           </Link>
 
-          {!!(user as any)?.companyScopeId && (
-            <MobileBgpTeam clientCompanyId={(user as any).companyScopeId} />
+          {!!clientCompanyId && (
+            <>
+              <MobileBgpTeam clientCompanyId={clientCompanyId} />
+              <div className="h-[30rem] min-w-0 [&>div]:rounded-2xl" data-testid="mobile-home-portfolio-contacts">
+                <PortfolioContactsBoard companyId={clientCompanyId} />
+              </div>
+            </>
           )}
         </>
       )}

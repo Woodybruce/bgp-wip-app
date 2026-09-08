@@ -148,7 +148,8 @@ function getRedirectUri(req: Request): string {
 // consumed` — knocking the whole system session offline. Keyed by RT
 // string so concurrent calls on the same token serialise, but different
 // sessions don't block each other.
-const refreshLocks = new Map<string, Promise<string | null>>();
+type XeroTokens = NonNullable<import("express-session").SessionData["xeroTokens"]>;
+const refreshLocks = new Map<string, Promise<XeroTokens | undefined>>();
 
 export async function refreshXeroToken(session: any): Promise<string | null> {
   // Callers can pass null/undefined deliberately to mean "no user session —
@@ -165,18 +166,18 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
 
   const inFlight = refreshLocks.get(rt);
   if (inFlight) {
-    // Another caller is already refreshing this token. Wait for them and
-    // then re-read from session — they will have mutated session.xeroTokens
-    // in place (we share the same session object across withSystemXero calls).
-    await inFlight.catch(() => {});
-    return session.xeroTokens?.accessToken || null;
+    // Background callers hold separate session objects. Copy the rotated
+    // tokens into every waiter instead of returning its expired token.
+    const tokens = await inFlight;
+    session.xeroTokens = tokens ? { ...tokens, tenantId: session.xeroTokens?.tenantId ?? tokens.tenantId } : undefined;
+    return tokens?.accessToken || null;
   }
 
   const clientId = process.env.XERO_CLIENT_ID;
   const clientSecret = process.env.XERO_CLIENT_SECRET;
   if (!clientId || !clientSecret) return null;
 
-  const run = (async (): Promise<string | null> => {
+  const run = (async (): Promise<XeroTokens | undefined> => {
     try {
       const res = await fetch(XERO_TOKEN_URL, {
         method: "POST",
@@ -204,7 +205,7 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
           } catch {/* table may not exist yet on a fresh boot */}
         }
         session.xeroTokens = undefined;
-        return null;
+        return undefined;
       }
 
       const data = await res.json();
@@ -214,17 +215,18 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
         refreshToken: data.refresh_token || session.xeroTokens.refreshToken,
         expiresAt: Date.now() + (data.expires_in || 1800) * 1000,
       };
-      return data.access_token;
+      return { ...session.xeroTokens };
     } catch (err) {
       console.error("[Xero] Token refresh error:", err);
       session.xeroTokens = undefined;
-      return null;
+      return undefined;
     }
   })();
 
   refreshLocks.set(rt, run);
   try {
-    return await run;
+    const tokens = await run;
+    return tokens?.accessToken || null;
   } finally {
     refreshLocks.delete(rt);
   }
@@ -949,33 +951,73 @@ export function setupXeroRoutes(app: Express) {
       let promoted = 0;
       const errors: string[] = [];
 
-      for (const inv of toSync) {
-        try {
-          // Status pull, not a write — fall back to the firm-wide Xero
-          // session like the read endpoints do. A fresh login has no
-          // per-session Xero tokens, which made every invoice fail with
-          // "Not connected" ("Synced 0, 70 failed", Woody 2026-08-31).
-          const xeroRes = await xeroApiWithFallback(req.session, `/Invoices/${inv.xeroInvoiceId}`);
-          const xeroInvoice = xeroRes.Invoices?.[0];
-          if (!xeroInvoice) continue;
-
-          const oldStatus = inv.status;
-          await db.update(xeroInvoices).set({
-            status: xeroInvoice.Status,
-            totalAmount: xeroInvoice.Total,
-            invoiceNumber: xeroInvoice.InvoiceNumber,
-            syncedAt: new Date(),
-            updatedAt: new Date(),
-          }).where(eq(xeroInvoices.id, inv.id));
-          synced++;
-
-          if (inv.dealId) {
-            const didPromote = await autoPromoteDealToInvoiced(inv.dealId, xeroInvoice.Status);
-            if (didPromote) promoted++;
+      // One GET per invoice tripped Xero's 60-calls-a-minute limit the
+      // moment the book passed ~35 open invoices ("Synced 33, 12 failed",
+      // Woody 2026-09-08, every failure a 429). Pull them in batches via
+      // the IDs filter instead — a handful of calls for the whole book —
+      // and back off on any 429 rather than burning the rest of the run.
+      const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+      const is429 = (e: any) => /\b429\b/.test(String(e?.message || ""));
+      const xeroGetWithBackoff = async (path: string): Promise<any> => {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            return await xeroApiWithFallback(req.session, path);
+          } catch (e: any) {
+            if (!is429(e) || attempt >= 3) throw e;
+            await sleep([3000, 8000, 15000][attempt]);
           }
-        } catch (err: any) {
-          errors.push(`Invoice ${inv.invoiceNumber || inv.id}: ${err.message}`);
         }
+      };
+
+      const applyInvoice = async (inv: typeof toSync[number], xeroInvoice: any) => {
+        await db.update(xeroInvoices).set({
+          status: xeroInvoice.Status,
+          totalAmount: xeroInvoice.Total,
+          invoiceNumber: xeroInvoice.InvoiceNumber,
+          syncedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(xeroInvoices.id, inv.id));
+        synced++;
+        if (inv.dealId) {
+          const didPromote = await autoPromoteDealToInvoiced(inv.dealId, xeroInvoice.Status);
+          if (didPromote) promoted++;
+        }
+      };
+
+      const BATCH = 40;
+      for (let i = 0; i < toSync.length; i += BATCH) {
+        const slice = toSync.slice(i, i + BATCH);
+        let byXeroId: Map<string, any> | null = null;
+        try {
+          const res = await xeroGetWithBackoff(`/Invoices?IDs=${slice.map(inv => inv.xeroInvoiceId).join(",")}`);
+          byXeroId = new Map((res.Invoices || []).map((x: any) => [String(x.InvoiceID), x]));
+        } catch (e: any) {
+          // Batch endpoint unhappy — fall back to one-at-a-time for this
+          // slice, paced under the per-minute limit.
+          console.warn(`[Xero] sync-all batch fetch failed (${e?.message}); falling back to per-invoice`);
+        }
+        for (const inv of slice) {
+          try {
+            let xeroInvoice = byXeroId?.get(String(inv.xeroInvoiceId));
+            if (!byXeroId) {
+              await sleep(1100);
+              xeroInvoice = (await xeroGetWithBackoff(`/Invoices/${inv.xeroInvoiceId}`)).Invoices?.[0];
+            }
+            if (!xeroInvoice) {
+              if (byXeroId) errors.push(`Invoice ${inv.invoiceNumber || inv.id}: not found in Xero (deleted or wrong organisation)`);
+              continue;
+            }
+            await applyInvoice(inv, xeroInvoice);
+          } catch (err: any) {
+            errors.push(`Invoice ${inv.invoiceNumber || inv.id}: ${is429(err) ? "Xero rate limit (429) — wait a minute and sync again" : err.message}`);
+          }
+        }
+      }
+
+      if (errors.length) {
+        const reasons = new Map<string, number>();
+        for (const e of errors) { const r = e.replace(/^Invoice [^:]+:\s*/, ""); reasons.set(r, (reasons.get(r) || 0) + 1); }
+        console.warn(`[Xero] sync-all: ${synced} synced, ${errors.length} failed — ${[...reasons.entries()].map(([r, n]) => `${r} ×${n}`).join("; ")}`);
       }
 
       res.json({ success: true, synced, promoted, total: toSync.length, errors });

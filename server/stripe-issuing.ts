@@ -2234,6 +2234,10 @@ export function setupStripeIssuingRoutes(app: Express) {
       const userId = (req as any).session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not signed in" });
       const expenseId = String(req.params.id);
+      const expectedStage = req.body?.expectedStage;
+      if (expectedStage !== 1 && expectedStage !== 2) {
+        return res.status(400).json({ error: "Refresh the approvals page before approving this expense" });
+      }
 
       const { canApproveExpense, approveExpense } = await import("./expense-approval");
       if (!(await canApproveExpense(userId, expenseId))) {
@@ -2243,7 +2247,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       const notes = typeof req.body?.notes === "string" ? req.body.notes : null;
       // Two-stage: stage 1 (Wendy/Layla) advances to a director; stage 2
       // (director) finalises. Only the final approval posts to Xero.
-      const result = await approveExpense(userId, expenseId, notes);
+      const result = await approveExpense(userId, expenseId, notes, expectedStage);
 
       if (result.outcome === "advanced") {
         return res.json({ success: true, stage: result.stage, advanced: true });
@@ -2280,6 +2284,10 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (!userId) return res.status(401).json({ error: "Not signed in" });
       const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
       if (ids.length === 0) return res.status(400).json({ error: "ids array required" });
+      const expectedStages: Record<string, number> = req.body?.expectedStages || {};
+      if (ids.some(id => expectedStages[id] !== 1 && expectedStages[id] !== 2)) {
+        return res.status(400).json({ error: "Refresh the approvals page before approving these expenses" });
+      }
 
       const { canApproveExpense, approveExpense } = await import("./expense-approval");
       const { withSystemXero } = await import("./xero-system-session");
@@ -2301,7 +2309,7 @@ export function setupStripeIssuingRoutes(app: Express) {
               continue;
             }
             // Stage 1 advances to a director; stage 2 finalises + posts to Xero.
-            const result = await approveExpense(userId, id, null);
+            const result = await approveExpense(userId, id, null, expectedStages[id]);
             if (result.outcome === "advanced") {
               outcomes.push({ id, ok: true, advanced: true, stage: result.stage });
               continue;

@@ -14,6 +14,18 @@ import { Camera, Loader2 } from "lucide-react";
 import { queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
+export function ProfileSettingsPage() {
+  return (
+    <div className="p-4 sm:p-6 space-y-6" data-testid="profile-settings-page">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">My Profile</h1>
+        <p className="text-sm text-muted-foreground mt-1">Manage the photo people see alongside your name.</p>
+      </div>
+      <ProfilePhotoCard />
+    </div>
+  );
+}
+
 export function ProfilePhotoCard() {
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -55,10 +67,10 @@ export function ProfilePhotoCard() {
 
   return (
     <Card data-testid="profile-photo-card">
-      <CardContent className="p-4 flex items-center gap-4">
+      <CardContent className="p-4 flex flex-wrap sm:flex-nowrap items-center gap-4">
         <button
           type="button"
-          className="relative group rounded-full"
+          className="relative group rounded-full shrink-0"
           onClick={() => inputRef.current?.click()}
           disabled={busy}
           title="Change profile photo"
@@ -66,19 +78,19 @@ export function ProfilePhotoCard() {
         >
           <Avatar className="h-16 w-16 border">
             {me?.profilePicUrl && <AvatarImage src={me.profilePicUrl} alt={me?.name || "Me"} />}
-            <AvatarFallback className="bg-zinc-800 text-white text-lg">{initials}</AvatarFallback>
+            <AvatarFallback className="bg-foreground text-background text-lg">{initials}</AvatarFallback>
           </Avatar>
-          <span className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-            {busy ? <Loader2 className="w-5 h-5 text-white animate-spin" /> : <Camera className="w-5 h-5 text-white" />}
+          <span className="absolute inset-0 rounded-full bg-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+            {busy ? <Loader2 className="w-5 h-5 text-background animate-spin" /> : <Camera className="w-5 h-5 text-background" />}
           </span>
         </button>
         <div className="min-w-0 flex-1">
-          <p className="font-medium">{me?.name || me?.username || "My profile"}</p>
+          <p className="text-sm font-medium">{me?.name || me?.username || "My profile"}</p>
           <p className="text-xs text-muted-foreground mt-0.5">
             Your photo shows on your chat messages and anywhere your name appears.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => inputRef.current?.click()} disabled={busy}>
+        <Button className="w-full sm:w-auto" variant="outline" size="sm" onClick={() => inputRef.current?.click()} disabled={busy}>
           {busy ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Camera className="w-4 h-4 mr-1.5" />}
           {me?.profilePicUrl ? "Change photo" : "Add photo"}
         </Button>

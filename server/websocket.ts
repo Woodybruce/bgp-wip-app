@@ -6,7 +6,7 @@ let io: SocketIOServer | null = null;
 
 async function getUserIdFromToken(token: string): Promise<string | null> {
   const result = await pool.query(
-    "SELECT user_id FROM auth_tokens WHERE token = $1 AND expires_at > NOW()",
+    "SELECT t.user_id FROM auth_tokens t JOIN users u ON u.id = t.user_id WHERE t.token = $1 AND t.expires_at > NOW() AND u.is_active IS DISTINCT FROM false",
     [token]
   );
   return result.rows[0]?.user_id || null;

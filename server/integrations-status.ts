@@ -44,13 +44,6 @@ const KEYS: KeyDef[] = [
   { name: "APOLLO_API_KEY", label: "Apollo.io", group: "CRM" },
   { name: "COMPANIES_HOUSE_API_KEY", label: "Companies House", group: "CRM" },
 
-  // Commercial credit / KYB
-  { name: "EXPERIAN_CLIENT_ID", label: "Experian Client ID", group: "KYC" },
-  { name: "EXPERIAN_CLIENT_SECRET", label: "Experian Client Secret", group: "KYC" },
-  { name: "EXPERIAN_USERNAME", label: "Experian Username", group: "KYC" },
-  { name: "EXPERIAN_PASSWORD", label: "Experian Password", group: "KYC" },
-  { name: "EXPERIAN_ENV", label: "Experian environment — MUST be 'production' for real credit data (defaults to sandbox)", group: "KYC" },
-
   // Scraping / proxy
   { name: "WEBSHARE_PROXY_USERNAME", label: "Webshare proxy username", group: "Scraping" },
   { name: "WEBSHARE_PROXY_PASSWORD", label: "Webshare proxy password", group: "Scraping" },

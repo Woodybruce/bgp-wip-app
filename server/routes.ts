@@ -520,8 +520,12 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Not authenticated" });
     }
     try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const user = await storage.getUser(userId!);
+      if (!user || user.isActive === false) return res.status(401).json({ message: "Not authenticated" });
       const filename = String(req.params.filename || "");
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
+      res.set("Cache-Control", "private, no-store");
       const file = await getFile(`chat-media/${filename}`);
       if (!file) {
         const diskPath = path.join(CHAT_MEDIA_DIR, filename);
@@ -531,7 +535,6 @@ export async function registerRoutes(
       res.set("Content-Type", file.contentType);
       // chat-media also stores KYC documents (passports, bank statements) —
       // auth-gated content must never be publicly cacheable.
-      res.set("Cache-Control", "private, max-age=3600");
       const downloadTypes = [
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "application/vnd.ms-excel",
@@ -1186,9 +1189,26 @@ export async function registerRoutes(
       if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
 
       const targetId = req.params.id;
-      const result = await pool.query("DELETE FROM session WHERE sess::jsonb -> 'passport' ->> 'user' = $1 OR sess::jsonb ->> 'userId' = $1", [targetId]);
+      const client = await pool.connect();
+      let sessionsCleared = 0;
+      let tokensCleared = 0;
+      try {
+        await client.query("BEGIN");
+        const tokens = await client.query("DELETE FROM auth_tokens WHERE user_id = $1", [targetId]);
+        await client.query("DELETE FROM sso_exchange_codes WHERE user_id = $1", [targetId]);
+        const sessions = await client.query("DELETE FROM session WHERE sess::jsonb -> 'passport' ->> 'user' = $1 OR sess::jsonb ->> 'userId' = $1", [targetId]);
+        await client.query("COMMIT");
+        sessionsCleared = sessions.rowCount || 0;
+        tokensCleared = tokens.rowCount || 0;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+      getIO()?.in(`user:${targetId}`).disconnectSockets(true);
       const [user] = await pool.query("SELECT name FROM users WHERE id = $1", [targetId]).then(r => r.rows);
-      res.json({ success: true, name: user?.name, sessionsCleared: result.rowCount });
+      res.json({ success: true, name: user?.name, sessionsCleared, tokensCleared });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to force logout" });
     }
@@ -2933,34 +2953,83 @@ export async function registerRoutes(
     }
   });
 
-  // Promote a pending email-sender suggestion into a CRM contact.
-  // Body: { email, name? } — name parsed from the email local part
-  // if not supplied. Returns the new contact id.
+  // Save an inbox/discovery candidate without treating the source brand as
+  // their employer. Both contact-discovery entry points use this path.
   app.post("/api/brand/:companyId/promote-sender", requireAuth, async (req, res) => {
     try {
-      const { companyId } = req.params;
-      const email = String(req.body?.email || "").trim().toLowerCase();
-      if (!email || !email.includes("@")) return res.status(400).json({ error: "valid email required" });
-      // Derive a name from the local part if the caller didn't pass one
-      // ("sara.ciullaserino@hm.com" → "Sara Ciullaserino"). Cheap, and
-      // the user can fix it inline via the existing role-edit flow.
-      const localPart = email.split("@")[0];
-      const derived = localPart
-        .replace(/[._-]+/g, " ")
-        .split(/\s+/)
-        .filter(Boolean)
-        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-        .join(" ");
-      const name = (req.body?.name && String(req.body.name).trim()) || derived || email;
-      const { rows } = await pool.query<{ id: string }>(
-        `INSERT INTO crm_contacts (name, email, company_id, enrichment_source)
-         VALUES ($1, $2, $3, 'promoted-from-email')
-         RETURNING id`,
-        [name, email, companyId]
-      );
-      res.json({ id: rows[0].id, name, email });
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Contact discovery is available to staff only." });
+      const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
+      const email = clean(req.body?.email).toLowerCase();
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "A valid email address is required." });
+      const identityEmail = (value: unknown): string | null => {
+        const candidate = clean(value).toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate)) return null;
+        if (/^(info|contact|hello|enquiries|enquiry|office|admin|team|sales|support|property|properties|acquisitions|lettings|leasing|reception|marketing|accounts|careers|jobs|noreply|no-reply)$/.test(candidate.split("@")[0])) return null;
+        return candidate;
+      };
+      const identityLinkedIn = (value: unknown): string | null => {
+        const raw = clean(value);
+        if (!raw) return null;
+        try {
+          const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+          if (!/^([a-z]{2,3}\.)?linkedin\.com$/i.test(url.hostname) || !/^https?:$/.test(url.protocol)) return null;
+          const profile = url.pathname.match(/^\/in\/([^/]+)\/?$/i);
+          return profile ? `linkedin.com/in/${profile[1].toLowerCase()}` : null;
+        } catch { return null; }
+      };
+      const linkedIn = identityLinkedIn(req.body?.linkedin);
+      const namedEmail = identityEmail(email);
+      if (!namedEmail && !linkedIn) return res.status(400).json({ error: "An individual email address or LinkedIn profile is needed to identify this person safely." });
+      const suppliedName = clean(req.body?.name);
+      const name = suppliedName || email.split("@")[0].replace(/[._-]+/g, " ")
+        .split(/\s+/).filter(Boolean).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+      if (!name) return res.status(400).json({ error: "A contact name is required." });
+      const company = (await pool.query("SELECT id, name FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL", [String(req.params.companyId)])).rows[0];
+      if (!company) return res.status(404).json({ error: "Source company not found." });
+      const connection = await pool.connect();
+      try {
+        await connection.query("BEGIN");
+        // Share RocketReach's lock so two discovery surfaces cannot insert
+        // the same identity between the global check and the write.
+        await connection.query("SELECT pg_advisory_xact_lock(hashtext('rocketreach-contact-import'))");
+        const contacts = (await connection.query(`SELECT c.id, c.name, c.email, c.linkedin_url,
+          c.company_id, co.name AS company_name FROM crm_contacts c
+          LEFT JOIN crm_companies co ON co.id = c.company_id`)).rows;
+        const matches = contacts.filter(contact => (namedEmail && identityEmail(contact.email) === namedEmail)
+          || (linkedIn && identityLinkedIn(contact.linkedin_url) === linkedIn));
+        const nameKey = (value: unknown) => clean(value).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+        const existing = matches[0];
+        const conflicting = matches.length > 1 || (existing && (
+          (linkedIn && identityLinkedIn(existing.linkedin_url) && identityLinkedIn(existing.linkedin_url) !== linkedIn)
+          || (suppliedName && nameKey(existing.name) && nameKey(existing.name) !== nameKey(suppliedName))
+        ));
+        if (conflicting) {
+          await connection.query("ROLLBACK");
+          return res.status(409).json({ error: "Email or LinkedIn conflicts with existing CRM contacts. Review those identities before adding this person." });
+        }
+        if (existing) {
+          await connection.query("COMMIT");
+          return res.json({ id: existing.id, name: existing.name, email: existing.email, created: false,
+            companyId: existing.company_id, companyName: existing.company_name,
+            employerConfirmed: !!existing.company_id && !!existing.company_name });
+        }
+        const result = await connection.query(`
+          INSERT INTO crm_contacts (name, email, role, phone, phone_mobile, linkedin_url, company_id, company_name, notes, enrichment_source)
+          VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, 'promoted-from-email') RETURNING id`,
+        [name, email || null, clean(req.body?.role) || null, clean(req.body?.phone) || null,
+          clean(req.body?.mobile) || null, linkedIn ? `https://${linkedIn}` : null,
+          `Discovered from the ${company.name} profile; employer unconfirmed.`]);
+        await connection.query("COMMIT");
+        res.json({ id: result.rows[0].id, name, email: email || null, created: true,
+          companyId: null, companyName: null, employerConfirmed: false });
+      } catch (error) {
+        await connection.query("ROLLBACK");
+        throw error;
+      } finally {
+        connection.release();
+      }
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || "create failed" });
+      res.status(500).json({ error: err?.message || "Contact could not be saved." });
     }
   });
 

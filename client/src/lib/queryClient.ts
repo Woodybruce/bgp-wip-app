@@ -1,15 +1,73 @@
-import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { CancelledError, notifyManager, QueryClient, QueryFunction } from "@tanstack/react-query";
 import { clearPersistedQueries } from "./query-persist";
 
-// When the session has expired, EVERY api call 401s — but the persisted
-// cache has already painted a real-looking app, so without this the user
-// stares at a dead shell until the auth/me refetch finally lands (15s+ on
-// Woody's phone, 2026-08-31, "Chat taking ages to load"). Any 401 triggers
-// an immediate auth/me re-probe (NOT a hard logout — endpoints like an
-// unlinked Microsoft calendar 401 while the session is fine); only a null
-// probe result drops the app to the login screen, clearing the persisted
-// cache so the next paint is honest. Debounced so a burst of 401s on a
-// dead session probes once.
+const AUTH_KEY = ["/api/auth/me"];
+type SessionUser = { id: string; role?: string | null; companyScopeId?: string | null; isAdmin?: boolean | null; activeTeam?: string | null };
+let verifiedIdentity: string | null | undefined;
+const verificationListeners = new Set<() => void>();
+
+export function subscribeSessionVerification(listener: () => void) {
+  verificationListeners.add(listener);
+  return () => { verificationListeners.delete(listener); };
+}
+
+export function getSessionVerificationSnapshot() {
+  return verifiedIdentity;
+}
+
+function setVerifiedIdentity(identity: string | null | undefined) {
+  if (verifiedIdentity === identity) return;
+  verifiedIdentity = identity;
+  // A successful probe can return structurally identical cached user data,
+  // so React Query alone may not notify the authenticated shell to render.
+  for (const listener of verificationListeners) listener();
+}
+
+export function sessionIdentity(user: SessionUser | null | undefined) {
+  return user ? JSON.stringify([user.id, user.role, user.companyScopeId, !!user.isAdmin]) : null;
+}
+
+// A restored auth record identifies the cache owner; it does not prove that
+// the browser still has that person's session. App waits for a live probe.
+export function isSessionVerified(user: SessionUser | null | undefined) {
+  return user !== undefined && verifiedIdentity !== undefined && verifiedIdentity === sessionIdentity(user);
+}
+
+function clearSessionQueries() {
+  notifyManager.batch(() => {
+    for (const query of queryClient.getQueryCache().getAll()) {
+      if (query.queryKey[0] === AUTH_KEY[0]) continue;
+      // Reset first so existing observers also drop their old data. Removing
+      // an active query alone leaves its observer holding the last response.
+      query.reset();
+      if (query.getObserversCount() === 0) queryClient.getQueryCache().remove(query);
+    }
+    queryClient.getMutationCache().clear();
+  });
+  clearPersistedQueries();
+}
+
+function reconcileSession(user: SessionUser | null) {
+  const previous = verifiedIdentity === undefined
+    ? sessionIdentity(queryClient.getQueryData<SessionUser | null>(AUTH_KEY))
+    : verifiedIdentity;
+  const next = sessionIdentity(user);
+  if (!user || previous !== next) clearSessionQueries();
+  setVerifiedIdentity(next);
+}
+
+export function refreshSession() {
+  void queryClient.cancelQueries({ queryKey: AUTH_KEY });
+  setVerifiedIdentity(undefined);
+  clearSessionQueries();
+  queryClient.setQueryData(AUTH_KEY, null);
+  return queryClient.fetchQuery<SessionUser | null>({ queryKey: AUTH_KEY, queryFn: getQueryFn({ on401: "returnNull" }), staleTime: 0 });
+}
+
+// A session can expire while its pages are still open. Recheck auth on API
+// 401s, since an unlinked Microsoft calendar may also return 401 for a valid
+// session. Only the auth probe can clear the signed-in user's data. Debounce
+// a burst of failing requests so they share one probe.
 let authProbeAt = 0;
 function probeAuthOn401() {
   const now = Date.now();
@@ -20,11 +78,6 @@ function probeAuthOn401() {
       queryKey: ["/api/auth/me"],
       queryFn: getQueryFn({ on401: "returnNull" }),
       staleTime: 0,
-    })
-    .then((me) => {
-      if (!me) {
-        try { clearPersistedQueries(); } catch {}
-      }
     })
     .catch(() => {});
 }
@@ -84,18 +137,26 @@ export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
+  async ({ queryKey, signal }) => {
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
       headers: getAuthHeaders(),
+      signal,
     });
 
-    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
+    const isAuthQuery = queryKey.length === 1 && queryKey[0] === AUTH_KEY[0];
+    if (signal.aborted) throw new CancelledError({ silent: true });
+
+    if ((unauthorizedBehavior === "returnNull" || isAuthQuery) && res.status === 401) {
+      if (isAuthQuery) reconcileSession(null);
       return null;
     }
 
     await throwIfResNotOk(res);
-    return await res.json();
+    const data = await res.json();
+    if (signal.aborted) throw new CancelledError({ silent: true });
+    if (isAuthQuery) reconcileSession(data);
+    return data;
   };
 
 export const queryClient = new QueryClient({
@@ -144,10 +205,8 @@ export const queryClient = new QueryClient({
 queryClient.setQueryDefaults(["/api/auth/me"], {
   refetchInterval: false,
   staleTime: 5 * 60 * 1000,
-  // Always revalidate on mount (i.e. once per page load) so a persisted-cache
-  // restore that disagrees with the real session self-heals: the cached value
-  // still paints instantly, and the background probe corrects it. The poll
-  // exemption above is untouched — this is one request per load, not per 30s.
+  // A restored identity needs a live check before App shows private pages.
+  // This mount check keeps the polling exemption above.
   refetchOnMount: "always",
 });
 

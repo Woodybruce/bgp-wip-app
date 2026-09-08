@@ -300,34 +300,54 @@ export async function approveExpense(
   approverUserId: string,
   expenseId: string,
   notes: string | null,
+  expectedStage: number,
 ): Promise<{ outcome: "advanced" | "approved" | "noop"; stage: number; nextApproverUserId?: string | null }> {
   const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
   if (!exp || exp.status !== "pending_approval") return { outcome: "noop", stage: exp?.approvalStage ?? 0 };
 
   const stage = exp.approvalStage ?? 1;
+  if (stage !== 1 && stage !== 2) return { outcome: "noop", stage };
+  if (stage !== expectedStage) return { outcome: "noop", stage };
+  const [approver] = await db.select().from(users).where(eq(users.id, approverUserId)).limit(1);
+  const canApprove = approver && (
+    approver.isAdmin || exp.approverUserId === approverUserId ||
+    (exp.approverUserId == null && FALLBACK_APPROVER_EMAILS.has((approver.email || "").toLowerCase()))
+  );
+  if (!canApprove) return { outcome: "noop", stage };
+
+  // Authorization and stage must still match when the write lands. A second
+  // click must not approve a stage that the first click just handed on.
+  const currentStage = and(
+    eq(expenses.id, expenseId),
+    eq(expenses.status, "pending_approval"),
+    sql`COALESCE(${expenses.approvalStage}, 1) = ${stage}`,
+    exp.approverUserId == null ? isNull(expenses.approverUserId) : eq(expenses.approverUserId, exp.approverUserId),
+  );
 
   if (stage === 1) {
     // Info check passed → hand to a director for spend sign-off.
     const nextApprover = await pickStageApprover(2, exp.submitterUserId || null);
-    await db.update(expenses).set({
+    const changed = await db.update(expenses).set({
       approvalStage: 2,
       approverUserId: nextApprover,
       stage1ApprovedByUserId: approverUserId,
       stage1ApprovedAt: new Date(),
       approvalNotes: notes ?? exp.approvalNotes,
       updatedAt: new Date(),
-    }).where(eq(expenses.id, expenseId));
+    }).where(currentStage).returning({ id: expenses.id });
+    if (changed.length === 0) return { outcome: "noop", stage };
     return { outcome: "advanced", stage: 2, nextApproverUserId: nextApprover };
   }
 
   // Stage 2 → final approval.
-  await db.update(expenses).set({
+  const changed = await db.update(expenses).set({
     status: "approved",
     approvedAt: new Date(),
     approvedByUserId: approverUserId,
     approvalNotes: notes ?? exp.approvalNotes,
     updatedAt: new Date(),
-  }).where(eq(expenses.id, expenseId));
+  }).where(currentStage).returning({ id: expenses.id });
+  if (changed.length === 0) return { outcome: "noop", stage };
   return { outcome: "approved", stage: 2 };
 }
 

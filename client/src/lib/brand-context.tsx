@@ -137,9 +137,9 @@ export function BrandProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--accent", accentTint);
     root.style.setProperty("--accent-foreground", "0 0% 10%");
     root.style.setProperty("--ring", accent || primary);
-    // Sidebar takes the deep primary with light text.
+    // Sidebar text and the Landsec mark must contrast with the actual brand surface.
     root.style.setProperty("--sidebar", primary);
-    root.style.setProperty("--sidebar-foreground", "0 0% 95%");
+    root.style.setProperty("--sidebar-foreground", primaryFg);
     root.style.setProperty("--sidebar-primary", accent || primary);
     root.style.setProperty("--sidebar-ring", accent || primary);
     return () => { vars.forEach(v => root.style.removeProperty(v)); };

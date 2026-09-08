@@ -6,7 +6,8 @@ import { storage } from "./storage";
 import { requireAuth } from "./auth";
 import { db, pool } from "./db";
 import { saveFile, getFile, deleteFile as deleteStoredFile } from "./file-storage";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand, getClientExtraBrandIds, clientBrandSliceSql } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand, getClientExtraBrandIds, clientBrandSliceSql, NO_ACCESS_SCOPE } from "./company-scope";
+import { buildClientAgentDirectoryQuery, mapClientAgentDirectoryRows, type ClientAgentDirectoryRow } from "./client-agent-directory";
 
 const LANDLORD_PACKS_DIR = path.join(process.cwd(), "ChatBGP", "landlord-packs");
 if (!fs.existsSync(LANDLORD_PACKS_DIR)) fs.mkdirSync(LANDLORD_PACKS_DIR, { recursive: true });
@@ -1407,27 +1408,29 @@ export function setupCrmRoutes(app: Express) {
   })();
 
   app.use("/api/crm", requireAuth);
-  // Client logins are read-only across the whole CRM surface — a client
-  // must never create/edit/delete/merge BGP records. (Landsec audit.)
-  // Exception: adding/amending contacts, which the contact routes scope to
-  // the client's own company or the hospitality-brand slice
-  // (clientCanTouchCompany); deletes stay staff-only.
+  // Keep this CRM guard aligned with the outer client gateway. Only the
+  // routes below implement client scope checks; unrelated imports, merges,
+  // destructive operations and internal tools remain staff-only.
   app.use("/api/crm", async (req: any, res: any, next: any) => {
     if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
-    if (
-      (req.method === "POST" && req.path === "/contacts") ||
-      (req.method === "PUT" && /^\/contacts\/[^/]+$/.test(req.path)) ||
-      // Clients may create + edit deals on their own portfolio (scoped +
-      // fee-stripped inside the handlers). DELETE stays staff-only.
-      (req.method === "POST" && req.path === "/deals") ||
-      (req.method === "PUT" && /^\/deals\/[^/]+$/.test(req.path))
-    ) return next();
     try {
-      if (await isClientRequestUser(req)) {
-        return res.status(403).json({ error: "Read-only access for client accounts" });
-      }
-    } catch {}
-    next();
+      if (!(await isClientRequestUser(req))) return next();
+      // Express matches routes without case/trailing-slash sensitivity.
+      // Normalize only for policy matching; handlers keep the original IDs.
+      const p = req.path.replace(/\/+$/, "").toLowerCase();
+      const allowed =
+        (req.method === "POST" && ["/contacts", "/deals"].includes(p)) ||
+        (req.method === "PUT" && /^\/(contacts|deals|properties)\/[^/]+$/.test(p)) ||
+        (req.method === "POST" && /^\/(properties|deals)\/bulk-update$/.test(p)) ||
+        // Relationship handlers validate both the visible company and the
+        // owned/shared property or deal before adding or removing a link.
+        (req.method === "POST" && /^\/companies\/[^/]+\/(properties|deals)$/.test(p)) ||
+        (req.method === "DELETE" && /^\/companies\/[^/]+\/(properties|deals)\/[^/]+$/.test(p));
+      if (allowed) return next();
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    } catch {
+      return res.status(503).json({ error: "Unable to verify client access" });
+    }
   });
   app.get("/api/crm/stats", async (_req, res) => {
     try {
@@ -1439,6 +1442,55 @@ export function setupCrmRoutes(app: Express) {
   // Landlord board — aggregated view of every Landlord company with WIP
   // fees, active deal count, properties, contacts, and last touchpoint.
   // All data is already in the CRM; this endpoint just rolls it up.
+  // ── Landlord type normalisation ──────────────────────────────────────────
+  // The Landlord CRM list decides "landlord" from deal/property links, but
+  // the rest of the app (filters, reports, the profile header) reads
+  // company_type — and many landlords were untyped or carried legacy
+  // synonyms ("Investor", "Developer", "Fund", "REIT", "Landlord/Freeholder")
+  // that the dropdown no longer offers. Woody, 2026-09-08: "CRM type should
+  // be Landlord for all landlords." Blanks and synonyms become "Landlord";
+  // Agents and lender types are never touched, just reported for review.
+  const normaliseLandlordTypes = async () => {
+    const landlordRule = `
+      LOWER(COALESCE(c.company_type, '')) NOT LIKE 'tenant%%'
+      AND (
+        EXISTS (SELECT 1 FROM crm_deals d WHERE d.landlord_id = c.id AND d.status NOT IN ('ARCH'))
+        OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id)
+      )`.replace(/%%/g, "%");
+    const updated = await pool.query(
+      `UPDATE crm_companies c SET company_type = 'Landlord', updated_at = now()
+        WHERE ${landlordRule}
+          AND (COALESCE(TRIM(c.company_type), '') = ''
+               OR LOWER(c.company_type) IN ('landlord/freeholder', 'investor', 'reit', 'developer', 'fund'))
+        RETURNING c.id, c.name`
+    );
+    const review = await pool.query(
+      `SELECT c.id, c.name, c.company_type FROM crm_companies c
+        WHERE ${landlordRule} AND LOWER(COALESCE(c.company_type, '')) <> 'landlord'
+        ORDER BY c.name`
+    );
+    if (updated.rowCount) {
+      console.log(`[landlords] typed ${updated.rowCount} landlord(s) as "Landlord": ${updated.rows.map((r: any) => r.name).join(", ")}`);
+    }
+    if (review.rowCount) {
+      console.log(`[landlords] ${review.rowCount} landlord-by-rule companies keep a non-Landlord type (review): ${review.rows.map((r: any) => `${r.name} [${r.company_type}]`).join(", ")}`);
+    }
+    return { updated: updated.rows, reviewNeeded: review.rows };
+  };
+  // Once per boot, off the request path; the endpoint below re-runs it on demand.
+  setTimeout(() => { normaliseLandlordTypes().catch(e => console.warn("[landlords] type normalisation failed:", e?.message)); }, 20_000);
+
+  app.post("/api/crm/landlords/normalise-types", async (req, res) => {
+    try {
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId;
+      const u = userId ? await pool.query(`SELECT is_admin FROM users WHERE id = $1`, [userId]) : { rows: [] as any[] };
+      if (!u.rows[0]?.is_admin) return res.status(403).json({ error: "Admin access required" });
+      res.json(await normaliseLandlordTypes());
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/crm/landlords", async (req, res) => {
     try {
       // Staff-only board: rolls up every landlord BGP works with, including
@@ -1976,9 +2028,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     }
   });
 
-  app.delete("/api/crm/companies/:id", async (req, res) => {
+  app.delete("/api/crm/companies/:id", requireAuth, async (req, res) => {
     try {
-      await storage.deleteCrmCompany(req.params.id);
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Company deletion requires a staff account" });
+      await storage.deleteCrmCompany(String(req.params.id));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2335,6 +2388,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         return res.status(403).json({ error: "Access denied" });
       }
       const updates = { ...req.body };
+      if (scopeCompanyId) {
+        // Client edits must not overwrite identity, access or staff attestations.
+        for (const field of ["id", "createdAt", "landlordId", "leasingPrivacyEnabled", "proprietorKycStatus", "proprietorKycData", "kycCheckedAt"]) {
+          delete updates[field];
+        }
+      }
       const dateFields = ["titleSearchDate", "createdAt", "updatedAt", "kycCheckedAt"];
       for (const f of dateFields) {
         if (updates[f] && typeof updates[f] === "string") {
@@ -2436,6 +2495,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     try {
       const { ids, field, value } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids array required" });
+      const scope = await resolveCompanyScope(req);
+      if (scope) {
+        for (const id of ids) {
+          if (typeof id !== "string" || !(await isPropertyInScope(scope, id))) {
+            return res.status(403).json({ error: "Access denied" });
+          }
+        }
+      }
       const allowedFields = ["bgpEngagement", "status", "assetClass", "tenure"];
       if (!allowedFields.includes(field)) return res.status(400).json({ error: `Field '${field}' not allowed for bulk update` });
       for (const id of ids) {
@@ -2459,6 +2526,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     try {
       const { ids } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids array required" });
+      const scope = await resolveCompanyScope(req);
+      if (scope) {
+        for (const id of ids) {
+          if (typeof id !== "string" || !(await isPropertyInScope(scope, id))) {
+            return res.status(403).json({ error: "Access denied" });
+          }
+        }
+      }
       for (const id of ids) {
         await storage.deleteCrmProperty(id);
       }
@@ -2468,8 +2543,22 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/deals/bulk-update", requireAuth, async (req, res) => {
     try {
-      const { ids, field, value } = req.body;
+      const { ids, field } = req.body;
+      let { value } = req.body;
+      if (field === "status") {
+        const code = legacyToCode(value);
+        if (!code) return res.status(400).json({ error: "Unknown deal status" });
+        value = code;
+      }
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids array required" });
+      const scope = await resolveCompanyScope(req);
+      if (scope) {
+        for (const id of ids) {
+          if (typeof id !== "string" || !(await isDealInScope(scope, id))) {
+            return res.status(403).json({ error: "Access denied" });
+          }
+        }
+      }
       const allowedFields = ["team", "status", "dealType", "assetClass"];
       if (!allowedFields.includes(field)) return res.status(400).json({ error: `Field '${field}' not allowed for bulk update` });
 
@@ -2554,6 +2643,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     try {
       const { ids } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids array required" });
+      const scope = await resolveCompanyScope(req);
+      if (scope) {
+        for (const id of ids) {
+          if (typeof id !== "string" || !(await isDealInScope(scope, id))) {
+            return res.status(403).json({ error: "Access denied" });
+          }
+        }
+      }
       for (const id of ids) {
         await storage.deleteCrmDeal(id);
       }
@@ -2710,26 +2807,37 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.post("/api/crm/companies/:id/properties", async (req, res) => {
+  app.post("/api/crm/companies/:id/properties", requireAuth, async (req, res) => {
     try {
       const { propertyId } = req.body;
       if (!propertyId) return res.status(400).json({ error: "propertyId required" });
-      await storage.linkCompanyProperty(req.params.id, propertyId);
+      const scope = await resolveCompanyScope(req);
+      if (scope && ((scope !== String(req.params.id) && !(await isClientVisibleBrand(String(req.params.id), scope))) ||
+          !(await isPropertyInScope(scope, propertyId)))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await storage.linkCompanyProperty(String(req.params.id), propertyId);
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.delete("/api/crm/companies/:id/properties/:propertyId", async (req, res) => {
+  app.delete("/api/crm/companies/:id/properties/:propertyId", requireAuth, async (req, res) => {
     try {
-      await storage.unlinkCompanyProperty(req.params.id, req.params.propertyId);
+      const scope = await resolveCompanyScope(req);
+      if (scope && ((scope !== String(req.params.id) && !(await isClientVisibleBrand(String(req.params.id), scope))) ||
+          !(await isPropertyInScope(scope, String(req.params.propertyId))))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await storage.unlinkCompanyProperty(String(req.params.id), String(req.params.propertyId));
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.get("/api/crm/company-deal-links", async (_req, res) => {
+  app.get("/api/crm/company-deal-links", requireAuth, async (req, res) => {
     try {
       const links = await storage.getAllCompanyDealLinks();
-      res.json(links);
+      const scope = await resolveCompanyScope(req);
+      res.json(scope ? links.filter((link: any) => link.companyId === scope) : links);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -2763,18 +2871,28 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.post("/api/crm/companies/:id/deals", async (req, res) => {
+  app.post("/api/crm/companies/:id/deals", requireAuth, async (req, res) => {
     try {
       const { dealId } = req.body;
       if (!dealId) return res.status(400).json({ error: "dealId required" });
-      await storage.linkCompanyDeal(req.params.id, dealId);
+      const scope = await resolveCompanyScope(req);
+      if (scope && ((scope !== String(req.params.id) && !(await isClientVisibleBrand(String(req.params.id), scope))) ||
+          !(await isDealInScope(scope, dealId)))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await storage.linkCompanyDeal(String(req.params.id), dealId);
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.delete("/api/crm/companies/:id/deals/:dealId", async (req, res) => {
+  app.delete("/api/crm/companies/:id/deals/:dealId", requireAuth, async (req, res) => {
     try {
-      await storage.unlinkCompanyDeal(req.params.id, req.params.dealId);
+      const scope = await resolveCompanyScope(req);
+      if (scope && ((scope !== String(req.params.id) && !(await isClientVisibleBrand(String(req.params.id), scope))) ||
+          !(await isDealInScope(scope, String(req.params.dealId))))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      await storage.unlinkCompanyDeal(String(req.params.id), String(req.params.dealId));
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -4199,9 +4317,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     }
   });
 
-  app.delete("/api/crm/deals/:id", async (req, res) => {
+  app.delete("/api/crm/deals/:id", requireAuth, async (req, res) => {
     try {
-      await storage.deleteCrmDeal(req.params.id);
+      const scope = await resolveCompanyScope(req);
+      if (scope && !(await isDealInScope(scope, String(req.params.id)))) return res.status(403).json({ error: "Access denied" });
+      await storage.deleteCrmDeal(String(req.params.id));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -4227,14 +4347,15 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.put("/api/crm/deals/:id/fee-allocations", async (req, res) => {
+  app.put("/api/crm/deals/:id/fee-allocations", requireAuth, async (req, res) => {
     try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Internal fee allocations require a staff account" });
       const { allocations } = req.body;
       if (!Array.isArray(allocations)) {
         return res.status(400).json({ error: "allocations must be an array" });
       }
       const validated = allocations.map((a: any) => ({
-        dealId: req.params.id,
+        dealId: String(req.params.id),
         agentName: String(a.agentName || ""),
         allocationType: a.allocationType === "fixed" ? "fixed" : "percentage",
         percentage: a.allocationType === "percentage" ? Number(a.percentage) || 0 : null,
@@ -4268,7 +4389,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           error: "Fee split must include the BGP House 15% row. Open the editor to re-add it (it auto-inserts).",
         });
       }
-      const result = await storage.setDealFeeAllocations(req.params.id, validated);
+      const result = await storage.setDealFeeAllocations(String(req.params.id), validated);
       // Keep crm_deals.internal_agent in sync with the fee-allocation
       // agents. Without this, the Deals board's BGP Contact column
       // (which reads internal_agent) diverges from the WIP report's
@@ -4279,16 +4400,16 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           .filter((a: any) => !a.isBgpHouse && a.agentName)
           .map((a: any) => String(a.agentName).trim())
           .filter((n: string) => n.length > 0);
-        const dealRow = await storage.getCrmDeal(req.params.id);
+        const dealRow = await storage.getCrmDeal(String(req.params.id));
         const existing: string[] = Array.isArray((dealRow as any)?.internalAgent)
           ? ((dealRow as any).internalAgent as string[])
           : ((dealRow as any)?.internalAgent ? [(dealRow as any).internalAgent as string] : []);
         const merged = Array.from(new Set([...existing, ...allocAgents]));
         if (merged.length !== existing.length || merged.some((n, i) => n !== existing[i])) {
-          await storage.updateCrmDeal(req.params.id, { internalAgent: merged } as any);
+          await storage.updateCrmDeal(String(req.params.id), { internalAgent: merged } as any);
         }
       } catch (mergeErr: any) {
-        console.warn(`[fee-allocations] internal_agent sync failed for ${req.params.id}:`, mergeErr?.message);
+        console.warn(`[fee-allocations] internal_agent sync failed for ${String(req.params.id)}:`, mergeErr?.message);
       }
       res.json(result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -5420,54 +5541,18 @@ Return a JSON object with these fields (use null for any field you cannot find):
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  // Agent directory for client CRM lookup — TENANT REP agents only (the
-  // agents chasing sites for brands, i.e. who a landlord wants to reach).
-  // Landlord-side and investment agents stay out of client view. An agent
-  // qualifies via an active tenant_rep representation, a company-level
-  // agent_type of tenant_rep, or a Tenant Rep specialty contact. The
-  // "represents" list is limited to brands in the client brand slice.
+  // Named agents acting for brands in this client's Brand CRM. Current
+  // representations and visible leasing requirements supply the links;
+  // a qualifying firm does not make every employee relevant to the brand.
   app.get("/api/client/agent-directory", requireAuth, async (req, res) => {
     try {
-      const agentDirScope = await resolveCompanyScope(req);
-      const agentDirSliceSql = await clientBrandSliceSql(agentDirScope);
-      const rows = await pool.query(
-        `WITH slice_brands AS (
-           SELECT id, name FROM crm_companies
-            WHERE ${agentDirSliceSql} AND merged_into_id IS NULL
-         )
-         SELECT a.id, a.name, a.domain, a.company_type AS "companyType",
-                COALESCE((
-                  SELECT json_agg(json_build_object(
-                    'id', ct.id, 'name', ct.name, 'role', ct.role,
-                    'email', ct.email, 'phone', COALESCE(ct.phone_mobile, ct.phone),
-                    'specialty', ct.agent_specialty
-                  ) ORDER BY ct.name)
-                  FROM crm_contacts ct WHERE ct.company_id = a.id
-                ), '[]') AS contacts,
-                COALESCE((
-                  SELECT json_agg(json_build_object(
-                    'brandId', b.id, 'brandName', b.name, 'region', r.region
-                  ) ORDER BY b.name)
-                  FROM brand_agent_representations r
-                  JOIN slice_brands b ON b.id = r.brand_company_id
-                 WHERE r.agent_company_id = a.id AND r.end_date IS NULL
-                   AND r.agent_type = 'tenant_rep'
-                ), '[]') AS represents
-           FROM crm_companies a
-          WHERE a.merged_into_id IS NULL
-            AND (
-              EXISTS (SELECT 1 FROM brand_agent_representations r2
-                       WHERE r2.agent_company_id = a.id AND r2.end_date IS NULL
-                         AND r2.agent_type = 'tenant_rep')
-              OR a.agent_type = 'tenant_rep'
-              OR (lower(COALESCE(a.company_type, '')) = 'agent'
-                  AND EXISTS (SELECT 1 FROM crm_contacts c2
-                               WHERE c2.company_id = a.id
-                                 AND lower(COALESCE(c2.agent_specialty, '')) = 'tenant rep'))
-            )
-          ORDER BY a.name`
-      );
-      res.json(rows.rows);
+      const requirementScope = await resolveCompanyScope(req);
+      const brandScope = requirementScope
+        || ((req.query as any).companyId ? String((req.query as any).companyId) : null);
+      const brandSliceSql = await clientBrandSliceSql(brandScope);
+      const query = buildClientAgentDirectoryQuery(brandSliceSql, requirementScope, NO_ACCESS_SCOPE);
+      const rows = await pool.query<ClientAgentDirectoryRow>(query.text, query.values);
+      res.json(mapClientAgentDirectoryRows(rows.rows));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -6898,7 +6983,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const agentTotals = new Map<string, { invoiced: number; wip: number }>();
 
       for (const deal of deals) {
-        if (!deal.status || deal.fee == null) continue;
+        const code = legacyToCode(deal.status);
+        if (!code || !WIP_STATUSES.includes(code) || deal.fee == null) continue;
         const dealTeamArr = Array.isArray(deal.team) ? deal.team : (deal.team ? [deal.team] : []);
         const dealTeamsLower = dealTeamArr.map(t => (t || "").toLowerCase());
         // Wendy/Layla (fullView) see BGP-team rows too. fullView is folded
@@ -6915,7 +7001,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         if (agents && agents.length > 0) {
           for (const alloc of agents) {
             if (!senior && WIP_RESTRICTED_AGENTS.has(alloc.agentName.toLowerCase())) continue;
-            const agentFee = alloc.fixedAmount || Math.round(totalFee * ((alloc.percentage || 0) / 100) * 100) / 100;
+            const agentFee = alloc.fixedAmount ?? Math.round(totalFee * ((alloc.percentage || 0) / 100) * 100) / 100;
             const entry = agentTotals.get(alloc.agentName) || { invoiced: 0, wip: 0 };
             if (isInvoiced) entry.invoiced += agentFee;
             else entry.wip += agentFee;
@@ -6926,7 +7012,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           if (agentNames.length === 0) continue;
           const filteredNames = senior ? agentNames : agentNames.filter(n => !WIP_RESTRICTED_AGENTS.has(n.toLowerCase()));
           if (filteredNames.length === 0) continue;
-          const perAgent = totalFee / filteredNames.length;
+          const perAgent = totalFee / agentNames.length;
           for (const name of filteredNames) {
             const entry = agentTotals.get(name) || { invoiced: 0, wip: 0 };
             if (isInvoiced) entry.invoiced += perAgent;
@@ -6975,7 +7061,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       for (const deal of deals) {
         // Skip archived rows: WIT (withdrawn/lost/dead) + legacy comps statuses still present pre-migration
         const code = legacyToCode(deal.status);
-        if (code === "WIT" || (deal.status || "").toLowerCase().includes("comps")) continue;
+        if (!code || !WIP_STATUSES.includes(code)) continue;
         const totalFee = deal.fee || 0;
         const isInvoiced = isInvoicedStatus(deal.status);
         const dealAllocs = allocsByDeal.get(deal.id);
@@ -6987,7 +7073,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           if (agentAlloc) {
             isRelevant = true;
             const pct = (agentAlloc.percentage || 0) / 100;
-            allocatedAmount = agentAlloc.fixedAmount || (totalFee * pct);
+            allocatedAmount = agentAlloc.fixedAmount ?? (totalFee * pct);
           }
         } else {
           const agentNames = Array.isArray(deal.internalAgent) ? deal.internalAgent : (deal.internalAgent ? [deal.internalAgent] : []);
@@ -7005,13 +7091,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
         const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
 
-        function drilldownStage(status: string | null): string {
-          if (!status) return "pipeline";
-          if (isInvoicedStatus(status)) return "invoiced";
-          if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
-          return "pipeline";
-        }
-
         result.push({
           dealId: deal.id,
           name: deal.name,
@@ -7021,7 +7100,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           totalFee: totalFee,
           allocatedAmount: Math.round(allocatedAmount),
           status: deal.status || null,
-          stage: drilldownStage(deal.status),
+          stage: deriveStageFromStatus(deal.status),
           team: dealTeamArr.join(", "),
           isInvoiced,
           wip: isInvoiced ? 0 : Math.round(allocatedAmount),

@@ -3590,7 +3590,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   const [showTenancyPlans, setShowTenancyPlans] = useState(true);
   const [tenancyPlanCount, setTenancyPlanCount] = useState(0);
   const tenancyPlansLayerRef = useRef<L.LayerGroup | null>(null);
-  // ── Retail Context layer (real Experian Goad polygons) ────────────────────
+  // ── Retail Context layer (Edozo occupier polygons) ────────────────────
   // When toggled on, loads the licensed Goad GeoJSON layers for the West End
   // (centre 9033MM, ~10,600 unit footprints across LG/GF/F1/F2) and renders
   // them as colour-coded polygons. The previous synthesised version (CRM +
@@ -3837,7 +3837,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
 
     const renderBuildings = (_buildings: any[]) => {
       // Retired. The auto-classified pale-yellow building layer is
-      // superseded by the real Experian Goad polygons on the Retail
+      // superseded by the Edozo occupier polygons on the Retail
       // Context toggle. Stub kept so existing callers don't need
       // surgery — it just clears the layer and exits.
       if (buildingLayerRef.current) buildingLayerRef.current.clearLayers();
@@ -5135,7 +5135,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     } catch {}
   }, [postcodeQuery]);
 
-  // Map Experian Goad `Category` strings onto the 6-band palette below.
+  // Map Goad-style `Category` strings onto the 6-band palette below.
   // Kept in this file (not goad-taxonomy.ts) because the server-side
   // taxonomy operates on synthesised data with different field names.
   const classifyGoadCategory = useCallback((rawCategory: string, activity: string): string => {
@@ -6008,7 +6008,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
 
       pdf.setTextColor(80, 80, 80);
       pdf.setFontSize(7);
-      pdf.text("Data: OS Zoomstack, OpenStreetMap, Valuation Office Agency, HM Land Registry, Google Places, Experian Goad. BGP Intelligence Map.", margin, pageH - 4);
+      pdf.text("Data: OS Zoomstack, OpenStreetMap, Valuation Office Agency, HM Land Registry, Google Places, Edozo. BGP Intelligence Map.", margin, pageH - 4);
 
       const filename = `BGP_Plan_${areaLabel.replace(/[^a-zA-Z0-9]/g, "_")}_${new Date().toISOString().slice(0, 10)}.pdf`;
       pdf.save(filename);
