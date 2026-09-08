@@ -4,7 +4,7 @@
 // manage_website_content tool calls. Tables are seeded once from
 // assets/website-seed.json (the site's bundled copy) when empty.
 import { Router, type Request } from "express";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import path from "path";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { db } from "./db";
@@ -37,13 +37,13 @@ export function ensureWebsiteContentSeed(): Promise<void> {
       const [c] = await db.select({ id: websiteCaseStudies.id }).from(websiteCaseStudies).limit(1);
       const [n] = await db.select({ id: websiteNews.id }).from(websiteNews).limit(1);
       if (t && c && n) return;
-      let seed: any;
-      try {
-        seed = JSON.parse(readFileSync(path.resolve(process.cwd(), "server/assets/website-seed.json"), "utf8"));
-      } catch (e: any) {
-        console.warn("[website-content] seed file missing:", e?.message);
+      const candidates = ["server/assets/website-seed.json", "dist/server/assets/website-seed.json"].map((p) => path.resolve(process.cwd(), p));
+      const seedPath = candidates.find((p) => existsSync(p));
+      if (!seedPath) {
+        console.warn("[website-content] seed file missing:", candidates.join(", "));
         return;
       }
+      const seed: any = JSON.parse(readFileSync(seedPath, "utf8"));
       if (!t && seed.team?.length) await db.insert(websiteTeam).values(seed.team.map((r: any) => ({ ...r, updatedBy: "seed" })));
       if (!c && seed.caseStudies?.length) await db.insert(websiteCaseStudies).values(seed.caseStudies.map((r: any) => ({ ...r, updatedBy: "seed" })));
       if (!n && seed.news?.length) await db.insert(websiteNews).values(seed.news.map((r: any) => ({ ...r, updatedBy: "seed" })));
