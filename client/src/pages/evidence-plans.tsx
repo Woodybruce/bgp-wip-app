@@ -23,6 +23,7 @@ import { Pill } from "@/components/ui/pill";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EvidencePlanReview } from "@/components/evidence-plan-review";
+import { EvidencePlanScanReview } from "@/components/evidence-plan-scan-review";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -256,6 +257,7 @@ function PlanView({ planId }: { planId: string }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [unitSearch, setUnitSearch] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [scanReviewOpen, setScanReviewOpen] = useState(false);
   const [cleanPlan, setCleanPlan] = useState(false);
   const [strongLines, setStrongLines] = useState(false);
   const [hideRedInk, setHideRedInk] = useState(false);
@@ -339,9 +341,19 @@ function PlanView({ planId }: { planId: string }) {
   useEffect(() => {
     if (!scanJob || scanJob.status === "running" || completedScan.current === scanJob.id) return;
     completedScan.current = scanJob.id;
-    setScanReport(scanJob.status === "error" ? `Scan couldn't finish: ${scanJob.error || "Try again or trace a unit individually."}` : `${scanJob.created || 0} units added. ${scanJob.error || "Existing unit information has been kept."}`);
+    const summary = scanJob.reviewSummary;
+    setScanReport(scanJob.status === "error" ? `Scan couldn't finish: ${scanJob.error || "Try again or trace a unit individually."}`
+      : summary ? `${summary.detected} boundaries detected · ${summary.added} added · ${summary.refined} refined · ${summary.current} already current · ${summary.needsReview} awaiting review. Existing unit information has been kept.`
+      : `Scan finished. ${scanJob.created || 0} units added. ${scanJob.error || "Review scan to inspect the detected outlines and any boundaries awaiting review."}`);
     invalidate();
   }, [scanJob]);
+  const refreshUnits = async () => {
+    try {
+      const r = await apiRequest("POST", `/api/evidence-plans/${planId}/detect-units`, { levelId: activeLevel?.id || null });
+      const started = await r.json(); setScanJobId(started.jobId); setScanReport(null);
+      invalidate();
+    } catch (e: any) { toast({ title: "Couldn't start detection", description: e.message, variant: "destructive" }); }
+  };
 
   // Latest Zone A per unit — drives the dot's figure on the plan.
   const latestZaByUnit = useMemo(() => {
@@ -599,19 +611,13 @@ function PlanView({ planId }: { planId: string }) {
               <Sparkles className="w-3 h-3" /> {scanJob?.status === "running" && scanJob.total_docs > 1 ? `Scanning · ${scanJob.done_docs} / ${scanJob.total_docs} sections` : "Reading the plan…"}
             </span>
           ) : hasBg ? (
-            <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={busy !== null}
-              onClick={async () => {
-                try {
-                  const r = await apiRequest("POST", `/api/evidence-plans/${planId}/detect-units`, { levelId: activeLevel?.id || null });
-                  if (!r.ok) throw new Error((await r.json()).error || "failed");
-                  const started = await r.json(); setScanJobId(started.jobId); setScanReport(null);
-                  invalidate();
-                } catch (e: any) { toast({ title: "Couldn't start detection", description: e.message, variant: "destructive" }); }
-              }}
+            <Button variant="outline" size="sm" disabled={busy !== null}
+              onClick={refreshUnits}
               data-testid="button-redetect">
               <Sparkles className="w-3.5 h-3.5 mr-1" /> Refresh units
             </Button>
           ) : null}
+          <Button variant="outline" size="sm" disabled={!hasBg} onClick={() => setScanReviewOpen(true)} data-testid="button-review-scan">Review scan</Button>
           <Button variant={tracing ? "default" : "outline"} size="sm" disabled={!hasBg || traceBusy} onClick={() => { stopDrawing(); setCleanPlan(false); draftBackgroundKey.current = activeLevel?.background_key || null; setTracing(!tracing); setCropping(false); setDetailsOpen(false); }} data-testid="pill-trace-unit">
             {traceBusy ? "Tracing…" : "Trace unit"}
           </Button>
@@ -656,7 +662,7 @@ function PlanView({ planId }: { planId: string }) {
         <input ref={tafFolderRef} type="file" hidden multiple {...({ webkitdirectory: "" } as any)} onChange={e => { const fs = Array.from(e.target.files || []).filter(f => /\.(pdf|zip)$/i.test(f.name)); if (fs.length) uploadTafs(fs); else toast({ title: "No TAFs found", description: "That folder has no PDFs or zips in it.", variant: "destructive" }); e.target.value = ""; }} />
       </div>
 
-      {scanReport && <div role="status" className="px-4 py-2 border-b border-border text-sm bg-card flex items-center gap-3" data-testid="scan-report"><p className="flex-1">{scanReport}</p><Button variant="ghost" size="sm" onClick={() => setScanReport(null)}>Dismiss</Button></div>}
+      {scanReport && <div role="status" className="px-4 py-2 border-b border-border text-sm bg-card flex items-center gap-3 flex-wrap" data-testid="scan-report"><p className="flex-1 min-w-48">{scanReport}</p><Button variant="outline" size="sm" disabled={!hasBg} onClick={() => setScanReviewOpen(true)} data-testid="button-review-completed-scan">Review scan</Button><Button variant="ghost" size="sm" onClick={() => setScanReport(null)}>Dismiss</Button></div>}
       {scanJob?.status === "running" && scanJob.error && <p role="status" className="px-4 py-2 text-sm text-muted-foreground border-b border-border">{scanJob.error}</p>}
 
       <div className="px-4 py-2 border-b border-border flex items-center gap-2 flex-wrap">
@@ -673,6 +679,7 @@ function PlanView({ planId }: { planId: string }) {
       <EvidencePlanReview open={reviewOpen} onOpenChange={setReviewOpen} units={units} levels={levels} activeLevelId={activeLevel?.id || null} propertyLinked={!!plan.property_id} unlinkedCount={unlinkedCount}
         evidence={<UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} initiallyOpen />}
         onSelect={id => { const unit = units.find(u => u.id === id); stopDrawing(); setCleanPlan(false); setActiveLevelId(unit?.level_id || levels[0]?.id || null); setZoom(1); setPan({ x: 0, y: 0 }); selectUnit(id); }} />
+      {activeLevel && <EvidencePlanScanReview key={activeLevel.id} open={scanReviewOpen} onOpenChange={setScanReviewOpen} planId={planId} level={activeLevel} onSaved={invalidate} onRefresh={refreshUnits} scanRunning={detectRunning} />}
 
       <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />
 

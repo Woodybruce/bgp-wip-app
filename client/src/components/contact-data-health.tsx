@@ -1,9 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { AlertCircle, ChevronLeft, ChevronRight } from "lucide-react";
+import { AlertCircle, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import type { CrmCompany } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { EntityCombobox } from "@/components/entity-combobox";
@@ -27,6 +28,7 @@ interface Finding {
 }
 
 const PAGE_SIZE = 6;
+const EMPLOYER_COMPANIES_KEY = ["/api/crm/companies", "employer-picker"];
 const message = (error: Error) => error.message.replace(/^\d{3}:\s*/, "");
 
 export function ContactDataHealth() {
@@ -35,6 +37,11 @@ export function ContactDataHealth() {
   const [open, setOpen] = useState(false);
   const [review, setReview] = useState<Finding | null>(null);
   const [choice, setChoice] = useState<string | null>(null);
+  const [addingEmployer, setAddingEmployer] = useState(false);
+  const [employerName, setEmployerName] = useState("");
+  const [employerType, setEmployerType] = useState("");
+  const employerCreation = useRef<Promise<{ company: CrmCompany; created: boolean }> | null>(null);
+  const employerForm = useRef<HTMLDivElement | null>(null);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -52,7 +59,8 @@ export function ContactDataHealth() {
     refetchInterval: false,
   });
   const companies = useQuery<CrmCompany[]>({
-    queryKey: ["/api/crm/companies"], enabled: !!review,
+    queryKey: EMPLOYER_COMPANIES_KEY, enabled: !!review,
+    queryFn: async () => (await apiRequest("GET", "/api/crm/companies?includeBillingEntities=true")).json(),
     refetchInterval: false,
   });
   const options = useMemo(() => (companies.data || []).filter(c => !c.mergedIntoId).map(c => ({
@@ -68,6 +76,33 @@ export function ContactDataHealth() {
     ...(row.brand_links || []).map(b => b.name)].join(" ").toLowerCase().includes(search.trim().toLowerCase()));
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
+  useEffect(() => { if (addingEmployer) employerForm.current?.scrollIntoView({ block: "nearest" }); }, [addingEmployer]);
+
+  const createEmployer = useMutation({
+    mutationFn: () => {
+      if (employerCreation.current) return employerCreation.current;
+      employerCreation.current = (async () => {
+        const name = employerName.trim();
+        if (!name) throw new Error("Enter the employer's company name.");
+        if (!CRM_OPTIONS.companyType.some(type => type === employerType)) throw new Error("Choose the employer's company type.");
+        // Another reviewer may have added the company since this dialog opened.
+        const latest = await companies.refetch({ throwOnError: true });
+        const matches = (latest.data || []).filter(company => !company.mergedIntoId && company.name.trim().toLowerCase() === name.toLowerCase());
+        if (matches.length > 1) throw new Error("More than one company has this name. Choose the correct company from the employer list.");
+        if (matches.length === 1) return { company: matches[0], created: false };
+        const company: CrmCompany = await (await apiRequest("POST", "/api/crm/companies", { name, companyType: employerType })).json();
+        return { company, created: true };
+      })().finally(() => { employerCreation.current = null; });
+      return employerCreation.current;
+    },
+    onSuccess: ({ company, created }) => {
+      queryClient.setQueryData<CrmCompany[]>(EMPLOYER_COMPANIES_KEY, current => [...(current || []).filter(item => item.id !== company.id), company]);
+      setChoice(company.id); setAddingEmployer(false);
+      void queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      toast({ title: created ? `Company added: ${company.name}` : `Existing company selected: ${company.name}`,
+        description: "Click Save employer to update this contact." });
+    },
+  });
 
   const act = useMutation({
     mutationFn: async ({ finding, action }: { finding: Finding; action: "apply" | "dismiss" }) => {
@@ -76,7 +111,7 @@ export function ContactDataHealth() {
     },
     onSuccess: (result, { action }) => {
       toast({ title: action === "apply" ? `Employer saved: ${result.linkedCompany}` : "Finding dismissed" });
-      setReview(null); setChoice(null);
+      setReview(null); setChoice(null); setAddingEmployer(false);
       void queryClient.invalidateQueries({ queryKey: ["/api/crm/data-health"] });
       if (action === "apply") {
         void queryClient.invalidateQueries({ predicate: query => {
@@ -89,12 +124,12 @@ export function ContactDataHealth() {
 
   function show(finding: Finding | null) {
     returnFocus.current = document.activeElement as HTMLElement;
-    act.reset(); setReview(finding); setChoice(null); setOpen(true);
+    act.reset(); createEmployer.reset(); setReview(finding); setChoice(null); setAddingEmployer(false); setEmployerName(""); setOpen(true);
   }
   function close(value: boolean) {
-    if (act.isPending) return;
+    if (act.isPending || createEmployer.isPending) return;
     setOpen(value);
-    if (!value) { setReview(null); setChoice(null); act.reset(); }
+    if (!value) { setReview(null); setChoice(null); setAddingEmployer(false); act.reset(); createEmployer.reset(); }
   }
   function focusBack(event: Event) {
     event.preventDefault();
@@ -151,20 +186,47 @@ export function ContactDataHealth() {
     <p className="text-sm text-muted-foreground">Choose their employer. Existing brand and requirement links will be kept.</p>
     <div className="space-y-2">
       <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Employer in CRM</p>
-      <EntityCombobox items={options} value={selectedId} onChange={setChoice} loading={companies.isLoading} disabled={companies.isLoading || companies.isError || act.isPending} allowClear={false}
-        placeholder="Choose employer" searchPlaceholder="Search CRM companies…" emptyText="No matching company in CRM." testId="dh-employer-picker" className="[&>button]:min-h-11" />
+      <EntityCombobox items={options} value={selectedId} onChange={id => { setChoice(id); setAddingEmployer(false); createEmployer.reset(); }} loading={companies.isLoading} disabled={companies.isLoading || companies.isError || act.isPending || createEmployer.isPending} allowClear={false}
+        placeholder={companies.isLoading ? "Loading employers…" : "Choose employer"} searchPlaceholder="Search CRM companies…" emptyText="No matching company. Use Add employer below to create its company record." testId="dh-employer-picker" className="[&>button]:min-h-11" />
       {companies.isError ? <p className="text-sm text-destructive" role="alert">Could not load companies. <Button variant="ghost" onClick={() => void companies.refetch()}>Retry</Button></p>
-        : <p className="text-[11px] text-muted-foreground">If the employer is missing, leave this review pending until its company record has been added.</p>}
+        : companies.isLoading ? <p className="text-sm text-muted-foreground" role="status">Loading CRM companies before matching the suggested employer…</p>
+        : selected ? <p className="text-sm text-muted-foreground" role="status">{selected.label} selected. Save employer to confirm this change.</p>
+        : <p className="text-sm text-muted-foreground" role="status" data-testid="dh-employer-match-help">{exact.length > 1
+          ? `More than one CRM company is named ${review.suggested_company_name}. Search the list and choose the correct record.`
+          : review.suggested_company_name ? `No CRM company named ${review.suggested_company_name} was found. Search for another name, or add the employer below.`
+          : "Choose a CRM company, or add the employer below."}</p>}
+      {!companies.isLoading && !companies.isError && <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" className="min-h-11" disabled={act.isPending || createEmployer.isPending} onClick={() => {
+          setEmployerName(review.suggested_company_name || ""); setEmployerType(""); setAddingEmployer(true); createEmployer.reset();
+        }} data-testid="dh-add-employer"><Plus className="mr-1 h-4 w-4" />Add employer</Button>
+        <Button variant="ghost" size="sm" className="min-h-11" disabled={companies.isFetching || act.isPending || createEmployer.isPending} onClick={() => void companies.refetch()}>Refresh companies</Button>
+      </div>}
+      {addingEmployer && <div ref={employerForm} className="rounded-lg border border-border bg-muted/30 p-3 space-y-3" data-testid="dh-add-employer-form">
+        <div className="space-y-2"><label htmlFor="dh-new-employer-name" className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Company name</label>
+          <Input id="dh-new-employer-name" value={employerName} maxLength={200} disabled={createEmployer.isPending} onChange={event => setEmployerName(event.target.value)} className="min-h-11" /></div>
+        <div className="space-y-2"><label htmlFor="dh-new-employer-type" className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Company type</label>
+          <select id="dh-new-employer-type" value={employerType} disabled={createEmployer.isPending} onChange={event => setEmployerType(event.target.value)}
+            className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" data-testid="dh-new-employer-type">
+            <option value="">Choose type</option>{CRM_OPTIONS.companyType.map(type => <option key={type} value={type}>{type}</option>)}
+          </select></div>
+        <p className="text-sm text-muted-foreground">Check the name before creating a company. The contact changes only when you press Save employer.</p>
+        {createEmployer.isError && <p role="alert" className="text-sm text-destructive" data-testid="dh-create-employer-error">{message(createEmployer.error)}</p>}
+      </div>}
     </div>
     <Link href={`/contacts/${review.contact_id}`} onClick={() => close(false)} className="inline-flex min-h-11 items-center text-sm underline">Open contact record</Link>
   </div>;
   const errorNotice = act.isError && <div role="alert" className="shrink-0 rounded-lg border border-destructive p-3 text-sm text-destructive" data-testid="dh-save-error">
-      <p>{message(act.error)}</p><Button variant="outline" className="mt-2 min-h-11" onClick={() => { act.reset(); setReview(null); setChoice(null); void queue.refetch(); }}>Refresh queue</Button>
+      <p>{message(act.error)}</p><Button variant="outline" className="mt-2 min-h-11" disabled={createEmployer.isPending} onClick={() => { act.reset(); setReview(null); setChoice(null); setAddingEmployer(false); void queue.refetch(); }}>Refresh queue</Button>
     </div>;
   const actions = review && <div className="shrink-0 flex flex-wrap justify-end gap-2 border-t border-border bg-background pt-3">
-      <Button variant="ghost" className="min-h-11" disabled={act.isPending} onClick={() => { setReview(null); act.reset(); }}>Back</Button>
-      <Button variant="outline" className="min-h-11" disabled={act.isPending} onClick={() => act.mutate({ finding: review, action: "dismiss" })}>Dismiss finding</Button>
-      <Button className="min-h-11" disabled={!selected || companies.isError || act.isPending} onClick={() => act.mutate({ finding: review, action: "apply" })} data-testid="dh-save-employer">{act.isPending ? "Saving…" : "Save employer"}</Button>
+    {addingEmployer ? <>
+      <Button variant="ghost" className="min-h-11" disabled={createEmployer.isPending} onClick={() => { setAddingEmployer(false); createEmployer.reset(); }}>Cancel</Button>
+      <Button className="min-h-11" disabled={!employerName.trim() || !employerType || createEmployer.isPending} onClick={() => createEmployer.mutate()} data-testid="dh-create-employer">{createEmployer.isPending ? "Adding…" : "Create company"}</Button>
+    </> : <>
+      <Button variant="ghost" className="min-h-11" disabled={act.isPending || createEmployer.isPending} onClick={() => { setReview(null); setAddingEmployer(false); act.reset(); createEmployer.reset(); }}>Back</Button>
+      <Button variant="outline" className="min-h-11" disabled={act.isPending || createEmployer.isPending} onClick={() => act.mutate({ finding: review, action: "dismiss" })}>Dismiss finding</Button>
+      <Button className="min-h-11" disabled={!selected || companies.isError || act.isPending || addingEmployer || createEmployer.isPending} onClick={() => act.mutate({ finding: review, action: "apply" })} data-testid="dh-save-employer">{act.isPending ? "Saving…" : "Save employer"}</Button>
+    </>}
     </div>;
   const title = review ? "Review employer" : "Employer reviews";
   const description = review ? review.contact_name : "One current finding per person. Search people, employers or brands.";
