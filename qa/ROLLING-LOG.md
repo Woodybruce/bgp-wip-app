@@ -207,9 +207,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   identical shields with no description, no row counts and no undo — Victoria
   would not press five of the six without ringing someone, and one still
   ships labelled "(test)").
-- New flakes: none. `npx tsc --noEmit` clean. Nothing near `shared/schema.ts`
-  tables or `migrations/` — both fixes are two Tailwind classes and one
-  `isAdmin &&` guard inside an existing page.
+- New flakes: none. `npx tsc --noEmit` clean. `FRESH_BUILD=1 run-smoke.sh`
+  **GREEN 42/0** after both fixes. Nothing near `shared/schema.ts` tables or
+  `migrations/` — both fixes are two Tailwind classes and one `isAdmin &&`
+  guard inside an existing page.
 - **LESSON FOR FUTURE ROUNDS: a CLIPPED overflow is invisible to a
   `scrollWidth` sweep.** `qa/phone-overflow-sweep.mjs` asserts
   `documentElement.scrollWidth <= innerWidth` and passed this page every
