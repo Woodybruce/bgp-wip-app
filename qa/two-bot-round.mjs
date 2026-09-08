@@ -2708,6 +2708,40 @@ async function victoriaRound(page, cross) {
     if (cleanup.some(c => c !== 200 && c !== 204)) throw new Error(`probe task cleanup failed (${cleanup.join(',')})`);
   });
 
+  // An AML re-check due TODAY is due, not late. aml_recheck_reminders.due_date
+  // is a TIMESTAMP but the MLRO's own form is <input type="date">, so every
+  // reminder lands at midnight — the overdue count and the red OVERDUE card
+  // used to fire from 00:00 on the day the re-check was scheduled (r612).
+  await step(page, p, 'staff-aml-recheck-due-today-is-not-overdue', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const count = async () => (await (await fetch('/api/aml/reminders/overdue-count', { headers: auth })).json())?.count;
+      const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+      const mk = async (entityName, dueDate) => {
+        const res = await fetch('/api/aml/reminders', {
+          method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ entityName, recheckType: 'annual_cdd', dueDate, notes: `QA-PROBE aml reminder R${round}` }),
+        });
+        return res.ok ? (await res.json())?.id : null;
+      };
+      const before = await count();
+      const todayId = await mk(`QA-R${round} due today`, day(0));
+      const dueToday = await count();
+      const lateId = await mk(`QA-R${round} due 3 days ago`, day(-3));
+      const withLate = await count();
+      const del = [];
+      for (const id of [todayId, lateId]) if (id) del.push((await fetch(`/api/aml/reminders/${id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status);
+      return { before, dueToday, withLate, todayId, lateId, del, restored: await count() };
+    }, ROUND);
+    if (!r.todayId || !r.lateId) throw new Error('AML reminder create failed — cannot judge the overdue count');
+    if (r.dueToday !== r.before)
+      throw new Error(`overdue count moved by ${r.dueToday - r.before} for a re-check due TODAY — a reminder is overdue on the day it is due (before ${r.before}, after ${r.dueToday})`);
+    if (r.withLate !== r.before + 1)
+      throw new Error(`a re-check due 3 days ago did not count as overdue (before ${r.before}, after ${r.withLate})`);
+    if (r.del.some((c) => c !== 200 && c !== 204)) throw new Error(`probe reminder cleanup failed (${r.del.join(',')})`);
+    if (r.restored !== r.before) throw new Error(`overdue count did not return to ${r.before} after cleanup (got ${r.restored})`);
+  });
+
   // "Expiring soon" means the lease still runs and runs out inside the window.
   // Two units seeded on the same property — one expiring in 4 months, one that
   // expired 30 months ago — must move the board's expiring_soon count by

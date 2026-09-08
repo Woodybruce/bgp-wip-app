@@ -21,6 +21,7 @@ import { withSystemXero } from "./xero-system-session";
 import { pool } from "./db";
 import { legacyToCode, type DealStatusCode } from "../shared/deal-status";
 import { buildCommissionStatements } from "./commission-engine";
+import { startOfToday } from "../shared/day-overdue";
 
 const CACHE_TTL_MS = 15 * 60_000;
 let cache: { at: number; payload: any } | null = null;
@@ -320,6 +321,11 @@ export async function buildFinancials(session: any): Promise<any> {
   // ---- Creditors (outstanding ACCPAY bills) + cash-out schedule ----
   // Bills are accrual entries: an AUTHORISED bill is already inside the P&L
   // expense figures. This view is about WHEN the cash leaves, not extra cost.
+  // Day-safe "is this bill/receipt late": Xero due dates carry no time, so
+  // comparing them against the current MOMENT put anything due TODAY in the
+  // overdue bucket from midnight (the debtors bucket above already gets this
+  // right via daysOver <= 0). Shared rule — shared/day-overdue.ts.
+  const startOfDay = startOfToday();
   const monthEnd = Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0);
   const nextMonthEnd = Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 2, 0);
   const credBuckets = { overdue: 0, thisMonth: 0, nextMonth: 0, later: 0 };
@@ -334,7 +340,7 @@ export async function buildFinancials(session: any): Promise<any> {
     apByMonth[dueMonthKey(parseXeroDate(b.DueDateString || b.DueDate))] = (apByMonth[dueMonthKey(parseXeroDate(b.DueDateString || b.DueDate))] || 0) + netBillDue;
     const due = parseXeroDate(b.DueDateString || b.DueDate);
     const dueMs = due ? due.getTime() : NaN;
-    if (!isNaN(dueMs) && dueMs < now) credBuckets.overdue += amount;
+    if (!isNaN(dueMs) && dueMs < startOfDay) credBuckets.overdue += amount;
     else if (!isNaN(dueMs) && dueMs <= monthEnd) credBuckets.thisMonth += amount;
     else if (!isNaN(dueMs) && dueMs <= nextMonthEnd) credBuckets.nextMonth += amount;
     else credBuckets.later += amount;
@@ -355,7 +361,7 @@ export async function buildFinancials(session: any): Promise<any> {
     if (!amount) continue;
     const due = parseXeroDate(inv.DueDateString || inv.DueDate);
     const dueMs = due ? due.getTime() : NaN;
-    if (!isNaN(dueMs) && dueMs < now) recBuckets.overdue += amount;
+    if (!isNaN(dueMs) && dueMs < startOfDay) recBuckets.overdue += amount;
     else if (!isNaN(dueMs) && dueMs <= monthEnd) recBuckets.thisMonth += amount;
     else if (!isNaN(dueMs) && dueMs <= nextMonthEnd) recBuckets.nextMonth += amount;
     else recBuckets.later += amount;

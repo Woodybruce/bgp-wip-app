@@ -13,6 +13,44 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+341. 2026-09-08 · BGP staff / desktop (QA r612) · Victoria does quarterly AML
+   housekeeping and wants her list of re-checks due · the MLRO's ongoing-
+   monitoring list (Re-check Reminders, MLR 2017 Reg 28(11)) lives at the
+   BOTTOM of the AML hub's "Firm Settings" tab, and the only place an overdue
+   re-check is ever announced is a small red badge in that same page's own
+   header — so you only learn a CDD re-check is late once you have already
+   navigated to the page that would tell you. Nothing appears in the
+   notifications bell, on the dashboard, or on the Compliance Board.
+   Suggestion: surface the overdue re-check count where the team actually
+   looks — a bell notification per overdue re-check (like the KYC-not-approved
+   alert already does for deals) and/or a tile on the Compliance Board, both
+   deep-linking to the reminder.
+
+340. 2026-09-08 · BGP staff / desktop (QA r612) · Victoria adds a re-check
+   reminder for a brand she has just approved · the Add Reminder form takes
+   the entity as FREE TEXT, so the row it writes has `company_id = NULL`. Two
+   consequences the MLRO can't see: the reminder can't be opened from (or
+   shown on) the brand it is about, and the nightly AML re-screen sweep joins
+   `aml_recheck_reminders` on `company_id`, so a hand-typed reminder can
+   never trigger the automatic re-screen it is asking for — only reminders
+   the app auto-created on KYC approval can.
+   Suggestion: make the Entity field the shared CRM brand picker (free text
+   still allowed for non-CRM individuals) and store `company_id` when a brand
+   is chosen, so hand-made reminders behave like auto-made ones.
+
+339. 2026-09-08 · BGP staff / desktop (QA r612) · Victoria opens the
+   Compliance Board to see "AML status for every counterparty on a live deal"
+   · the Counterparties tab header counts the counterparties it found (3 in
+   the fixture) while the sibling tab says 5 Live deals, and only 2 of those
+   5 deals are reachable from any counterparty card — the other 3 are live
+   deals with NO counterparty recorded, which is precisely the case an MLRO
+   most needs to see. They are listed on the Live deals tab, so nothing is
+   lost, but the counterparty view gives no hint that it is showing a
+   subset.
+   Suggestion: on the Counterparties view, add a plain line or amber card —
+   "N live deals have no counterparty recorded" — linking to those deals, so
+   the two tabs visibly account for the same deal book.
+
 338. 2026-09-08 · BGP staff / desktop (QA r611) · Victoria looks at the
    Leasing Schedule Board to see which properties need attention · the board
    gives each property one amber "N expiring" badge and one board-wide

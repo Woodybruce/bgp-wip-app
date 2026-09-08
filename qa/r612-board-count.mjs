@@ -1,0 +1,13 @@
+const BASE='http://localhost:5000';
+const r = await fetch(`${BASE}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'victoria@brucegillinghampollard.com',password:'B@nd0077!'})});
+const u = await r.json(); const H={Authorization:`Bearer ${u.token}`};
+const board = await (await fetch(`${BASE}/api/kyc/board`,{headers:H})).json();
+const deals = await (await fetch(`${BASE}/api/kyc/board/deals`,{headers:H})).json();
+const rows = board.rows||board.companies||[];
+console.log('board counts:', JSON.stringify(board.counts||{}), 'rows:', rows.length);
+console.log('deals counts:', JSON.stringify(deals.counts||{}), 'deal rows:', (deals.deals||deals.rows||[]).length);
+const linked = new Set(); for (const row of rows) for (const d of (row.deals||[])) linked.add(d.id||d.deal_id||d.name);
+console.log('distinct deals reachable from the counterparty view:', linked.size);
+const dl = deals.deals||deals.rows||[];
+console.log('live deals with NO counterparty on the deals tab:', dl.filter(d=>!(d.counterparties||[]).length).map(d=>d.name||d.id));
+console.log('sample deal keys:', Object.keys(dl[0]||{}).slice(0,14));

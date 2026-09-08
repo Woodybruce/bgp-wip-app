@@ -92,24 +92,114 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r612 · 2026-09-08 · FULL (round IN PROGRESS — provisional entry)
+### r612 · 2026-09-08 · FULL · journey: **BGP staff · desktop 1440px** (rotation slot #1) · 2 bugs fixed: an AML re-check due TODAY printed OVERDUE at the MLRO (2 doors), and two of three Xero cash buckets called money due today late · 1 micro-fix · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD
-  at b9b8058 — pushing with `git push origin HEAD:claude/qa-staging-20260810`.
+  at b9b8058 — pushed with `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE.** Four chunks sharing
   `QA_CROSS_FILE=/tmp/qa-cross-612.json`: 92 + 130 + 110 (head **332 ok**) +
   tail **39 ok** = **371 ok / 18 issues**, signature **6x400 + 1x409 +
-  10x403 + 1x503** — exactly the r611 prediction (head 332 after r611's new
+  10x403 + 1x503** — exactly r611's prediction (head 332 after its new
   scenario, signature unchanged). No 5xx beyond the keyless-AI 503.
-  **Streak 67.** All 18 are the listed noise signature.
-- Triage: nothing new. 6x400 = rocketreach/negative-probe 400s; 1x409 =
-  duplicate-probe; 10x403 = deliberate client-scope refusals
-  (incl. the wide-contacts PUT guard and the chat-members 403); 1x503 =
-  keyless commentary regen.
-- Journey planned: **BGP staff · desktop 1440px** — Victoria doing AML/KYC
-  housekeeping on the compliance/MLRO surfaces (ground not walked recently),
-  with a write, plus a census of the "is this KYC expired / is this re-check
-  overdue" derived rule across all its doors.
+  **Streak 67.** All 18 are the listed noise signature; nothing new to triage.
+- **JOURNEY (new ground — the MLRO surfaces).** Victoria, 1440px: quarterly
+  AML housekeeping — `/aml-compliance` (the KYC hub: Compliance Board ·
+  Investigator · Training · Firm Settings) → Firm Settings (MLRO settings,
+  firm-wide risk assessment, staff training log, Re-check Reminders) → **the
+  write**: schedule today's Annual CDD re-check through the same POST the
+  form makes → back to the Compliance Board (board/table/cards views,
+  Counterparties vs Live deals). Shots `r612-01/02/03`, `r612v-reminders`.
+- **BUG 1 — the "day-stamped TIMESTAMP read as a moment" shape, TWO ROUNDS
+  RUNNING, now at a compliance surface.** `aml_recheck_reminders.due_date` is
+  a TIMESTAMP; the MLRO's own form is `<input type="date">`, so every
+  hand-made reminder lands at **midnight**. Census of "is this re-check
+  overdue", every door:
+  · ❌ `server/aml-compliance.ts:619` — `due_date < NOW()`, the
+    `/api/aml/reminders/overdue-count` the page header badges.
+  · ❌ `client/src/pages/aml-compliance.tsx:397` — `due < now`, the red card
+    and the literal red **OVERDUE** on the row.
+  · ✅ `server/kyc-orchestrator.ts:774`/`:808` — `due_date <= NOW()`, whose
+    documented intent is "due today or earlier" for the 02:00 sweep;
+    inclusive of a midnight-today row, so correct for that intent. Left as
+    is, deliberately.
+  **PROVEN VISUALLY, pre-fix:** created "QA r612 Holdings Ltd · Annual CDD ·
+  due 2026-09-08" on 2026-09-08 → the header went from nothing to **"1
+  overdue"** and the row rendered red with **"Due: 08/09/2026 OVERDUE"**
+  (`r612-02`). An MLRO is told her ongoing monitoring is late the moment she
+  schedules it.
+- **BUG 2 — same rule, the money surface, and one of its three doors was
+  already right.** `server/xero-financials.ts` buckets AR/AP by due date
+  against `now = new Date()` (a moment) while Xero due dates carry no time:
+  · ✅ debtors buckets (`:290`) — `daysOver = floor((now - dueMs)/86400000)`
+    then `daysOver <= 0 → current`, so an invoice due today is current.
+  · ❌ creditors `credBuckets.overdue` (`:337`) and ❌ receipts
+    `recBuckets.overdue` (`:358`) — `dueMs < now`, so a bill/receipt due
+    TODAY joins the **Overdue** bucket from 00:00, on the Cashflow forecast
+    board's own numbers. Fixed onto the day boundary; **PATCHED, NOT PROVEN
+    IN THE BROWSER** — this container has no Xero key, so the two buckets
+    were read and reasoned, not seen. Worth a look next time production data
+    is in front of someone.
+- **FIX:** one shared home, **`shared/day-overdue.ts`** — `isDayOverdue(d)`
+  for JS readers, `dayOverdueSql(col)` for SQL ones (`(col)::date <
+  CURRENT_DATE`; `col` is caller-supplied, never user input) and
+  `startOfToday()` for callers bucketing many dates against one "today".
+  **`shared/task-due.ts`'s `isTaskOverdue` now delegates to it**, so r610's
+  six task readers and r612's four due-date readers are the same rule in one
+  place. Nothing else changed. `npx tsc --noEmit` clean.
+- **MICRO-FIX on the touched surface:** the AML header rendered the overdue
+  `<Badge>` (a `div`) **inside its `<p>`** — invalid nesting, a
+  `validateDOMNesting` console error on every visit, and the text ran
+  together as "…Compliance Dashboard1 overdue". Header line is now a flex row
+  with the badge beside the paragraph; console errors on the page: **none**.
+- **RE-VERIFIED VISUALLY:** with one reminder due today and one due three
+  days ago, `overdue-count` = **1**, the today row is **amber "due soon"**
+  with no OVERDUE label and the three-day-old one is **red OVERDUE**
+  (`r612v-reminders`). Both probe rows deleted; reminders back to 0.
+- Harness: **`staff-aml-recheck-due-today-is-not-overdue`** added (staff
+  chunk, before `staff-leasing-board-expiring-excludes-expired`) — creates a
+  reminder due today and asserts the overdue count did **not** move, then one
+  due 3 days ago and asserts it moved by exactly 1, then DELETEs both
+  asserting the DELETE code (the r607 trap) and that the count returned to
+  its start. **Proven non-vacuous:** putting `due_date < NOW()` back makes it
+  fail with *"overdue count moved by 1 for a re-check due TODAY"*. Both new
+  scenarios green together: **2 ok, 0 issues**. Smoke after the fixes:
+  **GREEN 42/0** with `FRESH_BUILD=1`.
+- **COUNT-vs-LIST check on the Compliance Board (clean-ish, one gap noted):**
+  Documents pending 4 + Under review 0 + Approved 0 = the "4 total"
+  counterparties, consistent. But the Counterparties tab counts 3 (post-
+  restore fixture) beside a sibling tab reading 5 Live deals, and only 2 of
+  those 5 deals are reachable from any counterparty card — the rest are live
+  deals with no counterparty recorded. Nothing is hidden (the Live deals tab
+  lists them) so not filed as a bug → **UX #339**.
+- **CHECKED-NOT-BUGS (do not re-chase):** `crm_companies.kyc_expires_at` has
+  exactly ONE writer (`aml-compliance.ts:801`, `now + recheck_interval_days`
+  **with time-of-day preserved**), so its five "is this KYC expired" readers
+  (`aml-compliance.ts:1123`/`:1288`, `deal-gates.ts:57`, `kyc-panel.tsx:168`,
+  `deal-aml-badge.tsx:50`) compare a real moment against now and are all
+  **correct** — that census is CLOSED, unlike the reminder one. The debtors
+  bucket in `xero-financials.ts` (above). `/api/kyc/board` vs
+  `/api/kyc/board/deals` being two endpoints with two different totals.
+- Bugs deferred: none new. Deferred pool unchanged (UX #331/#332 — and note
+  the auto-KYC writer also never sets `kyc_expires_at` or creates a re-check
+  reminder, so auto-approved brands never enter the 182-day monitoring cycle
+  that manually-approved ones do; that belongs with #331's compliance
+  judgement, not a blind fix —, the favorite-instructions and
+  `add_property_imagery` scope write-ups, the two column DEFAULTs, #320's
+  dead phone "More" tab).
+- Suggestions added: **UX #339** (the Counterparties view silently shows a
+  subset of the live deal book), **UX #340** (Add Reminder takes free text, so
+  the row it writes has `company_id = NULL` and the nightly re-screen sweep —
+  which joins on `company_id` — can never act on a hand-made reminder),
+  **UX #341** (an overdue CDD re-check is announced only in the header of the
+  page you had to reach to find out; nothing in the bell or on the board).
+- `server/chatbgp-app-map.ts` NOT touched — no navigation, page or control
+  moved. `shared/schema.ts` and `migrations/` NOT touched
+  (`shared/day-overdue.ts` is a new pure helper module).
+- New flakes: none. Setup note re-confirmed: `run-smoke.sh` restores the DB —
+  re-apply `qa/seed-personas.sql` after **every** smoke run (caught mid-round
+  when the board's fixture counts changed from 4/7 to 3/5).
+- Next journey: **rotation #2, Landsec client · desktop 1440px** (r612 had the
+  journey → r613 may be LIGHT; then #2).
 
 ### r611 · 2026-09-08 · LIGHT (r610 had the journey — no journey this round) · 1 bug fixed across TWO doors: "expiring soon" counted leases that had ALREADY expired · 2 harness assertions strengthened from exists-only · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

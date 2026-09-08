@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { isDayOverdue } from "@shared/day-overdue";
 
 // --- MLRO Settings Section ---
 function MlroSettings() {
@@ -393,7 +394,7 @@ function RecheckReminders() {
           <div className="space-y-2">
             {(reminders as any[]).map((r: any) => {
               const due = new Date(r.due_date);
-              const isOverdue = !r.completed_at && due < now;
+              const isOverdue = !r.completed_at && isDayOverdue(r.due_date);
               const isDueSoon = !r.completed_at && !isOverdue && (due.getTime() - now.getTime()) < 30 * 24 * 60 * 60 * 1000;
               return (
                 <div key={r.id} className={`flex items-center justify-between border rounded-lg p-2.5 text-sm ${isOverdue ? "border-red-300 bg-red-50 dark:bg-red-950/20" : isDueSoon ? "border-amber-300 bg-amber-50 dark:bg-amber-950/20" : ""}`}>
@@ -630,12 +631,14 @@ export default function AmlCompliancePage() {
           </div>
           <div>
             <h1 className="text-lg font-semibold tracking-tight">AML Compliance</h1>
-            <p className="text-xs text-muted-foreground">
-              Money Laundering Regulations 2017 — Estate Agent Compliance Dashboard
+            <div className="flex items-center gap-2">
+              <p className="text-xs text-muted-foreground">
+                Money Laundering Regulations 2017 — Estate Agent Compliance Dashboard
+              </p>
               {(overdueCount?.count ?? 0) > 0 && (
-                <Badge variant="destructive" className="ml-2 text-[10px]">{overdueCount!.count} overdue</Badge>
+                <Badge variant="destructive" className="text-[10px]">{overdueCount!.count} overdue</Badge>
               )}
-            </p>
+            </div>
           </div>
         </div>
       </div>

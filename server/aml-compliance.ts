@@ -8,6 +8,7 @@ import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { pool } from "./db";
 import { saveFile } from "./file-storage";
 import { recomputeDealKycApproved } from "./deal-gates";
+import { dayOverdueSql } from "../shared/day-overdue";
 
 const router = Router();
 
@@ -616,7 +617,8 @@ router.delete("/api/aml/reminders/:id", requireAuth, async (req: Request, res: R
 router.get("/api/aml/reminders/overdue-count", requireAuth, async (_req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      "SELECT COUNT(*) as count FROM aml_recheck_reminders WHERE due_date < NOW() AND completed_at IS NULL"
+      `SELECT COUNT(*) as count FROM aml_recheck_reminders
+        WHERE ${dayOverdueSql("due_date")} AND completed_at IS NULL`
     );
     res.json({ count: parseInt(result.rows[0]?.count || "0") });
   } catch (err: any) {

@@ -7,12 +7,8 @@
 // today is due today — it only goes overdue once that day has passed.
 // `new Date(due) < new Date()` made every date-only due date read as overdue
 // from 00:00 on the day itself.
+import { isDayOverdue } from "./day-overdue";
+
 export function isTaskOverdue(dueDate: string | Date | null | undefined): boolean {
-  if (!dueDate) return false;
-  const due = new Date(dueDate);
-  if (Number.isNaN(due.getTime())) return false;
-  const now = new Date();
-  const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate());
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return dueDay.getTime() < today.getTime();
+  return isDayOverdue(dueDate);
 }
