@@ -92,6 +92,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r610 · 2026-09-08 · FULL · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- **REGRESSION AT BASELINE.** Four chunks sharing `QA_CROSS_FILE=/tmp/qa-cross-610.json`:
+  90 + 130 + 110 (head **330 ok**) + tail **39 ok** = **369 ok / 18 issues**,
+  signature **6x400 + 1x409 + 10x403 + 1x503** — exactly the number r609
+  predicted after adding `staff-aml-gate-blocks-sol` to the negative probes.
+  No 5xx, nothing new. **Streak 64.** All 18 are the listed noise signature.
+- Triage: nothing to chase. Journey next — rotation #4, BGP staff · phone 390px.
+
 ### r609 · 2026-09-08 · LIGHT (r608 had the journey — no journey this round) · 1 bug fixed across THREE doors: ChatBGP could move a deal into SOL+ with no AML counterparty check at all · 2 compliance write-ups deferred (UX #331, #332)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`.
