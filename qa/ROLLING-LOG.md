@@ -92,6 +92,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r619 · 2026-09-08 · LIGHT (r618 did the journey) · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushing with
+  `git push origin HEAD:claude/qa-staging-20260810`.
+- Regression, head split three ways sharing `QA_CROSS_FILE=/tmp/qa-cross-619.json`,
+  each chunk in its own `with-server.sh`: **chunk 1 = 99 ok** (exactly r618's
+  prediction after its two new scenarios), **chunk 2 = 133 ok**. Chunk 3 + tail
+  in flight. Signature so far 6x400 + 1x409 + 9x403 — all listed noise.
+- Triage: no new issue classes. Targets under way — the control-reach
+  bounding-box sweep (r618's lesson) and the requireAdmin-panel census.
+
 ### r618 · 2026-09-08 · FULL · journey: **BGP staff · phone 390px** (rotation slot #4) · 2 bugs fixed: five of six CRM data-hygiene actions were OFF the phone screen, and an admin-only email panel was mounted for every staff user · 2 suggestions · 1 deferred
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
