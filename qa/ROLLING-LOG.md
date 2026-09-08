@@ -92,6 +92,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r613 · 2026-09-08 · LIGHT (r612 had the journey) — ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD at e9e7341.
+- **REGRESSION AT BASELINE.** Four chunks sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-613.json`: 93 + 130 + 110 (head **333 ok**) +
+  tail **39 ok** = **372 ok / 18 issues**, signature **6x400 + 1x409 +
+  10x403 + 1x503** — exactly r612's prediction (head 333 after its new
+  `staff-aml-recheck-due-today-is-not-overdue`, signature unchanged). No 5xx
+  beyond the keyless-AI 503. **Streak 68.** All 18 are the listed noise
+  signature; nothing new to triage.
+- Round in progress — targets: the outstanding day-overdue census doors and
+  the two deferred scope write-ups.
+
 ### r612 · 2026-09-08 · FULL · journey: **BGP staff · desktop 1440px** (rotation slot #1) · 2 bugs fixed: an AML re-check due TODAY printed OVERDUE at the MLRO (2 doors), and two of three Xero cash buckets called money due today late · 1 micro-fix · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD
