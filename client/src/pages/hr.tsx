@@ -178,6 +178,25 @@ interface HrDocument {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const fmtSalary = (pence: number) => `£${(pence / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
+
+// Review periods are stored as annual_2026 / midyear_2026 / monthly_2026_09.
+function reviewPeriodLabel(period: string): string {
+  const m = period.match(/^monthly_(\d{4})_(\d{2})$/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  return period.replace(/^(annual|midyear)_/, "");
+}
+function reviewTitle(r: { kind: string; period: string }): string {
+  if (r.kind === "monthly") return `1:1 · ${reviewPeriodLabel(r.period)}`;
+  if (r.kind === "midyear") return `Mid-year review · ${reviewPeriodLabel(r.period)}`;
+  return `Annual review · ${reviewPeriodLabel(r.period)}`;
+}
+// monthly_2026_09 → monthly_2026_08
+function previousMonthlyPeriod(period: string): string | null {
+  const m = period.match(/^monthly_(\d{4})_(\d{2})$/);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 2, 1);
+  return `monthly_${d.getFullYear()}_${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 const fmtProgress = (pence: number, total: number) => total > 0 ? Math.min((pence / total) * 100, 100) : 0;
 
 // Whether a staff member's job is fee-earning (property advisor) or
@@ -2913,6 +2932,13 @@ interface StaffReview {
   salary_expectation_pence: number | null;
   feedback: string | null;
   bgp_can_help: string | null;
+  // Monthly 1:1 template
+  wip_target_pence: number | null;
+  wip_actual_pence: number | null;
+  exchanged_target: number | null;
+  exchanged_actual: number | null;
+  goals_review: string | null;
+  time_spent: string | null;
   status: string;
   submitted_at: string | null;
   reviewed_at: string | null;
@@ -3114,6 +3140,85 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
     },
   });
 
+  // ── Autosave ────────────────────────────────────────────────────────────
+  // Field edits used to PATCH on blur only. Safari (Mac + iPhone) doesn't
+  // blur a textarea when you tap a button, so typing then hitting Submit /
+  // Mark complete silently lost the last field — the "reviews not saving
+  // once done" report. Now edits queue into a pending buffer, a debounced
+  // PATCH fires after 900ms, the status buttons flush the buffer in the
+  // SAME request as the status change, and switching review / leaving the
+  // page flushes whatever is left (keepalive on pagehide).
+  const pendingRef = useRef<{ id: string; fields: Record<string, any> } | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
+  const [drafts, setDrafts] = useState<Record<string, any>>({});
+
+  const flush = async (extra?: Record<string, any>) => {
+    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+    const pending = pendingRef.current;
+    const id = pending?.id || editingId;
+    const body = { ...(pending?.fields || {}), ...(extra || {}) };
+    if (!id || Object.keys(body).length === 0) return;
+    pendingRef.current = null;
+    setSaveState("saving");
+    try {
+      await updateReview.mutateAsync({ id, body });
+      setSaveState(pendingRef.current ? "dirty" : "saved");
+    } catch {
+      // Put the fields back so the next edit / retry re-sends them.
+      const { status: _status, ...fields } = body;
+      if (Object.keys(fields).length) {
+        // Edits typed while the request was in flight win over the failed ones.
+        const typedSince: Record<string, any> = (pendingRef.current as { id: string; fields: Record<string, any> } | null)?.fields || {};
+        pendingRef.current = { id, fields: { ...fields, ...typedSince } };
+      }
+      setSaveState("error");
+    }
+  };
+  const queueField = (key: string, value: any) => {
+    if (!editingId) return;
+    if (pendingRef.current && pendingRef.current.id !== editingId) void flush();
+    pendingRef.current = { id: editingId, fields: { ...(pendingRef.current?.fields || {}), [key]: value } };
+    setDrafts(d => ({ ...d, [key]: value }));
+    setSaveState("dirty");
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => void flush(), 900);
+  };
+  // Immediate save — money fields on commit, and the status buttons (which
+  // carry any still-pending text edits along in the same PATCH).
+  const saveNow = (fields: Record<string, any>) => {
+    if (!editingId) return;
+    const { status, ...rest } = fields;
+    if (Object.keys(rest).length) {
+      if (pendingRef.current && pendingRef.current.id !== editingId) void flush();
+      pendingRef.current = { id: editingId, fields: { ...(pendingRef.current?.fields || {}), ...rest } };
+      setDrafts(d => ({ ...d, ...rest }));
+    }
+    void flush(status !== undefined ? { status } : undefined);
+  };
+  useEffect(() => {
+    setDrafts({});
+    setSaveState("idle");
+    return () => { if (pendingRef.current) void flush(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId]);
+  useEffect(() => {
+    const onHide = () => {
+      const p = pendingRef.current;
+      if (!p) return;
+      pendingRef.current = null;
+      fetch(`/api/hr/reviews/${p.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(p.fields),
+        credentials: "include",
+        keepalive: true,
+      }).catch(() => {});
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, []);
+
   const deleteReview = useMutation({
     mutationFn: async (id: string) => apiRequest("DELETE", `/api/hr/reviews/${id}`).then(r => r.json()),
     onSuccess: () => {
@@ -3173,12 +3278,17 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
       apiRequest("POST", `/api/hr/reviews/${id}/sync-from-wip`).then(r => r.json()),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] });
-      const ach = ((data?.changes?.fees_achieved_pence || 0) / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 });
-      const sol = ((data?.changes?.pipeline_under_offer_pence || 0) / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 });
-      const neg = ((data?.changes?.pipeline_negotiating_pence || 0) / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 });
+      const gbp = (pence: any) => ((Number(pence) || 0) / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 });
+      if (data?.kind === "monthly") {
+        toast({
+          title: `Synced from WIP (${data?.matchedAllocations || 0} allocations)`,
+          description: `Fees invoiced £${gbp(data?.changes?.fees_achieved_pence)}, WIP £${gbp(data?.changes?.wip_actual_pence)}, ${data?.changes?.exchanged_actual || 0} exchanged`,
+        });
+        return;
+      }
       toast({
         title: `Synced from WIP (${data?.matchedAllocations || 0} allocations)`,
-        description: `Achieved £${ach}, Under offer £${sol}, Negotiating £${neg}`,
+        description: `Achieved £${gbp(data?.changes?.fees_achieved_pence)}, Under offer £${gbp(data?.changes?.pipeline_under_offer_pence)}, Negotiating £${gbp(data?.changes?.pipeline_negotiating_pence)}`,
       });
     },
     onError: (e: any) => {
@@ -3234,6 +3344,18 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   if (!isAdmin && !isOwn) return null;
 
   const editing = reviews.find(r => r.id === editingId);
+  const isMonthly = editing?.kind === "monthly";
+  const fieldValue = (key: string): string => {
+    if (drafts[key] !== undefined && drafts[key] !== null) return String(drafts[key]);
+    const v = editing ? (editing as any)[key] : null;
+    return v === null || v === undefined ? "" : String(v);
+  };
+  // "Review — goals from last month": surface what was written last month so
+  // the answer to "what did you learn?" has something to reflect on.
+  const prevPeriod = editing?.kind === "monthly" ? previousMonthlyPeriod(editing.period) : null;
+  const prevMonthly = prevPeriod ? reviews.find(r => r.kind === "monthly" && r.period === prevPeriod) : undefined;
+  const moneyOrNull = (pence: number | null | undefined) => (pence ? Math.round(pence / 100) : null);
+  const toPence = (n: number | null) => (n === null ? null : n * 100);
 
   return (
     <div className="space-y-4 pb-4">
@@ -3316,7 +3438,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   className={`w-full flex items-center gap-3 p-2.5 rounded-md border text-left transition-colors hover:bg-accent/40 ${editingId === r.id ? "border-primary bg-primary/5" : ""}`}
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium capitalize">{r.kind} review · {r.period}</div>
+                    <div className="text-sm font-medium">{reviewTitle(r)}</div>
                     <div className="text-[11px] text-muted-foreground">
                       {r.review_date ? new Date(r.review_date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "Not dated"}
                       {r.fees_achieved_pence != null && r.fees_target_pence ? ` · achieved ${fmtSalary(r.fees_achieved_pence)} of ${fmtSalary(r.fees_target_pence)}` : ""}
@@ -3335,29 +3457,31 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center justify-between">
-              <span className="capitalize">{editing.kind} review — {editing.period}</span>
+              <span>{reviewTitle(editing)}</span>
               <div className="flex gap-1">
-                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => aiDraft.mutate(editing.id)} disabled={aiDraft.isPending}>
-                  {aiDraft.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />} AI draft
-                </Button>
+                {!isMonthly && (
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => aiDraft.mutate(editing.id)} disabled={aiDraft.isPending}>
+                    {aiDraft.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />} AI draft
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="ghost"
                   className="h-7 text-xs"
                   onClick={() => syncFromWip.mutate({ id: editing.id })}
                   disabled={syncFromWip.isPending}
-                  title="Pull target (3× salary) and fees-achieved / under-offer / negotiating from the WIP report"
+                  title={isMonthly ? "Fill this month's actuals from the WIP report — fees invoiced, current WIP figure, deals exchanged" : "Pull target (3× salary) and fees-achieved / under-offer / negotiating from the WIP report"}
                   data-testid="button-sync-from-wip"
                 >
                   {syncFromWip.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <BarChart3 className="w-3.5 h-3.5 mr-1" />} Sync from WIP
                 </Button>
                 {editing.status === "draft" && isOwn && (
-                  <Button size="sm" className="h-7 text-xs" onClick={() => updateReview.mutate({ id: editing.id, body: { status: "submitted" } })}>
+                  <Button size="sm" className="h-7 text-xs" onClick={() => saveNow({ status: "submitted" })}>
                     Submit to manager
                   </Button>
                 )}
                 {editing.status === "submitted" && isAdmin && (
-                  <Button size="sm" className="h-7 text-xs" onClick={() => updateReview.mutate({ id: editing.id, body: { status: "completed" } })}>
+                  <Button size="sm" className="h-7 text-xs" onClick={() => saveNow({ status: "completed" })}>
                     Mark complete
                   </Button>
                 )}
@@ -3392,13 +3516,73 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 so we hide these blocks for them. Detection is title-based,
                 see isFeeEarner(person.title). Their version of the form
                 emphasises workload, support, and office contributions. */}
-            {isFeeEarner(person.title) ? (
+            {isMonthly ? (
+            <div className="space-y-3">
+              {/* Monthly one-to-one — mirrors the BGP One_to_One_Template
+                  (Name / Position / Date, then KPIs target vs actual). */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-md border bg-muted/30 p-3">
+                <div className="space-y-1">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Name</div>
+                  <div className="text-sm font-medium">{person.name}</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Position</div>
+                  <div className="text-sm font-medium">{person.title || <span className="italic text-muted-foreground">Not set</span>}</div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Date</Label>
+                  <Input
+                    type="date"
+                    value={fieldValue("review_date").slice(0, 10)}
+                    onChange={e => saveNow({ review_date: e.target.value || null })}
+                    className="h-8 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-md border overflow-hidden">
+                <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center bg-muted/40 px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <div>Key performance indicators</div>
+                  <div>Target</div>
+                  <div>Actual</div>
+                </div>
+                <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center gap-2 px-3 py-2 border-t">
+                  <div className="text-sm">Fees (£)</div>
+                  <MoneyInput value={moneyOrNull(editing.fees_target_pence)} onCommit={(n) => saveNow({ fees_target_pence: toPence(n) })} className="h-8" />
+                  <MoneyInput value={moneyOrNull(editing.fees_achieved_pence)} onCommit={(n) => saveNow({ fees_achieved_pence: toPence(n) })} className="h-8" />
+                </div>
+                <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center gap-2 px-3 py-2 border-t">
+                  <div className="text-sm">WIP figure (£)</div>
+                  <MoneyInput value={moneyOrNull(editing.wip_target_pence)} onCommit={(n) => saveNow({ wip_target_pence: toPence(n) })} className="h-8" />
+                  <MoneyInput value={moneyOrNull(editing.wip_actual_pence)} onCommit={(n) => saveNow({ wip_actual_pence: toPence(n) })} className="h-8" />
+                </div>
+                <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center gap-2 px-3 py-2 border-t">
+                  <div className="text-sm">Exchanged deals</div>
+                  <Input
+                    type="number" inputMode="numeric" min={0}
+                    value={fieldValue("exchanged_target")}
+                    onChange={e => queueField("exchanged_target", e.target.value === "" ? null : Number(e.target.value))}
+                    onBlur={() => void flush()}
+                    className="h-8 text-sm"
+                  />
+                  <Input
+                    type="number" inputMode="numeric" min={0}
+                    value={fieldValue("exchanged_actual")}
+                    onChange={e => queueField("exchanged_actual", e.target.value === "" ? null : Number(e.target.value))}
+                    onBlur={() => void flush()}
+                    className="h-8 text-sm"
+                  />
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground">Actuals come from the WIP report via <span className="font-medium">Sync from WIP</span> (fees invoiced this month, your current WIP figure, deals exchanged this month). Targets are yours to set — the fee target defaults to a twelfth of 3× salary.</p>
+            </div>
+            ) : isFeeEarner(person.title) ? (
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1.5">
                 <Label className="text-xs">Target (£)</Label>
                 <MoneyInput
                   value={editing.fees_target_pence ? Math.round(editing.fees_target_pence / 100) : null}
-                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { fees_target_pence: n === null ? null : n * 100 } })}
+                  onCommit={(n) => saveNow({ fees_target_pence: n === null ? null : n * 100 })}
                   className="h-8"
                 />
               </div>
@@ -3406,7 +3590,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 <Label className="text-xs">Achieved (£)</Label>
                 <MoneyInput
                   value={editing.fees_achieved_pence ? Math.round(editing.fees_achieved_pence / 100) : null}
-                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { fees_achieved_pence: n === null ? null : n * 100 } })}
+                  onCommit={(n) => saveNow({ fees_achieved_pence: n === null ? null : n * 100 })}
                   className="h-8"
                 />
               </div>
@@ -3414,7 +3598,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 <Label className="text-xs">Pipeline — under offer (£)</Label>
                 <MoneyInput
                   value={editing.pipeline_under_offer_pence ? Math.round(editing.pipeline_under_offer_pence / 100) : null}
-                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { pipeline_under_offer_pence: n === null ? null : n * 100 } })}
+                  onCommit={(n) => saveNow({ pipeline_under_offer_pence: n === null ? null : n * 100 })}
                   className="h-8"
                 />
               </div>
@@ -3422,7 +3606,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 <Label className="text-xs">Pipeline — negotiating (£)</Label>
                 <MoneyInput
                   value={editing.pipeline_negotiating_pence ? Math.round(editing.pipeline_negotiating_pence / 100) : null}
-                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { pipeline_negotiating_pence: n === null ? null : n * 100 } })}
+                  onCommit={(n) => saveNow({ pipeline_negotiating_pence: n === null ? null : n * 100 })}
                   className="h-8"
                 />
               </div>
@@ -3430,7 +3614,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 <Label className="text-xs">Expected invoice next year (£)</Label>
                 <MoneyInput
                   value={editing.expected_invoice_next_year_pence ? Math.round(editing.expected_invoice_next_year_pence / 100) : null}
-                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { expected_invoice_next_year_pence: n === null ? null : n * 100 } })}
+                  onCommit={(n) => saveNow({ expected_invoice_next_year_pence: n === null ? null : n * 100 })}
                   className="h-8"
                 />
               </div>
@@ -3438,7 +3622,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 <Label className="text-xs">Salary expectation (£)</Label>
                 <MoneyInput
                   value={editing.salary_expectation_pence ? Math.round(editing.salary_expectation_pence / 100) : null}
-                  onCommit={(n) => updateReview.mutate({ id: editing.id, body: { salary_expectation_pence: n === null ? null : n * 100 } })}
+                  onCommit={(n) => saveNow({ salary_expectation_pence: n === null ? null : n * 100 })}
                   className="h-8"
                 />
               </div>
@@ -3452,14 +3636,22 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   <Label className="text-xs">Salary expectation (£)</Label>
                   <MoneyInput
                     value={editing.salary_expectation_pence ? Math.round(editing.salary_expectation_pence / 100) : null}
-                    onCommit={(n) => updateReview.mutate({ id: editing.id, body: { salary_expectation_pence: n === null ? null : n * 100 } })}
+                    onCommit={(n) => saveNow({ salary_expectation_pence: n === null ? null : n * 100 })}
                     className="h-8"
                   />
                 </div>
               </div>
             )}
 
-            {(isFeeEarner(person.title) ? [
+            {(isMonthly ? [
+              // Monthly one-to-one template sections, in template order.
+              { key: "achievements", label: "Achievements", prompt: "What's working well?", placeholder: "Wins this month — instructions, completions, client moments" },
+              { key: "development_areas", label: "Development areas", prompt: "What could be better?", placeholder: "" },
+              { key: "marketing_pr", label: "Marketing", prompt: "What have I done?", placeholder: "LinkedIn posts, events, pitches, press" },
+              { key: "goals_review", label: "Review (goals from last month)", prompt: "What did you learn?", placeholder: prevMonthly?.goals ? "How did last month's goals go — what did you learn?" : "No 1:1 on file for last month — note what you set out to do and what you learned" },
+              { key: "goals", label: "Goals (focus for this month)", prompt: "", placeholder: "Two or three things to focus on this month" },
+              { key: "time_spent", label: "Time spent this month", prompt: "Developments in percentages", placeholder: "e.g. Leasing 60% · Investment 25% · Marketing 15%" },
+            ] : isFeeEarner(person.title) ? [
               { key: "achievements", label: "Achievements", placeholder: "Numbered list of wins this year" },
               { key: "development_areas", label: "Development areas", placeholder: "What to work on" },
               { key: "goals", label: "Goals for next year", placeholder: "SMART goals — turn into tasks above" },
@@ -3481,14 +3673,23 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
               { key: "goals", label: "Goals for next year", placeholder: "How you'd like to grow / focus / improve" },
               { key: "feedback", label: "Feedback for line manager", placeholder: "" },
               { key: "bgp_can_help", label: "Anything BGP can do to help you?", placeholder: "Training, kit, time, support…" },
-            ]).map(f => (
-              <div key={f.key} className="space-y-1.5">
-                <Label className="text-xs">{f.label}</Label>
+            ] as Array<{ key: string; label: string; placeholder: string; prompt?: string }>).map(f => (
+              <div key={`${editing.id}-${f.key}`} className="space-y-1.5">
+                <Label className="text-xs">
+                  {f.label}
+                  {f.prompt ? <span className="ml-1.5 font-normal text-muted-foreground">{f.prompt}</span> : null}
+                </Label>
+                {f.key === "goals_review" && prevMonthly?.goals && (
+                  <div className="rounded-md border-l-2 border-primary/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground whitespace-pre-wrap">
+                    <span className="font-medium text-foreground">Last month's goals ({reviewPeriodLabel(prevMonthly.period)}):</span>{"\n"}{prevMonthly.goals}
+                  </div>
+                )}
                 <Textarea
                   rows={3}
-                  defaultValue={(editing as any)[f.key] || ""}
+                  value={fieldValue(f.key)}
                   placeholder={f.placeholder}
-                  onBlur={e => updateReview.mutate({ id: editing.id, body: { [f.key]: e.target.value } })}
+                  onChange={e => queueField(f.key, e.target.value)}
+                  onBlur={() => void flush()}
                   className="text-sm"
                 />
               </div>
@@ -3504,10 +3705,12 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 <Label className="text-xs">Manager comments {!isAdmin && <span className="text-[10px] text-muted-foreground">(admin-only)</span>}</Label>
                 {isAdmin ? (
                   <Textarea
+                    key={`${editing.id}-manager_comments`}
                     rows={4}
-                    defaultValue={(editing as any).manager_comments || ""}
-                    placeholder="Your reaction, agreement, areas to challenge, salary recommendation, next steps..."
-                    onBlur={e => updateReview.mutate({ id: editing.id, body: { managerComments: e.target.value } })}
+                    value={fieldValue("manager_comments")}
+                    placeholder={isMonthly ? "Manager's notes from the 1:1 — agreed actions, support needed, next check-in" : "Your reaction, agreement, areas to challenge, salary recommendation, next steps..."}
+                    onChange={e => queueField("manager_comments", e.target.value)}
+                    onBlur={() => void flush()}
                     className="text-sm bg-background"
                   />
                 ) : (
@@ -3521,10 +3724,12 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 <div className="space-y-1.5">
                   <Label className="text-xs">Your acknowledgement / response</Label>
                   <Textarea
+                    key={`${editing.id}-employee_acknowledgement`}
                     rows={2}
-                    defaultValue={(editing as any).employee_acknowledgement || ""}
+                    value={fieldValue("employee_acknowledgement")}
                     placeholder="Anything you'd like to say in reply"
-                    onBlur={e => updateReview.mutate({ id: editing.id, body: { employeeAcknowledgement: e.target.value } })}
+                    onChange={e => queueField("employee_acknowledgement", e.target.value)}
+                    onBlur={() => void flush()}
                     className="text-sm bg-background"
                   />
                 </div>
@@ -3533,7 +3738,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
               {/* Admin-only: agree a bonus and/or new salary, log it to
                   bonus_history / salary_history, and auto-raise a task for
                   Wendy so she pushes the change through Xero payroll. */}
-              {isAdmin && (
+              {isAdmin && !isMonthly && (
                 <div className="rounded-md border bg-background p-2.5 space-y-2.5">
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
                     <PoundSterling className="w-3.5 h-3.5" /> Bonus &amp; salary increase
@@ -3612,6 +3817,14 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 autosave on blur; this button progresses status. */}
             <div className="border-t pt-3 mt-3 flex items-center justify-between gap-3">
               <div className="text-[11px] text-muted-foreground">
+                <span className={`inline-flex items-center gap-1 mr-2 ${saveState === "error" ? "text-destructive" : saveState === "saved" ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
+                  {saveState === "saving" && <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</>}
+                  {saveState === "dirty" && <><Clock className="w-3 h-3" /> Unsaved changes</>}
+                  {saveState === "saved" && <><Check className="w-3 h-3" /> Saved</>}
+                  {saveState === "error" && (
+                    <button type="button" className="underline" onClick={() => void flush()}>Save failed — retry</button>
+                  )}
+                </span>
                 {editing.status === "draft" && (
                   <>Draft — your field edits autosave as you type. {isOwn ? "Click Submit when you're ready for your manager to review." : isAdmin ? "After the in-person meeting, click Mark review complete to finalise without waiting for the employee to submit." : "Waiting for the reviewee to submit."}</>
                 )}
@@ -3627,7 +3840,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   <Button
                     size="sm"
                     className="h-8"
-                    onClick={() => updateReview.mutate({ id: editing.id, body: { status: "submitted" } })}
+                    onClick={() => saveNow({ status: "submitted" })}
                     disabled={updateReview.isPending}
                   >
                     {updateReview.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
@@ -3638,7 +3851,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   <Button
                     size="sm"
                     className="h-8"
-                    onClick={() => updateReview.mutate({ id: editing.id, body: { status: "completed" } })}
+                    onClick={() => saveNow({ status: "completed" })}
                     disabled={updateReview.isPending}
                     title="Finalise this review now — use after the in-person meeting"
                   >
@@ -3650,7 +3863,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   <Button
                     size="sm"
                     className="h-8"
-                    onClick={() => updateReview.mutate({ id: editing.id, body: { status: "completed" } })}
+                    onClick={() => saveNow({ status: "completed" })}
                     disabled={updateReview.isPending}
                   >
                     {updateReview.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
@@ -3662,7 +3875,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                     size="sm"
                     variant="outline"
                     className="h-8"
-                    onClick={() => updateReview.mutate({ id: editing.id, body: { status: "draft" } })}
+                    onClick={() => saveNow({ status: "draft" })}
                     disabled={updateReview.isPending}
                     title="Reopen this review as a draft so you can edit it again"
                   >

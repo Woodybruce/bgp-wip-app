@@ -3559,7 +3559,8 @@ Return ONLY JSON.`,
          VALUES ($1, $2, $3, $4, $5, $6, 'draft')
          ON CONFLICT (user_id, period) DO UPDATE SET kind = EXCLUDED.kind, updated_at = now()
          RETURNING *`,
-        [req.params.userId, period, kind, reviewDate || null, salary, salary ? salary * 3 : null]
+        // Annual target is 3 × salary; a monthly 1:1 gets one twelfth of it.
+        [req.params.userId, period, kind, reviewDate || null, salary, salary ? (kind === "monthly" ? Math.round((salary * 3) / 12) : salary * 3) : null]
       );
       res.json(r.rows[0]);
     } catch (e: any) {
@@ -3585,6 +3586,9 @@ Return ONLY JSON.`,
         "pipeline_under_offer_pence", "pipeline_negotiating_pence", "expected_invoice_next_year_pence",
         "achievements", "development_areas", "goals", "referrals", "marketing_pr",
         "salary_expectation_pence", "feedback", "bgp_can_help",
+        // Monthly 1:1 template fields
+        "wip_target_pence", "wip_actual_pence", "exchanged_target", "exchanged_actual",
+        "goals_review", "time_spent",
       ];
       const sets: string[] = [];
       const params: any[] = [req.params.id];

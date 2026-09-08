@@ -382,6 +382,16 @@ installGoogleBudgetGuard();
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS letter_storage_key TEXT`,
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS letter_generated_at TIMESTAMP`,
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS letter_issued BOOLEAN DEFAULT false`,
+    // Monthly one-to-one template (Woody, 2026-09-08): KPI target vs actual
+    // for WIP figure + exchanged deals (fees reuse fees_target/achieved),
+    // plus "Review — goals from last month / what did you learn" and
+    // "Time spent this month (%)" sections.
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS wip_target_pence BIGINT`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS wip_actual_pence BIGINT`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS exchanged_target INTEGER`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS exchanged_actual INTEGER`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS goals_review TEXT`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS time_spent TEXT`,
     `CREATE TABLE IF NOT EXISTS staff_review_goals (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       review_id VARCHAR,
