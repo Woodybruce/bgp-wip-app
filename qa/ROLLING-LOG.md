@@ -92,17 +92,89 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r621 · 2026-09-08 · LIGHT · ROUND IN PROGRESS
+### r621 · 2026-09-08 · LIGHT (r620 did the journey — no exploratory journey) · REGRESSION AT BASELINE · 1 bug fixed (5 sites): the Board Report's "Fees Billed YTD", its billed-by-month series and its time-to-close stats were all built from `crm_deals.updated_at` · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushing with
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
   `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE, exactly r620's prediction.** Head split three ways
   sharing `QA_CROSS_FILE=/tmp/qa-cross-621.json`, each chunk in its OWN
   `with-server.sh`: **103 + 133 + 110 = head 346** + tail **39** = **385 ok**.
   Signature **6x400 + 1x409 + 10x403 + 1x503 — identical to r615-r620.
   Streak 76.** All listed noise; no chunk died at `sam · login`.
-- Probe in progress: census of `updatedAt`/`createdAt` fallbacks used as
-  business dates (r620's shape #2).
+- **PROBE — r620's lead run down: census every `updatedAt`/`createdAt`
+  fallback used as a business date.** Only five live sites exist across
+  `server/`, `shared/` and `client/src/` (`grep` for `|| …updatedAt` /
+  `?? …updatedAt`): `storage.ts:959` (a dedupe tiebreak — correct),
+  `routes.ts:8561` (a KYC *timeline* entry, labelled by the row it decorates —
+  left alone) and **two copies of the same board-report derivation**, which
+  were the bug.
+- **BUG FIXED — the Board Report's headline revenue number was partly a
+  "who saved what, when" histogram.** `/api/board-report` (`crm.ts:6857`):
+  `billedStr = invoicedAt || completedAt || exchangedAt || updatedAt`. An
+  INV deal with **no billing date at all** therefore counted as billed in the
+  month somebody last *saved the row* — so an invoice from a previous year
+  landed in **this** year's "Fees Billed YTD" the moment anyone edited it,
+  and the billed-by-month area chart moved with the editing, not the billing.
+  The same `for` loop dated **time-to-close** the same way
+  (`completedAt || exchangedAt || (updatedAt || now)`), so a "completed" deal
+  with no completion date measured *days until someone last touched it*.
+- **Three things prove it's a mistake, not a design:** (1) the **sibling
+  billings queries never do it** — `hr-routes.ts:1245` and
+  `commission-engine.ts:136` both ask the same question as
+  `COALESCE(invoiced_at, completed_at, exchanged_at)`, no `updated_at`;
+  (2) `computeWipHealth`'s `hasDate` (`crm.ts:10154`) counts exactly these
+  deals as having **no date at all** — the audit contradicts the KPI
+  (TWO DOORS, ONE QUESTION); (3) the `/reporting` card **prints the claim the
+  query didn't honour** — its subtitle reads **"Invoiced since 1 January"**
+  under a figure that included a deal with no invoice date.
+- **FIX, 5 sites, 3 consumer doors.** `billedStr` in `/api/board-report`
+  (`crm.ts:6912`) **and its second copy in `/api/board-report/export-excel`**
+  (`:9665` — whose own comment says "the export must not tell a different
+  story from the screen it exports"); the three time-to-close derivations
+  (`:6924` avg, `:6946` buckets, `:9675` export) now yield `null`/`-1` rather
+  than falling back to `updatedAt || now`. Doors verified: **`/board-report`,
+  `/reporting`, and the `.xlsx` export all agree.**
+- **VERIFIED VISUALLY at 1440px, both directions, `qa/r621-board-report-probe.mjs`
+  + `qa/r621-export-probe.mjs`.** Seeded one INV deal, fee £90,000, created
+  Mar-2025, **no invoice/completion/exchange date**, saved today. BEFORE:
+  KPI card **"Fees Billed YTD £90K"**, `monthlyFees [{2026-09, 90000}]` (the
+  save month), `avgTimeToClose` **554 days** = created → last saved, in the
+  365+ bucket. AFTER: **£0**, `monthlyFees []`, `avgTimeToClose 0`, and the
+  Excel "Executive Summary" sheet + the `/reporting` card both read **£0**.
+  Then stamped a real `invoiced_at` 2026-04-15 and `completed_at` 2026-03-20
+  on the same deal: **£90K back, in `2026-04`** (the invoice month, not
+  September) and `avgTimeToClose` **381 days** (created → completed). So the
+  fix loses no real revenue — it stops guessing. Probe deal deleted; fixture
+  clean (`select count(*) … = 0`). Shots `/tmp/r621/*`.
+- **Harness: one scenario added to victoria's chunk**, immediately BEFORE
+  `staff-requirement-match-dialog-agrees`, so **head chunk 1: 103 → 104 next
+  round; head 347, sum 386; total scenarios now 386.** Signature unchanged
+  (it makes no refused request — create, PUT, read, delete, all 200).
+  `staff-board-report-billed-only-from-a-real-billing-date` creates its own
+  INV deal, asserts it claims **no month and no YTD money while undated**,
+  then stamps `invoicedAt` and asserts the fee **does** arrive in that exact
+  month, then deletes it. **Refuses to pass vacuously**: it throws if the
+  dated half fails to move `totalFeesYTD` by the exact fee, so a fix that
+  merely zeroes the chart fails it too. **PROVEN NON-VACUOUS by re-breaking**
+  — with the `updatedAt` fallback restored: **0 ok / 1 issue**, `a dateless
+  invoiced deal moved Fees Billed YTD (0 → 91357) — updated_at is being read
+  as a billing date`; restored: **1 ok / 0 issues**.
+- **PROVED vs PATCHED:** all five sites PROVED — three read back through real
+  HTTP doors (`/api/board-report`, the page DOM at 1440px, the parsed
+  `.xlsx`), both directions, plus the re-break.
+- **CHECKED, NOT BUGS:** `storage.ts:959` `updatedAt` compare is a
+  last-write-wins dedupe, not a business date; `routes.ts:8561`'s
+  `kyc_approved_at || updated_at` decorates a *timeline* row that already
+  names itself "KYC approved", and the KYC flag and the row move together —
+  left alone; `crm.ts:1023` (`invoicedAt = targetDate` on a spreadsheet
+  import) is the importer's own stamp, not a read-time guess; Victoria still
+  403s on `/api/wip/health` (design → #360), so the probe's sibling read
+  came back empty — expected, not a finding.
+- **SUGGESTIONS → UX #363, #364** (undated invoices now vanish from the KPI
+  with no footnote saying how much; "Average Time to Close" has no
+  denominator).
+- No new flakes. Two probe scripts kept: `qa/r621-board-report-probe.mjs`,
+  `qa/r621-export-probe.mjs`.
 
 ### r620 · 2026-09-08 · FULL · journey: BGP staff · DESKTOP 1440px (month-end WIP/billing as Victoria) · REGRESSION AT BASELINE · 1 bug fixed (3 sites): the WIP report's month-end billing forecast was built from the deal row's `updated_at` · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

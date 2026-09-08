@@ -6903,8 +6903,13 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           // "Fees Billed YTD" means billed: only an invoiced deal counts, on the
           // same INV test the WIP report uses. Anything still in the pipeline
           // (NEG/SOL/EXC) or withdrawn is forecast, not revenue.
+          // No billing date = no year and no month. `updated_at` is when someone
+          // last SAVED the row, not when it was billed — falling back to it put
+          // old invoices into this year's YTD and turned the month series into
+          // an edit histogram. Same COALESCE the commission engine and the HR
+          // billings query use (hr-routes.ts:1245, commission-engine.ts:136).
           if (isInvoicedStatus(deal.status)) {
-            const billedStr = deal.invoicedAt || deal.completedAt || deal.exchangedAt || deal.updatedAt?.toISOString?.();
+            const billedStr = deal.invoicedAt || deal.completedAt || deal.exchangedAt;
             if (billedStr) {
               const billedDate = new Date(billedStr);
               if (billedDate >= yearStart && billedDate <= now) {
@@ -6921,8 +6926,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
         if (isComplete && deal.createdAt) {
           const created = new Date(deal.createdAt);
-          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
-          const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : null);
+          const days = completed ? Math.round((completed.getTime() - created.getTime()) / (1000 * 60 * 60 * 24)) : -1;
           if (days > 0 && days < 1000) {
             totalDays += days;
             completedWithDays++;
@@ -6943,8 +6948,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const isComplete = ["EXC", "COM", "INV"].includes(legacyToCode(deal.status) || "");
         if (isComplete && deal.createdAt) {
           const created = new Date(deal.createdAt);
-          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
-          const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : null);
+          const days = completed ? Math.round((completed.getTime() - created.getTime()) / (1000 * 60 * 60 * 24)) : -1;
           if (days >= 0 && days < 1000) {
             if (days <= 30) timeToCloseBuckets["0-30"]++;
             else if (days <= 60) timeToCloseBuckets["31-60"]++;
@@ -9657,7 +9662,7 @@ Rules:
           // Same billed test as /api/board-report — the export must not tell a
           // different story from the screen it exports.
           if (isInvoicedStatus(deal.status)) {
-            const billedStr = deal.invoicedAt || deal.completedAt || deal.exchangedAt || deal.updatedAt?.toISOString?.();
+            const billedStr = deal.invoicedAt || deal.completedAt || deal.exchangedAt;
             if (billedStr) {
               const billedDate = new Date(billedStr);
               if (billedDate >= yearStart && billedDate <= now) {
@@ -9672,8 +9677,8 @@ Rules:
 
         if (isComplete && deal.createdAt) {
           const created = new Date(deal.createdAt);
-          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
-          const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : null);
+          const days = completed ? Math.round((completed.getTime() - created.getTime()) / (1000 * 60 * 60 * 24)) : -1;
           if (days > 0 && days < 1000) {
             totalDays += days;
             completedWithDays++;

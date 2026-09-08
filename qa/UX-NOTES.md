@@ -3688,6 +3688,32 @@ verified same day (commit dbade8e0):
 13. Contacts zero-hit searches that match a company name show "Looking for a
    brand? Search Brand Intelligence →".
 
+363. 2026-09-08 · Victoria (BGP staff) / desktop 1440px · QA r621 · **the
+   Board Report's "Fees Billed YTD" now drops undated invoices silently — the
+   board has no way to see what is missing from its headline number.** After
+   this round's fix an INV deal carrying no invoice/completion/exchange date
+   is excluded from `totalFeesYTD` and from the billed-by-month series
+   (`crm.ts:6912`, `:9665`), which is correct — `updated_at` was never a
+   billing date — but the KPI card just reads a smaller number, and the
+   `/reporting` card's own subtitle still promises "Invoiced since 1 January"
+   with nothing to say some invoices could not be dated. The WIP Report at
+   least parks its undated money in a visible TBC bar. **Suggestion:** put the
+   same footnote on both KPI cards — "£X of invoiced fees have no invoice
+   date and are not counted" — and deep-link it to the Deal Detail rows so
+   somebody can stamp the dates. The number to show already exists: it is the
+   fee sum of `isInvoicedStatus` deals failing `hasDate`
+   (`computeWipHealth`, `crm.ts:10154`).
+
+364. 2026-09-08 · Victoria (BGP staff) / desktop 1440px · QA r621 ·
+   **"Average Time to Close" is an average over an unstated subset.** The
+   Board Report KPI and the time-to-close histogram only count EXC/COM/INV
+   deals that carry a completion or exchange date AND close in 1-999 days
+   (`crm.ts:6924-6931`); everything else is dropped without a denominator
+   anywhere on the card. In the fixture that means one deal decides the
+   number. **Suggestion:** show the denominator on the card ("381 days ·
+   over 1 of 2 completed deals"), the way the Fees Billed card shows its
+   "total deals in pipeline" sub.
+
 Confirmed by Woody 2026-08-08 ("Do all 5"); built + visually verified same day:
 1. 2026-08-08 · Letting Tracker viewing/offer rows now have an edit pencil —
    PATCH routes added for unit viewings + offers, form switches to edit mode.

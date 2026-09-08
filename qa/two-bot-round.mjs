@@ -3069,6 +3069,65 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r621: the Board Report's "Fees Billed YTD" and its billed-by-month series
+  // fell back to crm_deals.updated_at when an invoiced deal carried no
+  // invoice/completion/exchange date — so the headline revenue number counted
+  // old invoices into this year and the month series was a "who saved what,
+  // when" histogram. Three doors read this one derivation (/board-report,
+  // /reporting, the Excel export) and the sibling billings queries
+  // (hr-routes, commission-engine) never used updated_at.
+  await step(page, p, 'staff-board-report-billed-only-from-a-real-billing-date', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const board = async () => (await fetch('/api/board-report', { credentials: 'include', headers: auth })).json();
+      const FEE = 91357;
+      const base = await board();
+      const out = { baseYTD: base?.performance?.totalFeesYTD ?? null, FEE };
+      out.baseMonths = (base?.performance?.monthlyFees || []).map((m) => m.month);
+      const cRes = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-R${round} billed month probe`, dealType: 'Letting', status: 'INV', fee: FEE }) });
+      if (!cRes.ok) return { fail: `deal create ${cRes.status}` };
+      const deal = await cRes.json();
+      if (!deal?.id) return { fail: 'deal create returned no id' };
+      out.dealId = deal.id;
+      // 1. no invoice/completion/exchange date at all → no month, no YTD money
+      const dateless = await board();
+      out.datelessYTD = dateless?.performance?.totalFeesYTD ?? null;
+      out.datelessMonths = (dateless?.performance?.monthlyFees || []).map((m) => m.month);
+      // 2. a real invoice date this year → the fee appears, in THAT month
+      const now = new Date();
+      let billed = new Date(Date.now() - 3 * 86400000);
+      if (billed.getFullYear() !== now.getFullYear()) billed = new Date(now.getFullYear(), 0, 1, 12);
+      out.expectedMonth = `${billed.getFullYear()}-${String(billed.getMonth() + 1).padStart(2, '0')}`;
+      const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ invoicedAt: billed.toISOString() }) });
+      out.putStatus = put.status;
+      const dated = await board();
+      out.datedYTD = dated?.performance?.totalFeesYTD ?? null;
+      out.datedMonths = (dated?.performance?.monthlyFees || []).map((m) => m.month);
+      out.deleteStatus = (await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status;
+      return out;
+    }, ROUND);
+    if (r.fail) throw new Error(r.fail);
+    if (r.putStatus !== 200) throw new Error(`stamping invoicedAt failed (${r.putStatus})`);
+    if (typeof r.baseYTD !== 'number') throw new Error('board report returned no totalFeesYTD — cannot judge');
+    // Non-vacuous: the dated half MUST move the number, or this proves nothing.
+    if (r.datedYTD !== r.baseYTD + r.FEE) {
+      throw new Error(`a properly invoiced deal did not reach Fees Billed YTD (${r.baseYTD} → ${r.datedYTD}, expected +${r.FEE})`);
+    }
+    if (!r.datedMonths.includes(r.expectedMonth)) {
+      throw new Error(`billed-by-month has no ${r.expectedMonth} bar for a deal invoiced that month (got ${r.datedMonths.join(',') || 'none'})`);
+    }
+    if (r.datelessYTD !== r.baseYTD) {
+      throw new Error(`a dateless invoiced deal moved Fees Billed YTD (${r.baseYTD} → ${r.datelessYTD}) — updated_at is being read as a billing date`);
+    }
+    const newMonths = r.datelessMonths.filter((m) => !r.baseMonths.includes(m));
+    if (newMonths.length) {
+      throw new Error(`a dateless invoiced deal claimed billing month(s) ${newMonths.join(',')} — that is when the row was last saved`);
+    }
+    if (r.deleteStatus !== 200 && r.deleteStatus !== 204) throw new Error(`probe deal cleanup failed (${r.deleteStatus})`);
+  });
+
   await step(page, p, 'staff-requirement-match-dialog-agrees', async () => {
     // r548: the Requirements board's Fits cell and the "Matching Available
     // Units" dialog opened from the same row ran DIFFERENT matchers — a
