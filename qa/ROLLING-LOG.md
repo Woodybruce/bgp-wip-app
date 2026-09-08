@@ -92,6 +92,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r608 · 2026-09-08 · FULL (round in progress) · Landsec client · MOBILE 390px
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD at
+  2ea9a4b — pushing with `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE.** Chunked into four (the harness caps a foreground
+  Bash call at 600s, so the ~20-minute head was split three ways), shared
+  `QA_CROSS_FILE=/tmp/qa-cross-608.json`: 89 + 130 + 110 = **head 329 ok**,
+  tail **39 ok**, sum **368 ok / 18 issues** — exactly r607's prediction
+  (head 329, sum 368) with the issue signature unchanged: 6x400 + 1x409 +
+  10x403 + 1x503. **Streak 62.** Triage: nothing new, no 5xx. The 400s are
+  the listed rocketreach noise plus the deliberate invalid-tracker probe; the
+  409 and 403s are guard proofs; the 503 is the keyless commentary regen.
+- Journey in progress: Landsec client on the phone shell at 390px.
+
 ### r607 · 2026-09-08 · LIGHT (r606 had the journey) · 2 bugs fixed: every AI write door put a LABEL in `crm_deals.status`, and ChatBGP's tenancy upsert skipped the unit-mirror fan-out
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Container
