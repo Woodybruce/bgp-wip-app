@@ -1045,7 +1045,11 @@ export default function WipReport() {
       }
     }
     if (skip !== "month" && selectedMonths.size > 0) {
-      if (e.month && !selectedMonths.has(e.month)) return false;
+      // A dateless deal has no billing month (it charts as TBC, which is
+      // deliberately untappable), so it must NOT survive a month filter —
+      // the old `e.month &&` guard let every dateless deal into every
+      // month's rows and total.
+      if (!e.month || !selectedMonths.has(e.month)) return false;
     }
     if (skip !== "agent" && selectedAgents.size > 0) {
       const agentParts = e.agent ? (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean) : [];

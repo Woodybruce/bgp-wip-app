@@ -92,18 +92,98 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r620 · 2026-09-08 · FULL (round in progress) · REGRESSION AT BASELINE
+### r620 · 2026-09-08 · FULL · journey: BGP staff · DESKTOP 1440px (month-end WIP/billing as Victoria) · REGRESSION AT BASELINE · 1 bug fixed (3 sites): the WIP report's month-end billing forecast was built from the deal row's `updated_at` · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushing with
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
   `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE, exactly r619's prediction.** Head split three ways
   sharing `QA_CROSS_FILE=/tmp/qa-cross-620.json`, each chunk in its OWN
   `with-server.sh`: **101 + 133 + 110 = head 344** + tail **39** = **383 ok**.
   Signature **6x400 + 1x409 + 10x403 + 1x503 — identical to r615-r619.
   Streak 75.** All listed noise; no chunk died at `sam · login`.
-- Journey in progress: staff desktop 1440px as Victoria — ground not recently
-  walked (WIP/billing, comps, contacts/data health, landlord board, desktop
-  ChatBGP, tenancy schedule as editor).
+- **JOURNEY — Victoria (Head of National, `isAdmin:false`) at month-end.**
+  `/deals` → WIP Report (the desktop landing tab) → month chart → boards →
+  Deal Detail → Agent Summary → click-to-filter → an inline write. The page
+  itself is handsome and the filters are coherent: clicking the month bar
+  narrowed 7 → 4 rows and the header count followed; `wip-clear-all-filters`
+  restored all 7. Agent Summary is legitimately empty (0 `deal_fee_allocations`
+  in the fixture) and its empty state reads well. **Fee Check and Needs
+  Attention are both hidden from her** (`canSeeAll`) → UX #360.
+- **BUG FIXED — the WIP report's "Net fees by month" was largely a chart of
+  when somebody last SAVED each deal.** `deriveMonth` (`server/crm.ts:7302`):
+  `deal.completedAt || deal.exchangedAt || deal.targetDate || deal.updatedAt`.
+  **Six of the seven fixture WIP deals have no target, exchange or completion
+  date at all — and every one of them still claimed a month:** Westgate →
+  Jul-26, MSU3 Bluewater → Aug-26, Brent Cross / U124 / Bluewater MSU9 /
+  **Broadgate Secret Deal (£250,000) → Sep-26**, i.e. the current month. Only
+  the one deal with a real `target_date` (Dec-26) was honest. So the number
+  the Head of National bills from was a `updated_at` histogram, **and it moves
+  again on the next edit** — open and save a deal in October and its fee
+  slides to Oct-26.
+- **Three things prove it's a mistake, not a design:**
+  (1) the FY derivation right next door (`deriveFiscalYear`, :7286) has the
+  same shape but deliberately falls back to **`createdAt`** — a STABLE stamp;
+  (2) `computeWipHealth`'s `hasDate` (`crm.ts:10140`) counts exactly these as
+  **"No date at all … the deal lands in no month and skews the year view"** —
+  the audit flatly contradicted the chart above it (**TWO DOORS, ONE
+  QUESTION, TWO SOURCES**, and on the SAME SCREEN: the Deal Detail table's
+  Target Month column correctly rendered **blank** for all six while the
+  chart claimed Jul/Aug/Sep);
+  (3) the chart's **"TBC" bucket was unreachable dead code** — `key =
+  e.month || "TBC"` (:1142), a `disabled` bar (:1730), a last-place sort key
+  (`getMonthSortKey("") → 99`) — all built for a null month that nothing
+  could ever produce.
+- **FIX, 3 sites.** `deriveMonth` and its **second copy `deriveMonthExcel`**
+  (`crm.ts:9310`, the "Download Excel" workbook — same `updatedAt` fallback,
+  so the exported month-end sheet carried the same phantom months) now take
+  **completed || exchanged || target only**. Third site, and the fix is
+  incomplete without it: `entryMatches` (`wip-report.tsx:1047`) read
+  `if (e.month && !selectedMonths.has(e.month)) return false` — **a
+  null-month entry passed EVERY month filter**, so making dateless deals null
+  would have dragged all six and their £250K into every month's rows and
+  total. Now `if (!e.month || !selectedMonths.has(e.month))`.
+- **VERIFIED VISUALLY at 1440px.** `/api/wip`: 6 dateless deals → `month:
+  null`, the dated one keeps Dec-26. The chart now reads **Dec-26 £0 · TBC
+  £250K (disabled)** — total unchanged at £250,000, so no money was lost, it
+  just stopped claiming September. Dec-26 filter → **1 row · £0** (it used to
+  drag six dateless deals along). Then the **WRITE that closes the loop**:
+  Victoria typed Nov 2026 into the row's inline Target Month input → toast
+  "Target month updated", `deal.targetDate = 2026-11-01`, chart moved to
+  **Nov-26 £250K · Dec-26 £0 · TBC £0**, Nov-26 filter → 1 row · £250,000.
+  Fixture restored (`targetDate` back to null). Shots `/tmp/r620/01-10`.
+- **Harness: two scenarios added to victoria's chunk**, immediately BEFORE
+  `staff-requirement-match-dialog-agrees`, so **head chunk 1: 101 → 103 next
+  round; head 346, sum 385; total scenarios now 385.** Signature unchanged
+  (neither makes a refused request). `staff-wip-month-only-from-a-real-deal-date`
+  asserts no dateless WIP deal claims a month **and** that dated ones keep
+  theirs (so a fix that just blanks the chart fails too);
+  `staff-wip-month-filter-excludes-dateless-deals` drives the real chart —
+  clicks the one dated month's bar and requires the table to isolate exactly
+  the deals in it. **Both refuse to pass vacuously** (they throw if the
+  fixture has no dateless deal, or no dated one). **BOTH PROVEN NON-VACUOUS
+  by re-breaking:** with the fix stashed the pair ran **0 ok / 2 issues**
+  (`6 of 6 dateless WIP deal(s) still claim a billing month — "Westgate …" →
+  Jul-26; … "Broadgate Secret Deal" → Sep-26`, and the filter scenario
+  correctly refusing as vacuous because with the bug there IS no dateless
+  deal); with it restored, **2 ok / 0 issues**.
+- **HARNESS NOTE worth 10 minutes to the next round:** a probe that logs in
+  with plain node `fetch` and then only injects the token into
+  `localStorage` lands on the **login screen** — the app's page loads need
+  the SESSION COOKIE, which `fetch` doesn't put in the browser context. Log
+  in with `ctx.request.post` (what `two-bot-round.mjs:158` does) and the
+  cookie + token both land. Also: `/login` renders no `input[type=email]`
+  until you click `button-show-guest-login` — drive the API login instead.
+- **CHECKED, NOT BUGS:** the month chart's £0 bars are real (only one deal
+  carries a fee); "WIP Report— All Teams" in `textContent` is element
+  adjacency, it renders with a space; the Target Month cell rendering `""`
+  rather than `"—"` is the editable `input[type=month]`, correct; Victoria
+  403ing on `/api/wip/health` matches the hidden tab (design → #360);
+  `parseWipMonthToDate` (:862, :1021, :7658) parses **Sage `wip_entries.month`
+  spreadsheet data**, not deal dates — untouched and correct.
+- **SUGGESTIONS → UX #360, #361, #362** (the audit Victoria can't reach; the
+  month axis isn't a timeline; the TBC bar is now where the money is and is
+  the one bar you can't click).
+- No new flakes.
 
 ### r619 · 2026-09-08 · LIGHT (r618 did the journey — no exploratory journey) · REGRESSION AT BASELINE · 2 bugs fixed: seven of nine Diary team-filter pills were off the phone screen, and two AML compliance card actions were clipped off it · 2 suggestions · 1 deferred
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

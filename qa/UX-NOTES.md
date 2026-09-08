@@ -13,6 +13,47 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+360. 2026-09-08 · Victoria (BGP staff, non-admin "Head of National") /
+   desktop 1440px · QA r620 · **she can read the firm's money list but has no
+   door to the audit that says whether to trust it.** Month-end journey: she
+   opens `/deals` (WIP Report is the desktop landing tab) and sees 7
+   transactions · £250,000. Six of those seven deals have no target, exchange
+   or completion date at all — after this round's fix the chart says so
+   honestly (£250K in an untappable "TBC" bar), but the two tabs that would
+   NAME the offending deals, **Fee Check and Needs Attention, are both hidden
+   from her** (`canSeeAll`, wip-report.tsx:1453/1456) and `GET
+   /api/wip/health` returns "Not authorised" to her token. So the Head of
+   National can see that essentially all her WIP is undated and has no way in
+   the app to find out which deals or fix them in a batch. **Suggestion:**
+   keep the leadership gate on Fee Check (it exposes restricted-director fee
+   numbers) but let anyone who can see the WIP Report see the *link* audit —
+   either open Needs Attention to all WIP viewers scoped to their own teams,
+   or put a one-line banner on the WIP Report tab ("6 deals worth £250,000
+   have no billing month — set a Target Month") that deep-links the affected
+   rows into the existing Deal Detail table filter.
+
+361. 2026-09-08 · Victoria (BGP staff) / desktop 1440px · QA r620 · **"Net
+   fees by month" is drawn as a bar chart but its x-axis is not a timeline.**
+   `monthlyFees` (wip-report.tsx:1138-1151) plots only the months that
+   actually have deals, equally spaced. Before this round's fix her chart read
+   Jul-26 · Aug-26 · Sep-26 · Dec-26 — four evenly spaced bars with the
+   Sep→Dec gap invisible, so the shape of the year (a quiet autumn) simply
+   isn't there to read. **Suggestion:** render a continuous month axis across
+   the selected fiscal year with £0 columns for the empty months, keeping TBC
+   pinned on the right as the one off-axis bucket.
+
+362. 2026-09-08 · Victoria (BGP staff) / desktop 1440px · QA r620 · **the TBC
+   bar is now where the money is, and it is the one bar you cannot click.**
+   Every other bar and every board row on the WIP Report filters the table
+   below; TBC is `disabled` (wip-report.tsx:1730/1736) with no tooltip saying
+   why. After this round's fix that is the bar carrying £250,000 of the
+   fixture's £250,000, and "show me the deals with no billing month" is
+   *exactly* the query a Head of National wants at month-end. **Suggestion:**
+   make TBC tappable as a normal month filter (`entryMatches` already has the
+   null-month branch this round added — selecting TBC would just invert it),
+   or at minimum give the disabled bar a title explaining that these deals
+   have no date and pointing at the Target Month column.
+
 358. 2026-09-08 · Victoria (BGP staff, non-admin "Head of National") /
    desktop + phone · QA r619 · **Settings is admin-only in the nav, but it is
    the sole home of four all-staff panels.** `/settings` sits in

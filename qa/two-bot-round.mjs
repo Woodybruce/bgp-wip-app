@@ -3002,6 +3002,73 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r620: the WIP report's "Net fees by month" chart is the firm's month-end
+  // billing forecast. deriveMonth (server/crm.ts) fell back to the deal row's
+  // updated_at, so a deal with NO date at all was banked into whatever month
+  // somebody last SAVED it — six of seven fixture deals had no date and every
+  // one still claimed a month, £250k of it into the current one, and the
+  // number moved again on the next edit. The chart's "TBC" bucket (rendered
+  // and deliberately untappable) was unreachable, and the Needs Attention
+  // audit's "No date at all" bucket (computeWipHealth's hasDate) flatly
+  // contradicted the chart above it. A WIP month may only come from a REAL
+  // deal date: completed, exchanged or target.
+  await step(page, p, 'staff-wip-month-only-from-a-real-deal-date', async () => {
+    const wipRes = await fetch(`${BASE}/api/wip`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (!wipRes.ok) throw new Error(`GET /api/wip ${wipRes.status}`);
+    const rows = await wipRes.json();
+    const entries = Array.isArray(rows) ? rows : (rows?.entries || rows?.data || []);
+    if (!entries.length) throw new Error('/api/wip returned no entries — cannot test the month rule');
+    const dateless = entries.filter((e) => !e.targetDate && !e.exchangedAt && !e.completedAt);
+    if (!dateless.length) throw new Error('no dateless WIP deal in the fixture — scenario would pass vacuously');
+    const claiming = dateless.filter((e) => e.month);
+    if (claiming.length) {
+      throw new Error(
+        `${claiming.length} of ${dateless.length} dateless WIP deal(s) still claim a billing month — ` +
+        claiming.slice(0, 3).map((e) => `"${String(e.ref).slice(0, 32)}" → ${e.month}`).join('; '),
+      );
+    }
+    // …and the ones WITH a real date must still be dated, or the rule has
+    // simply blanked the whole chart.
+    const dated = entries.filter((e) => e.targetDate || e.exchangedAt || e.completedAt);
+    if (!dated.length) throw new Error('no dated WIP deal in the fixture — scenario would pass vacuously');
+    const lost = dated.filter((e) => !e.month);
+    if (lost.length) throw new Error(`${lost.length} WIP deal(s) with a real date lost their month`);
+  });
+
+  // The other half of the same bug: entryMatches let a null-month entry
+  // through EVERY month filter (`if (e.month && !selected.has(e.month))`), so
+  // picking a month dragged every dateless deal and its fee into that month's
+  // rows and total. Drives the real chart: click the one dated month's bar and
+  // require the table to isolate exactly the deals in it.
+  await step(page, p, 'staff-wip-month-filter-excludes-dateless-deals', async () => {
+    const wipRes = await fetch(`${BASE}/api/wip`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (!wipRes.ok) throw new Error(`GET /api/wip ${wipRes.status}`);
+    const rows = await wipRes.json();
+    const entries = Array.isArray(rows) ? rows : (rows?.entries || rows?.data || []);
+    const dated = entries.filter((e) => e.month);
+    if (!dated.length) throw new Error('no dated WIP deal — scenario would pass vacuously');
+    if (!entries.some((e) => !e.month)) throw new Error('no dateless WIP deal — scenario would pass vacuously');
+    const month = dated[0].month;
+    const expected = dated.filter((e) => e.month === month).length;
+    await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+    });
+    await page.waitForSelector('[data-testid="wip-report-page"]', { timeout: 60000 });
+    await page.waitForTimeout(4000);
+    const bars = await page.locator('[data-testid^="wip-desk-month-"]').all();
+    if (!bars.length) throw new Error('no month bars on the WIP chart');
+    let hit = false;
+    for (const bar of bars) {
+      if (((await bar.textContent()) || '').includes(month)) { await bar.click(); hit = true; break; }
+    }
+    if (!hit) throw new Error(`no ${month} bar on the chart to filter by`);
+    await page.waitForTimeout(2500);
+    const shown = await page.locator('[data-testid^="wip-row-"]').count();
+    if (shown !== expected) {
+      throw new Error(`${month} filter shows ${shown} row(s), expected ${expected} — dateless deals are leaking through the month filter`);
+    }
+  });
+
   await step(page, p, 'staff-requirement-match-dialog-agrees', async () => {
     // r548: the Requirements board's Fits cell and the "Matching Available
     // Units" dialog opened from the same row ran DIFFERENT matchers — a

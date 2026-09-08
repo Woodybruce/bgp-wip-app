@@ -7299,8 +7299,19 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         return month >= 4 ? created.getFullYear() + 1 : created.getFullYear();
       }
 
+      // The WIP month is the anticipated BILLING month, so it may only come
+      // from a real deal date — completed, exchanged or target. It used to
+      // fall back to updated_at, which meant a deal with no date at all was
+      // banked into whatever month somebody last SAVED the row: six of seven
+      // fixture deals had no date and every one of them still claimed a
+      // month, one of them £250k into the current month, and the number moved
+      // again on the next edit. The "TBC" bucket the chart renders (and
+      // deliberately makes untappable) was unreachable as a result, and the
+      // Needs Attention audit — which counts exactly these as "No date at
+      // all" (computeWipHealth's hasDate) — was contradicted by the chart
+      // above it. Returning null lands them in TBC, where they belong.
       function deriveMonth(deal: any): string | null {
-        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
+        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate;
         if (!dateStr) return null;
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return null;
@@ -9307,8 +9318,10 @@ Rules:
         return month >= 4 ? created.getFullYear() + 1 : created.getFullYear();
       }
 
+      // Same rule as /api/wip's deriveMonth — a real deal date only, never
+      // updated_at. The exported workbook is the one Victoria bills from.
       function deriveMonthExcel(deal: any): string | null {
-        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
+        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate;
         if (!dateStr) return null;
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return null;
