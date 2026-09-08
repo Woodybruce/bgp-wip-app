@@ -92,18 +92,101 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r613 · 2026-09-08 · LIGHT (r612 had the journey) — ROUND IN PROGRESS
+### r613 · 2026-09-08 · LIGHT (r612 had the journey — no journey this round) · 1 bug fixed across FIVE doors: a lease event happening TODAY read as OVERDUE · 2 deferred scope write-ups finally written · 1 suggestion
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD at e9e7341.
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD at
+  e9e7341 — pushed with `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE.** Four chunks sharing
   `QA_CROSS_FILE=/tmp/qa-cross-613.json`: 93 + 130 + 110 (head **333 ok**) +
-  tail **39 ok** = **372 ok / 18 issues**, signature **6x400 + 1x409 +
-  10x403 + 1x503** — exactly r612's prediction (head 333 after its new
-  `staff-aml-recheck-due-today-is-not-overdue`, signature unchanged). No 5xx
-  beyond the keyless-AI 503. **Streak 68.** All 18 are the listed noise
-  signature; nothing new to triage.
-- Round in progress — targets: the outstanding day-overdue census doors and
-  the two deferred scope write-ups.
+  tail **39 ok** = **372 ok / 18 issues**, signature **6x400 + 1x409 + 10x403 +
+  1x503** — exactly r612's prediction (head 333 after its new scenario,
+  signature unchanged). No 5xx beyond the keyless-AI 503. **Streak 68.** All 18
+  are the listed noise signature; nothing new to triage.
+- **BUG — the "DAY stamped into a TIMESTAMP, read as a MOMENT" shape, SEVEN
+  ROUNDS RUNNING, now on the Lease Events board.** `lease_events.event_date` is
+  a TIMESTAMP. Census of the WRITERS — **all five write a DAY**:
+  · `client/src/pages/lease-events.tsx:465` — `<Input type="date" required>`.
+  · `server/chatbgp.ts:4436` — the `log_lease_event` tool schema literally says
+    *"Event date as ISO date string (YYYY-MM-DD)"*, `new Date()` at `:8451`.
+    **EIGHTH ROUND RUNNING a ChatBGP tool schema caused or enabled the bug.**
+  · `server/legal-dd.ts:818` — inserts a regex-matched `\d{4}-\d{2}-\d{2}`.
+  · `server/universal-ingest.ts:209` — *"event_date (ISO date or null)"*.
+  · `server/pla-matters.ts:107` — matter dates (review/break/expiry/deadline).
+  Census of the READERS — **five of seven wrong**:
+  · ❌ `client/src/pages/lease-events.tsx:51` (`urgencyFor`) — `months < 0` →
+    the red **Overdue** badge on every row and phone card.
+  · ❌ `client/src/pages/lease-events.tsx:132` — the red **Overdue** KPI tile.
+  · ❌ `server/lease-events.ts:132` — the digest's `event_date < NOW() THEN
+    'overdue'` bucket, behind the dashboard widget and the nightly job.
+  · ❌ `server/lease-events.ts:161` (`runLeaseEventMonitoring`) — `event_date
+    >= NOW()`, so **an event dated TODAY was never auto-assigned to the lease
+    advisory team at all**. Not cosmetic: the event never reaches Peter.
+  · ❌ `server/landlord-hunter.ts:106` — `upcoming_events`, a Letting Hunter
+    score input, excluded today.
+  · ✅ `server/lease-events.ts:27` (the `withinMonths` filter) — lower bound is
+    `NOW() - INTERVAL '1 month'`, so a today-event is included. Correct.
+  · ✅ `server/map-layers.ts:341` — ordering only.
+- **PROVEN VISUALLY, pre-fix** (`qa/r613-lease-event-probe.mjs`, shot
+  `r613-lease-events`): a Rent Review created for **08 Sept 2026 — today —**
+  stored as `2026-09-08T00:00:00.000Z`, came back from the digest as
+  `urgency=overdue`, rendered a red **Overdue** badge, and the red Overdue KPI
+  read **2** (both probe rows). A review happening this morning was already
+  late.
+- **FIX:** all five doors onto the existing **`shared/day-overdue.ts`** —
+  `isDayOverdue()` for the two client readers, `dayOverdueSql('event_date')`
+  for the digest bucket, and `NOT (dayOverdueSql(...))` for the two
+  "still upcoming" filters. No new helper, no schema change, nothing else
+  touched. `npx tsc --noEmit` clean; `npm run build` clean.
+- **RE-VERIFIED VISUALLY** (shot `r613v-lease-events`): today's row now carries
+  the amber **< 3 mo** badge, the 3-days-ago row is still red **Overdue**, and
+  the tiles read Overdue **1** / Due < 3 months **1**. Digest:
+  `imminent` vs `overdue`. Both probe rows deleted (DELETE 200).
+  *(Note for whoever reuses the probe: its DOM badge extractor walks too far up
+  and catches the KPI label's "Overdue" — it printed "Overdue" for both rows
+  even post-fix. The screenshot and the digest are the truth; the two-bot
+  scenario below asserts on the API, not the DOM.)*
+- Harness: **`staff-lease-event-due-today-is-not-overdue`** added (staff chunk,
+  immediately before `staff-aml-recheck-due-today-is-not-overdue`) — creates
+  one event today and one 3 days ago, asserts the digest buckets them
+  `imminent` and `overdue` respectively, then DELETEs both **asserting the
+  DELETE code** (the r607 trap). **Proven non-vacuous:** putting `event_date <
+  NOW()` back makes it fail with *"a lease event happening TODAY bucketed as
+  'overdue'"*. Both day-overdue scenarios green together: **2 ok, 0 issues**.
+  Smoke after the fix, `FRESH_BUILD=1`: **GREEN 42/0**.
+- **THE TWO SCOPE WRITE-UPS, unstarted for four rounds, are now written** —
+  **UX #343** (`add_property_imagery`: schema `chatbgp.ts` ~5081, **two**
+  handlers at ~6851 and ~12375, **neither** consults company scope, so a client
+  login can attach imagery to a rival landlord's property under their own user
+  id) and **UX #344** (`POST /api/favorite-instructions/:propertyId`,
+  `crm.ts:8048`: `requireAuth` only, the path param validated against nothing —
+  not `crm_properties`, not scope). Both carry the correct fix
+  (`clientBlockedForProperty` from `company-scope.ts:244`, the guard the
+  neighbouring `chatbgp.ts:6558` already uses) and both are **deliberately NOT
+  landed** — they change what a client login may write, which is Woody's call.
+- Bugs deferred: none new. Deferred pool otherwise unchanged (UX #331/#332,
+  #339-#341, the two column DEFAULTs, #320's dead phone "More" tab).
+- Suggestions added: **UX #342** (the nightly lease-event auto-assignment is
+  invisible — the Owner cell just changes overnight with no "auto" marker),
+  plus the two write-ups above filed as #343/#344.
+- `server/chatbgp-app-map.ts` NOT touched — no navigation, page or control
+  moved. `shared/schema.ts` and `migrations/` NOT touched.
+- **STILL UNCENSUSED in this class:** "is this deal stale / needs attention",
+  "is this invoice overdue" beyond Xero, "is this unit available", and any £
+  total or percentage computed in more than one file. **CHECKED-NOT-BUGS this
+  round, do not re-chase:** `server/deal-verdicts.ts` — its whole pending query
+  keys off `date_trunc('month', now())` and `daysOverdue` is floored, so the
+  month boundary makes it immune to the midnight problem by construction;
+  `server/routes.ts:9658` (`target_date < CURRENT_DATE`) already uses the day
+  rule; `landlord_debt_events` at `landlord-hunter.ts:189`/`:191` is a
+  different table on a deliberate 12-month window.
+- r612's one patched-not-proven item **STILL STANDS**: the two
+  `xero-financials.ts` buckets were read and reasoned, not seen (no Xero key in
+  this container). Not attempted this round.
+- New flakes: none.
+- Next journey: **rotation #2, Landsec client · desktop 1440px** (r613 was
+  LIGHT → r614 is FULL).
+- Baseline for r614: r613 added one scenario making no refused request —
+  **expect head 334 / sum 373 with the signature unchanged**.
 
 ### r612 · 2026-09-08 · FULL · journey: **BGP staff · desktop 1440px** (rotation slot #1) · 2 bugs fixed: an AML re-check due TODAY printed OVERDUE at the MLRO (2 doors), and two of three Xero cash buckets called money due today late · 1 micro-fix · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

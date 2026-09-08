@@ -13,6 +13,65 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+343. 2026-09-08 · SCOPE-MODEL WRITE-UP, not a suggestion (QA r613; deferred
+   since r608 — parked four rounds as "if time remains", written up here so
+   Woody can decide). **ChatBGP's `add_property_imagery` has no scope check at
+   all.** Schema at `server/chatbgp.ts` ~5081 (`required: ["propertyId",
+   "images"]`); TWO handlers implement it — ~6851 and ~12375 — and NEITHER
+   consults the caller's company scope. Both do the same three steps: look the
+   property up by id, confirm it exists, then INSERT into
+   `property_imagery_assets` stamping `generatedBy` with the caller. So a
+   CLIENT login (Mark at Landsec) that gets any `crm_properties.id` into the
+   conversation can attach imagery to a property outside their portfolio — a
+   rival landlord's building — and it is written under their user id. Nothing
+   in the tool description bounds it to the caller's own estate.
+   **Correct fix** (same shape the neighbouring tool already uses at
+   `chatbgp.ts:6558`, which does `isPropertyInScope(briefScope, ...)`): resolve
+   the scope once and refuse before the insert, in BOTH handlers —
+   `if (await clientBlockedForProperty(req, propertyId)) return { data: {
+   success: false, error: "That property isn't in your portfolio." } };`
+   `clientBlockedForProperty` (`server/company-scope.ts:244`) is the canonical
+   guard for property-keyed doors opened to clients (plans / brochures /
+   tasks): it no-ops for staff, and for a client returns true unless the
+   property is theirs. Two edits, no schema change.
+   **Why it isn't landed:** it changes what a client login may write, which is
+   a scope-model decision, and the r609 lesson says the damage is always in the
+   door nobody checked — so the write-up goes to Woody rather than the branch.
+   Needs his numbered say-so. Worth pairing with #344.
+
+344. 2026-09-08 · SCOPE-MODEL WRITE-UP, not a suggestion (QA r613; deferred
+   since r608 alongside #343). **`POST /api/favorite-instructions/:propertyId`
+   (`server/crm.ts:8048`) takes any property id and writes it, with no scope
+   check.** The route is `requireAuth` only: it reads the session user, then
+   `INSERT INTO favorite_instructions (user_id, property_id) … ON CONFLICT DO
+   NOTHING`. The `propertyId` path param is never validated — not against
+   `crm_properties` (so a favourite can point at nothing), and not against the
+   caller's scope (so a client can favourite a rival landlord's building).
+   Lower blast radius than #343 — the row is keyed to the user and the GET at
+   `:8040` only ever returns that user's own ids, so nothing leaks TO the
+   client from this table today. But it is a client-writable row referencing an
+   out-of-scope property, and any future surface that joins favourites to
+   property data inherits the hole.
+   **Correct fix:** the same guard, plus the existence check the route is
+   missing — reject with 404 when no such property, and
+   `clientBlockedForProperty(req, propertyId)` → 403 otherwise. One edit.
+   **Why it isn't landed:** same reason as #343 — Woody's call on what a client
+   login may write.
+
+342. 2026-09-08 · BGP staff / desktop (QA r613) · the Lease Events board's
+   nightly auto-assignment is invisible to the user · `runLeaseEventMonitoring`
+   (`server/lease-events.ts`) silently reassigns every unassigned Monitoring
+   event inside the 18-month watch window to the lease advisory team's first
+   address, and the only trace is a server console line. On the board the Owner
+   cell just changes from "Unassigned" to a name some time overnight, with no
+   note of who or what did it and no way to see the rule. (Found while fixing
+   r613's day-overdue bug — the same job had been skipping events dated TODAY
+   entirely, so nobody would have noticed those never arriving either.)
+   **Suggestion:** stamp the auto-assignment — either a `source`/`assigned_by`
+   note on the row rendered as a small "auto" chip beside the owner, or a line
+   in the event's notes ("auto-assigned to lease advisory, <date>"), so an
+   agent can tell a deliberate hand-off from a nightly sweep.
+
 341. 2026-09-08 · BGP staff / desktop (QA r612) · Victoria does quarterly AML
    housekeeping and wants her list of re-checks due · the MLRO's ongoing-
    monitoring list (Re-check Reminders, MLR 2017 Reg 28(11)) lives at the
