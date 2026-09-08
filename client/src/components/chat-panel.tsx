@@ -3142,7 +3142,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                     id="chat-panel-file-upload"
                     type="file"
                     className="sr-only"
-                    accept=".docx,.pdf,.doc,.txt,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.aac,.mov,.avi,.mkv,.flac,.zip,image/*,audio/*,video/*"
+                    accept=".docx,.pdf,.doc,.txt,.xlsx,.xls,.csv,.pptx,.ppt,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.aac,.mov,.avi,.mkv,.flac,.zip,image/*,audio/*,video/*"
                     multiple
                     tabIndex={-1}
                     onChange={handleFileSelect}

@@ -4,7 +4,7 @@
 // the other).
 
 export const ACCEPTED_EXTENSIONS = [
-  ".docx", ".pdf", ".doc", ".txt", ".xlsx", ".xls", ".csv",
+  ".docx", ".pdf", ".doc", ".txt", ".xlsx", ".xls", ".csv", ".pptx", ".ppt",
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic",
   ".mp3", ".mp4", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".mov", ".avi", ".mkv", ".flac",
   ".eml", ".msg", ".zip",
@@ -23,6 +23,8 @@ const MIME_BY_EXT: Record<string, string> = {
   ".xls": "application/vnd.ms-excel",
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   ".csv": "text/csv",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   ".txt": "text/plain",
   ".png": "image/png",
   ".jpg": "image/jpeg",

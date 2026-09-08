@@ -101,6 +101,12 @@ export async function readDocumentForAI(args: ReadDocumentArgs): Promise<ReadDoc
       const text = await extractWordText(file.data);
       result.text = text.slice(0, maxText);
       result.textTruncated = text.length > maxText;
+    } else if (mimeType.includes("presentationml") || ext === "pptx") {
+      const text = await extractPptxText(file.data);
+      result.text = text.slice(0, maxText);
+      result.textTruncated = text.length > maxText;
+    } else if (ext === "ppt") {
+      result.text = "[Legacy binary .ppt file — ask the user to re-save it as .pptx and re-upload; the old format can't be read directly.]";
     } else if (mimeType.startsWith("text/") || ["txt", "json", "xml", "html", "md", "log"].includes(ext)) {
       const text = file.data.toString("utf-8");
       result.text = text.slice(0, maxText);
@@ -211,6 +217,44 @@ async function extractWordText(buffer: Buffer): Promise<string> {
   return result.value || "";
 }
 
+// PowerPoint: each slide's text plus tables, pulled straight from the OOXML
+// (same approach as the chat file extractor — no external service).
+export async function extractPptxText(buffer: Buffer): Promise<string> {
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(buffer);
+  const dec = (s: string) => s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_m, d) => String.fromCodePoint(parseInt(d, 10)));
+  const linesOf = (xml: string) => (xml.match(/<a:p>[\s\S]*?<\/a:p>/g) || [])
+    .map((para) => dec((para.match(/<a:t>([\s\S]*?)<\/a:t>/g) || []).map((x) => x.replace(/<\/?a:t>/g, "")).join("")).trim())
+    .filter(Boolean);
+  const names = Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    .sort((a, b) => parseInt(a.match(/(\d+)/)![1], 10) - parseInt(b.match(/(\d+)/)![1], 10));
+  if (names.length === 0) return "[PowerPoint file contains no slides.]";
+  const out: string[] = [];
+  for (let i = 0; i < names.length; i++) {
+    const xml = (await zip.file(names[i])!.async("string")) || "";
+    out.push(`--- Slide ${i + 1} ---`);
+    const tables: string[][][] = [];
+    for (const tbl of xml.match(/<a:tbl>[\s\S]*?<\/a:tbl>/g) || []) {
+      const rows: string[][] = [];
+      for (const tr of tbl.match(/<a:tr[\s\S]*?<\/a:tr>/g) || []) {
+        const cells: string[] = [];
+        for (const tc of tr.match(/<a:tc>[\s\S]*?<\/a:tc>/g) || []) cells.push(linesOf(tc).join(" ").trim());
+        if (cells.some((c) => c)) rows.push(cells);
+      }
+      if (rows.length) tables.push(rows);
+    }
+    const noTbl = xml.replace(/<a:tbl>[\s\S]*?<\/a:tbl>/g, "");
+    const lines: string[] = [];
+    for (const sp of noTbl.match(/<p:sp>[\s\S]*?<\/p:sp>/g) || []) lines.push(...linesOf(sp));
+    if (lines.length) out.push(lines.join("\n"));
+    for (const t of tables) { out.push("[table]"); for (const r of t) out.push("| " + r.join(" | ") + " |"); }
+  }
+  return out.join("\n");
+}
+
 // A ZIP is read as its contents: list every entry, then extract the ones we
 // have a reader for (spreadsheets, PDFs, Word, text) through the same
 // extractors used for a bare upload. Mirrors what ingest_url already does
@@ -246,6 +290,8 @@ export async function extractZipText(buffer: Buffer, maxText: number): Promise<s
         text = await extractPdfText(data);
       } else if (/\.(docx|doc)$/.test(name)) {
         text = await extractWordText(data);
+      } else if (name.endsWith(".pptx")) {
+        text = await extractPptxText(data);
       } else if (/\.(txt|json|xml|html|md|log)$/.test(name)) {
         text = data.toString("utf-8");
       }
@@ -274,6 +320,8 @@ function guessMimeFromExt(name: string): string {
     xls: "application/vnd.ms-excel",
     xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     csv: "text/csv",
+    ppt: "application/vnd.ms-powerpoint",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     txt: "text/plain",
     json: "application/json",
     xml: "application/xml",
