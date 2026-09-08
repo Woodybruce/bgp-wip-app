@@ -92,19 +92,82 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r608 · 2026-09-08 · FULL (round in progress) · Landsec client · MOBILE 390px
+### r608 · 2026-09-08 · FULL · Landsec client · PHONE 390px · 0 bugs found to fix — four count-vs-list checks and the client's own self-add write all came back clean · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD at
-  2ea9a4b — pushing with `git push origin HEAD:claude/qa-staging-20260810`.
-- **REGRESSION AT BASELINE.** Chunked into four (the harness caps a foreground
-  Bash call at 600s, so the ~20-minute head was split three ways), shared
-  `QA_CROSS_FILE=/tmp/qa-cross-608.json`: 89 + 130 + 110 = **head 329 ok**,
-  tail **39 ok**, sum **368 ok / 18 issues** — exactly r607's prediction
-  (head 329, sum 368) with the issue signature unchanged: 6x400 + 1x409 +
-  10x403 + 1x503. **Streak 62.** Triage: nothing new, no 5xx. The 400s are
-  the listed rocketreach noise plus the deliberate invalid-tracker probe; the
-  409 and 403s are guard proofs; the 503 is the keyless commentary regen.
-- Journey in progress: Landsec client on the phone shell at 390px.
+  `node qa/apply-sql.mjs qa/seed-personas.sql` (the seeding trap). Container on
+  a DETACHED HEAD at 2ea9a4b — pushed with
+  `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE.** Chunked into FOUR, shared
+  `QA_CROSS_FILE=/tmp/qa-cross-608.json`: 89 (`QA_UNTIL=staff-evidence-plan-lifecycle`)
+  + 130 (`…SKIP_UNTIL` that, `QA_UNTIL=client-brand-suggested-pitches-scoped`)
+  + 110 (`…UNTIL=client-properties-table-readonly-cells`) = **head 329 ok**,
+  tail **39 ok**, sum **368 ok / 18 issues** — exactly r607's prediction, issue
+  signature unchanged: **6x400 + 1x409 + 10x403 + 1x503**. **Streak 62.** No
+  5xx, nothing new. **HARNESS NOTE for the next round: the head chunk no longer
+  fits one Bash call — the foreground cap is 600s and the ~20-minute head runs
+  over it, so split it three ways at the two names above.** (One chunk that did
+  overrun was moved to a background task file by the harness and completed
+  there with its closing tally intact.)
+- Journey — **Mark Warne, Monday on the train, phone shell at 390px**: "give
+  the asset team a read on live deal activity and anything in the news about
+  our tenants, and get a brand onto my CRM before I forget." Ground r600 did
+  not walk: the dashboard tiles themselves, Deals, News, ChatBGP/Messages,
+  Brand Intelligence and the client's own self-add write.
+  · **Phone dashboard** ("Good morning, Mark"): tracker tile **72 Available +
+  1 Under offer + 0 Let = 73 On tracker** — the count-vs-list check passes, and
+  the roll-up is properly bridged (`mobile-home.tsx:291` runs both the linked
+  deal's status and the unit's `marketingStatus` through `legacyToCode`, so no
+  vocabulary leak on this surface). Client bottom nav
+  Portfolio|Messages|Deals|Tasks|News, Portfolio lit at "/".
+  · **Deals** (`/deals` renders the client's own hub, not the staff WIP tab):
+  "2 deals — Landsec · +2 letting deals on the Letting Tracker", chips
+  **ALL 2 = SOLICITORS 1 + EXCHANGED 1**, both cards human-labelled
+  (Solicitors, Exchanged) — no raw codes anywhere. Count matches list.
+  · **News**: "Brand News — latest signals across your tenant brands", ~20
+  signals, all in-slice brands (Starbucks, Amorino). No leak.
+  · **Messages**: badge "1" over the tab, ALL reads "No conversations yet" —
+  **r600's fix holds**: UNREAD lists the one unseen AI thread ("QA Thread R608
+  media", left by this round's own two-bot run) and `/api/chat/notifications`
+  `unseenCount:1` matches that one row. Badge and list agree.
+  · **Brand Intelligence**: category tiles **1 + 6 + 1 + 1 = 9 = "9 results"**
+  = 9 brands rendered. Third count-vs-list check, clean.
+  · **THE WRITE** — self-add from the global directory on the phone. Two
+  attempts: "Nando" returns a correct "No brands match" (the fixture holds no
+  Nando's), then the real out-of-slice brand. **NOT A BUG, checked and cleared:**
+  a brand already self-added comes back from
+  `GET /api/client/crm/global-brands` with `inSlice:false` **but `added:true`**
+  (routes.ts:5679), and the dialog renders that as **"Added" + a Remove
+  button** with the name linked to the profile — so the re-add path is
+  correctly closed, not offered twice. Probe: `qa/r608-client-phone-journey4.mjs`.
+- **NO H-OVERFLOW** on any of the six phone surfaces; no error boundary; no
+  page errors. Only listed noise fired (hr/photo 404, ai-briefing 503).
+- **NOT A BUG — the one thing that looked like one.** `/deals` and `/news`
+  first paint as bare skeletons and were still skeletons after
+  networkidle + 1.6s (`r608-02-phone-deals.png`, `r608-03-phone-news.png`).
+  With a 12s settle both render fully (`r608b-01…`, `r608b-02…`). That is the
+  dev server compiling the lazy route chunk on demand, not a stuck query — no
+  4xx/5xx fires on either page. Journeys on the phone shell should settle 10s+
+  on a route's FIRST visit before judging it empty.
+- Bugs fixed: **0** — nothing broken surfaced. Rather than reach for a
+  cosmetic edit, this round spent the budget on the checks that have been
+  productive lately (four count-next-to-a-filtered-list checks, the tracker
+  roll-up's vocabulary bridge, the client write door) and reports them clean.
+- Bugs DEFERRED: unchanged — `POST /api/favorite-instructions/:propertyId`
+  scope check, `add_property_imagery` scope, the two column DEFAULTs. Nothing
+  new added to the pool.
+- Suggestions added: **UX #329** (the Deals card's "In status" row says
+  "today" on one deal and "35d in Exchanged" on the other, repeating the chip
+  beside a deal name that is itself truncated at 390px) and **UX #330** (the
+  ONLY way to remove a self-added brand is the Remove button inside the
+  **Add a brand** dialog — removing is hidden inside adding, and needs the
+  brand's name typed into "Search all brands…" to reach it).
+- Harness: no new scenarios (none earned — no fix to lock in). Journey scripts
+  `qa/r608-client-phone-journey{,2,3,4}.mjs` reuse r600's 390px harness via
+  `QA_TAG` / `QA_TOKEN_CACHE`. `server/chatbgp-app-map.ts` NOT touched — no
+  navigation, page or control moved this round.
+- New flakes: none.
+- Next journey: **rotation #4, BGP staff · mobile 390px** (r608 was FULL →
+  r609 may be LIGHT; then #4).
 
 ### r607 · 2026-09-08 · LIGHT (r606 had the journey) · 2 bugs fixed: every AI write door put a LABEL in `crm_deals.status`, and ChatBGP's tenancy upsert skipped the unit-mirror fan-out
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

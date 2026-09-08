@@ -13,6 +13,28 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+329. 2026-09-08 · Landsec client / phone 390px (QA r608) · Mark scans live
+   deal activity on the Deals tab · the two deal cards label the same row
+   "In status" but fill it two different ways — "today" on one and "35d in
+   Exchanged" on the other, which repeats the status the chip beside the
+   title already shows. On a 390px card that repetition costs the width that
+   is truncating the deal names themselves ("U124 Bluewater — Gail's let…",
+   "MSU3 Bluewater — Starbu…"). Suggestion: make the value the duration only
+   ("today" / "35d"), and give the freed width back to the deal name so it
+   wraps to two lines instead of truncating.
+
+330. 2026-09-08 · Landsec client / phone 390px (QA r608) · Mark wants to drop
+   a brand he self-added to his Brand CRM · there is no way to do it from
+   anywhere he can see the brand. The hub tile has no remove control and
+   neither does the brand profile; the only `DELETE /api/client/crm/add-brand`
+   caller is the "Remove" button inside the **Add a brand** dialog
+   (brands-hub.tsx:1592), which only appears once you type at least two
+   characters of the brand's name into a search box labelled "Search all
+   brands…". So removing is hidden inside adding. Suggestion: surface the
+   same Remove on the hub tile (or the brand profile) for brands the client
+   self-added — the endpoint and the `added` flag the dialog already reads
+   are enough to render it.
+
 328. 2026-09-08 · BGP staff / ChatBGP (QA r607, target-2 schema sweep) · a
    user asks ChatBGP "which deals are under offer?" · the `query_wip` tool
    (server/chatbgp.ts:4448) advertises `status` as "Filter by status/stage
