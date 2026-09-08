@@ -92,6 +92,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r616 · 2026-09-08 · FULL · ROUND IN PROGRESS
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD.
+- **REGRESSION AT BASELINE.** Head split three ways sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-616.json`: 95 + 131 + 110 = **head 336 ok**
+  (exactly r615's prediction — its new `staff-property-focus-task-due-today-not-overdue`
+  took victoria's chunk 94 -> 95) + tail **39** = **375 ok**. Signature
+  **6x400 + 1x409 + 10x403 + 1x503 — identical to r615/r614. Streak 71.**
+  All listed noise; no 5xx beyond the keyless-AI 503. Tail ran in its OWN
+  `with-server.sh` (as did each head chunk) — the r614 login trap did not recur.
+- Triage: nothing to triage. Journey (Landsec client - phone 390px) in progress.
+
 ### r615 · 2026-09-08 · LIGHT (r614 had the journey, no journey) · 2 bugs fixed: the property focus card's day maths + the commission statements' false 85%-split claim · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Container on a DETACHED HEAD —
