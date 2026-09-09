@@ -105,6 +105,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r629 · 2026-09-09 · FULL (provisional) · journey: Mark Warne client desktop 1440px — non-leasing-prep ground · REGRESSION AT BASELINE
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- **REGRESSION AT BASELINE — 104 + 133 + 111 + 39 = 387 ok, signature
+  6x400 + 1x409 + 10x403 + 1x503. Streak 84.** Four chunks, r628 arithmetic
+  verbatim, shared `QA_CROSS_FILE=/tmp/qa-cross-629.json`. No cold flake in
+  chunk 1 this session (104 on the first pass).
+- Journey in progress; final entry replaces this one.
+
 ### r628 · 2026-09-09 · LIGHT · probe: the comps board's OWN "Export" button (the SECOND spreadsheet exporter) · REGRESSION AT BASELINE · **1 bug fixed (PROVED)** · 2 suggestions (#375, #376)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **45/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`.
