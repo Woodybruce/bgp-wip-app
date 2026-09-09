@@ -13,6 +13,31 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+366. 2026-09-09 · Mark Warne (Landsec client) / **phone 390px** · QA r623 ·
+   **the same page counts his letting deals three different ways in two
+   taps.** Journey: on the phone, checking where his Bluewater lettings
+   stand. `/deals` header reads "2 deals — Landsec · **+2 letting deals on
+   the Letting Tracker**"; one tap to the Properties tab of the same page
+   reads "**73** LIVE LETTINGS · **2** LIVE DEALS"; and his portfolio home
+   tile reads "**72** Available · **1** Under offer · 73 On tracker". Every
+   number is defensible on its own (deals vs tracker units vs live lettings)
+   but nothing on screen says which is which, and "+2 letting deals on the
+   Letting Tracker" sits inches from a tracker that says 73. Suggestion: pick
+   one noun per thing and use it everywhere on this page — "deals" for CRM
+   deals, "units on the tracker" for listings — and drop the "+2 letting
+   deals" fragment from the header, or qualify it ("2 of the 73 tracker units
+   have a live letting deal").
+
+367. 2026-09-09 · Mark Warne (Landsec client) / **phone 390px** · QA r623 ·
+   **the two deal cards phrase "how long has this been sitting" two
+   different ways, and one of them reads as a date.** Journey: same phone
+   visit to `/deals`. Card 1 (U124 Bluewater — Gail's letting, Solicitors)
+   shows "In status · **today**"; card 2 (MSU3 Bluewater — Starbucks regear,
+   Exchanged) shows "In status · **36d in Exchanged**". Same field, same
+   card layout, one value is a date-ish word and the other a duration with
+   the status repeated. Suggestion: one form for both — "0d in Solicitors" /
+   "36d in Exchanged", or "today" / "36 days", not a mix.
+
 365. 2026-09-09 · Mark Warne (Landsec client) / desktop 1440px · QA r622 ·
    **the client's Deals table invites him to type the deal terms, and the
    invitation reads like a BGP-side editing affordance sitting on a client

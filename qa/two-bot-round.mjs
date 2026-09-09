@@ -7362,6 +7362,72 @@ async function markRound(page, cross) {
     if (r.foreign !== 403) throw new Error(`client read suggested-pitches on an out-of-slice brand (expected 403, got ${r.foreign})`);
   });
 
+  // r623: the client PHONE home tile prints three buckets next to the tracker
+  // total ("Available / Under offer / Let / On tracker"), but the buckets only
+  // covered 8 of the 12 status codes — a withdrawn unit was counted in the
+  // total and in no bucket, so Mark read 71 + 1 + 0 against 73 with nothing
+  // to explain the missing unit. The buckets now come from
+  // TRACKER_ROLLUP_BUCKET, which partitions the whole vocabulary. Withdraw
+  // one of the client's own units (a client PATCH he is entitled to make),
+  // assert the tile still reconciles, and put it back.
+  await step(page, p, 'client-mobile-portfolio-tile-reconciles', async () => {
+    const pick = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const u = (Array.isArray(units) ? units : []).find(x => !x.dealId && String(x.marketingStatus).toUpperCase() === 'AVA');
+      return u ? { id: u.id, status: u.marketingStatus } : null;
+    });
+    if (!pick) throw new Error('no unlinked AVA unit in the client portfolio to withdraw');
+    const setStatus = (id, status) => page.evaluate(async ([i, st]) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const r = await fetch(`/api/available-units/${i}`, { method: 'PATCH', headers: auth, body: JSON.stringify({ marketingStatus: st }) });
+      return r.status;
+    }, [id, status]);
+    // The phone shell keys off the USER AGENT + touch, not the viewport — a
+    // viewport-only 390px context renders the DESKTOP app instead.
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    const readTile = async () => {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mobGoto(mob, `${BASE}/deals`, nav);   // warm — a client route's
+      await mob.waitForTimeout(4000);             // first cold render can be
+      await mobGoto(mob, `${BASE}/`, nav);        // nav-only (r262)
+      await mob.waitForTimeout(6000);
+      if (!(await mob.locator('[data-testid="mobile-bottom-nav"]').count())) throw new Error('phone shell did not render — wrong surface');
+      const tile = mob.locator('[data-testid="mobile-home-portfolio"]');
+      if (!(await tile.count())) throw new Error('client phone home has no portfolio tile');
+      const txt = await tile.innerText();
+      const pairs = {};
+      for (const m of txt.matchAll(/(\d[\d,]*)\s*\n\s*(Available|Under offer|Let|Withdrawn|On tracker)/g)) {
+        pairs[m[2]] = Number(m[1].replace(/,/g, ''));
+      }
+      return { txt, pairs };
+    };
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      const before = await readTile();
+      if (before.pairs['On tracker'] === undefined) throw new Error(`tile has no "On tracker" total: ${before.txt.replace(/\n/g, ' | ')}`);
+      const sumOf = (t) => ['Available', 'Under offer', 'Let', 'Withdrawn'].reduce((a, k) => a + (t.pairs[k] || 0), 0);
+      if (sumOf(before) !== before.pairs['On tracker']) throw new Error(`tile does not reconcile before the write: ${before.txt.replace(/\n/g, ' | ')}`);
+      const code = await setStatus(pick.id, 'WIT');
+      if (code !== 200) throw new Error(`client withdraw of own unit returned ${code}`);
+      const after = await readTile();
+      if (!after.pairs['Withdrawn']) throw new Error(`withdrawn unit is in no bucket on the phone tile: ${after.txt.replace(/\n/g, ' | ')}`);
+      if (sumOf(after) !== after.pairs['On tracker']) throw new Error(`tile buckets sum to ${sumOf(after)} but "On tracker" says ${after.pairs['On tracker']}: ${after.txt.replace(/\n/g, ' | ')}`);
+    } finally {
+      await setStatus(pick.id, pick.status);
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Compliance & KYC panel STAYS visible on client brand profiles (2026-08-01
   // — landlords need tenant AML/financial standing). KYC action gating, as
   // decided 2026-08-04 ("allow Landsec to hit the enrichment button — use the

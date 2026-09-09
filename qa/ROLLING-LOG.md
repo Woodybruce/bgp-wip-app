@@ -92,16 +92,85 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r623 · 2026-09-09 · FULL (round in progress) · journey: **Landsec client · PHONE 390px (real iPhone UA)** (rotation slot #3) · REGRESSION AT BASELINE
+### r623 · 2026-09-09 · FULL · journey: **Landsec client · PHONE 390px, real iPhone context** (rotation slot #3, "where are my Bluewater lettings" with a real WRITE) · REGRESSION AT BASELINE · **1 bug fixed** · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushing with
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
   `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE.** Head split three ways sharing
   `QA_CROSS_FILE=/tmp/qa-cross-623.json`, each chunk in its OWN
   `with-server.sh`: **104 + 133 + 110 = head 347** + tail **39** = **386 ok**.
   Signature **6x400 + 1x409 + 10x403 + 1x503 — identical to r615-r622.
   Streak 78.** All listed noise; no chunk died at `sam · login`.
-- Triage: nothing outside the ROLLING-LOG noise list. Journey in progress.
+- **SURFACE DISCIPLINE (this round's rule).** The phone shell is gated on
+  `isTouchDevice()` in `client/src/hooks/use-mobile.tsx` — **user agent +
+  touch**, not the viewport — so a viewport-only 390px run renders the
+  DESKTOP app. Every r623 probe uses `devices['iPhone 13']` (or an explicit
+  iPhone UA + `isMobile`/`hasTouch`) and **THROWS** if
+  `[data-testid="mobile-bottom-nav"]` is absent. Confirmed real phone shell:
+  client nav = Portfolio · Messages · Deals · Tasks · News.
+- **BUG FIXED — the client phone home tile counted units it then showed in no
+  bucket.** `mobile-home.tsx` prints four numbers to a landlord: Available /
+  Under offer / Let / **On tracker**. "On tracker" is `clientUnits.length`,
+  but the three buckets were hardcoded `OPP,AVA` / `NEG,HOT,SOL,EXC` /
+  `COM,INV` — **8 of the 12 `DEAL_STATUS_CODES`**, with a comment claiming
+  they "cover the whole pipeline". **REP, SPEC, LIVE and WIT fell through.**
+  WIT is not hypothetical: it is in `LETTING_STATUSES`, it is one of the
+  tracker's own `HISTORIC_PILL_STATUSES`, and the tracker row menu sets it
+  (`available-units.tsx:2637`). PROVED end-to-end with a staff-writes →
+  client-sees cross-check (`qa/r623-tile-probe.mjs`): Victoria withdrew one
+  of Mark's 73 units, and Mark's phone home then read **71 + 1 + 0 against a
+  total of 73** — one unit silently gone from the read, nothing on screen to
+  explain it. Fix: new exhaustive `TRACKER_ROLLUP_BUCKET` in
+  `shared/deal-status.ts`, typed `Record<DealStatusCode, …>` so **adding a
+  code without bucketing it now fails `tsc`**; the tile derives its buckets
+  from it and renders a **Withdrawn** cell only when non-zero (row stays
+  four-across in the normal case). Re-verified VISUALLY at 390px both
+  directions: before **72+1+0=73**, after withdraw **71+1+0+1=73**, no
+  overflow, fixture restored (status back to `AVA`, asserted).
+  `npx tsc --noEmit` clean. Shots `/tmp/r623/*`.
+- **SCENARIO ADDED (1) — PROVED NON-VACUOUS.**
+  `mark · client-mobile-portfolio-tile-reconciles`: real iPhone context,
+  throws if the phone shell is absent, withdraws one of the client's own
+  unlinked AVA units (a PATCH he is entitled to make), asserts the tile
+  reconciles and shows the Withdrawn bucket, restores in `finally`.
+  Re-broke the fix (`withdrawn: 0`) → **flow-failure with the exact original
+  symptom** ("withdrawn unit is in no bucket … 71 | Available | 1 | Under
+  offer | 0 | Let | 73 | On tracker"); restored → ok. **It sits after
+  `client-brand-suggested-pitches-scoped`, so next round chunk 3: 110 → 111,
+  head 348, sum 387** (chunk 1 = 104, chunk 2 = 133 unchanged).
+- **#365 IS A DESKTOP-ONLY QUESTION — the phone does NOT widen it.** Asked
+  directly: `/deals` on the phone renders `mobile-card-*` cards, not the
+  desktop table, and the deal detail at `/deals/:id` renders
+  `deal-phone-sections`. **Zero "Add terms" affordances anywhere on the
+  client phone surface** (counted in the DOM, not eyeballed). The phone deal
+  detail does offer a client `button-edit-deal`, `button-deal-image-studio`
+  and `input-deal-comment` — untested this round, worth a look.
+- **RUN DOWN, do not re-spend:** the phone Letting Tracker shows a client
+  `button-add-unit` and a per-unit `Files / Viewing / Offer / Interest / Edit`
+  action row, which looks like a staff row leaking onto a client screen. It
+  is **INTENDED**: `POST`, `PATCH` and `DELETE /api/available-units` all
+  resolve the company scope, `isPropertyInScope` the property, 403 outside it
+  and `delete parsed.fee` inside it (`server/routes.ts:4499/4713/4874`) —
+  clients may run their own portfolio's tracker, minus BGP's fee. Also
+  reconciled: Mark's 73 tracker units = 71 AVA-no-deal + 1 AVA-with-deal +
+  1 NEG-with-deal, matching the pre-fix tile's 72 + 1 + 0.
+- **2 suggestions → UX #366, #367** (three different counts of his letting
+  deals in two taps of `/deals`; "In status · today" vs "In status · 36d in
+  Exchanged" on the two deal cards). Next free number **#368**.
+- Doors PROVED (not merely patched): the phone home tile's roll-up, by a
+  staff write and a client read on the real phone surface. The desktop client
+  home has no equivalent tile — `mobile-home.tsx` was the only place claiming
+  a three-way partition of the tracker total (grepped every copy of those
+  bucket arrays; the others are "live pipeline" filters, a different shape).
+- No new flakes. Probes kept: `qa/r623-mark-phone-journey.mjs` (reusable
+  phone harness with the shell assertion + `warm()`), `qa/r623-step1.mjs`,
+  `qa/r623-step2.mjs`, `qa/r623-tile-probe.mjs`. NOTE: do not pass
+  `ids: true` to `report()` on `/available-units` — 73 cards × 6 testids
+  floods the transcript.
+- **Next:** rotation #4 BGP staff · phone 390px. r623 fixed a bug and did the
+  journey, so r624 can be LIGHT. Untested and adjacent: the client phone deal
+  detail's `button-edit-deal` / Image Studio / comment box, and #366's
+  three-way count mismatch on `/deals`.
 
 ### r622 · 2026-09-09 · FULL · journey: **Landsec client · desktop 1440px** (rotation slot #2, leasing-meeting prep with a real WRITE) · REGRESSION AT BASELINE · **0 bugs fixed — every candidate ran down to correct behaviour or my own probe error** · 1 bug-shaped question deferred · 1 suggestion
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
