@@ -105,6 +105,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r628 · 2026-09-09 · LIGHT · probe: the comps board's OWN "Export" button (the second spreadsheet exporter) · REGRESSION AT BASELINE · PROVISIONAL
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **45/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- **REGRESSION AT BASELINE — 104 + 133 + 111 + 39 = 387 ok, signature
+  6x400 + 1x409 + 10x403 + 1x503. Streak 83.** Four chunks, r627 arithmetic
+  verbatim, shared `QA_CROSS_FILE=/tmp/qa-cross-628.json`. Chunk 1's first
+  pass gave the r626 cold flake again (103 + 1 flow-failure at
+  `staff-settings-data-health-reachable-on-phone`, `ERR_ABORTED` on
+  `/settings`); identical re-run gave 104. Flake confirmed, still a flake.
+- Probe in progress — final entry replaces this one.
+- NOTE `qa/with-server.sh` takes ONE QUOTED argument
+  (`bash qa/with-server.sh "node qa/two-bot-round.mjs"`); passing the command
+  unquoted silently runs `node` with no script and prints only
+  "command exit 0" — cost this round ~8 minutes.
+
 ### r627 · 2026-09-09 · FULL · Victoria staff-desktop: comps evidence for a pitch + the ChatBGP Excel door · REGRESSION AT BASELINE · **1 bug fixed (3 symptoms)** · 1 suggestion (#374)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **43/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`.
