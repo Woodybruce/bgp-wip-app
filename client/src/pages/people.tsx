@@ -1107,6 +1107,15 @@ export default function PeoplePage() {
 }
 
 // ── Client CRM hub — brand-contact lookup + own contacts ─────────────────
+// The five curated pills cover the AUTO slice (hospitality / food / café /
+// leisure / fitness) — but a client's directory also carries the brands they
+// self-added from the global directory, which are by definition outside it.
+// A self-added fashion or jewellery brand matched no pill, so the first
+// narrowing click made the brand the client had deliberately added disappear
+// while the header still counted it (r629). Hence the "Other" pill, and hence
+// the pill row is derived from the brands actually present — the sibling
+// Brand Explorer already hides empty categories, and an always-empty "Bars"
+// pill sat here for the same reason.
 const CLIENT_BRAND_CATS: { key: string; label: string; re: RegExp | null }[] = [
   { key: "all", label: "All", re: null },
   { key: "food", label: "Food & Dining", re: /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie)/i },
@@ -1114,7 +1123,12 @@ const CLIENT_BRAND_CATS: { key: string; label: string; re: RegExp | null }[] = [
   { key: "bars", label: "Bars", re: /bar/i },
   { key: "leisure", label: "Leisure", re: /(leisure|cinema|entertainment|hospitality|hotel)/i },
   { key: "fitness", label: "Fitness", re: /(fitness|gym|yoga)/i },
+  { key: "other", label: "Other", re: null },
 ];
+
+// A brand belongs to "Other" when none of the curated regexes claim it.
+const clientBrandIsOther = (companyType: string | null) =>
+  !CLIENT_BRAND_CATS.some(c => c.re && c.re.test(companyType || ""));
 
 interface DirectoryBrand {
   id: string;
@@ -1180,10 +1194,22 @@ function ClientCrmHub() {
     return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [brands]);
 
+  // Only offer a category some brand in this directory actually falls into,
+  // so the pills always sum to the "All" count the header prints.
+  const visibleCats = useMemo(
+    () => CLIENT_BRAND_CATS.filter(c =>
+      c.key === "all"
+        || (c.key === "other"
+          ? brands.some(b => clientBrandIsOther(b.companyType))
+          : brands.some(b => c.re!.test(b.companyType || "")))),
+    [brands],
+  );
+
   const filteredBrands = useMemo(() => {
     const catRe = CLIENT_BRAND_CATS.find(c => c.key === cat)?.re || null;
     const q = search.trim().toLowerCase();
     return brands.filter(b => {
+      if (cat === "other" && !clientBrandIsOther(b.companyType)) return false;
       if (catRe && !catRe.test(b.companyType || "")) return false;
       if (rel === "tenant" && !b.isExistingTenant) return false;
       if (rel === "targeted" && !(b.targetedAt || []).length) return false;
@@ -1230,13 +1256,14 @@ function ClientCrmHub() {
               data-testid="client-brand-search"
             />
             <div className="flex gap-1.5 flex-wrap">
-              {CLIENT_BRAND_CATS.map(c => (
+              {visibleCats.map(c => (
                 <button
                   key={c.key}
                   onClick={() => setCat(c.key)}
                   className={`px-3 py-1 rounded-full text-xs border transition-colors ${
                     cat === c.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"
                   }`}
+                  data-testid={`client-brand-cat-${c.key}`}
                 >
                   {c.label}
                 </button>

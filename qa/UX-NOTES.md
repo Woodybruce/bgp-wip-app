@@ -13,6 +13,43 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+377. 2026-09-09 · Mark Warne (Landsec client) / desktop 1440px · QA r629 ·
+   **The "re-add it from the Brand Directory" empty state sends the client to
+   a page with no way to add a brand.** Opening a brand that is not in his CRM
+   gives a clean "Brand not in your list — you can re-add it from the Brand
+   Directory at any time" card whose button navigates to `/contacts`
+   (`companies.tsx:1269`). That page is the client CRM Brand Directory — and
+   the only "Add brand" control in the app lives on Brand Intelligence
+   (`ClientAddBrandButton`, `brands-hub.tsx:1617`). So the recovery path the
+   app names is a dead end: Mark has to work out on his own that the add
+   control is on a different page. **Suggestion:** mount the same
+   `ClientAddBrandButton` on the client CRM Brand Directory header (it is
+   already a self-contained component), or point the empty-state button at
+   `/brands` instead.
+
+378. 2026-09-09 · Mark Warne (Landsec client) / desktop 1440px · QA r629 ·
+   **The Brand Intelligence header button says "All Brands" and lands the
+   client on a page titled "CRM".** For staff the label is honest — it opens
+   the whole tenant directory. For a client it opens his own 10-brand slice
+   under a heading that says nothing about brands, so the one button that
+   promises "all brands" is both an overclaim and a non-sequitur
+   (`brands-hub.tsx:1613`, unconditional). **Suggestion:** for client logins
+   label it "Brand Directory" (matching the tab it lands on and the wording
+   the empty state above already uses).
+
+379. 2026-09-09 · Mark Warne (Landsec client) / desktop 1440px · QA r629 ·
+   **The client Turnover Board shows BGP's internal AI working notes in its
+   Notes column.** The board is correctly sliced to his brands, but each row
+   carries the estimate's reasoning verbatim — "Testco Fashion appears to be a
+   fictional or very small/niche brand with no available public financial
+   data", "Starbucks UK revenue not separately disclosed. Parent company
+   reports global revenue only" — beside a Source of "AI Estimate" and a
+   Confidence of "Low". Nothing is secret, but it reads as BGP's scratchpad
+   rather than intelligence prepared for a landlord. **Suggestion:** for
+   client logins either hide the Notes column on AI-Estimate rows (keep it for
+   Conversation/accounts-sourced rows, which are real evidence) or print a
+   single honest line — "No public turnover disclosed" — in its place.
+
 375. 2026-09-09 · Victoria (BGP staff) / `/comps` desktop · QA r628 ·
    **The comps board's "Export" button is called Export next to "Export PDF",
    and it silently hands you a .csv — not the .xlsx the board's own Import

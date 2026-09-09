@@ -10717,6 +10717,68 @@ async function markRound(page, cross) {
   // Landsec". This pins the two halves the fix depends on: the endpoint stays
   // wide (do not narrow it — other boards read it), and the writability line
   // through it is own-company + brand slice YES, agent company NO.
+  // r629: the client CRM Brand Directory's category pill row was hardcoded to
+  // the five AUTO-slice categories (Food & Dining / Cafés & Coffee / Bars /
+  // Leisure / Fitness), while the list it filters also carries the brands the
+  // client SELF-ADDED from the global directory — which are by definition
+  // outside that slice. So Mark's self-added Fashion and Jewellery brands
+  // appeared under "All" and in the header's "10 brands", but no pill could
+  // reach them: the first narrowing click made the brands he had deliberately
+  // added disappear. An always-empty "Bars" pill sat there for the same
+  // reason. Pins both halves: the pills must SUM to the header count, and
+  // every brand must be reachable by some pill.
+  await step(page, p, 'client-brand-directory-pills-reach-every-brand', async () => {
+    await page.goto(`${BASE}/companies?tab=tenants`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(2000);
+    const CURATED = [
+      /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie)/i,
+      /(caf|coffee)/i, /bar/i,
+      /(leisure|cinema|entertainment|hospitality|hotel)/i,
+      /(fitness|gym|yoga)/i,
+    ];
+    const dir = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const r = await (await fetch('/api/client/brand-directory', { headers: auth })).json();
+      return Array.isArray(r) ? r.map(b => [b.name, b.companyType]) : [];
+    });
+    if (!dir.length) throw new Error('client brand directory is empty — nothing to reconcile');
+    const outOfSlice = dir.filter(([, t]) => !CURATED.some(re => re.test(t || '')));
+    if (!outOfSlice.length) {
+      throw new Error('no out-of-slice brand in the client directory — seed-personas must leave Landsec a self-added extra or this check is vacuous');
+    }
+    const pills = await page.$$eval('[data-testid^="client-brand-cat-"]',
+      els => els.map(e => e.getAttribute('data-testid').replace('client-brand-cat-', '')));
+    if (!pills.includes('all')) throw new Error('the brand directory pill row lost its "All" pill');
+    if (!pills.includes('other')) {
+      throw new Error(`${outOfSlice.length} self-added out-of-slice brand(s) (${outOfSlice.map(b => b[0]).join(', ')}) but no "Other" pill — they are reachable only under All`);
+    }
+    const rowsFor = async (key) => {
+      await page.click(`[data-testid="client-brand-cat-${key}"]`);
+      await page.waitForTimeout(500);
+      return page.$$eval('[data-testid^="client-brand-"]',
+        els => els.filter(e => /^client-brand-[0-9a-f-]{36}$/.test(e.getAttribute('data-testid')))
+                  .map(e => e.querySelector('a')?.textContent?.trim()).filter(Boolean));
+    };
+    const all = await rowsFor('all');
+    if (all.length !== dir.length) throw new Error(`"All" shows ${all.length} brands but the directory has ${dir.length}`);
+    let sum = 0;
+    const reached = new Set();
+    for (const key of pills.filter(k => k !== 'all')) {
+      const rows = await rowsFor(key);
+      if (!rows.length) throw new Error(`pill "${key}" is offered but matches no brand — empty pills belong hidden`);
+      sum += rows.length;
+      for (const n of rows) reached.add(n);
+    }
+    if (sum !== all.length) throw new Error(`the category pills sum to ${sum} but the header prints ${all.length} brands`);
+    const missed = all.filter(n => !reached.has(n));
+    if (missed.length) throw new Error(`brand(s) reachable only under All: ${missed.join(', ')}`);
+    const other = await rowsFor('other');
+    for (const [name] of outOfSlice) {
+      if (!other.includes(name)) throw new Error(`self-added out-of-slice brand ${name} is missing from the "Other" pill`);
+    }
+  });
+
   await step(page, p, 'client-contacts-endpoint-stays-wide-but-agents-stay-readonly', async () => {
     const got = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
