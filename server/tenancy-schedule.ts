@@ -3,6 +3,7 @@ import { requireAuth } from "./auth";
 import multer from "multer";
 import { backfillPropertyTenants, backfillPropertyUnitFks, normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import { fanOutTenancyStatus } from "./unit-mirror";
+import { importTenancyRows, TenancyImportError, type ParsedTenancyImportRow } from "./tenancy-import";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -782,7 +783,7 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
         const v = (data[i] || [])[Number(propColIdx)];
         if (v != null && String(v).trim()) distinct.add(String(v).trim());
       }
-      if (distinct.size > 1) {
+      if (distinct.size > 0) {
         const tn = await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [propertyId]);
         const canon = (x: string) => String(x || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
         const target = canon(tn.rows[0]?.name || "");
@@ -795,21 +796,9 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
     }
 
     const clearExisting = req.body.clearExisting === "true";
-    if (clearExisting) {
-      // Unlink projections first (same cascade as the single-row delete
-      // below) — otherwise the mirror rows keep a dangling tenancy_unit_id,
-      // the fan-out's name-link can't adopt them, and every re-import
-      // duplicates the Letting Tracker / leasing boards.
-      await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
-      await pool.query(`UPDATE available_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
-      await pool.query(`UPDATE crm_deals SET tenancy_unit_id = NULL WHERE tenancy_unit_id IN (SELECT id FROM tenancy_schedule_units WHERE property_id = $1)`, [propertyId]);
-      await pool.query("DELETE FROM tenancy_schedule_units WHERE property_id = $1", [propertyId]);
-    }
-
-    let imported = 0;
     let sortOrder = 0;
     let currentGrouping = ""; // Landsec tracks a "Grouping" header band
-    const insertedIds: string[] = []; // fan out the mirror for these after import
+    const parsedRows: ParsedTenancyImportRow[] = [];
 
     for (let i = bestHeaderIdx + 1; i < data.length; i++) {
       const row = data[i] || [];
@@ -837,7 +826,7 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
       }
 
       // Whole-portfolio file: drop rows that belong to a different asset.
-      if (propMatcher && rec.__property != null && !propMatcher(rec.__property)) {
+      if (propMatcher && !propMatcher(rec.__property)) {
         skippedOtherProperties++;
         continue;
       }
@@ -884,51 +873,34 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
       sortOrder++;
       rec.sort_order = sortOrder;
 
-      const cols = ["property_id", ...Object.keys(rec)];
-      const placeholders = cols.map((_, idx) => `$${idx + 1}`);
-      const values = [propertyId, ...Object.values(rec)];
-
-      try {
-        const ins = await pool.query(
-          `INSERT INTO tenancy_schedule_units (${cols.join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING id`,
-          values
-        );
-        if (ins.rows[0]?.id) insertedIds.push(ins.rows[0].id);
-        imported++;
-      } catch (e: any) {
-        console.warn(`[tenancy-import] row ${i + 1} skipped: ${e.message}`);
-      }
+      parsedRows.push({ sourceRow: i + 1, values: rec });
     }
 
-    // Auto-resolve tenant → brand FKs across the freshly imported rows
-    // so the property page lights up without a manual click. Failures
-    // here are non-fatal: the import is already committed and the user
-    // can still hit "Resolve unmatched tenants" later.
+    const result = await importTenancyRows(pool, String(propertyId), parsedRows, { clearExisting, allowedFields: TENANCY_FIELDS });
+    const { imported, skippedExisting, needsReview, reviewRows, insertedIds, mirrorEligibleIds } = result;
+
+    // A repeat import must not change the old rows or their reviewed links.
+    // Resolve brands only on the records this import actually created.
     let resolution: { total: number; resolved: number; unresolved: number } | null = null;
     try {
-      resolution = await backfillPropertyTenants(propertyId);
+      if (insertedIds.length) {
+        await pool.query(`UPDATE tenancy_schedule_units t SET tenant_company_id = ${resolveBrandIdSubquery("coalesce(t.trading_name, t.tenant_name, '')")}
+          WHERE t.property_id = $1 AND t.id::text = ANY($2::text[]) AND t.tenant_company_id IS NULL`, [propertyId, insertedIds]);
+      }
+      const counts = (await pool.query(`SELECT
+          COUNT(*) FILTER (WHERE coalesce(trim(tenant_name), '') <> '' OR coalesce(trim(trading_name), '') <> '') AS total,
+          COUNT(*) FILTER (WHERE tenant_company_id IS NOT NULL) AS resolved,
+          COUNT(*) FILTER (WHERE tenant_company_id IS NULL AND (coalesce(trim(tenant_name), '') <> '' OR coalesce(trim(trading_name), '') <> '')) AS unresolved
+        FROM tenancy_schedule_units WHERE property_id = $1`, [propertyId])).rows[0];
+      resolution = { total: Number(counts.total), resolved: Number(counts.resolved), unresolved: Number(counts.unresolved) };
     } catch (e: any) {
       console.warn("[tenancy-import] resolver pass failed:", e?.message);
     }
 
-    // Fan out the status mirror for every freshly-imported row so the
-    // Letting Tracker + Leasing projections are joined up immediately —
-    // without this the import lands rows that only exist on the Tenancy
-    // schedule until someone manually taps "Re-sync (all)", which is the
-    // "boards not joined up" symptom. Run AFTER the brand-resolver pass
-    // so tenant/brand FKs are set before fan-out reads them. Best-effort
-    // per row: the import is already committed, a mirror miss is recoverable
-    // via Re-sync.
-    for (const id of insertedIds) {
+    // Only new rows with a unique reference can safely adopt the existing
+    // name-based mirrors. Repeated refs on different floors need review.
+    for (const id of mirrorEligibleIds) {
       try { await fanOutTenancyStatus(pool, id); } catch {}
-    }
-
-    // Re-knit the Letting Tracker / leasing / deals FKs onto the fresh
-    // rows (clearExisting nulls them; a first import may find existing
-    // tracker units too). Normalised unit-name match — without this the
-    // tracker entries reappear as orphan VACANT bands after every import.
-    try { await backfillPropertyUnitFks(propertyId); } catch (e: any) {
-      console.warn("[tenancy-import] unit-FK backfill failed:", e?.message);
     }
 
     const unmatchedNote = unmatchedHeaders.length > 0
@@ -936,16 +908,20 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
       : "";
     res.json({
       imported,
+      skippedExisting,
+      needsReview,
+      reviewRows,
+      mirrorNeedsReview: insertedIds.length - mirrorEligibleIds.length,
       skippedOtherProperties,
       headerRow: bestHeaderIdx + 1,
       mappedColumns: Object.values(colToField),
       unmatchedHeaders,
       resolution,
-      message: `${imported} units imported${skippedOtherProperties ? ` · ${skippedOtherProperties} rows for other properties skipped` : ""}${resolution ? ` · ${resolution.resolved}/${resolution.total} tenants resolved` : ""}${unmatchedNote}`,
+      message: `${imported} new units · ${skippedExisting} already present · ${needsReview} need review${needsReview ? " (existing information kept)" : ""}${insertedIds.length > mirrorEligibleIds.length ? ` · ${insertedIds.length - mirrorEligibleIds.length} repeated references need their board links reviewed` : ""}${skippedOtherProperties ? ` · ${skippedOtherProperties} rows for other properties skipped` : ""}${unmatchedNote}`,
     });
   } catch (e: any) {
     console.error("[tenancy-import] failed:", e);
-    res.status(500).json({ error: e.message });
+    res.status(e instanceof TenancyImportError ? e.status : 500).json({ error: e.message });
   }
 });
 

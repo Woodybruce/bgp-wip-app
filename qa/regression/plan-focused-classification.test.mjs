@@ -50,11 +50,11 @@ test('focused classification sends matching original and single-boundary crops f
   assert.equal(fixture.calls.length, 1);
   const content = fixture.calls[0].body.messages[0].content;
   const images = content.filter(block => block.type === 'image').map(block => Buffer.from(block.source.data, 'base64'));
-  assert.equal(images.length, regions.length * 2);
+  assert.equal(images.length, 2 + regions.length * 2);
   assert.equal(fixture.crops.length, regions.length);
-  assert.equal(fixture.composites.length, regions.length);
+  assert.equal(fixture.composites.length, 1 + regions.length);
   for (let index = 0; index < regions.length; index++) {
-    const region = regions[index], original = images[index * 2], outlined = images[index * 2 + 1];
+    const region = regions[index], original = images[2 + index * 2], outlined = images[3 + index * 2];
     const originalMeta = await sharp(original).metadata(), outlinedMeta = await sharp(outlined).metadata();
     assert.deepEqual([originalMeta.width, originalMeta.height], [outlinedMeta.width, outlinedMeta.height]);
     assert.ok(Math.max(originalMeta.width, originalMeta.height) <= 768);
@@ -62,7 +62,7 @@ test('focused classification sends matching original and single-boundary crops f
       .resize({ width: originalMeta.width, height: originalMeta.height }).jpeg({ quality: 95 }).toBuffer();
     assert.deepEqual(original, expected, 'The label-reading crop must contain only the original drawing');
     assert.notDeepEqual(outlined, original);
-    const overlay = fixture.composites[index].input.toString();
+    const overlay = fixture.composites[index + 1].input.toString();
     assert.equal((overlay.match(/<polygon\b/g) || []).length, 1, 'Each view must highlight exactly one candidate');
     assert.equal(/<(?:text|line|rect)\b/.test(overlay), false, 'No candidate IDs or grid may obscure the plan');
     const vertices = overlay.match(/points="([^"]+)"/)[1].split(' ').map(pair => pair.split(',').map(Number));
@@ -96,13 +96,13 @@ test('focused L-shaped view preserves its interior and fades the excluded notch 
   assert.deepEqual(result[0].polygon, candidate.polygon, 'The visual mask must not alter the stored candidate geometry');
   const images = fixture.calls[0].body.messages[0].content.filter(block => block.type === 'image')
     .map(block => Buffer.from(block.source.data, 'base64'));
-  assert.equal(images.length, 2);
-  const [original, focused] = await Promise.all(images.map(bytes => sharp(bytes).removeAlpha().raw().toBuffer({ resolveWithObject: true })));
+  assert.equal(images.length, 4);
+  const [original, focused] = await Promise.all(images.slice(2).map(bytes => sharp(bytes).removeAlpha().raw().toBuffer({ resolveWithObject: true })));
   assert.deepEqual(original.info, focused.info);
   const crop = fixture.crops[0];
   const expectedOriginal = await sharp(imageBytes).extract(crop)
     .resize({ width: original.info.width, height: original.info.height }).jpeg({ quality: 95 }).toBuffer();
-  assert.deepEqual(images[0], expectedOriginal, 'The separate original image must stay completely unmasked');
+  assert.deepEqual(images[2], expectedOriginal, 'The separate original image must stay completely unmasked');
   const pixel = (decoded, x, y) => {
     const px = Math.round((x - crop.left) * decoded.info.width / crop.width);
     const py = Math.round((y - crop.top) * decoded.info.height / crop.height);
@@ -153,6 +153,15 @@ test('focused classification excludes rejected shapes even when the provider sup
 
 test('focused classification permits a complete set of negative decisions', async () => {
   assert.deepEqual(await harness({ rows: regions.map(region => ({ regionId: region.id, isUnit: false })) }).run(), []);
+});
+
+test('missing confidence stays review-only while an explicit certain decision can proceed', async () => {
+  const result = await harness({ rows: [
+    { regionId: 101, isUnit: true, unitRef: 'D1', tenant: 'First shop' },
+    { regionId: 203, isUnit: true, confidence: 'certain', unitRef: 'D2', tenant: 'Second shop' },
+  ] }).run();
+  assert.equal(result[0].reviewRequired, true);
+  assert.notEqual(result[1].reviewRequired, true);
 });
 
 const valid = regions.map(region => ({ regionId: region.id, isUnit: true }));

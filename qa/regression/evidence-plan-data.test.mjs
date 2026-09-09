@@ -8,7 +8,7 @@ const declaration=name=>find('server/evidence-plan.ts',node=>
   || ts.isVariableStatement(node)&&node.declarationList.declarations.some(d=>d.name.getText()===name));
 const code=source('shared/plan-geometry.ts')+'\n'+['normaliseUnitRef','normTenantName','stripCoName','EvidencePlanError',
   'ENTRY_FIELDS','validateEvidenceUnitPatch','validateEvidenceEntryPatch','matchEvidenceScheduleRow','presentEvidenceUnit'].map(declaration).join('\n');
-const {matchEvidenceScheduleRow:match,presentEvidenceUnit:present,validateEvidenceUnitPatch:unitPatch,validateEvidenceEntryPatch:entryPatch}=evaluate(code);
+const {matchEvidenceScheduleRow:match,presentEvidenceUnit:present,validateEvidenceUnitPatch:unitPatch,validateEvidenceEntryPatch:entryPatch}=evaluate(code,evaluate(source('server/evidence-plan-schedule.ts')));
 const schedule=(id,ref,tenant='Tea Shop',fields={})=>({id,unit_number:ref,trading_name:tenant,tenant_name:tenant,...fields});
 const rectangle=[{x:.1,y:.1},{x:.4,y:.1},{x:.4,y:.4},{x:.1,y:.4}];
 test('duplicate schedule refs never select an arbitrary first tenant',()=>{

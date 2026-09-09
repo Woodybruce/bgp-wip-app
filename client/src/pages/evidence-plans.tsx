@@ -24,6 +24,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EvidencePlanReview } from "@/components/evidence-plan-review";
 import { EvidencePlanScanReview } from "@/components/evidence-plan-scan-review";
+import { TenancyImportReview, type TenancyImportReviewRow } from "@/components/tenancy-import-review";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -43,7 +44,10 @@ type PlanUnit = {
   tenant_name: string | null; level_id: string | null; polygon: Pt[] | null; dot?: Pt | null;
   lease_expiry: string | null; break_date: string | null; review_date: string | null;
   erv: string | null; passing_rent: string | null; sqft: string | null; notes: string | null;
-  source?: string | null; ts_link_status?: string;
+  source?: string | null; ts_link_status?: string; ts_link_reason?: string | null;
+  tenancy_unit_id?: string | null; ts_row_updated_at?: string | null; ts_candidate_ids?: string[];
+  ts_equivalent_row_ids?: string[]; ts_match_method?: string | null;
+  ts_conflicts?: { field: string; label: string }[];
 };
 type Matter = { id: string; matter_type: string; status: string; acting_for: string | null; unit_name: string | null; unit_norm: string | null };
 type Entry = {
@@ -270,6 +274,7 @@ function PlanView({ planId }: { planId: string }) {
   const draftBackgroundKey = useRef<string | null>(null);
   const setPoints = (points: Pt[]) => { draftRef.current = points; setDraft(points); };
   const [busy, setBusy] = useState<string | null>(null);
+  const [importReviewRows, setImportReviewRows] = useState<TenancyImportReviewRow[]>([]);
   const bgInputRef = useRef<HTMLInputElement>(null);
   const tsInputRef = useRef<HTMLInputElement>(null);
   const tafInputRef = useRef<HTMLInputElement>(null);
@@ -526,7 +531,9 @@ function PlanView({ planId }: { planId: string }) {
       if (!r.ok) throw new Error(j.error || "Upload failed");
       invalidate();
       if (linkedTs) {
-        toast({ title: "Tenancy schedule imported", description: j.message || `${j.imported} rows imported to ${plan?.property_name || "the property"} — plan units pick the facts up automatically.` });
+        setImportReviewRows(j.reviewRows || []);
+        toast({ title: j.needsReview ? "Schedule imported — review needed" : "Tenancy schedule imported",
+          description: `${j.imported ?? 0} added · ${j.skippedExisting ?? 0} already present${j.needsReview ? ` · ${j.needsReview} changed or ambiguous rows need review on the property's tenancy schedule` : ""}. Existing entries and plan links kept.` });
       } else if (kind === "import-tenancy") {
         toast({ title: "Tenancy schedule imported", description: `${j.matched} unit${j.matched === 1 ? "" : "s"} matched${j.unmatched?.length ? ` · ${j.unmatched.length} TS rows had no unit on the plan` : ""}` });
       } else {
@@ -682,6 +689,13 @@ function PlanView({ planId }: { planId: string }) {
       {activeLevel && <EvidencePlanScanReview key={activeLevel.id} open={scanReviewOpen} onOpenChange={setScanReviewOpen} planId={planId} level={activeLevel} onSaved={invalidate} onRefresh={refreshUnits} scanRunning={detectRunning} />}
 
       <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />
+      <Dialog open={importReviewRows.length > 0} onOpenChange={open => { if (!open) setImportReviewRows([]); }}>
+        <DialogContent className="max-w-3xl max-h-[85dvh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Review imported tenancy entries</DialogTitle><DialogDescription>New entries have been added. The differences below need a decision before existing schedule information is changed.</DialogDescription></DialogHeader>
+          <TenancyImportReview rows={importReviewRows} />
+          <DialogFooter><Button variant="outline" onClick={() => setImportReviewRows([])}>Close</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* UX #137 — unit-ref dialog for a just-drawn outline. Closing keeps
           the polygon pending until Discard is chosen explicitly. */}
@@ -1200,6 +1214,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, onClose,
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<any>({});
+  const [originalForm, setOriginalForm] = useState<any>({});
   const [addingEvidence, setAddingEvidence] = useState(false);
   const [ev, setEv] = useState<any>({});
   const [editingEvidenceId, setEditingEvidenceId] = useState<string | null>(null);
@@ -1210,22 +1225,31 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, onClose,
   const [scheduleId, setScheduleId] = useState("");
   const [scheduleSearch, setScheduleSearch] = useState("");
   const [editScheduleId, setEditScheduleId] = useState<string | null>(null);
+  const [editScheduleVersion, setEditScheduleVersion] = useState<string | null>(null);
+  const [scheduleOpen, setScheduleOpen] = useState(unit.ts_link_status === "ambiguous" || unit.ts_link_status === "stale-link");
   const scheduleChoice = scheduleRows.find(row => row.id === scheduleId);
-  const scheduleRefCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const row of scheduleRows) { const ref = normRef(row.unit_number || ""); if (ref) counts.set(ref, (counts.get(ref) || 0) + 1); }
-    return counts;
-  }, [scheduleRows]);
-  const ambiguousSchedule = !unit.ts_linked && (scheduleRefCounts.get(normRef(unit.unit_ref)) || 0) > 1;
+  const suggestedScheduleRows = scheduleRows.filter(row => unit.ts_candidate_ids?.includes(row.id));
+  const ambiguousSchedule = unit.ts_link_status === "ambiguous";
+  const otherDifferences = (unit.ts_conflicts || []).filter(item => !["unit_number", "tenant_name", "trading_name", "floor_level", "passing_rent_pa", "lease_expiry", "break_date", "next_review_date", "erv_pa", "nia_sqft", "gia_sqft", "saved_tenant"].includes(item.field));
+  const differenceValue = (row: any, field: string) => {
+    const value = row[field];
+    if (value === null || value === undefined || value === "") return "Not recorded";
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    if (Array.isArray(value)) return value.length ? value.join(", ") : "None";
+    if (field.endsWith("_date") || ["lease_start", "lease_expiry"].includes(field)) return fmtDate(value);
+    return typeof value === "number" ? value.toLocaleString("en-GB") : String(value);
+  };
 
   const startEdit = () => {
-    setForm({
+    const values = {
       unitRef: unit.unit_ref, tenantName: unit.tenant_name || "",
       leaseExpiry: unit.lease_expiry?.slice(0, 10) || "", breakDate: unit.break_date?.slice(0, 10) || "",
       reviewDate: unit.review_date?.slice(0, 10) || "", erv: unit.erv ?? "", passingRent: unit.passing_rent ?? "",
       sqft: unit.sqft ?? "", notes: unit.notes || "",
-    });
+    };
+    setForm(values); setOriginalForm(values);
     setEditScheduleId(unit.ts_row_id || null);
+    setEditScheduleVersion(unit.ts_row_updated_at || null);
     setSaveError("");
     setEditing(true);
   };
@@ -1238,14 +1262,19 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, onClose,
 
   const saveFacts = async () => {
     setSaving(true); setSaveError("");
-    try { await onSave({ ...form, scheduleRowId: editScheduleId }); setEditing(false); }
+    const changed = Object.fromEntries(Object.entries(form).filter(([key, value]) => String(value ?? "") !== String(originalForm[key] ?? "")));
+    try {
+      if (Object.keys(changed).length) await onSave({ ...changed, scheduleRowId: editScheduleId, scheduleRowUpdatedAt: editScheduleVersion });
+      setEditing(false);
+    }
     catch (error: any) { setSaveError(error.message || "Couldn't save. Your changes are kept here."); }
     finally { setSaving(false); }
   };
   const linkSchedule = async () => {
     if (!scheduleId) return;
     setSaving(true); setSaveError("");
-    try { await onSave({ linkScheduleRowId: scheduleId, expectedScheduleRowId: unit.ts_row_id || null }); setScheduleId(""); }
+    try { await onSave({ linkScheduleRowId: scheduleId, expectedScheduleRowId: unit.ts_row_id || null,
+      expectedTenancyUnitId: unit.tenancy_unit_id || null, expectedTargetUpdatedAt: scheduleChoice?.updated_at || null }); setScheduleId(""); }
     catch (error: any) { setSaveError(error.message); }
     finally { setSaving(false); }
   };
@@ -1340,10 +1369,24 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, onClose,
         <Button variant="outline" size="sm" onClick={() => onRedraw("draw")} data-testid="button-redraw-unit">Redraw boundary</Button>
         <Button variant="outline" size="sm" onClick={() => onRedraw("trace")} data-testid="button-trace-boundary">Trace boundary</Button>
       </div>}
-      {!editing && scheduleRows.length > 0 && <details className="rounded-xl border border-border p-3 text-sm">
+      {!editing && (scheduleRows.length > 0 || unit.tenancy_unit_id) && <details open={scheduleOpen} onToggle={event => setScheduleOpen(event.currentTarget.open)} className="rounded-xl border border-border p-3 text-sm">
         <summary className="cursor-pointer font-medium">{unit.ts_linked ? "Change schedule link" : "Link schedule row"}</summary>
-        {ambiguousSchedule && <p className="mt-2 text-sm" role="status">Multiple schedule rows use this unit reference. Compare their lease facts before choosing; a similar tenant name does not establish which row is current.</p>}
-        <p className="text-muted-foreground mt-2">Choose the matching row. The unit adopts its reference and lease facts; evidence stays with this outline.</p>
+        {ambiguousSchedule && <p className="mt-2 text-sm" role="status">These schedule entries need a choice. Compare the tenant and lease facts, then select the entry that applies to this unit.</p>}
+        {ambiguousSchedule && unit.ts_link_reason && <p className="mt-2 text-xs text-muted-foreground">{unit.ts_link_reason}</p>}
+        {unit.ts_link_status === "stale-link" && <p className="mt-2 text-sm" role="status">The linked entry is no longer available on this property. Choose its replacement to restore the lease details.</p>}
+        <p className="text-muted-foreground mt-2">Choose the matching entry once. This outline will keep its link to that entry, including after a reimport. Its plan label and evidence stay attached.</p>
+        {ambiguousSchedule && suggestedScheduleRows.length > 0 && <div className="mt-3 space-y-2" data-testid="schedule-match-comparison">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Entries to compare</h3>
+          {suggestedScheduleRows.slice(0, 6).map((row, index) => <div key={row.id} className={`rounded-lg border bg-card p-3 space-y-2 ${scheduleId === row.id ? "border-primary" : "border-border"}`}>
+            <p className="text-[11px] text-muted-foreground">Entry <span className="font-mono tabular-nums">{index + 1}</span>{row.floor_level ? ` · ${row.floor_level}` : ""}</p>
+            <p className="font-semibold break-words">{row.unit_number} · {row.trading_name || row.tenant_name || "No tenant entered"}</p>
+            {row.tenant_name && row.tenant_name !== row.trading_name && <p className="text-[11px] text-muted-foreground break-words">Legal tenant: {row.tenant_name}</p>}
+            <div className="grid grid-cols-2 gap-2">{fact("Passing rent", fmtMoney(row.passing_rent_pa))}{fact("Lease expiry", fmtDate(row.lease_expiry))}{fact("Break", fmtDate(row.break_date))}{fact("Next review", fmtDate(row.next_review_date))}{fact("ERV", fmtMoney(row.erv_pa))}{fact("Size", row.nia_sqft != null || row.gia_sqft != null ? `${Number(row.nia_sqft ?? row.gia_sqft).toLocaleString("en-GB")} sq ft` : "—")}</div>
+            {otherDifferences.length > 0 && <details className="text-xs"><summary className="cursor-pointer text-muted-foreground">{otherDifferences.length} other {otherDifferences.length === 1 ? "difference" : "differences"}</summary><dl className="mt-2 space-y-2">{otherDifferences.map(item => <div key={item.field}><dt className="capitalize text-muted-foreground">{item.label}</dt><dd className="break-words">{differenceValue(row, item.field)}</dd></div>)}</dl></details>}
+            <Button variant="outline" size="sm" disabled={saving} aria-pressed={scheduleId === row.id} onClick={() => setScheduleId(row.id)} data-testid={`choose-schedule-${row.id}`}>{scheduleId === row.id ? "Entry selected" : "Use this entry"}</Button>
+          </div>)}
+          {suggestedScheduleRows.length > 6 && <p className="text-[11px] text-muted-foreground">More matches are available in the search below.</p>}
+        </div>}
         <Input aria-label="Search tenancy schedule rows" placeholder="Find unit or tenant…" value={scheduleSearch} onChange={e => setScheduleSearch(e.target.value)} className="mt-2" />
         <select aria-label="Tenancy schedule row" className="w-full min-h-11 mt-2 rounded-md border border-input bg-background px-2" value={scheduleId} onChange={e => setScheduleId(e.target.value)} data-testid="select-unit-schedule">
           <option value="">Choose a schedule row…</option>
@@ -1354,7 +1397,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, onClose,
           <p className="text-[11px] text-muted-foreground break-words">Legal tenant: {scheduleChoice.tenant_name || "Not entered"}{scheduleChoice.floor_level ? ` · ${scheduleChoice.floor_level}` : ""}</p>
           <div className="grid grid-cols-2 gap-2">{fact("Passing rent", fmtMoney(scheduleChoice.passing_rent_pa))}{fact("Lease expiry", fmtDate(scheduleChoice.lease_expiry))}{fact("ERV", fmtMoney(scheduleChoice.erv_pa))}{fact("Size", scheduleChoice.nia_sqft ?? scheduleChoice.gia_sqft ? `${Number(scheduleChoice.nia_sqft ?? scheduleChoice.gia_sqft).toLocaleString("en-GB")} sq ft` : "—")}</div>
         </div>}
-        <Button className="mt-2" size="sm" disabled={!scheduleId || saving} onClick={linkSchedule} data-testid="button-link-unit-schedule">Link schedule row</Button>
+        <Button className="mt-2" size="sm" disabled={!scheduleId || saving} onClick={linkSchedule} data-testid="button-link-unit-schedule">{saving ? "Saving link…" : "Link schedule row"}</Button>
       </details>}
 
       {matters.length > 0 && (

@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { CovenantBadgeByCompany } from "@/components/covenant-badge";
 import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
 import { TrackerSummary } from "@/components/tracker-summary";
+import { TenancyImportReview, type TenancyImportReviewRow } from "@/components/tenancy-import-review";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -586,6 +587,8 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [unifiedAddOpen, setUnifiedAddOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importReviewRows, setImportReviewRows] = useState<TenancyImportReviewRow[]>([]);
+  useEffect(() => setImportReviewRows([]), [propertyId]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Import, Re-sync (all) and bulk-delete are staff-only server-side (the
@@ -816,7 +819,6 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
       const formData = new FormData();
       formData.append("file", file);
       formData.append("propertyId", propertyId);
-      formData.append("clearExisting", units.length > 0 ? "true" : "false");
       const r = await fetch("/api/tenancy-schedule/import-excel", {
         method: "POST",
         headers: getAuthHeaders(),
@@ -825,7 +827,8 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
       });
       const result = await r.json();
       if (!r.ok) throw new Error(result.error);
-      toast({ title: "Import complete", description: result.message });
+      setImportReviewRows(result.reviewRows || []);
+      toast({ title: result.needsReview ? "Import needs review" : "Import complete", description: result.message });
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
     } catch (err: any) {
       toast({ title: "Import failed", description: err.message, variant: "destructive" });
@@ -865,6 +868,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     const isAccessDenied = (unitsError as Error)?.message === "ACCESS_DENIED";
     return (
       <div className="space-y-3" data-testid="property-tenancy-schedule">
+        <TenancyImportReview rows={importReviewRows} />
         <div className="text-center py-6 text-gray-400 border rounded-lg">
           <Lock className="w-6 h-6 mx-auto mb-1 opacity-40" />
           <p className="text-xs">{isAccessDenied ? "Access restricted" : "Failed to load"}</p>
@@ -1045,7 +1049,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           </div>
           <input type="file" ref={fileInputRef} accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
           {!readOnly && !isClientViewer && (
-          <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
+          <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={() => fileInputRef.current?.click()} disabled={importing} title="Add new units from Excel. Existing information is kept; differences are flagged for review." data-testid="btn-import-tenancy">
             {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import
           </Button>
           )}
@@ -1178,6 +1182,12 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
       {/* Live lettings pulse — canonical tracker strip; each lozenge opens
           the Letting Tracker pre-filtered (Woody, 2026-08-03). */}
       <TrackerSummary variant="strip" propertyId={propertyId} />
+
+      <TenancyImportReview rows={importReviewRows} onSelectCandidate={candidate => {
+        setSearch(candidate.unitNumber || candidate.premises || "");
+        setStatusFilter(null);
+        setExpandedZones(new Set(["__all__"]));
+      }} />
 
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
         {[

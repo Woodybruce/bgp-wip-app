@@ -5091,7 +5091,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "upsert_tenancy_schedule",
-      description: "Add or update tenancy schedule rows on a property (one row per let/vacant unit). Use to populate a full tenancy schedule from a brochure, datatape, or the user's notes. Pass the property ID and an array of unit rows. Each row with an `id` updates that row; rows without an `id` are inserted. Search for the property first to get its ID.",
+      description: "Add or update tenancy schedule rows on a property. Search for the property first. An explicit row id updates only that property's row using supplied fields. Rows without IDs are matched by unit reference and floor/demise: new identities are added, unchanged rows are skipped, and ambiguous or different existing information is reported for review without overwriting it. Include floorLevel and premises when available to distinguish repeated unit references; do not invent them. Report added, updated, skipped and review counts accurately.",
       parameters: {
         type: "object",
         properties: {
@@ -5102,9 +5102,11 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
             items: {
               type: "object",
               properties: {
-                id: { type: "string", description: "Existing tenancy_schedule_units.id — provide to update, omit to insert" },
+                id: { type: "string", description: "Existing tenancy_schedule_units.id on this property — provide for an explicit edit; omit for a safe import/match" },
                 unitNumber: { type: "string", description: "Unit number / reference e.g. 'Unit 4'" },
                 premises: { type: "string", description: "Demise / premises e.g. 'Ground Floor'" },
+                floorLevel: { type: "string", description: "Floor or level as recorded in the source, to distinguish repeated unit references" },
+                grouping: { type: "string", description: "Source grouping or zone, when provided" },
                 permittedUse: { type: "string", description: "Permitted use e.g. 'Retail', 'Class E'" },
                 tenantName: { type: "string", description: "Tenant legal name. Leave blank/'Vacant' for void units." },
                 tradingName: { type: "string", description: "Tenant trading name" },
@@ -6867,39 +6869,13 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "upsert_tenancy_schedule") {
-    const { tenancyScheduleUnits, crmProperties } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    const propertyId = fnArgs.propertyId as string;
-    const rows: any[] = Array.isArray(fnArgs.rows) ? fnArgs.rows : [];
-    const prop = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties).where(eq(crmProperties.id, propertyId)).limit(1);
-    if (!prop.length) return { data: { success: false, error: `No property found with ID "${propertyId}"` } };
-    if (!rows.length) return { data: { success: false, error: "No tenancy rows provided" } };
-    const toDate = (v: any) => (v ? new Date(v) : null);
-    let inserted = 0, updated = 0;
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-      const values: any = {
-        propertyId,
-        unitNumber: r.unitNumber ?? null, premises: r.premises ?? null, permittedUse: r.permittedUse ?? null,
-        tenantName: r.tenantName ?? null, tradingName: r.tradingName ?? null,
-        leaseStart: toDate(r.leaseStart), leaseExpiry: toDate(r.leaseExpiry), breakDate: toDate(r.breakDate), nextReviewDate: toDate(r.nextReviewDate),
-        termYears: r.termYears ?? null, passingRentPa: r.passingRentPa ?? null, ervPa: r.ervPa ?? null,
-        niaSqft: r.niaSqft ?? null, giaSqft: r.giaSqft ?? null, rateableValue: r.rateableValue ?? null,
-        status: r.status ?? (r.tenantName && String(r.tenantName).toLowerCase() !== "vacant" ? "Occupied" : "Vacant"),
-        comments: r.comments ?? null,
-      };
-      if (r.id) {
-        const clean: any = { updatedAt: new Date() };
-        for (const [k, v] of Object.entries(values)) { if (v !== undefined && v !== null && k !== "propertyId") clean[k] = v; }
-        await db.update(tenancyScheduleUnits).set(clean).where(eq(tenancyScheduleUnits.id, r.id));
-        updated++;
-      } else {
-        values.sortOrder = i;
-        await db.insert(tenancyScheduleUnits).values(values);
-        inserted++;
-      }
+    const { upsertChatTenancySchedule } = await import("./chatbgp-tenancy-import");
+    try {
+      const result = await upsertChatTenancySchedule(pool, fnArgs.propertyId, fnArgs.rows);
+      return { data: result, ...(result.inserted || result.updated ? { action: { type: "crm_updated", entityType: "property", id: result.propertyId } } : {}) };
+    } catch (error: any) {
+      return { data: { success: false, error: error.message || "Could not save tenancy schedule" } };
     }
-    return { data: { success: true, action: "upserted", entity: "tenancy schedule", propertyId, name: prop[0].name, inserted, updated }, action: { type: "crm_updated", entityType: "property", id: propertyId } };
   }
 
   if (fnName === "add_property_imagery") {
@@ -12405,40 +12381,14 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "upsert_tenancy_schedule") {
-    const { tenancyScheduleUnits, crmProperties } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    const propertyId = fnArgs.propertyId as string;
-    const rows: any[] = Array.isArray(fnArgs.rows) ? fnArgs.rows : [];
-    const prop = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties).where(eq(crmProperties.id, propertyId)).limit(1);
-    if (!prop.length) return { handled: true, response: { reply: `No property found with ID "${propertyId}". Please search first.` } };
-    if (!rows.length) return { handled: true, response: { reply: "No tenancy rows provided." } };
-    const toDate = (v: any) => (v ? new Date(v) : null);
-    let inserted = 0, updated = 0;
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-      const values: any = {
-        propertyId,
-        unitNumber: r.unitNumber ?? null, premises: r.premises ?? null, permittedUse: r.permittedUse ?? null,
-        tenantName: r.tenantName ?? null, tradingName: r.tradingName ?? null,
-        leaseStart: toDate(r.leaseStart), leaseExpiry: toDate(r.leaseExpiry), breakDate: toDate(r.breakDate), nextReviewDate: toDate(r.nextReviewDate),
-        termYears: r.termYears ?? null, passingRentPa: r.passingRentPa ?? null, ervPa: r.ervPa ?? null,
-        niaSqft: r.niaSqft ?? null, giaSqft: r.giaSqft ?? null, rateableValue: r.rateableValue ?? null,
-        status: r.status ?? (r.tenantName && String(r.tenantName).toLowerCase() !== "vacant" ? "Occupied" : "Vacant"),
-        comments: r.comments ?? null,
-      };
-      if (r.id) {
-        const clean: any = { updatedAt: new Date() };
-        for (const [k, v] of Object.entries(values)) { if (v !== undefined && v !== null && k !== "propertyId") clean[k] = v; }
-        await db.update(tenancyScheduleUnits).set(clean).where(eq(tenancyScheduleUnits.id, r.id));
-        updated++;
-      } else {
-        values.sortOrder = i;
-        await db.insert(tenancyScheduleUnits).values(values);
-        inserted++;
-      }
+    const { upsertChatTenancySchedule } = await import("./chatbgp-tenancy-import");
+    try {
+      const result = await upsertChatTenancySchedule(pool, fnArgs.propertyId, fnArgs.rows);
+      return { handled: true, response: { reply: result.message,
+        ...(result.inserted || result.updated ? { action: { type: "crm_updated", entityType: "property", id: result.propertyId } } : {}) } };
+    } catch (error: any) {
+      return { handled: true, response: { reply: error.message || "Could not save tenancy schedule" } };
     }
-    const reply = await summaryHelper({ success: true, action: "upserted", entity: "tenancy schedule", name: prop[0].name, inserted, updated });
-    return { handled: true, response: { reply: reply || `Tenancy schedule updated for "${prop[0].name}" (${inserted} added, ${updated} updated).`, action: { type: "crm_updated", entityType: "property", id: propertyId } } };
   }
 
   if (fnName === "add_property_imagery") {

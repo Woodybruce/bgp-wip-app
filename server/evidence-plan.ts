@@ -29,6 +29,7 @@ import { isValidPolygon, pointInPolygon, interiorPoint } from "@shared/plan-geom
 import { resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import type { ScanReviewCandidate } from "@shared/plan-scan-review";
 import { applyPlanScanReview, buildPlanScanReview, persistPlanScanReview, PlanScanReviewError, readPlanScanReview } from "./plan-scan-review";
+import { resolveEvidenceScheduleMatch } from "./evidence-plan-schedule";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
@@ -90,7 +91,7 @@ pool.query(`
     notes TEXT,
     ts_matched_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  )`).then(() => pool.query(`ALTER TABLE evidence_plan_units ADD COLUMN IF NOT EXISTS level_id UUID, ADD COLUMN IF NOT EXISTS source TEXT, ADD COLUMN IF NOT EXISTS dot JSONB`)).catch(() => {});
+  )`).then(() => pool.query(`ALTER TABLE evidence_plan_units ADD COLUMN IF NOT EXISTS level_id UUID, ADD COLUMN IF NOT EXISTS source TEXT, ADD COLUMN IF NOT EXISTS dot JSONB, ADD COLUMN IF NOT EXISTS tenancy_unit_id VARCHAR`)).catch(error => console.error("[evidence-plan] unit schema initialization failed:", error.message));
 pool.query(`
   CREATE TABLE IF NOT EXISTS evidence_plan_entries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -205,31 +206,22 @@ export function validateEvidenceUnitPatch(body: any): Record<string, any> {
 
 export async function evidenceScheduleRows(propertyId: string | null, db: any = pool): Promise<any[]> {
   if (!propertyId) return [];
-  return (await db.query(`SELECT id, property_id, unit_number, trading_name, tenant_name, floor_level,
-    lease_expiry, break_date, next_review_date, erv_pa, passing_rent_pa, nia_sqft, gia_sqft,
-    permitted_use, premises, updated_at FROM tenancy_schedule_units WHERE property_id = $1 ORDER BY unit_number, id`, [propertyId])).rows;
+  return (await db.query(`SELECT * FROM tenancy_schedule_units WHERE property_id = $1 ORDER BY unit_number, id`, [propertyId])).rows;
 }
 
-export function matchEvidenceScheduleRow(unit: any, rows: any[]): { row: any | null; method: "ref" | "tenant" | null } {
-  const norm = normaliseUnitRef(unit.unit_ref);
-  const exact = norm ? rows.filter(row => normaliseUnitRef(row.unit_number) === norm) : [];
-  if (exact.length) return { row: exact.length === 1 ? exact[0] : null, method: exact.length === 1 ? "ref" : null };
-  // An explicit different unit number is not evidence for another shop held
-  // by the same tenant. Name matching is only a fallback for name-only labels.
-  if (/\d/.test(String(unit.unit_ref || ""))) return { row: null, method: null };
-  const names = new Set([stripCoName(unit.tenant_name), stripCoName(unit.unit_ref)].filter(name => name.length >= 3));
-  const candidates = rows.filter(row => names.has(stripCoName(row.trading_name)) || names.has(stripCoName(row.tenant_name)));
-  const retail = candidates.filter(row => !/storage|store\s*cage|container|car\s*park|atm|substation|advert|barrow|locker|sprinkler|plant/i
-    .test(`${row.permitted_use || ""} ${row.unit_number || ""} ${row.premises || ""}`));
-  const unique = retail.length ? retail : candidates;
-  return { row: unique.length === 1 ? unique[0] : null, method: unique.length === 1 ? "tenant" : null };
+export function matchEvidenceScheduleRow(unit: any, rows: any[]) {
+  const properties = [...new Set(rows.map(row => row.property_id).filter(Boolean))];
+  return resolveEvidenceScheduleMatch(unit, rows, properties.length === 1 ? { propertyId: properties[0] } : {});
 }
 
 export function presentEvidenceUnit(unit: any, scheduleRows: any[]): any {
   const match = matchEvidenceScheduleRow(unit, scheduleRows);
   const schedule = match.row;
   const metadata = { unit_norm: normaliseUnitRef(unit.unit_ref), ts_linked: !!schedule,
-    ts_row_id: schedule?.id || null, ts_match_method: match.method, ts_unit_ref: schedule?.unit_number || null };
+    ts_row_id: schedule?.id || null, ts_match_method: match.method, ts_unit_ref: schedule?.unit_number || null,
+    ts_link_status: match.status, ts_link_reason: match.reason, ts_candidate_ids: match.candidateIds,
+    ts_equivalent_row_ids: match.equivalentDuplicateIds, ts_row_updated_at: schedule?.updated_at || null,
+    ts_conflicts: match.conflicts.map(conflict => ({ field: conflict.field, label: conflict.label })) };
   if (!schedule) return { ...unit, ...metadata };
   // Canonical blank values stay blank; a deleted schedule fact must not be
   // resurrected from an old local import on the next load.
@@ -243,7 +235,7 @@ export function presentEvidenceUnit(unit: any, scheduleRows: any[]): any {
 // tenant name when exactly one unit carries that tenant. Idempotent —
 // runs after detection/extraction jobs and on plan load.
 async function relinkAllEntries(planId: string, db: any = pool): Promise<number> {
-  const { rows: units } = await db.query(`SELECT id, unit_ref, tenant_name FROM evidence_plan_units WHERE plan_id = $1`, [planId]);
+  const { rows: units } = await db.query(`SELECT id, unit_ref, tenant_name, tenancy_unit_id FROM evidence_plan_units WHERE plan_id = $1`, [planId]);
   const { rows: entries } = await db.query(`SELECT id, unit_ref, tenant FROM evidence_plan_entries WHERE plan_id = $1 AND unit_id IS NULL`, [planId]);
   if (units.length === 0 || entries.length === 0) return 0;
   const { rows: plans } = await db.query(`SELECT property_id FROM evidence_plans WHERE id = $1`, [planId]);
@@ -779,6 +771,9 @@ export async function saveEvidenceUnit(
     if (plan.property_id) await db.query(`SELECT id FROM tenancy_schedule_units WHERE property_id = $1 ORDER BY id FOR UPDATE`, [plan.property_id]);
     const schedule = await evidenceScheduleRows(plan.property_id, db);
     const current = matchEvidenceScheduleRow(unit, schedule).row;
+    if ("expectedTenancyUnitId" in body && (body.expectedTenancyUnitId ?? null) !== (unit.tenancy_unit_id ?? null)) {
+      throw new EvidencePlanError(409, "The saved schedule link has changed. Reload this unit before choosing a row.");
+    }
     let matched = current;
     if (linking) {
       if (!("expectedScheduleRowId" in body) || (body.expectedScheduleRowId ?? null) !== (current?.id ?? null)) {
@@ -786,30 +781,29 @@ export async function saveEvidenceUnit(
       }
       const target = schedule.find((row: any) => row.id === body.linkScheduleRowId);
       if (!target) throw new EvidencePlanError(409, "That schedule row is no longer on this property. Reload the schedule choices.");
-      const ref = String(target.unit_number || "").trim();
-      const normalised = normaliseUnitRef(ref);
-      if (!normalised || schedule.filter((row: any) => normaliseUnitRef(row.unit_number) === normalised).length !== 1) {
-        throw new EvidencePlanError(409, "This schedule reference is missing or duplicated. Give the schedule rows distinct references before linking.");
+      if ("expectedTargetUpdatedAt" in body && String(body.expectedTargetUpdatedAt || "") !== (target.updated_at ? new Date(target.updated_at).toISOString() : "")) {
+        throw new EvidencePlanError(409, "That schedule row changed after you reviewed it. Reload the choices before linking.");
       }
-      const siblings = (await db.query(`SELECT id, unit_ref FROM evidence_plan_units WHERE plan_id = $1 AND id <> $2`, [plan.id, unit.id])).rows;
-      if (siblings.some((row: any) => normaliseUnitRef(row.unit_ref) === normalised)) {
-        throw new EvidencePlanError(409, "Another outline already uses that schedule reference. Review the existing outline before linking.");
-      }
-      patch.unitRef = ref;
       matched = target;
     }
     if ("scheduleRowId" in body && (body.scheduleRowId ?? null) !== (current?.id ?? null)) {
       throw new EvidencePlanError(409, "The linked schedule row has changed. Reload this unit before editing its facts.");
+    }
+    if (current && "scheduleRowUpdatedAt" in body && String(body.scheduleRowUpdatedAt || "") !== (current.updated_at ? new Date(current.updated_at).toISOString() : "")) {
+      throw new EvidencePlanError(409, "The tenancy schedule was edited after you opened this unit. Reload it before saving.");
     }
     const factMap: Record<string, string> = {
       tenantName: "trading_name", leaseExpiry: "lease_expiry", breakDate: "break_date", reviewDate: "next_review_date",
       erv: "erv_pa", passingRent: "passing_rent_pa", sqft: matched?.nia_sqft != null || matched?.gia_sqft == null ? "nia_sqft" : "gia_sqft",
     };
     const factKeys = Object.keys(factMap).filter(key => key in patch);
+    if (unit.tenancy_unit_id && !current && factKeys.length) {
+      throw new EvidencePlanError(409, "The saved tenancy row is no longer available on this property. Choose its replacement before editing lease facts.");
+    }
     if (matched && factKeys.length && (body.scheduleRowId !== matched.id || linking && current?.id !== matched.id)) {
       throw new EvidencePlanError(409, "These facts belong to the linked tenancy schedule. Review the current schedule row before saving.");
     }
-    if (current && !linking && ("unitRef" in patch || "tenantName" in patch)) {
+    if (current && !unit.tenancy_unit_id && !linking && ("unitRef" in patch || "tenantName" in patch)) {
       const prospectiveUnit = { ...unit,
         unit_ref: "unitRef" in patch ? patch.unitRef : unit.unit_ref,
         tenant_name: "tenantName" in patch ? patch.tenantName : unit.tenant_name };
@@ -839,6 +833,12 @@ export async function saveEvidenceUnit(
     const localKeys = Object.keys(patch).filter(key => !matched || !(key in factMap) || key === "tenantName");
     const values = localKeys.map(key => key === "polygon" || key === "dot" ? patch[key] === null ? null : JSON.stringify(patch[key]) : patch[key]);
     const assignments = localKeys.map((key, index) => `${UNIT_FIELDS[key]} = $${index + 1}`);
+    // Persist the reviewed identity, including an inferred match on its first
+    // fact edit. A later duplicate import cannot redirect this unit's edits.
+    if (linking || matched && factKeys.length) {
+      values.push(matched!.id);
+      assignments.push(`tenancy_unit_id = $${values.length}`);
+    }
     assignments.push("source = 'manual'", "updated_at = now()");
     values.push(unit.id);
     const saved = (await db.query(`UPDATE evidence_plan_units SET ${assignments.join(", ")} WHERE id = $${values.length} RETURNING *`, values)).rows[0];
@@ -1305,9 +1305,22 @@ All x/y fractions are 0..1 in THIS image, x rightwards, y downwards. ${known.len
 async function detectTile(sharp: any, planImage: Buffer, W: number, H: number, ox: number, oy: number, fw: number, fh: number, known: string[], overview = false, regions: import("./plan-unit-detection").PlanUnitRegion[] = [], focused = false): Promise<import("./plan-unit-detection").DetectedPlanUnit[]> {
   const { mapDetectedPlanUnits } = await import("./plan-unit-detection");
   if (focused) {
-    const content: any[] = [{ type: "text", text: `Inspect each candidate separately. Each pair shows the SAME close-up of a retail plan: first the original, then the same view with ONE blue boundary and everything outside it faded. Only the unfaded area belongs to the candidate. A unit can be L-shaped or have narrow returns behind neighbouring shops. Neighbours in a concave notch are outside the unit even when they lie inside its rectangular crop; their presence does not mean it combines multiple units. Candidate IDs appear only in accompanying text and are NOT unit references.
+    const contextScale = Math.min(1, 1400 / Math.max(W, H));
+    const contextWidth = Math.max(1, Math.round(W * contextScale)), contextHeight = Math.max(1, Math.round(H * contextScale));
+    const contextFrame = sharp(planImage).resize({ width: contextWidth, height: contextHeight });
+    const contextOriginal = await contextFrame.clone().jpeg({ quality: 90 }).toBuffer();
+    const locators = regions.map(region => {
+      const xs = region.polygon.map(p => p.x * contextWidth), ys = region.polygon.map(p => p.y * contextHeight);
+      const x = Math.min(...xs), y = Math.min(...ys);
+      return `<rect x="${x}" y="${y}" width="${Math.max(...xs) - x}" height="${Math.max(...ys) - y}" fill="none" stroke="#006ce0" stroke-width="2"/><text x="${x}" y="${Math.max(12, y - 3)}" font-size="12" font-weight="bold" fill="#0057bc" stroke="white" stroke-width="3" paint-order="stroke">@${region.id}</text>`;
+    }).join("");
+    const contextLocated = await contextFrame.clone().composite([{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${contextWidth}" height="${contextHeight}">${locators}</svg>`) }]).jpeg({ quality: 90 }).toBuffer();
+    const content: any[] = [{ type: "text", text: `First inspect the WHOLE ORIGINAL PAGE and the locator page. Locate the actual plan drawing and any detached retail units. Candidates in page logos, titles, keys, schedules and decorative panels are not shops, even if their close-up resembles an enclosed room. The blue boxes and @ tags on the locator page are generated locations, never printed references.` },
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: contextOriginal.toString("base64") } },
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: contextLocated.toString("base64") } },
+      { type: "text", text: `Now inspect each candidate in its whole-page context. Each pair shows the SAME close-up of a retail plan: first the original, then the same view with ONE blue boundary and everything outside it faded. Only the unfaded area belongs to the candidate. A unit can be L-shaped or have narrow returns behind neighbouring shops. Neighbours in a concave notch are outside the unit even when they lie inside its rectangular crop; their presence does not mean it combines multiple units. Candidate IDs appear only in accompanying text and are NOT unit references.
 For each candidate decide whether that exact boundary is one complete lettable shop, restaurant or kiosk. Include vacant and unlabelled retail units. Label readability does not determine isUnit: a clearly recognizable kiosk with no readable name is still a unit and its labels can be null. Reject lettering/logo fragments, internal rooms, stairs, lifts, toilets, malls, legend/table cells, surrounding non-retail buildings and partial pieces of a larger unit. Do not switch to a neighbouring shop. A closed shape alone does not make a unit.
-Read tenant and unitRef from the original inside the highlighted boundary or its frontage label. A nearby label is usable only when a clear leader line connects it to this exact candidate; never borrow a neighbour's label. If there is no readable label, retain a recognizable unit with null labels. Preserve combined references such as A2/A3/A4. If a label is unreadable use null; do not invent a number or copy a candidate ID. Return one decision for EVERY supplied candidate, including rejections, as JSON only: {"units":[{"regionId":123,"isUnit":true,"unitRef":"B12","tenant":"Example"},{"regionId":124,"isUnit":false,"unitRef":null,"tenant":null}]}. Do not return seeds or polygons; each decision is tied to its supplied boundary.` }];
+Read tenant and unitRef from the original inside the highlighted boundary or its frontage label. A nearby label is usable only when a clear leader line connects it to this exact candidate; never borrow a neighbour's label. If there is no readable label, retain a recognizable unit with null labels. Preserve combined references such as A2/A3/A4. If a label is unreadable use null; do not invent a number or copy a candidate ID. Set confidence:"certain" only when its location, complete boundary and identity are supported by the original page; use confidence:"uncertain" for a possible unit needing a person's review. Return one decision for EVERY supplied candidate, including rejections, as JSON only: {"units":[{"regionId":123,"isUnit":true,"confidence":"certain","unitRef":"B12","tenant":"Example"},{"regionId":124,"isUnit":false,"confidence":"certain","unitRef":null,"tenant":null}]}. Do not return seeds or polygons; each decision is tied to its supplied boundary.` }];
     for (const region of regions) {
       const xs = region.polygon.map(p => p.x * W), ys = region.polygon.map(p => p.y * H);
       const pad = Math.max(28, Math.min(100, Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * .2));
@@ -1332,10 +1345,11 @@ Read tenant and unitRef from the original inside the highlighted boundary or its
     const parsed = extractJsonObject(msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join(""));
     const rows = parsed?.units;
     if (!Array.isArray(rows) || rows.length !== regions.length || new Set(rows.map((row: any) => row?.regionId)).size !== regions.length
-      || rows.some((row: any) => !Number.isInteger(row?.regionId) || !regions.some(region => region.id === row.regionId) || typeof row.isUnit !== "boolean")) {
+      || rows.some((row: any) => !Number.isInteger(row?.regionId) || !regions.some(region => region.id === row.regionId) || typeof row.isUnit !== "boolean"
+        || row.confidence !== undefined && row.confidence !== "certain" && row.confidence !== "uncertain")) {
       throw new Error("Detection did not return one decision per proposed boundary");
     }
-    return mapDetectedPlanUnits({ units: rows.filter((row: any) => row.isUnit) }, { x: 0, y: 0, width: 1, height: 1 }, regions);
+    return mapDetectedPlanUnits({ units: rows.filter((row: any) => row.isUnit).map((row: any) => ({ ...row, reviewRequired: row.confidence !== "certain" })) }, { x: 0, y: 0, width: 1, height: 1 }, regions);
   }
   const left = Math.round(ox * W), top = Math.round(oy * H);
   const width = Math.min(W - left, Math.round(fw * W)), height = Math.min(H - top, Math.round(fh * H));
@@ -1475,7 +1489,7 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       await checkpoint(`Read ${index + 1} of ${frames.length} image sections; ${found.length} unit observations to verify…`, index + 1);
     }
     if (!found.length) throw new Error("No units could be read on this level. Existing outlines and information are unchanged.");
-    const candidates: { ref: string; printedRef: boolean; conflictingLabel: boolean; tenant: string | null; polygon: { x: number; y: number }[]; dot: { x: number; y: number } }[] = [];
+    const candidates: { ref: string; printedRef: boolean; conflictingLabel: boolean; reviewRequired: boolean; tenant: string | null; polygon: { x: number; y: number }[]; dot: { x: number; y: number } }[] = [];
     let untraced = 0;
     for (const candidate of found) {
       let ref = candidate.unitRef || (!candidate.tenant && candidate.regionId ? `Unlabelled ${candidate.regionId}` : "");
@@ -1494,9 +1508,12 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
           duplicate.ref = ref.slice(0, 80); duplicate.printedRef = true;
         } else if (!duplicate.printedRef && /^Unlabelled \d+$/.test(duplicate.ref) && candidate.tenant) duplicate.ref = ref.slice(0, 80);
         if (!duplicate.tenant && candidate.tenant) duplicate.tenant = candidate.tenant;
+        duplicate.reviewRequired ||= !!candidate.reviewRequired;
         continue;
       }
-      candidates.push({ ref: ref.slice(0, 80), printedRef: Boolean(candidate.unitRef), conflictingLabel: false, tenant: candidate.tenant, polygon: traced.polygon, dot: traced.dot });
+      candidates.push({ ref: ref.slice(0, 80), printedRef: Boolean(candidate.unitRef), conflictingLabel: false,
+        reviewRequired: !!candidate.reviewRequired,
+        tenant: candidate.tenant, polygon: traced.polygon, dot: traced.dot });
     }
     if (!candidates.length) throw new Error("Labels were found but no reliable closed unit outlines could be traced. Existing units are unchanged; click inside a unit or draw its outline.");
     const refCounts = new Map<string, number>();
@@ -1513,6 +1530,7 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       // through tenant-name fallback and stay stable when region IDs change.
       candidate.ref = `Unlabelled ${Math.round(candidate.dot.x * 10000)}-${Math.round(candidate.dot.y * 10000)}`;
       candidate.printedRef = false;
+      candidate.reviewRequired = true;
       labelReviews++;
     }
     await checkpoint("Checking labels and saving verified boundaries…", frames.length);
@@ -1535,6 +1553,20 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
         const sameRef = existing.filter(row => normaliseUnitRef(row.unit_ref) === normaliseUnitRef(candidate.ref));
         result.suggestedUnitIds = sameRef.map(row => row.id);
         const overlaps = (row: any) => planPolygonsOverlap(candidate.polygon, row.polygon);
+        if (candidate.reviewRequired || !candidate.printedRef && !candidate.tenant) {
+          preserved++;
+          result.reason = "This possible boundary needs its identity checked. Choose its existing unit or enter a confirmed reference before adding it.";
+          continue;
+        }
+        const sameGeometry = existing.filter(row => JSON.stringify(row.polygon) === JSON.stringify(candidate.polygon));
+        if (sameGeometry.length === 1 && (sameRef.some(row => row.id === sameGeometry[0].id)
+          || candidate.tenant && stripCoName(candidate.tenant) === stripCoName(sameGeometry[0].tenant_name))) {
+          result.status = "current"; result.unitId = sameGeometry[0].id;
+          result.suggestedUnitIds = [sameGeometry[0].id];
+          result.reason = "The saved unit already has this boundary.";
+          preserved++;
+          continue;
+        }
         if (sameRef.length) {
           const saved = sameRef.length === 1 ? sameRef[0] : null;
           if (saved && JSON.stringify(saved.polygon) === JSON.stringify(candidate.polygon)) {

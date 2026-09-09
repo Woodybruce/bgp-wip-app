@@ -208,6 +208,7 @@ async function detectionJob({ existing = [], candidates, changedBackground = fal
       { unitRef: 'A2', tenant: 'Tenant B', seed: seed(image, 115, 60), polygon: null },
     ]) : []; },
     normaliseUnitRef: value => String(value).trim().toUpperCase(), normTenantName: value => String(value || '').toUpperCase(),
+    stripCoName: value => String(value || '').toUpperCase(),
     relinkAllEntries: async () => 0,
     require(name) {
       if (name === 'sharp') return { default: sharp };
@@ -219,6 +220,46 @@ async function detectionJob({ existing = [], candidates, changedBackground = fal
   await run('plan', 'job', { id: 'level', background_key: 'original' }, null, true);
   return { writes, refinements, updates, allQueries, current, released, calls, artifacts };
 }
+
+test('focused classification receives whole-page context and retains uncertainty for review', async () => {
+  const image = raster(); rect(image, 20, 20, 75, 100, teal);
+  const png = await sharp(image.data, { raw: { width: image.width, height: image.height, channels: 3 } }).png().toBuffer();
+  const regions = findPlanUnitRegions(image).slice(0, 1);
+  assert.equal(regions.length, 1);
+  const declarations = ['DETECT_PROMPT', 'extractJsonObject', 'detectTile'].map(name => find('server/evidence-plan.ts', node =>
+    ts.isFunctionDeclaration(node) && node.name?.text === name || ts.isVariableStatement(node) && node.declarationList.declarations.some(d => d.name.getText() === name))).join('\n');
+  let request;
+  const { tile } = evaluate(declarations + '\nexports.tile = detectTile;', {
+    anthropic: { messages: { create: async body => { request = body; return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ units: [{ regionId: regions[0].id, isUnit: true, confidence: 'uncertain', unitRef: 'A1', tenant: null }] }) }] }; } } },
+    require: name => { assert.equal(name, './plan-unit-detection'); return { mapDetectedPlanUnits }; },
+  });
+  const classified = await tile(sharp, png, image.width, image.height, 0, 0, 1, 1, [], false, regions, true);
+  assert.equal(classified[0].reviewRequired, true);
+  const images = request.messages[0].content.filter(item => item.type === 'image').map(item => Buffer.from(item.source.data, 'base64'));
+  assert.equal(images.length, 4, 'original page, locator page, original close-up and highlighted close-up');
+  assert.deepEqual(images[0], await sharp(png).resize({ width: image.width, height: image.height }).jpeg({ quality: 90 }).toBuffer());
+  assert.notDeepEqual(images[1], images[0]);
+});
+
+test('unidentified shapes and uncertain named candidates remain review-only', async () => {
+  const result = await detectionJob({ candidates: [
+    { regionId: 1, unitRef: null, tenant: null, seed: seed(raster(), 45, 60), polygon: null },
+    { unitRef: 'A2', tenant: 'Possible shop', reviewRequired: true, seed: seed(raster(), 115, 60), polygon: null },
+  ] });
+  assert.equal(result.writes.length, 0); assert.equal(result.refinements.length, 0);
+  assert.equal(result.artifacts[0].summary.needsReview, 2);
+  assert.ok(result.artifacts[0].candidates.every(row => /identity checked/.test(row.reason)));
+});
+
+test('a reviewed boundary with a human label stays current on the next scan', async () => {
+  const first = await detectionJob();
+  const reviewed = { ...first.current[0], unit_ref: 'Reviewed anchor', source: 'manual' };
+  const second = await detectionJob({ existing: [reviewed] });
+  assert.deepEqual(second.current[0], reviewed);
+  assert.equal(second.refinements.length, 0);
+  assert.equal(second.artifacts[0].candidates[0].status, 'current');
+  assert.equal(second.artifacts[0].candidates[0].unitId, reviewed.id);
+});
 
 test('overlapping legacy AI boxes retain every traced candidate in the saved review artifact', async () => {
   const saved = { id: 'saved', unit_ref: 'Legacy box', source: 'ai', polygon: [
@@ -265,25 +306,29 @@ test('repeated saved refs and an AI label in a different place cannot replace ex
   assert.equal(duplicate.refinements.length, 0);
 });
 
-test('conflicting printed labels retain one editable outline with a review label', async () => {
+test('conflicting printed labels retain one proposal for review without creating an unverified unit', async () => {
   const result = await detectionJob({ candidates: [
     { unitRef: 'A1', seed: { x: 45 / 240, y: 60 / 180 }, polygon: null },
     { unitRef: 'A2', seed: { x: 50 / 240, y: 65 / 180 }, polygon: null },
   ] });
-  assert.equal(result.writes.length, 1);
-  assert.match(result.writes[0][2], /^Unlabelled \d+-\d+$/);
+  assert.equal(result.writes.length, 0);
+  assert.equal(result.artifacts[0].candidates.length, 1);
+  assert.equal(result.artifacts[0].candidates[0].status, 'review');
+  assert.match(result.artifacts[0].candidates[0].unitRef, /^Unlabelled \d+-\d+$/);
   assert.equal(result.refinements.length, 0);
   assert.ok(result.updates.at(-1).values[3].includes('outlines need a confirmed unit label'));
 });
 
-test('two distinct demises with the same printed reference remain separately editable', async () => {
+test('two distinct demises with the same printed reference remain separate review proposals', async () => {
   const result = await detectionJob({ candidates: [
     { unitRef: 'A1', seed: { x: 45 / 240, y: 60 / 180 }, polygon: null },
     { unitRef: 'A1', seed: { x: 115 / 240, y: 60 / 180 }, polygon: null },
   ] });
-  assert.equal(result.writes.length, 2);
-  assert.notEqual(result.writes[0][2], result.writes[1][2]);
-  for (const row of result.writes) assert.match(row[2], /^Unlabelled \d+-\d+$/);
+  assert.equal(result.writes.length, 0);
+  const proposals = result.artifacts[0].candidates;
+  assert.equal(proposals.length, 2);
+  assert.notEqual(proposals[0].unitRef, proposals[1].unitRef);
+  for (const row of proposals) { assert.equal(row.status, 'review'); assert.match(row.unitRef, /^Unlabelled \d+-\d+$/); }
   assert.ok(result.updates.at(-1).values[3].includes('outlines need a confirmed unit label'));
 });
 
@@ -297,8 +342,8 @@ test('uncertain new labels cannot alter an overlapping manual unit or its saved 
   ] });
   assert.deepEqual(result.current[0], saved);
   assert.equal(result.refinements.length, 0);
-  assert.equal(result.writes.length, 1);
-  assert.match(result.writes[0][2], /^Unlabelled \d+-\d+$/);
+  assert.equal(result.writes.length, 0);
+  assert.equal(result.artifacts[0].summary.needsReview, 2);
 });
 
 test('a failed trace never removes existing units or pretends an approximate box is an outline', async () => {

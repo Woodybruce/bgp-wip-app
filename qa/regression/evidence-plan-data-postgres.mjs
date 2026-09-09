@@ -20,7 +20,7 @@ const code=source('shared/plan-geometry.ts')+'\n'+declaration('resolveBrandIdSub
     'validateEvidenceUnitPatch','validateEvidenceEntryPatch','evidenceScheduleRows','matchEvidenceScheduleRow','presentEvidenceUnit',
     'relinkEntriesToUnit','relinkAllEntries','saveEvidenceUnit','saveEvidenceEntry','planOr404'].map(name=>declaration(name)).join('\n')+
   '\nexport {relinkEntriesToUnit,relinkAllEntries,planOr404};';
-const helpers=evaluate(code,{pool:db});
+const helpers=evaluate(code,{...evaluate(source('server/evidence-plan-schedule.ts')),pool:db});
 const {saveEvidenceUnit:saveUnit,saveEvidenceEntry:saveEntry,relinkAllEntries:relink}=helpers;
 const allow=async()=>true;
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
@@ -39,7 +39,7 @@ try {
     CREATE TABLE evidence_plan_levels(id uuid PRIMARY KEY,plan_id uuid,background_key text,sort_order int DEFAULT 0,created_at timestamptz DEFAULT now());
     CREATE TABLE evidence_plan_units(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),plan_id uuid,level_id uuid,unit_ref text NOT NULL,
       tenant_name text,polygon jsonb,dot jsonb,source text,lease_expiry date,break_date date,review_date date,
-      erv numeric,passing_rent numeric,sqft numeric,notes text,updated_at timestamptz DEFAULT now());
+      erv numeric,passing_rent numeric,sqft numeric,notes text,tenancy_unit_id varchar,updated_at timestamptz DEFAULT now());
     CREATE TABLE evidence_plan_entries(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),plan_id uuid,unit_id uuid,unit_ref text,tenant text,
       transaction_type text,transaction_date date,size_sqft numeric,zone_a numeric,itza numeric,headline_rent numeric,
       net_effective numeric,term text,concession text,notes text,source_key text,created_by varchar,created_at timestamptz DEFAULT now());
@@ -96,10 +96,14 @@ try {
     assert.equal(namedAfter.id,named);assert.equal(namedAfter.unit_ref,'Tea Shop');assert.deepEqual(namedAfter.dot,{x:.2,y:.2});assert.equal(namedAfter.notes,'Reviewed');
   });
   assert.equal((await entry(id(21))).unit_id,named);
-  const beforeNameConflict=await schedule('schedule-one');
-  await reject('a tenant-name edit that would make the inferred schedule match ambiguous is rejected',()=>saveUnit(named,{scheduleRowId:'schedule-one',tenantName:'Second Shop',passingRent:999},allow),409);
-  const afterNameConflict=await schedule('schedule-one');
-  check('rejected tenant identity edits preserve all canonical lease facts',()=>assert.deepEqual(afterNameConflict,beforeNameConflict));
+  check('the first canonical fact edit pins the exact tenancy row',()=>assert.equal(namedAfter.tenancy_unit_id,'schedule-one'));
+  const otherTenancyBefore=await schedule('schedule-two');
+  const renamedTenant=await saveUnit(named,{scheduleRowId:'schedule-one',tenantName:'Second Shop'},allow);
+  check('a pinned row allows a deliberate tenant change without following another shop of that name',()=>{
+    assert.equal(renamedTenant.ts_row_id,'schedule-one');assert.equal(renamedTenant.unit_ref,'Tea Shop');
+  });
+  assert.deepEqual(await schedule('schedule-two'),otherTenancyBefore);
+  await saveUnit(named,{scheduleRowId:'schedule-one',tenantName:'New Brand'},allow);
   const numbered=id(41);
   await db.query("INSERT INTO tenancy_schedule_units(id,property_id,unit_number,trading_name,tenant_name,passing_rent_pa,lease_expiry) VALUES ('numeric-schedule','other-property','D1','Numeric Shop','Numeric Legal Limited',120000,'2031-01-01')");
   await db.query("INSERT INTO evidence_plan_units(id,plan_id,level_id,unit_ref,tenant_name,passing_rent,lease_expiry,notes,source) VALUES ($1,$2,$3,'D1','Numeric Shop',30000,'2020-01-01','Original numbered unit','manual')",[numbered,otherPlan,otherLevel]);
@@ -112,10 +116,28 @@ try {
   check('safe reference normalization retains the same schedule link and ordinary fact edits',()=>{assert.equal(normalizedNumbered.unit_ref,'Unit D01');assert.equal(normalizedNumbered.ts_row_id,'numeric-schedule');assert.equal(normalizedNumbered.passing_rent,'0');});
   await reject('explicit schedule links reject stale expected matches',()=>saveUnit(manual,{linkScheduleRowId:'schedule-two',expectedScheduleRowId:'wrong'},allow),409);
   await reject('explicit schedule links reject other-property rows',()=>saveUnit(manual,{linkScheduleRowId:'foreign-row',expectedScheduleRowId:null},allow),409);
-  await reject('duplicate schedule references cannot be persisted as an arbitrary link',()=>saveUnit(manual,{linkScheduleRowId:'duplicate-one',expectedScheduleRowId:null},allow),409);
-  const mapped=await saveUnit(manual,{linkScheduleRowId:'schedule-two',expectedScheduleRowId:null},allow);
-  check('reviewed schedule choice explicitly adopts its unique ref and canonical facts',()=>{
-    assert.equal(mapped.unit_ref,'C1');assert.equal(mapped.ts_row_id,'schedule-two');assert.equal(mapped.erv,'600');assert.equal(mapped.notes,'Human edit');
+  const duplicateChosen=await saveUnit(manual,{linkScheduleRowId:'duplicate-one',expectedScheduleRowId:null,expectedTenancyUnitId:null},allow);
+  check('reviewing a duplicate selects its exact row without changing the plan label',()=>{
+    assert.equal(duplicateChosen.tenancy_unit_id,'duplicate-one');assert.equal(duplicateChosen.ts_row_id,'duplicate-one');
+    assert.equal(duplicateChosen.unit_ref,'99');assert.equal(duplicateChosen.erv,'100');
+  });
+  await reject('an outdated saved link cannot replace a newer choice',()=>saveUnit(manual,{linkScheduleRowId:'schedule-two',expectedScheduleRowId:'duplicate-one',expectedTenancyUnitId:null},allow),409);
+  await reject('a changed target needs to be reviewed again',()=>saveUnit(manual,{linkScheduleRowId:'schedule-two',expectedScheduleRowId:'duplicate-one',expectedTargetUpdatedAt:'2000-01-01T00:00:00.000Z'},allow),409);
+  await db.query("INSERT INTO tenancy_schedule_units(id,property_id,unit_number,trading_name,passing_rent_pa) VALUES ('later-duplicate','property','D1','Later import',95000)");
+  const persisted=helpers.presentEvidenceUnit(await unit(manual),await helpers.evidenceScheduleRows('property'));
+  check('reload after a duplicate import keeps the reviewed row',()=>{assert.equal(persisted.ts_row_id,'duplicate-one');assert.equal(persisted.ts_match_method,'explicit');});
+  await reject('lease facts reject an outdated row version',()=>saveUnit(manual,{scheduleRowId:'duplicate-one',scheduleRowUpdatedAt:'2000-01-01T00:00:00.000Z',passingRent:999},allow),409);
+  const duplicateOtherBefore=await schedule('duplicate-two');
+  await saveUnit(manual,{scheduleRowId:'duplicate-one',scheduleRowUpdatedAt:new Date((await schedule('duplicate-one')).updated_at).toISOString(),passingRent:45678},allow);
+  const duplicateChosenAfter=await schedule('duplicate-one'),duplicateOtherAfter=await schedule('duplicate-two');
+  check('editing a chosen duplicate changes only that exact tenancy',()=>{assert.equal(duplicateChosenAfter.passing_rent_pa,'45678');assert.deepEqual(duplicateOtherAfter,duplicateOtherBefore);});
+  await db.query("DELETE FROM tenancy_schedule_units WHERE id='duplicate-one'");
+  const stale=helpers.presentEvidenceUnit(await unit(manual),await helpers.evidenceScheduleRows('property'));
+  check('a deleted linked row stays stale rather than inheriting another duplicate',()=>{assert.equal(stale.ts_row_id,null);assert.equal(stale.ts_link_status,'stale-link');});
+  await reject('stale links require replacement before editing lease facts',()=>saveUnit(manual,{scheduleRowId:null,passingRent:999},allow),409);
+  const mapped=await saveUnit(manual,{linkScheduleRowId:'schedule-two',expectedScheduleRowId:null,expectedTenancyUnitId:'duplicate-one'},allow);
+  check('reviewed replacement link keeps its label, note and canonical facts',()=>{
+    assert.equal(mapped.unit_ref,'99');assert.equal(mapped.ts_row_id,'schedule-two');assert.equal(mapped.erv,'600');assert.equal(mapped.notes,'Human edit');
   });
   const snapshot=await unit(manual);
   await reject('marker outside the outline is rejected before any data write',()=>saveUnit(manual,{dot:{x:.9,y:.9},notes:'Should not save'},allow),400);

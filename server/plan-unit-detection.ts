@@ -2,7 +2,7 @@ import { boundaryDistance, interiorPoint, isValidPolygon, pointInPolygon, polygo
 
 type Point = { x: number; y: number };
 export type PlanRaster = { data: Buffer; width: number; height: number };
-export type DetectedPlanUnit = { unitRef: string | null; tenant: string | null; seed: Point; polygon: Point[] | null; regionId?: number };
+export type DetectedPlanUnit = { unitRef: string | null; tenant: string | null; seed: Point; polygon: Point[] | null; regionId?: number; reviewRequired?: boolean };
 export type PlanUnitRegion = TracedPlanUnit & { id: number };
 export type TracedPlanUnit = { polygon: Point[]; dot: Point; pixels: number };
 
@@ -25,7 +25,7 @@ export function mapDetectedPlanUnits(value: unknown, frame: { x: number; y: numb
     };
     const unitRef = sourceLabel(row?.unitRef, 80);
     const tenant = sourceLabel(row?.tenant, 160);
-    if (unitRef || tenant || region) result.push({ unitRef, tenant, seed, polygon: region?.polygon || validPolygon, ...(region ? { regionId: region.id } : {}) });
+    if (unitRef || tenant || region) result.push({ unitRef, tenant, seed, polygon: region?.polygon || validPolygon, ...(region ? { regionId: region.id } : {}), ...(row?.reviewRequired === true ? { reviewRequired: true } : {}) });
   }
   return result;
 }
@@ -125,6 +125,54 @@ export function tracePlanUnit(raster: PlanRaster, desired: Point, expected?: Poi
     }
   }
   if (touchesEdge || count < Math.max(16, Math.round(W * H * .000002))) return null;
+  // Lettering can split a coloured floor into disconnected pieces. Recover
+  // those pieces only inside an independently closed dark wall: white ink is
+  // traversable, but even a one-pixel shared wall remains a barrier.
+  const colourRange = Math.max(...colour) - Math.min(...colour);
+  const brightness = colour.reduce((sum, value) => sum + value, 0) / 3;
+  const isInk = (pos: number) => {
+    const x = pos % rw + left, y = Math.floor(pos / rw) + top, i = (y * W + x) * 3;
+    const values = [data[i], data[i + 1], data[i + 2]];
+    const mean = (values[0] + values[1] + values[2]) / 3;
+    return mean < brightness - 40
+      || (Math.max(...values) - Math.min(...values) < colourRange * .5 && mean < brightness + 10);
+  };
+  const isLightInkOrFloor = (pos: number) => {
+    const x = pos % rw + left, y = Math.floor(pos / rw) + top, i = (y * W + x) * 3;
+    const mean = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    const mix = Math.max(0, Math.min(1, (mean - brightness) / (255 - brightness)));
+    return colour.every((value, channel) => Math.abs(data[i + channel] - (value + (255 - value) * mix)) <= colourTolerance);
+  };
+  if (colourRange > 30) {
+    const enclosed = new Uint8Array(mask.length), walk = new Int32Array(mask.length);
+    const originalCount = count, maximumRepair = Math.min(maximum, Math.max(count * 4, 400));
+    let length = 1, next = 0, bounded = true, matching = 0;
+    enclosed[first] = 1; walk[0] = first;
+    while (next < length && bounded) {
+      const pos = walk[next++], x = pos % rw, y = Math.floor(pos / rw);
+      if (x === 0 || y === 0 || x === rw - 1 || y === rh - 1) { bounded = false; break; }
+      if (matches(x + left, y + top)) matching++;
+      for (const neighbour of [pos - 1, pos + 1, pos - rw, pos + rw]) {
+        if (enclosed[neighbour] || isInk(neighbour) || !isLightInkOrFloor(neighbour)) continue;
+        enclosed[neighbour] = 1; walk[length++] = neighbour;
+        if (length > maximumRepair) { bounded = false; break; }
+      }
+    }
+    // A closed mall, mixed-colour room or broad background is not evidence
+    // of a unit. Demand dominant original floor colour and preservation of
+    // every original floor pixel before using the wall-constrained region.
+    const withinWallFringe = (pos: number) => enclosed[pos]
+      || [-rw - 1, -rw, -rw + 1, -1, 1, rw - 1, rw, rw + 1].some(offset => enclosed[pos + offset]);
+    if (bounded && matching >= length * .55 && length > count
+      && (length < W * H * .0005 || length <= originalCount * 1.5)
+      && queue.subarray(0, count).every(withinWallFringe)) {
+      // JPEG antialiasing can put a floor-edge pixel just inside the dark
+      // threshold. Keep that original one-pixel fringe rather than shrink it.
+      for (let n = 0; n < count; n++) if (!enclosed[queue[n]]) { enclosed[queue[n]] = 1; walk[length++] = queue[n]; }
+      mask.fill(0); count = length;
+      for (let n = 0; n < length; n++) { const pos = walk[n]; mask[pos] = 2; queue[n] = pos; }
+    }
+  }
   // Close only narrow breaks in this single small coloured component. A JPEG
   // gap can connect a printed logo to the mall, turning the logo into a false
   // concave edge. Retain a repair only when it encloses a substantial hole.
@@ -169,20 +217,42 @@ export function tracePlanUnit(raster: PlanRaster, desired: Point, expected?: Poi
           for (let dy = -radius; dy <= radius && contained; dy++) for (let dx = -radius; dx <= radius; dx++) {
             if (!dilated[(y + dy) * sw + x + dx]) { contained = false; break; }
           }
-          if (contained) { closed[y * sw + x] = 1; added++; }
+          if (contained) {
+            closed[y * sw + x] = 1; added++;
+          }
         }
-        if (!added || added > count * .05) continue;
+        if (!added) continue;
         const after = exterior(closed);
         let enclosed = 0;
         for (let n = 0; n < source.length; n++) if (before[n] && !after[n] && !closed[n]) enclosed++;
-        if (enclosed < Math.max(16, added * 4, bw * bh * .03)) continue;
+        const closesLabel = enclosed >= Math.max(16, added * 4, bw * bh * .03);
+        // Approve each separate thin cut only when every pixel is dark ink.
+        // Unrelated JPEG fringe elsewhere must not prevent repairing a
+        // leader, and a pale mall recess must not be filled along with it.
+        if (!closesLabel) {
+          const visited = new Uint8Array(source.length), gaps = new Int32Array(source.length);
+          for (let start = 0; start < source.length; start++) {
+            if (visited[start] || source[start] || !closed[start]) continue;
+            let length = 1, inkOnly = true; gaps[0] = start; visited[start] = 1;
+            for (let n = 0; n < length; n++) {
+              const pos = gaps[n], x = pos % sw, y = Math.floor(pos / sw);
+              if (!isInk((minY + y - 2) * rw + minX + x - 2)) inkOnly = false;
+              for (const next of [pos - 1, pos + 1, pos - sw, pos + sw]) {
+                if (next < 0 || next >= source.length || visited[next] || source[next] || !closed[next]) continue;
+                visited[next] = 1; gaps[length++] = next;
+              }
+            }
+            if (!inkOnly) for (let n = 0; n < length; n++) { closed[gaps[n]] = 0; added--; }
+          }
+        }
+        if (!added || added > count * .05) continue;
         for (let y = 2; y < sh - 2; y++) for (let x = 2; x < sw - 2; x++) {
           const n = y * sw + x;
           if (!closed[n] || source[n]) continue;
           const pos = (minY + y - 2) * rw + minX + x - 2;
           mask[pos] = 2; queue[count++] = pos;
         }
-        repairedLabelGap = true;
+        repairedLabelGap = closesLabel;
         break;
       }
     }
