@@ -92,6 +92,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r623 · 2026-09-09 · FULL (round in progress) · journey: **Landsec client · PHONE 390px (real iPhone UA)** (rotation slot #3) · REGRESSION AT BASELINE
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushing with
+  `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE.** Head split three ways sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-623.json`, each chunk in its OWN
+  `with-server.sh`: **104 + 133 + 110 = head 347** + tail **39** = **386 ok**.
+  Signature **6x400 + 1x409 + 10x403 + 1x503 — identical to r615-r622.
+  Streak 78.** All listed noise; no chunk died at `sam · login`.
+- Triage: nothing outside the ROLLING-LOG noise list. Journey in progress.
+
 ### r622 · 2026-09-09 · FULL · journey: **Landsec client · desktop 1440px** (rotation slot #2, leasing-meeting prep with a real WRITE) · REGRESSION AT BASELINE · **0 bugs fixed — every candidate ran down to correct behaviour or my own probe error** · 1 bug-shaped question deferred · 1 suggestion
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
