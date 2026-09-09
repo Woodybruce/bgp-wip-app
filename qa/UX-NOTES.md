@@ -13,6 +13,24 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+374. 2026-09-09 · Victoria (BGP staff, Head of National) / ChatBGP export ·
+   QA r627 · **A spreadsheet cell's number format is still guessed from its
+   COLUMN HEADER, which is meaningless on a label/value sheet.** r627 fixed
+   the damage the guess was doing (an exit yield of 0.068 under a header
+   reading "Value" was rendering as "£0") and gave the tool a typed-cell path
+   so the model can pass `{value, numFmt}` per cell — but the fallback
+   heuristic is untouched, so on an Assumptions sheet headed
+   Metric / Value / Notes a term of `10` years still comes out as "£10" and a
+   unit count of `4` as "£4", because "value" is on the currency keyword list
+   (`chatbgp.ts`, `guessNumFmt`). Formats are a per-cell property; guessing
+   them per column only ever worked because the tool started life as a comps
+   dumper where every column was homogeneous. **Suggestion:** once ChatBGP is
+   reliably passing `numFmt` on the cells that need it, drop the header
+   heuristic to currency-only-when-the-header-is-unambiguous (`£`, `rent`,
+   `price`, `cost`, `income` — not the generic `value`), and let everything
+   else render as the plain number the user typed. Needs Woody's call because
+   it changes how every existing comps export looks.
+
 372. 2026-09-09 · Mark Warne (Landsec client) / ChatBGP · QA r626 · **The
    new out-of-portfolio refusal is a dead end.** Ask ChatBGP to change a
    record that isn't yours and the reply is "That deal isn't part of your

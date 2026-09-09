@@ -285,6 +285,17 @@ if (process.env.DATABASE_URL) {
   });
   if (t.stdout) process.stdout.write(t.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
   check('client tool scope: record-keyed writes stay in the portfolio', t.status === 0, t.status === 0 ? '' : (t.stderr || '').slice(0, 200));
+
+  // r627: export_to_excel is the only door a spreadsheet leaves the app
+  // through. Formulas used to be coerced to inert text, a merged title row
+  // pushed the data one row below where the schema said it was, and the
+  // header-keyed number format rendered an exit yield of 0.068 as "£0".
+  console.log('── excel export (formulas, layout, number formats) ──');
+  const x = spawnSync('npx', ['tsx', new URL('./excel-export-check.ts', import.meta.url).pathname], {
+    env: process.env, encoding: 'utf8', timeout: 120000,
+  });
+  if (x.stdout) process.stdout.write(x.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
+  check('excel export: formulas stay live, headers on row 1, formats keep the number', x.status === 0, x.status === 0 ? '' : (x.stderr || '').slice(0, 200));
 } else {
   console.log('── tracker sync check skipped (no DATABASE_URL) ──');
 }

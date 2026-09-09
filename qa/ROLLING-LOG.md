@@ -105,14 +105,69 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r627 · 2026-09-09 · FULL (provisional) · Victoria staff-desktop journey · REGRESSION AT BASELINE
-- `npm run qa:pg` once, `bash qa/run-smoke.sh` **43 checks / 0 failures**, then
+### r627 · 2026-09-09 · FULL · Victoria staff-desktop: comps evidence for a pitch + the ChatBGP Excel door · REGRESSION AT BASELINE · **1 bug fixed (3 symptoms)** · 1 suggestion (#374)
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **43/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`.
-- **Two-bot AT BASELINE — 104 + 133 + 111 + 39 = 387 ok, signature
+- **REGRESSION AT BASELINE — 104 + 133 + 111 + 39 = 387 ok, signature
   6x400 + 1x409 + 10x403 + 1x503. Streak 82.** Four chunks, r626 arithmetic
   verbatim, shared `QA_CROSS_FILE=/tmp/qa-cross-627.json`. No chunk-1 cold
-  flake this session (104 on the first pass).
-- Journey + findings to follow in the final entry.
+  flake this session (104 first pass).
+- **NEW SMOKE BASELINE: 44 checks, 0 failures** — one new check,
+  `qa/excel-export-check.ts` (15 assertions), wired at `smoke.mjs:294`.
+- **JOURNEY (Victoria, 1440px, staff desktop).** `/comps` → `/property-pathway`
+  → `/evidence-plans` → `/lease-events`, all render clean, **zero console
+  errors** across the four. `/property-pathway` and `/evidence-plans` are
+  legitimately empty in the fixture ("No investigations yet"), not broken.
+  **WRITE: Add comp on the Leasing Comps board** — dialog filled (88 Regent
+  Street W1 / QA r627 Tenant / Regent Street / £185,000 / Zone A £565 /
+  Aug 2026), "Comp created" toast, counter 2 → 3 comps, areas 0 → 1, a new
+  "Regent Street" area pill appeared and Net Effective computed £185,000 pa.
+  Clean write path, verified visually. Row-click on the comps table does NOT
+  open a detail (the eye/`…` controls do) — that is the board's design, not a
+  fault.
+- **BUG FIXED — `export_to_excel` could not carry a financial model. PROVED,
+  not patched.** It is the only door a spreadsheet leaves the app through, and
+  Woody was sent a real appraisal workbook that arrived broken three ways. All
+  three reproduced with a direct dispatcher call (keyless env, so the AI
+  itself can't be driven):
+  1. **Formulas were always inert TEXT.** `cellText()` (1e9105d5, 2026-07-02,
+     added to stop `[object Object]` cells) coerced EVERY cell to a string
+     before ExcelJS saw it, then the row builder did `Number(val)` — NaN for
+     `=IRR(...)`, so it stayed a string. `=B3*C3`, `=SUM(B3:B4)` and
+     `=IRR(Cashflow!B3:F3)` all landed as literal text.
+  2. **Every model-written reference was one row short.** The handler injected
+     a merged title row (`ws.addRow([sheet.name])`) so headers landed on row 2
+     and data on row 3, while the schema described only `headers` + `rows`.
+     The title row duplicated the tab name and bought nothing.
+  3. **The number format keyed off the COLUMN HEADER, and swallowed the
+     number.** Worse than reported: on a Metric/Value/Notes sheet the header
+     "Value" is on the currency keyword list, so an exit yield of `0.068` and
+     rental growth of `0.1` BOTH rendered as **"£0"**. (The `0.0"%"` format
+     also appends a literal % without multiplying — `0.1` showed "0.1%".)
+  **Fix (`chatbgp.ts`, `export_to_excel`):** a `toCell()` typed-cell path —
+  `{formula}` / `{value, numFmt}` / `{text}` accepted alongside plain strings,
+  and a plain string starting with `=` is written as a live formula; the
+  merged title row DROPPED so headers sit on row 1 and data from row 2 exactly
+  as the schema describes (autoFilter/freeze moved with it); `guessNumFmt()`
+  gains magnitude guards so a header-guessed `£#,##0` never fires on |v| < 1
+  and a percent header uses the real `0.0%` (which multiplies) for fractions.
+  Schema now documents typed cells; the tool description states the row-1/row-2
+  layout, that formulas are supported and preferred, and how to pass a rate.
+  `npx tsc --noEmit` clean.
+- **NON-VACUOUS, three narrow re-breaks** (each restored): formulas back to
+  `cellText` → the 4 formula assertions + the reference assertion fail with the
+  original symptom (`"=B2*C2"` as a string); title row re-added → headers land
+  on row 2, `A1="Asset Schedule"`, 12 fail; currency magnitude guard removed →
+  `0.068 numFmt=£#,##0`, exactly the "£0" symptom. Restored → all green.
+- **Deferred / not touched.** The comps board's own "Export" button is a
+  SECOND spreadsheet exporter (separate from the ChatBGP tool) — not looked at
+  this round, worth a future census. Only one bug slot spent.
+- Suggestion **#374** — the number format is still guessed per COLUMN when it
+  is a per-CELL property; a term of `10` under a "Value" header still reads
+  "£10". Needs Woody's call (changes how existing comps exports look).
+- New flakes: none. `pool.end()` alone does not exit a `tsx` probe that has
+  imported `server/file-storage` (its own Pool) — the new check calls
+  `process.exit`, worth copying in future probes.
 
 ### r626 · 2026-09-09 · LIGHT · census: **company/deal/contact/unit-keyed ChatBGP WRITE tools across BOTH dispatchers** · REGRESSION AT BASELINE · **2 bugs fixed** · 2 suggestions (#372, #373)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 43/0**, then
