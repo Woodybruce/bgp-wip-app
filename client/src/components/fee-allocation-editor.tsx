@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { formatCurrency } from "@/lib/format";
+import { BGP_HOUSE_PCT as SHARED_BGP_HOUSE_PCT, bgpHousePctFor, isFirmOnlyDealType } from "@shared/fee-policy";
 
 export interface FeeAllocationRow {
   agentName: string;
@@ -35,12 +36,15 @@ interface Props {
   /** Whether to render the "BGP House" line that flags is_bgp_house. */
   showBgpHouseToggle?: boolean;
   className?: string;
+  // Deal type drives the house slice: 15% normally, 100% for firm-only
+  // types (Secondment) where no agent split exists — see shared/fee-policy.
+  dealType?: string | null;
 }
 
 // BGP House percentage of total fee. Fixed firm policy — every deal
 // takes 15% off the top before agents split the remainder. Change here
 // if the firm rate ever changes.
-export const BGP_HOUSE_PCT = 15;
+export const BGP_HOUSE_PCT = SHARED_BGP_HOUSE_PCT;
 
 // Non-staff fee recipients selectable in every split picker (Woody,
 // 2026-08-27: "add Consultant as a BGP agent for fee splits"). Saved as
@@ -75,7 +79,10 @@ export function FeeAllocationEditor({
   colorMap,
   showBgpHouseToggle: _ignored, // kept for back-compat but BGP House is now always auto-added
   className = "",
+  dealType,
 }: Props) {
+  const firmOnly = isFirmOnlyDealType(dealType);
+  const housePctBase = bgpHousePctFor(dealType);
   // Consultant rule (Woody, 2026-08-27): an external Consultant's share
   // comes OFF THE TOP — BGP House takes its 15% of what remains for the
   // firm, not of the consultant's slice. So with a 20% consultant row,
@@ -84,14 +91,20 @@ export function FeeAllocationEditor({
   const isExternal = (r: FeeAllocationRow) => !r.isBgpHouse && EXTERNAL_FEE_AGENTS.includes(r.agentName);
   const externalPct = Math.min(100, rows.filter(isExternal).reduce((s, r) => s + (r.percentage || 0), 0));
   const externalFixed = rows.filter(isExternal).reduce((s, r) => s + (r.fixedAmount || 0), 0);
-  const housePct = round2(BGP_HOUSE_PCT * (100 - externalPct) / 100);
-  const houseFixed = round2(Math.max(0, (dealFee || 0) - externalFixed) * BGP_HOUSE_PCT / 100);
+  const housePct = firmOnly ? 100 : round2(housePctBase * (100 - externalPct) / 100);
+  const houseFixed = firmOnly ? round2(dealFee || 0) : round2(Math.max(0, (dealFee || 0) - externalFixed) * housePctBase / 100);
 
   // Ensure exactly one BGP House row is always present. Runs on every
   // render so the row is materialised even if the parent forgot to
   // include it on initial state. Agents only ever interact with the
   // non-BGP-House rows.
   React.useEffect(() => {
+    // Firm-only deal types (Secondment): the whole fee is BGP House — drop
+    // any agent rows so nobody's commission picks up a slice.
+    if (firmOnly && rows.some((r) => !r.isBgpHouse)) {
+      onChange(rows.filter((r) => r.isBgpHouse));
+      return;
+    }
     const hasBgp = rows.some((r) => r.isBgpHouse);
     if (!hasBgp) {
       onChange([
@@ -122,7 +135,7 @@ export function FeeAllocationEditor({
       ));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows.length, dealFee, allocType, housePct, houseFixed]);
+  }, [rows.length, dealFee, allocType, housePct, houseFixed, firmOnly]);
 
   const addRow = () => {
     // Append a fresh AGENT row (not BGP House — that's auto-managed).
@@ -205,12 +218,14 @@ export function FeeAllocationEditor({
       </div>
       {/* Firm-policy reminder so Layla knows where the 15% goes. */}
       <p className="text-[10px] text-muted-foreground">
-        {externalPct > 0 || externalFixed > 0
+        {firmOnly
+          ? `${dealType} fees are firm income — 100% goes to BGP House (firm overhead), with no agent split.`
+          : externalPct > 0 || externalFixed > 0
           ? `Consultant share comes off the top first — BGP House takes ${BGP_HOUSE_PCT}% of the remainder (${housePct}% of the fee here), and agents share the rest.`
           : `BGP House takes ${BGP_HOUSE_PCT}% off the top automatically. Agents share the remaining ${100 - BGP_HOUSE_PCT}%.`}
       </p>
 
-      {agentRows.length === 0 ? (
+      {agentRows.length === 0 && !firmOnly ? (
         <p className="text-[11px] text-muted-foreground italic">
           Add the agents earning on this deal — BGP House is already taking {BGP_HOUSE_PCT}%.
         </p>
@@ -295,6 +310,7 @@ export function FeeAllocationEditor({
         </div>
       )}
 
+      {!firmOnly && (
       <div className="flex items-center gap-2">
         <Button
           type="button"
@@ -338,6 +354,7 @@ export function FeeAllocationEditor({
           </Button>
         )}
       </div>
+      )}
     </div>
   );
 }
