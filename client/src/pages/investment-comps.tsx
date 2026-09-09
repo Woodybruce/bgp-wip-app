@@ -929,8 +929,10 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
       c.buyer, c.buyerBroker, c.seller, c.sellerBroker, c.lender,
       c.source, c.comments,
     ]);
-    const csv = [headers.join(","), ...rows.map(r => r.map(v => `"${(v ?? "").toString().replace(/"/g, '""')}"`).join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+    // Leading BOM: Excel reads a CSV as the machine's ANSI codepage unless one
+    // says otherwise, so an accented buyer name arrived as "CafÃ©".
+    const csv = "\ufeff" + [headers.join(","), ...rows.map(r => r.map(v => `"${(v ?? "").toString().replace(/"/g, '""')}"`).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

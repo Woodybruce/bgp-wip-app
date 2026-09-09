@@ -13,6 +13,26 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+375. 2026-09-09 · Victoria (BGP staff) / `/comps` desktop · QA r628 ·
+   **The comps board's "Export" button is called Export next to "Export PDF",
+   and it silently hands you a .csv — not the .xlsx the board's own Import
+   accepts.** The function is even named `exportToExcel`. So the obvious
+   round-trip (export the board, tidy it in Excel, re-import) fails at the
+   import step, which only takes `.xlsx`. **Suggestion:** label the two
+   buttons "Export CSV" / "Export PDF", or ship a real .xlsx through the
+   `export_to_excel` builder now that it carries typed cells and formulas —
+   which would also let the Net Effective columns arrive as live
+   `=headline−incentive÷term` formulas rather than flat numbers.
+
+376. 2026-09-09 · Investment team / `/investment-comps` desktop · QA r628 ·
+   **Four columns the table can show are absent from its CSV export.** The
+   board's column picker offers `features`, `priceQualifier`,
+   `capRateQualifier` and `partialInterest`; the export's 27 headers do not
+   include them, so a user who turned them on and exported loses exactly the
+   qualifiers that say whether a price or a cap rate is comparable at all.
+   **Suggestion:** export what the picker offers — ideally the user's OWN
+   visible column selection, which is what "Export" reads as.
+
 374. 2026-09-09 · Victoria (BGP staff, Head of National) / ChatBGP export ·
    QA r627 · **A spreadsheet cell's number format is still guessed from its
    COLUMN HEADER, which is meaningless on a label/value sheet.** r627/r628 fixed

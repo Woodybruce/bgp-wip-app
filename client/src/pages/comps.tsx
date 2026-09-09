@@ -39,6 +39,7 @@ import {
   TrendingUp, Inbox, ArrowRight, Eye, ExternalLink, Phone, Mail, User,
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
+import { compsCsv } from "@shared/comps-csv";
 import jsPDF from "jspdf";
 import { Link, useLocation } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
@@ -2268,22 +2269,11 @@ export default function Comps() {
   );
 
   const exportToExcel = useCallback(() => {
-    const headers = [
-      "Property", "Tenant", "Landlord", "Area", "Postcode", "Use Class", "Transaction Type",
-      "Date", "Headline Rent", "Zone A Rate", "Overall Rate", "Net Effective Rent",
-      "NIA (sqft)", "GIA (sqft)", "ITZA (sqft)", "Rent Free (mths)", "Tenant Incentive",
-      "Term (yrs)", "Break", "L&T Act", "Measurement Standard",
-      "Source", "Verified", "Comments",
-    ];
-    const rows = filtered.map(c => [
-      c.name, c.tenant, c.landlord, c.areaLocation, c.postcode, c.useClass, c.transactionType,
-      c.completionDate, c.headlineRent, c.zoneARate, c.overallRate, c.netEffectiveRent,
-      c.niaSqft, c.giaSqft, c.itzaSqft, c.rentFreeMonths || c.rentFree, c.fitoutContribution,
-      c.term, c.breakClause, c.ltActStatus, c.measurementStandard,
-      c.sourceEvidence, c.verified ? "Yes" : "No", c.comments,
-    ]);
-    const csv = [headers.join(","), ...rows.map(r => r.map(v => `"${(v || "").toString().replace(/"/g, '""')}"`).join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+    // Column set and the devalued Net Effective pair live in shared/comps-csv
+    // so the file can be asserted against the same devaluation the board's
+    // own green column renders.
+    const csv = compsCsv(filtered as any);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

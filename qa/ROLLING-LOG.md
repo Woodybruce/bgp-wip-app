@@ -105,7 +105,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r628 · 2026-09-09 · LIGHT · probe: the comps board's OWN "Export" button (the second spreadsheet exporter) · REGRESSION AT BASELINE · PROVISIONAL
+### r628 · 2026-09-09 · LIGHT · probe: the comps board's OWN "Export" button (the SECOND spreadsheet exporter) · REGRESSION AT BASELINE · **1 bug fixed (PROVED)** · 2 suggestions (#375, #376)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **45/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`.
 - **REGRESSION AT BASELINE — 104 + 133 + 111 + 39 = 387 ok, signature
@@ -113,12 +113,78 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   verbatim, shared `QA_CROSS_FILE=/tmp/qa-cross-628.json`. Chunk 1's first
   pass gave the r626 cold flake again (103 + 1 flow-failure at
   `staff-settings-data-health-reachable-on-phone`, `ERR_ABORTED` on
-  `/settings`); identical re-run gave 104. Flake confirmed, still a flake.
-- Probe in progress — final entry replaces this one.
-- NOTE `qa/with-server.sh` takes ONE QUOTED argument
+  `/settings`); identical re-run gave 104. Flake reconfirmed.
+- **NEW SMOKE BASELINE: 46 checks, 0 failures** — 45 + `qa/comps-csv-check.ts`
+  (11 assertions), wired at `smoke.mjs:300`.
+- **BUG FIXED — the comps board's "Export" disagreed with the comps board.
+  PROVED, not patched.** It is the second spreadsheet exporter r627 flagged,
+  and it is a CSV builder inlined in `comps.tsx` (misleadingly named
+  `exportToExcel`). The board's headline green **"Net Effective"** column is
+  the SERVER devaluation — `GET /api/crm/comps` attaches
+  `devaluation: devalueComp(c)` to every row (`crm.ts:5679`) and the table
+  renders `dv.netEffectiveRentPa` / `netEffectiveRentPsf` at
+  `comps.tsx:3092`. The CSV's "Net Effective Rent" column read the SEPARATE
+  hand-typed `netEffectiveRent` field, which is only ever populated by
+  clicking the calculator in the *other* column (`FormulaCell` displays the
+  stored value; `compute()` runs on click, it is not a display fallback). So
+  on a comp the app HAS devalued and nobody has typed into — the normal state
+  — the board showed a number and the exported column was **blank**. The
+  on-screen **"Net psf"** column (`effectiveRatePsf`) was absent from the file
+  altogether. A rent-review or pitch schedule left the building with its
+  net-effective evidence missing.
+- **Fix.** Column set + row builder extracted to a pure, dependency-free
+  `shared/comps-csv.ts` (`compsCsv`, `COMPS_CSV_HEADERS`, `compsCsvRow`) so
+  the file can be asserted against the same `devalueComp` the board renders;
+  `comps.tsx` now calls it. Added, in the screen's own order: **"Net Effective
+  Rent (devalued £ pa)"**, **"Net Effective Rent (devalued £ psf)"**, **"Net
+  Effective Rate (psf)"** and **"Contact"**. The hand-typed field keeps its
+  own "Net Effective Rent" column — the two are different facts (app
+  devaluation vs the agreed figure) and no existing header was renamed.
+- **NON-VACUOUS — three narrow re-breaks, each reproducing the original
+  symptom.** (1) devalued pair pointed back at `c.netEffectiveRent` (the old
+  code) → `csv="" board="148000"`, the exact blank-column symptom, 2 fail;
+  (2) `?? ""` → `|| ""` in the cell writer → a numeric 0 in a devalued column
+  exports blank, 1 fail; (3) BOM removed → the UTF-8 assertion fails.
+  Restored → all green. `npx tsc --noEmit` clean, smoke **46/0**.
+- **Two flaws found in my OWN first cut, worth remembering.** (a) The header
+  row was joined UNQUOTED, so a header containing a comma
+  ("Net Effective Rent (devalued, £ pa)") widened the header row past the data
+  rows — 30 columns of header over 28 of data. Headers are now quoted through
+  the same cell writer AND carry no commas. (b) The `|| ""` → `?? ""` change
+  is NOT a bug that was ever biting: every comp column is `text`, so the old
+  code only ever saw strings and `"0"` is truthy. It matters only for the two
+  NEW numeric columns, and the check says so rather than claiming a fix.
+- **CENSUS — every spreadsheet/CSV door out of the app.** Three hand-rolled
+  CSV builders: this one; `investment-comps.tsx:915` (**sound** — every column
+  is a stored field, no derivation to disagree with, already `?? ""`); and
+  `leasing-schedule.tsx:1676` (**sound** — it does not build the rows at all,
+  it GETs `/api/leasing-schedule/property/:id/export` and prints what the
+  server returns, and two-bot already holds
+  `staff-tenancy-export-agrees-with-board` +
+  `staff-board-export-matches-screen`). Server-built .xlsx doors —
+  `board-report`, tenancy schedule, leasing schedule (x3), the PLA workbook
+  writer — all download a server-generated file; not re-tread this round.
+  **One defect was common to all three CSV builders and is fixed in all
+  three: no UTF-8 BOM**, so Excel read them in the machine's ANSI codepage and
+  a tenant like "Café Nero" arrived as "CafÃ© Nero" (Content-Type now says
+  `charset=utf-8` too). One-line each, same bug class, so counted with the
+  bug above rather than as a second slot.
+- Suggestions **#375** (the button says "Export", the function is called
+  `exportToExcel`, and it hands you a .csv the board's own Import — .xlsx only
+  — will not take back) and **#376** (four columns the investment-comps picker
+  offers are missing from its CSV, including the price and cap-rate
+  qualifiers). Neither implemented.
+- **Deferred / not touched.** Server-built .xlsx doors (board report, tenancy
+  schedule, PLA workbook writer) — never censused. `export_to_excel` and
+  `server/excel-builder.ts` deliberately untouched per the r627 hand-off.
+- New harness notes: `qa/with-server.sh` takes **ONE QUOTED** argument
   (`bash qa/with-server.sh "node qa/two-bot-round.mjs"`); passing the command
-  unquoted silently runs `node` with no script and prints only
-  "command exit 0" — cost this round ~8 minutes.
+  unquoted runs `node` with no script, prints only "command exit 0" and looks
+  like a pass — cost ~8 minutes. A hand-rolled CSV check must parse the header
+  row with the SAME quoted-field regex as the data rows, or a comma in a
+  header shifts every `at(header)` lookup and the assertions read the wrong
+  cells (they came back "undefined", but they could as easily have read a
+  neighbouring cell and passed).
 
 ### r627 · 2026-09-09 · FULL · Victoria staff-desktop: comps evidence for a pitch + the ChatBGP Excel door · REGRESSION AT BASELINE · **1 bug fixed (3 symptoms)** · 1 suggestion (#374)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **43/0**, then

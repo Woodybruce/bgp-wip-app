@@ -296,6 +296,17 @@ if (process.env.DATABASE_URL) {
   });
   if (x.stdout) process.stdout.write(x.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
   check('excel export: formulas stay live, headers on row 1, formats keep the number', x.status === 0, x.status === 0 ? '' : (x.stderr || '').slice(0, 200));
+
+  // r628: the comps board's OWN "Export" button is a SECOND spreadsheet
+  // exporter, and it disagreed with the board — the green devalued Net
+  // Effective column the board shows was absent from the file, so a devalued
+  // comp exported blank.
+  console.log('── comps board CSV export (agrees with the board) ──');
+  const cc = spawnSync('npx', ['tsx', new URL('./comps-csv-check.ts', import.meta.url).pathname], {
+    env: process.env, encoding: 'utf8', timeout: 120000,
+  });
+  if (cc.stdout) process.stdout.write(cc.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
+  check('comps CSV export carries the board\'s devalued Net Effective', cc.status === 0, cc.status === 0 ? '' : (cc.stderr || '').slice(0, 200));
 } else {
   console.log('── tracker sync check skipped (no DATABASE_URL) ──');
 }

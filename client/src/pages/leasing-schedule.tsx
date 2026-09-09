@@ -1686,7 +1686,9 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           u.lfl_percent, u.occ_cost_percent, u.target_brands, u.optimum_target, u.priority, u.updates
         ].map(v => `"${(v ?? "").toString().replace(/"/g, '""')}"`).join(","));
       }
-      const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
+      // Leading BOM so Excel reads it as UTF-8 and an accented tenant name
+      // does not arrive as "CafÃ©".
+      const blob = new Blob(["\ufeff" + csvRows.join("\n")], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = `${propertyName}_leasing_schedule.csv`; a.click();
