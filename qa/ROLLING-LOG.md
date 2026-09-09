@@ -67,6 +67,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - tsx does not hot-reload server/*.ts — restart the server after server fixes
 - (r262) first smoke pass right after FRESH_BUILD can time out the client
   UI-login check (cold first page load); re-run before triaging as real
+- (r625) the phone root `/` non-deterministically resolves to `/chatbgp`
+  ("Messages") instead of the phone home, on a fresh iPhone context with no
+  localStorage — 3 of 5 runs. The bottom nav renders either way, so the
+  phone-shell assertion still holds; just never assert on the ROOT's
+  content, navigate to `/home` explicitly.
 - (r572) a two-bot CHUNK can die outright at `login()`
   (two-bot-round.mjs:105) when it follows two other chunks — the login rate
   limiter, the same 429 class already listed as noise. Re-run the same
@@ -96,17 +101,99 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r625 · 2026-09-09 · FULL (round in progress) · journey: **BGP staff · PHONE 390px** (rotation slot #4, Victoria, real iPhone context, task with a WRITE) · REGRESSION AT BASELINE
-- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 43/0** (new
-  r624 baseline), then `node qa/apply-sql.mjs qa/seed-personas.sql`.
-  Detached HEAD — pushing with `git push origin HEAD:claude/qa-staging-20260810`.
+### r625 · 2026-09-09 · FULL · journey: **BGP staff · PHONE 390px** (rotation slot #4, Victoria, real iPhone context, "a landlord rang about the Gail's letting" with two WRITEs) · REGRESSION AT BASELINE · **0 bugs fixed** · 3 suggestions
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 43/0**
+  (r624's new baseline holds), then `node qa/apply-sql.mjs qa/seed-personas.sql`.
+  Detached HEAD — pushed with `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE — 104 + 133 + 111 + 39 = 387 ok, signature
-  6x400 + 1x409 + 10x403 + 1x503. Streak 80.** Four chunks per r624's
-  arithmetic, each in its own `qa/with-server.sh`, sharing
-  `QA_CROSS_FILE=/tmp/qa-cross-625.json`.
-- Triage: all listed environment noise; no new issue classes, no chunk died
-  at `sam · login`.
-- Journey in progress — final entry replaces this one.
+  6x400 + 1x409 + 10x403 + 1x503. Streak 80.** r624's four-chunk arithmetic
+  reproduced exactly, verbatim, each chunk in its own `qa/with-server.sh`
+  sharing `QA_CROSS_FILE=/tmp/qa-cross-625.json`. All issues listed noise; no
+  chunk died at `sam · login`.
+- **THE STAFF PHONE NAV IS FOUR TABS: Dashboard · Messages · Deals · News.**
+  No Tasks tab (the CLIENT phone has five, including Tasks) — see UX #370.
+  Harness: `qa/r625-victoria-phone-journey.mjs` + `qa/r625-victoria-phone-b.mjs`,
+  both importing r623's harness, both THROWING without
+  `[data-testid="mobile-bottom-nav"]`. Shots `/tmp/r625*/`.
+- **ROUTE NAMES — I wasted two passes on this, do not repeat.** There is no
+  `/dashboard` and no `/available-units` route: both render the app's own
+  "Page not found" card. The real ones are `/` and `/home` (phone home),
+  `/available` (client tracker), **`/deals/letting`** (staff tracker tab),
+  `/tasks`, `/news`. A 404 here is MY bad URL, not a bug.
+- **PHONE DEAL DETAIL — the desktop sidebar is rendered `hidden md:block`
+  alongside the phone sections, so EVERY sidebar testid exists TWICE in the
+  DOM** (`input-deal-comment`, `btn-add-deal-comment`, `deal-comments`,
+  `button-delete-deal`, …) with 0 visible until you tap a
+  `deal-section-*` pill. `toggle-sidebar-comments` is permanently hidden on
+  the phone. **Always drive `:visible` on this page** — a bare testid
+  selector times out on the hidden copy. Not an a11y bug: Tailwind `hidden`
+  is `display:none`, so the hidden copies are out of the tab order (checked).
+- **WRITE 1 — deal comment from the phone: WORKS.** `/deals/<id>` → ACTIVITY
+  → Comments → post. Saved, rendered, correctly stamped
+  `[9 Sept 2026, 09:13 · Victoria Broadhead]`, audit row written
+  (`deal_audit_log`, field `comments`). Server appends with
+  `comments = comments || E'\n\n' || $2` (`crm.ts:3411`) so it is genuinely
+  append-only at the door.
+- **WRITE 2 — task from the phone: WORKS.** `/tasks` `input-add-task` + Enter
+  → row in `user_tasks` (priority `medium`, status `todo`), header count
+  0 open → 1 open, card under TO DO. Deleted via the API afterwards (200).
+- **FIXTURE RESTORED and verified**: `crm_deals.comments` back to NULL, 0
+  leftover `deal_audit_log` rows matching `r625%`, 0 leftover `user_tasks`.
+- **NO BUG FOUND WORTH FIXING — 0 fixes, and therefore (r622's precedent) NO
+  new two-bot scenario.** Everything I chased came back clean; the negatives
+  are the value here:
+  - **Anonymous CRM deal writes: NOT a hole.** Nine `/api/crm/deals*` routes
+    carry no `requireAuth` — including `GET /api/crm/deals` (list),
+    `GET/PUT/DELETE /:id`, `POST /:id/comments`, `GET/PUT /:id/fee-allocations`
+    — and `POST /:id/comments` (`crm.ts:3390`) would stamp "Unknown" and skip
+    its scope check for a session-less caller. **PROBED all of them
+    anonymously: every one 401s** (the global gate r622 found). Do not
+    re-spend this; the route-level omission is cosmetic.
+  - **The staff phone tracker's pills partition the vocabulary.**
+    `/deals/letting` reads ALL 76 = MARKETING 74 + NEGOTIATING 2, with
+    OPPORTUNITY/HOTS/SOLICITORS/HISTORIC at 0. Pipeline pills + the four
+    `HISTORIC_PILL_STATUSES` (EXC/COM/WIT/INV) = exactly the nine
+    `LETTING_STATUSES`; REP/SPEC/LIVE are investment-only. **Nothing falls
+    through** — r623's "grep for hardcoded status arrays" lead is clean on
+    this screen. (Victoria's 76 vs Mark's 73 is the already-deferred #327
+    family.)
+  - **Victoria's "My billing" tile reading all zeros next to "Total billing
+    £250,000" is CORRECT, not a mismatch.** The tile is per-user and comes
+    from her fee allocations (`/api/hr/staff/:id/commission`, salary 0,
+    `wipByStage` all 0); the fixture gives her deal no `deal_fee_allocations`
+    row (the deal detail shows "No split yet"). `totalBilling` is the
+    firm-wide `/api/wip` roll-up, 7 entries summing to exactly 250000
+    (`mobile-home.tsx:305`). Different scopes by design; both reconcile.
+- **NEW FLAKE — the phone root `/` non-deterministically lands on Messages.**
+  Same script, same fresh iPhone context, no localStorage: three runs landed
+  on `/chatbgp` ("Messages", 200 chars) and two on `/` ("Good morning,
+  Victoria", 489 chars). Harmless to the journey (the surface assertion
+  passes either way — the bottom nav renders on both) but it means **do not
+  assert on the root's content**; `go('/home', …)` explicitly. Added to Known
+  flakes.
+- **3 suggestions → UX #369, #370, #371.** #371 is the one with teeth: a BGP
+  agent's internal deal comment reaches the landlord login verbatim
+  (`comments` is not in `stripDealFees`, and the client deal detail renders
+  the same `deal-comments` block) — PROVED with Mark's own read of the deal
+  Victoria had just commented on. Probably intended as a shared thread; the
+  ask is a caption, not a strip, and it is Woody's call. #369 records that
+  `stripDealFees` nulls `fee`/`feePercentage`/`feeAgreement` while the
+  decision comment directly above it says clients now see all three — a
+  code-vs-decision divergence, not reproducible as user-facing on this
+  fixture, deliberately NOT touched (client fee visibility is DECIDED).
+  Next free number **#372**.
+- **Doors PROVED (not patched — nothing was patched):** the two phone WRITE
+  doors end-to-end with a DB read-back and cleanup; the nine unauthenticated
+  deal routes by real anonymous requests; the client's view of a
+  staff-authored comment by a second, FRESH browser context (r622 trap 1
+  respected — never `ctx.request` from Victoria's context).
+- **Next:** rotation wraps — slot #1 **BGP staff · desktop** is next, and
+  r624's census is still the best lead: **every ChatBGP tool that writes to a
+  company-, deal- or contact-keyed record** needs the gate the property-keyed
+  four got (the deny-list default is why they were open — UX #368). Also
+  still untested: the CLIENT phone deal detail's `button-edit-deal` /
+  `button-deal-image-studio` (its `input-deal-comment` is now covered by the
+  #371 probe above), and #366's three-way count mismatch on `/deals`.
 
 ### r624 · 2026-09-09 · LIGHT · deep probe: **the #343/#344 client-scope write holes** · REGRESSION AT BASELINE · **1 bug fixed (4 tools x 2 doors)** · 1 suggestion
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

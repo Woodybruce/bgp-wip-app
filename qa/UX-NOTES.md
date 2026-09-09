@@ -13,6 +13,51 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+371. 2026-09-09 · Victoria (BGP staff, Head of National) / **phone 390px** ·
+   QA r625 · **A BGP agent's internal deal comment goes straight to the
+   landlord's screen, and nothing on the staff phone says so.** Victoria
+   opened her Bluewater Gail's letting on the phone, ACTIVITY → Comments,
+   and posted a note; it saved stamped "9 Sept 2026, 09:13 · Victoria
+   Broadhead" (good). But `comments` is not in `stripDealFees`
+   (`crm.ts:1130`), and the client deal detail renders the same
+   `deal-comments` block with its own `input-deal-comment` — PROVED: Mark's
+   `GET /api/crm/deals/:id` came back with Victoria's note verbatim. That may
+   well be the intent (a shared thread the landlord can answer in), but the
+   staff side is captioned only "Comments", next to a KYC panel whose notes
+   were deliberately stripped from clients in r561. **Suggestion:** caption
+   it for what it is on both surfaces — "Comments · visible to the client"
+   on the staff phone/desktop, "Shared with your BGP team" on the client
+   side — or, if it is meant to be internal, strip `comments` for clients
+   and give them a separate thread. One word of caption either way.
+
+370. 2026-09-09 · Victoria (BGP staff, Head of National) / **phone 390px** ·
+   QA r625 · **The staff phone has no Tasks tab, so tasks are one scroll
+   deep on the home screen.** Staff bottom nav is Dashboard · Messages ·
+   Deals · News; the CLIENT phone nav carries Tasks as a fifth tab. On the
+   staff phone `/tasks` exists and works (add-task from the phone saved
+   first time, priority Medium, appears under TO DO), but it is only
+   reachable from the "My tasks · View all" link below the finance tiles,
+   the boards grid and the AI briefing card. For the "log the follow-up
+   before you put the phone down" moment this is the wrong depth.
+   **Suggestion:** either give staff the same Tasks tab the client has, or
+   put an "Add task" affordance in the phone header — the page's own
+   `input-add-task` is a single text field, so it would inline cleanly.
+
+369. 2026-09-09 · Victoria (BGP staff, Head of National) / **phone 390px** ·
+   QA r625 · **`stripDealFees` contradicts the decision recorded directly
+   above it.** The comment at `crm.ts:1110` records Woody, 2026-07 ("client
+   should see fees anywhere") and states: "Clients now see the fee they're
+   paying us — total fee, agency %, and the fee-agreement label. Still
+   stripped: the internal fee NOTES, the signed FA document link, and the
+   raw commission field." The function immediately below nulls `fee`,
+   `feePercentage` **and** `feeAgreement` along with the three it says it
+   keeps stripping. Not observable on the fixture (the Bluewater deal's fee
+   is null for staff too), so this is a code-vs-decision divergence, not a
+   proven user-facing bug — but it is the kind that gets "fixed" the wrong
+   way in a merge. **Suggestion:** Woody to say which is current, then make
+   the comment and the field list agree in one commit. Not touched
+   unilaterally — client fee visibility is a DECIDED question.
+
 368. 2026-09-09 · Mark Warne (Landsec client) / ChatBGP · QA r624 ·
    **ChatBGP's client tool gate is a DENY-list, so every new tool ships
    client-allowed by default.** `CLIENT_BLOCKED_TOOLS`
