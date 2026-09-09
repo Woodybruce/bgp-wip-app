@@ -76,6 +76,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   FIRST pass in a session and 104 + 2x400 on an immediate identical re-run —
   cold start, same class as the r262 smoke flake. Re-run chunk 1 once before
   triaging a single flow-failure there.
+- (r630) two-bot chunk 2 run WITHOUT chunk 1 first, on a fresh restore, gives
+  133 ok + 1 flow-failure at `mark · client-comps-readonly` ("Net Effective
+  column missing on client comps") — not a flake and not a bug: the scenario
+  reads state chunk 1 writes. Always run the chunks IN ORDER on a shared
+  `QA_CROSS_FILE`; a standalone chunk is not a valid baseline.
 - (r572) a two-bot CHUNK can die outright at `login()`
   (two-bot-round.mjs:105) when it follows two other chunks — the login rate
   limiter, the same 429 class already listed as noise. Re-run the same
@@ -105,14 +110,84 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r630 · 2026-09-09 · LIGHT · probe: the SERVER-built .xlsx doors (board-report, tenancy-schedule export, three leasing-schedule exports, PLA workbook) · REGRESSION AT BASELINE · **PROVISIONAL — probe in flight**
-- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+### r630 · 2026-09-09 · LIGHT · probe: the SERVER-built .xlsx doors (the three leasing-schedule exports + the JSON export door) · REGRESSION AT BASELINE · **2 bugs fixed (both PROVED)** · 3 suggestions (#380/#381/#382)
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0** (run three
+  times across the round, 46/0 every time), then
+  `node qa/apply-sql.mjs qa/seed-personas.sql` after each restore.
 - **REGRESSION AT BASELINE — 104 + 133 + 111 + 40 = 388 ok,
   signature 6x400 + 1x409 + 10x403 + 1x503. Streak 85.** Four chunks,
   r629 arithmetic, shared `QA_CROSS_FILE=/tmp/qa-cross-630.json`. No cold
   flake in chunk 1 (104 first pass).
-- Probe in flight; this entry is replaced before the round ends.
+- **NEW TWO-BOT BASELINE: 389 ok** — +1 scenario,
+  `staff-leasing-exports-hide-what-the-screen-hides`, at the END of
+  `victoriaRound`, so it lands in **chunk 2** (133 → **134**). Every other
+  chunk unchanged. Post-fix re-measure: chunk 1 **104**, chunk 2 **134**,
+  same 4x400 + 1x409 + 9x403 signature. Chunks 3 (111) and 4 (40) were
+  measured at the start of the round on PRE-fix code and were NOT re-run
+  after the fix (round over budget) — the diff touches only the
+  `/api/leasing-schedule/*` export doors and `grep` confirms no chunk-3/4
+  scenario calls one, but that is reasoning, not a measurement.
+- Probe (the "SECOND COPY of the same derivation" shape, aimed at the
+  server-built .xlsx doors that had never been censused). Asked of each
+  door: what does the SCREEN derive, and does the FILE derive it the same way?
+  - **PROVED CLEAN — the all-properties export is not a client leak.**
+    `/api/leasing-schedule/export-excel` gates clients with a flat
+    `403 "Not available for client accounts"`; probed with Mark (Landsec)
+    and Sam (Hammerson) — both 403. Victoria (staff, non-admin): the file's
+    3 properties == the `/leasing-schedule` screen's 3. So the missing
+    `resolveCompanyScope` in that handler (every other read door in the file
+    has one) is covered upstream, not a hole.
+  - **BUG 1 (fixed, PROVED) — all four export doors shipped the units the
+    screen hides.** The `/leasing-schedule` table filters `status ===
+    'Archived'` behind an "Archived (n)" toggle (default OFF) and each
+    property card's `unit_count` excludes them, but the styled per-property
+    .xlsx, the multi-property .xlsx, the all-properties tabular .xlsx and the
+    JSON `/export` all selected every row. Measured on Westgate Test Centre
+    with RU10 archived: **screen card 2 units, table 2 rows — styled export
+    banner "3 units" with RU10 as a row, all-properties export 3 rows, JSON
+    export 3 rows.** Worse in the styled sheet, which has NO Status column at
+    all, so the archived unit read as live. Fix: `AND COALESCE(u.status,'')
+    <> 'Archived'` on all four queries (the all-properties one needed its
+    non-admin privacy clause turned from `WHERE` to `AND`). After: banner
+    "2 units", RU10 absent, 2 rows, 2 rows.
+  - **BUG 2 (fixed, PROVED) — Rent PSF lost its pence in the tabular
+    export.** The handler computes `Math.round(psf*100)/100` (intent: 2 dp)
+    and then stamps `numFmt = "£#,##0"`, so Excel showed £154.75 as "£155",
+    £100.55 as "£101", £10.04 as "£10" — the same `£#,##0`-swallows-decimals
+    family closed in r627. Fix: a separate `PSF_FMT = "£#,##0.00"`.
+- Non-vacuity, three narrow re-breaks, each failing with the ORIGINAL symptom:
+  (a) archived filter reverted on all three per-property doors → "the JSON
+  /export door still ships Archived units the screen hides"; (b) JSON door
+  restored, styled + multi still broken → "the styled leasing export banner
+  says \"3 units\" but the screen card says 2 units"; (c) filters restored,
+  PSF format reverted → "Rent PSF 10.04 is formatted \"£#,##0\" — Excel
+  rounds the pence away on a psf". Then restored, `npx tsc --noEmit` clean.
+- The new scenario archives a unit that is **already Vacant** and restores it
+  in a `finally` — `PATCH …/archive` hardcodes unarchive → 'Vacant', so any
+  other starting status would not survive the round trip. It also guards its
+  own vacuity twice: it throws if no Vacant unit exists, and if no Rent PSF
+  in the file has a fractional part.
+- Flaw in my own first cut: the probe's initial scope check compared only
+  property NAMES, which would have missed a leak of extra UNITS inside a
+  property the persona can already see; the shipped scenario compares row
+  COUNTS per property against the screen card as well.
+- Suggestions: **#380** (the styled leasing .xlsx has no Status column, so the
+  board pack loses the one thing the screen leads with), **#381** (the
+  all-schemes export ships a permanently empty "Lease Start" column —
+  `lease_start: null, // not tracked in DB`), **#382** (now the exports match
+  the screen's DEFAULT, a user who has turned the "Archived (n)" toggle ON and
+  hits Export gets a file that disagrees with the view — pass the toggle
+  through as `?includeArchived=1`).
+- Not fixed / not touched: nothing deferred from this probe — the two bugs
+  found were the two fixed.
+- **NEW NOTE for future rounds (not a bug):** chunk 2 run WITHOUT chunk 1
+  first, on a fresh restore, gives **133 ok + 1 flow-failure at
+  `mark · client-comps-readonly`** ("Net Effective column missing on client
+  comps") — the scenario depends on state chunk 1 writes. Run the chunks in
+  order on a shared `QA_CROSS_FILE`; a standalone chunk 2 is not a valid
+  baseline. Cost me ~15 minutes chasing it as a regression of my own fix.
+- Round overran the 75-minute budget again (~95 min), mostly on the three
+  re-break runs and the chunk-2 false alarm above.
 
 ### r629 · 2026-09-09 · FULL · journey: Mark Warne (Landsec client) desktop 1440px — Brand Intelligence → the client CRM Brand Directory, with a real self-add WRITE · REGRESSION AT BASELINE · **1 bug fixed (PROVED)** · 3 suggestions (#377/#378/#379)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0**, then
