@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { eq, desc, and, or, ilike, sql } from "drizzle-orm";
 import { requireAuth } from "./auth";
 import { contentDispositionFor } from "./utils/http-headers";
+import { parseSizeSqFt, plausibleSqFt } from "@shared/size-parse";
 import { db, pool } from "./db";
 import {
   propertyPathwayRuns,
@@ -4896,24 +4897,25 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
         let totalAreaSqFt: number | undefined;
         let totalAreaSource: "tenancy" | "ai" | "manual" | "default" = "default";
         if (typeof existingStage7.overrideTotalAreaSqFt === "number" && existingStage7.overrideTotalAreaSqFt > 0) {
-          totalAreaSqFt = Math.round(existingStage7.overrideTotalAreaSqFt);
-          totalAreaSource = "manual";
+          totalAreaSqFt = plausibleSqFt(existingStage7.overrideTotalAreaSqFt) ?? undefined;
+          if (totalAreaSqFt) totalAreaSource = "manual";
+          else console.warn(`[pathway stage7] rejected implausible manual area override: ${existingStage7.overrideTotalAreaSqFt}`);
         }
         if (!totalAreaSqFt) {
           const unitSqfts = (s1.tenancy?.units || [])
             .map((u: any) => Number(u.sqft))
             .filter((n: number) => Number.isFinite(n) && n > 0);
           if (unitSqfts.length) {
-            totalAreaSqFt = unitSqfts.reduce((a: number, b: number) => a + b, 0);
-            totalAreaSource = "tenancy";
+            const summed = unitSqfts.reduce((a: number, b: number) => a + b, 0);
+            totalAreaSqFt = plausibleSqFt(summed) ?? undefined;
+            if (totalAreaSqFt) totalAreaSource = "tenancy";
+            else console.warn(`[pathway stage7] rejected implausible tenancy area total: ${summed} from ${unitSqfts.length} unit(s)`);
           }
         }
         if (!totalAreaSqFt && s1.aiFacts?.sizeSqft) {
-          const parsed = parseFloat(String(s1.aiFacts.sizeSqft).replace(/[^0-9.]/g, ""));
-          if (Number.isFinite(parsed) && parsed > 0) {
-            totalAreaSqFt = Math.round(parsed);
-            totalAreaSource = "ai";
-          }
+          totalAreaSqFt = parseSizeSqFt(s1.aiFacts.sizeSqft) ?? undefined;
+          if (totalAreaSqFt) totalAreaSource = "ai";
+          else console.warn(`[pathway stage7] rejected implausible aiFacts.sizeSqft: ${JSON.stringify(s1.aiFacts.sizeSqft)}`);
         }
 
         let currentRentPA: number | undefined;

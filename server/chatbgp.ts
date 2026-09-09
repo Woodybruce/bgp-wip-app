@@ -4305,7 +4305,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "export_to_excel",
-      description: "Generate a downloadable Excel (.xlsx) file from structured table data. Use when you extract comps tables, schedules, financial data, or any tabular information from brochures, PDFs, or documents and the user wants it as an Excel file. Also use proactively when presenting tabular data that would be useful to download. Returns a download link.\n\nSHEET LAYOUT — on every sheet the `headers` land on ROW 1 and the first `rows` entry on ROW 2. Write all cell references accordingly (the first data row is row 2).\n\nFORMULAS ARE SUPPORTED and preferred for anything derived — a workbook with live =SUM/=IRR/=NPV/=SUMIF formulas is worth far more to the user than one with the answers typed in as text. Write a formula either as a plain string starting with '=' or as {\"formula\": \"=B2*C2\"}. Cross-sheet references use the sheet name, e.g. '=IRR(Cashflow!B2:F2)'.\n\nNUMBER FORMATS — a cell's format is guessed from its column header, which is wrong on a label/value layout. Where a number is a RATE or a fraction (a yield of 0.068, growth of 0.1), pass it as {\"value\": 0.068, \"numFmt\": \"0.0%\"} so it renders as 6.8% rather than being read as currency.",
+      description: "Generate a downloadable Excel (.xlsx) file from structured table data. Use when you extract comps tables, schedules, financial data, or any tabular information from brochures, PDFs, or documents and the user wants it as an Excel file. Also use proactively when presenting tabular data that would be useful to download. Returns a download link.\n\nLIVE FORMULAS ARE SUPPORTED: any cell whose text starts with \"=\" is written as a real Excel formula, not as text — so a financial model calculates when opened (e.g. \"=B3*B4\", \"=SUM(C5:C12)\", \"=IRR(C13:M13)\", \"=Assumptions!B5\"). Sheet names containing a space need quoting exactly as Excel requires, e.g. \"='Asset Schedule'!D14\".\n\nCELL ADDRESSES — the sheet layout is fixed, so count rows before writing a reference: ROW 1 is a merged title bar carrying the sheet name, ROW 2 is your headers, and your first `rows` entry lands on ROW 3. Column A is your first header. So the third value in your second data row is cell C4.\n\nNUMBER FORMATS are otherwise guessed from the COLUMN HEADER, which is meaningless on a label/value layout. Where a cell needs a format the header cannot imply — a yield of 0.068, growth of 0.1 — pass it as a TYPED CELL instead of a string: {\"value\": 0.068, \"numFmt\": \"0.0%\"} renders 6.8%. A formula can be typed the same way: {\"formula\": \"=B3*C3\", \"numFmt\": \"£#,##0\"}.",
       parameters: {
         type: "object",
         properties: {
@@ -4320,21 +4320,21 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
                 headers: { type: "array", items: { type: "string" }, description: "Column headers" },
                 rows: {
                   type: "array",
-                  description: "Array of rows. Each row is an array of cells. A cell may be a plain string (numbers written as strings are converted), or a typed cell object for formulas and explicit number formats.",
+                  description: "Array of rows, each row is an array of cell values. A cell starting with \"=\" becomes a live Excel formula; remember row 1 is the title bar and row 2 the headers, so this array starts at row 3.",
                   items: {
                     type: "array",
                     items: {
                       anyOf: [
-                        { type: "string", description: "Plain cell text. A string starting with '=' is written as a live Excel formula." },
+                        { type: "string", description: "Plain cell text. A string starting with \"=\" is written as a live Excel formula." },
                         { type: "number", description: "A numeric cell value." },
                         {
                           type: "object",
-                          description: "Typed cell. Use `formula` for a live Excel formula, or `value`/`text` with an optional `numFmt`.",
+                          description: "Typed cell — use when the cell needs an explicit number format.",
                           properties: {
-                            formula: { type: "string", description: "Live Excel formula, e.g. '=B2*C2', '=SUM(B2:B9)', '=IRR(Cashflow!B2:F2)'. Include the leading '='." },
+                            formula: { type: "string", description: "Live Excel formula including the leading '=', e.g. '=B3*C3'." },
                             value: { type: "number", description: "Numeric cell value." },
                             text: { type: "string", description: "Text cell value." },
-                            numFmt: { type: "string", description: "Excel number format for this cell, e.g. '£#,##0', '0.00', '0.0%' (0.0% multiplies by 100, so 0.068 shows as 6.8%)." },
+                            numFmt: { type: "string", description: "Excel number format, e.g. '£#,##0', '0.00', '0.0%' (0.0% multiplies by 100, so 0.068 shows as 6.8%)." },
                           },
                         },
                       ],
@@ -9149,6 +9149,10 @@ export async function executeCrmToolRaw(
       const wb = new ExcelJS.Workbook();
       wb.creator = "Bruce Gillingham Pollard";
       wb.created = new Date();
+      // Formulas are written without cached results, so ask Excel to calculate
+      // on open — otherwise readers that don't recalculate for themselves
+      // (Sheets, Numbers, Excel Online, preview panes) show blanks.
+      wb.calcProperties.fullCalcOnLoad = true;
 
       const DARK_BLUE = "FF082861";
       const WHITE_FONT: any = { name: "Calibri", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
@@ -9162,6 +9166,18 @@ export async function executeCrmToolRaw(
       };
 
       const sheets = fnArgs.sheets as Array<{ name: string; headers: string[]; rows: any[][] }>;
+
+      // A cell written as "=..." is a live formula, not text. ExcelJS only
+      // treats it as one if it arrives as { formula }, so mark those cells
+      // before the string coercion below flattens them (which is what made
+      // every generated model inert — the formulas rendered as literal text).
+      const FORMULA_START = /^=\s*[A-Za-z0-9_$'("[+\-]/;
+      const formulaOf = (val: any): string | null => {
+        if (typeof val !== "string") return null;
+        const t = val.trim();
+        if (t.length < 2 || !FORMULA_START.test(t)) return null;
+        return t.slice(1).trim();
+      };
 
       // The model occasionally passes objects/arrays as cell values despite the
       // string[][] schema — those stringify to "[object Object]" in the workbook.
@@ -9179,64 +9195,39 @@ export async function executeCrmToolRaw(
         return String(val);
       };
 
-      // A cell can be a live formula, a typed number with its own format, or
-      // plain text. Before this the whole grid went through cellText() and a
-      // formula could only ever land as inert text — a workbook of =IRR/=SUMIF
-      // arrived with the formulas showing as literal strings.
-      type CellSpec = { formula?: string; value?: number; text?: string; numFmt?: string };
-      const toCell = (val: any): CellSpec => {
-        if (val && typeof val === "object" && !Array.isArray(val)) {
-          const numFmt = typeof val.numFmt === "string" && val.numFmt ? val.numFmt : undefined;
-          if (typeof val.formula === "string" && val.formula.trim().startsWith("=")) {
-            return { formula: val.formula.trim().replace(/^=/, ""), numFmt };
-          }
-          if (typeof val.value === "number" && isFinite(val.value)) return { value: val.value, numFmt };
-          if (typeof val.text === "string") return { text: cellText(val.text), numFmt };
-          if (val.value !== undefined || val.text !== undefined || val.numFmt !== undefined) {
-            // a typed cell whose value arrived as a string — coerce it here
-            const raw = cellText(val.value ?? val.text);
-            const n = Number(raw);
-            if (raw.trim() !== "" && !isNaN(n)) return { value: n, numFmt };
-            return { text: raw, numFmt };
-          }
-        }
-        const text = cellText(val);
-        if (text.startsWith("=") && text.length > 1) return { formula: text.slice(1) };
-        const num = Number(text);
-        if (text.trim() !== "" && !isNaN(num)) return { value: num };
-        return { text };
-      };
-      const cellDisplayLength = (c: CellSpec): number =>
-        (c.formula !== undefined ? c.formula.length + 1
-          : c.value !== undefined ? String(c.value).length
-          : (c.text || "").length);
-
-      // The header-guessed format must never swallow the number it formats:
-      // '£#,##0' renders an exit yield of 0.068 as "£0", and a label/value
-      // sheet whose column is headed "Value" hit that on EVERY row.
-      const guessNumFmt = (header: string, v: number): string | undefined => {
-        const h = (header || "").toLowerCase();
-        if (h.includes("%") || h.includes("percent") || h.includes("yield")) {
-          return Math.abs(v) > 0 && Math.abs(v) < 1 ? '0.0%' : '0.0"%"';
-        }
-        if (h.includes("£") || h.includes("rent") || h.includes("price") || h.includes("value") || h.includes("cost") || h.includes("income")) {
-          return Math.abs(v) >= 1 ? '£#,##0' : undefined;
-        }
-        if (v > 100) return '#,##0';
-        return undefined;
-      };
-
       for (const sheet of sheets) {
-        const headers = (sheet.headers || []).map(cellText);
-        const grid: CellSpec[][] = (sheet.rows || []).map((r) => (r || []).map(toCell));
+        sheet.headers = (sheet.headers || []).map(cellText);
+        // A cell may also arrive TYPED — { formula } for a live formula, or
+        // { value, numFmt } where the model knows the format the guess below
+        // cannot infer (a yield of 0.068 under a column headed "Value").
+        const typedCell = (cell: any): any => {
+          if (cell && typeof cell === "object" && !Array.isArray(cell)) {
+            const numFmt = typeof cell.numFmt === "string" && cell.numFmt ? cell.numFmt : undefined;
+            const f = typeof cell.formula === "string" ? formulaOf(cell.formula) : null;
+            if (f) return { formula: f, numFmt };
+            if (typeof cell.value === "number" && isFinite(cell.value)) return { value: cell.value, numFmt };
+            if (numFmt !== undefined || cell.value !== undefined || cell.text !== undefined) {
+              const raw = cellText(cell.value ?? cell.text);
+              const n = Number(raw);
+              return raw.trim() !== "" && !isNaN(n) ? { value: n, numFmt } : { text: raw, numFmt };
+            }
+          }
+          const formula = formulaOf(cell);
+          return formula ? { formula } : cellText(cell);
+        };
+        sheet.rows = (sheet.rows || []).map((r) => (r || []).map(typedCell));
         const safeSheetName = sheet.name.replace(/[\\/*?\[\]:]/g, "").substring(0, 31) || "Sheet1";
         const ws = wb.addWorksheet(safeSheetName);
 
-        // No merged title row: the tab already carries the sheet name, and a
-        // title row pushed the headers to row 2 and the data to row 3 while
-        // the tool schema described a plain headers + rows grid — so every
-        // formula reference the model wrote came out one row short.
-        const headerRow = ws.addRow(headers);
+        const titleRow = ws.addRow([sheet.name]);
+        ws.mergeCells(titleRow.number, 1, titleRow.number, sheet.headers.length);
+        const titleCell = ws.getCell(titleRow.number, 1);
+        titleCell.font = { name: "Calibri", size: 13, bold: true, color: { argb: "FFFFFFFF" } };
+        titleCell.fill = HEADER_FILL;
+        titleCell.alignment = { vertical: "middle" };
+        ws.getRow(titleRow.number).height = 30;
+
+        const headerRow = ws.addRow(sheet.headers);
         headerRow.eachCell((cell: any) => {
           cell.font = WHITE_FONT;
           cell.fill = HEADER_FILL;
@@ -9245,46 +9236,69 @@ export async function executeCrmToolRaw(
         });
         headerRow.height = 24;
 
-        const colWidths = headers.map((h: string, i: number) => {
+        const colWidths = sheet.headers.map((h: string, i: number) => {
           let maxLen = h.length;
-          for (const row of grid) {
-            const len = row[i] ? cellDisplayLength(row[i]) : 0;
+          for (const row of sheet.rows) {
+            const cell: any = row[i];
+            // A formula cell's width comes from its likely result, not its source
+            const len = cell && typeof cell === "object"
+              ? (cell.formula ? 14 : String(cell.value ?? cell.text ?? "").length)
+              : cell ? String(cell).length : 0;
             if (len > maxLen) maxLen = len;
           }
           return Math.min(maxLen + 3, 50);
         });
         ws.columns = colWidths.map(w => ({ width: w }));
 
-        grid.forEach((rowData, rowIdx) => {
-          const row = ws.addRow(rowData.map(c =>
-            c.formula !== undefined ? { formula: c.formula } as any
-              : c.value !== undefined ? c.value
-              : (c.text ?? "")
-          ));
+        sheet.rows.forEach((rowData, rowIdx) => {
+          const row = ws.addRow(rowData.map((val: any) => {
+            if (val && typeof val === "object") {
+              if (val.formula) return { formula: val.formula };
+              if (val.value !== undefined) return val.value;
+              if (val.text !== undefined) return val.text;
+            }
+            const num = Number(val);
+            if (val && !isNaN(num) && String(val).trim() !== "") return num;
+            return val;
+          }));
           row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
             cell.font = { name: "Calibri", size: 10 };
             cell.alignment = { vertical: "middle" };
             cell.border = THIN_BORDER;
             if (rowIdx % 2 === 1) cell.fill = ALT_ROW_FILL;
 
-            const spec = rowData[colNumber - 1];
-            if (spec?.numFmt) {
+            const spec: any = (rowData as any[])[colNumber - 1];
+            const isFormulaCell = cell.value && typeof cell.value === "object" && (cell.value as any).formula;
+            if (spec && typeof spec === "object" && spec.numFmt) {
               cell.numFmt = spec.numFmt;
-            } else if (spec?.formula !== undefined) {
-              // A formula's result is unknown here, so only the unambiguous
-              // magnitude-free guesses apply — never the percent one.
-              const fmt = guessNumFmt(headers[colNumber - 1] || "", 1000);
-              if (fmt === '£#,##0' || fmt === '#,##0') cell.numFmt = fmt;
-            } else if (typeof cell.value === "number") {
-              const fmt = guessNumFmt(headers[colNumber - 1] || "", cell.value);
-              if (fmt) cell.numFmt = fmt;
+            } else if (typeof cell.value === "number" || isFormulaCell) {
+              const headerText = (sheet.headers[colNumber - 1] || "").toLowerCase();
+              const num = typeof cell.value === "number" ? cell.value : null;
+              if (headerText.includes("£") || headerText.includes("rent") || headerText.includes("price") || headerText.includes("value") || headerText.includes("cost") || headerText.includes("income")) {
+                // A header-guessed currency format must never swallow the number
+                // it formats: '£#,##0' renders an exit yield of 0.068 as "£0",
+                // and a label/value sheet headed "Value" hits that on EVERY row.
+                if (num === null || Math.abs(num) >= 1) cell.numFmt = '£#,##0';
+              } else if (headerText.includes("%") || headerText.includes("percent") || headerText.includes("yield") || headerText.includes("irr")) {
+                // A decimal is a real proportion — 0.1 must render as 10.0%, not
+                // "0.1%". Only a value already scaled to percentage points gets
+                // the literal suffix.
+                cell.numFmt = num !== null && Math.abs(num) > 1 ? '0.0"%"' : '0.0%';
+              } else if (num !== null && num > 100) {
+                cell.numFmt = '#,##0';
+              }
             }
           });
           row.height = 18;
         });
 
-        ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1 + grid.length, column: Math.max(headers.length, 1) } };
-        ws.views = [{ state: "frozen", ySplit: 1 }];
+        // An autofilter belongs on a table, not on a calculating model — sorting
+        // a cashflow by column would scramble every relative reference in it.
+        const hasFormulas = sheet.rows.some((r: any[]) => (r || []).some((c: any) => c && typeof c === "object" && c.formula));
+        if (!hasFormulas) {
+          ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2 + sheet.rows.length, column: sheet.headers.length } };
+        }
+        ws.views = [{ state: "frozen", ySplit: 2 }];
       }
 
       const buffer = await wb.xlsx.writeBuffer();
@@ -9298,7 +9312,7 @@ export async function executeCrmToolRaw(
         `${safeName}.xlsx`
       );
       const downloadUrl = `/api/chat-media/${storageFilename}`;
-      const totalRows = sheets.reduce((sum: number, s: { rows: any[][] }) => sum + (s.rows || []).length, 0);
+      const totalRows = sheets.reduce((sum: number, s: { rows: string[][] }) => sum + s.rows.length, 0);
       return {
         data: {
           success: true,
