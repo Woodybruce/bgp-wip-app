@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { AiCommentary } from "@/components/ai-commentary";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -739,7 +740,7 @@ function KycCommentaryStrip({ companyId }: { companyId: string }) {
         </Button>
       </div>
       {data.commentary && (
-        <p className="text-xs leading-snug text-foreground/90 whitespace-pre-wrap mb-1.5">{data.commentary}</p>
+        <AiCommentary text={data.commentary} className="mb-1.5" />
       )}
       {topOutstanding.length > 0 && (
         <div className="text-[11px] text-muted-foreground">

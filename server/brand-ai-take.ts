@@ -215,7 +215,14 @@ Write a single 60-90 word paragraph that adds what the description doesn't say:
 - The BGP angle: what we should pitch, to whom, and why the timing works (or doesn't)
 - One concrete next step for the team
 
-Never open by describing who they are — the reader just read that. Tone: punchy, specific, broker-to-broker. No fluff, no generic phrases. No bullet points, no headers. Plain text only.`;
+Never open by describing who they are — the reader just read that. Tone: punchy, specific, broker-to-broker. No fluff, no generic phrases.
+
+FORMAT (the app renders this as a styled card — follow it exactly):
+- Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
+- Then 3 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Trajectory:**, **BGP angle:**, **Verdict:**, **Signal:**, **Risk:**, **Next step:**). One sentence each, max ~25 words.
+- The last bullet MUST be "- **Next step:** …" — who does what, why now.
+- Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). No markdown headings, no numbered lists, no citations, nothing else.
+Total under 110 words.`;
 }
 
 function ukPrompt(d: any): string {
@@ -229,7 +236,14 @@ Write a single 60-90 word paragraph covering:
 - Key financial signal driving that verdict (the house covenant grade A-E and its flags if present, turnover trajectory, parent guarantee need, CCJs, etc.)
 - A practical recommendation for landlord pitches (e.g. "insist on parent guarantee", "rent cap at X% of turnover", "fine for prime rents")
 
-Tone: direct, broker-to-broker, decisive. Plain text, no bullets, no headers. Use £ for sterling.`;
+Tone: direct, broker-to-broker, decisive. Use £ for sterling.
+
+FORMAT (the app renders this as a styled card — follow it exactly):
+- Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
+- Then 3 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Trajectory:**, **BGP angle:**, **Verdict:**, **Signal:**, **Risk:**, **Next step:**). One sentence each, max ~25 words.
+- The last bullet MUST be "- **Next step:** …" — who does what, why now.
+- Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). No markdown headings, no numbered lists, no citations, nothing else.
+Total under 110 words.`;
 }
 
 function activityPrompt(d: any): string {
@@ -243,7 +257,14 @@ Write a single 60-90 word paragraph covering:
 - Who's the live contact and last touchpoint context
 - The next best action (who to contact, what about, why now)
 
-Tone: direct, broker-to-broker. Plain text. No bullets or headers.`;
+Tone: direct, broker-to-broker.
+
+FORMAT (the app renders this as a styled card — follow it exactly):
+- Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
+- Then 3 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Temperature:**, **Live contact:**, **Pattern:**, **Risk:**, **Next step:**). One sentence each, max ~25 words.
+- The last bullet MUST be "- **Next step:** …" — who does what, why now.
+- Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). No markdown headings, no numbered lists, no citations, nothing else.
+Total under 110 words.`;
 }
 
 function intelPrompt(d: any): string {
@@ -259,7 +280,14 @@ Write ONE 60-90 word paragraph covering:
 
 Then, ONLY if warranted, add one final sentence starting "Data note:" flagging the single most important data problem — sources that disagree (e.g. Apollo employee count vs the CRM record), or a feed that is stale (90+ days) or never fetched. If the feeds agree and are fresh, no Data note.
 
-Tone: direct, broker-to-broker, decisive. Plain text only.`;
+Tone: direct, broker-to-broker, decisive. If a Data note is warranted, make it the third bullet as "- **Data note:** …" and keep **Next step:** last.
+
+FORMAT (the app renders this as a styled card — follow it exactly):
+- Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
+- Then 3 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Temperature:**, **Live contact:**, **Pattern:**, **Risk:**, **Next step:**). One sentence each, max ~25 words.
+- The last bullet MUST be "- **Next step:** …" — who does what, why now.
+- Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). No markdown headings, no numbered lists, no citations, nothing else.
+Total under 110 words.`;
 }
 
 // ─── Core call ──────────────────────────────────────────────────────────
@@ -271,7 +299,7 @@ async function callClaude(prompt: string): Promise<string> {
     try {
       const msg = await anthropic.messages.create({
         model,
-        max_tokens: 300,
+        max_tokens: 400,
         messages: [{ role: "user", content: prompt }],
       });
       const text = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("").trim();

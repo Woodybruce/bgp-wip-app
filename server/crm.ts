@@ -41,7 +41,40 @@ import { getPlanningSummary } from "./planning-summary";
 import { parseRequirementBrochure } from "./requirement-vision-parser";
 
 import { randomUUID } from "crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
+import { FIRM_ONLY_DEAL_TYPES, isFirmOnlyDealType } from "../shared/fee-policy";
+
+// Firm-only deal types (Secondment) carry no agent split: the whole fee is
+// BGP House. Collapses any other allocation shape on those deals to a single
+// BGP House 100% row. Idempotent — deals already in that shape are skipped.
+// Runs at boot, after a Sage WIP import (which rewrites allocations from
+// Sage slices), and on demand via the admin endpoint.
+export async function normaliseFirmOnlyDealFees(q: Pool | PoolClient): Promise<Array<{ id: string; dealRef: number | null; name: string; before: string }>> {
+  const { rows } = await q.query(
+    `SELECT d.id, d.deal_ref AS "dealRef", d.name, d.fee,
+            COALESCE((SELECT string_agg(a.agent_name || '=' || COALESCE(a.percentage::text || '%', '£' || a.fixed_amount::text), ', ' ORDER BY a.is_bgp_house DESC, a.agent_name)
+                        FROM deal_fee_allocations a WHERE a.deal_id = d.id), '(none)') AS before,
+            (SELECT COUNT(*) FROM deal_fee_allocations a WHERE a.deal_id = d.id) AS n_rows,
+            (SELECT COUNT(*) FROM deal_fee_allocations a WHERE a.deal_id = d.id AND a.is_bgp_house = true
+                AND a.allocation_type = 'percentage' AND a.percentage = 100) AS n_house_full
+       FROM crm_deals d
+      WHERE LOWER(TRIM(COALESCE(d.deal_type, ''))) = ANY($1::text[])`,
+    [FIRM_ONLY_DEAL_TYPES.map((t) => t.toLowerCase())],
+  );
+  const changed: Array<{ id: string; dealRef: number | null; name: string; before: string }> = [];
+  for (const d of rows) {
+    if (Number(d.n_rows) === 1 && Number(d.n_house_full) === 1) continue;
+    await q.query(`DELETE FROM deal_fee_allocations WHERE deal_id = $1`, [d.id]);
+    await q.query(
+      `INSERT INTO deal_fee_allocations (deal_id, agent_name, allocation_type, percentage, is_bgp_house)
+       VALUES ($1, 'BGP House', 'percentage', 100, true)`,
+      [d.id],
+    );
+    changed.push({ id: d.id, dealRef: d.dealRef, name: d.name, before: d.before });
+    console.log(`[fee-policy] deal ${d.dealRef ?? d.id} "${d.name}" (firm-only type): fee now 100% BGP House — was ${d.before}`);
+  }
+  return changed;
+}
 
 // Snapshot a completed deal into the appropriate comps schedule. Idempotent:
 // skips if a comp already exists for this deal. The original deal stays on
@@ -768,6 +801,9 @@ async function enrichWipDealsFromSage(
       }
     }
 
+    // Sage slices can put agent shares on firm-only deal types — the
+    // policy wins: Secondment fees stay 100% BGP House.
+    await normaliseFirmOnlyDealFees(client);
     await client.query("COMMIT");
     console.log(`[WIP Enrich] ${JSON.stringify(result)}`);
     return result;
@@ -1479,6 +1515,20 @@ export function setupCrmRoutes(app: Express) {
   };
   // Once per boot, off the request path; the endpoint below re-runs it on demand.
   setTimeout(() => { normaliseLandlordTypes().catch(e => console.warn("[landlords] type normalisation failed:", e?.message)); }, 20_000);
+  // Same pattern for the fee policy on firm-only deal types (fixes #3662 and
+  // any other Secondment deal still carrying the default 15% split).
+  setTimeout(() => { normaliseFirmOnlyDealFees(pool).catch(e => console.warn("[fee-policy] firm-only normalisation failed:", e?.message)); }, 25_000);
+
+  app.post("/api/crm/deals/normalise-firm-only-fees", async (req, res) => {
+    try {
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId;
+      const u = userId ? await pool.query(`SELECT is_admin FROM users WHERE id = $1`, [userId]) : { rows: [] as any[] };
+      if (!u.rows[0]?.is_admin) return res.status(403).json({ error: "Admin access required" });
+      res.json({ changed: await normaliseFirmOnlyDealFees(pool) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   app.post("/api/crm/landlords/normalise-types", async (req, res) => {
     try {
@@ -4353,6 +4403,20 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const { allocations } = req.body;
       if (!Array.isArray(allocations)) {
         return res.status(400).json({ error: "allocations must be an array" });
+      }
+      // Firm-only deal types (Secondment): whatever the form sent, the fee
+      // is 100% BGP House with no agent rows.
+      const { rows: policyRows } = await pool.query(`SELECT deal_type FROM crm_deals WHERE id = $1`, [String(req.params.id)]);
+      if (isFirmOnlyDealType(policyRows[0]?.deal_type)) {
+        const result = await storage.setDealFeeAllocations(String(req.params.id), [{
+          dealId: String(req.params.id),
+          agentName: "BGP House",
+          allocationType: "percentage",
+          percentage: 100,
+          fixedAmount: null,
+          isBgpHouse: true,
+        }] as any);
+        return res.json(result);
       }
       const validated = allocations.map((a: any) => ({
         dealId: String(req.params.id),

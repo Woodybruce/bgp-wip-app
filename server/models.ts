@@ -635,6 +635,25 @@ Important:
 - Calculate occupancy from the schedule if possible.
 - Return ONLY the JSON object, no markdown formatting.`;
 
+// Model Studio runs on Fable (Woody, 2026-09-08: "upgrade the model creator
+// to fable") — the same id ChatBGP uses, through the beta endpoint with
+// Anthropic's server-side fallback to Opus, so a Fable-side blip never
+// breaks a model build. Every Studio call goes through here.
+const STUDIO_MODEL = process.env.MODEL_STUDIO_MODEL || "claude-fable-5";
+const STUDIO_FALLBACK_MODEL = "claude-opus-4-8";
+async function studioCreate(anthropic: Anthropic, params: Record<string, any>): Promise<Anthropic.Messages.Message> {
+  const model = params.model || STUDIO_MODEL;
+  if (model.startsWith("claude-fable")) {
+    return (await (anthropic as any).beta.messages.create({
+      ...params,
+      model,
+      betas: ["server-side-fallback-2026-06-01"],
+      fallbacks: [{ model: STUDIO_FALLBACK_MODEL }],
+    })) as Anthropic.Messages.Message;
+  }
+  return await anthropic.messages.create({ ...params, model } as any);
+}
+
 function getAnthropicClient() {
   // Use direct API key first (same dual-key approach as chatbgp.ts)
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
@@ -659,8 +678,8 @@ async function extractPropertyDataWithAI(documentTexts: { name: string; text: st
     .map((doc) => `=== DOCUMENT: ${doc.name} ===\n${doc.text.slice(0, 15000)}`)
     .join("\n\n");
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-8",
+  const response = await studioCreate(anthropic, {
+    model: STUDIO_MODEL,
     max_tokens: 8192,
     system: SMART_EXTRACT_PROMPT,
     messages: [
@@ -715,8 +734,8 @@ Guidelines:
 - Pay attention to number formats [fmt:...] to determine if a cell is a percentage, currency, etc.
 - Return ONLY the JSON, no markdown`;
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-8",
+  const response = await studioCreate(anthropic, {
+    model: STUDIO_MODEL,
     max_tokens: 8192,
     system: systemPrompt,
     messages: [
@@ -745,8 +764,8 @@ async function askAboutModel(wb: XLSX.WorkBook, question: string, templateName: 
       .join("\n");
   }
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-8",
+  const response = await studioCreate(anthropic, {
+    model: STUDIO_MODEL,
     max_tokens: 8192,
     system: `You are an expert Excel financial modelling analyst at BGP (Bruce Gillingham Pollard), a London property consultancy. You have full visibility of a workbook including:
 - Every cell's value and formula (formulas shown as =FORMULA → calculated_value)
@@ -795,8 +814,8 @@ async function analyzeModelResults(
     })
     .join("\n");
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-8",
+  const response = await studioCreate(anthropic, {
+    model: STUDIO_MODEL,
     max_tokens: 8192,
     system: `You are a senior investment analyst at BGP (Bruce Gillingham Pollard), a London property consultancy. Provide a concise, professional analysis of these model results. Cover:
 1. Overall attractiveness of the investment (based on IRR, MOIC, yields)
@@ -828,8 +847,8 @@ async function suggestInputValues(
     })
     .join("\n");
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-8",
+  const response = await studioCreate(anthropic, {
+    model: STUDIO_MODEL,
     max_tokens: 8192,
     system: `You are a senior property investment analyst at BGP, a London property consultancy. Suggest reasonable default/market-standard values for a property investment model. Base suggestions on current London property market conditions. Return JSON with:
 {
@@ -1840,8 +1859,8 @@ Return ONLY valid JSON. No markdown, no code fences.`;
       if (!responseText) {
         console.log("[model-design-chat] Using Claude Sonnet fallback");
         const anthropic = getAnthropicClient();
-        const response = await anthropic.messages.create({
-          model: "claude-opus-4-8",
+        const response = await studioCreate(anthropic, {
+          model: STUDIO_MODEL,
           max_tokens: 4096,
           system: systemPrompt,
           messages,
@@ -2192,8 +2211,8 @@ Also include:
 
 Only include keys where the user has specified or implied a value. Use sensible London commercial property defaults for anything not mentioned. Percentages should be decimals (e.g., 5% = 0.05).`;
 
-          const extractResponse = await anthropic.messages.create({
-            model: "claude-opus-4-8",
+          const extractResponse = await studioCreate(anthropic, {
+            model: STUDIO_MODEL,
             max_tokens: 4000,
             system: extractPrompt,
             messages: [{ role: "user", content: `Create an investment appraisal model for: ${description}${modelType ? `\nModel type: ${modelType}` : ""}` }],
@@ -2310,8 +2329,8 @@ CRITICAL RULES:
       const startTime = Date.now();
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         const attemptStart = Date.now();
-        fullResponse = await anthropic.messages.create({
-          model: "claude-opus-4-8",
+        fullResponse = await studioCreate(anthropic, {
+          model: STUDIO_MODEL,
           max_tokens: 12000,
           system: systemPrompt,
           messages: currentMessages,
@@ -3633,8 +3652,8 @@ Available keys (with defaults): purchasePrice (10000000), stampDutyRate (0.05), 
 
 Also include: "modelName" (string), "quarters" (integer, default holdPeriodYears*4). Percentages as decimals (5% = 0.05).`;
 
-              const extractResp = await anthropic.messages.create({
-                model: "claude-opus-4-8",
+              const extractResp = await studioCreate(anthropic, {
+                model: STUDIO_MODEL,
                 max_tokens: 4000,
                 system: extractPrompt,
                 messages: [{ role: "user", content: `Create an investment appraisal for: ${input.description}${input.modelType ? `\nType: ${input.modelType}` : ""}` }],
@@ -3697,8 +3716,8 @@ Formats: £#,##0;(£#,##0);"-" (GBP), #,##0;(#,##0);"-" (int), #,##0.0%;(#,##0.0
 
 CRITICAL: For Cash Flow, ONLY define 2 quarter columns (E,F). Keep JSON under 30KB. Use numeric 0 for nil values.`;
 
-            const createResponse = await anthropic.messages.create({
-              model: "claude-opus-4-8",
+            const createResponse = await studioCreate(anthropic, {
+              model: STUDIO_MODEL,
               max_tokens: 12000,
               system: createSystemPrompt,
               messages: [{
@@ -3710,8 +3729,8 @@ CRITICAL: For Cash Flow, ONLY define 2 quarter columns (E,F). Keep JSON under 30
             let raw = createResponse.content[0]?.type === "text" ? createResponse.content[0].text : "";
 
             if (createResponse.stop_reason === "max_tokens") {
-              const contResponse = await anthropic.messages.create({
-                model: "claude-opus-4-8",
+              const contResponse = await studioCreate(anthropic, {
+                model: STUDIO_MODEL,
                 max_tokens: 12000,
                 system: createSystemPrompt,
                 messages: [
@@ -3920,8 +3939,8 @@ Use professional UK property investment language. Format currency as GBP (£).`;
       const maxIterations = 10;
 
       for (let i = 0; i < maxIterations; i++) {
-        const response = await anthropic.messages.create({
-          model: "claude-opus-4-8",
+        const response = await studioCreate(anthropic, {
+          model: STUDIO_MODEL,
           max_tokens: 8192,
           system: systemPrompt,
           tools,

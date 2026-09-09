@@ -3,6 +3,7 @@ import { Sparkles, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
 
 type Tab = "brand" | "uk" | "activity" | "intel";
 
@@ -29,7 +30,7 @@ function friendlyTakeError(raw?: string): string {
 // `intro` merges the company description into the same card as the take —
 // one continuous read instead of two stacked blocks saying similar things
 // (Woody, 2026-08-25: "the BGP take and the intro should be combined").
-export function BgpTakeStrip({ companyId, tab, intro }: { companyId: string; tab: Tab; intro?: string | null }) {
+export function BgpTakeStrip({ companyId, tab, intro, entities }: { companyId: string; tab: Tab; intro?: string | null; entities?: CommentaryEntity[] }) {
   const { toast } = useToast();
   const queryKey = ["/api/brand", companyId, "ai-take", tab];
 
@@ -67,7 +68,7 @@ export function BgpTakeStrip({ companyId, tab, intro }: { companyId: string; tab
     <div className="rounded-md border border-border bg-muted/40 p-2.5">
       {intro && (
         <>
-          <p className="text-sm leading-snug text-foreground/85 whitespace-pre-wrap">{intro}</p>
+          <AiCommentary text={intro} entities={entities} size="sm" />
           <div className="border-t border-border/60 my-2" />
         </>
       )}
@@ -91,7 +92,7 @@ export function BgpTakeStrip({ companyId, tab, intro }: { companyId: string; tab
       ) : isError ? (
         <p className="text-xs text-muted-foreground italic">{friendlyTakeError((error as any)?.message)}</p>
       ) : data?.text ? (
-        <p className="text-xs leading-snug text-foreground/90 whitespace-pre-wrap">{data.text}</p>
+        <AiCommentary text={data.text} entities={entities} />
       ) : (
         <p className="text-xs text-muted-foreground italic">No take available.</p>
       )}

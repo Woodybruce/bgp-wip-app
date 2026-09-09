@@ -97,7 +97,11 @@ export async function extractTextFromFile(filePath: string, originalName: string
         const slideFiles = Object.keys(zip.files)
           .filter(f => f.match(/^ppt\/slides\/slide\d+\.xml$/))
           .sort((a, b) => parseInt(a.match(/(\d+)/)![1], 10) - parseInt(b.match(/(\d+)/)![1], 10));
-        const runText = (frag: string) => (frag.match(/<a:t[^>]*>([^<]*)<\/a:t>/g) || []).map(m => m.replace(/<[^>]+>/g, "")).join(" ").trim();
+        const decodeXml = (t: string) => t.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+          .replace(/&#x([0-9a-fA-F]+);/g, (_m, h) => String.fromCodePoint(parseInt(h, 16)))
+          .replace(/&#(\d+);/g, (_m, d) => String.fromCodePoint(parseInt(d, 10)));
+        const runText = (frag: string) => decodeXml((frag.match(/<a:t[^>]*>([^<]*)<\/a:t>/g) || []).map(m => m.replace(/<[^>]+>/g, "")).join(" ").trim());
         const out: string[] = [];
         for (let i = 0; i < slideFiles.length; i++) {
           const xml = await zip.files[slideFiles[i]].async("text");

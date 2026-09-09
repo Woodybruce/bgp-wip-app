@@ -1043,6 +1043,10 @@ function ThreadCard({ thread, onClick, onDelete, currentUserId, userPics }: { th
   const hasUnseen = myMember ? !myMember.seen : false;
   const isAi = thread.isAiChat;
   const otherMembers = thread.members.filter(m => m.id !== currentUserId);
+  const sharedAiPeople = isAi && thread.members.length > 0
+    ? [thread.createdBy !== currentUserId ? thread.creatorName : null, ...otherMembers.map(m => m.name)]
+        .filter((n): n is string => !!n).map(n => n.split(" ")[0])
+    : [];
   const isDm = !isAi && otherMembers.length === 1;
   const dmName = isDm ? otherMembers[0].name : null;
   const dmInitials = dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
@@ -1131,6 +1135,11 @@ function ThreadCard({ thread, onClick, onDelete, currentUserId, userPics }: { th
             )}
           </div>
         </div>
+        {sharedAiPeople.length > 0 && (
+          <p className="text-[11px] text-muted-foreground mt-0.5 truncate flex items-center gap-1">
+            <Sparkles className="w-2.5 h-2.5" /> ChatBGP with {sharedAiPeople.join(", ")}
+          </p>
+        )}
         {(thread.propertyName || thread.linkedName) && (
           <div className="flex items-center gap-2 mt-0.5">
             {thread.propertyName && (
@@ -1193,10 +1202,10 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
     } else if (chip === "ai") {
       filtered = filtered.filter(t => t.isAiChat);
     } else if (chip === "groups") {
-      filtered = filtered.filter(t => !t.isAiChat && t.members.filter(m => m.id !== currentUserId).length > 1);
+      filtered = filtered.filter(t => t.members.filter(m => m.id !== currentUserId).length > (t.isAiChat ? 0 : 1));
     } else if (chip === "unread") {
       filtered = filtered.filter(t => {
-        if (t.isAiChat) return false;
+        if (t.isAiChat && t.members.length === 0) return false;
         const me = t.members.find(m => m.id === currentUserId);
         return me ? !me.seen : false;
       });
@@ -1204,8 +1213,10 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
       // "All" = PEOPLE. The AI's many working threads were drowning human
       // conversations (Woody, 2026-08-20: "the AI chats are overtaking the
       // main ones") — ChatBGP gets exactly one row: the pinned one above.
-      // Full AI history lives under the AI chip.
-      filtered = filtered.filter(t => !t.isAiChat);
+      // Full AI history lives under the AI chip — except ChatBGP chats
+      // where someone has been tagged (they have member rows): those are
+      // shared conversations and sit with the people (Woody, 2026-09-08).
+      filtered = filtered.filter(t => !t.isAiChat || t.members.length > 0);
     }
     return [...filtered].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [threads, searchQuery, currentUserId, chip]);
@@ -1496,6 +1507,11 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   // for the durable @[Name](tag:type/id) token that renders as a chip.
   const [tagEntities, setTagEntities] = useState<Array<{ type: TagType; id: string; name: string; subtitle?: string }>>([]);
   const pendingTagsRef = useRef<Map<string, { type: TagType; id: string; name: string }>>(new Map());
+  // People picked from the @ menu ("@Charlotte" → user id), sent as
+  // mentionedUserIds so the server adds them to the thread — covers the
+  // brand-new ChatBGP thread case where there's no thread to add them to yet.
+  const pendingUserTagsRef = useRef<Map<string, string>>(new Map());
+  const mentionedForSendRef = useRef<string[] | undefined>(undefined);
 
   useEffect(() => {
     if (mentionQuery === null || mentionQuery.length < 2) {
@@ -1566,6 +1582,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       }
     } else if (opt.kind === "user") {
       inserted = `@${opt.name.split(" ")[0]}`;
+      pendingUserTagsRef.current.set(inserted, opt.id);
       if (activeThreadId) {
         const existingMemberIds = new Set(activeThread?.members?.map((m) => m.id) || []);
         const creatorId = activeThread?.createdBy || currentUser?.id || "";
@@ -1686,8 +1703,10 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     mutationFn: async ({ threadId, role, content, actionData, attachments }: {
       threadId: string; role: string; content: string; actionData?: string; attachments?: string[];
     }) => {
+      const mentionedUserIds = role === "user" ? mentionedForSendRef.current : undefined;
+      if (role === "user") mentionedForSendRef.current = undefined;
       const res = await apiRequest("POST", `/api/chat/threads/${threadId}/messages`, {
-        role, content, actionData, attachments,
+        role, content, actionData, attachments, mentionedUserIds,
       });
       return res.json();
     },
@@ -2001,10 +2020,13 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
 
   const teamSendMutation = useMutation({
     mutationFn: async ({ content, threadId, attachments }: { content: string; threadId: string; attachments?: string[] }) => {
+      const mentionedUserIds = mentionedForSendRef.current;
+      mentionedForSendRef.current = undefined;
       const res = await apiRequest("POST", `/api/chat/threads/${threadId}/messages`, {
         role: "user",
         content,
         attachments,
+        mentionedUserIds,
       });
       return res.json();
     },
@@ -2602,6 +2624,11 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       }
       pendingTagsRef.current.clear();
     }
+    if (pendingUserTagsRef.current.size > 0) {
+      const ids = [...pendingUserTagsRef.current.entries()].filter(([key]) => content.includes(key)).map(([, id]) => id);
+      pendingUserTagsRef.current.clear();
+      mentionedForSendRef.current = ids.length ? Array.from(new Set(ids)) : undefined;
+    }
     const filesToSend = [...attachedFiles];
     setInput("");
     setAttachedFiles([]);
@@ -3142,7 +3169,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                     id="chat-panel-file-upload"
                     type="file"
                     className="sr-only"
-                    accept=".docx,.pdf,.doc,.txt,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.aac,.mov,.avi,.mkv,.flac,.zip,image/*,audio/*,video/*"
+                    accept=".docx,.pdf,.doc,.txt,.xlsx,.xls,.csv,.pptx,.ppt,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.aac,.mov,.avi,.mkv,.flac,.zip,image/*,audio/*,video/*"
                     multiple
                     tabIndex={-1}
                     onChange={handleFileSelect}

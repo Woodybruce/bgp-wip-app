@@ -10,13 +10,46 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Camera, Loader2, Phone, Mail, Users, Briefcase, GraduationCap, Linkedin, ChevronRight, FileText } from "lucide-react";
+import { ArrowLeft, Camera, Loader2, Phone, Mail, Users, Briefcase, GraduationCap, Linkedin, ChevronRight, FileText, Bell, BellOff } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
+import { usePushNotifications } from "@/hooks/use-push-notifications";
 
 export default function MobileProfilePage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  // Push notifications — status + a real end-to-end test, because "are
+  // notifications working?" was unanswerable from inside the app.
+  const push = usePushNotifications();
+  const [pushBusy, setPushBusy] = useState(false);
+  const isStandalone = typeof window !== "undefined" && ((window.navigator as any).standalone === true || window.matchMedia?.("(display-mode: standalone)").matches);
+  const pushStatus: { label: string; detail: string; tone: "ok" | "warn" | "off" } = !push.isSupported
+    ? { label: "Not available in the browser", detail: isStandalone ? "This device can't receive web push." : "Add the app to your Home Screen (Share → Add to Home Screen) and open it from there — iPhones only deliver notifications to the installed app.", tone: "off" }
+    : push.permission === "denied"
+      ? { label: "Blocked", detail: "Allow them in iPhone Settings → Notifications → BGP, then come back here.", tone: "warn" }
+      : push.isSubscribed
+        ? { label: "On for this device", detail: "You'll get a push for new messages, tags and approvals.", tone: "ok" }
+        : { label: "Not enabled on this device", detail: "Tap Enable and allow notifications when asked.", tone: "warn" };
+  const enablePush = async () => {
+    setPushBusy(true);
+    try {
+      const ok = await push.subscribe();
+      toast(ok ? { title: "Notifications on", description: "Send a test to check they arrive." } : { title: "Couldn't enable notifications", description: push.permission === "denied" ? "They're blocked in iPhone Settings for this app." : "Try again from the installed Home Screen app.", variant: "destructive" });
+    } finally { setPushBusy(false); }
+  };
+  const testPush = async () => {
+    setPushBusy(true);
+    try {
+      const r = await apiRequest("POST", "/api/push/test").then(x => x.json());
+      if (!r.configured) toast({ title: "Server push isn't configured", description: "VAPID keys are missing on the server.", variant: "destructive" });
+      else if (r.subscriptions === 0) toast({ title: "No devices registered", description: "Tap Enable on this device first.", variant: "destructive" });
+      else if (r.sent > 0 && r.failed.length === 0) toast({ title: `Test sent to ${r.sent} device${r.sent === 1 ? "" : "s"}`, description: "It should appear on your lock screen within a few seconds. If not, check iPhone Settings → Notifications → BGP and Focus modes." });
+      else toast({ title: `Sent ${r.sent}, failed ${r.failed.length}`, description: r.failed.map((f: any) => `${f.host}: ${f.statusCode ?? ""} ${f.message}`).join(" · ").slice(0, 300), variant: "destructive" });
+    } catch (e: any) {
+      toast({ title: "Test failed", description: e?.message?.slice(0, 200), variant: "destructive" });
+    } finally { setPushBusy(false); }
+  };
 
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const { data: hr } = useQuery<any>({
@@ -122,6 +155,30 @@ export default function MobileProfilePage() {
         <p className="text-[11px] text-muted-foreground mt-2 text-center max-w-[260px]">
           Tap the photo to change it — it shows on your chat messages and everywhere your name appears.
         </p>
+      </div>
+
+      {/* Notifications */}
+      <div className="mx-4 mb-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] dark:border-border overflow-hidden" data-testid="profile-notifications">
+        <div className="flex items-center gap-3 px-4 py-3">
+          {pushStatus.tone === "ok" ? <Bell className="w-4 h-4 text-emerald-600 shrink-0" /> : <BellOff className="w-4 h-4 text-amber-600 shrink-0" />}
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] text-muted-foreground">Notifications</p>
+            <p className="text-sm">{pushStatus.label}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">{pushStatus.detail}</p>
+          </div>
+        </div>
+        {push.isSupported && push.permission !== "denied" && (
+          <div className="flex gap-2 px-4 pb-3">
+            {!push.isSubscribed && (
+              <button onClick={enablePush} disabled={pushBusy} className="flex-1 h-9 rounded-full bg-primary text-primary-foreground text-sm font-medium disabled:opacity-60" data-testid="button-profile-enable-push">
+                {pushBusy ? <Loader2 className="w-4 h-4 animate-spin inline" /> : "Enable"}
+              </button>
+            )}
+            <button onClick={testPush} disabled={pushBusy} className="flex-1 h-9 rounded-full border border-[#E7E5E4] dark:border-border text-sm font-medium disabled:opacity-60" data-testid="button-profile-test-push">
+              {pushBusy ? <Loader2 className="w-4 h-4 animate-spin inline" /> : "Send test notification"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Contact / team rows */}

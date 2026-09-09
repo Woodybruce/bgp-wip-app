@@ -1540,6 +1540,7 @@ function ConsultantCreateBody({
             allocType={feeAllocType}
             onAllocTypeChange={setFeeAllocType}
             dealFee={parseFloat(form.fee) || null}
+            dealType={form.dealType}
             bgpAgents={withExternalAgents(users.map(u => ({ id: String(u.id), name: u.name })))}
           />
         </div>
@@ -2134,6 +2135,7 @@ function SimplifiedCreateBody({
               allocType={feeAllocType}
               onAllocTypeChange={setFeeAllocType}
               dealFee={parseFloat(form.fee) || null}
+              dealType={form.dealType}
               bgpAgents={withExternalAgents(users.map(u => ({ id: String(u.id), name: u.name })))}
             />
           </div>
@@ -3110,6 +3112,7 @@ export function DealFormDialog({
           <div className="px-6 pb-4">
             <FeeAllocationCard
               dealId={deal.id}
+              dealType={form.dealType || deal.dealType}
               dealFee={parseFloat(form.fee) || deal.fee}
               users={users.map(u => ({ id: String(u.id), name: u.name }))}
               colorMap={buildUserColorMap(users as any)}
@@ -3187,7 +3190,7 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClic
   );
 }
 
-export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorMap }: { dealId: string; dealFee: number | null | undefined; headlineRent?: number | null; users: { id: string; name: string }[]; colorMap?: Record<string, string> }) {
+export function FeeAllocationCard({ dealId, dealType, dealFee, headlineRent, users, colorMap }: { dealId: string; dealType?: string | null; dealFee: number | null | undefined; headlineRent?: number | null; users: { id: string; name: string }[]; colorMap?: Record<string, string> }) {
   const { toast } = useToast();
   const { data: allocations = [], isLoading } = useQuery<DealFeeAllocation[]>({
     queryKey: ["/api/crm/deals", dealId, "fee-allocations"],
@@ -3366,6 +3369,7 @@ export function FeeAllocationCard({ dealId, dealFee, headlineRent, users, colorM
             allocType={allocType}
             onAllocTypeChange={setAllocType}
             dealFee={totalFee}
+            dealType={dealType}
             bgpAgents={withExternalAgents(users)}
             colorMap={colorMap}
           />
