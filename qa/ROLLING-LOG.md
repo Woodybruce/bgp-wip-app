@@ -110,6 +110,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r631 · 2026-09-09 · FULL (in progress) · journey: Mark Warne client PHONE 390px — provisional entry, heartbeat push
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- **REGRESSION AT BASELINE — 104 + 134 + 111 + 40 = 389 ok,
+  signature 6x400 + 1x409 + 10x403 + 1x503. Streak 86.** Four chunks in
+  order, shared `QA_CROSS_FILE=/tmp/qa-cross-631.json`. No cold flake in
+  chunk 1 (104 first pass). **r630's caveat is now closed: chunks 3 (111)
+  and 4 (40) measured on POST-fix code and both came in on baseline.**
+- Journey in progress — final entry replaces this one.
+
 ### r630 · 2026-09-09 · LIGHT · probe: the SERVER-built .xlsx doors (the three leasing-schedule exports + the JSON export door) · REGRESSION AT BASELINE · **2 bugs fixed (both PROVED)** · 3 suggestions (#380/#381/#382)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0** (run three
   times across the round, 46/0 every time), then
