@@ -146,6 +146,16 @@ const MATTER_TYPE_TO_DEAL_TYPE: Record<string, string> = {
   general: "Consultancy",
 };
 
+/**
+ * The signed-in user's id. `requireAuth` puts the identity on the session /
+ * bearer-token fields, never on `req.user` (only the HR router populates
+ * that), so reading `req.user?.id` here handed every PLA route `undefined` —
+ * and `pla_matters.lead_user_id` is NOT NULL, so matter creation 500'd.
+ */
+function actorId(req: Request): string | undefined {
+  return (req.session as any)?.userId || (req as any).tokenUserId || undefined;
+}
+
 export function registerPlaMattersRoutes(app: Express): void {
   // ── List ───────────────────────────────────────────────────────────────────
   app.get("/api/pla/matters", requireAuth, async (req: Request, res: Response) => {
@@ -220,7 +230,7 @@ export function registerPlaMattersRoutes(app: Express): void {
         return res.status(400).json({ error: `invalid matterType — must be one of ${[...VALID_TYPES].join(", ")}` });
       }
 
-      const userId = (req as any).user?.id;
+      const userId = actorId(req);
       const insert: InsertPlaMatter = {
         propertyId,
         unitId: body.unitId || null,
@@ -401,7 +411,7 @@ export function registerPlaMattersRoutes(app: Express): void {
       const compId = String(req.body?.compId || "");
       if (!compId) return res.status(400).json({ error: "compId required" });
       const weight = typeof req.body?.weight === "number" ? req.body.weight : 1.0;
-      const userId = (req as any).user?.id;
+      const userId = actorId(req);
       await db
         .insert(plaMatterComps)
         .values({ matterId, compId, weight, notes: req.body?.notes || null, addedBy: userId })
@@ -434,7 +444,7 @@ export function registerPlaMattersRoutes(app: Express): void {
       const body = req.body || {};
       const eventKind = String(body.eventKind || "note");
       const eventDate = body.eventDate ? new Date(body.eventDate) : new Date();
-      const userId = (req as any).user?.id;
+      const userId = actorId(req);
       const [created] = await db
         .insert(plaMatterEvents)
         .values({

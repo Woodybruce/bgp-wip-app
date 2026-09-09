@@ -30,6 +30,7 @@ import {
 } from "@shared/schema";
 import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus } from "@shared/deal-status";
 import { isClientCrmCategory } from "@shared/tenant-categories";
+import { splitDealFee } from "@shared/deal-fee-split";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { contentDispositionFor } from "./utils/http-headers";
@@ -7125,29 +7126,16 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         }
         const totalFee = deal.fee;
         const isInvoiced = isInvoicedStatus(deal.status);
-        const agents = allocsByDeal.get(deal.id);
-
-        if (agents && agents.length > 0) {
-          for (const alloc of agents) {
-            if (!senior && WIP_RESTRICTED_AGENTS.has(alloc.agentName.toLowerCase())) continue;
-            const agentFee = alloc.fixedAmount || Math.round(totalFee * ((alloc.percentage || 0) / 100) * 100) / 100;
-            const entry = agentTotals.get(alloc.agentName) || { invoiced: 0, wip: 0 };
-            if (isInvoiced) entry.invoiced += agentFee;
-            else entry.wip += agentFee;
-            agentTotals.set(alloc.agentName, entry);
-          }
-        } else {
-          const agentNames = Array.isArray(deal.internalAgent) ? deal.internalAgent : deal.internalAgent ? [deal.internalAgent] : [];
-          if (agentNames.length === 0) continue;
-          const filteredNames = senior ? agentNames : agentNames.filter(n => !WIP_RESTRICTED_AGENTS.has(n.toLowerCase()));
-          if (filteredNames.length === 0) continue;
-          const perAgent = totalFee / filteredNames.length;
-          for (const name of filteredNames) {
-            const entry = agentTotals.get(name) || { invoiced: 0, wip: 0 };
-            if (isInvoiced) entry.invoiced += perAgent;
-            else entry.wip += perAgent;
-            agentTotals.set(name, entry);
-          }
+        // `splitDealFee` is the one derivation — allocations are the split,
+        // an even spread over internal_agent only when there are none. The
+        // restricted-agent gate goes IN so a hidden agent also leaves the
+        // even-split divisor.
+        const allowAgent = (n: string) => senior || !WIP_RESTRICTED_AGENTS.has(n.toLowerCase());
+        for (const share of splitDealFee(totalFee, allocsByDeal.get(deal.id), deal.internalAgent as any, allowAgent)) {
+          const entry = agentTotals.get(share.agentName) || { invoiced: 0, wip: 0 };
+          if (isInvoiced) entry.invoiced += share.amount;
+          else entry.wip += share.amount;
+          agentTotals.set(share.agentName, entry);
         }
       }
 
@@ -9734,17 +9722,21 @@ Rules:
       kpiHeader.font = { bold: true, size: 13, color: { argb: `FF${BGP_GREEN}` } };
       ws1.addRow({});
 
-      const kpis = [
-        ["Total Deals in Pipeline", allDeals.length.toString()],
-        ["Fees Billed YTD", `£${totalFeesYTD.toLocaleString()}`],
-        ["Conversion Rate", `${conversionRate}%`],
-        ["Average Deal Size", `£${avgDealSize.toLocaleString()}`],
-        ["Average Time to Close", `${avgTimeToClose} days`],
-        ["Completed Deals", completedCount.toString()],
+      // Every KPI is a NUMBER with a format, not a pre-rendered string. The
+      // board pack used to ship "£353,395" and "13%" as text, so the finance
+      // lead could not sum, sort or chart a single figure in the file.
+      const kpis: Array<[string, number, string]> = [
+        ["Total Deals in Pipeline", allDeals.length, "#,##0"],
+        ["Fees Billed YTD", totalFeesYTD, CURRENCY_FMT],
+        ["Conversion Rate", conversionRate / 100, "0%"],
+        ["Average Deal Size", avgDealSize, CURRENCY_FMT],
+        ["Average Time to Close", avgTimeToClose, `#,##0 "days"`],
+        ["Completed Deals", completedCount, "#,##0"],
       ];
-      for (const [label, value] of kpis) {
+      for (const [label, value, fmt] of kpis) {
         const row = ws1.addRow({ label, value });
         row.getCell("label").font = { bold: true };
+        row.getCell("value").numFmt = fmt;
       }
       ws1.addRow({});
 
@@ -9755,7 +9747,8 @@ Rules:
       const statusTableHeader = ws1.addRow({ label: "Status", value: "Count" });
       statusTableHeader.eachCell(cell => { cell.fill = headerFill; cell.font = headerFont; });
       for (const [status, count] of Object.entries(statusCounts).sort((a, b) => b[1] - a[1])) {
-        ws1.addRow({ label: status, value: count.toString() });
+        const row = ws1.addRow({ label: status, value: count });
+        row.getCell("value").numFmt = "#,##0";
       }
 
       // Sheet 2 — Pipeline
@@ -9837,16 +9830,23 @@ Rules:
       ws3.addRow({});
       feeRowIdx = 0;
 
-      // By Agent
+      // By Agent — the fee split is `splitDealFee`, the same derivation the
+      // WIP report reports against. Reading internal_agent alone ignored the
+      // fee-allocation rows the editor writes, so a 60/25/15 split left the
+      // board pack as 50/50 with no BGP House slice.
+      const allocsByDeal = new Map<string, typeof allAllocations>();
+      for (const a of allAllocations) {
+        const existing = allocsByDeal.get(a.dealId);
+        if (existing) existing.push(a);
+        else allocsByDeal.set(a.dealId, [a]);
+      }
       const agentFees = new Map<string, { count: number; total: number }>();
       for (const deal of allDeals) {
-        const agents = Array.isArray(deal.internalAgent) ? deal.internalAgent : (deal.internalAgent ? [deal.internalAgent] : []);
-        const perAgent = (deal.fee || 0) / Math.max(agents.length, 1);
-        for (const agent of agents) {
-          const existing = agentFees.get(agent) || { count: 0, total: 0 };
+        for (const share of splitDealFee(deal.fee || 0, allocsByDeal.get(deal.id), deal.internalAgent as any)) {
+          const existing = agentFees.get(share.agentName) || { count: 0, total: 0 };
           existing.count++;
-          existing.total += perAgent;
-          agentFees.set(agent, existing);
+          existing.total += share.amount;
+          agentFees.set(share.agentName, existing);
         }
       }
       for (const [name, vals] of [...agentFees.entries()].sort((a, b) => b[1].total - a[1].total)) {

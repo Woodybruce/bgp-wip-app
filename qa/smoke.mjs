@@ -307,6 +307,19 @@ if (process.env.DATABASE_URL) {
   });
   if (cc.stdout) process.stdout.write(cc.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
   check('comps CSV export carries the board\'s devalued Net Effective', cc.status === 0, cc.status === 0 ? '' : (cc.stderr || '').slice(0, 200));
+
+  // r632: the two server-built .xlsx doors r630 ran out of budget before
+  // reaching. The Board Report export's "Fees by Agent" ignored the
+  // fee-allocation rows entirely (a 60/25/15 split shipped as 50/50 with no
+  // BGP House slice), and every PLA route read `req.user?.id` — which
+  // requireAuth never sets — so matter creation 500'd and the workbooks were
+  // unauthored.
+  console.log('── xlsx doors (board report fee split, PLA workbook doors) ──');
+  const xd = spawnSync('npx', ['tsx', new URL('./xlsx-doors-check.ts', import.meta.url).pathname], {
+    env: process.env, encoding: 'utf8', timeout: 120000,
+  });
+  if (xd.stdout) process.stdout.write(xd.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
+  check('board report + PLA .xlsx doors: one fee split, real author', xd.status === 0, xd.status === 0 ? '' : (xd.stderr || '').slice(0, 200));
 } else {
   console.log('── tracker sync check skipped (no DATABASE_URL) ──');
 }

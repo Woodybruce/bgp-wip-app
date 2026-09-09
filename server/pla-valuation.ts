@@ -26,7 +26,7 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { db } from "./db";
 import { plaMatters, plaMatterWorkbooks, plaMatterComps, crmComps, crmProperties, users } from "@shared/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { fireNetEffectiveXlsxAsync, buildAndUploadComparablesScheduleXlsx, buildAndUploadItzaXlsx, buildAndUploadDevaluationXlsx, type ComparablesScheduleRow } from "./pla-workbook-writer";
 
 // ─── Net Effective ───────────────────────────────────────────────────────────
@@ -192,6 +192,15 @@ function round2(n: number): number {
 
 // ─── HTTP routes ─────────────────────────────────────────────────────────────
 
+/**
+ * The signed-in user's id — same canonical read as the rest of the server.
+ * `requireAuth` never sets `req.user`, so the old `req.user?.id` left every
+ * workbook row with a null `generated_by` and the xlsx header's "By" as "—".
+ */
+function actorId(req: Request): string | undefined {
+  return (req.session as any)?.userId || (req as any).tokenUserId || undefined;
+}
+
 export function registerPlaValuationRoutes(app: Express): void {
   /**
    * Run Net Effective on a matter and persist the snapshot to
@@ -216,7 +225,7 @@ export function registerPlaValuationRoutes(app: Express): void {
         return res.status(400).json({ error: "areaSqft and headlineRentPa are required" });
       }
       const output = calcNetEffective(input);
-      const userId = (req as any).user?.id;
+      const userId = actorId(req);
       const [workbook] = await db
         .insert(plaMatterWorkbooks)
         .values({
@@ -268,7 +277,7 @@ export function registerPlaValuationRoutes(app: Express): void {
       if (!matter) return res.status(404).json({ error: "matter not found" });
       const input = itzaInputFromBody(req.body);
       const output = calcItza(input);
-      const userId = (req as any).user?.id;
+      const userId = actorId(req);
       const [workbook] = await db
         .insert(plaMatterWorkbooks)
         .values({
@@ -308,7 +317,7 @@ export function registerPlaValuationRoutes(app: Express): void {
       const itza = calcItza(itzaInputFromBody(req.body));
       const annualRentPa = num(req.body?.annualRentPa);
       const output = calcDevaluation({ annualRentPa, itza });
-      const userId = (req as any).user?.id;
+      const userId = actorId(req);
       const [workbook] = await db
         .insert(plaMatterWorkbooks)
         .values({
@@ -405,7 +414,7 @@ export function registerComparablesScheduleRoute(app: Express): void {
       const compRows = await db
         .select()
         .from(crmComps)
-        .where(sql`${crmComps.id} = ANY(${compIds})`);
+        .where(inArray(crmComps.id, compIds));
       const weightById = new Map(linked.map((l) => [l.compId, l.weight ?? 1.0]));
 
       // Normalise to schedule rows
@@ -435,7 +444,7 @@ export function registerComparablesScheduleRoute(app: Express): void {
         };
       });
 
-      const userId = (req as any).user?.id;
+      const userId = actorId(req);
       const [workbook] = await db
         .insert(plaMatterWorkbooks)
         .values({

@@ -110,6 +110,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r632 · 2026-09-09 · PROVISIONAL HEARTBEAT (round in progress)
+- Baseline reproduced: smoke **46/0**; two-bot **104 + 134 + 111 + 41 = 390 ok**,
+  signature 6x400 + 2x409 + 10x403 + 1x503. Streak 86 held.
+- Probe: the `board-report` .xlsx + the PLA workbook writer. **4 bugs found,
+  all fixed, 4 re-breaks reproduced the original symptoms.** New smoke probe
+  `qa/xlsx-doors-check.ts` (16 assertions) wired in. Full write-up replaces
+  this entry at the end of the round.
+
 ### r631 · 2026-09-09 · FULL · journey: Mark Warne (Landsec client) on the CLIENT PHONE 390px — "is the Bluewater deal moving?" → the deal detail's never-tested `button-edit-deal` + `button-deal-image-studio`, with a real WRITE · REGRESSION AT BASELINE · **2 bugs fixed (both PROVED)** · 1 bug DEFERRED · 3 suggestions (#383/#384/#385)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0** (twice
   across the round, 46/0 both), `node qa/apply-sql.mjs qa/seed-personas.sql`
