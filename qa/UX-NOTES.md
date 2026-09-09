@@ -3960,6 +3960,41 @@ verified same day (commit dbade8e0):
    over 1 of 2 completed deals"), the way the Fees Billed card shows its
    "total deals in pipeline" sub.
 
+383. 2026-09-09 · Landsec client / phone 390px · QA r631 · **The client's own
+   Edit button on a deal can never be saved on an early-stage letting.** The
+   phone deal detail's `button-edit-deal` opens the dialog fine, but
+   `handleSubmit` (deals.tsx) requires a landlord AND a tenant on every
+   leasing-type deal before it will fire the PUT — and a client's party slots
+   are deliberately read-only ("Not set yet — your BGP team will link
+   parties"). So on Mark's Bluewater MSU9 letting, whose tenant BGP has not
+   linked yet, Save Changes fires no request at all and the dialog just sits
+   there; every deal on his board is at that stage. Suggestion: for a client
+   editor, drop the counterparty requirement (the fields it protects are the
+   ones the client cannot set anyway) so a target-date or comment edit saves —
+   or, if the requirement must hold, disable Save with the reason on it rather
+   than leaving a live button that does nothing.
+
+384. 2026-09-09 · Landsec client / phone 390px · QA r631 · **Image Studio
+   opened from a deal is handed the deal NAME as the address.** The
+   `button-deal-image-studio` link builds `address=` from the linked
+   property's address and falls back to the deal name, and on a fixture
+   property with no address the URL Mark actually landed on read
+   `?property=Bluewater%20Shopping%20Centre&address=Bluewater%20MSU9%20letting`
+   — "Bluewater MSU9 letting" is not an address, and Street View capture and
+   stock search both key off that field. The page itself worked (library,
+   brand library, collections all loaded on the phone). Suggestion: omit
+   `address` when the property has none rather than substituting the deal
+   name, so the studio prompts for a real one.
+
+385. 2026-09-09 · Landsec client / phone 390px · QA r631 · **The phone Deals
+   tab shows nothing but the pill row while it loads.** Tapping Deals lands on
+   a header, the Properties/Deals/Letting Tracker pill row and two empty grey
+   skeleton blocks for several seconds — no count, no "loading your deals",
+   and no empty-state text to distinguish "still fetching" from "you have no
+   deals" (Mark has five). Suggestion: put the tracker-style roll-up counts on
+   that pill row and a one-line "Loading your deals…" under it, the way the
+   Portfolio tile does.
+
 Confirmed by Woody 2026-08-08 ("Do all 5"); built + visually verified same day:
 1. 2026-08-08 · Letting Tracker viewing/offer rows now have an edit pencil —
    PATCH routes added for unit viewings + offers, form switches to edit mode.

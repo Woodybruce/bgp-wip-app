@@ -110,15 +110,97 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r631 · 2026-09-09 · FULL (in progress) · journey: Mark Warne client PHONE 390px — provisional entry, heartbeat push
-- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+### r631 · 2026-09-09 · FULL · journey: Mark Warne (Landsec client) on the CLIENT PHONE 390px — "is the Bluewater deal moving?" → the deal detail's never-tested `button-edit-deal` + `button-deal-image-studio`, with a real WRITE · REGRESSION AT BASELINE · **2 bugs fixed (both PROVED)** · 1 bug DEFERRED · 3 suggestions (#383/#384/#385)
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0** (twice
+  across the round, 46/0 both), `node qa/apply-sql.mjs qa/seed-personas.sql`
+  after each restore.
 - **REGRESSION AT BASELINE — 104 + 134 + 111 + 40 = 389 ok,
   signature 6x400 + 1x409 + 10x403 + 1x503. Streak 86.** Four chunks in
-  order, shared `QA_CROSS_FILE=/tmp/qa-cross-631.json`. No cold flake in
-  chunk 1 (104 first pass). **r630's caveat is now closed: chunks 3 (111)
-  and 4 (40) measured on POST-fix code and both came in on baseline.**
-- Journey in progress — final entry replaces this one.
+  order, r630 arithmetic, shared `QA_CROSS_FILE=/tmp/qa-cross-631.json`. No
+  cold flake in chunk 1 (104 first pass). **r630's caveat is CLOSED: chunks
+  3 (111) and 4 (40) measured on POST-r630-fix code, both on baseline.**
+- **NEW TWO-BOT BASELINE: 390 ok, signature 6x400 + 2x409 + 10x403 + 1x503.**
+  +1 scenario, `client-cannot-self-serve-the-mlro-override`, added at the END
+  of `markRound` right after `client-deal-assignment-stays-bgps`, so it lands
+  in **chunk 4 (40 → 41)**; the extra 409 is the AML gate correctly refusing
+  the probe's SOL move. Chunks 1/2/3 unchanged.
+- Surface discipline held: `devices['iPhone 13']`, shell assertion passed
+  (nav = portfolio, messages, deals, tasks, news), `:visible` on the deal
+  detail. Harness reused: `qa/r623-mark-phone-journey.mjs`.
+- **BUG 1 (fixed, PROVED) — a Landsec client could set BGP's MLRO override
+  and walk their own deal past the AML gate, from the phone.** `PUT
+  /api/crm/deals/:id` stripped six fee fields from a client body but not
+  `amlCheckCompleted` — which is exactly the MLRO override the gate honours
+  (`mlroOverride = (req.body.amlCheckCompleted ?? oldDeal…) === "YES"`), and
+  the gate's own 409 hint spells the bypass out ("MLRO override: set Deal →
+  AML check completed = YES"). Measured as Mark: PUT `amlCheckCompleted:
+  "YES"` → 200, reads back "YES"; then PUT `status: "SOL"` → **200, deal sits
+  at SOL**. CONTROL with the override cleared: the same move → **409
+  `AML_GATE_FAILED` "AML not complete: Landsec (no checks run)"**. Fix: the
+  client write strip is now DERIVED from `stripDealFees` (everything redacted
+  on the way out is refused on the way in) plus `amlCheckCompleted`, applied
+  at both client write doors (PUT and POST). `amlCheckCompleted` stays
+  READABLE — the client Letting Tracker needs it at SOL.
+- **BUG 2 (fixed, PROVED) — the client's Edit dialog was the full staff form.**
+  `button-edit-deal` on the client phone opened a dialog carrying **Fee (£),
+  Fee Agreement, AML Check, Xero Contact (Billing), PO Number, Invoiced,
+  Team, BGP Contact and BGP's fee-allocation editor** (`card-fee-allocation`
+  + `button-edit-fee-allocation`) — every one of them a field the deal page
+  itself deliberately hides from clients, and the control that fed BUG 1.
+  Cause: only the CREATE body was gated on the client flag; the EDIT path
+  "always renders the full form regardless". Fix: `isClientCreate` →
+  `isClientUser`, and the staff-only blocks + the fee-allocation card gated on
+  it. After: 27 labels, none of the ten staff-only testids present, Property /
+  Unit / Name / Type / Status / Target Date / Asset Class / parties / rent /
+  areas / lease terms / Comments all still there.
+- **PROVED CLEAN in the same probe:** `PUT /api/crm/deals/:id/fee-allocations`
+   403s a client ("Not available for client accounts") and the GET returns
+  `[]`, so the fee-split card the dialog used to render leaked no numbers and
+  its Save was already shut — the leak was the control, not the door.
+- Non-vacuity, two narrow re-breaks, each failing with the ORIGINAL symptom:
+  (a) `amlCheckCompleted` removed from the server strip → "a client set the
+  MLRO override (amlCheckCompleted null -> \"YES\") — that bypasses BGP's AML
+  gate"; (b) strip restored, the AML/Xero/PO gate reverted in the dialog →
+  "the client Edit Deal dialog still shows BGP-only controls: select-deal-aml,
+  deal-xero-contact-search, input-deal-po-number". Then restored, `npx tsc
+  --noEmit` clean, scenario green, smoke 46/0.
+- **Flaw in my own first cut (and a trap for the next round):** the new
+  scenario cannot restore `amlCheckCompleted` — a client is (now) forbidden to
+  write it — so re-break (a) left the fixture deal carrying the override, and
+  the NEXT run reported the vacuity guard ("fixture deal already carries the
+  MLRO override") instead of the real failure. The guard did its job, but the
+  first failure is the honest one; `run-smoke.sh`'s restore clears it (I
+  cleared it with a one-line UPDATE through `qa/apply-sql.mjs`). The message
+  now says so. The scenario also guards vacuity by refusing to run on a deal
+  already at a gated status, and by failing if the dialog renders no fields.
+- **BUG DEFERRED (#383, needs a Woody call, not a mechanical fix) — the
+  client's Edit dialog can never be SAVED on an early-stage letting.** With
+  the leak closed I did the actual write Mark came for (push the target date
+  to 30 Nov, add a chase comment) and **no PUT was fired at all**: dialog
+  still open, nothing `:invalid`, no request. `handleSubmit` requires a
+  landlord AND tenant on every leasing-type deal, and a client's party slots
+  are read-only by design ("your BGP team will link parties") — so on
+  Bluewater MSU9, tenant unset, Save Changes is inert, and every deal on
+  Mark's board is at that stage. Left alone: the fix is a product decision
+  (drop the counterparty requirement for client editors vs disable Save with
+  the reason). Written up as #383.
+- `button-deal-image-studio` (never tested by anyone): **works on the client
+  phone** — lands on `/image-studio?property=…&propertyId=…`, header "Image
+  Studio — Bluewater Shopping Centre", "Linked from property", library 1 /
+  brand library 5 / collections 1, no error, no overflow. One flaw: the
+  `address` param falls back to the DEAL NAME when the property has no address
+  (`address=Bluewater MSU9 letting`) → #384.
+- Also seen, not chased: the phone Deals tab renders only the pill row plus
+  two grey skeletons for several seconds and my first pass found zero
+  deal-card testids at 3s settle (Mark has 5 deals by API) — a warmed second
+  pass was run but its card list was not captured, so I am NOT claiming the
+  list never fills. Worth a deliberate look next phone round → #385.
+- Round overran again (~95 min), on the two re-breaks and the fixture-dirty
+  detour above. Smoke and all four regression chunks were measured; the
+  post-fix full 4-chunk re-run was NOT — chunk 4's `client-deal-*` scenarios
+  (the only ones touching these doors) were each re-run green post-fix, and
+  the staff write path is untouched by the strip (it only applies when
+  `resolveCompanyScope` returns a company).
 
 ### r630 · 2026-09-09 · LIGHT · probe: the SERVER-built .xlsx doors (the three leasing-schedule exports + the JSON export door) · REGRESSION AT BASELINE · **2 bugs fixed (both PROVED)** · 3 suggestions (#380/#381/#382)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0** (run three

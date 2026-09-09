@@ -10993,6 +10993,79 @@ async function markRound(page, cross) {
       }
     }
   });
+
+  // r631: the client phone deal detail's Edit button (never exercised before)
+  // opened the FULL staff form — Fee, Fee Agreement, AML Check, Xero billing,
+  // PO Number, Invoiced, Team, BGP Contact and BGP's fee-allocation editor —
+  // because only the CREATE body was gated on the client flag while the EDIT
+  // path "always renders the full form". Worse, the door behind the AML Check
+  // control accepted it: amlCheckCompleted is the MLRO override the AML gate
+  // honours, so a client could set it and walk their own deal past BGP's gate
+  // to SOL/EXC/COM. Two halves, one rule: the control must not render for a
+  // client AND the field must not be writable by one.
+  await step(page, p, 'client-cannot-self-serve-the-mlro-override', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const arr = Array.isArray(list) ? list : (list.data || []);
+      const GATED = new Set(['SOL', 'EXC', 'COM', 'INV']);
+      const deal = arr.find((d) => d.id && !GATED.has(d.status));
+      if (!deal) return { err: 'client sees no un-gated deal to probe' };
+      const before = { status: deal.status ?? null, aml: deal.amlCheckCompleted ?? null };
+      if (before.aml === 'YES') return { err: 'fixture deal already carries the MLRO override — the probe would be vacuous (a PREVIOUS failing run left it set; the next run-smoke.sh restore clears it)' };
+      const put = await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth,
+        body: JSON.stringify({ amlCheckCompleted: 'YES', comments: 'QA r631 mlro probe' }),
+      });
+      let back = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      let d = back.deal || back;
+      const afterPut = { status: d.status ?? null, aml: d.amlCheckCompleted ?? null, comments: d.comments ?? null };
+      // Now try the gated status move the override would have unlocked.
+      const move = await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth, body: JSON.stringify({ status: 'SOL' }),
+      });
+      const moveBody = await move.text();
+      back = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      d = back.deal || back;
+      const afterMove = { status: d.status ?? null, aml: d.amlCheckCompleted ?? null };
+      await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth,
+        body: JSON.stringify({ status: before.status, comments: deal.comments ?? null }),
+      });
+      return { id: deal.id, putStatus: put.status, before, afterPut, moveStatus: move.status, moveBody: moveBody.slice(0, 200), afterMove };
+    });
+    if (r.err) throw new Error(r.err);
+    if (r.putStatus !== 200) throw new Error(`a client editing their OWN deal got ${r.putStatus} — the edit door should stay open`);
+    if (r.afterPut.comments !== 'QA r631 mlro probe') throw new Error(`the client's benign deal edit did not land — the strip is too wide`);
+    if (r.afterPut.aml === 'YES') throw new Error(`a client set the MLRO override (amlCheckCompleted ${JSON.stringify(r.before.aml)} -> "YES") — that bypasses BGP's AML gate`);
+    if (r.afterMove.status === 'SOL' && r.afterPut.aml === 'YES') {
+      throw new Error('a client walked their own deal to SOL on an override they set themselves');
+    }
+    // The dialog half — the control must not even render for a client.
+    const leaks = await page.evaluate(async (dealId) => {
+      const STAFF_ONLY = ['input-deal-fee', 'select-deal-fee-agreement', 'select-deal-aml',
+        'deal-xero-contact-search', 'input-deal-po-number', 'input-deal-invoiced-at',
+        'select-deal-team', 'input-deal-agent', 'card-fee-allocation', 'button-edit-fee-allocation'];
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      if (!location.pathname.endsWith(dealId)) { history.pushState({}, '', `/deals/${dealId}`); window.dispatchEvent(new PopStateEvent('popstate')); }
+      for (let i = 0; i < 40; i++) { if (document.querySelector('[data-testid="button-edit-deal"]')) break; await sleep(250); }
+      const btn = document.querySelector('[data-testid="button-edit-deal"]');
+      if (!btn) return { err: 'no button-edit-deal on the client deal detail' };
+      btn.click();
+      let dlg = null;
+      for (let i = 0; i < 40; i++) { dlg = document.querySelector('[role="dialog"]'); if (dlg && dlg.querySelector('[data-testid="button-save-deal"]')) break; await sleep(250); }
+      if (!dlg) return { err: 'the Edit Deal dialog never opened' };
+      const found = STAFF_ONLY.filter((t) => !!dlg.querySelector(`[data-testid="${t}"]`));
+      const fields = dlg.querySelectorAll('[data-testid^="input-deal"],[data-testid^="select-deal"]').length;
+      document.querySelector('[data-testid="button-cancel-deal"]')?.click();
+      return { found, fields };
+    }, r.id);
+    if (leaks.err) throw new Error(leaks.err);
+    if (!leaks.fields) throw new Error('the client Edit Deal dialog rendered no fields at all — probe is vacuous');
+    if (leaks.found.length) {
+      throw new Error(`the client Edit Deal dialog still shows BGP-only controls: ${leaks.found.join(', ')}`);
+    }
+  });
 }
 
 // ─── Additional personas ──────────────────────────────────────────────────

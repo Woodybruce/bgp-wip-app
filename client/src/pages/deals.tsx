@@ -2300,7 +2300,13 @@ export function DealFormDialog({
   // Clients can create deals but never set fees — the server strips every
   // fee field regardless, and here we hide the fee-exposing paths (Consultant
   // fee-only body + "Show all fields") so they only see the fee-less form.
-  const isClientCreate = currentUser?.role === "Client" || !!currentUser?.companyScopeId;
+  // The EDIT path renders the full form regardless of "Show all fields", so
+  // the same test has to gate the staff-only blocks inside it — otherwise a
+  // client tapping Edit on their own deal gets Fee, Fee Agreement, AML Check,
+  // Xero billing, PO Number, Invoiced, Team, BGP Contact and BGP's
+  // fee-allocation editor, every one of which the deal page deliberately
+  // hides from them (r631, on the client phone).
+  const isClientUser = currentUser?.role === "Client" || !!currentUser?.companyScopeId;
   const SENIOR_EMAILS = new Set([
     "woody@brucegillinghampollard.com",
     "charlotte@brucegillinghampollard.com",
@@ -2498,10 +2504,10 @@ export function DealFormDialog({
               AML) lives behind a "Show all fields" toggle and can
               also be filled in later on the actual deal board. The
               EDIT path always renders the full form. */}
-          {!isEdit && (!showAllFields || isClientCreate) ? (
+          {!isEdit && (!showAllFields || isClientUser) ? (
             // Clients always get the fee-less simplified body — never the
             // Consultant fee-only body, never the full form.
-            (form.dealType === "Consultant" && !isClientCreate) ? (
+            (form.dealType === "Consultant" && !isClientUser) ? (
             <ConsultantCreateBody
               form={form}
               set={set}
@@ -2523,7 +2529,7 @@ export function DealFormDialog({
               users={users}
               toggleAgent={toggleAgent}
               setForm={setForm}
-              hideFees={isClientCreate}
+              hideFees={isClientUser}
               feeRows={feeRows}
               setFeeRows={setFeeRows}
               feeAllocType={feeAllocType}
@@ -2705,7 +2711,8 @@ export function DealFormDialog({
               )}
             </div>
 
-            <div>
+            {!isClientUser && (
+<div>
               <Label>Team</Label>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -2737,6 +2744,7 @@ export function DealFormDialog({
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+            )}
 
             <div>
               <Label>
@@ -2755,7 +2763,8 @@ export function DealFormDialog({
               )}
             </div>
 
-            <div>
+            {!isClientUser && (
+<div>
               <Label>BGP Contact</Label>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -2792,6 +2801,7 @@ export function DealFormDialog({
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+            )}
 
             <div>
               <Label>Asset Class</Label>
@@ -2938,6 +2948,7 @@ export function DealFormDialog({
                     </div>
                   )}
 
+                  {!isClientUser && (<>
                   <div>
                     <Label>Fee ({"\u00A3"})</Label>
                     <Input type="number" min="0" step="0.01" value={form.fee} onChange={(e) => set("fee", e.target.value)} data-testid="input-deal-fee" />
@@ -2953,6 +2964,8 @@ export function DealFormDialog({
                       </SelectContent>
                     </Select>
                   </div>
+                  </>
+                  )}
 
                   {showArea && (
                     <>
@@ -3014,6 +3027,7 @@ export function DealFormDialog({
                     <Label>Completed</Label>
                     <Input type="date" value={form.completedAt} onChange={(e) => set("completedAt", e.target.value)} data-testid="input-deal-completed-at" />
                   </div>
+                  {!isClientUser && (<>
                   <div>
                     <Label>Invoiced</Label>
                     <Input type="date" value={form.invoicedAt} onChange={(e) => set("invoicedAt", e.target.value)} data-testid="input-deal-invoiced-at" />
@@ -3053,6 +3067,8 @@ export function DealFormDialog({
                     <Label>PO Number</Label>
                     <Input value={form.poNumber || ""} onChange={(e) => set("poNumber", e.target.value)} placeholder="Purchase order number" data-testid="input-deal-po-number" />
                   </div>
+                  </>
+                  )}
                 </>
               );
             })()}
@@ -3071,7 +3087,7 @@ export function DealFormDialog({
           )}
 
           <DialogFooter className="flex items-center gap-2">
-            {!isEdit && !isClientCreate && (
+            {!isEdit && !isClientUser && (
               <Button
                 type="button"
                 variant="ghost"
@@ -3093,7 +3109,7 @@ export function DealFormDialog({
           </DialogFooter>
         </form>
 
-        {isEdit && deal && (
+        {isEdit && deal && !isClientUser && (
           <div className="px-6 pb-4">
             <FeeAllocationCard
               dealId={deal.id}

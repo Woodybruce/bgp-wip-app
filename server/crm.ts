@@ -1127,6 +1127,15 @@ export function setupCrmRoutes(app: Express) {
   // and internal agent on their own deal (UX #171, proven r601). Stripped on
   // both client write doors below — create and edit.
   const CLIENT_STRIPPED_ASSIGNMENT_FIELDS = ["team", "internalAgent", "internalAgentIds"] as const;
+  // Everything stripDealFees redacts on the way OUT must also be refused on
+  // the way IN, plus amlCheckCompleted — that one stays readable (the client
+  // Letting Tracker reads it at SOL) but it is the MLRO override the AML
+  // gate honours, so a client PUT could self-serve a bypass of BGP's own
+  // gate ("set Deal -> AML check completed = YES to bypass" is literally the
+  // gate's hint) and walk their deal to SOL/EXC/COM. Proven r631 on the
+  // client phone, where the Edit dialog hands them the control.
+  const clientUnwritableDealFields = (): string[] =>
+    [...Object.keys(stripDealFees({} as Record<string, any>)), "amlCheckCompleted"];
   const stripDealFees = <T extends Record<string, any>>(d: T): T => ({
     ...d, fee: null, feePercentage: null, feeAgreement: null,
     feeNotes: null, feeAgreementUrl: null, commission: null,
@@ -3247,13 +3256,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // fee. (Woody, 2026-07: "client can make a deal, just hide the fee.")
       const dealScope = await resolveCompanyScope(req);
       if (dealScope) {
-        req.body = {
-          ...req.body,
-          landlordId: dealScope,
-          fee: null, feePercentage: null, feeNotes: null,
-          feeAgreement: null, feeAgreementUrl: null, commission: null,
-        };
-        for (const f of CLIENT_STRIPPED_ASSIGNMENT_FIELDS) delete (req.body as any)[f];
+        req.body = { ...req.body, landlordId: dealScope };
+        for (const f of [...clientUnwritableDealFields(),
+                         ...CLIENT_STRIPPED_ASSIGNMENT_FIELDS]) {
+          delete (req.body as any)[f];
+        }
       }
       // Resolve a "__tenancy__<id>" unitId picked from the tenancy
       // schedule directly. Finds (or creates) a matching property_units
@@ -3443,7 +3450,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (editScope) {
         const inScope = !!oldDeal && (await isDealInScope(editScope, req.params.id));
         if (!inScope) return res.status(403).json({ error: "Not available for client accounts" });
-        for (const f of ["fee", "feePercentage", "feeNotes", "feeAgreement", "feeAgreementUrl", "commission",
+        for (const f of [...clientUnwritableDealFields(),
                          ...CLIENT_STRIPPED_ASSIGNMENT_FIELDS]) {
           delete (req.body as any)[f];
         }
