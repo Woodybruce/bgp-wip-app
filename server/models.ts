@@ -644,14 +644,6 @@ function getAnthropicClient() {
   return new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
 }
 
-function getGeminiModelClient() {
-  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-  if (!apiKey || !baseUrl) return null;
-  const { GoogleGenAI } = require("@google/genai");
-  return new GoogleGenAI({ apiKey, httpOptions: { apiVersion: "", baseUrl } });
-}
-
 async function extractPropertyDataWithAI(documentTexts: { name: string; text: string }[]): Promise<any> {
   const anthropic = getAnthropicClient();
 
@@ -1810,35 +1802,14 @@ Return ONLY valid JSON. No markdown, no code fences.`;
       }
       messages.push({ role: "user", content: userContent });
 
+      // Every model built or edited through Excel runs on Claude (Woody,
+      // 2026-09-09: "all models via excel should run on Fable"). This chat
+      // used to try Gemini 2.5 Flash first whenever the Gemini keys were set
+      // — logged, misleadingly, as "Gemini 3.1 Pro" — and only reached Claude
+      // when Gemini threw. Removed: the model-design conversation is now the
+      // same Claude tier as every other Studio call.
       let responseText = "";
-      const gemini = getGeminiModelClient();
-      if (gemini) {
-        try {
-          const geminiContents: any[] = [];
-          let lastRole = "";
-          for (const m of messages) {
-            const role = m.role === "assistant" ? "model" : "user";
-            if (role === lastRole && geminiContents.length > 0) {
-              geminiContents[geminiContents.length - 1].parts[0].text += "\n\n" + m.content;
-            } else {
-              geminiContents.push({ role, parts: [{ text: m.content }] });
-            }
-            lastRole = role;
-          }
-          console.log("[model-design-chat] Using Gemini 3.1 Pro");
-          const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: geminiContents,
-            config: { maxOutputTokens: 4096, temperature: 0.3, systemInstruction: systemPrompt },
-          });
-          responseText = geminiResponse.text || "";
-        } catch (geminiErr: any) {
-          console.log("[model-design-chat] Gemini failed, falling back to Claude:", geminiErr?.message);
-        }
-      }
-
-      if (!responseText) {
-        console.log("[model-design-chat] Using Claude Sonnet fallback");
+      {
         const anthropic = getAnthropicClient();
         const response = await anthropic.messages.create({
           model: "claude-opus-4-8",
