@@ -112,8 +112,9 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   6x400 + 1x409 + 10x403 + 1x503. Streak 82.** Four chunks, r626 arithmetic
   verbatim, shared `QA_CROSS_FILE=/tmp/qa-cross-627.json`. No chunk-1 cold
   flake this session (104 first pass).
-- **NEW SMOKE BASELINE: 44 checks, 0 failures** — one new check,
-  `qa/excel-export-check.ts` (15 assertions), wired at `smoke.mjs:294`.
+- **NEW SMOKE BASELINE: 45 checks, 0 failures** — 43 + r628's area-parse
+  probe + this round's `qa/excel-export-check.ts` (14 assertions), wired at
+  `smoke.mjs:294`.
 - **JOURNEY (Victoria, 1440px, staff desktop).** `/comps` → `/property-pathway`
   → `/evidence-plans` → `/lease-events`, all render clean, **zero console
   errors** across the four. `/property-pathway` and `/evidence-plans` are
@@ -144,21 +145,33 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
      "Value" is on the currency keyword list, so an exit yield of `0.068` and
      rental growth of `0.1` BOTH rendered as **"£0"**. (The `0.0"%"` format
      also appends a literal % without multiplying — `0.1` showed "0.1%".)
-  **Fix (`chatbgp.ts`, `export_to_excel`):** a `toCell()` typed-cell path —
-  `{formula}` / `{value, numFmt}` / `{text}` accepted alongside plain strings,
-  and a plain string starting with `=` is written as a live formula; the
-  merged title row DROPPED so headers sit on row 1 and data from row 2 exactly
-  as the schema describes (autoFilter/freeze moved with it); `guessNumFmt()`
-  gains magnitude guards so a header-guessed `£#,##0` never fires on |v| < 1
-  and a percent header uses the real `0.0%` (which multiplies) for fractions.
-  Schema now documents typed cells; the tool description states the row-1/row-2
-  layout, that formulas are supported and preferred, and how to pass a rate.
-  `npx tsc --noEmit` clean.
-- **NON-VACUOUS, three narrow re-breaks** (each restored): formulas back to
-  `cellText` → the 4 formula assertions + the reference assertion fail with the
-  original symptom (`"=B2*C2"` as a string); title row re-added → headers land
-  on row 2, `A1="Asset Schedule"`, 12 fail; currency magnitude guard removed →
-  `0.068 numFmt=£#,##0`, exactly the "£0" symptom. Restored → all green.
+  **COLLISION — r628 fixed the same tool in parallel and landed first**
+  (0a750c4, "Make generated spreadsheets calculate"), from Woody's other
+  workbook. Merged rather than re-litigated: r628's decisions KEPT (title row
+  stays, the tool description now states the row-1 title / row-2 headers /
+  row-3 data layout so references land; `"=..."` strings become live formulas;
+  `fullCalcOnLoad`; autofilter dropped from a calculating sheet; the percent
+  format multiplies). **What r628 did NOT have, and r627 layers on:**
+  1. **The TYPED CELL.** `{formula}` / `{value, numFmt}` / `{text}` accepted
+     alongside plain strings, normalised in one `typedCell()` ahead of
+     `cellText`, honoured through column widths, row values and formatting.
+     A format is a per-CELL property; string-only cells left the model no way
+     to say so.
+  2. **The currency guess no longer swallows the number.** r628 fixed the
+     percent case but left the currency one, so `0.068` under a header reading
+     "Value" was still rendering **"£0"** — `£#,##0` now only fires on
+     |v| >= 1 (and on formulas, whose result is unknown).
+  Schema documents typed cells; the description says how to pass a rate.
+  `npx tsc --noEmit` clean, smoke **45/0**.
+- **NON-VACUOUS.** Before the merge, three narrow re-breaks of the pre-r628
+  code each reproduced the ORIGINAL symptom: formulas back through `cellText`
+  → `"=B2*C2"` as a string (5 fail); title row re-added → `A1="Asset
+  Schedule"` (12 fail); currency guard removed → `0.068 numFmt=£#,##0`. After
+  the merge, the two r627-specific fixes were re-broken again on the MERGED
+  code: currency guard removed → the "£0" symptom; typed-cell `numFmt` branch
+  removed → `numFmt=(none)` on the 0.0% cell. Restored → all green both times.
+  `fullCalcOnLoad` is r628's assertion, not duplicated here — ExcelJS's own
+  `load()` does not round-trip `calcProperties`.
 - **Deferred / not touched.** The comps board's own "Export" button is a
   SECOND spreadsheet exporter (separate from the ChatBGP tool) — not looked at
   this round, worth a future census. Only one bug slot spent.

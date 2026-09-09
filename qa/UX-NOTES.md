@@ -15,14 +15,14 @@ what happened · concrete suggested improvement.
 
 374. 2026-09-09 · Victoria (BGP staff, Head of National) / ChatBGP export ·
    QA r627 · **A spreadsheet cell's number format is still guessed from its
-   COLUMN HEADER, which is meaningless on a label/value sheet.** r627 fixed
+   COLUMN HEADER, which is meaningless on a label/value sheet.** r627/r628 fixed
    the damage the guess was doing (an exit yield of 0.068 under a header
    reading "Value" was rendering as "£0") and gave the tool a typed-cell path
    so the model can pass `{value, numFmt}` per cell — but the fallback
    heuristic is untouched, so on an Assumptions sheet headed
    Metric / Value / Notes a term of `10` years still comes out as "£10" and a
    unit count of `4` as "£4", because "value" is on the currency keyword list
-   (`chatbgp.ts`, `guessNumFmt`). Formats are a per-cell property; guessing
+   (`chatbgp.ts`, the header keyword test inside `export_to_excel`). Formats are a per-cell property; guessing
    them per column only ever worked because the tool started life as a comps
    dumper where every column was homogeneous. **Suggestion:** once ChatBGP is
    reliably passing `numFmt` on the cells that need it, drop the header
