@@ -13,6 +13,50 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+389. 2026-09-09 · BGP staff · QA r632 · **The Board Report .xlsx and the
+   Board Report screen disagree about a status-less deal.** In the file
+   Woody actually downloads, the Executive Summary's "Pipeline by Status"
+   table counts a deal with a null status under **"Unknown"**, while the
+   Pipeline sheet's Status cell for that same deal is **blank** (measured on
+   `QA-R1 FeeVisibility`: `Unknown 1` on sheet 1, `B2` empty on sheet 2). Two
+   sheets of one file, two answers. Suggestion: write "Unknown" in the
+   Pipeline sheet too, so the row a reader lands on matches the count that
+   sent them there.
+
+388. 2026-09-09 · BGP staff · QA r632 · **The Board Report .xlsx is a strict
+   subset of the Board Report screen.** The export handler builds `topDeals`
+   (sorted, ready) and then never writes it to a cell, and it drops the
+   `monthlyFees` series, the `timeToCloseBuckets` histogram and the
+   `byAssetClass` breakdown that `/api/board-report` returns and the screen
+   charts. So the board pack Woody prints is missing the top-ten deal table
+   and every trend the meeting actually discusses. Suggestion: a "Top Deals"
+   sheet from the array already computed, plus a "Trends" sheet carrying the
+   monthly fee series and the time-to-close buckets.
+
+387. 2026-09-09 · BGP staff (Lease Advisory) · QA r632 · **Every PLA workbook
+   is a picture of a calculation, not a calculation.** Opened the real bytes
+   from all four writers: the Net Effective, ITZA, Devaluation and
+   Comparables sheets contain **no formulas at all** — `Total ITZA` is a
+   hardcoded 1165.75 next to hardcoded zone rows, `Net effective psf` is a
+   hardcoded 52.64, and the ITZA "Factor" column is the literal text `A/2`.
+   Tom and Pete's own Net Effective Template is a live workbook they flex
+   during a negotiation; this one cannot be. Suggestion: write the zone,
+   total and psf cells as real formulas (`=B11*…`, `=SUM(D11:D14)`,
+   `=B10/B11`) with `fullCalcOnLoad`, so the client can see the arithmetic and
+   the surveyor can move an assumption.
+
+386. 2026-09-09 · BGP staff (Lease Advisory) · QA r632 · **The Schedule of
+   Comparables .xlsx drops the two things a schedule of comparables is for.**
+   `ComparablesScheduleRow` carries `comments` and `weight`, the route
+   populates both, and the writer writes neither: `comments` reaches no cell
+   at all, and `weight` only tints a row's fill. Measured on five real linked
+   comps — **all five had a comments string** (e.g. "£100m+ revamped flagship
+   representing major retail repositioning…") and none of it is in the file,
+   and the weights (1.0 / 0.5) are invisible on a printed page. Suggestion: a
+   "Weight" column and a "Comments" column at the end (the header merge runs
+   to P and would need widening) — needs Woody's call on column order, since
+   this schedule can end up in front of an arbitrator.
+
 385. 2026-09-09 · Landsec client / phone 390px · QA r631 · **The phone Deals
    tab shows nothing but the pill row while it loads.** Tapping Deals lands on
    a header, the Properties/Deals/Letting Tracker pill row and two empty grey

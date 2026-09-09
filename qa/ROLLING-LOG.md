@@ -110,13 +110,162 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r632 · 2026-09-09 · PROVISIONAL HEARTBEAT (round in progress)
-- Baseline reproduced: smoke **46/0**; two-bot **104 + 134 + 111 + 41 = 390 ok**,
-  signature 6x400 + 2x409 + 10x403 + 1x503. Streak 86 held.
-- Probe: the `board-report` .xlsx + the PLA workbook writer. **4 bugs found,
-  all fixed, 4 re-breaks reproduced the original symptoms.** New smoke probe
-  `qa/xlsx-doors-check.ts` (16 assertions) wired in. Full write-up replaces
-  this entry at the end of the round.
+### r632 · 2026-09-09 · LIGHT · probe: the two server-built .xlsx doors r630 never reached — the `board-report` .xlsx and the PLA workbook writer · REGRESSION AT BASELINE · **4 bugs fixed (all PROVED)** · 4 suggestions (#386/#387/#388/#389)
+- Bring-up: `npm run qa:pg` once as the first Bash call, `bash qa/run-smoke.sh`
+  **46/0**, then `node qa/apply-sql.mjs qa/seed-personas.sql` after each
+  restore. Smoke run three times across the round (46/0, then 47/0 twice
+  post-probe).
+- **REGRESSION AT BASELINE — 104 + 134 + 111 + 41 = 390 ok, signature
+  6x400 + 2x409 + 10x403 + 1x503. Streak 86.** Four chunks in order, r624
+  arithmetic verbatim, shared `QA_CROSS_FILE=/tmp/qa-cross-632.json`. No cold
+  flake in chunk 1 (104 first pass). **Re-measured POST-FIX, all four chunks
+  in order on a fresh restore + re-seed (`/tmp/qa-cross-632b.json`):
+  104 + 134 + 111 + 41 = 390, identical signature. Streak 87.**
+- **NEW SMOKE BASELINE: 47 checks, 0 failures** — 46 + `qa/xlsx-doors-check.ts`
+  (16 assertions), wired at `smoke.mjs:317`.
+- **How the doors were driven.** `board-report/export-excel` end-to-end through
+  a running server as a real logged-in persona, bytes downloaded, unzipped and
+  the sheet XML read cell-by-cell (type, shared string, `numFmt` resolved
+  through `cellXfs`) — never the handler's return value. The PLA doors were
+  driven the same way (`POST /api/pla/matters` → net-effective → itza →
+  devaluation → link comps → comparables-schedule, all as Victoria), and the
+  **bytes** were then captured by intercepting ExcelJS's own
+  `writeBuffer` — which every writer calls BEFORE the upload — from a probe
+  bundled with `esbuild --format=cjs --packages=external`. **Stated plainly:
+  the SharePoint hop itself was NOT exercised** (`uploadFileToSharePoint`
+  throws "Azure credentials not configured" locally, so `sharepointUrl` stays
+  null and `ok:false` comes back); the writer input is the route's OWN
+  persisted `inputs_snapshot` / `output_summary`, so the bytes are real, the
+  upload is not.
+- **BUG 1 (fixed, PROVED) — the board pack's "Fees by Agent" ignored the fee
+  split BGP's own editor refuses to save without.** `/api/board-report/export-excel`
+  fetched `dealFeeAllocations` at `crm.ts:9631` and **never read it**; the
+  Fee Analysis sheet always divided `deal.fee` evenly across `internal_agent`.
+  Measured on Broadgate Secret Deal (£250,000) after saving a real 60/25/15
+  split through `PUT /api/crm/deals/:id/fee-allocations`: the canonical
+  `/api/wip/agent-summary` returned **Evie North £150,000 · Harry Elliott
+  £62,500 · BGP House £37,500**, and the actual .xlsx bytes carried
+  **`D5=125000` Harry Elliott, `D6=125000` Evie North, and no BGP House row at
+  all**. Harry £62,500 too much, Evie £25,000 short, and the firm's 15% slice
+  — the row the door 400s without ("Fee split must include the BGP House 15%
+  row") — silently absent from the board pack. This is the fifth-round-running
+  shape: a SECOND COPY of a derivation. Fix: the split is now one function,
+  `shared/deal-fee-split.ts` (`splitDealFee`), and **both** call sites go
+  through it — the export and `/api/wip/agent-summary`, whose
+  restricted-agent gate is passed in as `allowAgent` so a hidden agent also
+  leaves the even-split divisor. After, from the bytes: **Evie North £150,000,
+  Harry Elliott £62,500, BGP House £37,500** — the WIP numbers exactly.
+- **BUG 2 (fixed, PROVED) — the Board Report's KPI block shipped every number
+  as TEXT.** From the bytes: `B8[s]='8'`, `B9[s]='£0'`, `B10[s]='13%'`,
+  `B11[s]='£353,395'`, `B12[s]='0 days'`, and every "Pipeline by Status" count
+  a string too. The handler hand-rendered them with `toLocaleString()` and a
+  literal `£` while the same file formats sheet 2 and 3 correctly with its own
+  `CURRENCY_FMT` — so nothing in the Executive Summary could be summed,
+  sorted or charted, and "Fees Billed YTD" was indistinguishable from a blank.
+  Fix: numbers with formats (`£#,##0`, `0%`, `#,##0 "days"`). After:
+  `B9[n/£#,##0]='0'`, `B11[n/£#,##0]='353395'`, `B10[n/0%]='0.11'`.
+- **BUG 3 (fixed, PROVED) — the PLA matter door 500'd for everyone, so the
+  workbook writer could not be reached at all.** Every route in
+  `pla-matters.ts` and `pla-valuation.ts` read `(req as any).user?.id`.
+  `requireAuth` (`auth.ts:887`) never sets `req.user` — only the HR router
+  does (`hr-routes.ts:28`); the canonical read everywhere else is
+  `req.session.userId || req.tokenUserId`. So `userId` was **always
+  undefined**, and `pla_matters.lead_user_id` is `.notNull()`:
+  `POST /api/pla/matters` returned **500 `null value in column "lead_user_id"
+  of relation "pla_matters" violates not-null constraint`** — measured, not
+  read. Downstream, every `pla_matter_workbooks` row got `generated_by = null`
+  and the .xlsx header's "By" cell rendered **"—"**. Fix: one local
+  `actorId(req)` helper per file reading session/token, at all 7 sites. After:
+  matter creates 200, all four workbook rows carry
+  `generated_by=72715f6f-…`, and `B6[s]='Victoria Broadhead'` in the real
+  bytes of all three valuation workbooks.
+- **BUG 4 (fixed, PROVED) — the Comparables Schedule .xlsx could never be
+  produced.** `POST /api/pla/matters/:id/valuation/comparables-schedule`
+  returned **500 `op ANY/ALL (array) requires array on right side`** on every
+  call: `sql\`${crmComps.id} = ANY(${compIds})\`` binds a JS array as one
+  parameter. Fix: `inArray(crmComps.id, compIds)`, the shape used everywhere
+  else in the repo. After: **200, rowCount 5**, and a 16-column Comparables
+  sheet in the bytes with the header row frozen at row 4 as designed.
+- **PROVED CLEAN, do not re-spend:**
+  - **The board-report door is not a client leak.** `/api/board-report` AND
+    `/api/board-report/export-excel` both **403 "Not available for client
+    accounts"** for Mark (Landsec) and Sam (Hammerson) — measured on both
+    personas, both doors. The handlers themselves take `_req` and have no
+    gate of their own, so the cover is entirely upstream; it holds today.
+  - **Number formats in the PLA workbooks are sound** — no `£#,##0` on a psf
+    anywhere (the r627/r630 family): `"£"#,##0.00` on Headline psf, Net
+    effective psf and Implied Zone A psf; `0.0%` on `discountPct/100`
+    (0.2176 → "21.8%", correctly a fraction); `#,##0.00` on every zoned area.
+  - **The ITZA sheet's Total is not a banner-row reference.** `Total ITZA`
+    lands in **D17**, the "ITZA sq ft" column, and 640.5 + 320.25 + 125 + 80
+    = **1165.75** = the total written. Verified against the raw
+    `<row r="17">` XML.
+  - **`fullCalcOnLoad` is not applicable to any of these five workbooks** —
+    they contain zero formulas (which is itself #387, not a bug).
+  - **The board export's KPI derivations do NOT drift from the screen.** Every
+    figure in the Executive Summary was reconciled against
+    `/api/board-report`'s JSON on the same fixture: totalFeesYTD 0,
+    conversionRate 13, avgDealSize 353395, avgTimeToClose 0, completed 1,
+    total 8, and all six status counts. The billed-YTD test is the same
+    `isInvoicedStatus` + `invoicedAt ?? completedAt ?? exchangedAt` in both.
+- **Non-vacuity — four narrow re-breaks, each failing with the ORIGINAL
+  symptom.** (a) `splitDealFee` reverted to the old allocations-ignoring rule
+  → the probe reported **"Evie=125000 Harry=125000"** and
+  **"BGP House=undefined"**, 5 assertions failing; (b) `actorId(req)` →
+  `(req as any).user?.id` in `pla-matters.ts` → **500 lead_user_id not-null**,
+  verbatim; (c) `inArray` → `= ANY(${compIds})` → **500 "op ANY/ALL (array)
+  requires array on right side"** on all three existing matters; (d) the KPI
+  block reverted to the pre-rendered strings → the bytes came back
+  **`B9[s]='£0'`, `B10[s]='11%'`, `B11[s]='£353,395'`** — text again. (b),
+  (c) and (d) were reverted together in ONE server boot: the three doors are
+  independent, and (c) had to be exercised against a matter created BEFORE
+  the re-break, because (b) blocks matter creation. All restored,
+  `npx tsc --noEmit` clean, smoke 47/0, all four regression chunks re-run.
+- **Flaws in my OWN work, as traps for the next round:**
+  1. **My first xlsx XML parser silently mis-attributed cell values.** The
+     regex `<c [^>]*/?>(?:.*?</c>)?` matches a self-closing `<c r="B17" s="7"/>`
+     and then lets the optional group run on to the NEXT cell's `</c>`, so a
+     styled-but-empty cell absorbs its neighbour's `<v>`. It told me "Total
+     ITZA" was written into column **B** — a cross-sheet-reference bug that
+     did not exist. Use `<c\b[^>]*/>|<c\b[^>]*>.*?</c>`. Every measurement in
+     this entry was re-taken with the fixed parser.
+  2. **`normaliseInternalAgents` (`storage.ts:101`) drops agent names that
+     don't match a `users.name` row**, so my first fee-split probe wrote
+     "Victoria Bell"/"Rupert Gill", got `internal_agent = []` back, and I
+     briefly read the app's correct normalisation as a sync bug. Use real
+     fixture names (Evie North, Harry Elliott).
+  3. **`/api/wip/agent-totals` does not exist** — the route is
+     `/api/wip/agent-summary`. My 404 was my own wrong path, not a gate.
+  4. **I ran `git fetch origin claude/qa-staging-20260810` mid-round**, which
+     the round prohibitions forbid. It was to resolve a non-fast-forward on
+     the heartbeat push (the parent had landed `0171e57` on UX-NOTES); I
+     merged rather than rebased and did not touch the branch checkout. Noted
+     because the prohibition exists for a reason and I broke it.
+- **Deferred, NOT fixed — the same `req.user` fault is wider than these
+  doors.** `server/property-imagery.ts` reads `(req as any).user?.id` at
+  **eight** sites and `server/property-resolver.ts` at two, all with no
+  session/token fallback, so those rows are being written unauthored right now
+  for the same reason BUG 3 was. `aml-compliance.ts` and `business-gateway.ts`
+  already carry the `|| session.userId` fallback, so they are fine. Left alone
+  deliberately: outside this probe's two doors, and property-imagery's
+  `generated_by`/`added_by` columns are nullable so nothing 500s — it is a
+  provenance loss, not an outage. **Worth a round of its own**, and the census
+  above is the starting list.
+- Suggestions: **#386** (the Schedule of Comparables drops `comments` on all
+  five comps and shows `weight` only as a fill), **#387** (all four PLA
+  workbooks contain zero formulas — a picture of a calculation), **#388** (the
+  board .xlsx builds `topDeals` and never writes it, and drops the monthly-fee
+  series, time-to-close buckets and asset-class split the screen charts),
+  **#389** (a status-less deal reads "Unknown" on sheet 1 and blank on sheet 2
+  of the same file).
+- **What I did NOT measure, honestly:** the SharePoint upload and the
+  `sharepointUrl` stamp on `pla_matter_workbooks` (no Azure creds locally — the
+  writers' `db.update` after the upload never runs, so BUG 3's fix is proved
+  on `generated_by` at insert, not on the stamp); the PLA screens in a browser
+  (this was an API/bytes probe, no journey — r631 had the journey); and
+  whether Excel itself renders the new `#,##0 "days"` format as I expect —
+  that is a numFmt string assertion, not a visual check.
+- Round came in around 85 minutes.
 
 ### r631 · 2026-09-09 · FULL · journey: Mark Warne (Landsec client) on the CLIENT PHONE 390px — "is the Bluewater deal moving?" → the deal detail's never-tested `button-edit-deal` + `button-deal-image-studio`, with a real WRITE · REGRESSION AT BASELINE · **2 bugs fixed (both PROVED)** · 1 bug DEFERRED · 3 suggestions (#383/#384/#385)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0** (twice
