@@ -72,6 +72,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   localStorage — 3 of 5 runs. The bottom nav renders either way, so the
   phone-shell assertion still holds; just never assert on the ROOT's
   content, navigate to `/home` explicitly.
+- (r626) two-bot CHUNK 1 can come back **103 ok + 1 flow-failure** on its
+  FIRST pass in a session and 104 + 2x400 on an immediate identical re-run —
+  cold start, same class as the r262 smoke flake. Re-run chunk 1 once before
+  triaging a single flow-failure there.
 - (r572) a two-bot CHUNK can die outright at `login()`
   (two-bot-round.mjs:105) when it follows two other chunks — the login rate
   limiter, the same 429 class already listed as noise. Re-run the same
@@ -101,28 +105,92 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r626 · 2026-09-09 · LIGHT · census: **company/deal/contact-keyed ChatBGP WRITE tools across BOTH dispatchers** · round in progress
+### r626 · 2026-09-09 · LIGHT · census: **company/deal/contact/unit-keyed ChatBGP WRITE tools across BOTH dispatchers** · REGRESSION AT BASELINE · **2 bugs fixed** · 2 suggestions (#372, #373)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 43/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD.
-- **CENSUS RESULT — the hole is real and bigger than r624's.** The REST door
-  rule for a client on `/api/crm` is *read-only across the whole surface*
-  (`crm.ts:1444` blanket gate) with exactly FOUR exceptions: POST/PUT
-  `/contacts` (scoped by `clientCanTouchCompany`, `crm.ts:2096`) and POST/PUT
-  `/deals` (scoped by `isDealInScope` + fee-stripped, `crm.ts:3437`).
-  At the AI door, NEITHER dispatcher (`executeCrmToolRaw` 6104 /
-  `handleCrmToolCall` 11921) checks anything for:
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
+  `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE — 104 + 133 + 111 + 39 = 387 ok, signature
+  6x400 + 1x409 + 10x403 + 1x503. Streak 81.** Four chunks, r625's arithmetic
+  verbatim, each in its own `with-server.sh` sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-626b.json`. NOTE: chunk 1's FIRST pass gave
+  **103 ok + 1 flow-failure**; an immediate identical re-run gave 104 + 2x400.
+  Cold-start flake, added to Known flakes — re-run chunk 1 before triaging it.
+- **CENSUS RESULT (the r624 shape again, and wider).** 132 tools defined;
+  `CLIENT_BLOCKED_TOOLS` names 50, so **82 are client-allowed by default**.
+  Nine of those are keyed by an EXISTING record id — the only shape that can
+  REACH another tenant — and NEITHER dispatcher checked any of them:
   `link_entities`, `update_deal`, `update_company`, `update_contact`,
-  `update_available_unit`, `log_viewing`, `log_offer`,
-  `update_requirement`, `update_investment_tracker`. 82 of the 132 tools are
-  client-allowed (50 named in the deny-list); these nine are the ones keyed
-  by an EXISTING record id, i.e. the ones that can REACH another tenant.
-- **Worst of the nine is `link_entities` — a privilege ESCALATION, not just a
-  write.** `linkType:"company-property"` INSERTs into `crm_company_properties`,
-  which is the exact table `isPropertyInScope` (`company-scope.ts:251`) reads.
-  A client can link their OWN company to a RIVAL's property and thereby make
-  that property in-scope for the whole app — defeating r624's gate and every
-  other property check. `company-deal` does the same to `isDealInScope`.
-- Triage in progress; fix is ONE gate in r624's shape.
+  `update_available_unit`, `log_viewing`, `log_offer`, `update_requirement`,
+  `update_investment_tracker`.
+  The REST door meanwhile is emphatic: a client is **read-only across the
+  whole of `/api/crm`** (blanket gate, `crm.ts:1444`) with exactly FOUR
+  exceptions — POST/PUT `/contacts` (scoped by `clientCanTouchCompany`,
+  `crm.ts:2096`) and POST/PUT `/deals` (scoped by `isDealInScope`, plus every
+  fee field deleted, `crm.ts:3437`). `PATCH /api/available-units/:id` scopes
+  on `isPropertyInScope` and strips `fee` (`routes.ts:4713`). None of that
+  existed at the AI door.
+- **BUG 1 FIXED — ONE gate, r624's shape, both dispatchers.**
+  `CLIENT_PROPERTY_SCOPED_TOOLS`/`clientPropertyToolBlock` became
+  `CLIENT_SCOPED_TOOLS`/`clientScopedToolBlock` (`chatbgp.ts:6110`): one table
+  of tool → {arg, kind}, one call at the top of `executeCrmToolRaw` and of
+  `handleCrmToolCall`. Canonical predicates all live in `company-scope.ts` as
+  the new `clientBlockedForRecord(req, kind, id)` — deal→`isDealInScope`,
+  company→own row or `isClientVisibleBrand`, contact→its company by the same
+  rule, unit→its property via `isPropertyInScope`, investment→`client_id` or
+  `vendor_id`, requirement→always blocked (see below). Fails CLOSED, exempts
+  `isInternalStaffRequest`, no-ops for the session-less `req` from
+  `email-processor.ts:926`. The brand gates were NOT widened.
+- **The worst door was `link_entities`, and it is an ESCALATION, not a write.**
+  `linkType:"company-property"` INSERTs into `crm_company_properties` — the
+  exact table `isPropertyInScope` (`company-scope.ts:251`) selects from. So a
+  client could link their OWN company to a RIVAL's property and thereby make
+  that property in-scope for the whole app, defeating r624's gate and every
+  other property check. `company-deal` does the same to `isDealInScope`. The
+  gate now requires BOTH ends in scope.
+- **BUG 2 FIXED — `link_entities` was dead for all five link types.** Every
+  copy of its INSERT (one templated in the desktop dispatcher, five
+  hand-written in the mobile twin) did `SELECT $1, $2, $3 WHERE NOT EXISTS
+  (… = $2 AND … = $3)` with no casts; the join-table key columns are
+  `character varying`, so Postgres refused with **"inconsistent types deduced
+  for parameter $2"** and the user got that raw error back. Cast to `::text`
+  in all six. This also matters evidentially: a permanently broken INSERT made
+  "no escalating link landed" pass for free, so the check now asserts staff
+  linking WORKS alongside the client refusal.
+- **PROVED, not just patched.** `qa/client-tool-scope-check.ts` grew from 9 to
+  30 assertions (still ONE smoke check, so **baseline stays 43/0**). Re-broken
+  with `if (spec?.kind !== "property") return null;` — which leaves r624's
+  property doors live so the script reaches the new section — it fails **13
+  ways with the original symptoms**: the client renamed "Broadgate Secret
+  Deal", renamed "British Land Rival", renamed "Hammerson Head of Leasing",
+  re-priced Hammerson's Unit BX10 to 999999, logged a viewing AND an offer on
+  it, the mobile twin returned r624's tell-tale "threw past the guard: No
+  Anthropic API key configured" (write landed, summariser died), and the
+  escalation completed: `no escalating crm_company_properties link landed —
+  rows=1` and **`rival property still OUT of the client's scope` FAILED**.
+  Guard restored, `npx tsc --noEmit` clean, smoke re-run **43/0**.
+  Legitimate cases proved open in the same run: the client's OWN contact and
+  OWN unit still writable, staff `update_deal` on the same rival deal still
+  allowed, staff `link_entities` still creates the link.
+- A whole `return null` at the top of the guard is NOT a usable re-break: the
+  unguarded `upsert_tenancy_schedule` dies on `column "property_unit_id" of
+  relation "tenancy_schedule_units" does not exist` and aborts the script
+  before the new section. Break by kind, as above.
+- **`update_requirement`/`create_requirement` write the legacy `requirements`
+  table** — 11 columns, NO owner key (only `company_name`), **0 rows in the
+  fixture**, and no board reads it (the app uses
+  `crm_requirements_leasing`/`_investment`). Nothing to scope by, so the gate
+  fails closed for clients; the tools pointing at a dead table is UX #373.
+  `investment_tracker` fixture rows all have NULL `client_id`/`vendor_id`, so
+  a client is correctly blocked from every one — matches the board's own
+  `client_id = $1 OR vendor_id = $1` filter (`routes.ts:7237`).
+- Suggestions: **#372** (the refusal names nobody, though
+  `getClientVisibleUserIds` knows exactly who), **#373** (above). Next free
+  number is **#374**.
+- Still open from the deferred pool, untouched: #365, #366/#367, #368 (this
+  census IS its structural case — invert the deny-list or assert at startup
+  that every tool is classified), #369/#370/#371, #358, #357, #354,
+  #331/#332, #327's four-number family, the vacancy basis, two column
+  DEFAULTs, #320.
 
 ### r625 · 2026-09-09 · FULL · journey: **BGP staff · PHONE 390px** (rotation slot #4, Victoria, real iPhone context, "a landlord rang about the Gail's letting" with two WRITEs) · REGRESSION AT BASELINE · **0 bugs fixed** · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 43/0**

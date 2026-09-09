@@ -13,6 +13,30 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+372. 2026-09-09 · Mark Warne (Landsec client) / ChatBGP · QA r626 · **The
+   new out-of-portfolio refusal is a dead end.** Ask ChatBGP to change a
+   record that isn't yours and the reply is "That deal isn't part of your
+   portfolio, so it can't be changed from this account. Contact your BGP team
+   if it should be." — but it names nobody, so the client has to go find who
+   that is. The server already knows: `getClientVisibleUserIds`
+   (`company-scope.ts:100`) resolves the exact BGP agents on that client's
+   stock, and the tracker's Agent column renders them. Suggestion: name the
+   client's lead BGP contact in the refusal ("…contact Victoria Hartley, your
+   BGP contact on this scheme"), or offer to raise a task for them in the same
+   reply — `create_task` is already a client-allowed tool.
+
+373. 2026-09-09 · any persona / ChatBGP · QA r626 · **`create_requirement`
+   and `update_requirement` write to a table the app never displays.** Both
+   tools, in both dispatchers, INSERT/UPDATE the legacy `requirements` table
+   (`chatbgp.ts:6850` / `6978` and the mobile twins) — 11 columns, no owner
+   key, and **0 rows in the QA fixture**. Every requirements board in the app
+   reads `crm_requirements_leasing` / `crm_requirements_investment` instead.
+   So "log that requirement for me" appears to succeed in chat and then shows
+   up nowhere, for staff as much as for clients. Suggestion: point both tools
+   at the CRM tables the boards actually read (which also gives the
+   requirement an owner column, so the r626 gate can scope it properly
+   instead of failing closed), or retire the two tools.
+
 371. 2026-09-09 · Victoria (BGP staff, Head of National) / **phone 390px** ·
    QA r625 · **A BGP agent's internal deal comment goes straight to the
    landlord's screen, and nothing on the staff phone says so.** Victoria

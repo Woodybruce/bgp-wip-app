@@ -38,6 +38,12 @@ async function main() {
   const target = rival.rows[0];
   if (await isPropertyInScope(scope, target.id)) throw new Error(`${target.name} is IN the client's scope — pick another target`);
 
+  // Company links that already exist on the target property, so the cleanup
+  // below removes only the rows this check created (the escalating client link
+  // and the staff one) and never a fixture row.
+  const preLinks = new Set<string>((await pool.query(
+    `SELECT company_id FROM crm_company_properties WHERE property_id = $1`, [target.id])).rows.map(r => r.company_id));
+
   const img = [{ kind: "hero", source: "manual_upload", caption: CAPTION }];
   const refused = (r: any) => typeof r?.error === "string" && /part of your portfolio/i.test(r.error);
 
@@ -149,6 +155,17 @@ async function main() {
       `SELECT count(*)::int AS c FROM crm_company_properties WHERE company_id = $1 AND property_id = $2`, [scope, target.id]);
     ok("no escalating crm_company_properties link landed", escalated.rows[0].c === 0, `rows=${escalated.rows[0].c}`);
     ok("rival property still OUT of the client's scope", !(await isPropertyInScope(scope, target.id)));
+    // …and the link tool actually WORKS for staff. Until r626 every link type
+    // died on "inconsistent types deduced for parameter $2" (the join-table
+    // key columns are varchar and the un-cast params were deduced two ways),
+    // so this assertion is also what keeps the row-count check above honest:
+    // a permanently broken INSERT would make "no link landed" pass for free.
+    const staffLink = await executeCrmToolRaw("link_entities",
+      { linkType: "company-property", sourceId: coBefore.id, targetId: target.id }, staffReq());
+    ok("staff link_entities still creates the link", staffLink.data?.success === true, JSON.stringify(staffLink.data).slice(0, 110));
+    const staffLanded = await pool.query(
+      `SELECT count(*)::int AS c FROM crm_company_properties WHERE company_id = $1 AND property_id = $2`, [coBefore.id, target.id]);
+    ok("staff link row present", staffLanded.rows[0].c > 0, `rows=${staffLanded.rows[0].c}`);
 
     // and none of it is a blanket block — the client's own records stay writable
     if (ownContact.rows.length) {
@@ -184,6 +201,9 @@ async function main() {
     await pool.query(`DELETE FROM property_imagery_assets WHERE caption = $1`, [CAPTION]);
     await pool.query(`DELETE FROM available_units WHERE unit_name = 'QA scope-check unit'`);
     await pool.query(`UPDATE crm_properties SET name = $2 WHERE id = $1 AND name = 'QA scope-check rename'`, [target.id, target.name]);
+    await pool.query(
+      `DELETE FROM crm_company_properties WHERE property_id = $1 AND NOT (company_id = ANY($2::text[]))`,
+      [target.id, [...preLinks]]);
     await pool.query(`DELETE FROM unit_viewings WHERE company_name = $1`, [CAPTION]);
     await pool.query(`DELETE FROM unit_offers WHERE company_name = $1`, [CAPTION]);
     await pool.query(`UPDATE crm_contacts SET notes = NULL WHERE notes = $1`, [CAPTION]);
