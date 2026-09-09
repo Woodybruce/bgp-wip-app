@@ -6101,34 +6101,95 @@ export async function extractTextFromFile(filePath: string, originalName: string
 
 const CHAT_UPLOADS_DIR = path.join(process.cwd(), "ChatBGP", "chat-files");
 
-// r624: property-keyed WRITE tools reachable by a client ChatBGP session.
-// Every one has a REST twin that resolves the company scope and 403s outside
-// it (`PUT /api/crm/properties/:id`, the tenancy-schedule writes,
-// `POST /api/available-units`), but neither ChatBGP dispatcher checked, so a
-// client could attach imagery to, rename, re-schedule or add a unit to a
-// RIVAL landlord's property. Keyed by the arg each tool reads the id from.
-const CLIENT_PROPERTY_SCOPED_TOOLS: Record<string, string> = {
-  add_property_imagery: "propertyId",
-  update_property: "id",
-  upsert_tenancy_schedule: "propertyId",
-  create_available_unit: "propertyId",
+// r624/r626: the record-keyed WRITE tools a client ChatBGP session can reach.
+// Every one has a REST twin that resolves the company scope and refuses
+// outside it — and for the whole of `/api/crm` a client is read-only anyway
+// (the blanket gate at crm.ts:1444, with only contacts/deals PUT+POST
+// excepted) — but NEITHER dispatcher checked, so a client could rename a
+// rival landlord's company, edit their deals and contacts, re-price their
+// units, or log viewings/offers against their stock.
+// Keyed by the arg each tool reads the record id from, plus which scope rule
+// applies. `unitOrInvestment` resolves off the call's own entityType.
+type ClientScopedToolKind =
+  | "property" | "deal" | "company" | "contact" | "unit" | "investment"
+  | "requirement" | "unitOrInvestment";
+
+const CLIENT_SCOPED_TOOLS: Record<string, { arg: string; kind: ClientScopedToolKind }> = {
+  // property-keyed (r624)
+  add_property_imagery: { arg: "propertyId", kind: "property" },
+  update_property: { arg: "id", kind: "property" },
+  upsert_tenancy_schedule: { arg: "propertyId", kind: "property" },
+  create_available_unit: { arg: "propertyId", kind: "property" },
+  // company- / deal- / contact- / unit-keyed (r626)
+  update_deal: { arg: "id", kind: "deal" },
+  update_company: { arg: "id", kind: "company" },
+  update_contact: { arg: "id", kind: "contact" },
+  update_available_unit: { arg: "id", kind: "unit" },
+  update_requirement: { arg: "id", kind: "requirement" },
+  update_investment_tracker: { arg: "id", kind: "investment" },
+  log_viewing: { arg: "entityId", kind: "unitOrInvestment" },
+  log_offer: { arg: "entityId", kind: "unitOrInvestment" },
+};
+
+const CLIENT_SCOPED_TOOL_NOUN: Record<string, string> = {
+  property: "property", deal: "deal", company: "company", contact: "contact",
+  unit: "unit", investment: "investment record", requirement: "requirement",
+};
+
+// link_entities writes the JOIN TABLES the scope checks themselves read:
+// crm_company_properties is exactly what isPropertyInScope selects from, and
+// crm_company_deals what isDealInScope falls back to. Left open, a client
+// could link their own company to a rival's property and thereby make that
+// property in-scope everywhere — an escalation, not just a stray write. Both
+// ends must be in scope.
+const CLIENT_LINK_SCOPED_ENDS: Record<string, [ClientScopedToolKind, ClientScopedToolKind]> = {
+  "contact-deal": ["contact", "deal"],
+  "contact-property": ["contact", "property"],
+  "contact-requirement": ["contact", "requirement"],
+  "company-property": ["company", "property"],
+  "company-deal": ["company", "deal"],
 };
 
 // Returns the refusal text when this call is a client session reaching outside
 // its portfolio, else null. Fails CLOSED — a scope check that cannot answer
-// must not wave the write through.
-async function clientPropertyToolBlock(fnName: string, fnArgs: any, req: any): Promise<string | null> {
-  const argKey = CLIENT_PROPERTY_SCOPED_TOOLS[fnName];
-  if (!argKey || !req) return null;
-  const propertyId = fnArgs?.[argKey] ? String(fnArgs[argKey]) : "";
-  if (!propertyId) return null;
+// must not wave the write through. No-ops for the session-less `req` the email
+// processor passes, and for server-originated internal calls that forward a
+// client session (X-BGP-Internal).
+async function clientScopedToolBlock(fnName: string, fnArgs: any, req: any): Promise<string | null> {
+  const spec = CLIENT_SCOPED_TOOLS[fnName];
+  const isLink = fnName === "link_entities";
+  if ((!spec && !isLink) || !req) return null;
   const { isInternalStaffRequest } = await import("./chatbgp-internal");
   if (isInternalStaffRequest(req)) return null;
-  const { clientBlockedForProperty } = await import("./company-scope");
-  let blocked = true;
-  try { blocked = await clientBlockedForProperty(req, propertyId); } catch { blocked = true; }
-  if (!blocked) return null;
-  return "That property isn't part of your portfolio, so it can't be changed from this account. Contact your BGP team if it should be.";
+  const { clientBlockedForProperty, clientBlockedForRecord } = await import("./company-scope");
+
+  const blockedFor = async (kind: ClientScopedToolKind, id: string): Promise<boolean> => {
+    try {
+      return kind === "property"
+        ? await clientBlockedForProperty(req, id)
+        : await clientBlockedForRecord(req, kind as any, id);
+    } catch { return true; }
+  };
+
+  if (isLink) {
+    const ends = CLIENT_LINK_SCOPED_ENDS[String(fnArgs?.linkType)];
+    if (!ends) return null;
+    const sourceId = fnArgs?.sourceId ? String(fnArgs.sourceId) : "";
+    const targetId = fnArgs?.targetId ? String(fnArgs.targetId) : "";
+    if (!sourceId || !targetId) return null;
+    if (await blockedFor(ends[0], sourceId) || await blockedFor(ends[1], targetId)) {
+      return "That link would join a record outside your portfolio, so it can't be created from this account. Contact your BGP team if it should be.";
+    }
+    return null;
+  }
+
+  const recordId = fnArgs?.[spec.arg] ? String(fnArgs[spec.arg]) : "";
+  if (!recordId) return null;
+  const kind: ClientScopedToolKind = spec.kind === "unitOrInvestment"
+    ? (fnArgs?.entityType === "investment" ? "investment" : "unit")
+    : spec.kind;
+  if (!(await blockedFor(kind, recordId))) return null;
+  return `That ${CLIENT_SCOPED_TOOL_NOUN[kind]} isn't part of your portfolio, so it can't be changed from this account. Contact your BGP team if it should be.`;
 }
 
 export async function executeCrmToolRaw(
@@ -6139,8 +6200,8 @@ export async function executeCrmToolRaw(
   const { db } = await import("./db");
   const { pool } = await import("./db");
 
-  const propertyScopeBlock = await clientPropertyToolBlock(fnName, fnArgs, req);
-  if (propertyScopeBlock) return { data: { success: false, error: propertyScopeBlock } };
+  const scopeBlock = await clientScopedToolBlock(fnName, fnArgs, req);
+  if (scopeBlock) return { data: { success: false, error: scopeBlock } };
 
   if (fnName === "search_crm") {
     const searchScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
@@ -11976,8 +12037,8 @@ export async function handleCrmToolCall(
     }
   } catch {}
 
-  const propertyScopeBlock = await clientPropertyToolBlock(fnName, fnArgs, req);
-  if (propertyScopeBlock) return { handled: true, response: { reply: propertyScopeBlock } };
+  const scopeBlock = await clientScopedToolBlock(fnName, fnArgs, req);
+  if (scopeBlock) return { handled: true, response: { reply: scopeBlock } };
 
   const summaryHelper = async (toolResult: any) => {
     const summaryMessages = [

@@ -291,3 +291,64 @@ export async function isContactInScope(scopeCompanyId: string, contactId: string
   );
   return result.rows.length > 0;
 }
+
+// r626: the same portfolio rule as clientBlockedForProperty, for the other
+// record keys a client ChatBGP session can name. Each kind mirrors the rule
+// its REST twin already enforces:
+//   deal        PUT /api/crm/deals/:id        → isDealInScope
+//   company     PUT /api/crm/companies/:id    → own row or a visible brand
+//   contact     PUT /api/crm/contacts/:id     → the contact's company, same rule
+//   unit        PATCH /api/available-units/:id → the unit's property in scope
+//   investment  GET /api/investment-tracker   → client_id or vendor_id
+//   requirement (legacy unowned table — always blocked, see below)
+// Fails CLOSED: an unresolvable client, a missing row or a thrown query all
+// block. Staff (no scope) always pass.
+export type ClientScopedRecordKind =
+  | "deal" | "company" | "contact" | "unit" | "investment" | "requirement";
+
+async function isClientCompanyTouchable(scope: string, companyId: string | null | undefined): Promise<boolean> {
+  if (!companyId) return false;
+  if (companyId === scope) return true;
+  return isClientVisibleBrand(companyId, scope);
+}
+
+export async function clientBlockedForRecord(
+  req: Request,
+  kind: ClientScopedRecordKind,
+  recordId: string
+): Promise<boolean> {
+  if (!(await isClientRequestUser(req))) return false;
+  const scope = await resolveCompanyScope(req);
+  if (!scope || scope === NO_ACCESS_SCOPE) return true;
+  if (!recordId || !/^[0-9a-f-]{36}$/i.test(recordId)) return true;
+  switch (kind) {
+    case "deal":
+      return !(await isDealInScope(scope, recordId));
+    case "company":
+      return !(await isClientCompanyTouchable(scope, recordId));
+    case "contact": {
+      const r = await pool.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [recordId]);
+      if (!r.rows.length) return true;
+      return !(await isClientCompanyTouchable(scope, r.rows[0].company_id));
+    }
+    case "unit": {
+      const r = await pool.query(`SELECT property_id FROM available_units WHERE id = $1`, [recordId]);
+      if (!r.rows.length || !r.rows[0].property_id) return true;
+      return !(await isPropertyInScope(scope, r.rows[0].property_id));
+    }
+    case "investment": {
+      const r = await pool.query(
+        `SELECT 1 FROM investment_tracker WHERE id = $1 AND (client_id = $2 OR vendor_id = $2) LIMIT 1`,
+        [recordId, scope]
+      );
+      return r.rows.length === 0;
+    }
+    case "requirement":
+      // The legacy `requirements` table update_requirement writes to carries
+      // NO owner column at all (only company_NAME), so no client can ever be
+      // shown to own a row — fail closed, which is also exactly what the REST
+      // door does (clients are read-only across /api/crm).
+      return true;
+  }
+  return true;
+}

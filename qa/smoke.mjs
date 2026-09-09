@@ -275,15 +275,16 @@ if (process.env.DATABASE_URL) {
   if (r.stdout) process.stdout.write(r.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
   check('tracker sync: viewing + offer auto-collection', r.status === 0, r.status === 0 ? '' : (r.stderr || '').slice(0, 200));
 
-  // r624: the ChatBGP tool doors must honour the same property scope the REST
-  // doors do. Direct module access — a client cannot be driven through the
-  // LLM in the keyless QA env.
+  // r624/r626: the ChatBGP tool doors must honour the same record scope the
+  // REST doors do — property-, company-, deal-, contact- and unit-keyed
+  // writes, at BOTH dispatchers. Direct module access — a client cannot be
+  // driven through the LLM in the keyless QA env.
   console.log('── client tool scope (ChatBGP dispatchers) ──');
   const t = spawnSync('npx', ['tsx', new URL('./client-tool-scope-check.ts', import.meta.url).pathname], {
     env: process.env, encoding: 'utf8', timeout: 120000,
   });
   if (t.stdout) process.stdout.write(t.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
-  check('client tool scope: property-keyed writes stay in the portfolio', t.status === 0, t.status === 0 ? '' : (t.stderr || '').slice(0, 200));
+  check('client tool scope: record-keyed writes stay in the portfolio', t.status === 0, t.status === 0 ? '' : (t.stderr || '').slice(0, 200));
 } else {
   console.log('── tracker sync check skipped (no DATABASE_URL) ──');
 }
