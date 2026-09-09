@@ -96,6 +96,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r625 · 2026-09-09 · FULL (round in progress) · journey: **BGP staff · PHONE 390px** (rotation slot #4, Victoria, real iPhone context, task with a WRITE) · REGRESSION AT BASELINE
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 43/0** (new
+  r624 baseline), then `node qa/apply-sql.mjs qa/seed-personas.sql`.
+  Detached HEAD — pushing with `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE — 104 + 133 + 111 + 39 = 387 ok, signature
+  6x400 + 1x409 + 10x403 + 1x503. Streak 80.** Four chunks per r624's
+  arithmetic, each in its own `qa/with-server.sh`, sharing
+  `QA_CROSS_FILE=/tmp/qa-cross-625.json`.
+- Triage: all listed environment noise; no new issue classes, no chunk died
+  at `sam · login`.
+- Journey in progress — final entry replaces this one.
+
 ### r624 · 2026-09-09 · LIGHT · deep probe: **the #343/#344 client-scope write holes** · REGRESSION AT BASELINE · **1 bug fixed (4 tools x 2 doors)** · 1 suggestion
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
