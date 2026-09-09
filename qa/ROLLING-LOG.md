@@ -43,6 +43,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   (Ordnance Survey) locally; map panel degrades, no user-facing error (r391)
 - 503 GET /api/property/:id/brand-gaps/international + /commentary — same
   keyless-AI family as the listed brand-gaps/live-intel 503 (r391)
+- 404 GET /api/properties/:id/brochures/:id/file inside
+  `mark · client-property-area-reads-the-schedule` — a brochure row created
+  earlier in the same chunk whose bytes are not on disk; only shows up if a
+  chunk is run TWICE in a session, clean when the scenario runs alone (r624)
 - 404 GET /api/client/sharepoint/root — fixture has no SharePoint folder
   linked; handler returns a clean "ask your BGP team" 404, files panel
   degrades (r375)
@@ -92,32 +96,113 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r624 · 2026-09-09 · LIGHT · round in progress · REGRESSION AT BASELINE
+### r624 · 2026-09-09 · LIGHT · deep probe: **the #343/#344 client-scope write holes** · REGRESSION AT BASELINE · **1 bug fixed (4 tools x 2 doors)** · 1 suggestion
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushing with
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
   `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE — 387 ok, signature 6x400 + 1x409 + 10x403 + 1x503.
   Streak 79.**
-- **ARITHMETIC CLARIFIED (read this before you split the head).** The three
-  named anchors describe FOUR segments, and the "tail" is not just
-  woody,nick,sam. Exact recipe, each in its own `with-server.sh`:
+- **CHUNK ARITHMETIC — the three named anchors describe FOUR segments, and the
+  "tail" is NOT just woody,nick,sam.** Run these verbatim, each in its own
+  `qa/with-server.sh`, sharing `QA_CROSS_FILE=/tmp/qa-cross-<r>.json`:
   1. `QA_PERSONAS=victoria,mark QA_UNTIL=staff-evidence-plan-lifecycle` → **104**
-  2. `QA_PERSONAS=victoria,mark QA_SKIP_UNTIL=staff-evidence-plan-lifecycle
+  2. `… QA_SKIP_UNTIL=staff-evidence-plan-lifecycle
      QA_UNTIL=client-brand-suggested-pitches-scoped` → **133**
-  3. `QA_PERSONAS=victoria,mark QA_SKIP_UNTIL=client-brand-suggested-pitches-scoped
+  3. `… QA_SKIP_UNTIL=client-brand-suggested-pitches-scoped
      QA_UNTIL=client-properties-table-readonly-cells` → **111**
   4. tail = `QA_PERSONAS=victoria,mark,woody,nick,sam
      QA_SKIP_UNTIL=client-properties-table-readonly-cells` → **39**
      (= mark's last **15** scenarios + woody,nick,sam **24**).
-  I first ran chunk 3 unbounded (126 = 111 + those 15) and woody,nick,sam
-  alone (24) — same 387, but the numbers don't match the logged baseline, so
-  keep the four commands above verbatim.
-- Triage: all listed noise. One extra `http-404` on
+  I first ran chunk 3 unbounded (**126** = 111 + those 15) and woody,nick,sam
+  alone (**24**) — same 387 total, but the per-chunk numbers then don't match
+  the logged baseline. Also: `QA_PERSONAS=head` is NOT a thing (it silently
+  ran 0 scenarios and still printed a tally). Personas are
+  victoria, mark, woody, nick, sam.
+- Triage: all listed noise. One extra `http-404` —
   `GET /api/properties/<bluewater>/brochures/<id>/file` inside
-  `mark · client-property-area-reads-the-schedule` — appeared only because I
-  ran chunk 3 twice; **clean when isolated** (`QA_ONLY=` that scenario, 1 ok,
-  0 issues). Same class as the listed missing-photo 404s; see noise list.
-- Probe in flight: the #343/#344 client-scope write holes.
+  `mark · client-property-area-reads-the-schedule` — appeared ONLY because I
+  ran chunk 3 twice; **clean when isolated** (`QA_ONLY=` that scenario: 1 ok,
+  0 issues). Same class as the listed missing-photo 404s; noise entry added.
+- **BUG FIXED — a client's ChatBGP could write to a RIVAL landlord's
+  property.** #343/#344's real half. `CLIENT_BLOCKED_TOOLS` is a **DENY**-list
+  (`chatbgp.ts:2015`), so every property-keyed WRITE tool was client-allowed,
+  and **neither dispatcher checked the company scope** —
+  `executeCrmToolRaw` (desktop/SSE, `chatbgp.ts:6104`) and
+  `handleCrmToolCall` (the mobile twin, `chatbgp.ts:11921`). Four tools, both
+  doors: `add_property_imagery`, `update_property`, `upsert_tenancy_schedule`,
+  `create_available_unit`. Every one has a REST twin that resolves the scope
+  and 403s outside it (`client-property-put-guard`,
+  `client-tenancy-write-scoped`, `POST /api/available-units` at
+  `routes.ts:4499`) — **the rule was enforced at the REST door and not at the
+  AI door**, shape #8 exactly.
+  **PROVED before the fix** (`qa/r624-imagery-probe.ts`, direct module calls —
+  a client cannot be driven through the LLM in the keyless env): as Mark
+  (Landsec), `add_property_imagery` on **"Brent Cross Shopping Centre"**
+  (`landlord_id` ≠ Landsec, no `crm_company_properties` link,
+  `isPropertyInScope` **false**) returned
+  `{"success":true,"added":1}` and the row landed. The mobile twin inserted
+  too — it threw only afterwards, at its keyless Claude summary step, which is
+  itself proof it reached the insert. 4 rows counted on the rival property,
+  then deleted.
+  **FIX:** one gate, not four patches — `CLIENT_PROPERTY_SCOPED_TOOLS`
+  (tool → the arg it reads the property id from) plus
+  `clientPropertyToolBlock`, called once at the top of EACH dispatcher
+  (the mobile one right after the existing `CLIENT_SAFE_TOOLS` gate). Uses
+  the canonical `clientBlockedForProperty` (`company-scope.ts:244`), **fails
+  closed**, exempts `isInternalStaffRequest` so server-originated curations
+  that forward a client session keep working, and no-ops for the
+  session-less `req` the email processor passes
+  (`email-processor.ts:926`) and for staff.
+  `npx tsc --noEmit` clean.
+- **SCENARIO ADDED (1 check, 9 assertions) — PROVED NON-VACUOUS.** Not a
+  two-bot browser scenario: the doors are unreachable over HTTP without an AI
+  key, and a browser scenario that cannot reach them would pass vacuously.
+  Instead `qa/client-tool-scope-check.ts`, wired into `qa/smoke.mjs` the way
+  `tracker-sync-check.ts` already is (only when `DATABASE_URL` is set).
+  It asserts all four tools refuse the rival property on the desktop door,
+  `add_property_imagery` refuses on the mobile door, the client's **OWN**
+  property still succeeds, **staff** on the same rival property still
+  succeeds, no client-authored row landed, and the rival property's name is
+  unchanged; cleans up in `finally`. Re-broke the guard (`return null` at the
+  top of `clientPropertyToolBlock`) → **FAIL with the exact original symptom**
+  (`{"success":true,"action":"added",…"Brent Cross Shopping Centre"}`),
+  restored → all green. **SMOKE BASELINE MOVES 42 → 43 checks.**
+  Two-bot numbers UNCHANGED (104 / 133 / 111 / 39, sum 387).
+- **RUN DOWN, do NOT re-spend: the other half of #343/#344 —
+  `POST /api/favorite-instructions/:propertyId` (`crm.ts:8064`) — is a REAL
+  missing scope check with NO user impact.** The table is
+  `(user_id, property_id)` and the only read-back is
+  `GET /api/favorite-instructions`, which returns **the caller's own property
+  ids and nothing else**. Every consumer uses them as a CLIENT-SIDE FILTER
+  over already-scoped data — `dashboard.tsx:1347`
+  (`instructions.filter(p => favoriteIds.includes(p.id))`),
+  `tracker-summary.tsx:53` (`units.filter(u => propertyIds.includes(u.propertyId))`),
+  `instructions.tsx:841`, `available-units.tsx:582`. A foreign id therefore
+  matches nothing and renders nothing: no name, no leak, no write to anyone
+  else's record. Grepped `favorite_instructions` across `server/` — those
+  three handlers are the only doors. **Not worth a guard on its own;** if
+  anything, fold it into the allow-list work in UX #368.
+- **1 suggestion → UX #368** (invert `CLIENT_BLOCKED_TOOLS` to an allow-list,
+  or assert at startup that every tool is classified — the deny-list default
+  is *why* these four were open). Next free number **#369**.
+- **Doors PROVED (not merely patched):** both ChatBGP dispatchers, by a real
+  cross-tenant write that succeeded before the fix and is refused after, with
+  the legitimate client-own and staff cases proved still open in the same run.
+  The four REST twins were already covered by existing two-bot scenarios.
+  The favourites door is PROVED harmless by tracing every consumer, not by
+  reading the handler alone.
+- No new flakes. Probes kept: `qa/r624-imagery-probe.ts` (the exploratory
+  one, prints both doors) and `qa/client-tool-scope-check.ts` (the regression
+  one, now part of smoke).
+- **Next:** rotation #4 **BGP staff · phone 390px** — still not done (r623 did
+  client phone, r622 client desktop). r624 fixed a bug and did no journey, so
+  r625 can be FULL. Untested and adjacent: the client phone deal detail's
+  `button-edit-deal` / `button-deal-image-studio` / `input-deal-comment`
+  (r623 named them, still untested), and #366's three-way count mismatch on
+  `/deals`. If you want another door census, the deny-list default in UX #368
+  means **every ChatBGP tool that writes to a company-, deal- or
+  contact-keyed record** deserves the same treatment I gave the
+  property-keyed four.
 
 ### r623 · 2026-09-09 · FULL · journey: **Landsec client · PHONE 390px, real iPhone context** (rotation slot #3, "where are my Bluewater lettings" with a real WRITE) · REGRESSION AT BASELINE · **1 bug fixed** · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

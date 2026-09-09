@@ -6101,6 +6101,36 @@ export async function extractTextFromFile(filePath: string, originalName: string
 
 const CHAT_UPLOADS_DIR = path.join(process.cwd(), "ChatBGP", "chat-files");
 
+// r624: property-keyed WRITE tools reachable by a client ChatBGP session.
+// Every one has a REST twin that resolves the company scope and 403s outside
+// it (`PUT /api/crm/properties/:id`, the tenancy-schedule writes,
+// `POST /api/available-units`), but neither ChatBGP dispatcher checked, so a
+// client could attach imagery to, rename, re-schedule or add a unit to a
+// RIVAL landlord's property. Keyed by the arg each tool reads the id from.
+const CLIENT_PROPERTY_SCOPED_TOOLS: Record<string, string> = {
+  add_property_imagery: "propertyId",
+  update_property: "id",
+  upsert_tenancy_schedule: "propertyId",
+  create_available_unit: "propertyId",
+};
+
+// Returns the refusal text when this call is a client session reaching outside
+// its portfolio, else null. Fails CLOSED — a scope check that cannot answer
+// must not wave the write through.
+async function clientPropertyToolBlock(fnName: string, fnArgs: any, req: any): Promise<string | null> {
+  const argKey = CLIENT_PROPERTY_SCOPED_TOOLS[fnName];
+  if (!argKey || !req) return null;
+  const propertyId = fnArgs?.[argKey] ? String(fnArgs[argKey]) : "";
+  if (!propertyId) return null;
+  const { isInternalStaffRequest } = await import("./chatbgp-internal");
+  if (isInternalStaffRequest(req)) return null;
+  const { clientBlockedForProperty } = await import("./company-scope");
+  let blocked = true;
+  try { blocked = await clientBlockedForProperty(req, propertyId); } catch { blocked = true; }
+  if (!blocked) return null;
+  return "That property isn't part of your portfolio, so it can't be changed from this account. Contact your BGP team if it should be.";
+}
+
 export async function executeCrmToolRaw(
   fnName: string,
   fnArgs: any,
@@ -6108,6 +6138,9 @@ export async function executeCrmToolRaw(
 ): Promise<{ data: any; action?: any }> {
   const { db } = await import("./db");
   const { pool } = await import("./db");
+
+  const propertyScopeBlock = await clientPropertyToolBlock(fnName, fnArgs, req);
+  if (propertyScopeBlock) return { data: { success: false, error: propertyScopeBlock } };
 
   if (fnName === "search_crm") {
     const searchScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
@@ -11942,6 +11975,9 @@ export async function handleCrmToolCall(
       return { handled: true, response: { reply: "That capability isn't available on client accounts — your account covers your own portfolio only. Contact your BGP team for anything further." } };
     }
   } catch {}
+
+  const propertyScopeBlock = await clientPropertyToolBlock(fnName, fnArgs, req);
+  if (propertyScopeBlock) return { handled: true, response: { reply: propertyScopeBlock } };
 
   const summaryHelper = async (toolResult: any) => {
     const summaryMessages = [

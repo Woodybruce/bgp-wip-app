@@ -13,6 +13,24 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+368. 2026-09-09 · Mark Warne (Landsec client) / ChatBGP · QA r624 ·
+   **ChatBGP's client tool gate is a DENY-list, so every new tool ships
+   client-allowed by default.** `CLIENT_BLOCKED_TOOLS`
+   (`server/chatbgp.ts:2015`) names the ~45 tools a client must NOT have;
+   `isToolAllowedForClient` returns true for everything else. That is why
+   `add_property_imagery`, `update_property`, `upsert_tenancy_schedule` and
+   `create_available_unit` were all reachable from a client session with no
+   property-scope check at either dispatcher (fixed this round) — nobody
+   forgot to block them, the default handed them over. Each new tool is
+   another chance to hand a client something by omission.
+   **Suggestion:** invert it — an explicit `CLIENT_ALLOWED_TOOLS` allow-list
+   (the client surface is small: portfolio reads, their own tracker, their own
+   tasks/comments), so a new tool is invisible to clients until someone
+   deliberately adds it. Cheap safety net if the inversion is too big a
+   change: a startup assertion that every tool in the schema list appears in
+   exactly one of the two sets, so adding a tool fails loudly until it is
+   classified.
+
 366. 2026-09-09 · Mark Warne (Landsec client) / **phone 390px** · QA r623 ·
    **the same page counts his letting deals three different ways in two
    taps.** Journey: on the phone, checking where his Bluewater lettings
