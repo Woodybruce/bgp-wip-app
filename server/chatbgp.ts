@@ -4305,7 +4305,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "export_to_excel",
-      description: "Generate a downloadable Excel (.xlsx) file from structured table data. Use when you extract comps tables, schedules, financial data, or any tabular information from brochures, PDFs, or documents and the user wants it as an Excel file. Also use proactively when presenting tabular data that would be useful to download. Returns a download link.",
+      description: "Generate a downloadable Excel (.xlsx) file from structured table data. Use when you extract comps tables, schedules, financial data, or any tabular information from brochures, PDFs, or documents and the user wants it as an Excel file. Also use proactively when presenting tabular data that would be useful to download. Returns a download link.\n\nLIVE FORMULAS ARE SUPPORTED: any cell whose text starts with \"=\" is written as a real Excel formula, not as text — so a financial model calculates when opened (e.g. \"=B3*B4\", \"=SUM(C5:C12)\", \"=IRR(C13:M13)\", \"=Assumptions!B5\"). Sheet names containing a space need quoting exactly as Excel requires, e.g. \"='Asset Schedule'!D14\".\n\nCELL ADDRESSES — the sheet layout is fixed, so count rows before writing a reference: ROW 1 is a merged title bar carrying the sheet name, ROW 2 is your headers, and your first `rows` entry lands on ROW 3. Column A is your first header. So the third value in your second data row is cell C4.",
       parameters: {
         type: "object",
         properties: {
@@ -4318,7 +4318,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
               properties: {
                 name: { type: "string", description: "Sheet/tab name, e.g. 'Comps', 'Summary'" },
                 headers: { type: "array", items: { type: "string" }, description: "Column headers" },
-                rows: { type: "array", items: { type: "array", items: { type: "string" } }, description: "Array of rows, each row is an array of cell values as strings" },
+                rows: { type: "array", items: { type: "array", items: { type: "string" } }, description: "Array of rows, each row is an array of cell values as strings. A cell starting with \"=\" becomes a live Excel formula; remember row 1 is the title bar and row 2 the headers, so this array starts at row 3." },
               },
               required: ["name", "headers", "rows"],
             },
@@ -9127,6 +9127,10 @@ export async function executeCrmToolRaw(
       const wb = new ExcelJS.Workbook();
       wb.creator = "Bruce Gillingham Pollard";
       wb.created = new Date();
+      // Formulas are written without cached results, so ask Excel to calculate
+      // on open — otherwise readers that don't recalculate for themselves
+      // (Sheets, Numbers, Excel Online, preview panes) show blanks.
+      wb.calcProperties.fullCalcOnLoad = true;
 
       const DARK_BLUE = "FF082861";
       const WHITE_FONT: any = { name: "Calibri", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
@@ -9139,7 +9143,19 @@ export async function executeCrmToolRaw(
         right: { style: "thin", color: { argb: "FFDDDFE0" } },
       };
 
-      const sheets = fnArgs.sheets as Array<{ name: string; headers: string[]; rows: string[][] }>;
+      const sheets = fnArgs.sheets as Array<{ name: string; headers: string[]; rows: any[][] }>;
+
+      // A cell written as "=..." is a live formula, not text. ExcelJS only
+      // treats it as one if it arrives as { formula }, so mark those cells
+      // before the string coercion below flattens them (which is what made
+      // every generated model inert — the formulas rendered as literal text).
+      const FORMULA_START = /^=\s*[A-Za-z0-9_$'("[+\-]/;
+      const formulaOf = (val: any): string | null => {
+        if (typeof val !== "string") return null;
+        const t = val.trim();
+        if (t.length < 2 || !FORMULA_START.test(t)) return null;
+        return t.slice(1).trim();
+      };
 
       // The model occasionally passes objects/arrays as cell values despite the
       // string[][] schema — those stringify to "[object Object]" in the workbook.
@@ -9159,7 +9175,12 @@ export async function executeCrmToolRaw(
 
       for (const sheet of sheets) {
         sheet.headers = (sheet.headers || []).map(cellText);
-        sheet.rows = (sheet.rows || []).map((r) => (r || []).map(cellText));
+        sheet.rows = (sheet.rows || []).map((r) =>
+          (r || []).map((cell) => {
+            const formula = formulaOf(cell);
+            return formula ? { formula } : cellText(cell);
+          }),
+        );
         const safeSheetName = sheet.name.replace(/[\\/*?\[\]:]/g, "").substring(0, 31) || "Sheet1";
         const ws = wb.addWorksheet(safeSheetName);
 
@@ -9183,16 +9204,20 @@ export async function executeCrmToolRaw(
         const colWidths = sheet.headers.map((h: string, i: number) => {
           let maxLen = h.length;
           for (const row of sheet.rows) {
-            if (row[i] && String(row[i]).length > maxLen) maxLen = String(row[i]).length;
+            const cell: any = row[i];
+            // A formula cell's width comes from its likely result, not its source
+            const len = cell && typeof cell === "object" && cell.formula ? 14 : cell ? String(cell).length : 0;
+            if (len > maxLen) maxLen = len;
           }
           return Math.min(maxLen + 3, 50);
         });
         ws.columns = colWidths.map(w => ({ width: w }));
 
         sheet.rows.forEach((rowData, rowIdx) => {
-          const row = ws.addRow(rowData.map(val => {
+          const row = ws.addRow(rowData.map((val: any) => {
+            if (val && typeof val === "object" && val.formula) return val;
             const num = Number(val);
-            if (val && !isNaN(num) && val.trim() !== "") return num;
+            if (val && !isNaN(num) && String(val).trim() !== "") return num;
             return val;
           }));
           row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
@@ -9201,13 +9226,18 @@ export async function executeCrmToolRaw(
             cell.border = THIN_BORDER;
             if (rowIdx % 2 === 1) cell.fill = ALT_ROW_FILL;
 
-            if (typeof cell.value === "number") {
+            const isFormulaCell = cell.value && typeof cell.value === "object" && (cell.value as any).formula;
+            if (typeof cell.value === "number" || isFormulaCell) {
               const headerText = (sheet.headers[colNumber - 1] || "").toLowerCase();
+              const num = typeof cell.value === "number" ? cell.value : null;
               if (headerText.includes("£") || headerText.includes("rent") || headerText.includes("price") || headerText.includes("value") || headerText.includes("cost") || headerText.includes("income")) {
                 cell.numFmt = '£#,##0';
-              } else if (headerText.includes("%") || headerText.includes("percent") || headerText.includes("yield")) {
-                cell.numFmt = '0.0"%"';
-              } else if (cell.value > 100) {
+              } else if (headerText.includes("%") || headerText.includes("percent") || headerText.includes("yield") || headerText.includes("irr")) {
+                // A decimal is a real proportion — 0.1 must render as 10.0%, not
+                // "0.1%". Only a value already scaled to percentage points gets
+                // the literal suffix.
+                cell.numFmt = num !== null && Math.abs(num) > 1 ? '0.0"%"' : '0.0%';
+              } else if (num !== null && num > 100) {
                 cell.numFmt = '#,##0';
               }
             }
@@ -9215,7 +9245,12 @@ export async function executeCrmToolRaw(
           row.height = 18;
         });
 
-        ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2 + sheet.rows.length, column: sheet.headers.length } };
+        // An autofilter belongs on a table, not on a calculating model — sorting
+        // a cashflow by column would scramble every relative reference in it.
+        const hasFormulas = sheet.rows.some((r: any[]) => (r || []).some((c: any) => c && typeof c === "object" && c.formula));
+        if (!hasFormulas) {
+          ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2 + sheet.rows.length, column: sheet.headers.length } };
+        }
         ws.views = [{ state: "frozen", ySplit: 2 }];
       }
 

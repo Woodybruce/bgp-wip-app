@@ -289,6 +289,18 @@ if (process.env.DATABASE_URL) {
   console.log('── tracker sync check skipped (no DATABASE_URL) ──');
 }
 
+// ─── Pathway model inputs: a floor area must be plausible ────────────────
+// Pure logic, no DB. A size fact is free text, and the old parser stripped
+// every non-digit and parsed the remainder, gluing several figures into one
+// number — a real model shipped with a lettable area of 3.9 quintillion sq ft,
+// which drove the per-sq-ft OpEx line and poisoned every number in it.
+console.log('── pathway area parse ──');
+const a = spawnSync('npx', ['tsx', new URL('./r628-area-parse-probe.ts', import.meta.url).pathname], {
+  env: process.env, encoding: 'utf8', timeout: 120000,
+});
+if (a.stdout) process.stdout.write(a.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
+check('pathway model: implausible floor areas are refused', a.status === 0, a.status === 0 ? '' : (a.stderr || '').slice(0, 200));
+
 console.log(`\n── smoke complete: ${checks} checks, ${failures.length} failure${failures.length === 1 ? '' : 's'} ──`);
 for (const f of failures) console.log(`  ✗ ${f.name}${f.detail ? ` — ${f.detail}` : ''}`);
 process.exit(failures.length === 0 ? 0 : 1);
