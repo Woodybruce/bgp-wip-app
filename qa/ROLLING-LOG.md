@@ -101,6 +101,29 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r626 · 2026-09-09 · LIGHT · census: **company/deal/contact-keyed ChatBGP WRITE tools across BOTH dispatchers** · round in progress
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 43/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD.
+- **CENSUS RESULT — the hole is real and bigger than r624's.** The REST door
+  rule for a client on `/api/crm` is *read-only across the whole surface*
+  (`crm.ts:1444` blanket gate) with exactly FOUR exceptions: POST/PUT
+  `/contacts` (scoped by `clientCanTouchCompany`, `crm.ts:2096`) and POST/PUT
+  `/deals` (scoped by `isDealInScope` + fee-stripped, `crm.ts:3437`).
+  At the AI door, NEITHER dispatcher (`executeCrmToolRaw` 6104 /
+  `handleCrmToolCall` 11921) checks anything for:
+  `link_entities`, `update_deal`, `update_company`, `update_contact`,
+  `update_available_unit`, `log_viewing`, `log_offer`,
+  `update_requirement`, `update_investment_tracker`. 82 of the 132 tools are
+  client-allowed (50 named in the deny-list); these nine are the ones keyed
+  by an EXISTING record id, i.e. the ones that can REACH another tenant.
+- **Worst of the nine is `link_entities` — a privilege ESCALATION, not just a
+  write.** `linkType:"company-property"` INSERTs into `crm_company_properties`,
+  which is the exact table `isPropertyInScope` (`company-scope.ts:251`) reads.
+  A client can link their OWN company to a RIVAL's property and thereby make
+  that property in-scope for the whole app — defeating r624's gate and every
+  other property check. `company-deal` does the same to `isDealInScope`.
+- Triage in progress; fix is ONE gate in r624's shape.
+
 ### r625 · 2026-09-09 · FULL · journey: **BGP staff · PHONE 390px** (rotation slot #4, Victoria, real iPhone context, "a landlord rang about the Gail's letting" with two WRITEs) · REGRESSION AT BASELINE · **0 bugs fixed** · 3 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 43/0**
   (r624's new baseline holds), then `node qa/apply-sql.mjs qa/seed-personas.sql`.
