@@ -92,21 +92,101 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r622 · 2026-09-09 · FULL (round in progress) · journey: **Landsec client · desktop 1440px** (rotation slot #2) · REGRESSION AT BASELINE
+### r622 · 2026-09-09 · FULL · journey: **Landsec client · desktop 1440px** (rotation slot #2, leasing-meeting prep with a real WRITE) · REGRESSION AT BASELINE · **0 bugs fixed — every candidate ran down to correct behaviour or my own probe error** · 1 bug-shaped question deferred · 1 suggestion
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — push with
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
   `git push origin HEAD:claude/qa-staging-20260810`.
 - **REGRESSION AT BASELINE, exactly r621's prediction.** Head split three ways
   sharing `QA_CROSS_FILE=/tmp/qa-cross-622.json`, each chunk in its OWN
   `with-server.sh`: **104 + 133 + 110 = head 347** + tail **39** = **386 ok**.
   Signature **6x400 + 1x409 + 10x403 + 1x503 — identical to r615-r621.
   Streak 77.** All listed noise; no chunk died at `sam · login`.
-- Triage: 2x400 chunk 1 (rocketreach discover + invalid-tracker probe),
-  4x400 + 1x409 + 9x403 chunk 2 (keyless/probe-by-design scope rows),
-  1x503 chunk 3 (keyless AI), 1x403 tail (rival isolation by design).
-  Zero unexplained issues.
-- Journey in progress: Mark Warne client desktop, a real task with a WRITE,
-  aimed at the deferred #343/#344 client-scope write holes.
+- **JOURNEY — Mark Warne (Landsec client) preparing for tomorrow's leasing
+  meeting.** `/` (portfolio dashboard) → the Expiring (6m) tile → drill to a
+  tenancy schedule → `/deals` → the Lease Terms cell → an inline WRITE.
+  Also toured `/requirements`, `/tasks`, `/brand-intelligence`, `/comps`,
+  `/news`. **Every printed number on his landing page checked out:**
+  201 units = 124 occupied + 77 vacant; occupancy 61.7% = 124/201 and
+  38.3% = 77/201; Letting Tracker "73 live lettings" = 72 Available +
+  1 Negotiating = `/api/available-units` 73 rows; Deals "2 deals" = the
+  2 rows shown = the pill row 1 Solicitors + 1 Exchanged.
+- **THE WRITE — Mark recorded a rent on his own deal, and it saved.** `/deals`
+  → deal #1004's Lease Terms cell → "+ Add terms" → typed **185000** into
+  Rent PA → Enter → **`200 PUT /api/crm/deals/…302`**, cell re-rendered
+  **£185,000**, confirmed by a staff re-read. **Fixture restored** — cleared
+  back to `null` via `qa/r622-cleanup.mjs`, verified `rentPa: null`, and it
+  was the only row in `/api/crm/deals` carrying a `rentPa` at all.
+- **DEFERRED, bug-shaped, needs Woody's intent (→ UX #365).** The client's
+  Deals table renders **"+ Add terms"** on both his deals
+  (`deals.tsx:991`, `emptyLabel="Add terms"` → `NumericStackedCell` →
+  `InlineNumber`, which is click-to-edit with no `readOnly` prop at all —
+  unlike its sibling `InlineLinkSelect`, which has one at
+  `inline-edit.tsx:658`). **The same table shows Victoria 0 "Add terms"
+  cells**, so the client is the only persona offered this editor, and the
+  write reaches the deal BGP is negotiating from with no author stamp and no
+  confirmation. If clients writing deal terms is NOT intended this is a
+  client-scope hole in **r601's exact family** ("a client could silently
+  reassign the BGP team on their own deal") and the fix is a `readOnly` path
+  through `NumericStackedCell`/`InlineNumber` plus a server-side guard. I did
+  not fix it unilaterally: unlike r601's case the control is *deliberately*
+  labelled as an invitation, so intent has to come from Woody first.
+- **FOUR candidates chased and RUN DOWN to correct behaviour — recorded so
+  the next round doesn't re-spend the time:**
+  1. **Client `/` renders 221 chars (nav only)** — a COLD-render artifact,
+     not a bug. Warm (a prior route visit + 8s) it renders the full portfolio
+     dashboard. This is the r262 cold-first-load flake on a client route;
+     **every r622 probe now warms `/` before the route under test.**
+  2. **"EXPIRING (6M) 7 · click to list" looked inert** — it is not. My first
+     click targeted the subtitle *text node*; against the real
+     `[data-testid="kpi-expiring"]` button the popover opens and lists
+     **exactly 7 rows** for the count of 7 (same predicate both sides —
+     `leasingUnits.filter(isExpiringSoon)`, dashboard.tsx:1471 vs :1678).
+     A clean COUNT-vs-FILTERED-LIST pass, shape #5 negative.
+  3. **Mark's Requirements page says "0 active requirements" while the API
+     returned 1 row** — MY BUG, not the app's. See the harness note below.
+     Cookie-door and token-door agree once probed cleanly: Mark 0 leasing
+     requirements, Victoria 1 (`QA-REQ-R1`, `companyId=null`, non-PIPnet →
+     correctly invisible to a client per `crm.ts:5018`). Anonymous requests
+     to `/api/crm/requirements-leasing`, `…-investment`, `/api/crm/companies`
+     `/contacts` `/properties` `/deals` and `/api/available-units` all
+     **401** — the routes carry no `requireAuth` of their own but the global
+     gate in `auth.ts:214` covers them. **No exposure.**
+  4. **The three `isExpiringSoon` copies** (`dashboard.tsx:1443`,
+     `CompanyPropertiesBoard.tsx:132`, `leasing-schedule.tsx:96`) — all three
+     delegate to `shared/lease-expiry.ts`'s `isLeaseExpiringSoon`. The
+     lease-expiry census really is closed; shape #3 negative here.
+- **HARNESS NOTE, cost me ~10 minutes and would cost the next round the
+  same:** Playwright's `ctx.request` shares ONE cookie jar with the context.
+  Logging two personas in through the same `ctx.request.post` leaves the
+  SECOND persona's session cookie in the jar, and `resolveCompanyScope` reads
+  `req.session.userId || req.tokenUserId` — **the cookie wins over an
+  explicit `Authorization: Bearer` header**, so every later "Bearer as
+  persona A" probe silently runs as persona B. It looks exactly like a
+  scope leak. **Use a FRESH `browser.newContext()` per persona** (see
+  `qa/r622-anon-probe.mjs`, which does this deliberately).
+- **PROVED vs PATCHED:** nothing patched this round. The WRITE is PROVED
+  through the real UI and a staff re-read, both directions (set and cleared).
+  The four negatives above are PROVED by direct measurement, not by reading
+  code alone. **No new scenarios added to `qa/two-bot-round.mjs`** — I had no
+  fix to lock in, and the brief's evidential rule forbids adding a scenario I
+  cannot prove non-vacuous by re-breaking a change I didn't make. **So the
+  next round's expected numbers are UNCHANGED: chunk 1 = 104, chunks 133 +
+  110, head 347, tail 39, sum 386, signature 6x400 + 1x409 + 10x403 + 1x503.**
+- **SUGGESTION → UX #365** (the "+ Add terms" invitation on the client's
+  deals table — label the intent, or make it read-only).
+- No new flakes. Probes kept: `qa/r622-mark-journey.mjs`,
+  `qa/r622-anon-probe.mjs`, `qa/r622-expiring-probe.mjs`,
+  `qa/r622-terms-probe.mjs`, `qa/r622-terms-write.mjs`, `qa/r622-cleanup.mjs`,
+  `qa/r622-req-probe.mjs`, `qa/r622-counts-probe.mjs`, `qa/r622-dash-probe.mjs`.
+  Shots `/tmp/r622/*`.
+- **Next:** rotation #3 Landsec client mobile 390px, FULL (r622 had the
+  journey → r623 would normally be LIGHT, but r622 fixed nothing, so a FULL
+  round is the better use). Pick up **UX #365 / the deals-terms write** the
+  moment Woody rules on intent, and the still-open **#343/#344** client-scope
+  write holes (`add_property_imagery`, `POST /api/favorite-instructions/:id`
+  — I did not reach them; `POST /api/favorite-instructions/:propertyId`
+  (`crm.ts:8064`) still takes any propertyId with no scope check, though the
+  GET returns bare ids so nothing out-of-scope renders from it).
 
 ### r621 · 2026-09-08 · LIGHT (r620 did the journey — no exploratory journey) · REGRESSION AT BASELINE · 1 bug fixed (5 sites): the Board Report's "Fees Billed YTD", its billed-by-month series and its time-to-close stats were all built from `crm_deals.updated_at` · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then

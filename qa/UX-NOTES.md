@@ -13,6 +13,32 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+365. 2026-09-09 · Mark Warne (Landsec client) / desktop 1440px · QA r622 ·
+   **the client's Deals table invites him to type the deal terms, and the
+   invitation reads like a BGP-side editing affordance sitting on a client
+   screen.** Journey: preparing for tomorrow's Landsec leasing meeting, Mark
+   opens `/deals` (2 deals — #1003 Solicitors, #1004 Exchanged). The Lease
+   Terms column on both rows renders **"+ Add terms"**
+   (`deals.tsx:991` → `NumericStackedCell`, `emptyLabel="Add terms"`). It
+   opens a "Lease terms" popover of six click-to-edit rows (Rent PA, Capital
+   Contribution, Rent Free, Lease Length, Break Option, Rent Analysis), all
+   "—". Typing 185000 into Rent PA and pressing Enter **saved** — `200 PUT
+   /api/crm/deals/:id` — and the cell then read £185,000. Nothing tells Mark
+   whether he is recording an agreed figure for his own record or overwriting
+   the number BGP is negotiating from; there is no "who entered this" trace on
+   the cell and no confirmation step. Note the same table's staff view renders
+   **0** "Add terms" cells on these rows, so the client is the only persona
+   being offered this. **Suggestion:** decide the intent explicitly and make
+   the UI say it. If clients are meant to record their own view of terms,
+   label it as theirs ("Your terms note" / show BGP's figure alongside) and
+   stamp the author; if terms are BGP's to record (which the read-only shape
+   of the rest of the client deals surface implies), render the empty cell as
+   a plain "—" with a tooltip "your BGP team records the terms here" rather
+   than a "+ Add terms" call to action. See also the deferred bug-shaped
+   write-up in ROLLING-LOG r622 — if the write is NOT intended, this is a
+   client-scope hole in the same family as r601's "client could reassign the
+   BGP team on their own deal", not a suggestion.
+
 360. 2026-09-08 · Victoria (BGP staff, non-admin "Head of National") /
    desktop 1440px · QA r620 · **she can read the firm's money list but has no
    door to the audit that says whether to trust it.** Month-end journey: she
