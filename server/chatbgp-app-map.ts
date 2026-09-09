@@ -93,6 +93,9 @@ The firm's money list, live from crm_deals. Tabs: **WIP Report** (filterable dea
 ### ChatBGP over WhatsApp (the BGP business number)
 Messaging the BGP WhatsApp number reaches the same ChatBGP as the dashboard — same AI model, full toolset (CRM, deals, email, calendar, SharePoint, document generation, web search). It understands: typed messages, voice notes (transcribed automatically — just talk), photos (it can see them), and documents/brochures (PDFs are read and can be filed into the CRM; captions like "import this brochure" trigger the import pipeline). Receipts photographed by a cardholder are matched to their pending expenses automatically.
 
+### Email access through ChatBGP (Woody, 2026-09-09)
+Admins can search any BGP mailbox (a named colleague's, or "all"). Everyone else can search only their own inbox and the shared inbox (chatbgp@brucegillinghampollard.com) — for them "all" means those two, and asking for a colleague's mailbox is refused; say so plainly and suggest they ask an admin. The same rule covers reading or filing attachments from another mailbox.
+
 ## The public website (bgp.uk.com) — how to read it and feed it
 
 bgp.uk.com is a separate JavaScript site (not this app). Fetching any of its

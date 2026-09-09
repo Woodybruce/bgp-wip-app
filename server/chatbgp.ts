@@ -336,6 +336,31 @@ function toGraphSearchQuery(raw: string): string {
 //
 // Exported so the property-pathway email investigator can reuse the same
 // fan-out semantics ChatBGP gets — searching across all 31 BGP mailboxes.
+//
+// Who may read which mailbox (Woody, 2026-09-09): admins can search any BGP
+// mailbox; everyone else gets their own inbox and the shared chatbgp@ inbox
+// only. Enforced here and on the two attachment tools — the app-only Graph
+// token would otherwise let any login read any colleague's mail.
+const SHARED_INBOX = "chatbgp@brucegillinghampollard.com";
+async function mailboxCaller(req: any): Promise<{ isAdmin: boolean; email: string }> {
+  const userId = req?.session?.userId || req?.tokenUserId;
+  if (!userId) return { isAdmin: false, email: "" };
+  try {
+    const r = await pool.query("SELECT is_admin, email, username FROM users WHERE id = $1", [userId]);
+    const row = r.rows[0];
+    return { isAdmin: !!row?.is_admin, email: String(row?.email || row?.username || "").toLowerCase() };
+  } catch {
+    return { isAdmin: false, email: "" };
+  }
+}
+export async function mailboxDenied(req: any, mailbox: string | undefined): Promise<string | null> {
+  const mb = (mailbox || "").trim().toLowerCase();
+  if (!mb || mb === "me") return null;
+  const { isAdmin, email } = await mailboxCaller(req);
+  if (isAdmin || mb === SHARED_INBOX || (email && mb === email)) return null;
+  return `Only admins can read other people's mailboxes through ChatBGP. You can search your own inbox or the shared inbox (${SHARED_INBOX}).`;
+}
+
 export async function runSearchEmailsTool(opts: { query: string; top: number; mailbox: string; req: any }):
   Promise<{ messages: any[]; scope: string } | { error: string }> {
   const { query, top, mailbox, req } = opts;
@@ -365,11 +390,16 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
 
       // Build the list of mailboxes to query
       const mailboxes: Array<{ email: string; owner: string }> = [];
-      if (mailbox === "all") {
+      const caller = await mailboxCaller(req);
+      if (mailbox === "all" && !caller.isAdmin) {
+        // Non-admin "all" = own inbox + the shared inbox, never colleagues'.
+        mailboxes.push({ email: SHARED_INBOX, owner: "Shared inbox" });
+        if (caller.email && caller.email !== SHARED_INBOX) mailboxes.push({ email: caller.email, owner: "You" });
+      } else if (mailbox === "all") {
         const { db } = await import("./db");
         const { users } = await import("@shared/schema");
         const { eq } = await import("drizzle-orm");
-        mailboxes.push({ email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" });
+        mailboxes.push({ email: SHARED_INBOX, owner: "Shared inbox" });
         try {
           const activeUsers = await db
             .select({ username: users.username, email: users.email, name: users.name })
@@ -383,6 +413,8 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
           }
         } catch {}
       } else {
+        const denied = await mailboxDenied(req, mailbox);
+        if (denied) return { error: denied };
         mailboxes.push({ email: mailbox, owner: mailbox });
       }
 
@@ -3196,13 +3228,13 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "search_emails",
-      description: "Search Outlook for emails matching a query. By default searches the signed-in user's inbox. Pass `mailbox` to search a specific BGP teammate's inbox, or 'all' to search across every team member's mailbox plus the shared inbox (uses app-level Mail.Read). Returns up to 50 results. Use when the user asks to find specific emails, correspondence, or historic threads beyond the 15 most recent shown in context.",
+      description: "Search Outlook for emails matching a query. By default searches the signed-in user's inbox. Pass `mailbox` to search a specific BGP teammate's inbox, or 'all' to search across every team member's mailbox plus the shared inbox (uses app-level Mail.Read). ADMINS ONLY for other people's mailboxes: a non-admin user may search only their own inbox and the shared inbox (chatbgp@brucegillinghampollard.com); for them 'all' means those two and a named colleague's mailbox is refused — tell them plainly rather than retrying. Returns up to 50 results. Use when the user asks to find specific emails, correspondence, or historic threads beyond the 15 most recent shown in context.",
       parameters: {
         type: "object",
         properties: {
           query: { type: "string", description: "Search query — matches against subject, body, sender, recipients, and attachments. Use KQL syntax: e.g. 'from:john subject:proposal', 'hasattachment:true landsec', 'received>=2025-01-01'" },
           top: { type: "number", description: "Number of results to return (default 50, max 500)." },
-          mailbox: { type: "string", description: "Optional. A specific BGP mailbox email address (e.g. 'jack@brucegillinghampollard.com') to search, OR the literal string 'all' to fan out across every active BGP user's mailbox plus the shared inbox. Omit to search only the current user's inbox." },
+          mailbox: { type: "string", description: "Optional. A specific BGP mailbox email address (e.g. 'jack@brucegillinghampollard.com') to search, OR the literal string 'all' to fan out across every active BGP user's mailbox plus the shared inbox. Other people's mailboxes are admin-only. Omit to search only the current user's inbox." },
         },
         required: ["query"],
       },
@@ -8938,6 +8970,8 @@ export async function executeCrmToolRaw(
     try {
       const msgId = encodeURIComponent(fnArgs.messageId);
       const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      const denied = await mailboxDenied(req, mailboxEmail);
+      if (denied) return { data: { error: denied } };
       // Cross-mailbox path: route via app token on /users/{email}/messages/...
       // Graph message IDs are mailbox-scoped, so using /me here against an id
       // from another user's mailbox returns ErrorInvalidMailboxItemId.
@@ -8982,6 +9016,8 @@ export async function executeCrmToolRaw(
       const msgId = encodeURIComponent(fnArgs.messageId);
       const attId = encodeURIComponent(fnArgs.attachmentId);
       const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      const denied = await mailboxDenied(req, mailboxEmail);
+      if (denied) return { data: { error: denied } };
       let attachment: any;
       if (mailboxEmail) {
         const { graphRequest } = await import("./shared-mailbox");
@@ -13192,6 +13228,8 @@ export async function handleCrmToolCall(
     try {
       const msgId = encodeURIComponent(fnArgs.messageId);
       const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      const denied = await mailboxDenied(req, mailboxEmail);
+      if (denied) return { handled: true, response: { reply: denied } };
       let attachments: any[];
       if (mailboxEmail) {
         const { graphRequest } = await import("./shared-mailbox");
@@ -13236,6 +13274,8 @@ export async function handleCrmToolCall(
       const msgId = encodeURIComponent(fnArgs.messageId);
       const attId = encodeURIComponent(fnArgs.attachmentId);
       const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      const denied = await mailboxDenied(req, mailboxEmail);
+      if (denied) return { handled: true, response: { reply: denied } };
       let attachment: any;
       if (mailboxEmail) {
         const { graphRequest } = await import("./shared-mailbox");
