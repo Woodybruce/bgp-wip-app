@@ -105,6 +105,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r630 · 2026-09-09 · LIGHT · probe: the SERVER-built .xlsx doors (board-report, tenancy-schedule export, three leasing-schedule exports, PLA workbook) · REGRESSION AT BASELINE · **PROVISIONAL — probe in flight**
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- **REGRESSION AT BASELINE — 104 + 133 + 111 + 40 = 388 ok,
+  signature 6x400 + 1x409 + 10x403 + 1x503. Streak 85.** Four chunks,
+  r629 arithmetic, shared `QA_CROSS_FILE=/tmp/qa-cross-630.json`. No cold
+  flake in chunk 1 (104 first pass).
+- Probe in flight; this entry is replaced before the round ends.
+
 ### r629 · 2026-09-09 · FULL · journey: Mark Warne (Landsec client) desktop 1440px — Brand Intelligence → the client CRM Brand Directory, with a real self-add WRITE · REGRESSION AT BASELINE · **1 bug fixed (PROVED)** · 3 suggestions (#377/#378/#379)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Smoke run twice (once before
