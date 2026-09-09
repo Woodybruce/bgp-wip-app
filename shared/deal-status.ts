@@ -82,6 +82,25 @@ export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AV
 export const WIP_STATUSES: DealStatusCode[]        = ["AVA", "NEG", "HOT", "SOL", "EXC", "COM", "INV"];
 export const DEAL_PAGE_STATUSES: DealStatusCode[]  = [...DEAL_STATUS_CODES];
 
+// Tracker roll-up buckets — the three-plus-total read a client sees on the
+// phone home tile ("Available / Under offer / Let / On tracker"). The tile
+// prints the total alongside the buckets, so the buckets MUST partition the
+// whole vocabulary: a unit in no bucket silently vanished from the read while
+// still being counted in the total (r623 — a withdrawn unit gave Mark
+// 71 + 1 + 0 against a total of 73). Typed as a full Record so adding a code
+// to DEAL_STATUS_CODES without placing it in a bucket fails to compile.
+export type TrackerRollupBucket = "available" | "underOffer" | "let" | "withdrawn";
+export const TRACKER_ROLLUP_BUCKET: Record<DealStatusCode, TrackerRollupBucket> = {
+  OPP: "available", REP: "available", SPEC: "available", LIVE: "available", AVA: "available",
+  NEG: "underOffer", HOT: "underOffer", SOL: "underOffer", EXC: "underOffer",
+  COM: "let", INV: "let",
+  WIT: "withdrawn",
+};
+export function trackerRollupBucket(raw: string | null | undefined): TrackerRollupBucket {
+  const code = legacyToCode(raw);
+  return code ? TRACKER_ROLLUP_BUCKET[code] : "available";
+}
+
 // INV is set automatically when a Xero invoice syncs onto the deal — UI should
 // render it but disable manual selection.
 export const SYSTEM_SET_STATUSES: DealStatusCode[] = ["INV"];
