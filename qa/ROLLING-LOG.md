@@ -105,6 +105,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r627 · 2026-09-09 · FULL (provisional) · Victoria staff-desktop journey · REGRESSION AT BASELINE
+- `npm run qa:pg` once, `bash qa/run-smoke.sh` **43 checks / 0 failures**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`.
+- **Two-bot AT BASELINE — 104 + 133 + 111 + 39 = 387 ok, signature
+  6x400 + 1x409 + 10x403 + 1x503. Streak 82.** Four chunks, r626 arithmetic
+  verbatim, shared `QA_CROSS_FILE=/tmp/qa-cross-627.json`. No chunk-1 cold
+  flake this session (104 on the first pass).
+- Journey + findings to follow in the final entry.
+
 ### r626 · 2026-09-09 · LIGHT · census: **company/deal/contact/unit-keyed ChatBGP WRITE tools across BOTH dispatchers** · REGRESSION AT BASELINE · **2 bugs fixed** · 2 suggestions (#372, #373)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 43/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
