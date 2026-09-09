@@ -13,6 +13,39 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+380. 2026-09-09 · BGP staff / desktop · QA r630 · **The styled Leasing
+   Schedule .xlsx has no Status column, so the board pack loses the one
+   thing the screen leads with.** On `/leasing-schedule` every unit carries a
+   status chip (Occupied / Trading / Lease Event / Vacant / Opportunity /
+   Under Offer / In Negotiation) and the pill row groups the pipeline by it.
+   The exported per-property workbook has eight columns — Zone, Positioning,
+   Existing, Targets, Optimum, Financial, Priority, Updates — and not one of
+   them says what state the unit is in; the reader of the board file has to
+   infer it from whether the Existing cell names a tenant. Suggestion: add a
+   Status column to `buildStyledSheet` (or fold the status into the Existing
+   cell's first line), colour-filled to match the screen's chip colours,
+   which the sheet already defines fills for.
+
+381. 2026-09-09 · BGP staff / desktop · QA r630 · **The all-schemes Leasing
+   Schedule export ships a permanently empty "Lease Start" column.** The
+   tabular export at `/api/leasing-schedule/export-excel` writes eleven
+   columns, one of which is `lease_start: null, // not tracked in DB` — so
+   every row has a blank Lease Start under a date format. Anyone filtering or
+   sorting that file sees a column that will never fill. Suggestion: either
+   drop the column, or source it from the linked Tenancy Schedule row
+   (`tenancy_schedule_units.lease_start`), which the property screen already
+   joins for its live tenant/expiry/break values.
+
+382. 2026-09-09 · BGP staff / desktop · QA r630 · **No way to export the
+   archived units now that the exports match the screen.** r630 made all four
+   leasing-schedule export doors hide Archived units, because the screen hides
+   them and each property card's unit count excludes them — the board pack was
+   arriving with more units than the board had looked at. But the screen has an
+   explicit "Archived (n)" toggle, so a user who has turned it ON and then hits
+   Export gets a file that silently disagrees with what is in front of them.
+   Suggestion: pass the screen's toggle through as `?includeArchived=1` and have
+   the export honour it, so the file always matches the view it was taken from.
+
 377. 2026-09-09 · Mark Warne (Landsec client) / desktop 1440px · QA r629 ·
    **The "re-add it from the Brand Directory" empty state sends the client to
    a page with no way to add a brand.** Opening a brand that is not in his CRM

@@ -5684,6 +5684,102 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r630: the /leasing-schedule screen hides Archived units (the table filters
+  // them behind an "Archived (n)" toggle and each property card's unit_count
+  // excludes them) but all four export doors selected every row, so a board
+  // pack exported off a screen showing 2 units arrived with 3 — and the styled
+  // sheet has no Status column, so the archived unit read as live. Also the
+  // tabular export's Rent PSF was rounded to 2dp and then formatted "£#,##0",
+  // so £154.75 opened in Excel as "£155".
+  await step(page, p, 'staff-leasing-exports-hide-what-the-screen-hides', async () => {
+    const ExcelJSMod = await import('exceljs');
+    const ExcelJS = ExcelJSMod.default || ExcelJSMod;
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const props = await (await fetch(`${BASE}/api/leasing-schedule/properties`, { headers: auth })).json();
+    if (!Array.isArray(props) || !props.length) throw new Error('no leasing-schedule properties to reconcile');
+    let target = null, victim = null;
+    for (const cand of [...props].sort((a, b) => Number(a.unit_count) - Number(b.unit_count))) {
+      const units = await (await fetch(`${BASE}/api/leasing-schedule/property/${cand.id}`, { headers: auth })).json();
+      // Only a unit that is ALREADY Vacant: unarchive hardcodes 'Vacant', so
+      // any other status would not survive the round trip.
+      const v = (units || []).find((u) => u.status === 'Vacant');
+      if (v) { target = cand; victim = v; break; }
+    }
+    if (!victim) throw new Error('no Vacant leasing-schedule unit to archive — cannot make the check non-vacuous');
+    const ar = await fetch(`${BASE}/api/leasing-schedule/units/${victim.id}/archive`, { method: 'PATCH', headers: auth });
+    if (!ar.ok) throw new Error(`archive returned ${ar.status}`);
+    try {
+      const after = await (await fetch(`${BASE}/api/leasing-schedule/properties`, { headers: auth })).json();
+      const card = after.find((x) => x.id === target.id);
+      const screenCount = Number(card.unit_count);
+      const units = await (await fetch(`${BASE}/api/leasing-schedule/property/${target.id}`, { headers: auth })).json();
+      const archived = (units || []).filter((u) => u.status === 'Archived');
+      if (!archived.some((u) => u.id === victim.id)) throw new Error('the archive write did not stick — nothing to reconcile');
+      if (screenCount !== units.length - archived.length) {
+        throw new Error(`fixture assumption broken: card says ${screenCount} but the table would list ${units.length - archived.length}`);
+      }
+
+      const loadXlsx = async (path, init) => {
+        const r = await fetch(`${BASE}${path}`, { headers: auth, ...(init || {}) });
+        if (!r.ok) throw new Error(`${path} returned ${r.status}`);
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(Buffer.from(await r.arrayBuffer()));
+        return wb;
+      };
+
+      // 1. the JSON export door
+      const je = await (await fetch(`${BASE}/api/leasing-schedule/property/${target.id}/export`, { headers: auth })).json();
+      if (je.some((r) => r.status === 'Archived')) throw new Error('the JSON /export door still ships Archived units the screen hides');
+      if (je.length !== screenCount) throw new Error(`JSON /export has ${je.length} rows, the screen card says ${screenCount}`);
+
+      // 2. the styled per-property .xlsx — banner count AND the row itself
+      const ws1 = (await loadXlsx(`/api/leasing-schedule/property/${target.id}/export-excel`)).worksheets[0];
+      const banner = String(ws1.getCell(2, 1).value || '');
+      const bm = banner.match(/(\d+) units/);
+      if (!bm) throw new Error(`the styled export lost its "N units" banner (banner was "${banner}")`);
+      if (Number(bm[1]) !== screenCount) {
+        throw new Error(`the styled leasing export banner says "${bm[0]}" but the screen card says ${screenCount} units`);
+      }
+      const existingCells = [];
+      ws1.eachRow((row, n) => { if (n > 4 && row.getCell(3).value) existingCells.push(String(row.getCell(3).value).trim()); });
+      if (existingCells.includes(String(victim.unit_name).trim())) {
+        throw new Error(`the archived unit "${victim.unit_name}" is still a row in the styled export, which has no Status column to flag it`);
+      }
+
+      // 3. the all-properties tabular .xlsx
+      const wsAll = (await loadXlsx('/api/leasing-schedule/export-excel')).worksheets[0];
+      let mine = 0, sawArchived = false, psfCell = null;
+      wsAll.eachRow((row, n) => {
+        if (n === 1) return;
+        const prop = String(row.getCell(1).value || '');
+        if (prop === 'TOTALS') return;
+        if (String(row.getCell(11).value || '') === 'Archived') sawArchived = true;
+        if (prop === target.name) mine++;
+        const psf = row.getCell(9).value;
+        if (!psfCell && typeof psf === 'number' && Math.round(psf) !== psf) psfCell = row.getCell(9);
+      });
+      if (sawArchived) throw new Error('the all-properties leasing export still carries rows the screen hides (Status = Archived)');
+      if (mine !== screenCount) throw new Error(`the all-properties export has ${mine} rows for ${target.name}, the screen card says ${screenCount}`);
+      if (!psfCell) throw new Error('no fractional Rent PSF in the export — the format check would pass vacuously');
+      if (!/0\.00/.test(String(psfCell.numFmt || ''))) {
+        throw new Error(`Rent PSF ${psfCell.value} is formatted "${psfCell.numFmt}" — Excel rounds the pence away on a psf`);
+      }
+
+      // 4. the multi-property .xlsx shares the same query
+      const wbMulti = await loadXlsx('/api/leasing-schedule/export-multi-excel', {
+        method: 'POST', body: JSON.stringify({ propertyIds: [target.id] }),
+      });
+      const wsM = wbMulti.worksheets[0];
+      const mBanner = String(wsM.getCell(2, 1).value || '').match(/(\d+) units/);
+      if (!mBanner) throw new Error('the multi-property export lost its "N units" banner');
+      if (Number(mBanner[1]) !== screenCount) {
+        throw new Error(`the multi-property export banner says "${mBanner[0]}" but the screen card says ${screenCount} units`);
+      }
+    } finally {
+      await fetch(`${BASE}/api/leasing-schedule/units/${victim.id}/archive`, { method: 'PATCH', headers: auth }).catch(() => {});
+    }
+  });
+
 }
 
 async function trackerStatusDeepLink(page, who) {
