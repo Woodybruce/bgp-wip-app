@@ -13,6 +13,69 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+385. 2026-09-09 · Landsec client / phone 390px · QA r631 · **The phone Deals
+   tab shows nothing but the pill row while it loads.** Tapping Deals lands on
+   a header, the Properties/Deals/Letting Tracker pill row and two empty grey
+   skeleton blocks for several seconds — no count, no "loading your deals",
+   and no empty-state text to distinguish "still fetching" from "you have no
+   deals" (Mark has five). Suggestion: put the tracker-style roll-up counts on
+   that pill row and a one-line "Loading your deals…" under it, the way the
+   Portfolio tile does.
+
+Confirmed by Woody 2026-08-08 ("Do all 5"); built + visually verified same day:
+
+384. 2026-09-09 · Landsec client / phone 390px · QA r631 · **Image Studio
+   opened from a deal is handed the deal NAME as the address.** The
+   `button-deal-image-studio` link builds `address=` from the linked
+   property's address and falls back to the deal name, and on a fixture
+   property with no address the URL Mark actually landed on read
+   `?property=Bluewater%20Shopping%20Centre&address=Bluewater%20MSU9%20letting`
+   — "Bluewater MSU9 letting" is not an address, and Street View capture and
+   stock search both key off that field. The page itself worked (library,
+   brand library, collections all loaded on the phone). Suggestion: omit
+   `address` when the property has none rather than substituting the deal
+   name, so the studio prompts for a real one.
+
+383. 2026-09-09 · Landsec client / phone 390px · QA r631 · **The client's own
+   Edit button on a deal can never be saved on an early-stage letting.** The
+   phone deal detail's `button-edit-deal` opens the dialog fine, but
+   `handleSubmit` (deals.tsx) requires a landlord AND a tenant on every
+   leasing-type deal before it will fire the PUT — and a client's party slots
+   are deliberately read-only ("Not set yet — your BGP team will link
+   parties"). So on Mark's Bluewater MSU9 letting, whose tenant BGP has not
+   linked yet, Save Changes fires no request at all and the dialog just sits
+   there; every deal on his board is at that stage. Suggestion: for a client
+   editor, drop the counterparty requirement (the fields it protects are the
+   ones the client cannot set anyway) so a target-date or comment edit saves —
+   or, if the requirement must hold, disable Save with the reason on it rather
+   than leaving a live button that does nothing.
+
+364. 2026-09-08 · Victoria (BGP staff) / desktop 1440px · QA r621 ·
+   **"Average Time to Close" is an average over an unstated subset.** The
+   Board Report KPI and the time-to-close histogram only count EXC/COM/INV
+   deals that carry a completion or exchange date AND close in 1-999 days
+   (`crm.ts:6924-6931`); everything else is dropped without a denominator
+   anywhere on the card. In the fixture that means one deal decides the
+   number. **Suggestion:** show the denominator on the card ("381 days ·
+   over 1 of 2 completed deals"), the way the Fees Billed card shows its
+   "total deals in pipeline" sub.
+
+363. 2026-09-08 · Victoria (BGP staff) / desktop 1440px · QA r621 · **the
+   Board Report's "Fees Billed YTD" now drops undated invoices silently — the
+   board has no way to see what is missing from its headline number.** After
+   this round's fix an INV deal carrying no invoice/completion/exchange date
+   is excluded from `totalFeesYTD` and from the billed-by-month series
+   (`crm.ts:6912`, `:9665`), which is correct — `updated_at` was never a
+   billing date — but the KPI card just reads a smaller number, and the
+   `/reporting` card's own subtitle still promises "Invoiced since 1 January"
+   with nothing to say some invoices could not be dated. The WIP Report at
+   least parks its undated money in a visible TBC bar. **Suggestion:** put the
+   same footnote on both KPI cards — "£X of invoiced fees have no invoice
+   date and are not counted" — and deep-link it to the Deal Detail rows so
+   somebody can stamp the dates. The number to show already exists: it is the
+   fee sum of `isInvoicedStatus` deals failing `hasDate`
+   (`computeWipHealth`, `crm.ts:10154`).
+
 380. 2026-09-09 · BGP staff / desktop · QA r630 · **The styled Leasing
    Schedule .xlsx has no Status column, so the board pack loses the one
    thing the screen leads with.** On `/leasing-schedule` every unit carries a
@@ -359,7 +422,6 @@ what happened · concrete suggested improvement.
    makes five bulk maintenance tools effectively unusable. Suggestion: one
    line of description per action, a confirm dialog naming the row count for
    the four that write, and either finish or hide the "(test)" one.
-
 
 352. 2026-09-08 · Victoria (BGP staff) / desktop · QA r617 · Settings ->
    CRM data hygiene -> merging duplicate properties · **a merge that failed
@@ -2071,7 +2133,6 @@ what happened · concrete suggested improvement.
     company IS the viewer's own company, or re-key it on the BRAND being
     shown round (the tenant side of a viewing) rather than the event's
     company_name. Needs Woody's numbered confirmation — not built.
-
 
 219. 2026-09-05 · BGP staff / desktop (QA r559) · Two links still carry the
    dead `?highlight=<id>` convention after r559 fixed the four company ones:
@@ -3934,68 +3995,6 @@ verified same day (commit dbade8e0):
 13. Contacts zero-hit searches that match a company name show "Looking for a
    brand? Search Brand Intelligence →".
 
-363. 2026-09-08 · Victoria (BGP staff) / desktop 1440px · QA r621 · **the
-   Board Report's "Fees Billed YTD" now drops undated invoices silently — the
-   board has no way to see what is missing from its headline number.** After
-   this round's fix an INV deal carrying no invoice/completion/exchange date
-   is excluded from `totalFeesYTD` and from the billed-by-month series
-   (`crm.ts:6912`, `:9665`), which is correct — `updated_at` was never a
-   billing date — but the KPI card just reads a smaller number, and the
-   `/reporting` card's own subtitle still promises "Invoiced since 1 January"
-   with nothing to say some invoices could not be dated. The WIP Report at
-   least parks its undated money in a visible TBC bar. **Suggestion:** put the
-   same footnote on both KPI cards — "£X of invoiced fees have no invoice
-   date and are not counted" — and deep-link it to the Deal Detail rows so
-   somebody can stamp the dates. The number to show already exists: it is the
-   fee sum of `isInvoicedStatus` deals failing `hasDate`
-   (`computeWipHealth`, `crm.ts:10154`).
-
-364. 2026-09-08 · Victoria (BGP staff) / desktop 1440px · QA r621 ·
-   **"Average Time to Close" is an average over an unstated subset.** The
-   Board Report KPI and the time-to-close histogram only count EXC/COM/INV
-   deals that carry a completion or exchange date AND close in 1-999 days
-   (`crm.ts:6924-6931`); everything else is dropped without a denominator
-   anywhere on the card. In the fixture that means one deal decides the
-   number. **Suggestion:** show the denominator on the card ("381 days ·
-   over 1 of 2 completed deals"), the way the Fees Billed card shows its
-   "total deals in pipeline" sub.
-
-383. 2026-09-09 · Landsec client / phone 390px · QA r631 · **The client's own
-   Edit button on a deal can never be saved on an early-stage letting.** The
-   phone deal detail's `button-edit-deal` opens the dialog fine, but
-   `handleSubmit` (deals.tsx) requires a landlord AND a tenant on every
-   leasing-type deal before it will fire the PUT — and a client's party slots
-   are deliberately read-only ("Not set yet — your BGP team will link
-   parties"). So on Mark's Bluewater MSU9 letting, whose tenant BGP has not
-   linked yet, Save Changes fires no request at all and the dialog just sits
-   there; every deal on his board is at that stage. Suggestion: for a client
-   editor, drop the counterparty requirement (the fields it protects are the
-   ones the client cannot set anyway) so a target-date or comment edit saves —
-   or, if the requirement must hold, disable Save with the reason on it rather
-   than leaving a live button that does nothing.
-
-384. 2026-09-09 · Landsec client / phone 390px · QA r631 · **Image Studio
-   opened from a deal is handed the deal NAME as the address.** The
-   `button-deal-image-studio` link builds `address=` from the linked
-   property's address and falls back to the deal name, and on a fixture
-   property with no address the URL Mark actually landed on read
-   `?property=Bluewater%20Shopping%20Centre&address=Bluewater%20MSU9%20letting`
-   — "Bluewater MSU9 letting" is not an address, and Street View capture and
-   stock search both key off that field. The page itself worked (library,
-   brand library, collections all loaded on the phone). Suggestion: omit
-   `address` when the property has none rather than substituting the deal
-   name, so the studio prompts for a real one.
-
-385. 2026-09-09 · Landsec client / phone 390px · QA r631 · **The phone Deals
-   tab shows nothing but the pill row while it loads.** Tapping Deals lands on
-   a header, the Properties/Deals/Letting Tracker pill row and two empty grey
-   skeleton blocks for several seconds — no count, no "loading your deals",
-   and no empty-state text to distinguish "still fetching" from "you have no
-   deals" (Mark has five). Suggestion: put the tracker-style roll-up counts on
-   that pill row and a one-line "Loading your deals…" under it, the way the
-   Portfolio tile does.
-
-Confirmed by Woody 2026-08-08 ("Do all 5"); built + visually verified same day:
 1. 2026-08-08 · Letting Tracker viewing/offer rows now have an edit pencil —
    PATCH routes added for unit viewings + offers, form switches to edit mode.
 2. 2026-08-08 · Add Viewing date defaults to today (still editable).
