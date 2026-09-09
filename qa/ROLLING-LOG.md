@@ -92,6 +92,33 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r624 · 2026-09-09 · LIGHT · round in progress · REGRESSION AT BASELINE
+- Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushing with
+  `git push origin HEAD:claude/qa-staging-20260810`.
+- **REGRESSION AT BASELINE — 387 ok, signature 6x400 + 1x409 + 10x403 + 1x503.
+  Streak 79.**
+- **ARITHMETIC CLARIFIED (read this before you split the head).** The three
+  named anchors describe FOUR segments, and the "tail" is not just
+  woody,nick,sam. Exact recipe, each in its own `with-server.sh`:
+  1. `QA_PERSONAS=victoria,mark QA_UNTIL=staff-evidence-plan-lifecycle` → **104**
+  2. `QA_PERSONAS=victoria,mark QA_SKIP_UNTIL=staff-evidence-plan-lifecycle
+     QA_UNTIL=client-brand-suggested-pitches-scoped` → **133**
+  3. `QA_PERSONAS=victoria,mark QA_SKIP_UNTIL=client-brand-suggested-pitches-scoped
+     QA_UNTIL=client-properties-table-readonly-cells` → **111**
+  4. tail = `QA_PERSONAS=victoria,mark,woody,nick,sam
+     QA_SKIP_UNTIL=client-properties-table-readonly-cells` → **39**
+     (= mark's last **15** scenarios + woody,nick,sam **24**).
+  I first ran chunk 3 unbounded (126 = 111 + those 15) and woody,nick,sam
+  alone (24) — same 387, but the numbers don't match the logged baseline, so
+  keep the four commands above verbatim.
+- Triage: all listed noise. One extra `http-404` on
+  `GET /api/properties/<bluewater>/brochures/<id>/file` inside
+  `mark · client-property-area-reads-the-schedule` — appeared only because I
+  ran chunk 3 twice; **clean when isolated** (`QA_ONLY=` that scenario, 1 ok,
+  0 issues). Same class as the listed missing-photo 404s; see noise list.
+- Probe in flight: the #343/#344 client-scope write holes.
+
 ### r623 · 2026-09-09 · FULL · journey: **Landsec client · PHONE 390px, real iPhone context** (rotation slot #3, "where are my Bluewater lettings" with a real WRITE) · REGRESSION AT BASELINE · **1 bug fixed** · 2 suggestions
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **GREEN 42/0**, then
   `node qa/apply-sql.mjs qa/seed-personas.sql`. Detached HEAD — pushed with
