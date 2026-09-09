@@ -105,14 +105,87 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r629 · 2026-09-09 · FULL (provisional) · journey: Mark Warne client desktop 1440px — non-leasing-prep ground · REGRESSION AT BASELINE
+### r629 · 2026-09-09 · FULL · journey: Mark Warne (Landsec client) desktop 1440px — Brand Intelligence → the client CRM Brand Directory, with a real self-add WRITE · REGRESSION AT BASELINE · **1 bug fixed (PROVED)** · 3 suggestions (#377/#378/#379)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **46/0**, then
-  `node qa/apply-sql.mjs qa/seed-personas.sql`.
-- **REGRESSION AT BASELINE — 104 + 133 + 111 + 39 = 387 ok, signature
-  6x400 + 1x409 + 10x403 + 1x503. Streak 84.** Four chunks, r628 arithmetic
-  verbatim, shared `QA_CROSS_FILE=/tmp/qa-cross-629.json`. No cold flake in
-  chunk 1 this session (104 on the first pass).
-- Journey in progress; final entry replaces this one.
+  `node qa/apply-sql.mjs qa/seed-personas.sql`. Smoke run twice (once before
+  the fix, once after) — 46/0 both times.
+- **REGRESSION AT BASELINE — 104 + 133 + 111 + 40 = 388 ok,
+  signature 6x400 + 1x409 + 10x403 + 1x503. Streak 84.** Four chunks, r628 arithmetic, shared
+  `QA_CROSS_FILE=/tmp/qa-cross-629.json`. No cold flake in chunk 1 this
+  session (104 first pass, both times it was run).
+- **NEW TWO-BOT BASELINE: 388 ok** — +1 scenario,
+  `client-brand-directory-pills-reach-every-brand`, in the **chunk 4 tail**
+  (39 → 40); every other chunk unchanged.
+- Journey (framed as a real task — "build a Q4 pitch list of hospitality
+  brands to chase for Bluewater"): `/brands` Overview → the header
+  "All Brands" door → Brand Explorer → Turnover Board → Brand Hunter →
+  the WRITE (self-add a brand from the global directory through the real
+  dialog) → back round every surface that lists his brands.
+- RUN DOWN, all reconciled — do not re-spend: Mark's Brand Intelligence
+  Overview tiles are honest and all four move correctly on a self-add
+  (Total Brands 9→10, Categories 4→5); `/api/brands/hub` slices every
+  sub-query (`crm.ts:8410` — hot/req/turnover/stats all through
+  `clientBrandSliceSql`, `superBrands` blanked for clients); Brand Explorer
+  derives its category chips from the brands present and its chips sum to
+  its own total (9 = 1+6+1+1, then 10 with a "Luxury 1" chip); Brand Hunter
+  lists exactly the 9/10 in-slice+self-added brands; `GET /api/turnover` is
+  sliced (`turnover.ts:63`) and `/api/turnover/stats/summary` 403s for
+  clients; the "Brand not in your list" page for a brand outside his set is
+  clean (and its `/api/crm/companies/:id` 403 is the gate working); My Tasks'
+  "Portfolio activity — BGP team" panel showing 0 open / 0 done is CORRECT —
+  no non-Client-authored task links to a Landsec property in the fixture, and
+  the r616 client-authored exclusion is still in place
+  (`property-asset-brief.ts:1637`); Mark's "0 active requirements" is still
+  correct (#unchanged from r622).
+- **BUG FIXED — the client CRM Brand Directory's category pills could not
+  reach the brands the client had added themselves. PROVED, not patched.**
+  Landsec's CRM is the hospitality/leisure/fitness slice PLUS brands they
+  self-add (CLAUDE.md, decided 2026-08-01). The directory at `/contacts`
+  filtered that list with a HARDCODED five-pill row built for the AUTO slice
+  only (`CLIENT_BRAND_CATS`, `people.tsx:1110`): Food & Dining, Cafés &
+  Coffee, Bars, Leisure, Fitness. A self-added brand is by definition outside
+  all five. Measured before the fix, with Testco Fashion and Testco Jewellers
+  self-added: header "10 brands"; All=10, Food & Dining=5, Cafés=1, Bars=0,
+  Leisure=1, Fitness=1 — the pills summed to **8**, and the two brands Mark
+  had deliberately added were reachable only under "All". The first
+  narrowing click made them vanish, with the header still counting them. The
+  always-empty "Bars" pill was the same fault from the other side. This is
+  the r628 generalisation again — a SECOND COPY of a derivation the sibling
+  Brand Explorer already gets right (it hides empty categories and derives
+  its chips from the data; that was fixed for the "Categories" tile in an
+  earlier round and the CRM copy was never touched). Fix: added an "Other"
+  category (matches none of the curated regexes = exactly the self-add set)
+  and derived the pill row from the brands actually present, so the pills
+  always sum to the count the header prints. After: All=10, Food & Dining=5,
+  Cafés=1, Leisure=1, Fitness=1, **Other=2 (Testco Fashion, Testco
+  Jewellers)** — sums to 10, nothing reachable only under All, Bars gone.
+- Regression check: `client-brand-directory-pills-reach-every-brand`
+  (chunk 4). **PROVED NON-VACUOUS TWICE, each break narrow:** (a) render the
+  hardcoded list minus "other" → fails with the original symptom, "2
+  self-added out-of-slice brand(s) (Testco Fashion, Testco Jewellers) but no
+  'Other' pill — they are reachable only under All"; (b) stop hiding empty
+  categories → fails with "pill 'bars' is offered but matches no brand".
+  Restored, `npx tsc --noEmit` clean, scenario green.
+- Suggestions: **#377** the "re-add it from the Brand Directory" empty state
+  navigates to `/contacts`, which has no add control (the only
+  `ClientAddBrandButton` is on `/brands`) — a named recovery path that dead-
+  ends; **#378** the "All Brands" header button is unconditional and lands a
+  client on a page titled "CRM" showing his own 10; **#379** the client
+  Turnover Board prints BGP's internal AI-estimate reasoning in its Notes
+  column ("Testco Fashion appears to be a fictional or very small/niche
+  brand…").
+- Probe flaw worth writing down (r628's habit): the first cut of the journey
+  probe clicked the dialog's Add with `hasText: /^Add$/`. The button is
+  `<Plus/> Add`, so its textContent is " Add" — zero matches, and because the
+  click was guarded by `if (await btn.count())` the probe printed a whole
+  post-write reconciliation showing "nothing moved" and **looked like a
+  finding** (tiles 9→9, brand absent from Explorer). It was my locator, not
+  the app. Same family as r628's unquoted `with-server.sh`: a guard that
+  turns a missed action into a plausible-looking pass. Use `/Add\s*$/` or a
+  testid.
+- New flakes: none. Known noise unchanged; `GET /api/hr/photo/:id` 404 on the
+  client dashboard (a fixture user with no photo on disk) is benign and now
+  ignored in the r629 probes.
 
 ### r628 · 2026-09-09 · LIGHT · probe: the comps board's OWN "Export" button (the SECOND spreadsheet exporter) · REGRESSION AT BASELINE · **1 bug fixed (PROVED)** · 2 suggestions (#375, #376)
 - Bring-up: `npm run qa:pg` once, `bash qa/run-smoke.sh` **45/0**, then
