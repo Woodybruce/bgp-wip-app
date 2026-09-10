@@ -2238,16 +2238,21 @@ export function DealFormDialog({
 }) {
   const { toast } = useToast();
   const isEdit = !!deal;
-  const { activeTeam } = useTeam();
+  const { activeTeam, userTeam } = useTeam();
   const [, navigateTo] = useLocation();
   // Seed a created deal with the creator's own team. Deal types without an
   // auto-team rule (New Letting, Sub-Letting, Temp Lease, Consultancy) would
   // otherwise save team-less, and the deals list's default own-team filter
   // hides team-less deals — so the deal vanished the moment it was created.
   // "Landsec" is the client pseudo-team, never a deal team; clients keep [].
+  // activeTeam is the SERVER-held scope and is null until the user picks one,
+  // so fall back to their own team — otherwise a deal created straight after
+  // login saves team-less and disappears, which is the r309 bug returning by
+  // another route.
+  const seedTeam = activeTeam && activeTeam !== "all" ? activeTeam : userTeam;
   const freshForm = () => ({
     ...emptyForm,
-    team: activeTeam && activeTeam !== "all" && activeTeam !== "Landsec" ? [activeTeam] : [],
+    team: seedTeam && seedTeam !== "Landsec" ? [seedTeam] : [],
   });
   const [form, setForm] = useState<DealFormData>(deal ? dealToForm(deal) : freshForm());
   const [changeReason, setChangeReason] = useState("");

@@ -2291,7 +2291,13 @@ async function victoriaRound(page, cross) {
   // r530: the WIP-report page header put the (wide) BGP logo and the
   // title column side by side at every width, so on a 390px phone the
   // title/subtitle were squeezed into ~110px and wrapped around the logo.
-  // Header must stack on the phone: logo above a full-width title.
+  // Header must stack on the phone: nothing may sit to the LEFT of the
+  // title pushing it off the gutter, and a rendered logo must sit above it.
+  // The check used to require the h1's own box to be >= 280px wide, which
+  // only held while the "— <team>" label rendered inline on the phone; that
+  // label now lives on the sub-line, so the h1 shrinks to "WIP Report" while
+  // the header is still correctly stacked. Measure the squeeze itself —
+  // the title's left edge against the header's — not a proxy for it.
   await step(page, p, 'staff-wip-report-phone-header-stacked', async () => {
     const mobCtx = await page.context().browser().newContext({
       viewport: { width: 390, height: 780 },
@@ -2313,11 +2319,17 @@ async function victoriaRound(page, cross) {
           const r = e.getBoundingClientRect();
           return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
         };
-        return { logo: box('[data-testid="wip-bgp-logo"]'), title: box('[data-testid="wip-report-title"]') };
+        return {
+          logo: box('[data-testid="wip-bgp-logo"]'),
+          title: box('[data-testid="wip-report-title"]'),
+          header: box('[data-testid="wip-header"]'),
+        };
       });
       if (!g.title) throw new Error('no WIP report title on the phone');
-      if (g.title.w < 280) throw new Error(`WIP phone title column squeezed to ${g.title.w}px (expected the full gutter width)`);
-      if (g.logo && g.logo.y + g.logo.h > g.title.y) {
+      if (g.header && g.title.x - g.header.x > 24) {
+        throw new Error(`WIP phone title indented ${g.title.x - g.header.x}px from the header gutter — something is sitting beside it`);
+      }
+      if (g.logo && g.logo.w > 0 && g.logo.h > 0 && g.logo.y + g.logo.h > g.title.y) {
         throw new Error(`WIP phone header still side-by-side (logo bottom ${g.logo.y + g.logo.h} overlaps title top ${g.title.y})`);
       }
     } finally { await mobCtx.close(); }
