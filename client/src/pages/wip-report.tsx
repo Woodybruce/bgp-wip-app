@@ -1411,13 +1411,19 @@ export default function WipReport() {
     setSelectedStatuses(new Set());
   };
 
+  // The label must describe the rows actually in the report. Leadership
+  // always see the whole firm → "All Teams"; a plain DB admin who has sliced
+  // to a team sees that team's name. Everyone else now gets the firm-wide
+  // view too (the server stopped scoping /api/wip by team), so labelling it
+  // with their own team claimed a slice that isn't applied — the title read
+  // "— National Leasing" over a total made up of another team's deals.
   const teamLabel = isLandsecView
     ? "Landsec"
     : canSeeAll
       ? "All Teams"
       : isWipAdmin
         ? (activeTeam === "all" ? "All Teams" : activeTeam)
-        : wipUserTeam;
+        : "All Teams";
 
   if (isLoading) {
     return (
