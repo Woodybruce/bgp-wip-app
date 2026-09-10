@@ -372,7 +372,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
       if (!property) return res.status(404).json({ message: "Property not found" });
 
       const completedDeals = await db.select().from(crmDeals)
-        .where(sql`${crmDeals.status} IN ('Completed', 'Invoiced', 'Billed', 'Exchanged')`);
+        .where(sql`${crmDeals.status} IN ('EXC', 'COM', 'INV')`);
 
       const invComps = await db.select().from(investmentComps);
 
@@ -719,7 +719,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
         name: crmDeals.name,
         status: crmDeals.status,
       }).from(crmDeals)
-        .where(sql`${crmDeals.status} NOT IN ('Completed', 'Withdrawn', 'Invoiced', 'Billed')`);
+        .where(sql`${crmDeals.status} NOT IN ('WIT', 'COM', 'INV')`);
 
       const dealNames = deals.map(d => d.name.toLowerCase());
 

@@ -1,0 +1,25 @@
+import { go, report, tap, browser, page, BASE, ctx, user, shot } from './r552-client-mobile-journey.mjs';
+const UID = '99ee6031-384a-4799-94a4-8aba5dda89b1';
+await go('/available', 'tracker');
+const search = page.locator('input[placeholder*="Search" i]').first();
+await search.fill('U124'); await page.waitForTimeout(1500);
+const r1 = await tap(`[data-testid="unit-offer-${UID}"]`, 'offer-open');
+if (!r1) { await browser.close(); process.exit(1); }
+const dlg = page.locator('[role="dialog"]').last();
+console.log('\n--- DIALOG (offer) ---\n' + (await dlg.innerText().catch(() => '(no dialog)')).slice(0, 1200));
+await page.fill('[data-testid="offer-date"]', '2026-09-05');
+await page.fill('[data-testid="offer-rent"]', '250000');
+await page.fill('[data-testid="offer-rent-free"]', '12');
+await page.fill('[data-testid="offer-term"]', '10');
+await page.fill('[data-testid="offer-break"]', 'Year 5');
+await page.fill('[data-testid="offer-fitout"]', '50000');
+await page.fill('[data-testid="offer-comments"]', 'QA-PROBE r552 offer from phone');
+await shot('offer-filled');
+await tap('[data-testid="offer-save"]', 'offer-saved');
+await page.waitForTimeout(2500);
+console.log('\n--- DIALOG AFTER SAVE ---\n' + (await dlg.innerText().catch(() => '(no dialog)')).slice(0, 1600));
+await shot('offer-after-save');
+const H = { Authorization: `Bearer ${user.token}` };
+const offers = await (await ctx.request.get(`${BASE}/api/available-units/${UID}/offers`, { headers: H })).json();
+console.log('\nAPI offers ->', JSON.stringify(offers).slice(0, 900));
+await browser.close();

@@ -1048,13 +1048,13 @@ export function setupMicrosoftRoutes(app: Express) {
 
       const propertiesResult = insightsScope
         ? await pool.query(`
-            SELECT p.name, p.address, p.status, p.asset_class
+            SELECT p.id, p.name, p.address, p.status, p.asset_class
             FROM crm_properties p
             WHERE p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
             ORDER BY p.created_at DESC
           `, [insightsScope])
         : await pool.query(`
-            SELECT p.name, p.address, p.status, p.asset_class
+            SELECT p.id, p.name, p.address, p.status, p.asset_class
             FROM crm_properties p
             ORDER BY p.created_at DESC
           `);
@@ -1117,15 +1117,47 @@ export function setupMicrosoftRoutes(app: Express) {
         });
       }
 
-      if (meetingsByAgent.size > 0) {
-        const sorted = Array.from(meetingsByAgent.entries()).sort((a, b) => b[1] - a[1]);
+      // Busiest Agent is a BGP staff-productivity metric — never show a
+      // client which of their agents books the most meetings (same class as
+      // the r536 leaderboard block).
+      //
+      // team_events.created_by is a user id today, but older rows hold the
+      // creator's EMAIL and the client sync stamps the sentinel
+      // 'client-events-sync'. Resolve every key to a person before counting,
+      // or one agent's events split across two keys and the tile prints a
+      // raw UUID at the user.
+      if (!insightsScope && meetingsByAgent.size > 0) {
+        const keys = Array.from(meetingsByAgent.keys());
+        const named = await pool.query(
+          `SELECT id::text AS id, lower(email) AS email, name FROM users
+            WHERE id::text = ANY($1) OR lower(email) = ANY($2)`,
+          [keys, keys.map((k) => k.toLowerCase())]
+        );
+        const nameFor = new Map<string, string>();
+        for (const u of named.rows) {
+          const label = u.name || u.email;
+          if (!label) continue;
+          if (u.id) nameFor.set(u.id, label);
+          if (u.email) nameFor.set(u.email, label);
+        }
+        const byPerson = new Map<string, number>();
+        for (const [key, count] of meetingsByAgent.entries()) {
+          const label = nameFor.get(key) || nameFor.get(key.toLowerCase());
+          // No person behind the key = a sync sentinel or a deleted user.
+          // Better no tile than a raw id presented as a colleague's name.
+          if (!label) continue;
+          byPerson.set(label, (byPerson.get(label) || 0) + count);
+        }
+        const sorted = Array.from(byPerson.entries()).sort((a, b) => b[1] - a[1]);
         const top = sorted[0];
-        insights.push({
-          type: "busiestAgent",
-          title: "Busiest Agent",
-          detail: `${top[0]} — ${top[1]} events in 30 days`,
-          priority: 7,
-        });
+        if (top) {
+          insights.push({
+            type: "busiestAgent",
+            title: "Busiest Agent",
+            detail: `${top[0]} — ${top[1]} events in 30 days`,
+            priority: 7,
+          });
+        }
       }
 
       const negotiatingDeals = activeDealRows.filter((d: any) => 
@@ -1142,8 +1174,27 @@ export function setupMicrosoftRoutes(app: Express) {
       }
 
       const allProps = propertiesResult.rows;
-      const availableProps = allProps.filter((p: any) => 
-        p.status && (p.status.toLowerCase().includes("available") || p.status.toLowerCase().includes("to let"))
+      // A shopping centre's own status row is never "Available" — availability
+      // is held per unit on the Letting Tracker, so a property counts as
+      // available when it has a live unit there. Without this the count is
+      // structurally 0 for every retail portfolio and flatly contradicts the
+      // tracker the same user sees two taps away.
+      const propIds = allProps.map((p: any) => p.id).filter(Boolean);
+      const availableUnitPropIds = new Set<string>();
+      if (propIds.length > 0) {
+        const auRes = await pool.query(
+          `SELECT DISTINCT property_id FROM available_units
+           WHERE property_id = ANY($1::varchar[])
+             AND (upper(coalesce(marketing_status, 'AVA')) IN ('AVA', 'OPP')
+                  OR coalesce(marketing_status, '') ILIKE 'available%'
+                  OR coalesce(marketing_status, '') ILIKE 'to let%')`,
+          [propIds],
+        );
+        auRes.rows.forEach((r: any) => availableUnitPropIds.add(r.property_id));
+      }
+      const availableProps = allProps.filter((p: any) =>
+        availableUnitPropIds.has(p.id) ||
+        (p.status && (p.status.toLowerCase().includes("available") || p.status.toLowerCase().includes("to let")))
       );
       const propsWithNoViewings = availableProps.filter((p: any) => !viewingsByProp.has(p.name));
       if (propsWithNoViewings.length > 0 && propsWithNoViewings.length <= 5) {
@@ -1217,7 +1268,11 @@ export function setupMicrosoftRoutes(app: Express) {
 
       insights.sort((a, b) => b.priority - a.priority);
 
-      res.json({ insights: insights.slice(0, 8) });
+      // 9, not 8: reviving Needs Attention (it could never fire while
+      // availability was read off crm_properties.status) added a ninth line,
+      // and an 8-cap would have silently dropped Portfolio — the lowest
+      // priority — off a strip the team already reads.
+      res.json({ insights: insights.slice(0, 9) });
     } catch (err: any) {
       console.error("Calendar insights error:", err);
       res.status(500).json({ message: "Failed to generate insights" });

@@ -52,6 +52,19 @@ export async function upsertChatTenancySchedule(pool: any, propertyId: unknown, 
   const property = (await pool.query("SELECT id, name FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
   if (!property) throw new TenancyImportError(404, `No property found with ID "${propertyId}"`);
   const result = await importTenancyRows(pool, propertyId, prepared.rows, { allowedFields: [...Object.values(fields), "sort_order"], explicitEdits: prepared.explicitEdits });
+  // The tenancy schedule is the god of truth: every OTHER write door on it
+  // (tenancy-schedule.ts POST/PATCH/import, crm.ts) fans the status out to
+  // available_units, leasing_schedule_units and crm_deals via unit-mirror,
+  // and the schedule UI documents that contract to the user. This door
+  // didn't — so a unit ChatBGP marked Occupied from a datatape stayed
+  // "Vacant" on the landlord's leasing board and on the Letting Tracker.
+  // Best-effort per row, exactly as the HTTP doors do it. Only mirror-eligible
+  // inserts adopt existing name-based mirrors; a repeated reference on another
+  // floor is left for review rather than pointed at a neighbour.
+  const { fanOutTenancyStatus } = await import("./unit-mirror");
+  for (const id of [...result.mirrorEligibleIds, ...result.updatedIds]) {
+    try { await fanOutTenancyStatus(pool, id); } catch {}
+  }
   return {
     success: true, action: "upserted", entity: "tenancy schedule", propertyId, name: property.name,
     inserted: result.imported, updated: result.updated, skipped: result.skippedExisting, needsReview: result.needsReview, reviewRows: result.reviewRows,

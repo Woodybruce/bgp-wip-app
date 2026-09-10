@@ -434,7 +434,7 @@ export default function SettingsPage() {
         <ChatBGPLearningsSection />
         <AppFeedbackSection />
         <ChangeRequestsSection />
-        <EmailProcessorSection />
+        {isAdmin && <EmailProcessorSection />}
       </>)}
     </div>
   );
@@ -1164,12 +1164,12 @@ function DataHealthSection() {
   return (
     <Card data-testid="card-data-health">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-sm flex items-center gap-2">
             <ShieldCheck className="w-4 h-4" />
             Data Health
           </CardTitle>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" onClick={runBackfill} disabled={backfilling} data-testid="button-backfill-tracker-deals">
               {backfilling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
               {backfilling ? "Backfilling..." : "Backfill Tracker Deals"}

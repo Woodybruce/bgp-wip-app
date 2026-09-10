@@ -22,6 +22,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { saveFile, getFile } from "./file-storage";
+import { legacyToCode } from "@shared/deal-status";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -183,19 +184,27 @@ router.get("/api/plans/:planId/units", requireAuth, async (req: Request, res: Re
     // Compute the status the UI should render. Single source of truth
     // for the colour key — clients can trust this without re-running
     // the logic locally.
+    // au.marketing_status is a CODES column (boot canonicaliser,
+    // server/index.ts:1479), so the label regexes this used to carry —
+    // /under offer/i and /available|vacant/i — matched nothing: "SOL" is
+    // not "under offer" and "AVA" is not "available". Every vacancy fell
+    // through to "unknown" (grey) instead of "vacant" (rose), on the one
+    // panel whose job is showing what is empty. "vacant" stays as a
+    // literal alternative — legacyToCode has no mapping for it (r605).
     const now = Date.now();
     const decorated = rows.map(r => {
       let status: string;
       if (r.status_override) status = r.status_override;
       else if (Array.isArray(r.active_deals) && r.active_deals.length > 0) status = "deal_in_progress";
-      else if (r.marketing_status && /under offer/i.test(r.marketing_status)) status = "under_offer";
+      else if (legacyToCode(r.marketing_status) === "SOL") status = "under_offer";
       else {
         const expiry = r.lease_expiry ? new Date(r.lease_expiry).getTime() : null;
         const brk = r.lease_break ? new Date(r.lease_break).getTime() : null;
         const next = [expiry, brk].filter(Boolean) as number[];
         const upcoming = next.length > 0 ? Math.min(...next) : null;
         if (upcoming && upcoming - now < EVENT_HORIZON_MS && upcoming > now) status = "lease_event";
-        else if (r.marketing_status && /available|vacant/i.test(r.marketing_status)) status = "vacant";
+        else if (legacyToCode(r.marketing_status) === "AVA"
+                 || /vacant/i.test(r.marketing_status || "")) status = "vacant";
         else if (r.tenant_name) status = "occupied";
         else if (!r.unit_id) status = "unlinked";
         else status = "unknown";

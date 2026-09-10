@@ -347,11 +347,35 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     // outside the 500m centroid ring on big out-of-town schemes, which had
     // "Chicken — missing" showing on a centre with Nando's in occupation.
     // A tenancy FK or tenant-name prefix match beats the geocode.
+    //
+    // That truth lives in tenancy_schedule_units — the table the property
+    // page, the WAULT, passing rent and the phone tenancy cards all read.
+    // This read used to hit leasing_schedule_units instead: a DIFFERENT,
+    // optional board of units being MARKETED, which by its nature almost
+    // never carries an occupier's name. So the override never fired and the
+    // panel told the landlord a brand was "at other UK schemes, not here"
+    // while the Files & Contacts panel on the same page listed that brand
+    // under "In occupation" (both doors of one rule; r616). Read BOTH tables
+    // now — tenancy schedule first, the leasing board unioned in so anything
+    // that did resolve before still does — and match trading_name as well as
+    // the legal tenant_name, since the brand name is usually the trading one.
     const occ = await pool.query(
-      `SELECT DISTINCT tenant_company_id::text AS id,
-              lower(replace(coalesce(tenant_name, ''), '''', '')) AS name
-         FROM leasing_schedule_units
-        WHERE property_id = $1 AND (tenant_company_id IS NOT NULL OR tenant_name IS NOT NULL)`,
+      `SELECT DISTINCT id, name FROM (
+         SELECT tenant_company_id::text AS id,
+                lower(replace(coalesce(tenant_name, ''), '''', '')) AS name
+           FROM tenancy_schedule_units
+          WHERE property_id = $1 AND (tenant_company_id IS NOT NULL OR tenant_name IS NOT NULL)
+         UNION ALL
+         SELECT tenant_company_id::text AS id,
+                lower(replace(coalesce(trading_name, ''), '''', '')) AS name
+           FROM tenancy_schedule_units
+          WHERE property_id = $1 AND trading_name IS NOT NULL
+         UNION ALL
+         SELECT tenant_company_id::text AS id,
+                lower(replace(coalesce(tenant_name, ''), '''', '')) AS name
+           FROM leasing_schedule_units
+          WHERE property_id = $1 AND (tenant_company_id IS NOT NULL OR tenant_name IS NOT NULL)
+       ) o`,
       [propertyId]
     ).then(r => r.rows).catch(() => [] as any[]);
     const occIds = new Set(occ.map((r: any) => r.id).filter(Boolean));

@@ -39,6 +39,7 @@ import {
   TrendingUp, Inbox, ArrowRight, Eye, ExternalLink, Phone, Mail, User,
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
+import { compsCsv } from "@shared/comps-csv";
 import jsPDF from "jspdf";
 import { Link, useLocation } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
@@ -281,12 +282,24 @@ const MEASUREMENT_OPTIONS = ["NIA", "GIA", "IPMS 3 Office", "IPMS 3 Retail", "IT
 const SOURCE_OPTIONS = ["BGP Direct", "Opposing Agent", "Published", "EGi/CoStar", "Market Intel", "OneDrive Extract"];
 const COMP_TYPE_OPTIONS = ["Retail", "F&B / Restaurant", "Office", "Mixed Use", "Industrial", "Leisure / Gym", "Medical", "Other"];
 
+// Curated ordering for the area pill row. It is a preferred order, NOT the
+// whole vocabulary: `areaLocation` is a free-text field on the create dialog
+// (its siblings Use Class and Transaction Type are Selects bound to the
+// constants their filters enumerate — this one never was), so a national
+// comp lands in an area this list has never heard of. The tabs are derived
+// from the data below; anything here that has no comps is not offered.
 const AREA_GROUPS = [
-  "All Areas", "Mayfair", "City", "Covent Garden", "Marylebone", "Chelsea",
+  "Mayfair", "City", "Covent Garden", "Marylebone", "Chelsea",
   "Fitzrovia", "Farringdon", "Islington", "Kings Cross", "Soho",
   "Midtown", "Paddington", "Richmond", "East London", "SE1 / London Bridge",
-  "Camden", "Other",
+  "Camden",
 ];
+const ALL_AREAS = "All Areas";
+const OTHER_AREA = "Other";
+const compAreaText = (c: { areaLocation?: string | null; groupName?: string | null }) =>
+  `${c.areaLocation || ""} ${c.groupName || ""}`.toLowerCase();
+const matchesArea = (c: { areaLocation?: string | null; groupName?: string | null }, area: string) =>
+  compAreaText(c).includes(area.toLowerCase());
 
 const USE_CLASS_COLORS: Record<string, string> = {
   "E(a) Retail": "bg-blue-600 text-white",
@@ -475,10 +488,12 @@ function parseYears(v: string | null | undefined): number {
 function computeNetEffective(comp: CrmComp): number {
   const steps = parseSteppedRent(comp.headlineRent);
   if (steps.length === 0) return 0;
-  const term = parseYears(comp.term);
+  // Everything is measured over the term certain — to the earliest break when
+  // the comp records one.
+  const term = netEffectiveHorizon(comp);
   const y1 = steps[0];
-  // Average headline across the lease term. If steps are fewer than term, the final step
-  // is held for the remaining years (standard stepped-rent convention).
+  // Average headline across the term certain. If steps are fewer than the term, the final
+  // step is held for the remaining years (standard stepped-rent convention).
   let avgHeadline = y1;
   if (term > 0) {
     let totalRent = 0;
@@ -494,9 +509,19 @@ function computeNetEffective(comp: CrmComp): number {
   const rfValue = (y1 / 12) * rfMonths; // rent free is valued at year-1 rent
   const incentive = parseNum(comp.fitoutContribution); // Tenant incentive / capital contribution
   const totalIncentives = rfValue + incentive;
+  // Incentives amortise over that same term certain, so the schedule cell, the
+  // Rent Analysis dialog and the server devaluation all land on one number.
   if (!term) return avgHeadline;
   const annualisedIncentive = totalIncentives / term;
   return avgHeadline - annualisedIncentive;
+}
+
+// Amortisation horizon for a comp: years to the earliest break if one is
+// recorded and it falls inside the term, else the full term.
+function netEffectiveHorizon(comp: CrmComp): number {
+  const term = parseYears(comp.term);
+  const brk = parseYears(comp.breakClause || "");
+  return brk > 0 && (!term || brk < term) ? brk : term;
 }
 
 // Fallback data used until live ONS data loads.
@@ -2131,7 +2156,7 @@ export default function Comps() {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       toast({ title: "Company added to CRM", description: "Enrichment started — Apollo is filling in details." });
       if (created?.id) {
-        navigate(`/companies?highlight=${created.id}`);
+        navigate(`/companies/${created.id}`);
       }
     },
     onError: (err: any) => {
@@ -2150,6 +2175,22 @@ export default function Comps() {
   const leadComps = useMemo(() => comps.filter(isLead), [comps]);
   const confirmedComps = useMemo(() => comps.filter(c => !isLead(c)), [comps]);
 
+  // The area tabs come from the comps on the board, not from a fixed list of
+  // London sub-markets: a curated area is offered only when something sits in
+  // it, any area the data carries that the curated list never named gets its
+  // own tab, and "Other" appears only when there are comps with no area at
+  // all. Before this, a comp in West End, Oxford Street, Reading or Dartford
+  // could not be reached by ANY tab — including "Other" (r596).
+  const areaGroups = useMemo(() => {
+    const present = [...new Set(confirmedComps.map(c => (c.areaLocation || c.groupName || "").trim()).filter(Boolean))];
+    const curated = AREA_GROUPS.filter(a => present.some(p => p.toLowerCase().includes(a.toLowerCase())));
+    const extra = present
+      .filter(p => !AREA_GROUPS.some(a => p.toLowerCase().includes(a.toLowerCase())))
+      .sort((a, b) => a.localeCompare(b));
+    const unfiled = confirmedComps.some(c => !compAreaText(c).trim());
+    return [ALL_AREAS, ...curated, ...extra, ...(unfiled ? [OTHER_AREA] : [])];
+  }, [confirmedComps]);
+
   const filtered = useMemo(() => {
     let result = confirmedComps;
     if (debouncedSearch) {
@@ -2163,8 +2204,14 @@ export default function Comps() {
         c.comments?.toLowerCase().includes(q)
       );
     }
-    if (activeArea !== "All Areas") {
-      result = result.filter(c => c.areaLocation?.toLowerCase().includes(activeArea.toLowerCase()) || c.groupName?.toLowerCase().includes(activeArea.toLowerCase()));
+    if (activeArea === OTHER_AREA) {
+      // "Other" used to substring-search for the literal word "other", so it
+      // matched nothing and the comps it exists to catch were unreachable.
+      // It now means what the investment-comps sibling means by it: no area
+      // recorded at all.
+      result = result.filter(c => !compAreaText(c).trim());
+    } else if (activeArea !== ALL_AREAS) {
+      result = result.filter(c => matchesArea(c, activeArea));
     }
     if (activeUseClass !== "all") {
       result = result.filter(c => c.useClass === activeUseClass);
@@ -2222,22 +2269,11 @@ export default function Comps() {
   );
 
   const exportToExcel = useCallback(() => {
-    const headers = [
-      "Property", "Tenant", "Landlord", "Area", "Postcode", "Use Class", "Transaction Type",
-      "Date", "Headline Rent", "Zone A Rate", "Overall Rate", "Net Effective Rent",
-      "NIA (sqft)", "GIA (sqft)", "ITZA (sqft)", "Rent Free (mths)", "Tenant Incentive",
-      "Term (yrs)", "Break", "L&T Act", "Measurement Standard",
-      "Source", "Verified", "Comments",
-    ];
-    const rows = filtered.map(c => [
-      c.name, c.tenant, c.landlord, c.areaLocation, c.postcode, c.useClass, c.transactionType,
-      c.completionDate, c.headlineRent, c.zoneARate, c.overallRate, c.netEffectiveRent,
-      c.niaSqft, c.giaSqft, c.itzaSqft, c.rentFreeMonths || c.rentFree, c.fitoutContribution,
-      c.term, c.breakClause, c.ltActStatus, c.measurementStandard,
-      c.sourceEvidence, c.verified ? "Yes" : "No", c.comments,
-    ]);
-    const csv = [headers.join(","), ...rows.map(r => r.map(v => `"${(v || "").toString().replace(/"/g, '""')}"`).join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+    // Column set and the devalued Net Effective pair live in shared/comps-csv
+    // so the file can be asserted against the same devaluation the board's
+    // own green column renders.
+    const csv = compsCsv(filtered as any);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -2580,8 +2616,8 @@ export default function Comps() {
               {TRANSACTION_TYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
             </SelectContent>
           </Select>
-          {(activeUseClass !== "all" || activeTxnType !== "all" || activeVerified !== "all" || search) && (
-            <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs" onClick={() => { setSearch(""); setActiveUseClass("all"); setActiveTxnType("all"); setActiveVerified("all"); }} data-testid="button-clear-filters">
+          {(activeUseClass !== "all" || activeTxnType !== "all" || activeVerified !== "all" || activeArea !== ALL_AREAS || search) && (
+            <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs" onClick={() => { setSearch(""); setActiveUseClass("all"); setActiveTxnType("all"); setActiveVerified("all"); setActiveArea(ALL_AREAS); }} data-testid="button-clear-filters">
               <FilterX className="w-3.5 h-3.5" /> Clear
             </Button>
           )}
@@ -2594,12 +2630,12 @@ export default function Comps() {
               <SelectValue placeholder="All Areas" />
             </SelectTrigger>
             <SelectContent>
-              {AREA_GROUPS.map(area => <SelectItem key={area} value={area}>{area}</SelectItem>)}
+              {areaGroups.map(area => <SelectItem key={area} value={area}>{area}</SelectItem>)}
             </SelectContent>
           </Select>
         ) : (
         <div className="flex items-center gap-1.5 mt-3 flex-wrap">
-          {AREA_GROUPS.map(area => (
+          {areaGroups.map(area => (
             <button
               key={area}
               onClick={() => setActiveArea(area)}
@@ -2969,7 +3005,7 @@ export default function Comps() {
                         if (companyId) {
                           return (
                             <Link
-                              href={`/companies?highlight=${companyId}`}
+                              href={`/companies/${companyId}`}
                               className="shrink-0 p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-primary transition-colors"
                               title="Open matched CRM company"
                               data-testid={`tenant-link-${comp.id}`}
@@ -3081,8 +3117,8 @@ export default function Comps() {
                         if (!ne) return null;
                         return Math.round(ne).toString();
                       }}
-                      formulaLabel="Net Eff = Avg headline (across stepped rents) − (Rent free £ + Tenant incentive £) ÷ Term"
-                      disabled={!parseNum(comp.headlineRent) || !parseYears(comp.term)}
+                      formulaLabel={`Net Eff = Avg headline (across stepped rents) − (Rent free £ + Tenant incentive £) ÷ ${netEffectiveHorizon(comp) && parseYears(comp.breakClause || "") === netEffectiveHorizon(comp) && parseYears(comp.breakClause || "") > 0 ? "Term certain (to break)" : "Term"}`}
+                      disabled={!parseNum(comp.headlineRent) || !netEffectiveHorizon(comp)}
                       currency
                       readOnly={isClientComps}
                     />
@@ -3100,7 +3136,7 @@ export default function Comps() {
                       }}
                       formulaLabel={`Net Eff psf = Net Effective ÷ ${preferredAreaField(comp.useClass) === "giaSqft" ? "GIA" : "NIA"}`}
                       disabled={
-                        (!parseNum(comp.netEffectiveRent) && (!parseNum(comp.headlineRent) || !parseYears(comp.term))) ||
+                        (!parseNum(comp.netEffectiveRent) && (!parseNum(comp.headlineRent) || !netEffectiveHorizon(comp))) ||
                         (!parseNum(comp.niaSqft) && !parseNum(comp.giaSqft))
                       }
                       currency

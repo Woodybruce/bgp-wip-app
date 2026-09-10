@@ -137,8 +137,11 @@ export const CRM_OPTIONS = {
   propertyAssetClass: ["Office", "Leisure", "Retail", "Industrial", "Mixed Use"],
   propertyTenure: ["Freehold", "Leasehold"],
 
-  // Canonical 10-code set — see shared/deal-status.ts. INV is system-set on Xero invoice sync.
-  dealStatus: ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"],
+  // Canonical set the deal dialog offers — see shared/deal-status.ts. INV is
+  // system-set on Xero invoice sync. HOT (heads of terms, added 2026-08-12)
+  // sits between NEG and SOL; without it the dialog could not record heads of
+  // terms at all, and an existing HOT deal opened for edit showed no status.
+  dealStatus: ["REP", "SPEC", "LIVE", "AVA", "NEG", "HOT", "SOL", "EXC", "COM", "WIT", "INV"],
   dealType: [
     "Sale",
     "Purchase",

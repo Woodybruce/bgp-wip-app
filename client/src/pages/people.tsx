@@ -1110,6 +1110,15 @@ export default function PeoplePage() {
 }
 
 // ── Client CRM hub — brand-contact lookup + own contacts ─────────────────
+// The five curated pills cover the AUTO slice (hospitality / food / café /
+// leisure / fitness) — but a client's directory also carries the brands they
+// self-added from the global directory, which are by definition outside it.
+// A self-added fashion or jewellery brand matched no pill, so the first
+// narrowing click made the brand the client had deliberately added disappear
+// while the header still counted it (r629). Hence the "Other" pill, and hence
+// the pill row is derived from the brands actually present — the sibling
+// Brand Explorer already hides empty categories, and an always-empty "Bars"
+// pill sat here for the same reason.
 const CLIENT_BRAND_CATS: { key: string; label: string; re: RegExp | null }[] = [
   { key: "all", label: "All", re: null },
   { key: "food", label: "Food & Dining", re: /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie)/i },
@@ -1117,7 +1126,12 @@ const CLIENT_BRAND_CATS: { key: string; label: string; re: RegExp | null }[] = [
   { key: "bars", label: "Bars", re: /bar/i },
   { key: "leisure", label: "Leisure", re: /(leisure|cinema|entertainment|hospitality|hotel)/i },
   { key: "fitness", label: "Fitness", re: /(fitness|gym|yoga)/i },
+  { key: "other", label: "Other", re: null },
 ];
+
+// A brand belongs to "Other" when none of the curated regexes claim it.
+const clientBrandIsOther = (companyType: string | null) =>
+  !CLIENT_BRAND_CATS.some(c => c.re && c.re.test(companyType || ""));
 
 interface DirectoryBrand {
   id: string;
@@ -1278,6 +1292,21 @@ function ClientCrmHub() {
     ].some(value => value?.toLowerCase().includes(q)));
   }, [agentData, agentSearch]);
 
+  // "Your Contacts" means the client's OWN people. /api/crm/contacts serves a
+  // client the WIDER visibility set on purpose — own company + the brand slice
+  // + agent companies — so the Requirements board can name a principal/agent
+  // contact per requirement. Rendering that whole set here labelled
+  // "<team> Contacts" put Starbucks' Head of Acquisitions and a Testco Agents
+  // person on Landsec's own tab, with an edit pencil whose dialog read
+  // "Edit contact — Landsec" (the agent's save 403s; a brand contact's save
+  // silently amends the BRAND's record). Narrow to the client's own company.
+  const ownContacts = useMemo(
+    () => (hubUser?.companyScopeId
+      ? (myContacts as any[]).filter(c => c.companyId === hubUser.companyScopeId)
+      : []),
+    [myContacts, hubUser?.companyScopeId],
+  );
+
   // Properties this client is actively targeting brands at — drives the
   // "targeting at" dropdown without another fetch.
   const targetProperties = useMemo(() => {
@@ -1286,10 +1315,22 @@ function ClientCrmHub() {
     return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [brands]);
 
+  // Only offer a category some brand in this directory actually falls into,
+  // so the pills always sum to the "All" count the header prints.
+  const visibleCats = useMemo(
+    () => CLIENT_BRAND_CATS.filter(c =>
+      c.key === "all"
+        || (c.key === "other"
+          ? brands.some(b => clientBrandIsOther(b.companyType))
+          : brands.some(b => c.re!.test(b.companyType || "")))),
+    [brands],
+  );
+
   const filteredBrands = useMemo(() => {
     const catRe = CLIENT_BRAND_CATS.find(c => c.key === cat)?.re || null;
     const q = search.trim().toLowerCase();
     return brands.filter(b => {
+      if (cat === "other" && !clientBrandIsOther(b.companyType)) return false;
       if (catRe && !catRe.test(b.companyType || "")) return false;
       if (rel === "tenant" && !b.isExistingTenant) return false;
       if (rel === "targeted" && !(b.targetedAt || []).length) return false;
@@ -1308,7 +1349,7 @@ function ClientCrmHub() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">CRM</h1>
         <p className="text-sm text-muted-foreground">
-          <span className="font-mono tabular-nums">{brands.length.toLocaleString()}</span> brands · {agentsLoading ? "Agents loading" : agentsError && !agentData ? "Agents unavailable" : <><span className="font-mono tabular-nums">{agentFirmCount.toLocaleString()}</span> agent {agentFirmCount === 1 ? "firm" : "firms"} · <span className="font-mono tabular-nums">{namedAgentCount.toLocaleString()}</span> named {namedAgentCount === 1 ? "agent" : "agents"}</>} · <span className="font-mono tabular-nums">{myContacts.length.toLocaleString()}</span> of your contacts
+          <span className="font-mono tabular-nums">{brands.length.toLocaleString()}</span> brands · {agentsLoading ? "Agents loading" : agentsError && !agentData ? "Agents unavailable" : <><span className="font-mono tabular-nums">{agentFirmCount.toLocaleString()}</span> agent {agentFirmCount === 1 ? "firm" : "firms"} · <span className="font-mono tabular-nums">{namedAgentCount.toLocaleString()}</span> named {namedAgentCount === 1 ? "agent" : "agents"}</>} · <span className="font-mono tabular-nums">{ownContacts.length.toLocaleString()}</span> of your contacts
         </p>
       </div>
 
@@ -1336,13 +1377,14 @@ function ClientCrmHub() {
               data-testid="client-brand-search"
             />
             <div className="flex gap-1.5 flex-wrap">
-              {CLIENT_BRAND_CATS.map(c => (
+              {visibleCats.map(c => (
                 <button
                   key={c.key}
                   onClick={() => setCat(c.key)}
                   className={`px-3 py-1 rounded-full text-xs border transition-colors ${
                     cat === c.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"
                   }`}
+                  data-testid={`client-brand-cat-${c.key}`}
                 >
                   {c.label}
                 </button>
@@ -1531,7 +1573,7 @@ function ClientCrmHub() {
             </div>
           )}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {myContacts.map((c: any) => (
+            {ownContacts.map((c: any) => (
               <Card key={c.id} className="group" data-testid={`client-contact-${c.id}`}>
                 <CardContent className="p-3">
                   <div className="flex items-start justify-between gap-2">
@@ -1555,7 +1597,7 @@ function ClientCrmHub() {
                 </CardContent>
               </Card>
             ))}
-            {myContacts.length === 0 && (
+            {ownContacts.length === 0 && (
               <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No contacts yet.</p>
             )}
           </div>

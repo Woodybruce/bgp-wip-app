@@ -1198,10 +1198,11 @@ function InlineDateInput({
 const datesCellTargetTimers = new Map<string, { val: string; timer: ReturnType<typeof setTimeout> }>();
 
 function DatesCell({
-  deal, onSave,
+  deal, onSave, clientView,
 }: {
   deal: any;
   onSave: (field: string, value: string | null) => void;
+  clientView?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const added = deal.createdAt ? formatDate(deal.createdAt) : null;
@@ -1219,10 +1220,10 @@ function DatesCell({
             {added ? `Added ${added}` : "—"}
           </span>
           {target ? (
-            <span className="text-xs font-medium">Target {target}</span>
+            <span className="text-xs font-medium">{clientView ? "Completion" : "Target"} {target}</span>
           ) : (
             <span className="text-[11px] text-muted-foreground italic flex items-center gap-1">
-              <Plus className="w-3 h-3" /> Target month
+              <Plus className="w-3 h-3" /> {clientView ? "Completion month" : "Target month"}
             </span>
           )}
         </button>
@@ -1234,7 +1235,7 @@ function DatesCell({
           <span className="text-xs">{added || "—"}</span>
         </div>
         <div className="grid grid-cols-[110px_1fr] items-center gap-2">
-          <Label className="text-xs text-muted-foreground">Target Month</Label>
+          <Label className="text-xs text-muted-foreground">{clientView ? "Expected completion" : "Target Month"}</Label>
           {/* Month picker, matching the WIP report — targets are forecast by
               month, so the deal stores the 1st of the chosen month. */}
           <input
@@ -1272,10 +1273,12 @@ function DatesCell({
             data-testid={`dates-target-input-${deal.id}`}
           />
         </div>
-        <p className="text-[10px] text-muted-foreground leading-tight pt-1 border-t">
-          Target Date drives the WIP report's month / fiscal-year bucket
-          until the deal exchanges.
-        </p>
+        {!clientView && (
+          <p className="text-[10px] text-muted-foreground leading-tight pt-1 border-t">
+            Target Date drives the WIP report's month / fiscal-year bucket
+            until the deal exchanges.
+          </p>
+        )}
       </PopoverContent>
     </Popover>
   );
@@ -2306,7 +2309,13 @@ export function DealFormDialog({
   // Clients can create deals but never set fees — the server strips every
   // fee field regardless, and here we hide the fee-exposing paths (Consultant
   // fee-only body + "Show all fields") so they only see the fee-less form.
-  const isClientCreate = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
+  // The EDIT path renders the full form regardless of "Show all fields", so
+  // the same test has to gate the staff-only blocks inside it — otherwise a
+  // client tapping Edit on their own deal gets Fee, Fee Agreement, AML Check,
+  // Xero billing, PO Number, Invoiced, Team, BGP Contact and BGP's
+  // fee-allocation editor, every one of which the deal page deliberately
+  // hides from them (r631, on the client phone).
+  const isClientUser = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
   const SENIOR_EMAILS = new Set([
     "woody@brucegillinghampollard.com",
     "charlotte@brucegillinghampollard.com",
@@ -2509,10 +2518,10 @@ export function DealFormDialog({
               AML) lives behind a "Show all fields" toggle and can
               also be filled in later on the actual deal board. The
               EDIT path always renders the full form. */}
-          {!isEdit && (!showAllFields || isClientCreate) ? (
+          {!isEdit && (!showAllFields || isClientUser) ? (
             // Clients always get the fee-less simplified body — never the
             // Consultant fee-only body, never the full form.
-            (form.dealType === "Consultant" && !isClientCreate) ? (
+            (form.dealType === "Consultant" && !isClientUser) ? (
             <ConsultantCreateBody
               form={form}
               set={set}
@@ -2534,7 +2543,7 @@ export function DealFormDialog({
               users={users}
               toggleAgent={toggleAgent}
               setForm={setForm}
-              hideFees={isClientCreate}
+              hideFees={isClientUser}
               feeRows={feeRows}
               setFeeRows={setFeeRows}
               feeAllocType={feeAllocType}
@@ -2660,7 +2669,7 @@ export function DealFormDialog({
                     // Letting Tracker. Disable them when creating a new
                     // deal, but keep them selectable in edit mode so
                     // existing deals don't get stuck.
-                    const PRE_SOL = ["REP", "SPEC", "LIVE", "AVA", "NEG"];
+                    const PRE_SOL = ["REP", "SPEC", "LIVE", "AVA", "NEG", "HOT"];
                     const isPreSol = PRE_SOL.includes(s);
                     return (
                       <SelectItem key={s} value={s} disabled={s === "INV" || (!isEdit && isPreSol)}>
@@ -2716,7 +2725,8 @@ export function DealFormDialog({
               )}
             </div>
 
-            <div>
+            {!isClientUser && (
+<div>
               <Label>Team</Label>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -2748,6 +2758,7 @@ export function DealFormDialog({
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+            )}
 
             <div>
               <Label>
@@ -2766,7 +2777,8 @@ export function DealFormDialog({
               )}
             </div>
 
-            <div>
+            {!isClientUser && (
+<div>
               <Label>BGP Contact</Label>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -2803,6 +2815,7 @@ export function DealFormDialog({
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+            )}
 
             <div>
               <Label>Asset Class</Label>
@@ -2949,7 +2962,7 @@ export function DealFormDialog({
                     </div>
                   )}
 
-                  {!isClientCreate && (
+                  {!isClientUser && (
                     <>
                       <div>
                         <Label>Fee ({"\u00A3"})</Label>
@@ -3029,6 +3042,7 @@ export function DealFormDialog({
                     <Label>Completed</Label>
                     <Input type="date" value={form.completedAt} onChange={(e) => set("completedAt", e.target.value)} data-testid="input-deal-completed-at" />
                   </div>
+                  {!isClientUser && (<>
                   <div>
                     <Label>Invoiced</Label>
                     <Input type="date" value={form.invoicedAt} onChange={(e) => set("invoicedAt", e.target.value)} data-testid="input-deal-invoiced-at" />
@@ -3068,6 +3082,8 @@ export function DealFormDialog({
                     <Label>PO Number</Label>
                     <Input value={form.poNumber || ""} onChange={(e) => set("poNumber", e.target.value)} placeholder="Purchase order number" data-testid="input-deal-po-number" />
                   </div>
+                  </>
+                  )}
                 </>
               );
             })()}
@@ -3086,7 +3102,7 @@ export function DealFormDialog({
           )}
 
           <DialogFooter className="flex items-center gap-2">
-            {!isEdit && !isClientCreate && (
+            {!isEdit && !isClientUser && (
               <Button
                 type="button"
                 variant="ghost"
@@ -3108,7 +3124,7 @@ export function DealFormDialog({
           </DialogFooter>
         </form>
 
-        {isEdit && deal && !isClientCreate && (
+        {isEdit && deal && !isClientUser && (
           <div className="px-6 pb-4">
             <FeeAllocationCard
               dealId={deal.id}
@@ -3311,9 +3327,11 @@ export function FeeAllocationCard({ dealId, dealType, dealFee, headlineRent, use
           <div className="flex items-center gap-2 flex-wrap min-w-0">
             <Users className="w-4 h-4 shrink-0" />
             <h3 className="text-sm font-semibold">Fee Allocation</h3>
-            {totalFee > 0 && !editing && allocations && allocations.length > 0 && (
-              <Badge variant="secondary" className="text-[10px]">
-                {formatCurrency(totalAllocated)} of {formatCurrency(totalFee)} allocated
+            {totalFee > 0 && !editing && (
+              <Badge variant="secondary" className="text-[10px]" data-testid="badge-fee-total">
+                {allocations && allocations.length > 0
+                  ? `${formatCurrency(totalAllocated)} of ${formatCurrency(totalFee)} allocated`
+                  : `${formatCurrency(totalFee)} fee`}
               </Badge>
             )}
             {headlineRent != null && !editing && !feeBasisEditing && (
@@ -5353,7 +5371,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [search, setSearch] = useState(urlParams.get("search") || savedListFilters?.search || "");
   // Deep links from DealsSummary (the Deals twin of the tracker summary):
   // /deals/list?status=NEG&propertyId=… lands here pre-filtered.
-  const [activeGroup, setActiveGroup] = useState(() => legacyToCode(urlParams.get("status")) || savedListFilters?.activeGroup || "all");
+  // ?noFee=1 — the notification centre's "N deals with no fee set" alert lands
+  // here. It must show EXACTLY the set that alert counted, so it overrides the
+  // restored status group and the default team filter below (r564).
+  const [noFeeFilter, setNoFeeFilter] = useState(urlParams.get("noFee") === "1");
+  const [activeGroup, setActiveGroup] = useState(() => (urlParams.get("noFee") === "1" ? "all" : legacyToCode(urlParams.get("status")) || savedListFilters?.activeGroup || "all"));
   const [propertyIdFilter, setPropertyIdFilter] = useState<string | null>(urlParams.get("propertyId"));
   // ?new=1 deep link — the WIP report's New Deal button lands here with the
   // create dialog already open.
@@ -5391,13 +5413,17 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       if (!currentUserForViews) return;
       // Restored session filters already carry the user's team choice — only
       // seed a default when there is no snapshot, but let ?team= always win.
-      const teamToSet = isClientDeals ? null : (urlTeamParam || (!savedListFilters && activeTeam && activeTeam !== "all" ? activeTeam : null));
+      const teamToSet = isClientDeals || noFeeFilter ? null : (urlTeamParam || (!savedListFilters && activeTeam && activeTeam !== "all" ? activeTeam : null));
       if (teamToSet) {
         setColumnFilters(prev => ({ ...prev, team: [teamToSet] }));
+      } else if (noFeeFilter) {
+        // A restored snapshot can carry a team filter that would hide some of
+        // the counted deals — the alert's count and this list must agree.
+        setColumnFilters(prev => { const { team, ...rest } = prev; return rest; });
       }
       setTeamFilterInitialised(true);
     }
-  }, [activeTeam, teamFilterInitialised, urlTeamParam, isClientDeals, savedListFilters, currentUserForViews]);
+  }, [activeTeam, teamFilterInitialised, urlTeamParam, isClientDeals, savedListFilters, currentUserForViews, noFeeFilter]);
 
   // Self-heal: client sessions that already carry a poisoned team filter
   // (seeded by the race above and persisted in the session snapshot) get
@@ -5410,6 +5436,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   useEffect(() => {
     if (isClientDeals) return;
+    // ?noFee=1 must show every counted deal, including ones with no team —
+    // re-applying the viewer's team here hid two of the five (r564).
+    if (noFeeFilter) {
+      setColumnFilters(prev => { const { team, ...rest } = prev; return rest; });
+      return;
+    }
     if (teamFilterInitialised && activeTeam && !urlTeamParam) {
       if (activeTeam === "all") {
         setColumnFilters(prev => { const { team, ...rest } = prev; return rest; });
@@ -5417,7 +5449,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         setColumnFilters(prev => ({ ...prev, team: [activeTeam] }));
       }
     }
-  }, [activeTeam, isClientDeals]);
+  }, [activeTeam, isClientDeals, noFeeFilter]);
 
   useEffect(() => {
     if (!teamFilterInitialised) return;
@@ -5957,6 +5989,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     return baseDeals.filter((deal) => {
       if (propertyIdFilter && deal.propertyId !== propertyIdFilter) return false;
       const dealCode = legacyToCode(deal.status);
+      if (noFeeFilter) {
+        // Same test as the notification's SQL: fee blank or zero, and the
+        // deal still live (not withdrawn, completed or invoiced).
+        const feeNum = Number(deal.fee);
+        const feeBlank = deal.fee === null || deal.fee === undefined || (deal.fee as any) === "" || !Number.isFinite(feeNum) || feeNum === 0;
+        if (!feeBlank) return false;
+        if (dealCode && ["WIT", "COM", "INV"].includes(dealCode)) return false;
+      }
       // Always compare canonical codes — statusValues only ever offers codes
       // (legacy free-text rows are normalised through legacyToCode), so the
       // old raw-string branch silently dropped legacy-status rows from the
@@ -5995,7 +6035,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       if (search && !matchesSearch(deal)) return false;
       return true;
     });
-  }, [baseDeals, activeGroup, columnFilters, search, matchesSearch, myName, propertyIdFilter]);
+  }, [baseDeals, activeGroup, columnFilters, search, matchesSearch, myName, propertyIdFilter, noFeeFilter]);
 
   const teamFilteredDeals = useMemo(() => {
     if (!columnFilters["team"]?.length) return baseDeals;
@@ -6070,7 +6110,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     setColumnFilters({});
   };
 
-  const hasFilters = search || activeGroup !== "all" || activeFilterCount > 0 || !!propertyIdFilter;
+  const hasFilters = search || activeGroup !== "all" || activeFilterCount > 0 || !!propertyIdFilter || noFeeFilter;
 
   if (error) {
     return (
@@ -6225,7 +6265,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 <div>
                   <p className="text-lg font-bold">{searchedDeals.length}</p>
                   <p className="text-xs text-muted-foreground">{isCompsMode ? "All Comps" : "All Deals"}</p>
-                  <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(searchedDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
+                  {!isClientDeals && (
+                    <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(searchedDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -6245,7 +6287,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   <div>
                     <p className="text-lg font-bold">{s.count}</p>
                     <p className="text-xs text-muted-foreground truncate max-w-[100px]">{DEAL_STATUS_LABELS[s.name as DealStatusCode] ?? s.name}</p>
-                    <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(s.feeTotal)}</p>
+                    {!isClientDeals && (
+                      <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(s.feeTotal)}</p>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -6270,6 +6314,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           <Badge variant="secondary" className="gap-1 shrink-0" data-testid="chip-property-filter">
             {properties.find(p => p.id === propertyIdFilter)?.name || "Property"}
             <button onClick={() => setPropertyIdFilter(null)} className="ml-0.5 hover:text-destructive" aria-label="Clear property filter">
+              <X className="w-3 h-3" />
+            </button>
+          </Badge>
+        )}
+        {noFeeFilter && (
+          <Badge variant="secondary" className="gap-1 shrink-0" data-testid="chip-no-fee-filter">
+            No fee set
+            <button onClick={() => setNoFeeFilter(false)} className="ml-0.5 hover:text-destructive" aria-label="Clear no-fee filter">
               <X className="w-3 h-3" />
             </button>
           </Badge>
@@ -6688,6 +6740,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "landlordId", v || null)}
                             onCreate={(name) => createCompanyForDeal(deal.id, "landlordId", "Landlord / Client", name)}
                             placeholder="Link landlord"
+                            readOnly={isClientDeals}
                           />
                         </TableCell>
                       )}
@@ -6736,6 +6789,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               onSave={(v) => handleInlineSave(deal.id, "tenantId", v || null)}
                               onCreate={(name) => createCompanyForDeal(deal.id, "tenantId", "Tenant", name)}
                               placeholder="Link tenant"
+                              readOnly={isClientDeals}
                             />
                           </div>
                         </TableCell>
@@ -7047,6 +7101,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <DatesCell
                             deal={deal}
                             onSave={(field, value) => handleInlineSave(deal.id, field, value)}
+                            clientView={isClientDeals}
                           />
                         </TableCell>
                       )}
@@ -7141,7 +7196,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   {filteredDeals.length > 0 && (
                     <TableRow className="bg-muted/50 font-semibold border-t-2 hover:bg-muted/50">
                       <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="text-right py-2 text-xs">
-                        {filteredDeals.length} {isCompsMode ? "comps" : "deals"} · Total fees: {formatCurrency(filteredDeals.reduce((s, d) => s + (Number((d as any).fee) || 0), 0))}
+                        {filteredDeals.length} {isCompsMode ? "comps" : "deals"}{!isClientDeals && ` · Total fees: ${formatCurrency(filteredDeals.reduce((s, d) => s + (Number((d as any).fee) || 0), 0))}`}
                       </TableCell>
                     </TableRow>
                   )}

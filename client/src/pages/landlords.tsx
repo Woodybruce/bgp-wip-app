@@ -203,7 +203,7 @@ export default function LandlordsPage() {
               icon={Building2}
               accent="text-emerald-500"
               rows={topByPortfolio}
-              metric={l => `${l.property_count || 0} ${(l.property_count || 0) === 1 ? "property" : "properties"}`}
+              metric={l => { const n = Number(l.property_count) || 0; return `${n} ${n === 1 ? "property" : "properties"}`; }}
             />
             <Leaderboard
               title="Investment Hunter targets"

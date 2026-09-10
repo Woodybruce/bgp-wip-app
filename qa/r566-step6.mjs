@@ -1,0 +1,22 @@
+import { chromium } from '/home/user/bgp-wip-app/node_modules/playwright/index.mjs';
+const BASE='http://127.0.0.1:5000';
+const browser = await chromium.launch({executablePath:'/opt/pw-browsers/chromium', args:['--no-sandbox']});
+const ctx = await browser.newContext({viewport:{width:1440,height:1000}});
+const page = await ctx.newPage();
+const t=await (await ctx.request.post(`${BASE}/api/auth/login`,{data:{username:'mark.warne@landsec.com',password:'B@nd0077!'}})).json();
+await page.goto(BASE+'/login',{waitUntil:'domcontentloaded'}).catch(()=>{});
+await page.evaluate(x=>localStorage.setItem('authToken',x), t.token);
+await page.goto(BASE+'/',{waitUntil:'domcontentloaded'});
+await page.waitForTimeout(8000);
+// find the Expiring tile
+const tile = page.locator('text=/Expiring \\(6m\\)/i').first();
+console.log('tile count', await page.locator('text=/Expiring \\(6m\\)/i').count());
+const box = await tile.boundingBox();
+console.log('tile box', JSON.stringify(box));
+await tile.click({force:true});
+await page.waitForTimeout(4000);
+console.log('URL after tile click:', page.url());
+await page.screenshot({path:'qa/smoke-shots/r566-s6-after-tile.png', fullPage:true});
+const txt = await page.evaluate(()=>document.body.innerText.replace(/\s+/g,' ').slice(0,1500));
+console.log('BODY:', txt);
+await browser.close();

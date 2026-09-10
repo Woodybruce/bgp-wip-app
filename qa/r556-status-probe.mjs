@@ -1,0 +1,46 @@
+import { chromium } from '../node_modules/playwright/index.mjs';
+import { existsSync } from 'fs';
+const BASE='http://localhost:5000';
+const QA = existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : null;
+const browser = await chromium.launch(QA?{executablePath:QA,args:['--no-sandbox']}:{args:['--no-sandbox']});
+const ctx = await browser.newContext({ viewport:{width:1440,height:900}, locale:'en-GB' });
+const r = await ctx.request.post(`${BASE}/api/auth/login`,{data:{username:'victoria@brucegillinghampollard.com',password:'B@nd0077!'}});
+const user = await r.json();
+const api = async (m,p,d)=>{const res=await ctx.request.fetch(`${BASE}${p}`,{method:m,headers:{Authorization:`Bearer ${user.token}`,'Content-Type':'application/json'},data:d});let b=null;try{b=await res.json()}catch{};return{status:res.status(),body:b}};
+const made = await api('POST','/api/lease-events',{tenant:'QA-PROBE status r556',eventType:'Break Option',status:'Monitoring',sourceEvidence:'Manual',eventDate:new Date(Date.now()+120*864e5).toISOString().slice(0,10)});
+console.log('created', made.status, made.body?.id);
+const page = await ctx.newPage();
+await page.goto(BASE).catch(()=>{});
+await page.evaluate(([t,u])=>{localStorage.setItem('bgp_auth_token',t);localStorage.setItem('authToken',t);localStorage.setItem('user',JSON.stringify(u));},[user.token,user]);
+const readRow = async (label) => {
+  const tr = page.locator('table tbody tr', { hasText: 'QA-PROBE status r556' }).first();
+  const combos = tr.locator('button[role="combobox"]');
+  const n = await combos.count();
+  const txt = [];
+  for (let i=0;i<n;i++) txt.push((await combos.nth(i).innerText()).replace(/\s+/g,' ').trim());
+  console.log(label, 'combobox texts:', JSON.stringify(txt));
+};
+await page.goto(BASE+'/lease-events',{waitUntil:'domcontentloaded'}).catch(()=>{});
+await page.waitForLoadState('networkidle').catch(()=>{});
+await page.waitForTimeout(2500);
+await readRow('before');
+// change status via the board
+const tr = page.locator('table tbody tr', { hasText: 'QA-PROBE status r556' }).first();
+await tr.locator('button[role="combobox"]').nth(0).click();
+await page.waitForTimeout(500);
+await page.locator('[role="option"]', { hasText: /^Contacted$/ }).first().click();
+await page.waitForTimeout(1800);
+await readRow('after click');
+console.log('api:', JSON.stringify((await api('GET','/api/lease-events')).body.find(x=>x.tenant==='QA-PROBE status r556')?.status));
+await page.reload({waitUntil:'domcontentloaded'}).catch(()=>{});
+await page.waitForLoadState('networkidle').catch(()=>{});
+await page.waitForTimeout(2500);
+await readRow('after reload');
+await page.screenshot({path:'qa/smoke-shots/r556p-status.png'});
+// edit dialog assigned-to display
+await page.locator('table tbody tr',{hasText:'QA-PROBE status r556'}).first().locator('button[title="Edit"]').click();
+await page.waitForTimeout(1000);
+const st = await page.evaluate(()=>{const d=document.querySelector('[role="dialog"]');const labs=[...d.querySelectorAll('label')];const f=labs.find(l=>l.innerText.trim().startsWith('Status'));return f?f.parentElement.querySelector('button[role="combobox"]').innerText.trim():'?';});
+console.log('edit dialog status field:', st);
+console.log('cleanup', (await api('DELETE','/api/lease-events/'+made.body.id)).status);
+await browser.close();

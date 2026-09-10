@@ -560,6 +560,12 @@ export function InlineAgents({
     },
   });
 
+  // Same as the tenants cell: read-only + nothing assigned must still print
+  // something, or the client's Properties row shows an empty gap.
+  if (readOnly && assignedUsers.length === 0) {
+    return <span className="text-xs text-muted-foreground" data-testid={`agents-readonly-${propertyId}`}>—</span>;
+  }
+
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {assignedUsers.map(user => {
@@ -1372,6 +1378,13 @@ export function InlineTenants({
   const MAX_VISIBLE = 3;
   const visibleCompanies = assignedCompanies.slice(0, MAX_VISIBLE);
   const hiddenCount = assignedCompanies.length - MAX_VISIBLE;
+
+  // A client viewer has no "+" affordance, so with nothing linked the cell
+  // renders as blank space and the row reads half-broken. Match the
+  // read-only dash every other client-visible column uses.
+  if (readOnly && assignedCompanies.length === 0) {
+    return <span className="text-xs text-muted-foreground" data-testid={`tenants-readonly-${propertyId}`}>—</span>;
+  }
 
   return (
     <div className="flex items-center gap-1 flex-wrap">
@@ -3175,6 +3188,20 @@ interface PropertyNewsArticle {
   source: "database" | "web";
 }
 
+// Wire feeds copy the headline into the description, differing only by the
+// source suffix ("Headline - The Grocer" vs "Headline  The Grocer"), so a
+// summary that repeats the title is noise — same test the Brand News page
+// uses (summaryAddsInfo in news.tsx, UX #143).
+function newsSummaryAddsInfo(title?: string | null, summary?: string | null): boolean {
+  const body = (summary || "").trim();
+  if (!body) return false;
+  const key = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const t = key(title || "");
+  const s = key(body);
+  if (!t) return true;
+  return !(s === t || s.startsWith(t) || t.startsWith(s));
+}
+
 function newsTimeAgo(date: string | Date | null): string {
   if (!date) return "";
   const now = new Date();
@@ -4937,7 +4964,7 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
                     ) : null}
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold leading-snug line-clamp-2">{article.title}</p>
-                      {article.summary && (
+                      {newsSummaryAddsInfo(article.title, article.summary) && (
                         <p className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5">{article.summary}</p>
                       )}
                       <div className="flex items-center gap-1.5 mt-1">
@@ -5166,12 +5193,12 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
   const liveLettings = useMemo(() => units.filter(u => {
     if (!u.propertyId || !ids.has(u.propertyId)) return false;
     const code = legacyToCode(u.marketingStatus) || "AVA";
-    return ["OPP", "REP", "AVA", "NEG", "SOL", "EXC"].includes(code);
+    return ["OPP", "REP", "AVA", "NEG", "HOT", "SOL", "EXC"].includes(code);
   }).length, [units, ids]);
   const liveDeals = useMemo(() => deals.filter(d => {
     if (!d.propertyId || !ids.has(d.propertyId)) return false;
     const code = legacyToCode(d.status);
-    return !!code && ["REP", "AVA", "NEG", "SOL", "EXC"].includes(code);
+    return !!code && ["REP", "AVA", "NEG", "HOT", "SOL", "EXC"].includes(code);
   }).length, [deals, ids]);
 
   const stores = useMemo(() => items.map(p => {

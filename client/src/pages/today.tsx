@@ -9,6 +9,7 @@ import {
   ListTodo, Sun, CheckCircle2,
 } from "lucide-react";
 import type { User } from "@shared/schema";
+import { isTaskOverdue } from "@shared/task-due";
 
 interface Task {
   id: string;
@@ -100,7 +101,7 @@ export default function TodayPage() {
 
   const pendingTasks = tasks.filter(t => t.status !== "done");
   const todayTasks = pendingTasks.filter(t => t.due_date && t.due_date.split("T")[0] === todayStr);
-  const overdueTasks = pendingTasks.filter(t => t.due_date && t.due_date.split("T")[0] < todayStr);
+  const overdueTasks = pendingTasks.filter(t => isTaskOverdue(t.due_date));
   const upcomingTasks = pendingTasks.filter(t => !t.due_date || t.due_date.split("T")[0] > todayStr);
   const completedToday = tasks.filter(t => t.status === "done");
 

@@ -17,6 +17,7 @@ import {
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import type { CrmDeal, CrmProperty } from "@shared/schema";
+import { isLeaseExpiringSoon } from "@shared/lease-expiry";
 
 // Unified Properties board — single property-centric view that merges what
 // used to be four separate sections on the company detail page: the brand
@@ -129,9 +130,7 @@ interface DiscoveredItem {
 }
 
 function isExpiringSoon(d: string | null): boolean {
-  if (!d) return false;
-  const monthsAway = (new Date(d).getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 30);
-  return monthsAway >= 0 && monthsAway <= 12;
+  return isLeaseExpiringSoon(d);
 }
 
 function toNum(v: unknown): number | null {

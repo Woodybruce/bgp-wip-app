@@ -3,6 +3,7 @@ import multer from "multer";
 import { requireAuth } from "./auth";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
+import { leaseExpiringSoonSql } from "@shared/lease-expiry";
 
 const router = Router();
 
@@ -82,7 +83,7 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
           COUNT(CASE WHEN COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as unit_count,
           COUNT(CASE WHEN u.status = 'Occupied' THEN 1 END)::int as occupied_count,
           COUNT(CASE WHEN u.status = 'Vacant' THEN 1 END)::int as vacant_count,
-          COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as expiring_soon
+          COUNT(CASE WHEN ${leaseExpiringSoonSql('u.lease_expiry')} AND COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as expiring_soon
         FROM crm_properties p
         JOIN leasing_schedule_units u ON u.property_id = p.id
         LEFT JOIN crm_companies c ON p.landlord_id = c.id
@@ -99,7 +100,7 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
         COUNT(CASE WHEN COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as unit_count,
         COUNT(CASE WHEN u.status = 'Occupied' THEN 1 END)::int as occupied_count,
         COUNT(CASE WHEN u.status = 'Vacant' THEN 1 END)::int as vacant_count,
-        COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as expiring_soon
+        COUNT(CASE WHEN ${leaseExpiringSoonSql('u.lease_expiry')} AND COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as expiring_soon
       FROM crm_properties p
       JOIN leasing_schedule_units u ON u.property_id = p.id
       LEFT JOIN crm_companies c ON p.landlord_id = c.id
@@ -993,7 +994,7 @@ router.get("/api/leasing-schedule/property/:propertyId/export", requireAuth, asy
         u.rent_pa, u.sqft, u.mat_psqft, u.lfl_percent, u.occ_cost_percent,
         u.target_brands, u.optimum_target, u.priority, u.updates
       FROM leasing_schedule_units u
-      WHERE u.property_id = $1
+      WHERE u.property_id = $1 AND COALESCE(u.status, '') <> 'Archived'
       ORDER BY u.sort_order, u.zone, u.unit_name
     `, [req.params.propertyId]);
 
@@ -1773,7 +1774,7 @@ router.get("/api/leasing-schedule/property/:propertyId/export-excel", requireAut
         u.target_brands, u.optimum_target, u.priority, u.updates, u.financial_notes,
         u.status_band, u.meeting_month, u.agent_input, u.last_updated_by, u.updated_at
       FROM leasing_schedule_units u
-      WHERE u.property_id = $1
+      WHERE u.property_id = $1 AND COALESCE(u.status, '') <> 'Archived'
       ORDER BY u.sort_order, u.zone, u.unit_name
     `, [req.params.propertyId]);
 
@@ -1839,7 +1840,7 @@ router.post("/api/leasing-schedule/export-multi-excel", requireAuth, async (req,
           u.rent_pa, u.sqft, u.mat_psqft, u.lfl_percent, u.occ_cost_percent,
           u.target_brands, u.optimum_target, u.priority, u.updates, u.financial_notes
         FROM leasing_schedule_units u
-        WHERE u.property_id = $1
+        WHERE u.property_id = $1 AND COALESCE(u.status, '') <> 'Archived'
         ORDER BY u.sort_order, u.zone, u.unit_name
       `, [propId]);
 
@@ -1885,10 +1886,11 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
         u.rent_pa, u.sqft, u.status, p.name AS property_name
       FROM leasing_schedule_units u
       JOIN crm_properties p ON u.property_id = p.id
+      WHERE COALESCE(u.status, '') <> 'Archived'
     `;
     if (!user.is_admin) {
       query += `
-        WHERE (p.leasing_privacy_enabled = FALSE OR p.leasing_privacy_enabled IS NULL
+        AND (p.leasing_privacy_enabled = FALSE OR p.leasing_privacy_enabled IS NULL
           OR EXISTS (SELECT 1 FROM crm_property_agents pa WHERE pa.property_id = p.id AND pa.user_id = $1))
       `;
     }
@@ -1943,6 +1945,7 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
     // Date & currency formats
     const DATE_FMT = "DD/MM/YYYY";
     const CURRENCY_FMT = "£#,##0";
+    const PSF_FMT = "£#,##0.00";
     const NUMBER_FMT = "#,##0";
 
     // Populate data rows
@@ -1968,7 +1971,7 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
       dataRow.getCell("lease_end").numFmt = DATE_FMT;
       dataRow.getCell("break_date").numFmt = DATE_FMT;
       dataRow.getCell("rent_pa").numFmt = CURRENCY_FMT;
-      dataRow.getCell("rent_psf").numFmt = CURRENCY_FMT;
+      dataRow.getCell("rent_psf").numFmt = PSF_FMT;
       dataRow.getCell("area_sqft").numFmt = NUMBER_FMT;
     }
 

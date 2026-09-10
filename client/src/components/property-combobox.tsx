@@ -388,13 +388,23 @@ export function PropertyCombobox({
     return () => document.removeEventListener("pointerdown", onDocPointerDown);
   }, [open]);
 
+  // Close on Escape. The listener sits on WINDOW in the capture phase, not
+  // on document: Radix Dialog's DismissableLayer also listens for Escape on
+  // `document` with capture, and window is ahead of document in the capture
+  // path whatever order the two mount in. Getting first refusal lets this
+  // stop the key before the Dialog sees it — otherwise dismissing the
+  // dropdown tore the whole parent dialog down and lost the half-filled
+  // form (r604: Escape on the New Deal tenant picker closed New Deal).
   React.useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      setOpen(false);
     }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open]);
 
   const triggerLabel = selected?.label ?? placeholder;
@@ -442,6 +452,9 @@ export function PropertyCombobox({
             filter={(value, searchStr) => {
               if (!searchStr) return 1;
               const v = value.toLowerCase();
+              // Same rule as EntityCombobox: the create-by-name row stays
+              // visible but never outranks a real property (UX #298).
+              if (v.startsWith("__create_by_name__")) return 0.0001;
               const s = searchStr.toLowerCase().trim();
               if (!s) return 1;
               if (v.startsWith(s)) return 2;

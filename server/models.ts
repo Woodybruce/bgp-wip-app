@@ -663,14 +663,6 @@ function getAnthropicClient() {
   return new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
 }
 
-function getGeminiModelClient() {
-  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-  if (!apiKey || !baseUrl) return null;
-  const { GoogleGenAI } = require("@google/genai");
-  return new GoogleGenAI({ apiKey, httpOptions: { apiVersion: "", baseUrl } });
-}
-
 async function extractPropertyDataWithAI(documentTexts: { name: string; text: string }[]): Promise<any> {
   const anthropic = getAnthropicClient();
 
@@ -1829,35 +1821,14 @@ Return ONLY valid JSON. No markdown, no code fences.`;
       }
       messages.push({ role: "user", content: userContent });
 
+      // Every model built or edited through Excel runs on Claude (Woody,
+      // 2026-09-09: "all models via excel should run on Fable"). This chat
+      // used to try Gemini 2.5 Flash first whenever the Gemini keys were set
+      // — logged, misleadingly, as "Gemini 3.1 Pro" — and only reached Claude
+      // when Gemini threw. Removed: the model-design conversation is now the
+      // same Claude tier as every other Studio call.
       let responseText = "";
-      const gemini = getGeminiModelClient();
-      if (gemini) {
-        try {
-          const geminiContents: any[] = [];
-          let lastRole = "";
-          for (const m of messages) {
-            const role = m.role === "assistant" ? "model" : "user";
-            if (role === lastRole && geminiContents.length > 0) {
-              geminiContents[geminiContents.length - 1].parts[0].text += "\n\n" + m.content;
-            } else {
-              geminiContents.push({ role, parts: [{ text: m.content }] });
-            }
-            lastRole = role;
-          }
-          console.log("[model-design-chat] Using Gemini 3.1 Pro");
-          const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: geminiContents,
-            config: { maxOutputTokens: 4096, temperature: 0.3, systemInstruction: systemPrompt },
-          });
-          responseText = geminiResponse.text || "";
-        } catch (geminiErr: any) {
-          console.log("[model-design-chat] Gemini failed, falling back to Claude:", geminiErr?.message);
-        }
-      }
-
-      if (!responseText) {
-        console.log("[model-design-chat] Using Claude Sonnet fallback");
+      {
         const anthropic = getAnthropicClient();
         const response = await studioCreate(anthropic, {
           model: STUDIO_MODEL,
@@ -2754,7 +2725,7 @@ CRITICAL RULES:
               team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
               groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
               dealType: { type: "string", description: "Type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
-              status: { type: "string", description: "Status of the deal" },
+              status: { type: "string", description: "Deal status CODE: OPP, REP, SPEC, LIVE, AVA, NEG, HOT, SOL, EXC, COM, WIT (Opportunity, Reporting, Speculative, Live, Available, Negotiating, HOTs, Solicitors, Exchanged, Completed, Withdrawn). INV is system-set by the Xero sync. A label is canonicalised to its code; anything else is stored verbatim and the deal drops out of the WIP report." },
               pricing: { type: "number", description: "Deal value/price in GBP" },
               fee: { type: "number", description: "BGP fee in GBP" },
               rentPa: { type: "number", description: "Annual rent in GBP" },
@@ -2775,7 +2746,7 @@ CRITICAL RULES:
               team: { type: "array", items: { type: "string" } },
               groupName: { type: "string" },
               dealType: { type: "string" },
-              status: { type: "string" },
+              status: { type: "string", description: "Deal status CODE — same vocabulary as create_deal: OPP, REP, SPEC, LIVE, AVA, NEG, HOT, SOL, EXC, COM, WIT." },
               pricing: { type: "number" },
               fee: { type: "number" },
               rentPa: { type: "number" },
@@ -3456,7 +3427,10 @@ CRITICAL RULES:
           }
 
           case "create_deal": {
-            const [created] = await db.insert(crmDeals).values({
+            // Via the write boundary, which canonicalises `status` — the
+            // model hands over free text and a label in that codes column
+            // drops the deal out of the firm's WIP hero (hr-routes.ts).
+            const created = await storage.createCrmDeal({
               name: input.name,
               team: input.team || [],
               groupName: input.groupName || "New Instructions",
@@ -3467,7 +3441,7 @@ CRITICAL RULES:
               rentPa: input.rentPa,
               totalAreaSqft: input.totalAreaSqft,
               comments: input.comments,
-            }).returning();
+            } as any);
             return JSON.stringify({ success: true, action: "created", entity: "deal", id: created.id, name: created.name });
           }
 
@@ -3477,7 +3451,8 @@ CRITICAL RULES:
             for (const [k, v] of Object.entries(updates)) {
               if (v !== undefined && v !== null) cleanUpdates[k] = v;
             }
-            await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
+            // Through the same boundary as create_deal above.
+            await storage.updateCrmDeal(id, cleanUpdates);
             return JSON.stringify({ success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) });
           }
 

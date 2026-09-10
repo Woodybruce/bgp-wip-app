@@ -32,6 +32,7 @@ import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useToast } from "@/hooks/use-toast";
 import { getQueryFn } from "@/lib/queryClient";
 import type { User as AuthUser } from "@shared/schema";
+import { DEAL_STATUS_LABELS } from "@shared/deal-status";
 import HrOverview from "./hr-overview";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -132,7 +133,7 @@ interface CommissionData {
   schemeYearStart?: string;
   schemeYearEnd?: string;
   billedPence: number;
-  wipByStage: { neg: number; sol: number; exc: number; com: number };
+  wipByStage: { neg: number; hot: number; sol: number; exc: number; com: number };
   wipTotal: number;
   forecastPence: number;
   paidOnly?: boolean;
@@ -705,8 +706,8 @@ function CommissionTab({ userId }: { userId: string }) {
           {data.wipTotal > 0 && (
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-md border p-2.5 text-center">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Negotiating</div>
-                <div className="text-sm font-semibold mt-0.5">{fmtSalary(data.wipByStage.neg + data.wipByStage.sol)}</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Neg / HOTs / Sol</div>
+                <div className="text-sm font-semibold mt-0.5">{fmtSalary(data.wipByStage.neg + data.wipByStage.hot + data.wipByStage.sol)}</div>
               </div>
               <div className="rounded-md border p-2.5 text-center">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Exchanged</div>
@@ -2185,8 +2186,10 @@ function ActiveDealsCard({ userId }: { userId: string }) {
   });
   if (isLoading || deals.length === 0) return null;
 
-  const stageLabel = (s: string) => ({ NEG: "In negotiation", SOL: "In solicitors", EXC: "Exchanged", COM: "Completed", LIVE: "Live", SPEC: "Spec", AVA: "Available", REP: "Reported" }[s] || s);
-  const stageColor = (s: string) => ({ NEG: "bg-amber-500", SOL: "bg-amber-500", EXC: "bg-blue-500", COM: "bg-emerald-500" }[s] || "bg-muted-foreground/30");
+  // Falls back to the canonical label rather than the raw code, so a status
+  // added to the shared enum reads as English here without a code change.
+  const stageLabel = (s: string) => ({ NEG: "In negotiation", HOT: "Heads of terms", SOL: "In solicitors", EXC: "Exchanged", COM: "Completed", LIVE: "Live", SPEC: "Spec", AVA: "Available", REP: "Reported" }[s] || DEAL_STATUS_LABELS[s as keyof typeof DEAL_STATUS_LABELS] || s);
+  const stageColor = (s: string) => ({ NEG: "bg-amber-500", HOT: "bg-amber-500", SOL: "bg-amber-500", EXC: "bg-blue-500", COM: "bg-emerald-500" }[s] || "bg-muted-foreground/30");
   const totalFee = deals.reduce((sum, d) => sum + d.fee, 0);
 
   return (
@@ -3271,8 +3274,9 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   const [compReason, setCompReason] = useState<string>("");
 
   // Pull target / achieved / pipeline figures straight from the WIP
-  // report — target = 3 × salary, achieved = INV fees, under offer = SOL,
-  // negotiating = NEG. Maps the user's name to fee allocations server-side.
+  // report — target = 3 × salary, achieved = INV fees, under offer = HOT +
+  // SOL, negotiating = NEG. Maps the user's name to fee allocations
+  // server-side.
   const syncFromWip = useMutation({
     mutationFn: async ({ id }: { id: string }) =>
       apiRequest("POST", `/api/hr/reviews/${id}/sync-from-wip`).then(r => r.json()),
@@ -3470,7 +3474,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   className="h-7 text-xs"
                   onClick={() => syncFromWip.mutate({ id: editing.id })}
                   disabled={syncFromWip.isPending}
-                  title={isMonthly ? "Fill this month's actuals from the WIP report — fees invoiced, current WIP figure, deals exchanged" : "Pull target (3× salary) and fees-achieved / under-offer / negotiating from the WIP report"}
+                  title={isMonthly ? "Fill this month's actuals from the WIP report — fees invoiced, current WIP figure, deals exchanged" : "Pull target (3× salary) and fees-achieved / HOTs+under-offer / negotiating from the WIP report"}
                   data-testid="button-sync-from-wip"
                 >
                   {syncFromWip.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <BarChart3 className="w-3.5 h-3.5 mr-1" />} Sync from WIP
@@ -3595,7 +3599,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Pipeline — under offer (£)</Label>
+                <Label className="text-xs">Pipeline — HOTs / under offer (£)</Label>
                 <MoneyInput
                   value={editing.pipeline_under_offer_pence ? Math.round(editing.pipeline_under_offer_pence / 100) : null}
                   onCommit={(n) => saveNow({ pipeline_under_offer_pence: n === null ? null : n * 100 })}

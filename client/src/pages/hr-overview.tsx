@@ -1336,8 +1336,8 @@ function HungerGamesStrip({ allStaff: _allStaff, onSelectPerson }: { allStaff: S
                 <div className="font-semibold mb-1.5">How each leaderboard is ranked</div>
                 <div className="space-y-1.5 leading-relaxed">
                   <div><span className="font-semibold">Top biller:</span> sum of fees on deals invoiced this scheme year, pulled from Xero per person.</div>
-                  <div><span className="font-semibold">Pipeline:</span> sum of expected fees on deals not yet closed, weighted by stage.</div>
-                  <div><span className="font-semibold">Most active:</span> count of deals you're internal_agent on with status not in (ARCH, WIT).</div>
+                  <div><span className="font-semibold">Pipeline:</span> your share of the fee on every deal still in WIP — Available, Negotiating, HOTs, Solicitors, Exchanged, Completed. The same stages the ski target counts as WIP.</div>
+                  <div><span className="font-semibold">Most active:</span> count of those same deals — ones you're an internal agent on that are still in WIP.</div>
                   <div><span className="font-semibold">Most kudos:</span> peer shout-outs received in the last 7 days. Anyone can issue a kudos to anyone (not yourself); the receiver gets +10 Brucey points and the giver gets +5.</div>
                 </div>
               </PopoverContent>

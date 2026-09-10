@@ -208,6 +208,13 @@ function fmtNum(n: number | null | undefined) {
   return n.toLocaleString("en-GB");
 }
 
+// Activity rows print dates the way the rest of the app does — en-GB, not
+// the raw ISO string the <input type="date"> stores.
+function fmtDate(v: string | null | undefined) {
+  if (!v) return "";
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? v : d.toLocaleDateString("en-GB");
+}
 function fmtCurrency(n: number | null | undefined) {
   if (n == null) return "—";
   return `£${n.toLocaleString("en-GB")}`;
@@ -339,7 +346,7 @@ function formToPayload(f: UnitFormState) {
   };
 }
 
-function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id: string; name: string } | null): UnitFormState {
+function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id: string; name: string } | null, effCode?: DealStatusCode | null): UnitFormState {
   return {
     unitName: u.unitName || "",
     propertyId: u.propertyId || "",
@@ -354,7 +361,13 @@ function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id:
     useClass: u.useClass || "",
     condition: u.condition || "",
     availableDate: u.availableDate || "",
-    marketingStatus: legacyToCode(u.marketingStatus) || "AVA",
+    // Seed from the EFFECTIVE code (the linked deal's status wins), the same
+    // one the boards show — not the unit's own row, which lags behind a deal
+    // that has moved past marketing. Seeding it raw let the dialog render an
+    // editable "Available" on a unit the board called Negotiating, and saving
+    // any other field then pushed AVA back through the status mirror and
+    // regressed the live deal (r562).
+    marketingStatus: effCode || legacyToCode(u.marketingStatus) || "AVA",
     epcRating: u.epcRating || "",
     location: u.location || "",
     notes: u.notes || "",
@@ -410,7 +423,13 @@ export default function AvailableUnitsPage() {
   // Deep links from TrackerSummary lozenges / "Letting Tracker" buttons
   // carry ?propertyId= and ?status= — honour them on first mount (they
   // were silently ignored before).
-  const urlParam = (k: string) => { try { return new URLSearchParams(window.location.search).get(k) || "all"; } catch { return "all"; } };
+  const urlParamRaw = (k: string) => { try { return new URLSearchParams(window.location.search).get(k); } catch { return null; } };
+  // "all" is the no-filter sentinel for the status/property selects — but a
+  // MISSING param must not read as the literal value "all" for params that
+  // compare against it (r558: ?view= absent made viewAll permanently true,
+  // which short-circuits statusFilter, so every lozenge deep link landed
+  // unfiltered). Use urlParamRaw for those.
+  const urlParam = (k: string) => urlParamRaw(k) || "all";
   const [statusFilter, setStatusFilter] = useState(() => urlParam("status"));
   // Compact header (team feedback: the fixed header block was so tall the
   // table barely had scroll room). Hides the FY strip and swaps the big
@@ -425,7 +444,7 @@ export default function AvailableUnitsPage() {
   // "All statuses" view — every deal-status group laid out down the page
   // (SOL+ included) with the tenancy schedules underneath, instead of
   // clicking each status card in turn (Woody, 2026-08-06).
-  const [viewAll, setViewAll] = useState(() => urlParam("view") === "all");
+  const [viewAll, setViewAll] = useState(() => urlParamRaw("view") === "all");
   const [showHistoric, setShowHistoric] = useState(() => HISTORIC_PILL_STATUSES.includes(urlParam("status") as DealStatusCode));
   const [scheduleOpen, setScheduleOpen] = useState<Record<string, boolean>>({});
   // Header sort — Property/Unit and Client columns, A→Z / Z→A toggle.
@@ -622,11 +641,18 @@ export default function AvailableUnitsPage() {
   // Inline-create for the viewing/offer/interest pickers (UX #147) — an
   // unmatched company typed into the picker used to be silently discarded.
   const createCrmCompany = async (name: string) => {
-    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim() });
-    const created = await r.json();
-    queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-    toast({ title: "Company created", description: `${created.name} added to CRM.` });
-    return { id: String(created.id), label: created.name as string };
+    try {
+      const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim() });
+      const created = await r.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      toast({ title: "Company created", description: `${created.name} added to CRM.` });
+      return { id: String(created.id), label: created.name as string };
+    } catch (e: any) {
+      // The combobox swallows the throw and leaves the picker untouched, so
+      // without this the create row just closed and nothing happened (r528).
+      toast({ title: "Couldn't create company", description: e?.message || "Please try again.", variant: "destructive" });
+      throw e;
+    }
   };
 
   const { data: favoriteIds = [] } = useQuery<string[]>({
@@ -897,6 +923,7 @@ export default function AvailableUnitsPage() {
     mutationFn: async ({ data, feeRows, feeAllocType }: { data: any; feeRows: FeeAllocationRow[]; feeAllocType: "percentage" | "fixed" }) => {
       const res = await apiRequest("POST", "/api/available-units", data);
       const unit = await res.json();
+      let feeSplitError: string | null = null;
       // The server auto-creates a backing deal and stamps its id on the
       // unit. Fold the user's fee split onto that deal so it lands with
       // BGP House + agents pre-baked instead of empty (which used to
@@ -916,17 +943,17 @@ export default function AvailableUnitsPage() {
           try {
             await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
           } catch (e: any) {
-            toast({
-              title: "Unit added, fee split failed to save",
-              description: e?.message || "Open the deal to set the split there.",
-              variant: "destructive",
-            });
+            // Carry the failure out to onSuccess instead of toasting here:
+            // TOAST_LIMIT is 1, so a toast raised inside mutationFn is
+            // evicted by onSuccess's a moment later and the user is told
+            // "Unit added" with no hint the split was dropped (r588).
+            feeSplitError = e?.message || "Open the deal to set the split there.";
           }
         }
       }
-      return unit;
+      return { unit, feeSplitError, alreadyListed: !!unit?.alreadyListed };
     },
-    onSuccess: () => {
+    onSuccess: ({ feeSplitError, alreadyListed }: { unit: any; feeSplitError: string | null; alreadyListed: boolean }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       invalidateDealCaches();
       setCreateOpen(false);
@@ -934,7 +961,23 @@ export default function AvailableUnitsPage() {
       setUnitFeeRows([]);
       setUnitFeeAllocType("percentage");
       setShowAllUnitFields(false);
-      toast({ title: "Unit added" });
+      if (feeSplitError) {
+        toast({
+          title: alreadyListed ? "Already on the tracker — fee split NOT saved" : "Unit added — fee split NOT saved",
+          description: feeSplitError,
+          variant: "destructive",
+        });
+      } else if (alreadyListed) {
+        // The server returns the existing listing instead of creating a
+        // second one. Saying "Unit added" here told her a write had happened
+        // when it hadn't (r589).
+        toast({
+          title: "Already on the tracker",
+          description: "This unit is already listed — the existing listing was updated, not duplicated.",
+        });
+      } else {
+        toast({ title: "Unit added" });
+      }
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1140,11 +1183,9 @@ export default function AvailableUnitsPage() {
           try {
             await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
           } catch (e: any) {
-            toast({
-              title: "Promoted, but fee split failed to save",
-              description: e?.message || "Open the deal to set the split there.",
-              variant: "destructive",
-            });
+            // Same TOAST_LIMIT=1 eviction as the create path (r588) — hand
+            // the failure to onSuccess so it is the toast that survives.
+            json.feeSplitError = e?.message || "Open the deal to set the split there.";
           }
         }
       }
@@ -1157,7 +1198,13 @@ export default function AvailableUnitsPage() {
       // Surface the server's AML warn-but-allow result. Promotion went
       // through, but some counterparties are still missing KYC — flag it
       // so Layla can chase before the deal reaches exchange.
-      if (json?.amlWarning?.message) {
+      if (json?.feeSplitError) {
+        toast({
+          title: "Promoted — fee split NOT saved",
+          description: json.feeSplitError,
+          variant: "destructive",
+        });
+      } else if (json?.amlWarning?.message) {
         toast({
           title: "Promoted — AML follow-up needed",
           description: json.amlWarning.message,
@@ -1983,7 +2030,20 @@ export default function AvailableUnitsPage() {
               let cardTitle = rawTitle;
               if (u.unitName && prop?.name) {
                 const propWords = prop.name.split(/[,·]/)[0].trim();
-                for (const strip of [prop.name, propWords]) {
+                // r528: unit names embed the scheme's SHORT name ("L112
+                // Bluewater, Bluewater"), never its full one, so the full-name
+                // pass alone stripped nothing. Also try the name with its
+                // generic descriptor words removed ("Bluewater Shopping
+                // Centre" → "Bluewater"); ≥4 chars so a property called
+                // "The Centre" can't reduce to stripping "The".
+                const core = propWords
+                  .replace(/\b(shopping|retail|centre|center|park|mall|estate|quarter|arcade|outlet|village|scheme|plaza|house)\b/gi, "")
+                  .replace(/^the\b/i, "")
+                  .replace(/\s+/g, " ")
+                  .trim();
+                const strips = [prop.name, propWords];
+                if (core.length >= 4 && core.toLowerCase() !== propWords.toLowerCase()) strips.push(core);
+                for (const strip of strips) {
                   if (strip && cardTitle.toLowerCase() !== strip.toLowerCase()) {
                     cardTitle = cardTitle.replace(new RegExp(`[,\\s·-]*${strip.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gi"), "").trim();
                   }
@@ -2041,7 +2101,7 @@ export default function AvailableUnitsPage() {
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => setInterestUnit(u)} data-testid={`unit-interest-${u.id}`}>
                       <Flame className="w-3.5 h-3.5" /> Interest{(interestCounts[u.id] || 0) ? ` (${interestCounts[u.id]})` : ""}
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), effByUnit[u.id])); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </Button>
                   </div>
@@ -2112,9 +2172,14 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
-                    <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                    {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
+                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-12 text-muted-foreground">
+                    {/* The table is wider than its scroll container, so a
+                        cell-centred message lands off-screen — pin it to the
+                        visible viewport instead. */}
+                    <div className="sticky left-0 w-[min(100%,calc(100vw-20rem))] text-center" data-testid="tracker-empty-state">
+                      <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                      {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : (
@@ -2174,7 +2239,12 @@ export default function AvailableUnitsPage() {
                             </a>
                             {(() => {
                               const amlOk = deal.amlCheckCompleted === "YES" || deal.amlCheckCompleted === "N-A";
-                              const feeOk = deal.feeAgreement === "YES";
+                              // Clients are never sent feeAgreement (stripDealFees nulls
+                              // the whole fee family), so testing it here flagged EVERY
+                              // instructed deal on their board as a fee-agreement gap
+                              // while staff, on the same row, saw it clear. Their dot is
+                              // the AML flag only — the one compliance field they do get.
+                              const feeOk = isClientTracker || deal.feeAgreement === "YES";
                               const code = legacyToCode(deal.status);
                               // Only flag for deals on/past SOL — pre-SOL the fields don't matter yet.
                               const promoted = code === "SOL" || code === "EXC" || code === "COM" || code === "INV";
@@ -2661,7 +2731,7 @@ export default function AvailableUnitsPage() {
                               variant="ghost"
                               size="sm"
                               className="h-7 w-7 p-0"
-                              onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
+                              onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), effByUnit[u.id])); setEditItem(u); }}
                               data-testid={`button-edit-${u.id}`}
                               title="Edit unit form (everything is also editable in the row)"
                             >
@@ -2796,6 +2866,7 @@ export default function AvailableUnitsPage() {
         onSubmit={() => createMutation.mutate({ data: formToPayload(form), feeRows: unitFeeRows, feeAllocType: unitFeeAllocType })}
         isPending={createMutation.isPending}
         isEdit={false}
+        hideFees={isClientTracker}
       />
 
       <UnitFormDialog
@@ -2817,6 +2888,7 @@ export default function AvailableUnitsPage() {
         onSubmit={() => editItem && updateMutation.mutate({ id: editItem.id, data: formToPayload(form) })}
         isPending={updateMutation.isPending}
         isEdit={true}
+        hideFees={isClientTracker}
       />
 
       <Dialog open={!!deleteItem} onOpenChange={v => { if (!v) setDeleteItem(null); }}>
@@ -3295,7 +3367,7 @@ export default function AvailableUnitsPage() {
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">{i.companyName || i.contactName || "Unknown"}</p>
                   <p className="text-xs text-muted-foreground truncate">
-                    {[i.contactName && i.companyName ? i.contactName : null, i.interestDate].filter(Boolean).join(" · ")}
+                    {[i.contactName && i.companyName ? i.contactName : null, fmtDate(i.interestDate)].filter(Boolean).join(" · ")}
                   </p>
                   {i.notes && <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{i.notes}</p>}
                 </div>
@@ -3350,7 +3422,7 @@ export default function AvailableUnitsPage() {
               phone-call expression of interest can be recorded. */}
           <div className="border-t pt-3 space-y-2">
             <p className="text-xs font-medium">Log interest</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="min-w-0">
                 <CrmPicker
                   items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
@@ -3359,7 +3431,7 @@ export default function AvailableUnitsPage() {
                   onSelect={(id, name) => setInterestForm(f => ({ ...f, companyId: id, companyName: name }))}
                   placeholder="Company / brand"
                   testId="interest-company"
-                onCreate={createCrmCompany}
+                onCreate={isClientTracker ? undefined : createCrmCompany}
                 createLabel="company"
                 />
               </div>
@@ -3411,7 +3483,7 @@ export default function AvailableUnitsPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">{v.viewingDate}{v.viewingTime ? ` at ${v.viewingTime}` : ""}</span>
+                      <span className="text-xs text-muted-foreground">{fmtDate(v.viewingDate)}{v.viewingTime ? ` at ${v.viewingTime}` : ""}</span>
                       {/* Viewings live in the team calendar — link to the
                           actual event rather than making people hunt for it. */}
                       {v.calendarEventId && (
@@ -3463,7 +3535,7 @@ export default function AvailableUnitsPage() {
                     onSelect={(id, name) => setViewingForm(f => ({ ...f, companyId: id, companyName: name }))}
                     placeholder="Select company"
                     testId="viewing-company"
-                  onCreate={createCrmCompany}
+                  onCreate={isClientTracker ? undefined : createCrmCompany}
                   createLabel="company"
                   />
                 </div>
@@ -3480,8 +3552,11 @@ export default function AvailableUnitsPage() {
                 </div>
               </div>
               {/* min-w-0 — iOS date/time inputs refuse to shrink below their
-                  intrinsic width and pushed the Time field off-screen at 390px. */}
-              <div className="grid grid-cols-2 gap-3">
+                  intrinsic width and pushed the Time field off-screen at 390px.
+                  They still need a full column on the phone: a native date
+                  control wants ~166px and clipped its own value + picker in a
+                  half-width cell at 390px, so the pair stacks below sm. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="min-w-0">
                   <Label className="text-xs">Date</Label>
                   <Input type="date" className="min-w-0" value={viewingForm.viewingDate} onChange={e => setViewingForm(f => ({ ...f, viewingDate: e.target.value }))} data-testid="viewing-date" />
@@ -3571,7 +3646,7 @@ export default function AvailableUnitsPage() {
                         </Button>
                       )}
                       <Badge variant="outline" className={o.status === "Accepted" ? "bg-emerald-100 text-emerald-800" : o.status === "Rejected" ? "bg-red-100 text-red-800" : ""}>{o.status || "Pending"}</Badge>
-                      <span className="text-xs text-muted-foreground">{o.offerDate}</span>
+                      <span className="text-xs text-muted-foreground">{fmtDate(o.offerDate)}</span>
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit offer" title="Edit offer" onClick={() => {
                         setOfferForm({ companyName: o.companyName || "", companyId: o.companyId || "", contactName: o.contactName || "", contactId: o.contactId || "", offerDate: o.offerDate || "", rentPa: o.rentPa != null ? String(o.rentPa) : "", rentFreeMonths: o.rentFreeMonths != null ? String(o.rentFreeMonths) : "", termYears: o.termYears != null ? String(o.termYears) : "", breakOption: o.breakOption || "", incentives: o.incentives || "", premium: o.premium != null ? String(o.premium) : "", fittingOutContribution: o.fittingOutContribution != null ? String(o.fittingOutContribution) : "", comments: o.comments || "" });
                         setEditingOfferId(o.id);
@@ -3612,7 +3687,7 @@ export default function AvailableUnitsPage() {
                     onSelect={(id, name) => setOfferForm(f => ({ ...f, companyId: id, companyName: name }))}
                     placeholder="Select company"
                     testId="offer-company"
-                  onCreate={createCrmCompany}
+                  onCreate={isClientTracker ? undefined : createCrmCompany}
                   createLabel="company"
                   />
                 </div>
@@ -3628,7 +3703,7 @@ export default function AvailableUnitsPage() {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="min-w-0">
                   <Label className="text-xs">Date</Label>
                   <Input type="date" className="min-w-0" value={offerForm.offerDate} onChange={e => setOfferForm(f => ({ ...f, offerDate: e.target.value }))} data-testid="offer-date" />
@@ -4468,7 +4543,7 @@ function MarketingFilesDialog({
 function UnitFormDialog({
   open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, crmCompanies = [],
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
-  showAllFields, setShowAllFields, isEdit,
+  showAllFields, setShowAllFields, isEdit, hideFees = false,
   onSubmit, isPending,
 }: {
   open: boolean;
@@ -4487,6 +4562,9 @@ function UnitFormDialog({
   showAllFields: boolean;
   setShowAllFields: (v: boolean) => void;
   isEdit: boolean;
+  /** Client logins never see or set BGP's fee — same split the deal form
+      makes (deals.tsx hideFees). Quoting rent stays: it is theirs. */
+  hideFees?: boolean;
   onSubmit: () => void;
   isPending: boolean;
 }) {
@@ -4776,7 +4854,7 @@ function UnitFormDialog({
               );
             })()}
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 col-span-2 sm:col-span-1">
             <Label>Available Date</Label>
             <Input type="date" className="min-w-0" value={form.availableDate} onChange={e => upd("availableDate", e.target.value)} />
           </div>
@@ -4839,8 +4917,8 @@ function UnitFormDialog({
               Total so manual numbers survive). FeeAllocationEditor
               flows to the linked deal's allocations on submit. */}
           <div className="col-span-2 border-t pt-3 space-y-3">
-            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Financials & fee split</div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{hideFees ? "Financials" : "Financials & fee split"}</div>
+            <div className={`grid grid-cols-1 gap-3 ${hideFees ? "" : "sm:grid-cols-3"}`}>
               <div>
                 <Label className="text-xs">Quoting Rent (£ p.a.)</Label>
                 <CurrencyInput value={form.askingRent} onChange={v => upd("askingRent", v)} placeholder="e.g. 85,000" prefix="£" />
@@ -4849,6 +4927,7 @@ function UnitFormDialog({
                   Price on application (website shows POA)
                 </label>
               </div>
+              {!hideFees && (<>
               <div>
                 <Label className="text-xs">% Agency fee</Label>
                 <Input type="number" step="0.01" value={form.feePercentage}
@@ -4868,7 +4947,9 @@ function UnitFormDialog({
                 <Label className="text-xs">Total fee (£)</Label>
                 <CurrencyInput value={form.fee} onChange={v => upd("fee", v)} placeholder="auto from rent × %" prefix="£" />
               </div>
+              </>)}
             </div>
+            {!hideFees && (
             <div>
               <Label className="text-xs">BGP fee split</Label>
               <div className="border rounded-md p-2.5 bg-muted/30">
@@ -4882,6 +4963,7 @@ function UnitFormDialog({
                 />
               </div>
             </div>
+            )}
           </div>
 
           <div className="col-span-2">
@@ -4971,7 +5053,7 @@ function UnitFormDialog({
                   </SelectContent>
                 </Select>
               </div>
-              <div>
+              <div className="col-span-2 sm:col-span-1">
                 <Label>Marketing Start Date</Label>
                 <Input type="date" value={form.marketingStartDate} onChange={e => upd("marketingStartDate", e.target.value)} />
               </div>

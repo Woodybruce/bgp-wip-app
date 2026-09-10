@@ -3,6 +3,7 @@ import { requireAuth } from "./auth";
 import { db, pool } from "./db";
 import { landlordDebtEvents, investmentComps, insertLandlordDebtEventSchema } from "@shared/schema";
 import { eq, or, desc } from "drizzle-orm";
+import { dayOverdueSql } from "../shared/day-overdue";
 
 export function registerLandlordHunterRoutes(app: Express) {
   // List debt/capital events for a landlord
@@ -103,7 +104,7 @@ export function registerLandlordHunterRoutes(app: Express) {
           FROM lease_events le
           JOIN crm_properties p ON p.id = le.property_id
           WHERE le.event_date IS NOT NULL
-            AND le.event_date >= NOW()
+            AND NOT (${dayOverdueSql('le.event_date')})
             AND le.event_date <= NOW() + INTERVAL '12 months'
             AND p.landlord_id IS NOT NULL
           GROUP BY p.landlord_id

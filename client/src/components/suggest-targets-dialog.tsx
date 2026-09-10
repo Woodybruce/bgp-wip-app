@@ -27,14 +27,24 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
 }) {
   const { toast } = useToast();
   const defaultAdd = async (pick: BrandPick) => {
-    const res = await apiRequest("POST", "/api/unit-briefs", { unitId: unit!.id });
-    const brief = await res.json();
+    // Reuse the unit's existing brief — a blind POST minted a SECOND brief
+    // per added brand, and the unit page only ever reads the newest one, so
+    // every target added before the last one vanished from the unit (r540).
+    const existing = await apiRequest("GET", `/api/available-units/${unit!.id}/brief`)
+      .then((r) => r.json())
+      .catch(() => null);
+    let brief = existing;
+    if (!brief?.id) {
+      const res = await apiRequest("POST", "/api/unit-briefs", { unitId: unit!.id });
+      brief = await res.json();
+    }
     await apiRequest("POST", `/api/unit-briefs/${brief.id}/targets`, {
       operatorName: pick.name,
       companyId: pick.companyId,
       priority: "B",
     });
     queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit!.id, "brief"] });
     toast({ title: "Target added", description: pick.name });
   };
   const add = onAdd || defaultAdd;
@@ -72,13 +82,15 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
             {suggestions.map((s: any, i: number) => (
               <div key={`${s.companyId || s.name}-${i}`} className="flex items-center gap-2 border rounded-md px-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">
+                  {/* div, not <p> — Badge renders a div and React warns
+                      "<div> cannot appear as a descendant of <p>" (r541). */}
+                  <div className="text-sm font-medium truncate">
                     {s.name}
                     <Badge variant="outline" className={`ml-2 text-[9px] ${s.source === "live_requirement" ? "text-emerald-700 border-emerald-200" : "text-blue-700 border-blue-200"}`}>
                       {s.source === "live_requirement" ? "live requirement" : "brand"}
                     </Badge>
                     {s.aiScore != null && <span className="ml-2 text-[10px] text-muted-foreground tabular-nums">{s.aiScore}</span>}
-                  </p>
+                  </div>
                   <p className="text-[11px] text-muted-foreground truncate" title={s.reason || ""}>
                     {s.reason || [s.size, s.use, s.agent && `via ${s.agent}`].filter(Boolean).join(" · ")}
                   </p>

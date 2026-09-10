@@ -142,6 +142,13 @@ installGoogleBudgetGuard();
     `CREATE INDEX IF NOT EXISTS idx_lease_events_property ON lease_events(property_id)`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_date ON lease_events(event_date)`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_status ON lease_events(status)`,
+    // PLA matters write their key dates out as lease events and rewrite them
+    // by matter, so the Drizzle schema carries matter_id and every insert
+    // names the column. Any database that never ran migrations/0009 answered
+    // "Log event" with a 400 ("column matter_id does not exist") — the board
+    // could not be written to at all (r556).
+    `ALTER TABLE lease_events ADD COLUMN IF NOT EXISTS matter_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS lease_events_matter_idx ON lease_events (matter_id) WHERE matter_id IS NOT NULL`,
     `CREATE TABLE IF NOT EXISTS property_intelligence_cache (
       cache_key TEXT PRIMARY KEY,
       payload JSONB NOT NULL,
@@ -3634,7 +3641,21 @@ app.use("/api/branding/assets", express.static(
     //    /leasing-schedule/property/:id, /company-property-links — are not
     //    matched here and keep working.
     /^\/api\/dashboard\/intelligence/,
+    // BGP's own P&L. firm-summary is the firm-wide fee position — billed YTD,
+    // WIP, the ski target, deal count and headcount; individual-leaderboard is
+    // the per-agent billing/pipeline strip. Both rode the allowed
+    // /api/dashboard/ prefix on requireAuth alone, so a landlord login could
+    // read what BGP has billed and what each agent is worth. Only /hr reads
+    // them and that page is staff-only, so nothing client-side breaks. (r536)
+    /^\/api\/dashboard\/(firm-summary|individual-leaderboard)\b/,
     /^\/api\/crm\/(landlords|stats)\b/,
+    // BGP's own prospecting pipeline (the admin-only /leads page). The list
+    // and the :id detail were never company-scoped, so a Landsec login could
+    // pull every lead the firm is chasing — name, email, phone, free-text
+    // notes — through the network tab under the allowed /api/crm/ prefix.
+    // No client surface reads leads, so block the whole family (the
+    // convert-to-contact POST included). (r535)
+    /^\/api\/crm\/leads\b/,
     // property-deal-links + property-tenants are no longer blocked: the
     // client Properties page needs both maps and the handlers now scope
     // them to the caller's own portfolio (same pattern as property-agents).
@@ -3661,6 +3682,20 @@ app.use("/api/branding/assets", express.static(
     // scope-check the property via clientBlockedForProperty.
     /^\/api\/properties\/[^/]+\/(360|orphan-deals|instructions|project-files|duplicate-units|unresolved-tenants|linkage-audit)\b/,
     /^\/api\/image-studio\/orphans/,
+    // BGP's own map work. /api/map-annotations is already staff-only, so the
+    // layer list was a name-only leak with nothing behind it: the handler
+    // returns every layer with shared_with_team = TRUE, i.e. a Landsec login
+    // read "Brent Cross deck", "acquisition targets" and their item counts
+    // out of the /map sidebar, and both the + new layer and delete controls
+    // 403'd. Whole family blocked; the client map keeps every scoped layer
+    // it had. (r537)
+    /^\/api\/map-layers\b/,
+    // Which paywalled publications BGP holds subscriber cookies for, by
+    // label, env-var name and source — BGP's own subscription config, riding
+    // the allowed /api/news-feed/ prefix on requireAuth alone. Only the
+    // staff Sources tab reads it (clients get ClientNewsFeed instead), and
+    // the cookie POST/DELETE are write-denied already. (r537)
+    /^\/api\/news-feed\/auth-cookies\b/,
   ];
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,
@@ -4327,8 +4362,44 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             UPDATE leasing_schedule_units ls SET tenancy_unit_id = NULL
              WHERE ls.tenancy_unit_id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.id = ls.tenancy_unit_id)`);
-          const total = (delAvail.rowCount || 0) + (unlinkAvail.rowCount || 0) + (delLs.rowCount || 0) + (unlinkLs.rowCount || 0);
-          if (total) console.log(`[orphan-projection heal] tracker: ${delAvail.rowCount} duplicate(s) removed + ${unlinkAvail.rowCount} unlinked; leasing: ${delLs.rowCount} removed + ${unlinkLs.rowCount} unlinked`);
+          // Same duplicate class, second door: re-imports also spawned tracker
+          // rows whose tenancy_unit_id is LIVE but points at a duplicate
+          // tenancy row, so the sweep above (dangling links only) leaves them
+          // standing. The canonical spine already knows they are one unit —
+          // they share property_units.unit_id — so collapse on that key too.
+          // Bluewater carried U062 x4, L090 x2 and L130 x2 this way and the
+          // client's own dashboard, Letting Tracker, risk register and sq ft
+          // total counted every copy (found r590, Mark Warne's board paper).
+          // Bare copies only: no deal, viewing, offer, interest, brief or
+          // marketing file, and the name must match too. Keeps the richest
+          // row, tie-broken oldest-first. Idempotent.
+          const delDupeUnitId = await pool.query(`
+            DELETE FROM available_units au
+             WHERE au.unit_id IS NOT NULL
+               AND au.deal_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM unit_viewings v WHERE v.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_offers f WHERE f.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_interest i WHERE i.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_briefs b WHERE b.unit_id = au.id)
+               AND NOT EXISTS (SELECT 1 FROM unit_marketing_files mf WHERE mf.unit_id = au.id)
+               AND EXISTS (
+                     SELECT 1 FROM available_units au2
+                      WHERE au2.id <> au.id
+                        AND au2.property_id = au.property_id
+                        AND au2.unit_id = au.unit_id
+                        AND lower(trim(coalesce(au2.unit_name, ''))) = lower(trim(coalesce(au.unit_name, '')))
+                        AND (
+                              au2.deal_id IS NOT NULL
+                           OR EXISTS (SELECT 1 FROM unit_viewings v2 WHERE v2.unit_id = au2.id)
+                           OR EXISTS (SELECT 1 FROM unit_offers f2 WHERE f2.unit_id = au2.id)
+                           OR EXISTS (SELECT 1 FROM unit_interest i2 WHERE i2.unit_id = au2.id)
+                           OR EXISTS (SELECT 1 FROM unit_briefs b2 WHERE b2.unit_id = au2.id)
+                           OR EXISTS (SELECT 1 FROM unit_marketing_files m2 WHERE m2.unit_id = au2.id)
+                           OR (coalesce(au2.created_at, 'epoch'::timestamptz), au2.id)
+                            < (coalesce(au.created_at,  'epoch'::timestamptz), au.id)
+                        ))`);
+          const total = (delAvail.rowCount || 0) + (unlinkAvail.rowCount || 0) + (delLs.rowCount || 0) + (unlinkLs.rowCount || 0) + (delDupeUnitId.rowCount || 0);
+          if (total) console.log(`[orphan-projection heal] tracker: ${delAvail.rowCount} duplicate(s) removed + ${unlinkAvail.rowCount} unlinked + ${delDupeUnitId.rowCount} same-unit duplicate(s) collapsed; leasing: ${delLs.rowCount} removed + ${unlinkLs.rowCount} unlinked`);
         } catch (e: any) {
           console.error("[orphan-projection heal] failed:", e?.message);
         }
@@ -5864,8 +5935,14 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         // of the WIP cleanup that used to live alongside it.
         try {
           const { pool: dbPool } = await import("./db");
-          const statusFix1 = await dbPool.query(`UPDATE crm_deals SET status = 'SOLs' WHERE status = 'Solicitors'`);
-          const statusFix2 = await dbPool.query(`UPDATE crm_deals SET status = 'Live' WHERE status = 'Active'`);
+          // Write the CODES, not labels. These two ran 1s after boot — i.e.
+          // AFTER the canonicaliser above — and stamped the LABELS 'SOLs' and
+          // 'Live' into a codes column, where they then sat invisible to every
+          // code predicate until the next restart. 'Solicitors' is already
+          // handled by the canonicaliser, but 'Active' is NOT in its
+          // vocabulary, so this was the live one (r589).
+          const statusFix1 = await dbPool.query(`UPDATE crm_deals SET status = 'SOL' WHERE LOWER(TRIM(status)) IN ('solicitors', 'sols')`);
+          const statusFix2 = await dbPool.query(`UPDATE crm_deals SET status = 'LIVE' WHERE LOWER(TRIM(status)) = 'active'`);
           if ((statusFix1.rowCount || 0) + (statusFix2.rowCount || 0) > 0) {
             console.log(`[status-fix] Updated ${(statusFix1.rowCount || 0) + (statusFix2.rowCount || 0)} deal statuses`);
           }

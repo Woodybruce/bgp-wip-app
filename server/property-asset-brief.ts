@@ -23,8 +23,12 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+// Units "actively in play" on the Letting Tracker — one definition, shared
+// with the portfolio-contacts queries that ask the same question.
+import { IN_PLAY_STATUS_RX } from "./portfolio-contacts";
 
 const router = Router();
+
 
 interface FocusItem {
   id: string;
@@ -153,7 +157,11 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     //     2026-08-03). Surface every unit not yet completed/invoiced.
     const lettingsQ = await pool.query<any>(
       `SELECT au.id, au.unit_name, au.marketing_status, au.sqft, au.asking_rent,
-              au.deal_id, au.viewings_count, au.last_viewing_date, tc.name AS operator_name
+              au.deal_id, au.last_viewing_date, tc.name AS operator_name,
+              -- Live count (r570): available_units.viewings_count is never
+              -- written, so the brief printed no viewings on units the
+              -- tracker showed several on.
+              (SELECT COUNT(*)::int FROM unit_viewings v WHERE v.unit_id = au.id) AS viewings_count
          FROM available_units au
          LEFT JOIN crm_companies tc ON tc.id = au.tenant_company_id
         WHERE au.property_id = $1
@@ -162,8 +170,9 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
         ORDER BY CASE lower(au.marketing_status)
                    WHEN 'exchanged' THEN 0 WHEN 'exc' THEN 0
                    WHEN 'solicitors' THEN 1 WHEN 'sol' THEN 1
-                   WHEN 'negotiating' THEN 2 WHEN 'neg' THEN 2
-                   WHEN 'under_offer' THEN 3 ELSE 4 END,
+                   WHEN 'hot' THEN 2 WHEN 'hots' THEN 2
+                   WHEN 'negotiating' THEN 3 WHEN 'neg' THEN 3
+                   WHEN 'under_offer' THEN 4 ELSE 5 END,
                  au.unit_name
         LIMIT 40`,
       [propertyId]
@@ -204,7 +213,8 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     for (const u of lettingsQ.rows as any[]) {
       if (u.deal_id) continue;
       const s = (u.marketing_status || "").toLowerCase();
-      if (s === "neg" || s === "negotiating" || s === "under_offer" || s === "und") {
+      if (s === "neg" || s === "negotiating" || s === "under_offer" || s === "und"
+          || s === "hot" || s === "hots" || s === "heads of terms") {
         pipeline.hots++;
         pipelineItems.hots.push({ label: u.operator_name || u.unit_name, sub: u.operator_name ? u.unit_name : u.marketing_status });
       } else if (s === "sol" || s === "solicitors" || s === "exc" || s === "exchanged") {
@@ -362,15 +372,47 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     // 6. Performance scorecard — light first cut, derived from the
     //    leasing schedule (top + bottom MAT psqft, vacancy rate,
     //    weighted-average unexpired lease term).
+    // Occupancy counts the leasing board the same way the board's own
+    // stat pills do (status === 'Occupied' exactly, leasing-schedule.tsx).
+    // The old test was a negative regex on 'vacant|available', which
+    // counted the tracker's 'AVA' code and any NULL status as OCCUPIED —
+    // so the brief told the client 90 occupied of 165 while the board it
+    // reads from said 88 (r571).
     const perfQ = await pool.query<any>(
       `SELECT
-         COUNT(*) FILTER (WHERE COALESCE(LOWER(status), '') !~ 'vacant|available') AS occupied_units,
-         COUNT(*) AS total_units,
-         AVG(EXTRACT(EPOCH FROM (lease_expiry - NOW())) / 31557600.0) FILTER (WHERE lease_expiry > NOW()) AS wault_years
+         COUNT(*) FILTER (WHERE status = 'Occupied') AS occupied_units,
+         COUNT(*) AS total_units
          FROM leasing_schedule_units WHERE property_id = $1`,
       [propertyId]
     ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
     const perfRow = perfQ.rows[0] || {};
+    // WAULT comes off the tenancy master, not the leasing board:
+    // leasing_schedule_units.lease_expiry is never populated (0 of 165
+    // Bluewater rows), so the brief's one lease-term headline read "—"
+    // for every client on every property while tenancy_schedule_units
+    // carried 69 live expiries and the property's own tenancy board
+    // printed a WAULT from them. Same rule as that board
+    // (PropertyTenancySchedule): terms over 60 years are placeholder
+    // expiry dates and are excluded; rent-weighted by passing rent when
+    // any row carries one, otherwise a simple mean — so the two agree by
+    // construction rather than by luck (r571).
+    const waultQ = await pool.query<any>(
+      `WITH t AS (
+         SELECT EXTRACT(EPOCH FROM (lease_expiry - NOW())) / 31557600.0 AS yrs,
+                COALESCE(passing_rent_pa, 0) AS rent
+           FROM tenancy_schedule_units
+          WHERE property_id = $1 AND lease_expiry IS NOT NULL
+       ), inrange AS (
+         SELECT yrs, rent FROM t WHERE yrs > 0 AND yrs <= 60
+       )
+       SELECT CASE WHEN COALESCE(SUM(rent), 0) > 0
+                   THEN SUM(yrs * rent) / SUM(rent)
+                   ELSE AVG(yrs) END AS wault_years,
+              COUNT(*)::int AS wault_units
+         FROM inrange`,
+      [propertyId]
+    ).catch((e: any) => { console.error("[asset-brief] wault sub-query failed:", e?.message); return { rows: [] as any[] }; });
+    const waultRow = waultQ.rows[0] || {};
     const topPsqftQ = await pool.query<any>(
       `SELECT unit_name, tenant_name, mat_psqft, lfl_percent
          FROM leasing_schedule_units
@@ -389,7 +431,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       total_units: Number(perfRow.total_units || 0),
       occupied_units: Number(perfRow.occupied_units || 0),
       vacancy_rate: perfRow.total_units ? 1 - Number(perfRow.occupied_units || 0) / Number(perfRow.total_units) : 0,
-      wault_years: perfRow.wault_years ? Number(perfRow.wault_years) : null,
+      wault_years: waultRow.wault_years != null ? Number(waultRow.wault_years) : null,
       top_psqft: topPsqftQ.rows,
       bottom_psqft: bottomPsqftQ.rows,
     };
@@ -1125,7 +1167,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
          SELECT au.id, au.unit_name, au.marketing_status, au.tenant_company_id, au.deal_id
            FROM available_units au
           WHERE au.property_id = $1
-            AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+            AND lower(COALESCE(au.marketing_status,'')) ~ ${IN_PLAY_STATUS_RX}
        ),
        parties AS (
          SELECT u.unit_name, u.marketing_status, u.tenant_company_id AS company_id
@@ -1171,7 +1213,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
     const unlinkedQ = pool.query(
       `SELECT au.unit_name, au.marketing_status FROM available_units au
         WHERE au.property_id = $1
-          AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+          AND lower(COALESCE(au.marketing_status,'')) ~ ${IN_PLAY_STATUS_RX}
           AND au.tenant_company_id IS NULL AND au.deal_id IS NULL
           AND NOT EXISTS (SELECT 1 FROM unit_offers o WHERE o.unit_id = au.id AND o.company_id IS NOT NULL)
         ORDER BY au.unit_name LIMIT 8`,
@@ -1439,6 +1481,14 @@ router.get("/api/company-portfolio/:companyId/tasks", requireAuth, async (req: R
          LEFT JOIN crm_deals d ON d.id = t.linked_deal_id
         WHERE (t.linked_property_id IN (${PROPS})
                OR t.linked_deal_id IN (SELECT id FROM crm_deals WHERE property_id IN (${PROPS})))
+          -- BGP tasks only. The board this feeds is headed "Portfolio
+          -- activity — BGP team / What the BGP team is working on", and it
+          -- was also counting tasks the CLIENT's own logins had written: a
+          -- landlord who typed a focus item on his own property page saw it
+          -- come straight back as BGP work in progress, and the count
+          -- over-reported BGP effort (r616). Client-authored tasks already
+          -- show on My Tasks directly above this board.
+          AND COALESCE(u.role, '') <> 'Client'
           AND (t.status <> 'done' OR t.completed_at > NOW() - INTERVAL '60 days')
         ORDER BY (t.status = 'done'), COALESCE(t.due_date, t.created_at), t.created_at
         LIMIT 300`,

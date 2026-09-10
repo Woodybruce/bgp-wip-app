@@ -12,6 +12,7 @@
 //     already sitting there when the user opens the app.
 
 import { pool } from "./db";
+import { isTaskOverdue } from "@shared/task-due";
 
 export interface BriefingResult {
   briefing: string;
@@ -62,7 +63,7 @@ export async function generateBriefing(userId: string, msToken: string | null): 
      ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, due_date ASC NULLS LAST`,
     [userId]
   );
-  const overdueTasks = tasks.rows.filter((t: any) => t.due_date && new Date(t.due_date) < new Date());
+  const overdueTasks = tasks.rows.filter((t: any) => isTaskOverdue(t.due_date));
   const todayTasks = tasks.rows.filter((t: any) => {
     if (!t.due_date) return false;
     return new Date(t.due_date).toDateString() === new Date().toDateString();

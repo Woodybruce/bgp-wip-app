@@ -46,7 +46,41 @@ import {
   availableUnits,
 } from "@shared/schema";
 import { escapeLike } from "./utils/escape-like";
+import { legacyToCode } from "@shared/deal-status";
 import { db, pool } from "./db";
+
+// available_units.marketing_status is a CODES column — its vocabulary is
+// LETTING_STATUSES, and the boot auto-migrate (server/index.ts) rewrites
+// any legacy label it finds. Writers that stamped a LABEL ("Available")
+// produced rows that were invisible to every code predicate — the AVA
+// available_count, the letting-tracker pills, the pathway vacancy, the
+// asset-brief funnel — until the next server start healed them. Canonicalise
+// at the single write boundary so no caller can reintroduce that (r588,
+// handed over by r587). Unknown values are left alone: legacyToCode returns
+// null for anything outside the vocabulary, and dropping it would lose data.
+function canonicaliseUnitStatus<T extends { marketingStatus?: string | null }>(v: T): T {
+  const raw = v?.marketingStatus;
+  if (typeof raw !== "string" || !raw.trim()) return v;
+  const code = legacyToCode(raw);
+  return code && code !== raw ? { ...v, marketingStatus: code } : v;
+}
+
+// Same boundary for `crm_deals.status`, which is the SAME codes vocabulary
+// (DEAL_STATUS_CODES) and read by raw SQL code predicates — the firm's WIP
+// hero is `status IN ('AVA','NEG','HOT','SOL','EXC','COM')` (hr-routes.ts).
+// A label stored there ("Under Offer") drops the deal out of WIP pounds AND
+// the deal count, so the firm's forecast silently shrinks by that fee. The
+// AI write doors (ChatBGP create_deal/update_deal, the Models-page agent)
+// take a free-text status straight from the model, so canonicalise here
+// rather than at each door. Unknown values are left alone: legacyToCode
+// returns null outside the vocabulary, and 'ARCH' / 'leasing comps' are
+// deliberately-stored non-codes that the exclusion predicates rely on.
+function canonicaliseDealStatus<T extends { status?: string | null }>(v: T): T {
+  const raw = v?.status;
+  if (typeof raw !== "string" || !raw.trim()) return v;
+  const code = legacyToCode(raw);
+  return code && code !== raw ? { ...v, status: code } : v;
+}
 import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull, arrayContains } from "drizzle-orm";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -996,6 +1030,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteCrmProperty(id: string): Promise<void> {
+    const {
+      propertyUnits, tenancyScheduleUnits, leasingScheduleUnits, leasingScheduleAudit,
+      unitMarketingFiles, unitViewings, unitOffers,
+    } = await import("@shared/schema");
     await db.transaction(async (tx) => {
       await tx.update(crmDeals).set({ propertyId: null }).where(eq(crmDeals.propertyId, id));
       await tx.delete(crmPropertyAgents).where(eq(crmPropertyAgents.propertyId, id));
@@ -1004,6 +1042,26 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(crmContactProperties).where(eq(crmContactProperties.propertyId, id));
       await tx.delete(crmCompanyProperties).where(eq(crmCompanyProperties.propertyId, id));
       await tx.delete(crmReqInvestProperties).where(eq(crmReqInvestProperties.propertyId, id));
+      // The unit spine and its two projections are OWNED by the property —
+      // once the property row is gone nothing can reach them, but every
+      // count that scans the table still does. Deleting a scheme used to
+      // strand its whole rent roll: one QA re-import left 157 orphan
+      // leasing_schedule_units rows behind, and a stranded available_units
+      // row keeps a card on the firm-wide Letting Tracker for a scheme that
+      // no longer exists. Children of the tracker rows go first, mirroring
+      // deleteAvailableUnit.
+      const trackerRows = await tx.select({ id: availableUnits.id })
+        .from(availableUnits).where(eq(availableUnits.propertyId, id));
+      for (const u of trackerRows) {
+        await tx.delete(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, u.id));
+        await tx.delete(unitViewings).where(eq(unitViewings.unitId, u.id));
+        await tx.delete(unitOffers).where(eq(unitOffers.unitId, u.id));
+      }
+      await tx.delete(availableUnits).where(eq(availableUnits.propertyId, id));
+      await tx.delete(leasingScheduleAudit).where(eq(leasingScheduleAudit.propertyId, id));
+      await tx.delete(leasingScheduleUnits).where(eq(leasingScheduleUnits.propertyId, id));
+      await tx.delete(tenancyScheduleUnits).where(eq(tenancyScheduleUnits.propertyId, id));
+      await tx.delete(propertyUnits).where(eq(propertyUnits.propertyId, id));
       await tx.delete(crmProperties).where(eq(crmProperties.id, id));
     });
   }
@@ -1057,7 +1115,7 @@ export class DatabaseStorage implements IStorage {
         coerced[f] = new Date(coerced[f]);
       }
     }
-    const normalised = await normaliseInternalAgents(coerced);
+    const normalised = canonicaliseDealStatus(await normaliseInternalAgents(coerced));
     const [d] = await db.insert(crmDeals).values(normalised).returning();
     return d;
   }
@@ -1071,7 +1129,7 @@ export class DatabaseStorage implements IStorage {
         coerced[f] = new Date(coerced[f]);
       }
     }
-    const normalised = await normaliseInternalAgents(coerced);
+    const normalised = canonicaliseDealStatus(await normaliseInternalAgents(coerced));
     const [d] = await db.update(crmDeals).set({ ...normalised, updatedAt: new Date() }).where(eq(crmDeals.id, id)).returning();
     return d;
   }
@@ -1333,12 +1391,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAvailableUnit(unit: InsertAvailableUnit): Promise<AvailableUnit> {
-    const [created] = await db.insert(availableUnits).values(unit).returning();
+    // An ABSENT marketingStatus is the one way a label still reaches this
+    // codes column: canonicaliseUnitStatus only rewrites a status that is
+    // there, so drizzle omits the column and postgres applies the table
+    // default — the literal 'Available'. Supply the code the default means.
+    const values = canonicaliseUnitStatus(unit) as InsertAvailableUnit;
+    const status = values.marketingStatus;
+    const [created] = await db.insert(availableUnits).values(
+      typeof status === "string" && status.trim() ? values : { ...values, marketingStatus: "AVA" }
+    ).returning();
     return created;
   }
 
   async updateAvailableUnit(id: string, updates: Partial<InsertAvailableUnit>): Promise<AvailableUnit> {
-    const [updated] = await db.update(availableUnits).set({ ...updates, updatedAt: new Date() }).where(eq(availableUnits.id, id)).returning();
+    const [updated] = await db.update(availableUnits).set({ ...canonicaliseUnitStatus(updates), updatedAt: new Date() }).where(eq(availableUnits.id, id)).returning();
     return updated;
   }
 

@@ -4,13 +4,13 @@ import { storage } from "./storage";
 import { pool } from "./db";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql, isClientRequestUser } from "./company-scope";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import os from "os";
 import crypto from "crypto";
-import { saveFile, getFile, recordUserUpload } from "./file-storage";
+import { saveFile, getFile, recordUserUpload, clientCanReachChatMedia } from "./file-storage";
 import { contentDispositionFor } from "./utils/http-headers";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
@@ -39,7 +39,8 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
-import { legacyToCode } from "@shared/deal-status";
+import { legacyToCode, DEAL_STATUS_CODES, dealStatusLabel } from "@shared/deal-status";
+import { codeToLeasingStatus } from "@shared/lease-status-mirror";
 import { registerIngestRoutes } from "./ingest-routes";
 import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { setupStripeIssuingRoutes } from "./stripe-issuing";
@@ -165,6 +166,21 @@ async function resolveMentionedUserIds(content: unknown, explicit: unknown): Pro
   return [...ids];
 }
 
+// A CRM picker that was never touched sends "" for its id, not undefined —
+// so a tracker viewing/offer logged without picking a company banked
+// company_id = '' rather than NULL. Consumers test IS NOT NULL (the asset
+// brief's "link the brand" gap list among them), so a blank string reads as
+// "counterparty recorded" while naming nobody, and the unit falls into the
+// hole between the parties group and the gap list (r594). The interest
+// writer already coalesced every field; these two did not.
+function blankToNull<T extends Record<string, any>>(body: T): T {
+  const out: Record<string, any> = { ...body };
+  for (const k of ["companyId", "contactId", "companyName", "contactName"]) {
+    if (out[k] === "") out[k] = null;
+  }
+  return out as T;
+}
+
 function stripTagTokens(text: string): string {
   return text.replace(TAG_TOKEN_REGEX, "@$1");
 }
@@ -207,7 +223,7 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
         const r = await pool.query(
           `SELECT p.name, p.status, p.asset_class,
             (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id) as unit_count,
-            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'Available') as available_count
+            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'AVA') as available_count
            FROM crm_properties p WHERE p.id = $1`, [id]);
         const p = r.rows[0];
         if (p) {
@@ -558,6 +574,16 @@ export async function registerRoutes(
       if (!user || user.isActive === false) return res.status(401).json({ message: "Not authenticated" });
       const filename = String(req.params.filename || "");
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
+      // chat-media is a flat namespace shared with KYC documents, so a
+      // client login only gets files it can already reach (own upload, or
+      // posted in a thread it belongs to). Staff are unrestricted.
+      if (await isClientRequestUser(req)) {
+        const callerId = (req.session?.userId || req.tokenUserId) as string;
+        if (!(await clientCanReachChatMedia(callerId, filename))) {
+          console.warn(`[chat-media] client ${callerId} denied ${filename}`);
+          return res.status(403).json({ message: "Not available to your account" });
+        }
+      }
       res.set("Cache-Control", "private, no-store");
       const file = await getFile(`chat-media/${filename}`);
       if (!file) {
@@ -4319,7 +4345,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           au.deal_id AS "dealId",
           d.deal_ref AS "dealRef",
           au.agent_user_ids AS "agentUserIds",
-          au.viewings_count AS "viewingsCount",
+          -- Live count from unit_viewings, not the denormalised
+          -- available_units.viewings_count column: nothing has ever
+          -- written that column, so every consumer of it read 0 while
+          -- /all-viewings-counts (same table, same rule) read the real
+          -- figure — the same unit showed "2 viewings" on the tracker
+          -- and none on the phone letting card (r570).
+          (SELECT COUNT(*)::int FROM unit_viewings v WHERE v.unit_id = au.id) AS "viewingsCount",
           au.last_viewing_date AS "lastViewingDate",
           au.marketing_start_date AS "marketingStartDate",
           au.show_on_website AS "showOnWebsite",
@@ -4530,6 +4562,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
+      const iUnit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, iUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitInterest } = await import("@shared/schema");
       const rows = await db.select().from(unitInterest)
         .where(eq(unitInterest.unitId, req.params.id as string))
@@ -4545,6 +4581,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // sweep. source stays null so manual rows are distinguishable.
   app.post("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
+      const iUnit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, iUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitInterest, insertUnitInterestSchema } = await import("@shared/schema");
       const parsed = insertUnitInterestSchema.parse({
         unitId: req.params.id,
@@ -4570,6 +4610,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/interest/:interestId", requireAuth, async (req, res) => {
     try {
       const { unitInterest } = await import("@shared/schema");
+      const [existing] = await db.select().from(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
+      if (existing) {
+        const iUnit = await storage.getAvailableUnit(existing.unitId);
+        if (await assertUnitInClientScope(req, iUnit?.propertyId)) {
+          return res.status(403).json({ message: "Unit is outside your portfolio" });
+        }
+      }
       await db.delete(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
       res.json({ ok: true });
     } catch (err: any) {
@@ -4598,7 +4645,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           au.marketing_status AS "marketingStatus",
           au.deal_id AS "dealId",
           au.agent_user_ids AS "agentUserIds",
-          au.viewings_count AS "viewingsCount",
+          -- Live count from unit_viewings, not the denormalised
+          -- available_units.viewings_count column: nothing has ever
+          -- written that column, so every consumer of it read 0 while
+          -- /all-viewings-counts (same table, same rule) read the real
+          -- figure — the same unit showed "2 viewings" on the tracker
+          -- and none on the phone letting card (r570).
+          (SELECT COUNT(*)::int FROM unit_viewings v WHERE v.unit_id = au.id) AS "viewingsCount",
           au.last_viewing_date AS "lastViewingDate",
           au.marketing_start_date AS "marketingStartDate",
           au.created_at AS "createdAt",
@@ -4761,21 +4814,34 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // the client-side "already listed" guards miss when names differ in
       // format ("MSU9" vs "MSU9, Bluewater, Bluewater"), so the server is
       // the guard: an existing non-closed listing on the same property whose
-      // first name segment matches returns that listing instead of creating
-      // a duplicate.
+      // unit-name key matches returns that listing instead of creating a
+      // duplicate. Comparing comma segments alone was not enough — the boot
+      // auto-seed names a resurrected listing after its deal
+      // ("Bluewater Shopping Centre – MSU9"), which has no comma at all, so a
+      // re-add of the bare name sailed straight past and the unit was listed
+      // twice (r593). unitNameKey folds all three conventions together.
       if (parsed.propertyId && parsed.unitName?.trim()) {
-        const seg = parsed.unitName.split(",")[0].trim().toLowerCase();
+        const { unitNameKey } = await import("./unit-mirror");
+        const propName = (await pool.query(
+          `SELECT name FROM crm_properties WHERE id = $1`, [parsed.propertyId]
+        )).rows[0]?.name || null;
+        const seg = unitNameKey(parsed.unitName, propName);
         if (seg.length >= 2) {
-          const dupe = await pool.query(
-            `SELECT * FROM available_units
+          const live = await pool.query(
+            `SELECT id, unit_name FROM available_units
              WHERE property_id = $1
-               AND lower(trim(split_part(coalesce(unit_name, ''), ',', 1))) = $2
-               AND coalesce(marketing_status, '') NOT IN ('Withdrawn', 'WIT')
-             LIMIT 1`,
-            [parsed.propertyId, seg]
+               AND coalesce(marketing_status, '') NOT IN ('Withdrawn', 'WIT')`,
+            [parsed.propertyId]
           );
+          const dupe = { rows: live.rows.filter((r: any) => unitNameKey(r.unit_name, propName) === seg).slice(0, 1) };
           if (dupe.rows.length > 0) {
-            return res.status(200).json({ ...dupe.rows[0], alreadyListed: true });
+            // Re-read through storage so this answers in the SAME camelCase
+            // shape as the create path below. It used to ship the raw pg row
+            // (snake_case), so every caller reading `unit.dealId` off it got
+            // undefined — which silently skipped the Add-Unit fee-split PUT
+            // on any re-add (r589).
+            const listed = await storage.getAvailableUnit(dupe.rows[0].id);
+            return res.status(200).json({ ...(listed || { id: dupe.rows[0].id }), alreadyListed: true });
           }
         }
       }
@@ -4817,12 +4883,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           [parsed.propertyId, parsed.unitName || ""]
         );
         if (existingLs.rows.length === 0) {
+          // The Leasing Schedule has its OWN enum (Vacant / In Negotiation /
+          // Under Offer / Occupied / Archived) — it is not the canonical code
+          // set. Writing the tracker's marketing CODE straight in left the
+          // client-facing board showing a raw "AVA"/"HOT" chip that neither
+          // STATUS_CHIP_COLORS nor the Vacant tile recognises. Translate
+          // through the shared bridge, same as the PATCH mirror does.
           await pool.query(
             `INSERT INTO leasing_schedule_units
                (property_id, unit_name, sqft, rent_pa, status)
              VALUES ($1, $2, $3, $4, $5)`,
             [parsed.propertyId, parsed.unitName || null, parsed.sqft ?? null,
-             parsed.askingRent ?? null, parsed.marketingStatus || "AVA"]
+             parsed.askingRent ?? null, codeToLeasingStatus(parsed.marketingStatus) || "Vacant"]
           );
         }
       } catch (e: any) {
@@ -5111,19 +5183,26 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // Add Unit also mirrors a stub row onto the tenancy spine
       // (ensureTenancyRowForAvailableUnit). Remove that stub too — but only
       // when it's still clearly the untouched mirror (points back at this
-      // unit, status 'Marketing', no tenant/rent/lease data); an adopted or
-      // since-edited spine row is real schedule data and stays (it just
-      // loses its dead tracker link inside deleteAvailableUnit). Must run
-      // BEFORE the unit delete — that path nulls letting_tracker_unit_id.
+      // unit, carries a status the mirror itself stamps, no tenant/rent/lease
+      // data); an adopted or since-edited spine row is real schedule data and
+      // stays (it just loses its dead tracker link inside deleteAvailableUnit).
+      // Must run BEFORE the unit delete — that path nulls
+      // letting_tracker_unit_id.
+      // r592: this matched the single literal 'Marketing', which is only what
+      // the mirror stamps for AVA/NEG. A stub created for a SOL/EXC unit
+      // ('Under Offer') or a COM/INV one ('Occupied') never matched, so it was
+      // stranded on the landlord's tenancy schedule for good. Both sides now
+      // read TENANCY_STUB_STATUSES so they cannot drift.
       const tenancyId = (unitRow as any)?.tenancyUnitId;
       if (tenancyId) {
         try {
+          const { TENANCY_STUB_STATUSES } = await import("./unit-mirror");
           await pool.query(
             `DELETE FROM tenancy_schedule_units
               WHERE id = $1 AND letting_tracker_unit_id = $2
-                AND status = 'Marketing'
+                AND status = ANY($3::text[])
                 AND tenant_name IS NULL AND passing_rent_pa IS NULL AND lease_expiry IS NULL`,
-            [tenancyId, unitId]
+            [tenancyId, unitId, [...TENANCY_STUB_STATUSES]]
           );
         } catch (e: any) {
           console.warn(`[available-units DELETE] tenancy stub cleanup failed for ${tenancyId}:`, e?.message);
@@ -6152,15 +6231,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       for (const m of missing) {
         if (isJunkUnitName(m.unit_name || m.unit_number || m.premises)) continue;
         try {
-          const ins = await pool.query(
-            `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
-             VALUES ($1, $2, $3, $4, 'Available', $5) RETURNING id`,
-            [m.property_id, m.unit_name || m.unit_number || m.premises || "Unit",
-             m.nia_sqft ?? m.gia_sqft ?? null, m.marketing_rent_pa ?? null, m.tenancy_unit_id]
-          );
+          const created = await storage.createAvailableUnit({
+            propertyId: m.property_id,
+            unitName: m.unit_name || m.unit_number || m.premises || "Unit",
+            sqft: m.nia_sqft ?? m.gia_sqft ?? null,
+            askingRent: m.marketing_rent_pa ?? null,
+            marketingStatus: "AVA",
+            tenancyUnitId: m.tenancy_unit_id,
+          } as any);
           await pool.query(
             `UPDATE tenancy_schedule_units SET letting_tracker_unit_id = $1 WHERE id = $2`,
-            [ins.rows[0].id, m.tenancy_unit_id]
+            [created.id, m.tenancy_unit_id]
           );
           added++;
         } catch (e: any) {
@@ -6262,7 +6343,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           useClass: assetClass,
           condition: null,
           availableDate: null,
-          marketingStatus: "Available",
+          marketingStatus: "AVA",
           epcRating: null,
           notes: deal.comments || null,
           restrictions: null,
@@ -6657,12 +6738,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Marketing CODE -> Leasing Schedule enum, as a SQL CASE derived from the
+  // shared bridge so the backfill can't drift from codeToLeasingStatus.
+  const LEASING_STATUS_CASE = `CASE lower(trim(coalesce(au.marketing_status, '')))\n${
+    DEAL_STATUS_CODES.map((c) => `             WHEN '${c.toLowerCase()}' THEN '${codeToLeasingStatus(c)}'`).join("\n")
+  }\n           END`;
+
   app.post("/api/available-units/backfill-leasing-schedule", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const { rows } = await pool.query(
         `WITH inserted AS (
            INSERT INTO leasing_schedule_units (property_id, unit_name, sqft, rent_pa, status)
-           SELECT au.property_id, au.unit_name, au.sqft, au.asking_rent, COALESCE(au.marketing_status, 'AVA')
+           SELECT au.property_id, au.unit_name, au.sqft, au.asking_rent,
+                  COALESCE(${LEASING_STATUS_CASE}, 'Vacant')
            FROM available_units au
            WHERE NOT EXISTS (
              SELECT 1 FROM leasing_schedule_units ls
@@ -7292,7 +7380,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       const { unitViewings, insertUnitViewingSchema } = await import("@shared/schema");
-      const parsed = insertUnitViewingSchema.safeParse({ ...req.body, unitId: req.params.id });
+      const parsed = insertUnitViewingSchema.safeParse({ ...blankToNull(req.body), unitId: req.params.id });
       if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
       const [row] = await db.insert(unitViewings).values(parsed.data).returning();
       res.json(row);
@@ -7310,7 +7398,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       if (await assertUnitInClientScope(req, vUnit?.propertyId)) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
-      const parsed = insertUnitViewingSchema.partial().omit({ unitId: true }).safeParse(req.body);
+      const parsed = insertUnitViewingSchema.partial().omit({ unitId: true }).safeParse(blankToNull(req.body));
       if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
       const [row] = await db.update(unitViewings).set(parsed.data).where(eq(unitViewings.id, req.params.viewingId as string)).returning();
       res.json(row);
@@ -7358,7 +7446,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       const { unitOffers, insertUnitOfferSchema } = await import("@shared/schema");
-      const parsed = insertUnitOfferSchema.safeParse({ ...req.body, unitId: req.params.id });
+      const parsed = insertUnitOfferSchema.safeParse({ ...blankToNull(req.body), unitId: req.params.id });
       if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
       const [row] = await db.insert(unitOffers).values(parsed.data).returning();
       res.json(row);
@@ -7376,7 +7464,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       if (await assertUnitInClientScope(req, oUnit?.propertyId)) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
-      const parsed = insertUnitOfferSchema.partial().omit({ unitId: true }).safeParse(req.body);
+      const parsed = insertUnitOfferSchema.partial().omit({ unitId: true }).safeParse(blankToNull(req.body));
       if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
       const [row] = await db.update(unitOffers).set(parsed.data).where(eq(unitOffers.id, req.params.offerId as string)).returning();
       res.json(row);
@@ -7921,15 +8009,31 @@ These terms are indicative only and do not constitute a binding agreement.`;
 
       const existingUnits = await db.select().from(availableUnits);
       const existingDealIds = new Set(existingUnits.filter(u => u.dealId).map(u => u.dealId));
+      const { unitNameKey } = await import("./unit-mirror");
 
       let migrated = 0;
       for (const deal of negDeals) {
         if (existingDealIds.has(deal.id)) continue;
 
         let useClass: string | null = deal.assetClass || null;
+        let propName: string | null = null;
         if (deal.propertyId) {
           const prop = await storage.getCrmProperty(deal.propertyId);
-          if (prop) useClass = useClass || prop.assetClass || null;
+          if (prop) { useClass = useClass || prop.assetClass || null; propName = prop.name; }
+        }
+
+        // The unit may already be listed under one of the other name
+        // conventions — this seed names its listing after the deal
+        // ("Bluewater Shopping Centre – MSU9") while the tracker lists the
+        // bare name, so keying only on deal_id spawned a second live listing
+        // for the same physical unit and the vacancy counters counted it
+        // twice (r593). Same key as the POST guard.
+        const dealKey = unitNameKey(deal.name, propName);
+        if (deal.propertyId && dealKey.length >= 2 && existingUnits.some(u =>
+          u.propertyId === deal.propertyId
+          && !["Withdrawn", "WIT"].includes(u.marketingStatus || "")
+          && unitNameKey(u.unitName, propName) === dealKey)) {
+          continue;
         }
 
         await storage.createAvailableUnit({
@@ -7943,7 +8047,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
           useClass,
           condition: null,
           availableDate: null,
-          marketingStatus: "Available",
+          marketingStatus: "AVA",
           epcRating: null,
           notes: deal.comments || null,
           restrictions: null,
@@ -9161,7 +9265,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       for (const d of stuckDeals.rows) {
         const ms = Date.now() - new Date(d.updated_at).getTime();
         const days = isNaN(ms) ? 30 : Math.floor(ms / 86400000);
-        alerts.push({ type: "stuck_deal", severity: "warning", title: `Stuck deal: ${d.name}`, detail: `No update for ${days}+ days (status: ${d.status})`, entityId: d.id, entityType: "deal" });
+        alerts.push({ type: "stuck_deal", severity: "warning", title: `Stuck deal: ${d.name}`, detail: `No update for ${days}+ days (status: ${dealStatusLabel(d.status)})`, entityId: d.id, entityType: "deal" });
       }
 
       const unmatchedReqs = await pool.query(
@@ -9174,10 +9278,14 @@ These terms are indicative only and do not constitute a binding agreement.`;
         alerts.push({ type: "unmatched_requirement", severity: "info", title: `Open requirement: ${r.name}`, detail: `${r.company_name || "Unknown"} — no deal linked yet`, entityId: r.id, entityType: "requirement" });
       }
 
+      // Canonical codes — crm_deals.status stores codes, not the legacy
+      // labels this list used to carry ('SOLs'/'Exchanged'/'Completing'),
+      // so the digest's KYC alert never fired at any stage. Same set as
+      // /api/notifications: NEG onward, HOT included (r577).
       const kycGaps = await pool.query(
         `SELECT id, name FROM crm_deals 
          WHERE kyc_approved = false 
-         AND status IN ('SOLs', 'Exchanged', 'Completing')
+         AND status IN ('NEG', 'HOT', 'SOL', 'EXC', 'COM')
          LIMIT 10`
       );
       for (const d of kycGaps.rows) {
@@ -9789,7 +9897,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         notifications.push({
           id: `stuck-${d.id}`,
           type: "stuck_deal",
-          title: `${d.name} stuck in ${d.status || "Unknown"}`,
+          title: `${d.name} stuck in ${dealStatusLabel(d.status)}`,
           description: `No update for ${days} days`,
           severity: days > 60 ? "urgent" : "warning",
           createdAt: d.updated_at,
@@ -9798,10 +9906,19 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       }
 
       // Deals without fee allocated
+      // Same rule as the Deals list (storage.getCrmDeals excludeTrackerDeals):
+      // the Deals board is SOL+ only, so pre-Solicitors pipeline is excluded.
+      // It used to be counted here, which both flagged deals that aren't
+      // meant to carry a fee yet and made this alert's number disagree with
+      // the list it now opens (r564).
       const noFeeResult = await pool.query(`
         SELECT COUNT(*)::int as count FROM crm_deals
         WHERE (fee IS NULL OR fee = 0)
         AND status NOT IN ('WIT', 'COM', 'INV')
+        AND (status IS NULL OR lower(status) NOT IN (
+          'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live',
+          'ava', 'available', 'neg', 'negotiating', 'negotiation',
+          'under negotiation', 'in negotiation', 'hot', 'hots', 'heads of terms'))
       `);
       const noFeeCount = noFeeResult.rows[0]?.count || 0;
       if (noFeeCount > 0) {
@@ -9812,14 +9929,24 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
           description: "Active deals without fee allocation need attention",
           severity: noFeeCount > 10 ? "urgent" : "warning",
           createdAt: new Date().toISOString(),
+          // No single deal to open, so carry an explicit destination: the
+          // deals list filtered to exactly the set counted above. Without
+          // it this was the one alert in the bell that did nothing on click.
+          link: "/deals/list?noFee=1",
         });
       }
 
-      // KYC not approved on progressing deals
+      // KYC not approved on progressing deals. HOT (heads of terms) sits
+      // between NEG and SOL, and the AML gate hard-blocks the move into SOL —
+      // so HOT is the stage where this warning matters most. It was missing
+      // from the list, which predates the code (added 2026-08-12): the alert
+      // nagged at NEG, went silent the moment the deal reached heads of
+      // terms, and only came back at SOL, by which time the gate had already
+      // refused the move.
       const kycGaps = await pool.query(`
         SELECT id, name, status FROM crm_deals
         WHERE kyc_approved = false
-        AND status IN ('SOL', 'EXC', 'COM', 'NEG')
+        AND status IN ('NEG', 'HOT', 'SOL', 'EXC', 'COM')
         LIMIT 10
       `);
       for (const d of kycGaps.rows) {
@@ -9827,7 +9954,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
           id: `kyc-${d.id}`,
           type: "kyc_gap",
           title: `KYC not approved: ${d.name}`,
-          description: `Deal in ${d.status} without KYC clearance`,
+          description: `Deal in ${dealStatusLabel(d.status)} without KYC clearance`,
           severity: "urgent",
           createdAt: new Date().toISOString(),
           dealId: d.id,

@@ -1,0 +1,14 @@
+import { go, page, browser, ctx, BASE, user } from './r560-client-mobile-journey.mjs';
+await go('/', 'home');
+await page.locator('text="Calendar"').first().click({ timeout: 6000 });
+await page.waitForTimeout(6000);
+const t = await page.evaluate(()=>({p:location.pathname,txt:document.body.innerText.replace(/\n{2,}/g,'\n'),ov:document.documentElement.scrollWidth-window.innerWidth}));
+console.log(`\n== CLIENT CALENDAR ${t.p} overflow ${t.ov}\n${t.txt}`);
+console.log('BGP EMAIL ON SCREEN?', /brucegillinghampollard/i.test(t.txt), '| BUSIEST AGENT?', /BUSIEST AGENT/i.test(t.txt));
+await page.screenshot({ path: 'qa/smoke-shots/r560-fix-calendar-client.png', fullPage: true });
+const vr = await ctx.request.post(`${BASE}/api/auth/login`, { data: { username: 'victoria@brucegillinghampollard.com', password: 'B@nd0077!' } });
+const v = await vr.json();
+const vi = await (await ctx.request.get(`${BASE}/api/microsoft/calendar/insights`, { headers: { Authorization: `Bearer ${v.token}` } })).json();
+console.log('\nVICTORIA (staff) keeps:');
+for (const i of vi.insights) console.log(`   ${i.title}: ${i.detail}`);
+await browser.close();

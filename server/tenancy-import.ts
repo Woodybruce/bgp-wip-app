@@ -122,7 +122,7 @@ export async function importTenancyRows(pool: any, propertyId: string, rows: Par
       await db.query("DELETE FROM tenancy_schedule_units WHERE property_id = $1", [propertyId]);
       existing = [];
     }
-    const insertedIds: string[] = [], reviewRows: TenancyImportReview[] = [];
+    const insertedIds: string[] = [], updatedIds: string[] = [], reviewRows: TenancyImportReview[] = [];
     let skippedExisting = 0, updated = 0;
     for (const row of explicitEdits) {
       const index = existing.findIndex(saved => String(saved.id) === row.id);
@@ -136,6 +136,7 @@ export async function importTenancyRows(pool: any, propertyId: string, rows: Par
         [...fields.map(field => row.values[field]), row.id, propertyId])).rows[0];
       if (!updatedRow) throw new TenancyImportError(409, "The tenancy row changed while saving. Please reload and review it.");
       existing[index] = updatedRow;
+      updatedIds.push(String(updatedRow.id));
       updated++;
     }
     for (const row of rows) {
@@ -156,7 +157,7 @@ export async function importTenancyRows(pool: any, propertyId: string, rows: Par
       return existing.filter(saved => identity(saved) === identity(row)).length === 1;
     });
     await db.query("COMMIT");
-    return { imported: insertedIds.length, updated, skippedExisting, needsReview: reviewRows.length, reviewRows, insertedIds, mirrorEligibleIds };
+    return { imported: insertedIds.length, updated, skippedExisting, needsReview: reviewRows.length, reviewRows, insertedIds, updatedIds, mirrorEligibleIds };
   } catch (error) {
     await db.query("ROLLBACK");
     throw error;

@@ -21,21 +21,41 @@ psql -U bgp -h localhost bgp -f qa/seed-personas.sql >/dev/null 2>&1 || echo "[q
 
 # 2. Purge test rows from the previous round so data doesn't pile up.
 psql -U bgp -h localhost bgp -tA -c "
-  DELETE FROM crm_deals    WHERE name LIKE 'QA-R%' OR name LIKE '%PROBE%';
+  DELETE FROM crm_deals    WHERE name LIKE 'QA-R%' OR name LIKE '%PROBE%' OR name LIKE 'QA-REVIEW%' OR name LIKE 'QA-COMM%' OR name LIKE 'QA-FWD%' OR name LIKE 'R580%' OR name LIKE 'QA-ACT%' OR name LIKE 'R581%' OR name LIKE 'QA-LRN%' OR name LIKE 'R582%' OR name LIKE 'QA-STAGE%' OR name LIKE 'QA-KYCGAP%';
+  -- staff-review-pipeline-keeps-the-fee-through-hots drops its own review
+  -- row (r579); sweep survivors of a mid-scenario death.
+  DELETE FROM staff_reviews WHERE period LIKE 'QA-REVIEW-R%';
   -- verdict rows for deals that no longer exist (the verdict-flow scenario
   -- deletes its probe deal; the verdict row has no FK and would pile up)
   DELETE FROM deal_verdicts WHERE deal_id NOT IN (SELECT id FROM crm_deals);
   DELETE FROM crm_contacts WHERE name LIKE 'QA Contact%';
+  DELETE FROM crm_leads    WHERE name LIKE 'QA-PROBE Lead%';
+  -- staff-tracker-inline-company-create-kept deletes its own newco (r530);
+  -- sweep survivors of a mid-scenario death.
+  DELETE FROM crm_companies WHERE name LIKE 'QA-PROBE Newco%';
+  -- staff-map-layers-and-news-config-kept deletes its own layer (r537);
+  -- sweep survivors of a mid-scenario death.
+  DELETE FROM map_layers WHERE name LIKE 'QA-PROBE Layer%' OR name LIKE 'QA-PROBE BGP acquisition targets';
   DELETE FROM user_tasks   WHERE title LIKE 'QA-PROBE task%';
+  -- staff-lease-event-create-and-track deletes its own probe (r556); sweep
+  -- survivors of a mid-scenario death.
+  DELETE FROM lease_events WHERE tenant LIKE 'QA-PROBE %';
   DELETE FROM crm_requirements_leasing WHERE name LIKE 'QA-REQ%' OR name LIKE 'QA-PROBE req%';
   DELETE FROM unit_target_operators WHERE brief_id IN (SELECT id FROM unit_briefs WHERE title LIKE 'QA Brief%');
+  -- staff-unit-brief-keeps-every-target cleans up after itself (r540); sweep
+  -- survivors of a mid-scenario death.
+  DELETE FROM unit_target_operators WHERE operator_name LIKE 'QA-PROBE Target%';
   DELETE FROM unit_briefs WHERE title LIKE 'QA Brief%';
   DELETE FROM image_studio_images WHERE file_name = 'qa-unit-photo.jpg';
   DELETE FROM image_studio_collections WHERE name LIKE 'QA Folder R%';
   DELETE FROM team_events WHERE title LIKE 'QA-VIS %' OR title LIKE 'QA-CAL-%' OR title LIKE 'QA Landsec brainstorm' OR title LIKE 'QA Other Client review';
   DELETE FROM unit_viewings WHERE attendees LIKE 'QA-VIEWING-%' OR attendees LIKE 'QA-VDEL-%';
   DELETE FROM unit_interest WHERE company_name LIKE 'QA-PROBE%';
+  -- comp_files rows hang off the QA comp (r532 file sub-read scenarios) —
+  -- drop them before the comp so nothing is orphaned.
+  DELETE FROM comp_files WHERE comp_id IN (SELECT id FROM crm_comps WHERE name LIKE 'QA-COMP%');
   DELETE FROM crm_comps    WHERE name LIKE 'QA-COMP%';
+  DELETE FROM crm_requirements_investment WHERE name LIKE 'QA-REQINV%';
   DELETE FROM property_plans WHERE floor = 'QA-PLAN-GATE';
   DELETE FROM turnover_data WHERE notes LIKE 'QA-PROBE%';
   -- client-pi-lookup-open resolves DA9 9ST each round; the resolve persists
@@ -47,6 +67,10 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM available_units WHERE unit_name = 'QA-REIMP-UNIT';
   DELETE FROM leasing_schedule_units WHERE unit_name = 'QA-REIMP-UNIT';
   DELETE FROM crm_properties WHERE name LIKE 'QA-REIMP Prop%';
+  -- r533 chat-media gate scenarios: the uploaded probe files and their
+  -- per-user upload-history rows (the thread rows go with the sweep below).
+  DELETE FROM user_upload_history WHERE original_name LIKE 'QA-PROBE chat media%';
+  DELETE FROM file_storage WHERE storage_key LIKE 'chat-media/%' AND original_name LIKE 'QA-PROBE chat media%';
   DELETE FROM chat_messages WHERE thread_id IN (SELECT id FROM chat_threads WHERE title LIKE 'QA-CHATDEL%' OR title LIKE 'QA Thread%');
   DELETE FROM chat_threads WHERE title LIKE 'QA-CHATDEL%' OR title LIKE 'QA Thread%';
   DELETE FROM unit_offers WHERE company_name LIKE 'QA-AOFFER-%' OR company_name LIKE 'QA-ODEL-%' OR company_name LIKE 'QA-OFFER-%' OR company_name LIKE 'QA-RIVAL-%';

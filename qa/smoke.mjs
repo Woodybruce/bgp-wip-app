@@ -278,9 +278,67 @@ if (process.env.DATABASE_URL) {
   });
   if (r.stdout) process.stdout.write(r.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
   check('tracker sync: viewing + offer auto-collection', r.status === 0, r.status === 0 ? '' : (r.stderr || '').slice(0, 200));
+
+  // r624/r626: the ChatBGP tool doors must honour the same record scope the
+  // REST doors do — property-, company-, deal-, contact- and unit-keyed
+  // writes, at BOTH dispatchers. Direct module access — a client cannot be
+  // driven through the LLM in the keyless QA env.
+  console.log('── client tool scope (ChatBGP dispatchers) ──');
+  const t = spawnSync('npx', ['tsx', new URL('./client-tool-scope-check.ts', import.meta.url).pathname], {
+    env: process.env, encoding: 'utf8', timeout: 120000,
+  });
+  if (t.stdout) process.stdout.write(t.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
+  check('client tool scope: record-keyed writes stay in the portfolio', t.status === 0, t.status === 0 ? '' : (t.stderr || '').slice(0, 200));
+
+  // r627: export_to_excel is the only door a spreadsheet leaves the app
+  // through. Formulas used to be coerced to inert text, a merged title row
+  // pushed the data one row below where the schema said it was, and the
+  // header-keyed number format rendered an exit yield of 0.068 as "£0".
+  console.log('── excel export (formulas, layout, number formats) ──');
+  const x = spawnSync('npx', ['tsx', new URL('./excel-export-check.ts', import.meta.url).pathname], {
+    env: process.env, encoding: 'utf8', timeout: 120000,
+  });
+  if (x.stdout) process.stdout.write(x.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
+  check('excel export: formulas stay live, headers on row 1, formats keep the number', x.status === 0, x.status === 0 ? '' : (x.stderr || '').slice(0, 200));
+
+  // r628: the comps board's OWN "Export" button is a SECOND spreadsheet
+  // exporter, and it disagreed with the board — the green devalued Net
+  // Effective column the board shows was absent from the file, so a devalued
+  // comp exported blank.
+  console.log('── comps board CSV export (agrees with the board) ──');
+  const cc = spawnSync('npx', ['tsx', new URL('./comps-csv-check.ts', import.meta.url).pathname], {
+    env: process.env, encoding: 'utf8', timeout: 120000,
+  });
+  if (cc.stdout) process.stdout.write(cc.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
+  check('comps CSV export carries the board\'s devalued Net Effective', cc.status === 0, cc.status === 0 ? '' : (cc.stderr || '').slice(0, 200));
+
+  // r632: the two server-built .xlsx doors r630 ran out of budget before
+  // reaching. The Board Report export's "Fees by Agent" ignored the
+  // fee-allocation rows entirely (a 60/25/15 split shipped as 50/50 with no
+  // BGP House slice), and every PLA route read `req.user?.id` — which
+  // requireAuth never sets — so matter creation 500'd and the workbooks were
+  // unauthored.
+  console.log('── xlsx doors (board report fee split, PLA workbook doors) ──');
+  const xd = spawnSync('npx', ['tsx', new URL('./xlsx-doors-check.ts', import.meta.url).pathname], {
+    env: process.env, encoding: 'utf8', timeout: 120000,
+  });
+  if (xd.stdout) process.stdout.write(xd.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
+  check('board report + PLA .xlsx doors: one fee split, real author', xd.status === 0, xd.status === 0 ? '' : (xd.stderr || '').slice(0, 200));
 } else {
   console.log('── tracker sync check skipped (no DATABASE_URL) ──');
 }
+
+// ─── Pathway model inputs: a floor area must be plausible ────────────────
+// Pure logic, no DB. A size fact is free text, and the old parser stripped
+// every non-digit and parsed the remainder, gluing several figures into one
+// number — a real model shipped with a lettable area of 3.9 quintillion sq ft,
+// which drove the per-sq-ft OpEx line and poisoned every number in it.
+console.log('── pathway area parse ──');
+const a = spawnSync('npx', ['tsx', new URL('./r628-area-parse-probe.ts', import.meta.url).pathname], {
+  env: process.env, encoding: 'utf8', timeout: 120000,
+});
+if (a.stdout) process.stdout.write(a.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
+check('pathway model: implausible floor areas are refused', a.status === 0, a.status === 0 ? '' : (a.stderr || '').slice(0, 200));
 
 console.log(`\n── smoke complete: ${checks} checks, ${failures.length} failure${failures.length === 1 ? '' : 's'} ──`);
 for (const f of failures) console.log(`  ✗ ${f.name}${f.detail ? ` — ${f.detail}` : ''}`);

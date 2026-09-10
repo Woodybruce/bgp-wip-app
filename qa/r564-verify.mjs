@@ -1,0 +1,38 @@
+import { chromium } from '../node_modules/playwright/index.mjs';
+import { existsSync } from 'fs';
+const BASE='http://localhost:5000', USER='victoria@brucegillinghampollard.com', PASSWORD='B@nd0077!', TAG='r564v';
+const QA_CHROMIUM = existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : null;
+const browser = await chromium.launch(QA_CHROMIUM ? { executablePath: QA_CHROMIUM, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] });
+try {
+  const ctx = await browser.newContext({ viewport:{width:1440,height:900}, locale:'en-GB' });
+  await ctx.route('**/*',(route)=>{const u=route.request().url(); if(u.startsWith(BASE)||u.startsWith('data:')||u.startsWith('blob:'))return route.continue(); return route.abort();});
+  const user = await (await ctx.request.post(`${BASE}/api/auth/login`,{data:{username:USER,password:PASSWORD}})).json();
+  const page = await ctx.newPage();
+  let bucket=[];
+  page.on('response',(res)=>{if(res.status()>=400)bucket.push(`HTTP ${res.status()} ${res.request().method()} ${res.url().replace(BASE,'')}`);});
+  page.on('pageerror',(e)=>bucket.push(`PAGEERROR ${String(e).slice(0,250)}`));
+  page.on('console',(m)=>{if(m.type()==='error'&&!/Failed to load resource/.test(m.text()))bucket.push(`CONSOLE ${m.text().slice(0,220)}`);});
+  const flush=(l)=>{const s=[...new Set(bucket)];bucket=[];console.log(s.length?`   [${l}] `+s.join('\n   '):`   [${l}] clean`);};
+  let step=0; const shot=async(l)=>{step++;const p=`qa/smoke-shots/${TAG}-${String(step).padStart(2,'0')}-${l}.png`;await page.screenshot({path:p});console.log('   shot',p);};
+  await page.goto(BASE).catch(()=>{});
+  await page.evaluate(([t,u])=>{localStorage.setItem('bgp_auth_token',t);localStorage.setItem('authToken',t);localStorage.setItem('user',JSON.stringify(u));},[user.token,user]);
+  await page.goto(BASE+'/',{waitUntil:'domcontentloaded'}).catch(()=>{});
+  await page.waitForLoadState('networkidle').catch(()=>{}); await page.waitForTimeout(3000);
+  await page.locator('[data-testid="button-notifications"]').click(); await page.waitForTimeout(1800);
+  const row = page.locator('[data-testid="notification-no-fee-deals"]');
+  const label = (await row.innerText()).replace(/\s+/g,' ');
+  console.log('== alert:', label);
+  const counted = parseInt(label.match(/(\d+) deal/)[1], 10);
+  console.log('== cursor class clickable:', await row.evaluate(el=>el.className.includes('cursor-pointer')));
+  await row.click();
+  await page.waitForTimeout(4000); await page.waitForLoadState('networkidle').catch(()=>{});
+  console.log('== url:', page.url());
+  await shot('no-fee-list');
+  const rows = await page.locator('[data-testid^="row-deal-"], [data-testid^="deal-row-"]').count();
+  const t=(await page.locator('body').innerText()).replace(/\s+/g,' ');
+  console.log('== header:', (t.match(/\d+ deals?[^|]{0,60}/)||[''])[0]);
+  console.log('== chip present:', await page.locator('[data-testid="chip-no-fee-filter"]').count());
+  console.log('== visible deal names:', JSON.stringify(await page.evaluate(()=>[...document.querySelectorAll('[data-testid^="link-deal-"],[data-testid^="text-deal-name-"],table tbody tr')].map(e=>(e.innerText||'').replace(/\s+/g,' ').slice(0,60)).slice(0,20))));
+  console.log('== counted:', counted, 'rows rendered:', rows);
+  flush('list');
+} finally { await browser.close(); }

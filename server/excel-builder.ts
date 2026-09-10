@@ -554,7 +554,7 @@ function buildAssumptionsSheet(wb: ExcelJS.Workbook, assumptions: Record<string,
 
 // ─── Sheet 3: Cash Flow ─────────────────────────────────────────────────────
 
-function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: AssumptionRowMap): ExcelJS.Worksheet {
+function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: AssumptionRowMap): { ws: ExcelJS.Worksheet; noiRow: number } {
   const ws = wb.addWorksheet('Cash Flow', {
     properties: { defaultColWidth: 14 },
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 },
@@ -970,12 +970,12 @@ function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: Assu
   // Freeze panes
   ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 3, topLeftCell: 'C4', activeCell: 'E6' }];
 
-  return ws;
+  return { ws, noiRow };
 }
 
 // ─── Sheet 4: Debt Schedule ─────────────────────────────────────────────────
 
-function buildDebtScheduleSheet(wb: ExcelJS.Workbook, quarters: number): ExcelJS.Worksheet {
+function buildDebtScheduleSheet(wb: ExcelJS.Workbook, quarters: number, cashFlowNOIRow: number): ExcelJS.Worksheet {
   const ws = wb.addWorksheet('Debt Schedule', {
     properties: { defaultColWidth: 14 },
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 },
@@ -1150,7 +1150,7 @@ function buildDebtScheduleSheet(wb: ExcelJS.Workbook, quarters: number): ExcelJS
     const col = q + 2;
     const qCFCol = colLetter(q + 4); // Cash Flow sheet columns start at E (col 5)
     // Reference NOI from Cash Flow - we use a cross-sheet reference
-    setFormula(ws, r, col, `IF(ABS(${colLetter(col)}${totalDSRow})>0,'Cash Flow'!${qCFCol}6/ABS(${colLetter(col)}${totalDSRow}),0)`, 'formula', 'decimal');
+    setFormula(ws, r, col, `IF(ABS(${colLetter(col)}${totalDSRow})>0,'Cash Flow'!${qCFCol}${cashFlowNOIRow}/ABS(${colLetter(col)}${totalDSRow}),0)`, 'formula', 'decimal');
   }
   r++;
 
@@ -1159,7 +1159,7 @@ function buildDebtScheduleSheet(wb: ExcelJS.Workbook, quarters: number): ExcelJS
   for (let q = 1; q <= quarters; q++) {
     const col = q + 2;
     const qCFCol = colLetter(q + 4);
-    setFormula(ws, r, col, `IF(ABS(${colLetter(col)}${intRow})>0,'Cash Flow'!${qCFCol}6/ABS(${colLetter(col)}${intRow}),0)`, 'formula', 'decimal');
+    setFormula(ws, r, col, `IF(ABS(${colLetter(col)}${intRow})>0,'Cash Flow'!${qCFCol}${cashFlowNOIRow}/ABS(${colLetter(col)}${intRow}),0)`, 'formula', 'decimal');
   }
   r++;
 
@@ -1700,6 +1700,11 @@ export function applyBGPBranding(workbook: ExcelJS.Workbook): void {
   // Set workbook properties
   workbook.properties.date1904 = false;
 
+  // Every model ships as formulas with no cached results, so tell Excel to
+  // calculate on open. Without this, readers that do not recalculate for
+  // themselves (Sheets, Numbers, Excel Online, preview panes) show blanks.
+  workbook.calcProperties.fullCalcOnLoad = true;
+
   // Ensure all sheets have print setup
   workbook.eachSheet((sheet) => {
     sheet.pageSetup = {
@@ -1734,8 +1739,8 @@ export async function buildInvestmentModel(params: InvestmentModelParams): Promi
 
   // Build sheets in order (Summary will be repositioned to first)
   const { ws: assumptionsWs, rowMap } = buildAssumptionsSheet(wb, assumptions);
-  const cashFlowWs = buildCashFlowSheet(wb, quarters, rowMap);
-  const debtWs = buildDebtScheduleSheet(wb, quarters);
+  const { ws: cashFlowWs, noiRow: cashFlowNOIRow } = buildCashFlowSheet(wb, quarters, rowMap);
+  const debtWs = buildDebtScheduleSheet(wb, quarters, cashFlowNOIRow);
   const sensitivityWs = buildSensitivitySheet(wb);
   const returnsWs = buildReturnsSheet(wb);
 

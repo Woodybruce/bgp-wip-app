@@ -21,6 +21,7 @@ import { withSystemXero } from "./xero-system-session";
 import { pool } from "./db";
 import { legacyToCode, type DealStatusCode } from "../shared/deal-status";
 import { buildCommissionStatements } from "./commission-engine";
+import { startOfToday } from "../shared/day-overdue";
 
 const CACHE_TTL_MS = 15 * 60_000;
 let cache: { at: number; payload: any } | null = null;
@@ -320,6 +321,11 @@ export async function buildFinancials(session: any): Promise<any> {
   // ---- Creditors (outstanding ACCPAY bills) + cash-out schedule ----
   // Bills are accrual entries: an AUTHORISED bill is already inside the P&L
   // expense figures. This view is about WHEN the cash leaves, not extra cost.
+  // Day-safe "is this bill/receipt late": Xero due dates carry no time, so
+  // comparing them against the current MOMENT put anything due TODAY in the
+  // overdue bucket from midnight (the debtors bucket above already gets this
+  // right via daysOver <= 0). Shared rule — shared/day-overdue.ts.
+  const startOfDay = startOfToday();
   const monthEnd = Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0);
   const nextMonthEnd = Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 2, 0);
   const credBuckets = { overdue: 0, thisMonth: 0, nextMonth: 0, later: 0 };
@@ -334,7 +340,7 @@ export async function buildFinancials(session: any): Promise<any> {
     apByMonth[dueMonthKey(parseXeroDate(b.DueDateString || b.DueDate))] = (apByMonth[dueMonthKey(parseXeroDate(b.DueDateString || b.DueDate))] || 0) + netBillDue;
     const due = parseXeroDate(b.DueDateString || b.DueDate);
     const dueMs = due ? due.getTime() : NaN;
-    if (!isNaN(dueMs) && dueMs < now) credBuckets.overdue += amount;
+    if (!isNaN(dueMs) && dueMs < startOfDay) credBuckets.overdue += amount;
     else if (!isNaN(dueMs) && dueMs <= monthEnd) credBuckets.thisMonth += amount;
     else if (!isNaN(dueMs) && dueMs <= nextMonthEnd) credBuckets.nextMonth += amount;
     else credBuckets.later += amount;
@@ -355,7 +361,7 @@ export async function buildFinancials(session: any): Promise<any> {
     if (!amount) continue;
     const due = parseXeroDate(inv.DueDateString || inv.DueDate);
     const dueMs = due ? due.getTime() : NaN;
-    if (!isNaN(dueMs) && dueMs < now) recBuckets.overdue += amount;
+    if (!isNaN(dueMs) && dueMs < startOfDay) recBuckets.overdue += amount;
     else if (!isNaN(dueMs) && dueMs <= monthEnd) recBuckets.thisMonth += amount;
     else if (!isNaN(dueMs) && dueMs <= nextMonthEnd) recBuckets.nextMonth += amount;
     else recBuckets.later += amount;
@@ -482,12 +488,17 @@ export async function buildFinancials(session: any): Promise<any> {
 // ── WIP pipeline + invoice cross-reference ──────────────────────────────
 // Joins crm_deals (fee + canonical status) to xero_invoices (by deal_id)
 // so the dashboard can forecast the year and surface reconciliation gaps:
-//   - NEG / SOL / EXC fees = the live pipeline, weighted for projection
+//   - NEG / HOT / SOL / EXC fees = the live pipeline, weighted for projection
 //   - COM deals with NO Xero invoice = "completed, not yet invoiced" —
 //     fees earned but unbilled (the money-left-on-table list)
 //   - INV / invoiced amounts deliberately NOT added to the projection:
 //     they're already inside Xero's actual income figures
-const STAGE_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9 };
+// HOT (heads of terms agreed) joined the enum 2026-08-12 and sits BETWEEN NEG
+// and SOL, so its weight sits between theirs. Before r580 it had no bucket and
+// no branch below, so a deal moving FORWARD out of Negotiating fell through the
+// whole loop and was counted NOWHERE — not in the pipeline, not in the early
+// pipeline, not in the weighted or unweighted totals.
+const STAGE_WEIGHTS: Record<string, number> = { NEG: 0.5, HOT: 0.6, SOL: 0.75, EXC: 0.9 };
 
 async function buildWipForecast(): Promise<any> {
   const { rows } = await pool.query(`
@@ -511,6 +522,7 @@ async function buildWipForecast(): Promise<any> {
 
   const pipeline: Record<string, { total: number; count: number }> = {
     NEG: { total: 0, count: 0 },
+    HOT: { total: 0, count: 0 },
     SOL: { total: 0, count: 0 },
     EXC: { total: 0, count: 0 },
   };
@@ -524,7 +536,7 @@ async function buildWipForecast(): Promise<any> {
     if (!code || code === "WIT") continue;
     const fee = Number(d.fee) || 0;
 
-    if (code === "NEG" || code === "SOL" || code === "EXC") {
+    if (code === "NEG" || code === "HOT" || code === "SOL" || code === "EXC") {
       pipeline[code].total += fee;
       pipeline[code].count++;
       continue;
@@ -575,6 +587,7 @@ async function buildWipForecast(): Promise<any> {
   toInvoiceDeals.sort((a, b) => new Date(b.completedAt || 0).getTime() - new Date(a.completedAt || 0).getTime());
   const weightedPipeline =
     pipeline.NEG.total * STAGE_WEIGHTS.NEG +
+    pipeline.HOT.total * STAGE_WEIGHTS.HOT +
     pipeline.SOL.total * STAGE_WEIGHTS.SOL +
     pipeline.EXC.total * STAGE_WEIGHTS.EXC;
 
@@ -582,7 +595,7 @@ async function buildWipForecast(): Promise<any> {
     pipeline,
     weights: STAGE_WEIGHTS,
     weightedPipeline: Math.round(weightedPipeline),
-    unweightedPipeline: Math.round(pipeline.NEG.total + pipeline.SOL.total + pipeline.EXC.total),
+    unweightedPipeline: Math.round(pipeline.NEG.total + pipeline.HOT.total + pipeline.SOL.total + pipeline.EXC.total),
     toInvoice: { total: Math.round(toInvoiceTotal), count: toInvoiceDeals.length, deals: toInvoiceDeals.slice(0, 12) },
     invoicedAwaitingPayment: Math.round(invoicedAwaitingPayment),
     earlyPipeline: { total: Math.round(early.total), count: early.count },

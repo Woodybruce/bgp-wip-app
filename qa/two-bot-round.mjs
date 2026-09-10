@@ -5,7 +5,7 @@
 // on the client side. Logs every console error, failed request, blank page,
 // dead-end and broken flow to qa/logs/ as JSONL + screenshots.
 //
-// Usage:  node qa/two-bot-round.mjs [roundNumber]
+// Usage:  node qa/two-bot-round.mjs [roundNumber | persona[,persona...]]
 // Server: expects the dev server on http://localhost:5000 with a fixture DB.
 //         Entity IDs (Landsec, Bluewater, the in-slice brand) are resolved by
 //         NAME at startup — see resolveFixture — so the harness works against
@@ -13,17 +13,70 @@
 //         names fall back to the legacy dev-fixture IDs.
 
 import { chromium } from '../node_modules/playwright/index.mjs';
-import { mkdirSync, appendFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, appendFileSync, existsSync, readFileSync, writeFileSync, readdirSync } from 'fs';
+import { createRequire } from 'module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // Chunked runs (600s foreground-exec cap, r447): QA_PERSONAS picks which
 // persona rounds run; QA_CROSS_FILE persists the shared `cross` state between
 // chunks so staff-creates → client-sees/rival-403 checks still line up.
-const PERSONAS = (process.env.QA_PERSONAS || 'victoria,mark,woody,nick,sam')
-  .split(',').map((s) => s.trim()).filter(Boolean);
+const KNOWN_PERSONAS = ['victoria', 'mark', 'woody', 'nick', 'sam'];
+// The positional arg is the ROUND NUMBER and used to be nothing else, so
+// `node qa/two-bot-round.mjs victoria` parsed to ROUND=NaN and ran ALL FIVE
+// personas in one process — it cost r600 its chunking and stamped "RNaN" into
+// the rows it created. It now also accepts a persona list (same effect as
+// QA_PERSONAS=…), and anything else exits 2 loudly rather than running wide.
+const ARG = (process.argv[2] || '').trim();
+let ROUND = 1;
+let argPersonas = null;
+if (ARG) {
+  if (/^\d+$/.test(ARG)) {
+    ROUND = parseInt(ARG, 10);
+  } else {
+    const names = ARG.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const unknown = names.filter((n) => !KNOWN_PERSONAS.includes(n));
+    if (unknown.length) {
+      console.error(`[two-bot] unrecognised argument: "${ARG}"`);
+      console.error('[two-bot] usage: node qa/two-bot-round.mjs [roundNumber | persona[,persona...]]');
+      console.error(`[two-bot] personas: ${KNOWN_PERSONAS.join(', ')}`);
+      process.exit(2);
+    }
+    argPersonas = names;
+  }
+}
+const PERSONAS = argPersonas
+  || (process.env.QA_PERSONAS || KNOWN_PERSONAS.join(','))
+    .split(',').map((s) => s.trim()).filter(Boolean);
 const CROSS_FILE = process.env.QA_CROSS_FILE || '';
 
+// Scenario filters (r597). A persona chunk that is killed at the Bash cap
+// loses its tail, and re-running the whole persona to reach it costs a round
+// (r594 and r596 both lost the same mark tail). QA_ONLY=a,b runs only the
+// named scenarios; QA_SKIP_UNTIL=x skips every scenario before the first one
+// matching x and runs the rest; QA_UNTIL=y stops at the first scenario
+// matching y (exclusive), so QA_UNTIL=y then QA_SKIP_UNTIL=y splits a persona
+// into two chunks that cover it exactly once. All match a name exactly or as a
+// substring. Filtered steps print [filtered], never [ok], and the closing
+// tally names the filter — a partial run must never read as a full one.
+const ONLY = (process.env.QA_ONLY || '').split(',').map((s) => s.trim()).filter(Boolean);
+const SKIP_UNTIL = (process.env.QA_SKIP_UNTIL || '').trim();
+const UNTIL = (process.env.QA_UNTIL || '').trim();
+let cursorReached = !SKIP_UNTIL;
+let stopReached = false;
+const tally = { ok: 0, filtered: 0 };
+function scenarioSelected(scenario) {
+  if (!cursorReached) {
+    if (scenario === SKIP_UNTIL || scenario.includes(SKIP_UNTIL)) cursorReached = true;
+    else return false;
+  }
+  if (UNTIL && !stopReached && (scenario === UNTIL || scenario.includes(UNTIL))) stopReached = true;
+  if (stopReached) return false;
+  if (ONLY.length && !ONLY.some((n) => scenario === n || scenario.includes(n))) return false;
+  return true;
+}
+
 const BASE = 'http://localhost:5000';
-const ROUND = parseInt(process.argv[2] || '1', 10);
 const LOGDIR = new URL('./logs/', import.meta.url).pathname;
 mkdirSync(LOGDIR, { recursive: true });
 
@@ -75,7 +128,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-deal-audit-scope', 'client-foreign-unit-guards', 'client-info-sheet-roundtrip', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-property-put-guard', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-no-tenancy-import', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'client-investment-deeplink-guard', 'rival-viewing-offer-patch-guard', 'rival-unit-interest-guard', 'rival-comp-files-and-reqinv-guard', 'rival-chat-media-and-deal-subreads-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'staff-aml-gate-blocks-sol', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard', 'client-plans-write-controls-hidden', 'staff-cashflow-board', 'staff-historical-wip-gate', 'staff-lrbg-status-client-order-guard', 'staff-crm-leads-and-packs-kept']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -215,11 +268,84 @@ async function mobGoto(pg, url, nav) {
   }
 }
 
+// r569: read the tenancy board's "Avg ERV £psf" tile and work the same rate
+// out of the payload the board rendered from (area-weighted Σ ERV pa ÷ Σ NIA
+// over the rows carrying both). Shared by the staff and client halves.
+async function ervPsfTile(pg, propertyId) {
+  return pg.evaluate(async (pid) => {
+    const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+      headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+    });
+    if (!res.ok) return { status: res.status };
+    const j = await res.json();
+    const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+    const priced = units.filter((u) => Number(u.erv_pa) > 0 && Number(u.nia_sqft) > 0);
+    if (!priced.length) return { noRow: true };
+    const expect = priced.reduce((a, u) => a + Number(u.erv_pa), 0) / priced.reduce((a, u) => a + Number(u.nia_sqft), 0);
+    const el = document.querySelector('[data-testid="tenancy-stat-avg-erv-\u00a3psf"]');
+    if (!el) return { missing: true, expect, priced: priced.length };
+    const txt = el.innerText.replace(/\s+/g, ' ').trim();
+    const num = txt.match(/([\d,]+\.?\d*)\s*$/);
+    return { txt, shown: num ? Number(num[1].replace(/,/g, '')) : NaN, expect, priced: priced.length };
+  }, propertyId);
+}
+
+// r571 — the asset-brief scorecard is served to the client landlord on his
+// own property page. Both its lease-term and its occupancy must agree with
+// the boards they are drawn from: WAULT with the tenancy master under the
+// board's own rule (>60yr terms are placeholder expiry dates and excluded;
+// rent-weighted when any row carries a passing rent, else a simple mean),
+// and occupied_units with the leasing board's stat pill (status 'Occupied').
+async function assetBriefScorecard(page, pid) {
+  return page.evaluate(async (id) => {
+    const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+    const b = await fetch(`/api/properties/${id}/asset-brief`, { headers: auth });
+    if (!b.ok) return { status: b.status };
+    const brief = await b.json();
+    const t = await fetch(`/api/tenancy-schedule/property/${id}`, { headers: auth });
+    if (!t.ok) return { tStatus: t.status };
+    const tj = await t.json();
+    const rows = Array.isArray(tj) ? tj : (tj.units || tj.rows || []);
+    const now = Date.now();
+    const inRange = rows
+      .map((r) => ({
+        y: r.lease_expiry ? (new Date(r.lease_expiry).getTime() - now) / 31557600000 : 0,
+        rent: Number(r.passing_rent_pa) || 0,
+      }))
+      .filter((r) => r.y > 0 && r.y <= 60);
+    const rentTotal = inRange.reduce((s, r) => s + r.rent, 0);
+    const expectWault = inRange.length
+      ? (rentTotal > 0
+          ? inRange.reduce((s, r) => s + r.y * r.rent, 0) / rentTotal
+          : inRange.reduce((s, r) => s + r.y, 0) / inRange.length)
+      : null;
+    const l = await fetch(`/api/leasing-schedule/property/${id}`, { headers: auth });
+    let expectOcc = null, leasingTotal = null;
+    if (l.ok) {
+      const lj = await l.json();
+      const lr = Array.isArray(lj) ? lj : (lj.units || lj.rows || []);
+      leasingTotal = lr.length;
+      expectOcc = lr.filter((u) => u.status === 'Occupied').length;
+    }
+    const perf = brief.performance || {};
+    return {
+      wault: perf.wault_years, expectWault, waultUnits: inRange.length,
+      occ: perf.occupied_units, expectOcc, total: perf.total_units, leasingTotal,
+    };
+  }, pid);
+}
+
 async function step(page, persona, scenario, fn) {
+  if (!scenarioSelected(scenario)) {
+    tally.filtered++;
+    console.log(`  [filtered] ${persona} · ${scenario}`);
+    return true;
+  }
   currentScenario[persona] = scenario;
   if (process.env.QA_DEBUG) console.log(`  [dbg ${new Date().toISOString()}] step ${scenario}`);
   try {
     await fn();
+    tally.ok++;
     console.log(`  [ok] ${persona} · ${scenario}`);
     return true;
   } catch (e) {
@@ -440,6 +566,11 @@ async function victoriaRound(page, cross) {
     // event and never the Hammerson one (the surface Woody reported dead).
     cross.calMine = mine;
     cross.calOther = other;
+    // GET /api/team-events only serves start_time >= now, so the cross-check
+    // is only meaningful while the seeded event is still in the future. A
+    // mark chunk re-run later in the round (r526) read the expired event as
+    // a scoping regression — stamp the deadline so it skips instead.
+    cross.calValidUntil = soon.toISOString();
     await page.goto(`${BASE}/calendar`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(4000);
@@ -505,6 +636,32 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r524: the tracker's zero-result empty state ("No units match filters.")
+  // was centred across the FULL 2600px table width, so at 1440px it rendered
+  // ~370px past the visible scroller — users saw a blank grey table. The
+  // message is now pinned to the visible viewport (sticky left-0 wrapper);
+  // assert it stays on-screen when a filter matches nothing.
+  await step(page, p, 'staff-tracker-empty-state-visible', async () => {
+    await page.goto(`${BASE}/available`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3500);
+    const search = page.locator('input[placeholder*="earch" i]').first();
+    if (!(await search.count())) throw new Error('tracker search input missing');
+    await search.fill('QA-ZZZ-NO-SUCH-UNIT');
+    await page.waitForTimeout(1200);
+    const empty = page.locator('[data-testid="tracker-empty-state"]');
+    if (!(await empty.count())) throw new Error('zero-result tracker shows no empty-state message');
+    const box = await empty.evaluate((el) => {
+      const b = el.getBoundingClientRect();
+      return { x: b.x, w: b.width, vw: window.innerWidth };
+    });
+    if (box.x < 0 || box.x + Math.min(box.w, 200) > box.vw) {
+      throw new Error(`tracker empty state off-screen: x=${Math.round(box.x)} w=${Math.round(box.w)} viewport=${box.vw}`);
+    }
+    await search.fill('');
+    await page.waitForTimeout(800);
+  });
+
   // r411: the staff cold-open lands on /chatbgp, which renders the Messages
   // list — the bottom nav must light the Messages tab there (it shipped with
   // no tab active, leaving the cold-open screen unanchored). Needs real
@@ -559,6 +716,58 @@ async function victoriaRound(page, cross) {
       if (!(await dlg.count())) throw new Error('Add unit dialog did not open at 390px');
       const m = await dlg.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
       if (m.sw > m.cw + 4) throw new Error(`Add unit dialog overflows at 390px: scrollWidth ${m.sw} > ${m.cw}`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r546: every <input type="date"> in the tracker's Viewing / Offer /
+  // Interest / Edit-unit dialogs sat in a hard grid-cols-2 cell at 390px. A
+  // native date control wants ~166px, so it clipped its own value and picker
+  // by 10-25px — Victoria could not see or tap the calendar on the phone.
+  // The cells now stack below sm. Same scenario also pins the activity rows
+  // printing en-GB dates rather than the raw ISO string the input stores.
+  await step(page, p, 'staff-phone-tracker-date-fields', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true, locale: 'en-GB', timezoneId: 'Europe/London',
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/available`, nav);
+      await mob.waitForTimeout(3500);
+      const unit = await mob.evaluate(() => {
+        const b = [...document.querySelectorAll('button')].find((e) => /^unit-viewing-/.test(e.getAttribute('data-testid') || ''));
+        return b ? b.getAttribute('data-testid').replace('unit-viewing-', '') : null;
+      });
+      if (!unit) throw new Error('no phone unit card with a Viewing action');
+      for (const [action, label] of [['viewing', 'Viewings'], ['offer', 'Offers'], ['interest', 'Interest']]) {
+        await mob.locator(`[data-testid="unit-${action}-${unit}"]`).first().click();
+        await mob.waitForTimeout(1500);
+        const bad = await mob.evaluate(() => {
+          const d = document.querySelector('[role="dialog"]');
+          if (!d) return 'no dialog';
+          const clipped = [...d.querySelectorAll('input')]
+            .filter((e) => ['date', 'time'].includes(e.getAttribute('type')))
+            .filter((e) => e.scrollWidth > e.clientWidth + 1)
+            .map((e) => `${e.getAttribute('data-testid') || e.type} clipped ${e.scrollWidth - e.clientWidth}px`);
+          return clipped.length ? clipped.join(', ') : '';
+        });
+        if (bad) throw new Error(`${label} dialog at 390px: ${bad}`);
+        await mob.keyboard.press('Escape');
+        await mob.waitForTimeout(900);
+      }
+      // activity rows read as UK dates, never the raw ISO the input stores
+      await mob.locator(`[data-testid="unit-viewing-${unit}"]`).first().click();
+      await mob.waitForTimeout(1500);
+      const txt = await mob.locator('[role="dialog"]').last().innerText();
+      if (/\b\d{4}-\d{2}-\d{2}\b/.test(txt)) throw new Error(`viewing rows still print raw ISO dates: ${txt.replace(/\s+/g, ' ').slice(0, 160)}`);
     } finally {
       await mob.close();
       await mobCtx.close();
@@ -702,6 +911,38 @@ async function victoriaRound(page, cross) {
     if (!r.ok) throw new Error(`staff stage move rejected (${r.why})`);
     if (!r.moved) throw new Error('stage move returned OK but the deal did not change stage');
     if (r.restoredStatus !== r.original) throw new Error(`fixture deal stuck in UO (restore failed: ${r.restoredStatus})`);
+  });
+
+  // r607: `crm_deals.status` is the CODES column and the firm's WIP hero is a
+  // raw SQL code predicate (hr-routes.ts `status IN ('AVA','NEG','HOT','SOL',
+  // 'EXC','COM')`), so a LABEL stored there drops the deal out of WIP pounds
+  // AND the deal count. Every write door must canonicalise — the AI doors
+  // (ChatBGP create_deal/update_deal/bulk_update_crm, the Models-page agent)
+  // didn't, and their own tool schemas advertised labels. Probe deal only:
+  // created and deleted in-scenario, no fixture row touched, and AVA/NEG are
+  // below the SOL+ AML gate so nothing is refused.
+  await step(page, p, 'staff-deal-status-stays-canonical', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const made = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: 'QA r607 status probe', status: 'Under Negotiation', dealType: 'Letting' }) });
+      if (!made.ok) return { ok: false, why: `create ${made.status}` };
+      const deal = await made.json();
+      const read = async () => (await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json())?.status;
+      const created = await read();
+      const bulk = await fetch('/api/crm/deals/bulk-update', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ ids: [deal.id], field: 'status', value: 'available' }) });
+      const bulked = bulk.ok ? await read() : null;
+      // Delete by response code — a GET on the deleted id would log a 404 as
+      // a round issue.
+      const del = await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      return { ok: true, created, bulked, bulkStatus: bulk.status, delStatus: del.status };
+    });
+    if (!r.ok) throw new Error(`staff deal-status probe could not run (${r.why})`);
+    if (r.created !== 'NEG') throw new Error(`create door stored ${JSON.stringify(r.created)} for the label "Under Negotiation", expected the code NEG`);
+    if (!r.bulkStatus || r.bulkStatus >= 300) throw new Error(`bulk-update refused the probe deal (${r.bulkStatus})`);
+    if (r.bulked !== 'AVA') throw new Error(`bulk door stored ${JSON.stringify(r.bulked)} for "available", expected AVA`);
+    if (r.delStatus >= 300) throw new Error(`probe deal could not be deleted (${r.delStatus}) — it would sit in the WIP report`);
   });
 
   // MLR scope suggestion on deal detail: must 200 with a suggestion, never
@@ -1113,6 +1354,56 @@ async function victoriaRound(page, cross) {
     if (r.residue) throw new Error('deleted task still present in the task list');
   });
 
+  // A DAY read as a MOMENT, on the RENDERER this time: the property asset
+  // brief's "This week's focus" card measured user_tasks.due_date against
+  // Date.now(), so from 00:01 every label slid a day — a task due TODAY
+  // rendered "1d overdue" in rose (r615; the sixth reader of that column,
+  // missed when r610 censused the other five). The API was always right, so
+  // this asserts on the RENDERED label, not the endpoint.
+  await step(page, p, 'staff-property-focus-task-due-today-not-overdue', async () => {
+    const title = `QA-PROBE focus-due R${ROUND}`;
+    const setup = await page.evaluate(async (needle) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const props = await (await fetch('/api/crm/properties', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(props) ? props : (props?.data || []);
+      if (!rows.length) return { skip: true };
+      const d = new Date();
+      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const create = await fetch('/api/tasks', {
+        method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title: needle, dueDate: today, linkedPropertyId: rows[0].id }),
+      });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json();
+      return { ok: true, taskId: made.id, propertyId: rows[0].id };
+    }, title);
+    if (setup.skip) return;
+    if (!setup.ok) throw new Error(`focus-task setup failed (${setup.why})`);
+    let row = '';
+    let rendered = false;
+    try {
+      await page.goto(`${BASE}/properties/${setup.propertyId}`);
+      await page.waitForLoadState('networkidle');
+      await page.waitForTimeout(2500);
+      const box = page.locator(`[data-testid="task-complete-${setup.taskId}"]`).first();
+      if (await box.count()) {
+        rendered = true;
+        row = (await box.locator('xpath=ancestor::div[1]').innerText().catch(() => '')) || '';
+      }
+    } finally {
+      await page.evaluate(async (id) => {
+        await fetch(`/api/tasks/${id}`, {
+          method: 'DELETE', credentials: 'include',
+          headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        });
+      }, setup.taskId);
+    }
+    if (!rendered) throw new Error('focus card never rendered the probe task due today');
+    const seen = row.replace(/\s+/g, ' ').trim();
+    if (/overdue/i.test(seen)) throw new Error(`a task due TODAY is labelled overdue on the focus card: "${seen}"`);
+    if (!/today/i.test(seen)) throw new Error(`focus card shows no "today" label for a task due today: "${seen}"`);
+  });
+
   // Agent adds a contact ON the Landsec company — the client must then see it
   // in their own CRM (agent→client contact parity). Persisted (swept by the
   // round cleanup's 'QA Contact%' purge); the client-side check runs later.
@@ -1390,6 +1681,40 @@ async function victoriaRound(page, cross) {
     cross.chatMsgId = r.msgId;
   });
 
+  // The Messages nav badge counts EVERY unseen chat_thread_members row, AI
+  // threads included (storage.getUnseenThreadCount). So an AI thread that
+  // carries an unseen member must still come back from /api/chat/threads
+  // with that member row flagged unseen — otherwise the badge points at a
+  // conversation no list or Unread filter can surface ("1 unread" over "No
+  // conversations yet", r600 on the client phone shell). Staff-side because
+  // add-member is staff-only (a client POST is a correct 403).
+  await step(page, p, 'staff-unread-ai-thread-stays-listable', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const users = await (await fetch('/api/users', { headers: auth })).json().catch(() => []);
+      const other = (Array.isArray(users) ? users : []).find((u) => u.id !== me.id && u.role !== 'Client');
+      if (!other) return { ok: false, why: 'no second staff user' };
+      const create = await fetch('/api/chat/threads', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ isAiChat: true, title: `QA-UNREAD listable R${round}` }) });
+      if (!create.ok) return { ok: false, why: `thread ${create.status}` };
+      const thread = await create.json();
+      const add = await fetch(`/api/chat/threads/${thread.id}/members`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ userId: other.id }) });
+      if (!add.ok) return { ok: false, why: `add member ${add.status}` };
+      const list = await (await fetch('/api/chat/threads', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(list) ? list : (list?.threads || []);
+      const row = rows.find((t) => t.id === thread.id);
+      const added = (row?.members || []).find((m) => m.id === other.id);
+      await fetch(`/api/chat/threads/${thread.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, listed: !!row, isAi: row?.isAiChat === true, unseen: added ? added.seen === false : null };
+    }, ROUND);
+    if (!r.ok) throw new Error(`staff unread-listable setup failed (${r.why})`);
+    if (!r.listed) throw new Error('an AI thread with an unseen member never comes back from /api/chat/threads — the Messages badge would point at nothing');
+    if (!r.isAi) throw new Error('the seeded thread did not come back flagged isAiChat');
+    if (r.unseen !== true) throw new Error('the thread list does not mark the added member unseen, so no Unread filter can find it');
+  });
+
   // 4k. Agent logs a viewing on a Landsec unit — the client round then checks
   // it shows up on THEIR letting activity (true cross-persona visibility).
   await step(page, p, 'agent-log-viewing', async () => {
@@ -1621,7 +1946,13 @@ async function victoriaRound(page, cross) {
         }
         await fetch('/api/tenancy-schedule/bulk-delete', { method: 'POST', credentials: 'include', headers: auth,
           body: JSON.stringify({ propertyId: prop.id }) }).catch(() => {});
+        // r591: count the property's board rows BEFORE the delete so the
+        // cascade check below can't pass on an empty set.
+        const before = await (await fetch(`/api/leasing-schedule/property/${prop.id}`, { headers: auth })).json().catch(() => []);
+        out.leasingBefore = (Array.isArray(before) ? before : (before?.units || before?.data || [])).length;
         await fetch(`/api/crm/properties/${prop.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+        const after = await (await fetch(`/api/leasing-schedule/property/${prop.id}`, { headers: auth })).json().catch(() => []);
+        out.leasingAfter = (Array.isArray(after) ? after : (after?.units || after?.data || [])).length;
       };
       try {
         const mkRow = () => fetch('/api/tenancy-schedule/unit', { method: 'POST', credentials: 'include', headers: auth,
@@ -1640,6 +1971,11 @@ async function victoriaRound(page, cross) {
     }, ROUND);
     if (!r.ok) throw new Error(`re-import simulation failed (${r.why})`);
     if (r.trackerRows !== 1) throw new Error(`delete + re-import left ${r.trackerRows} tracker rows for one unit (want 1 — duplication regression)`);
+    // r591: deleting a scheme used to strand its whole unit spine. One QA
+    // rent-roll re-import left 157 orphan leasing_schedule_units rows behind
+    // every round — rows no surface can reach but every count still scans.
+    if (!r.leasingBefore) throw new Error('CONTROL failed: the throwaway property had no leasing-schedule rows, so the cascade check below is vacuous');
+    if (r.leasingAfter) throw new Error(`deleting the property left ${r.leasingAfter} of its ${r.leasingBefore} leasing-schedule row(s) orphaned`);
   });
 
   // Comps parity: a comp Victoria logs against the client's scheme must show
@@ -1652,10 +1988,114 @@ async function victoriaRound(page, cross) {
       const create = await fetch('/api/crm/comps', { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ name: needle, tenantName: 'QA Comp Tenant', area: 'Bluewater' }) });
       if (!create.ok) return { ok: false, why: `create ${create.status}` };
-      return { ok: true };
+      const comp = await create.json().catch(() => ({}));
+      // r532: give the comp a file row so the client-side file sub-reads
+      // (own-scheme roundtrip + rival guard) have something to answer with.
+      let fileOk = false;
+      if (comp.id) {
+        const fd = new FormData();
+        fd.append('file', new Blob(['QA-PROBE comp evidence'], { type: 'text/plain' }), 'QA-PROBE comp evidence.txt');
+        const up = await fetch(`/api/crm/comps/${comp.id}/files`, { method: 'POST', credentials: 'include',
+          headers: { Authorization: auth.Authorization }, body: fd });
+        fileOk = up.ok;
+      }
+      return { ok: true, compId: comp.id || null, fileOk };
     }, stamp);
     if (!r.ok) throw new Error(`agent could not log a scheme comp (${r.why})`);
+    if (!r.fileOk) throw new Error('agent could not attach a file to the scheme comp');
     cross.compStamp = stamp;
+    cross.compId = r.compId;
+  });
+
+  // r596: the comps area tabs were 16 hardcoded central-London sub-markets
+  // plus an "Other" that substring-searched for the literal word "other", so
+  // a comp anywhere else (the fixture holds West End, Oxford Street, Reading)
+  // was unreachable by EVERY tab. Tabs are now derived from the comps on the
+  // board. Uses the comp the scenario above just logged.
+  await step(page, p, 'staff-comp-area-tabs-reach-every-comp', async () => {
+    if (!cross.compId) { console.log(`  [skip] ${p} · staff-comp-area-tabs-reach-every-comp — no comp id from the step above`); return; }
+    const AREA = 'Dartford';
+    const put = async (data) => page.evaluate(async ([id, d]) => {
+      const r = await fetch('/api/crm/comps/' + id, { method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        body: JSON.stringify(d) });
+      return r.status;
+    }, [cross.compId, data]);
+    if ((await put({ areaLocation: AREA, verified: true })) >= 400) throw new Error('could not park the QA comp in an out-of-London area');
+    await page.goto(BASE + '/comps');
+    await page.locator('[data-testid="text-comps-title"]').waitFor({ timeout: 25000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    const tabs = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="area-tab-"]')].map(e => e.textContent.trim()));
+    if (!tabs.length) throw new Error('comps area tabs never rendered');
+    if (!tabs.includes(AREA)) throw new Error(`no area tab for "${AREA}" — tabs were ${JSON.stringify(tabs)}`);
+    await page.locator(`[data-testid="area-tab-${AREA}"]`).click();
+    await page.waitForTimeout(900);
+    const rows = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="comp-row-"]')]
+      .map(e => e.getAttribute('data-testid').replace('comp-row-', '')));
+    if (!rows.includes(cross.compId)) throw new Error(`the "${AREA}" tab does not show the comp filed there (${rows.length} row(s))`);
+    // NEAR-MISS CONTROL: a curated London area with nothing in it must not be
+    // offered — otherwise the tabs are just the old hardcoded list again.
+    const comps = await page.evaluate(async () => (await (await fetch('/api/crm/comps', { credentials: 'include',
+      headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } })).json()));
+    const hay = (Array.isArray(comps) ? comps : []).map(c => `${c.areaLocation || ''} ${c.groupName || ''}`.toLowerCase()).join('|');
+    const dead = ['Mayfair', 'Soho', 'Chelsea'].filter(a => !hay.includes(a.toLowerCase()));
+    if (!dead.length) throw new Error('CONTROL vacuous — every curated area holds a comp');
+    const offered = dead.filter(a => tabs.includes(a));
+    if (offered.length) throw new Error(`dead area tab(s) still offered: ${offered.join(', ')}`);
+    await put({ areaLocation: null, verified: false });
+  });
+
+  // r532: a Landsec-owned investment requirement, so the client chunks can
+  // prove the detail read is company-scoped (list already was, /:id was not).
+  await step(page, p, 'agent-add-investment-requirement', async () => {
+    const stamp = `QA-REQINV R${ROUND} Landsec`;
+    const r = await page.evaluate(async ([needle, landsec]) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const create = await fetch('/api/crm/requirements-investment', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: needle, companyId: landsec, contactName: 'QA Probe Contact', comments: 'QA-PROBE confidential' }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const row = await create.json().catch(() => ({}));
+      return { ok: true, id: row.id || null };
+    }, [stamp, LANDSEC]);
+    if (!r.ok) throw new Error(`agent could not log an investment requirement (${r.why})`);
+    cross.reqInvStamp = stamp;
+    cross.reqInvId = r.id;
+  });
+
+  // r533: chat-media is one flat namespace (chat uploads, ChatBGP-generated
+  // docs, KYC passports/bank statements) behind a client-allowed download
+  // route. Victoria drops two staff files in: one shared into a thread Mark
+  // belongs to, one never shared — the client chunks prove the shared one
+  // still opens and the private one doesn't.
+  await step(page, p, 'agent-upload-chat-media', async () => {
+    const r = await page.evaluate(async (round) => {
+      const bearer = 'Bearer ' + localStorage.getItem('authToken');
+      const put = async (name) => {
+        const fd = new FormData();
+        fd.append('files', new Blob(['QA-PROBE chat media'], { type: 'text/plain' }), name);
+        const up = await fetch('/api/chat/upload', { method: 'POST', credentials: 'include',
+          headers: { Authorization: bearer }, body: fd });
+        if (!up.ok) return null;
+        return ((await up.json().catch(() => ({}))).files || [])[0] || null;
+      };
+      const shared = await put(`QA-PROBE chat media shared R${round}.txt`);
+      const priv = await put(`QA-PROBE chat media private R${round}.txt`);
+      if (!shared || !priv) return { ok: false, why: 'upload failed' };
+      const users = await (await fetch('/api/users', { credentials: 'include', headers: { Authorization: bearer } })).json().catch(() => []);
+      const mark = (Array.isArray(users) ? users : []).find((u) => (u.email || '').toLowerCase() === 'mark.warne@landsec.com');
+      if (!mark) return { ok: false, why: 'mark not in /api/users' };
+      const json = { 'Content-Type': 'application/json', Authorization: bearer };
+      const th = await (await fetch('/api/chat/threads', { method: 'POST', credentials: 'include', headers: json,
+        body: JSON.stringify({ title: `QA Thread R${round} media`, memberIds: [mark.id] }) })).json().catch(() => ({}));
+      if (!th.id) return { ok: false, why: 'thread create failed' };
+      const msg = await fetch(`/api/chat/threads/${th.id}/messages`, { method: 'POST', credentials: 'include', headers: json,
+        body: JSON.stringify({ role: 'user', content: 'QA-PROBE pack for review', attachments: [JSON.stringify(shared)] }) });
+      if (!msg.ok) return { ok: false, why: `message ${msg.status}` };
+      return { ok: true, shared: shared.url.replace('/api/chat-media/', ''), priv: priv.url.replace('/api/chat-media/', '') };
+    }, ROUND);
+    if (!r.ok) throw new Error(`agent could not stage chat-media files (${r.why})`);
+    cross.mediaShared = r.shared;
+    cross.mediaPrivate = r.priv;
   });
 
   // r504: the comp detail dialog was a hard grid-cols-2 — at 390px each
@@ -1799,6 +2239,90 @@ async function victoriaRound(page, cross) {
   // out UNDER the sticky Actions & Activity column — the banner pointed at
   // a button the user couldn't see. The page now auto-scrolls the table
   // once so the first pitch button clears the pinned column.
+  await step(page, p, 'staff-tracker-inline-company-create-kept', async () => {
+    // r528 counterpart: hiding the inline "Create company" row for clients
+    // must not take it away from staff, who rely on it for a viewing/offer
+    // against a brand that isn't in the CRM yet (UX #147).
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/available`, nav);
+      await mob.waitForTimeout(4000);
+      const first = await mob.locator('[data-testid^="mobile-unit-"]').first().getAttribute('data-testid');
+      if (!first) throw new Error('no phone tracker card on the staff board');
+      const uid = first.replace('mobile-unit-', '');
+      await mob.locator(`[data-testid="unit-offer-${uid}"]`).click();
+      await mob.waitForTimeout(1500);
+      await mob.locator('[data-testid="offer-company"]').click();
+      await mob.waitForTimeout(800);
+      // Unique per run: an exact pre-existing name match makes the picker
+      // (correctly) offer no create row, which would read as a regression.
+      const newco = `QA-PROBE Newco ${ROUND}-${Date.now().toString().slice(-6)}`;
+      await mob.locator('input[placeholder^="Search"]').last().fill(newco);
+      await mob.waitForTimeout(800);
+      if (!(await mob.getByText(/Create company/i).count())) {
+        throw new Error('staff lost the tracker inline company-create row');
+      }
+      // r530: the row existing is not the same as it WORKING — tap it and
+      // prove the company really lands in the CRM (the client counterpart
+      // scenario proves it stays hidden for them).
+      await mob.getByText(/Create company/i).first().click();
+      await mob.waitForTimeout(2500);
+      const trigger = await mob.locator('[data-testid="offer-company"]').innerText();
+      if (!trigger.includes(newco)) {
+        throw new Error(`inline create did not select the new company (trigger "${trigger.replace(/\n/g, ' ')}")`);
+      }
+      const auth = { Authorization: 'Bearer ' + page.qaToken };
+      const cos = await (await fetch(`${BASE}/api/crm/companies`, { headers: auth })).json();
+      const made = (Array.isArray(cos) ? cos : []).find((c) => c.name === newco);
+      if (!made) throw new Error('inline create left no company row in the CRM');
+      await fetch(`${BASE}/api/crm/companies/${made.id}`, { method: 'DELETE', headers: auth });
+    } finally { await mobCtx.close(); }
+  });
+
+  // r530: the WIP-report page header put the (wide) BGP logo and the
+  // title column side by side at every width, so on a 390px phone the
+  // title/subtitle were squeezed into ~110px and wrapped around the logo.
+  // Header must stack on the phone: logo above a full-width title.
+  await step(page, p, 'staff-wip-report-phone-header-stacked', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/wip-report`, nav);
+      await mob.waitForTimeout(5000);
+      const g = await mob.evaluate(() => {
+        const box = (sel) => {
+          const e = document.querySelector(sel);
+          if (!e) return null;
+          const r = e.getBoundingClientRect();
+          return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+        };
+        return { logo: box('[data-testid="wip-bgp-logo"]'), title: box('[data-testid="wip-report-title"]') };
+      });
+      if (!g.title) throw new Error('no WIP report title on the phone');
+      if (g.title.w < 280) throw new Error(`WIP phone title column squeezed to ${g.title.w}px (expected the full gutter width)`);
+      if (g.logo && g.logo.y + g.logo.h > g.title.y) {
+        throw new Error(`WIP phone header still side-by-side (logo bottom ${g.logo.y + g.logo.h} overlaps title top ${g.title.y})`);
+      }
+    } finally { await mobCtx.close(); }
+  });
+
   await step(page, p, 'staff-tracker-pitch-button-visible', async () => {
     await page.goto(`${BASE}/available?pitchBrand=${BRAND}&pitchBrandName=PitchProbe`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(4000); // rows + the one-shot auto-scroll effect
@@ -2039,11 +2563,30 @@ async function victoriaRound(page, cross) {
       // Brief dialog read, and it rides the targets along.
       const list = await (await fetch('/api/unit-briefs', { headers: auth })).json().catch(() => []);
       const mine = (Array.isArray(list) ? list : []).find(b => b.id === brief.id);
-      return { briefId: brief.id, targetStatus: tRes.status, targets: (mine?.targets || []).map(t => t.operatorName) };
+      // Render the brief PDF too. r601 fixed every PDF footer loop writing
+      // below its own bottom margin, which made pdfkit tack a spurious blank
+      // page onto five document types; this is the one brief-shaped renderer
+      // that can prove it stays fixed. A one-section brief must come out at
+      // exactly one page, with the footer stamped on it.
+      const gRes = await fetch(`/api/unit-briefs/${brief.id}/generate-document`, { method: 'POST', credentials: 'include', headers: auth });
+      const gen = gRes.ok ? await gRes.json() : null;
+      let pdfPages = null, pdfFooter = null;
+      if (gen?.downloadUrl) {
+        const raw = await (await fetch(gen.downloadUrl, { credentials: 'include', headers: auth })).arrayBuffer();
+        const txt = new TextDecoder('latin1').decode(raw);
+        pdfPages = (txt.match(/\/Type\s*\/Page[^s]/g) || []).length;
+        // pdfkit writes standard-font text as hex TJ arrays interleaved with
+        // kerning offsets — join the hex runs WITHOUT the numbers to read it.
+        pdfFooter = /Bruce Gillingham Pollard/.test(txt) || /42007200750063006500/i.test(txt.replace(/\s/g, ''));
+      }
+      return { briefId: brief.id, targetStatus: tRes.status, targets: (mine?.targets || []).map(t => t.operatorName), genStatus: gRes.status, pdfPages, pdfFooter };
     }, ROUND);
     if (r.fail) throw new Error(r.fail);
     if (r.targetStatus !== 200) throw new Error(`target add failed (${r.targetStatus})`);
     if (!r.targets.includes(`QA-TGT-R${ROUND}`)) throw new Error('added target missing from brief read-back');
+    if (r.genStatus !== 200) throw new Error(`brief document generate failed (${r.genStatus})`);
+    if (r.pdfPages !== 1) throw new Error(`brief PDF should be 1 page, got ${r.pdfPages} (r601 blank-page regression?)`);
+    if (!r.pdfFooter) throw new Error('brief PDF has no BGP footer on its only page');
     cross.briefId = r.briefId;
   });
 
@@ -2105,7 +2648,12 @@ async function victoriaRound(page, cross) {
   await step(page, p, 'staff-deal-verdict-flow', async () => {
     const r = await page.evaluate(async (round) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const past = new Date(Date.now() - 5 * 86400000).toISOString();
+      // Must land in a PAST month: pendingVerdictDeals only chases
+      // target_date < date_trunc('month', now()), so "5 days ago" silently
+      // stopped qualifying from the 6th of every month onward (caught r560,
+      // the round that crossed midnight into 2026-09-06).
+      const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      const past = new Date(firstOfMonth.getTime() - 5 * 86400000).toISOString();
       const cRes = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ name: `QA-R${round} verdict probe`, dealType: 'Consultant', status: 'SOL', fee: 1000, targetDate: past, internalAgent: ['Victoria Broadhead'] }) });
       const deal = cRes.ok ? await cRes.json() : null;
       if (!deal?.id) return { fail: `deal create ${cRes.status}` };
@@ -2133,6 +2681,193 @@ async function victoriaRound(page, cross) {
     if (r.stillListed) throw new Error('deal still pending after a verdict this month');
     if (!r.newTarget || new Date(r.newTarget) < new Date()) throw new Error(`slipping did not re-date the deal (targetDate ${r.newTarget})`);
     if (r.deleteStatus !== 200 && r.deleteStatus !== 204) throw new Error(`probe deal cleanup failed (${r.deleteStatus})`);
+  });
+
+  // The AML counterparty gate on SOL+ (r609). ChatBGP's update_deal and
+  // bulk_update_crm wrote crm_deals.status straight through the storage
+  // layer, so the gate every HTTP door enforces was skippable from chat.
+  // The tool doors are locked in by qa/r609-aml-gate-probe.mjs (they need
+  // the dispatcher, not HTTP); this covers the HTTP door it must match:
+  // refuse the move, keep ungated moves working, honour the MLRO override.
+  await step(page, p, 'staff-aml-gate-blocks-sol', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const cRes = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ name: `QA-R${round} AML gate probe`, dealType: 'Letting', status: 'NEG' }) });
+      const deal = cRes.ok ? await cRes.json() : null;
+      if (!deal?.id) return { fail: `deal create ${cRes.status}` };
+      const out = { dealId: deal.id };
+      const put = (body) => fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify(body) });
+      const blocked = await put({ status: 'SOL' });
+      out.blockedStatus = blocked.status;
+      out.blockedCode = (await blocked.json().catch(() => ({}))).code;
+      out.ungatedStatus = (await put({ status: 'HOT' })).status;
+      out.overrideStatus = (await put({ amlCheckCompleted: 'YES', status: 'SOL' })).status;
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json().catch(() => []);
+      out.finalStatus = (Array.isArray(deals) ? deals : []).find(d => d.id === deal.id)?.status || null;
+      out.deleteStatus = (await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status;
+      return out;
+    }, ROUND);
+    if (r.fail) throw new Error(r.fail);
+    if (r.blockedStatus !== 409) throw new Error(`SOL with no cleared counterparty should 409 (got ${r.blockedStatus})`);
+    if (r.blockedCode !== 'AML_GATE_FAILED') throw new Error(`409 body missing AML_GATE_FAILED (got ${r.blockedCode})`);
+    if (r.ungatedStatus !== 200) throw new Error(`ungated move to HOT should pass (got ${r.ungatedStatus})`);
+    if (r.overrideStatus !== 200) throw new Error(`MLRO override should reach SOL (got ${r.overrideStatus})`);
+    if (r.finalStatus !== 'SOL') throw new Error(`deal should sit at SOL after the override (got ${r.finalStatus})`);
+    if (r.deleteStatus !== 200 && r.deleteStatus !== 204) throw new Error(`probe deal cleanup failed (${r.deleteStatus})`);
+  });
+
+  // A task due TODAY is due today, not late. Every reader of
+  // user_tasks.due_date shares isTaskOverdue (shared/task-due.ts) — before
+  // r610 five of the six compared a date-only due_date against `now`, so a
+  // task landed in the red Overdue card, and in the header's overdue count,
+  // from 00:00 on the day it was set for.
+  await step(page, p, 'staff-task-due-today-not-overdue', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return d.toISOString().slice(0, 10); };
+      const mk = async (title, dueDate) => {
+        const res = await fetch('/api/tasks', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ title, dueDate, priority: 'medium' }) });
+        return res.ok ? (await res.json())?.id : null;
+      };
+      const todayId = await mk(`QA-R${round} due today`, day(0));
+      const lateId = await mk(`QA-R${round} due yesterday`, day(-1));
+      return { todayId, lateId };
+    }, ROUND);
+    if (!r.todayId || !r.lateId) throw new Error('task create failed');
+    await page.goto(`${BASE}/tasks`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1800);
+    const seen = await page.evaluate((round) => {
+      const card = [...document.querySelectorAll('div')].find(d => /^Overdue \(\d+\)/.test((d.innerText || '').trim()) && (d.innerText || '').trim().length > 24);
+      return {
+        overdueText: card ? (card.innerText || '').replace(/\s+/g, ' ') : '',
+        header: ([...document.querySelectorAll('p')].map(e => (e.textContent || '').trim()).find(t => / open/.test(t)) || ''),
+        marker: round,
+      };
+    }, ROUND);
+    if (!seen.overdueText) throw new Error('no Overdue card rendered for a genuinely late task');
+    if (!seen.overdueText.includes(`QA-R${ROUND} due yesterday`)) throw new Error(`yesterday's task missing from the Overdue card (${seen.overdueText.slice(0, 160)})`);
+    if (seen.overdueText.includes(`QA-R${ROUND} due today`)) throw new Error("a task due TODAY was filed under Overdue");
+    if (!/1 overdue/.test(seen.header)) throw new Error(`header should count exactly one overdue task (got "${seen.header}")`);
+    const cleanup = await page.evaluate(async (ids) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const out = [];
+      for (const id of ids) out.push((await fetch(`/api/tasks/${id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status);
+      return out;
+    }, [r.todayId, r.lateId]);
+    if (cleanup.some(c => c !== 200 && c !== 204)) throw new Error(`probe task cleanup failed (${cleanup.join(',')})`);
+  });
+
+  // An AML re-check due TODAY is due, not late. aml_recheck_reminders.due_date
+  // is a TIMESTAMP but the MLRO's own form is <input type="date">, so every
+  // reminder lands at midnight — the overdue count and the red OVERDUE card
+  // used to fire from 00:00 on the day the re-check was scheduled (r612).
+  // lease_events.event_date is a TIMESTAMP and every writer stores a DAY (the
+  // board's own form is <Input type="date">, ChatBGP's tool schema asks for
+  // "YYYY-MM-DD", legal-dd inserts a regex-matched YYYY-MM-DD), so a rent
+  // review happening TODAY lands at midnight. Five of seven readers called it
+  // late from 00:00 — the red Overdue badge and KPI tile, the digest's
+  // urgency bucket, the nightly auto-assign to lease advisory (which skipped
+  // it entirely) and the letting hunter's upcoming-events score (r613).
+  await step(page, p, 'staff-lease-event-due-today-is-not-overdue', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+      const mk = async (tenant, eventDate) => {
+        const res = await fetch('/api/lease-events', {
+          method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ eventType: 'Rent Review', status: 'Monitoring', sourceEvidence: 'Manual', address: `QA-PROBE R${round} ${tenant}`, tenant, eventDate }),
+        });
+        return res.ok ? (await res.json())?.id : null;
+      };
+      const todayId = await mk(`QA-R${round} review today`, day(0));
+      const lateId = await mk(`QA-R${round} review 3 days ago`, day(-3));
+      const digest = await (await fetch('/api/lease-events/digest', { headers: auth })).json();
+      const urgency = (id) => (digest || []).find((e) => e.id === id)?.urgency ?? 'not-in-digest';
+      const out = { todayId, lateId, todayUrgency: urgency(todayId), lateUrgency: urgency(lateId), del: [] };
+      for (const id of [todayId, lateId]) if (id) out.del.push((await fetch(`/api/lease-events/${id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status);
+      return out;
+    }, ROUND);
+    if (!r.todayId || !r.lateId) throw new Error('lease event create failed — cannot judge the urgency bucket');
+    if (r.todayUrgency === 'overdue')
+      throw new Error('a lease event happening TODAY bucketed as "overdue" — it is not late until the day has passed');
+    if (r.todayUrgency !== 'imminent')
+      throw new Error(`a lease event today should bucket "imminent" (<3 months), got "${r.todayUrgency}"`);
+    if (r.lateUrgency !== 'overdue')
+      throw new Error(`a lease event 3 days past bucketed "${r.lateUrgency}", expected "overdue"`);
+    if (r.del.some((c) => c !== 200 && c !== 204)) throw new Error(`probe lease event cleanup failed (${r.del.join(',')})`);
+  });
+
+  await step(page, p, 'staff-aml-recheck-due-today-is-not-overdue', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const count = async () => (await (await fetch('/api/aml/reminders/overdue-count', { headers: auth })).json())?.count;
+      const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+      const mk = async (entityName, dueDate) => {
+        const res = await fetch('/api/aml/reminders', {
+          method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ entityName, recheckType: 'annual_cdd', dueDate, notes: `QA-PROBE aml reminder R${round}` }),
+        });
+        return res.ok ? (await res.json())?.id : null;
+      };
+      const before = await count();
+      const todayId = await mk(`QA-R${round} due today`, day(0));
+      const dueToday = await count();
+      const lateId = await mk(`QA-R${round} due 3 days ago`, day(-3));
+      const withLate = await count();
+      const del = [];
+      for (const id of [todayId, lateId]) if (id) del.push((await fetch(`/api/aml/reminders/${id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status);
+      return { before, dueToday, withLate, todayId, lateId, del, restored: await count() };
+    }, ROUND);
+    if (!r.todayId || !r.lateId) throw new Error('AML reminder create failed — cannot judge the overdue count');
+    if (r.dueToday !== r.before)
+      throw new Error(`overdue count moved by ${r.dueToday - r.before} for a re-check due TODAY — a reminder is overdue on the day it is due (before ${r.before}, after ${r.dueToday})`);
+    if (r.withLate !== r.before + 1)
+      throw new Error(`a re-check due 3 days ago did not count as overdue (before ${r.before}, after ${r.withLate})`);
+    if (r.del.some((c) => c !== 200 && c !== 204)) throw new Error(`probe reminder cleanup failed (${r.del.join(',')})`);
+    if (r.restored !== r.before) throw new Error(`overdue count did not return to ${r.before} after cleanup (got ${r.restored})`);
+  });
+
+  // "Expiring soon" means the lease still runs and runs out inside the window.
+  // Two units seeded on the same property — one expiring in 4 months, one that
+  // expired 30 months ago — must move the board's expiring_soon count by
+  // exactly ONE. The count used to have no lower bound, so the property card's
+  // "N expiring" badge summed expiring AND long-dead leases while the same
+  // property's own page listed them under separate "Expiring <12m" /
+  // "Expired" tiles (r611).
+  await step(page, p, 'staff-leasing-board-expiring-excludes-expired', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const props = await (await fetch('/api/leasing-schedule/properties', { headers: auth })).json();
+      const prop = (props || []).find((x) => /Bluewater/i.test(x.name || ''));
+      if (!prop) return { skip: 'no Bluewater on the leasing board' };
+      const before = prop.expiring_soon;
+      const iso = (months) => { const d = new Date(); d.setMonth(d.getMonth() + months); return d.toISOString().slice(0, 10); };
+      const mk = async (unit_name, lease_expiry) => {
+        const res = await fetch('/api/leasing-schedule/unit', {
+          method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ property_id: prop.id, unit_name, lease_expiry, status: 'Occupied' }),
+        });
+        return res.ok ? (await res.json())?.id : null;
+      };
+      const soonId = await mk(`QA-R${round} expiring soon`, iso(4));
+      const goneId = await mk(`QA-R${round} long expired`, iso(-30));
+      const after = ((await (await fetch('/api/leasing-schedule/properties', { headers: auth })).json()) || [])
+        .find((x) => x.id === prop.id)?.expiring_soon;
+      const del = await fetch('/api/leasing-schedule/bulk-delete', {
+        method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ propertyId: prop.id, ids: [soonId, goneId].filter(Boolean) }),
+      });
+      const restored = ((await (await fetch('/api/leasing-schedule/properties', { headers: auth })).json()) || [])
+        .find((x) => x.id === prop.id)?.expiring_soon;
+      return { before, after, soonId, goneId, delStatus: del.status, restored };
+    }, ROUND);
+    if (r.skip) return;
+    if (!r.soonId || !r.goneId) throw new Error('leasing unit create failed — cannot judge the expiring count');
+    if (r.after !== r.before + 1)
+      throw new Error(`expiring_soon moved by ${r.after - r.before} for one expiring + one long-expired unit — an already-expired lease is being counted as expiring (before ${r.before}, after ${r.after})`);
+    if (r.delStatus !== 200 && r.delStatus !== 204) throw new Error(`probe unit cleanup failed (HTTP ${r.delStatus})`);
+    if (r.restored !== r.before) throw new Error(`expiring_soon did not return to ${r.before} after cleanup (got ${r.restored})`);
   });
 
   // Staff logs turnover entries — one on an in-slice brand, one on an
@@ -2225,6 +2960,343 @@ async function victoriaRound(page, cross) {
     if (typeof body?.deals !== 'number' || body.activeDeals > body.deals) throw new Error(`activeDeals ${body.activeDeals} > deals ${body.deals}`);
   });
 
+  await step(page, p, 'staff-wip-target-month-clearable', async () => {
+    // r547: the WIP report's inline Target Month <input type="month"> saved a
+    // new month fine but silently swallowed a CLEAR — onChange bailed on an
+    // empty value, so a wrong forecast month could never be taken off a deal
+    // (the field looked empty until the next refetch put the old month back).
+    // Drives the real control: set, reload, clear, reload, then restore.
+    await page.goto(`${BASE}/wip-report`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+    });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(3000);
+    const sel = 'tbody tr input[type="month"]';
+    if (!(await page.locator(sel).count())) throw new Error('no Target Month input on the WIP deal table');
+    const inp = page.locator(sel).first();
+    const original = await inp.inputValue();
+    const value = async () => {
+      await page.goto(`${BASE}/wip-report`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => {
+        if (!/ERR_ABORTED/.test(String(e))) throw e;
+      });
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(3000);
+      return page.locator(sel).first().inputValue();
+    };
+    const write = async (v) => {
+      const i = page.locator(sel).first();
+      await i.scrollIntoViewIfNeeded();
+      await i.fill(v);
+      await page.waitForTimeout(400);
+      await page.locator('h1').first().click({ force: true });   // blur flushes the debounced save
+      await page.waitForTimeout(2800);
+    };
+    try {
+      await write('2027-04');
+      if ((await value()) !== '2027-04') throw new Error('setting a target month did not persist');
+      await write('');
+      const cleared = await value();
+      if (cleared !== '') throw new Error(`clearing the target month did not persist — reload shows "${cleared}"`);
+    } finally {
+      await write(original || '');
+    }
+  });
+
+  // r620: the WIP report's "Net fees by month" chart is the firm's month-end
+  // billing forecast. deriveMonth (server/crm.ts) fell back to the deal row's
+  // updated_at, so a deal with NO date at all was banked into whatever month
+  // somebody last SAVED it — six of seven fixture deals had no date and every
+  // one still claimed a month, £250k of it into the current one, and the
+  // number moved again on the next edit. The chart's "TBC" bucket (rendered
+  // and deliberately untappable) was unreachable, and the Needs Attention
+  // audit's "No date at all" bucket (computeWipHealth's hasDate) flatly
+  // contradicted the chart above it. A WIP month may only come from a REAL
+  // deal date: completed, exchanged or target.
+  await step(page, p, 'staff-wip-month-only-from-a-real-deal-date', async () => {
+    const wipRes = await fetch(`${BASE}/api/wip`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (!wipRes.ok) throw new Error(`GET /api/wip ${wipRes.status}`);
+    const rows = await wipRes.json();
+    const entries = Array.isArray(rows) ? rows : (rows?.entries || rows?.data || []);
+    if (!entries.length) throw new Error('/api/wip returned no entries — cannot test the month rule');
+    const dateless = entries.filter((e) => !e.targetDate && !e.exchangedAt && !e.completedAt);
+    if (!dateless.length) throw new Error('no dateless WIP deal in the fixture — scenario would pass vacuously');
+    const claiming = dateless.filter((e) => e.month);
+    if (claiming.length) {
+      throw new Error(
+        `${claiming.length} of ${dateless.length} dateless WIP deal(s) still claim a billing month — ` +
+        claiming.slice(0, 3).map((e) => `"${String(e.ref).slice(0, 32)}" → ${e.month}`).join('; '),
+      );
+    }
+    // …and the ones WITH a real date must still be dated, or the rule has
+    // simply blanked the whole chart.
+    const dated = entries.filter((e) => e.targetDate || e.exchangedAt || e.completedAt);
+    if (!dated.length) throw new Error('no dated WIP deal in the fixture — scenario would pass vacuously');
+    const lost = dated.filter((e) => !e.month);
+    if (lost.length) throw new Error(`${lost.length} WIP deal(s) with a real date lost their month`);
+  });
+
+  // The other half of the same bug: entryMatches let a null-month entry
+  // through EVERY month filter (`if (e.month && !selected.has(e.month))`), so
+  // picking a month dragged every dateless deal and its fee into that month's
+  // rows and total. Drives the real chart: click the one dated month's bar and
+  // require the table to isolate exactly the deals in it.
+  await step(page, p, 'staff-wip-month-filter-excludes-dateless-deals', async () => {
+    const wipRes = await fetch(`${BASE}/api/wip`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (!wipRes.ok) throw new Error(`GET /api/wip ${wipRes.status}`);
+    const rows = await wipRes.json();
+    const entries = Array.isArray(rows) ? rows : (rows?.entries || rows?.data || []);
+    const dated = entries.filter((e) => e.month);
+    if (!dated.length) throw new Error('no dated WIP deal — scenario would pass vacuously');
+    if (!entries.some((e) => !e.month)) throw new Error('no dateless WIP deal — scenario would pass vacuously');
+    const month = dated[0].month;
+    const expected = dated.filter((e) => e.month === month).length;
+    await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+    });
+    await page.waitForSelector('[data-testid="wip-report-page"]', { timeout: 60000 });
+    await page.waitForTimeout(4000);
+    const bars = await page.locator('[data-testid^="wip-desk-month-"]').all();
+    if (!bars.length) throw new Error('no month bars on the WIP chart');
+    let hit = false;
+    for (const bar of bars) {
+      if (((await bar.textContent()) || '').includes(month)) { await bar.click(); hit = true; break; }
+    }
+    if (!hit) throw new Error(`no ${month} bar on the chart to filter by`);
+    await page.waitForTimeout(2500);
+    const shown = await page.locator('[data-testid^="wip-row-"]').count();
+    if (shown !== expected) {
+      throw new Error(`${month} filter shows ${shown} row(s), expected ${expected} — dateless deals are leaking through the month filter`);
+    }
+  });
+
+  // r621: the Board Report's "Fees Billed YTD" and its billed-by-month series
+  // fell back to crm_deals.updated_at when an invoiced deal carried no
+  // invoice/completion/exchange date — so the headline revenue number counted
+  // old invoices into this year and the month series was a "who saved what,
+  // when" histogram. Three doors read this one derivation (/board-report,
+  // /reporting, the Excel export) and the sibling billings queries
+  // (hr-routes, commission-engine) never used updated_at.
+  await step(page, p, 'staff-board-report-billed-only-from-a-real-billing-date', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const board = async () => (await fetch('/api/board-report', { credentials: 'include', headers: auth })).json();
+      const FEE = 91357;
+      const base = await board();
+      const out = { baseYTD: base?.performance?.totalFeesYTD ?? null, FEE };
+      out.baseMonths = (base?.performance?.monthlyFees || []).map((m) => m.month);
+      const cRes = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-R${round} billed month probe`, dealType: 'Letting', status: 'INV', fee: FEE }) });
+      if (!cRes.ok) return { fail: `deal create ${cRes.status}` };
+      const deal = await cRes.json();
+      if (!deal?.id) return { fail: 'deal create returned no id' };
+      out.dealId = deal.id;
+      // 1. no invoice/completion/exchange date at all → no month, no YTD money
+      const dateless = await board();
+      out.datelessYTD = dateless?.performance?.totalFeesYTD ?? null;
+      out.datelessMonths = (dateless?.performance?.monthlyFees || []).map((m) => m.month);
+      // 2. a real invoice date this year → the fee appears, in THAT month
+      const now = new Date();
+      let billed = new Date(Date.now() - 3 * 86400000);
+      if (billed.getFullYear() !== now.getFullYear()) billed = new Date(now.getFullYear(), 0, 1, 12);
+      out.expectedMonth = `${billed.getFullYear()}-${String(billed.getMonth() + 1).padStart(2, '0')}`;
+      const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ invoicedAt: billed.toISOString() }) });
+      out.putStatus = put.status;
+      const dated = await board();
+      out.datedYTD = dated?.performance?.totalFeesYTD ?? null;
+      out.datedMonths = (dated?.performance?.monthlyFees || []).map((m) => m.month);
+      out.deleteStatus = (await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status;
+      return out;
+    }, ROUND);
+    if (r.fail) throw new Error(r.fail);
+    if (r.putStatus !== 200) throw new Error(`stamping invoicedAt failed (${r.putStatus})`);
+    if (typeof r.baseYTD !== 'number') throw new Error('board report returned no totalFeesYTD — cannot judge');
+    // Non-vacuous: the dated half MUST move the number, or this proves nothing.
+    if (r.datedYTD !== r.baseYTD + r.FEE) {
+      throw new Error(`a properly invoiced deal did not reach Fees Billed YTD (${r.baseYTD} → ${r.datedYTD}, expected +${r.FEE})`);
+    }
+    if (!r.datedMonths.includes(r.expectedMonth)) {
+      throw new Error(`billed-by-month has no ${r.expectedMonth} bar for a deal invoiced that month (got ${r.datedMonths.join(',') || 'none'})`);
+    }
+    if (r.datelessYTD !== r.baseYTD) {
+      throw new Error(`a dateless invoiced deal moved Fees Billed YTD (${r.baseYTD} → ${r.datelessYTD}) — updated_at is being read as a billing date`);
+    }
+    const newMonths = r.datelessMonths.filter((m) => !r.baseMonths.includes(m));
+    if (newMonths.length) {
+      throw new Error(`a dateless invoiced deal claimed billing month(s) ${newMonths.join(',')} — that is when the row was last saved`);
+    }
+    if (r.deleteStatus !== 200 && r.deleteStatus !== 204) throw new Error(`probe deal cleanup failed (${r.deleteStatus})`);
+  });
+
+  await step(page, p, 'staff-requirement-match-dialog-agrees', async () => {
+    // r548: the Requirements board's Fits cell and the "Matching Available
+    // Units" dialog opened from the same row ran DIFFERENT matchers — a
+    // requirement could read "4 fits" in the table and "No matching units
+    // found / try broadening the criteria" in the dialog. Both now run one
+    // ranker. Creates a requirement shaped to fit, asserts cell count ==
+    // endpoint length == rows rendered in the dialog, then deletes it.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const mk = await fetch(`${BASE}/api/crm/requirements-leasing`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ name: `QA-REQ R${ROUND} fits`, status: 'Active', use: ['Retail'], size: ['Under 500 sq ft'] }),
+    });
+    if (mk.status !== 200 && mk.status !== 201) throw new Error(`requirement create expected 200/201, got ${mk.status}`);
+    const req = await mk.json();
+    try {
+      const bulk = await (await fetch(`${BASE}/api/crm/requirements-leasing/matches`, { headers: { Authorization: auth.Authorization } })).json();
+      const count = bulk?.matches?.[req.id]?.count ?? 0;
+      if (!count) throw new Error('probe requirement scored 0 fits — the fixture pool changed, scenario needs a reshape');
+      const one = await fetch(`${BASE}/api/crm/requirements-leasing/${req.id}/matches`, { headers: { Authorization: auth.Authorization } });
+      if (one.status !== 200) throw new Error(`per-requirement matches expected 200, got ${one.status}`);
+      const list = await one.json();
+      if (!Array.isArray(list) || list.length !== count) throw new Error(`Fits cell says ${count}, matches endpoint returns ${Array.isArray(list) ? list.length : 'non-array'}`);
+      await page.goto(`${BASE}/requirements`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => {
+        if (!/ERR_ABORTED/.test(String(e))) throw e;
+      });
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(3000);
+      const btn = page.locator(`[data-testid="button-match-leasing-${req.id}"]`);
+      if (!(await btn.count())) throw new Error('no Match button on the probe requirement row');
+      await btn.click();
+      await page.waitForTimeout(2200);
+      const rendered = await page.locator('[data-testid^="match-unit-"]').count();
+      if (rendered !== count) throw new Error(`match dialog rendered ${rendered} units, Fits cell says ${count}`);
+      const body = await page.evaluate(() => (document.querySelector('[role="dialog"]') || {}).innerText || '');
+      if (/No matching units found/.test(body)) throw new Error('match dialog says "No matching units found" while the row shows fits');
+      if (/psf/.test(body)) throw new Error('match dialog labels the quoting rent psf — available_units.asking_rent is p.a.');
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(600);
+    } finally {
+      await fetch(`${BASE}/api/crm/requirements-leasing/${req.id}`, { method: 'DELETE', headers: { Authorization: auth.Authorization } });
+    }
+  });
+
+  await step(page, p, 'staff-comp-ner-surfaces-agree', async () => {
+    // r549: one comp, three net effective rents. The schedule's devaluation
+    // column read only comp.term/comp.rentFree/comp.areaSqft, so the Break and
+    // Rent Free (mths) fields the app's own form writes were silently dropped;
+    // the schedule's Net Effective cell amortised over the FULL term while the
+    // Rent Analysis dialog beside it amortised to the break. A 15-yr term with
+    // a 10-yr break, 9 mo rent free and £50k fit-out read £89,167 / £84,542 /
+    // £80,563 on the three surfaces. All three must now land on the same
+    // term-certain figure. Creates a comp, checks it, deletes it.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const mk = await fetch(`${BASE}/api/crm/comps`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({
+        name: `QA-COMP R${ROUND} NER surfaces`, tenant: 'QA NER Co', areaLocation: 'Clapham',
+        headlineRent: '92500', term: '15 years', breakClause: '10 years',
+        rentFreeMonths: '9', fitoutContribution: '50000', niaSqft: '780',
+      }),
+    });
+    if (mk.status !== 200 && mk.status !== 201) throw new Error(`comp create expected 200/201, got ${mk.status}`);
+    const comp = await mk.json();
+    try {
+      const list = await (await fetch(`${BASE}/api/crm/comps`, { headers: { Authorization: auth.Authorization } })).json();
+      const row = list.find((c) => c.id === comp.id);
+      if (!row) throw new Error('probe comp missing from the comps list');
+      const dv = row.devaluation;
+      if (!dv) throw new Error('probe comp devalued to null — the schedule would show no net effective rent');
+      // term certain 10 yrs (break), rent free 9 mo, £50k capital:
+      // (92500 * (10 - 0.75) - 50000) / 10 = 80,562.5
+      if (dv.termCertainYears !== 10) throw new Error(`devaluation used ${dv.termCertainYears} yr term certain, ignoring the 10-yr break`);
+      if (dv.rentFreeMonths !== 9) throw new Error(`devaluation read ${dv.rentFreeMonths} mo rent free, ignoring the Rent Free (mths) field`);
+      if (Math.abs(dv.netEffectiveRentPa - 80563) > 1) throw new Error(`devaluation NER ${dv.netEffectiveRentPa}, expected ~80563 over the term certain`);
+      if (dv.netEffectiveRentPsf === null) throw new Error('devaluation psf is null — NIA on the comp was not read');
+      if (Math.abs(dv.netEffectiveRentPsf - 103.29) > 0.05) throw new Error(`devaluation psf ${dv.netEffectiveRentPsf}, expected ~103.29`);
+    } finally {
+      await fetch(`${BASE}/api/crm/comps/${comp.id}`, { method: 'DELETE', headers: { Authorization: auth.Authorization } });
+    }
+  });
+
+  await step(page, p, 'staff-tenancy-export-agrees-with-board', async () => {
+    // r550: the tenancy Excel export ran off the RAW table, so Term came out
+    // blank on every row and the unexpired terms were whatever the last import
+    // wrote — months stale, and years on BGP-authored sheets. The board
+    // derives both from the lease dates on every read (Woody, 2026-08-03), so
+    // the download disagreed with the screen for the same lease. Both now run
+    // withComputedTerms, and the headers state their unit (Term is years, the
+    // Unexp columns are months) so the two can't be read as the same scale.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const board = await (await fetch(`${BASE}/api/tenancy-schedule/property/${BLUEWATER}`, auth)).json();
+    if (!Array.isArray(board) || board.length === 0) throw new Error('tenancy board returned no rows');
+    const ex = await fetch(`${BASE}/api/tenancy-schedule/property/${BLUEWATER}/export-excel`, auth);
+    if (ex.status !== 200) throw new Error(`export expected 200, got ${ex.status}`);
+    const XLSX = await import('../node_modules/xlsx/xlsx.mjs');
+    const wb = XLSX.read(Buffer.from(await ex.arrayBuffer()), { type: 'buffer' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    const hdr = rows[3] || [];
+    for (const label of ['Term (yrs)', 'Unexp. Term (Break, mths)', 'Unexp. Term (Expiry, mths)']) {
+      if (!hdr.includes(label)) throw new Error(`export header missing "${label}" — the unit is back off the column`);
+    }
+    const ci = { unit: hdr.indexOf('Unit'), term: hdr.indexOf('Term (yrs)'), unexp: hdr.indexOf('Unexp. Term (Expiry, mths)') };
+    // Unit names repeat in the fixture, so compare only names that appear once.
+    const counts = new Map();
+    for (const u of board) { const k = String(u.unit_number || '').trim(); if (k) counts.set(k, (counts.get(k) || 0) + 1); }
+    const byUnit = new Map(board.filter((u) => counts.get(String(u.unit_number || '').trim()) === 1)
+      .map((u) => [String(u.unit_number || '').trim(), u]));
+    let compared = 0;
+    for (const row of rows.slice(4)) {
+      const key = String(row[ci.unit] || '').trim();
+      const b = byUnit.get(key);
+      if (!b) continue;
+      compared++;
+      const same = (x, y) => (x == null && y == null) || Number(x) === Number(y);
+      if (!same(row[ci.unexp], b.unexpired_term)) throw new Error(`${key}: export unexpired term ${row[ci.unexp]} vs board ${b.unexpired_term}`);
+      if (!same(row[ci.term], b.term_years)) throw new Error(`${key}: export term ${row[ci.term]} vs board ${b.term_years}`);
+    }
+    if (compared < 20) throw new Error(`only ${compared} units cross-checked — the export and the board stopped lining up`);
+    // Durations must not be totalled: a summed "months to expiry" column read
+    // as a portfolio figure.
+    const total = rows[rows.length - 1] || [];
+    if (Number(total[ci.unexp]) > 0) throw new Error(`export TOTAL row still sums the unexpired-term column (${total[ci.unexp]})`);
+  });
+
+  await step(page, p, 'staff-tenancy-reimports-its-own-export', async () => {
+    // r551: the commonest sheet anyone uploads is one we exported — download
+    // the rent roll, tidy it in Excel, upload it again. Two things broke that
+    // round trip. (a) The export shipped areas as "Basement (GIA)" / "GIA" /
+    // "NIA" / "ITZA / ITGF" while the import aliases still said
+    // "basement sq ft gia", so 13 columns came back unrecognised and every
+    // area was silently blanked — 137 Bluewater units lost their NIA, the
+    // sq ft the whole rent roll's psf maths hangs off. (b) The export's TOTAL
+    // row imported as a LEASE: a tenant called TOTAL, status Occupied,
+    // carrying the portfolio's summed ERV (£27.3m), which the mirror then fanned
+    // out to the leasing board as a nameless £27.3m row. Import aliases are now
+    // derived from EXPORT_COLUMNS so the two sides can't drift again.
+    // Imported into a throwaway property; cleaned up either way.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const jsonAuth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const ex = await fetch(`${BASE}/api/tenancy-schedule/property/${BLUEWATER}/export-excel`, auth);
+    if (ex.status !== 200) throw new Error(`export expected 200, got ${ex.status}`);
+    const sheet = Buffer.from(await ex.arrayBuffer());
+    const mk = await fetch(`${BASE}/api/crm/properties`, { method: 'POST', headers: jsonAuth, body: JSON.stringify({ name: `QA-RT Prop R${ROUND}` }) });
+    if (mk.status !== 200 && mk.status !== 201) throw new Error(`property POST expected 200/201, got ${mk.status}`);
+    const prop = await mk.json();
+    try {
+      const fd = new FormData();
+      fd.append('file', new Blob([sheet], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'rent-roll.xlsx');
+      fd.append('propertyId', prop.id);
+      fd.append('clearExisting', 'false');
+      const up = await fetch(`${BASE}/api/tenancy-schedule/import-excel`, { method: 'POST', headers: { Authorization: 'Bearer ' + page.qaToken }, body: fd });
+      if (up.status !== 200) throw new Error(`import expected 200, got ${up.status}`);
+      const res = await up.json();
+      // "#" is a row-number column and has no field; anything else unmatched
+      // means an export label and its import alias have drifted apart.
+      const stray = (res.unmatchedHeaders || []).filter((h) => String(h).trim() !== '#');
+      if (stray.length) throw new Error(`export headers the import no longer recognises: ${stray.join(', ')}`);
+      const back = await (await fetch(`${BASE}/api/tenancy-schedule/property/${prop.id}`, auth)).json();
+      if (!Array.isArray(back) || back.length < 20) throw new Error(`re-import landed ${back?.length} rows`);
+      const withArea = back.filter((u) => Number(u.nia_sqft) > 0).length;
+      if (withArea < 20) throw new Error(`only ${withArea} rows kept their NIA through the round trip — the area block dropped again`);
+      const totals = back.filter((u) => /^(grand\s+)?(sub[-\s]?)?totals?$/i.test(String(u.tenant_name || '').trim()));
+      if (totals.length) throw new Error(`the export's TOTAL row imported as a lease (erv ${totals[0].erv_pa})`);
+    } finally {
+      await fetch(`${BASE}/api/tenancy-schedule/bulk-delete`, { method: 'POST', headers: jsonAuth, body: JSON.stringify({ propertyId: prop.id }) }).catch(() => {});
+      await fetch(`${BASE}/api/crm/properties/${prop.id}`, { method: 'DELETE', headers: jsonAuth }).catch(() => {});
+    }
+  });
+
   await step(page, p, 'staff-evidence-plans-list', async () => {
     // r471: Evidence Plans (arrived via the d0b79fe JOGQK merge) — staff
     // list must stay reachable. Node-side fetch, no page-log noise.
@@ -2233,6 +3305,213 @@ async function victoriaRound(page, cross) {
     if (r.status !== 200) throw new Error(`staff GET /api/evidence-plans expected 200, got ${r.status}`);
     const body = await r.json();
     if (!Array.isArray(body)) throw new Error('staff GET /api/evidence-plans did not return an array');
+  });
+
+  await step(page, p, 'staff-duplicate-property-merge', async () => {
+    // r617: Settings -> CRM data hygiene -> Property Duplicates -> Merge.
+    // The property branch of /api/crm/duplicates/merge named two columns that
+    // do not exist (crm_property_agents.agent_id, crm_property_tenants.tenant_id),
+    // so EVERY property merge 500'd and both duplicates survived. Merge the
+    // pair and assert the loser is gone and its agent link moved across.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const me = await (await fetch(`${BASE}/api/auth/me`, { headers: auth })).json();
+    const mkProp = async (name) => {
+      const r = await fetch(`${BASE}/api/crm/properties`, { method: 'POST', headers: auth, body: JSON.stringify({ name }) });
+      if (r.status !== 200 && r.status !== 201) throw new Error(`property create expected 200/201, got ${r.status}`);
+      return (await r.json()).id;
+    };
+    const name = `QA r${ROUND} Dup Merge Park`;
+    const keepId = await mkProp(name);
+    const goneId = await mkProp(name);
+    try {
+      const link = await fetch(`${BASE}/api/crm/properties/${goneId}/agents`, { method: 'POST', headers: auth, body: JSON.stringify({ userId: me.id, role: 'Leasing' }) });
+      if (link.status !== 200 && link.status !== 201) throw new Error(`agent link expected 200/201, got ${link.status}`);
+      const m = await fetch(`${BASE}/api/crm/duplicates/merge`, { method: 'POST', headers: auth, body: JSON.stringify({ entity: 'property', keepId, deleteIds: [goneId] }) });
+      const body = await m.text();
+      if (m.status !== 200) throw new Error(`property merge expected 200, got ${m.status} ${body.slice(0, 140)}`);
+      if (JSON.parse(body).merged !== 1) throw new Error(`property merge reported merged=${JSON.parse(body).merged}, expected 1`);
+      const loser = await fetch(`${BASE}/api/crm/properties/${goneId}`, { headers: auth });
+      if (loser.status === 200 && (await loser.json())?.id === goneId) throw new Error('the merged-away property is still readable — the merge did not delete it');
+      const agents = await (await fetch(`${BASE}/api/crm/properties/${keepId}/agents`, { headers: auth })).json();
+      if (!Array.isArray(agents) || !agents.some((a) => a.id === me.id)) throw new Error(`the loser's agent link did not move onto the keeper (keeper agents: ${JSON.stringify(agents).slice(0, 120)})`);
+    } finally {
+      await fetch(`${BASE}/api/crm/properties/${keepId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+      await fetch(`${BASE}/api/crm/properties/${goneId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-brand-dedupe-merge-repoints-refs', async () => {
+    // r617: /api/brand/dedupe/merge rewrites every column that points at
+    // crm_companies.id from a hand-kept list (COMPANY_REFS). One entry named
+    // a column that does not exist (crm_comps.company_id — the real columns
+    // are tenant_company_id / landlord_company_id), so EVERY brand merge
+    // 500'd and rolled back. Merge a pair and assert the secondary is
+    // soft-deleted, then undo so the fixture is unchanged.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const mkCo = async (name) => {
+      const r = await fetch(`${BASE}/api/crm/companies`, { method: 'POST', headers: auth, body: JSON.stringify({ name }) });
+      if (r.status !== 200 && r.status !== 201) throw new Error(`company create expected 200/201, got ${r.status}`);
+      return (await r.json()).id;
+    };
+    const primaryId = await mkCo(`QA r${ROUND} Dedupe Brand`);
+    const secondaryId = await mkCo(`QA r${ROUND} Dedupe Brand Ltd`);
+    let mergeId = null;
+    try {
+      const m = await fetch(`${BASE}/api/brand/dedupe/merge`, { method: 'POST', headers: auth, body: JSON.stringify({ primaryId, secondaryId }) });
+      const body = await m.text();
+      if (m.status !== 200) throw new Error(`brand dedupe merge expected 200, got ${m.status} ${body.slice(0, 140)}`);
+      const j = JSON.parse(body);
+      if (!j.ok || !j.mergeId) throw new Error(`brand dedupe merge returned ${body.slice(0, 140)}`);
+      mergeId = j.mergeId;
+      const sec = await fetch(`${BASE}/api/crm/companies/${secondaryId}`, { headers: auth });
+      const secBody = sec.status === 200 ? await sec.json() : null;
+      if (secBody && !secBody.mergedIntoId && !secBody.merged_into_id) throw new Error('the secondary company was not soft-deleted by the merge');
+    } finally {
+      if (mergeId) await fetch(`${BASE}/api/brand/dedupe/undo/${mergeId}`, { method: 'POST', headers: auth }).catch(() => {});
+      await fetch(`${BASE}/api/crm/companies/${secondaryId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+      await fetch(`${BASE}/api/crm/companies/${primaryId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-settings-data-health-reachable-on-phone', async () => {
+    // r618: the Data Health card put SIX action buttons in one non-wrapping
+    // flex row. At 390px the row is ~1270px wide and CLIPPED by an ancestor
+    // (documentElement.scrollWidth stayed 390, which is why the phone
+    // overflow sweep never saw it), so five of the six — including
+    // "Scan for Duplicates", the ONLY entry point to the duplicate-merge
+    // tools — sat off the right edge with no way to reach them by thumb.
+    // Assert every Data Health action lies inside the phone viewport.
+    // The phone SHELL keys off the user agent, not the viewport alone, so
+    // this needs a real iPhone context — a 390px desktop layout is a
+    // different (and not user-facing) surface.
+    const phone = await page.context().browser().newContext({
+      viewport: { width: 390, height: 844 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    const ph = await phone.newPage();
+    try {
+      await ph.goto(`${BASE}/`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await ph.evaluate((t) => { localStorage.setItem('bgp_auth_token', t); localStorage.setItem('authToken', t); }, page.qaToken);
+      await ph.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await ph.waitForTimeout(6000);
+      if (!(await ph.locator('nav [data-testid^="mobile-"], [data-testid^="mobile-home-"]').count())
+          && !(await ph.evaluate(() => !!document.querySelector('nav.fixed.bottom-0, nav[class*="fixed bottom"]')))) {
+        throw new Error('the phone shell did not render — scenario would measure the desktop layout instead');
+      }
+      const card = ph.locator('[data-testid="card-data-health"]');
+      if (!(await card.count())) throw new Error('the Data Health card is not on /settings for staff — scenario would pass vacuously');
+      await card.scrollIntoViewIfNeeded();
+      const ids = ['button-backfill-tracker-deals', 'button-sync-leasing-schedule', 'button-number-units', 'button-split-teams', 'button-scan-duplicates'];
+      const offscreen = [];
+      for (const id of ids) {
+        const b = await ph.locator(`[data-testid="${id}"]`).boundingBox().catch(() => null);
+        if (!b) throw new Error(`Data Health action ${id} has no box — scenario would pass vacuously`);
+        if (b.x < 0 || b.x + b.width > 391) offscreen.push(`${id} at x=${Math.round(b.x)} w=${Math.round(b.width)}`);
+      }
+      if (offscreen.length) throw new Error(`Data Health actions off a 390px phone screen: ${offscreen.join(', ')}`);
+    } finally {
+      await phone.close().catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-settings-hides-admin-only-email-panel', async () => {
+    // r618: every /api/email-processor/* endpoint is requireAdmin, but
+    // settings.tsx mounted EmailProcessorSection for EVERYONE — so a
+    // non-admin staff member got a dead panel (a "Scan Now" button that can
+    // only 403, plus the monitored mailbox address) and a 403 pair every 30s
+    // from its refetchInterval. Victoria is non-admin: prove that, then
+    // prove the panel and its polling are gone.
+    const auth = { Authorization: 'Bearer ' + page.qaToken };
+    const me = await (await fetch(`${BASE}/api/auth/me`, { headers: auth })).json();
+    if (me.isAdmin || me.is_admin) throw new Error('victoria is an admin in this fixture — the scenario cannot test the non-admin path');
+    const hits = [];
+    const watch = (res) => { if (/\/api\/email-processor\//.test(res.url())) hits.push(`${res.status()} ${res.url().replace(BASE, '')}`); };
+    page.on('response', watch);
+    try {
+      await page.goto(`${BASE}/settings`);
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(3500);
+      if (await page.locator('[data-testid="button-run-email-processor"]').count()) {
+        throw new Error('the admin-only email-processor panel is mounted for a non-admin staff user');
+      }
+      if (hits.length) throw new Error(`a non-admin /settings still calls the admin-only email-processor: ${hits.slice(0, 3).join(' | ')}`);
+    } finally {
+      page.off('response', watch);
+    }
+  });
+
+  await step(page, p, 'staff-calendar-team-pills-reachable-on-phone', async () => {
+    // r619: the Diary's team filter bar (calendar.tsx, data-testid
+    // team-filter-bar) laid nine team pills in one non-wrapping,
+    // non-scrolling flex row. showTeam defaults TRUE, so every staff member
+    // opening the Diary on a phone got a filter bar where seven of the nine
+    // teams sat off the right edge — "Landsec" 732px out — CLIPPED by an
+    // ancestor, so documentElement.scrollWidth stayed exactly 390 and the
+    // page-level overflow sweep passed it. The fix makes the strip
+    // overflow-x-auto (the house pattern: evidence-plans, mobile-expenses),
+    // so the durable assertion is REACHABILITY: scroll the strip to its end
+    // and the last pill must land inside the viewport. On the clipped build
+    // the scroll does nothing and the pill stays out of reach.
+    const phone = await page.context().browser().newContext({
+      viewport: { width: 390, height: 844 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    const ph = await phone.newPage();
+    try {
+      await ph.goto(`${BASE}/`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await ph.evaluate((t) => { localStorage.setItem('bgp_auth_token', t); localStorage.setItem('authToken', t); }, page.qaToken);
+      await ph.goto(`${BASE}/calendar`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await ph.waitForTimeout(8000);
+      const bar = ph.locator('[data-testid="team-filter-bar"]');
+      if (!(await bar.count())) throw new Error('the Diary team filter bar did not render — scenario would pass vacuously');
+      const pills = ph.locator('[data-testid^="team-pill-"]');
+      const n = await pills.count();
+      if (n < 3) throw new Error(`only ${n} team pill(s) — scenario would pass vacuously`);
+      // Reachable = the strip actually scrolls the overflow into view.
+      await bar.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+      await ph.waitForTimeout(400);
+      const last = await pills.nth(n - 1).boundingBox();
+      if (!last) throw new Error('the last team pill has no box — scenario would pass vacuously');
+      if (last.x < 0 || last.x + last.width > 391) {
+        throw new Error(`team pill ${n} of ${n} is unreachable on a 390px phone even after scrolling the strip: x=${Math.round(last.x)} w=${Math.round(last.width)}`);
+      }
+    } finally {
+      await phone.close().catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-aml-compliance-actions-reachable-on-phone', async () => {
+    // r619: two /aml-compliance card headers put their button cluster in a
+    // justify-between row that could not wrap — "Create blank" sat 78px past
+    // the right edge and "Log Training" 30px, both CLIPPED (scrollWidth 390),
+    // which is why r618 recorded /aml-compliance as clean at 390px. Measure
+    // the CONTROLS, not the document.
+    const phone = await page.context().browser().newContext({
+      viewport: { width: 390, height: 844 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    const ph = await phone.newPage();
+    try {
+      await ph.goto(`${BASE}/`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await ph.evaluate((t) => { localStorage.setItem('bgp_auth_token', t); localStorage.setItem('authToken', t); }, page.qaToken);
+      await ph.goto(`${BASE}/aml-compliance`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await ph.waitForTimeout(8000);
+      const ids = ['button-edit-risk-assessment', 'button-open-training-tab'];
+      const offscreen = [];
+      for (const id of ids) {
+        const el = ph.locator(`[data-testid="${id}"]`);
+        if (!(await el.count())) throw new Error(`${id} is not on /aml-compliance — scenario would pass vacuously`);
+        const b = await el.boundingBox().catch(() => null);
+        if (!b) throw new Error(`${id} has no box — scenario would pass vacuously`);
+        if (b.x < 0 || b.x + b.width > 391) offscreen.push(`${id} at x=${Math.round(b.x)} w=${Math.round(b.width)}`);
+      }
+      if (offscreen.length) throw new Error(`AML compliance actions off a 390px phone screen: ${offscreen.join(', ')}`);
+    } finally {
+      await phone.close().catch(() => {});
+    }
   });
 
   await step(page, p, 'staff-evidence-plan-lifecycle', async () => {
@@ -2258,6 +3537,2273 @@ async function victoriaRound(page, cross) {
     const after = await (await fetch(`${BASE}/api/evidence-plans`, { headers: { Authorization: auth.Authorization } })).json();
     if (after.some((pl) => pl.id === plan.id)) throw new Error('deleted plan still in the list');
   });
+
+  await step(page, p, 'staff-deals-table-editors', async () => {
+    // Other half of client-deals-table-read-only-parties (r534): the client
+    // read-only party cells must not cost staff their inline pickers.
+    // /deals opens on the WIP report for staff — the Deals tab holds the table.
+    await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForTimeout(3000);
+    await page.locator('text=Deals').nth(1).click({ timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(3000);
+    if (!(await page.locator('[data-testid="inline-link-select-trigger"]').count())) {
+      throw new Error('staff lost the inline party pickers on the deals table');
+    }
+    if (await page.locator('[data-testid="inline-link-readonly"]').count()) {
+      throw new Error('staff deals table rendered client read-only party cells');
+    }
+  });
+
+  await step(page, p, 'staff-deals-table-fee-total-and-wip-kept', async () => {
+    // Other half of client-deals-table-no-bgp-fee-or-wip (r553): stripping
+    // BGP's fee totals and the WIP framing for the client must not cost staff
+    // either. /deals opens on the WIP report for staff — the table is /list.
+    await page.goto(`${BASE}/deals/list`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/deals/list`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForSelector('[data-testid^="dates-cell-"]', { timeout: 25000 })
+      .catch(() => { throw new Error('staff deals table never rendered a dates cell (did it load?)'); });
+    const body = await page.evaluate(() => document.body.innerText);
+    if (!/Total fees:/i.test(body)) throw new Error('staff lost the deals-table fee total');
+    const tile = await page.locator('[data-testid="card-group-all"]').first().innerText().catch(() => '');
+    if (!/£/.test(tile)) throw new Error('staff lost the fee subtotal on the deals tile');
+    const dc = page.locator('[data-testid^="dates-cell-"]').first();
+    await dc.click();
+    await page.waitForTimeout(1200);
+    const pop = await page.evaluate(() => document.querySelector('[data-radix-popper-content-wrapper]')?.innerText || '');
+    if (!/Target Month/.test(pop)) throw new Error('staff lost the Target Month row on the dates cell');
+    if (!/WIP report/i.test(pop)) throw new Error('staff lost the WIP-report hint on the dates cell');
+  });
+
+  // r554: the WIP report's title must describe the rows it is actually
+  // showing. The server stopped scoping /api/wip by team (every staff user
+  // gets the firm-wide "Normal" view), but the header still fell back to the
+  // reader's own team — so Victoria's report read "WIP Report — National
+  // Leasing" over a £250,000 total made up entirely of another team's deal,
+  // while its own NET FEES BY TEAM panel said National Leasing £0.
+  await step(page, p, 'staff-wip-title-matches-its-rows', async () => {
+    const api = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/wip', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const b = await res.json().catch(() => null);
+      return { ok: true, userTeam: b?.userTeam || null, isAdmin: !!b?.isAdmin, canSeeAll: !!b?.canSeeAll };
+    });
+    if (!api.ok) throw new Error(`WIP fetch failed (${api.status})`);
+    await page.goto(`${BASE}/wip-report`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/wip-report`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForSelector('[data-testid="wip-report-title"]', { timeout: 25000 })
+      .catch(() => { throw new Error('WIP report never rendered its title (did it load?)'); });
+    const title = (await page.locator('[data-testid="wip-report-title"]').first().innerText()).replace(/\s+/g, ' ').trim();
+    // Rows are firm-wide unless a plain DB admin has sliced to a team, so the
+    // title must never carry the reader's own team name in that case.
+    if (!api.isAdmin && !api.canSeeAll && api.userTeam && title.includes(api.userTeam)) {
+      throw new Error(`WIP title claims a team slice that is not applied: "${title}" over firm-wide rows`);
+    }
+    if (!api.isAdmin && !api.canSeeAll && !/All Teams/.test(title)) {
+      throw new Error(`WIP title should read "All Teams" for a firm-wide view, got "${title}"`);
+    }
+  });
+
+  // r554: the deal page must state the fee it talks about. A staff deal with
+  // a fee but no agent split rendered "No split yet — Add Split shares the
+  // fee between BGP agents" and no figure anywhere on the page, so tapping
+  // the WIP report's biggest number through to its deal showed nothing to
+  // check it against.
+  await step(page, p, 'staff-deal-fee-shown-without-split', async () => {
+    const target = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/deals', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return null;
+      const deals = await res.json().catch(() => []);
+      const d = (Array.isArray(deals) ? deals : []).find((x) => Number(x.fee) > 0);
+      return d ? { id: d.id, fee: Number(d.fee) } : null;
+    });
+    if (!target) return; // no priced deal in the fixture — nothing to assert
+    await page.goto(`${BASE}/deals/${target.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/deals/${target.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForSelector('[data-testid="card-fee-allocation"]', { timeout: 25000 })
+      .catch(() => { throw new Error('staff deal page never rendered the Fee Allocation card'); });
+    const badge = await page.locator('[data-testid="badge-fee-total"]').first().innerText().catch(() => '');
+    if (!badge) throw new Error('staff deal page shows no fee figure for a priced deal');
+    const digits = badge.replace(/[^0-9]/g, '');
+    if (digits !== String(Math.round(target.fee))) {
+      throw new Error(`deal page fee badge "${badge}" disagrees with the deal's fee ${target.fee}`);
+    }
+  });
+
+  // r555: "Fees Billed YTD" on the Board Report counted the fee of every deal
+  // touched this year — a deal still in negotiation read as billed revenue,
+  // while the WIP report on the same data said Invoiced £0. Assert the board
+  // number only ever counts invoiced deals, and that no un-invoiced priced
+  // deal's fee is inside it.
+  await step(page, p, 'staff-board-report-billed-is-invoiced-only', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const [br, dl] = await Promise.all([
+        fetch('/api/board-report', { headers: auth }).then(x => x.ok ? x.json() : null).catch(() => null),
+        fetch('/api/crm/deals', { headers: auth }).then(x => x.ok ? x.json() : null).catch(() => null),
+      ]);
+      if (!br || !Array.isArray(dl)) return null;
+      const INV = /^(inv|invoiced|billed)$/i;
+      const priced = dl.filter(d => Number(d.fee) > 0);
+      return {
+        billed: Number(br.performance?.totalFeesYTD || 0),
+        monthly: (br.performance?.monthlyFees || []).reduce((s, m) => s + Number(m.total || 0), 0),
+        invoicedTotal: priced.filter(d => INV.test(String(d.status || '').trim())).reduce((s, d) => s + Number(d.fee), 0),
+        openTotal: priced.filter(d => !INV.test(String(d.status || '').trim())).reduce((s, d) => s + Number(d.fee), 0),
+      };
+    });
+    if (!r) throw new Error('board report or deals list unavailable to staff');
+    if (r.billed > r.invoicedTotal) {
+      throw new Error(`Fees Billed YTD ${r.billed} exceeds the fees of all invoiced deals (${r.invoicedTotal}) — un-billed pipeline is being counted as revenue`);
+    }
+    if (r.openTotal > 0 && r.billed >= r.invoicedTotal + r.openTotal) {
+      throw new Error(`Fees Billed YTD ${r.billed} includes the ${r.openTotal} sitting on un-invoiced deals`);
+    }
+    if (r.monthly > r.billed) {
+      throw new Error(`Monthly Fee Revenue sums to ${r.monthly} against a Fees Billed YTD of ${r.billed}`);
+    }
+  });
+
+  // r555 counterpart (r550 lesson — a report and its own export must agree):
+  // the Board Report's Excel export duplicates the same fee maths, so assert
+  // its Executive Summary KPI matches the screen's number.
+  await step(page, p, 'staff-board-export-matches-screen', async () => {
+    const XLSX = await import('../node_modules/xlsx/xlsx.mjs');
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const br = await fetch('/api/board-report', { headers: auth }).then(x => x.ok ? x.json() : null).catch(() => null);
+      const xr = await fetch('/api/board-report/export-excel', { headers: auth }).catch(() => null);
+      if (!br || !xr || !xr.ok) return null;
+      const buf = new Uint8Array(await xr.arrayBuffer());
+      return { billed: Number(br.performance?.totalFeesYTD || 0), ct: xr.headers.get('content-type') || '', bytes: Array.from(buf) };
+    });
+    if (!r) throw new Error('board report export unavailable to staff');
+    if (!/spreadsheetml|officedocument/.test(r.ct)) throw new Error(`board export returned a non-xlsx body (content-type ${r.ct || 'none'})`);
+    const wb = XLSX.read(Uint8Array.from(r.bytes), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    const row = rows.find(x => String(x?.[0] || '').toLowerCase().includes('fees billed'));
+    if (!row) throw new Error('board export lost its Fees Billed YTD row');
+    const exported = Number(String(row[1] ?? '').replace(/[^0-9]/g, '') || 0);
+    if (exported !== Math.round(r.billed)) {
+      throw new Error(`board export says Fees Billed YTD ${row[1]} but the screen says ${r.billed}`);
+    }
+  });
+
+  await step(page, p, 'staff-properties-table-pickers-kept', async () => {
+    // Other half of client-properties-table-readonly-cells (r542): the client
+    // read-only dash must not cost staff the tenant / BGP-contact pickers.
+    await page.goto(`${BASE}/properties`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/properties`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForSelector('[data-testid^="tenants-readonly-"], [data-testid^="add-tenant-"]', { timeout: 25000 })
+      .catch(() => { throw new Error('staff properties table never rendered a tenants cell (did it load?)'); });
+    for (const kind of ['add-tenant', 'add-agent']) {
+      if (!(await page.locator(`[data-testid^="${kind}-"]`).count())) {
+        throw new Error(`staff lost the ${kind} picker on the properties table`);
+      }
+    }
+    for (const kind of ['tenants', 'agents']) {
+      if (await page.locator(`[data-testid^="${kind}-readonly-"]`).count()) {
+        throw new Error(`staff properties table rendered the client read-only ${kind} cell`);
+      }
+    }
+  });
+
+  // Staff half of the r535 client-leads-guard additions: blocking the CRM
+  // leads pipeline and gating landlord packs for clients must not cost BGP
+  // its own prospecting board or its packs. A 404 on the pack filename is
+  // the RIGHT staff answer (no such file) — a 403 would mean the gate leaked
+  // onto staff.
+  await step(page, p, 'staff-crm-leads-and-packs-kept', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await fetch('/api/crm/leads', { headers: auth }).catch(() => ({ status: 0 }));
+      return {
+        list: list.status,
+        isArray: list.ok ? Array.isArray(await list.json().catch(() => null)) : false,
+        pack: (await fetch('/api/crm/landlord-packs/qa-probe-nonexistent-pack.pdf', { headers: auth }).catch(() => ({ status: 0 }))).status,
+      };
+    });
+    if (r.list !== 200) throw new Error(`staff lost the CRM leads pipeline (expected 200, got ${r.list})`);
+    if (!r.isArray) throw new Error('staff CRM leads list did not come back as an array');
+    if (r.pack === 403) throw new Error('the client landlord-pack gate leaked onto staff (403)');
+  });
+
+  // Staff half of the r536 dashboard block: BGP's own firm fee summary and the
+  // per-agent leaderboard power the /hr overview hero, so the client gate must
+  // not cost staff either.
+  await step(page, p, 'staff-firm-dashboard-kept', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const j = async (url) => {
+        const res = await fetch(url, { headers: auth }).catch(() => ({ status: 0 }));
+        return { status: res.status, body: res.ok ? await res.json().catch(() => null) : null };
+      };
+      return { summary: await j('/api/dashboard/firm-summary'), board: await j('/api/dashboard/individual-leaderboard') };
+    });
+    if (r.summary.status !== 200) throw new Error(`staff lost the firm fee summary (expected 200, got ${r.summary.status})`);
+    if (typeof r.summary.body?.wipPence !== 'number') throw new Error('firm summary came back without a WIP figure');
+    if (r.board.status !== 200) throw new Error(`staff lost the individual leaderboard (expected 200, got ${r.board.status})`);
+    if (!Array.isArray(r.board.body?.topBiller)) throw new Error('leaderboard came back without a topBiller list');
+  });
+
+  // Staff-keeps counterpart to the r537 client blocks: the /map annotation
+  // layer sidebar and the news Sources tab's paywall-login panel both live
+  // behind newly-blocked prefixes, so prove staff still get a full layer
+  // roundtrip (create → listed with its name → delete) and the cookie
+  // health list. A regression here is a staff surface losing its data.
+  await step(page, p, 'staff-map-layers-and-news-config-kept', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const name = 'QA-PROBE Layer ' + Date.now();
+      const made = await fetch('/api/map-layers', {
+        method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name, color: '#ef4444', sharedWithTeam: true }),
+      }).catch(() => ({ ok: false, status: 0 }));
+      const createStatus = made.status;
+      const id = made.ok ? (await made.json().catch(() => ({})))?.id : null;
+      const listRes = await fetch('/api/map-layers', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const list = listRes.ok ? await listRes.json().catch(() => []) : [];
+      let delStatus = 0;
+      if (id) delStatus = (await fetch(`/api/map-layers/${id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      const cookiesRes = await fetch('/api/news-feed/auth-cookies/health', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const cookies = cookiesRes.ok ? await cookiesRes.json().catch(() => ({})) : null;
+      return {
+        createStatus, listStatus: listRes.status, delStatus,
+        seen: Array.isArray(list) && list.some((l) => l.name === name && l.mine === true),
+        cookieStatus: cookiesRes.status,
+        cookieCount: Array.isArray(cookies?.status) ? cookies.status.length : -1,
+      };
+    });
+    if (![200, 201].includes(r.createStatus)) throw new Error(`staff lost map-layer create (expected 200/201, got ${r.createStatus})`);
+    if (r.listStatus !== 200) throw new Error(`staff lost the map-layer list (expected 200, got ${r.listStatus})`);
+    if (!r.seen) throw new Error('staff map-layer list came back without the layer just created');
+    if (r.delStatus !== 200) throw new Error(`staff lost map-layer delete (expected 200, got ${r.delStatus})`);
+    if (r.cookieStatus !== 200) throw new Error(`staff lost the paywall cookie health list (expected 200, got ${r.cookieStatus})`);
+    if (r.cookieCount < 1) throw new Error('paywall cookie health came back without any publication rows');
+  });
+
+  await step(page, p, 'staff-mlro-report-pdf', async () => {
+    // r545: GET /api/aml/deal/:id/mlro-report 500'd on every deal —
+    // "column d.crm_company_id does not exist" — so the MLRO's
+    // regulator-facing PDF (and its Save-to-SharePoint twin, same
+    // generator) could never be produced. Node-side fetch: the response is
+    // a binary PDF, not something to read through page.evaluate.
+    const deals = await (await fetch(`${BASE}/api/crm/deals`, { headers: { Authorization: 'Bearer ' + page.qaToken } })).json();
+    const list = Array.isArray(deals) ? deals : (deals.deals || []);
+    if (!list.length) throw new Error('no deals to report on');
+    const r = await fetch(`${BASE}/api/aml/deal/${list[0].id}/mlro-report`, { headers: { Authorization: 'Bearer ' + page.qaToken } });
+    if (r.status !== 200) throw new Error(`MLRO report expected 200, got ${r.status}: ${(await r.text()).slice(0, 120)}`);
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.slice(0, 4).toString() !== '%PDF') throw new Error(`MLRO report is not a PDF: ${buf.slice(0, 80).toString()}`);
+    if (buf.length < 1000) throw new Error(`MLRO report suspiciously small (${buf.length} bytes)`);
+  });
+
+  await step(page, p, 'staff-board-report-category-labels', async () => {
+    // r543: the Board Report's market-insights category breakdown was
+    // printing the raw news_sources key "brand:<uuid>" as a board-facing
+    // label. Those rows must resolve to the brand's name.
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/board-report', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const body = res.ok ? await res.json().catch(() => ({})) : {};
+      const cats = body?.marketInsights?.categoryBreakdown || [];
+      return { status: res.status, cats: cats.map((c) => c.category) };
+    });
+    if (r.status !== 200) throw new Error(`staff lost the board report (expected 200, got ${r.status})`);
+    if (!r.cats.length) throw new Error('board report came back with no category breakdown');
+    const raw = r.cats.filter((c) => typeof c === 'string' && c.startsWith('brand:'));
+    if (raw.length) throw new Error(`board report still labels brand feeds with raw keys: ${raw.join(', ')}`);
+  });
+
+  await step(page, p, 'staff-tenancy-dupe-no-second-tracker-card', async () => {
+    // r539: a duplicated spine row (same unit listed twice on the tenancy
+    // schedule) used to spawn a SECOND Letting Tracker card via
+    // fanOutTenancyStatus — the name-link only adopts unowned rows, so a
+    // sibling spine row's card was invisible to it. Add a duplicate-named
+    // tenancy row, assert the tracker card count for that name is unchanged,
+    // then delete the row we added. Node-side fetch, cleans up after itself.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const units = async () => {
+      const r = await fetch(`${BASE}/api/available-units?propertyId=${BLUEWATER}`, { headers: auth });
+      if (r.status !== 200) throw new Error(`staff GET /api/available-units expected 200, got ${r.status}`);
+      const body = await r.json();
+      return Array.isArray(body) ? body : (body.units || []);
+    };
+    const before = await units();
+    if (before.length === 0) throw new Error('staff tracker came back empty for Bluewater');
+    const name = before[0].unitName;
+    const countBefore = before.filter((u) => u.unitName === name).length;
+    const mk = await fetch(`${BASE}/api/tenancy-schedule/unit`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ property_id: BLUEWATER, unit_number: name, status: 'Vacant' }),
+    });
+    if (mk.status !== 200) throw new Error(`tenancy row create expected 200, got ${mk.status}`);
+    const row = await mk.json();
+    try {
+      const after = await units();
+      const countAfter = after.filter((u) => u.unitName === name).length;
+      if (countAfter !== countBefore) {
+        throw new Error(`duplicate spine row changed the tracker card count for "${name}": ${countBefore} -> ${countAfter}`);
+      }
+    } finally {
+      if (row?.id) await fetch(`${BASE}/api/tenancy-schedule/unit/${row.id}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-resync-mirror-is-idempotent', async () => {
+    // r539 companion: the property-wide "Re-sync" is the other amplifier —
+    // it fans out every spine row, so a dirty schedule used to grow the
+    // tracker on each press. Two consecutive re-syncs must leave the card
+    // count exactly where it started.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const count = async () => {
+      const r = await fetch(`${BASE}/api/available-units?propertyId=${BLUEWATER}`, { headers: auth });
+      if (r.status !== 200) throw new Error(`staff GET /api/available-units expected 200, got ${r.status}`);
+      const body = await r.json();
+      return (Array.isArray(body) ? body : (body.units || [])).length;
+    };
+    const before = await count();
+    for (let i = 0; i < 2; i++) {
+      const rs = await fetch(`${BASE}/api/properties/${BLUEWATER}/resync-mirror`, { method: 'POST', headers: auth });
+      if (rs.status !== 200) throw new Error(`staff resync-mirror expected 200, got ${rs.status}`);
+    }
+    const after = await count();
+    if (after !== before) throw new Error(`re-sync changed the Bluewater tracker card count: ${before} -> ${after}`);
+  });
+
+  await step(page, p, 'staff-requirement-fits-matches', async () => {
+    // r540: the Requirements board's "Fits" column and its KPI both come from
+    // /matches. A logged requirement with a size band must come back with at
+    // least one fitting unit, or the board's whole point is dead.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const cr = await fetch(`${BASE}/api/crm/requirements-leasing`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ name: 'QA-REQ-FITS', use: ['Restaurant'], size: ['1,000 - 2,000 sq ft'], requirementLocations: ['South East'], status: 'Active' }),
+    });
+    if (cr.status !== 201) throw new Error(`staff POST requirements-leasing expected 201, got ${cr.status}`);
+    const created = await cr.json();
+    try {
+      const m = await fetch(`${BASE}/api/crm/requirements-leasing/matches`, { headers: auth });
+      if (m.status !== 200) throw new Error(`staff GET requirements matches expected 200, got ${m.status}`);
+      const body = await m.json();
+      if (!body.unitPool) throw new Error('requirements matches returned an empty unit pool');
+      const hit = body.matches?.[created.id];
+      if (!hit || !hit.count) throw new Error('a 1,000-2,000 sq ft requirement matched no available unit');
+      if (!hit.top?.[0]?.unitName) throw new Error('fits row carries no unit name');
+    } finally {
+      await fetch(`${BASE}/api/crm/requirements-leasing/${created.id}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-unit-brief-keeps-every-target', async () => {
+    // r540: targets added from the Suggest-Targets dialog used to each mint a
+    // NEW brief for the unit, and the unit only ever reads its newest brief —
+    // so every target but the last one vanished. Two targets added to a unit
+    // must both come back on that unit's brief.
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const ur = await fetch(`${BASE}/api/available-units?propertyId=${BLUEWATER}`, { headers: auth });
+    const units = await ur.json();
+    const unit = (Array.isArray(units) ? units : (units.units || []))[0];
+    if (!unit?.id) throw new Error('no Bluewater unit to brief');
+    const existing = await (await fetch(`${BASE}/api/available-units/${unit.id}/brief`, { headers: auth })).json();
+    let briefId = existing?.id;
+    let mine = false;
+    if (!briefId) {
+      const b = await fetch(`${BASE}/api/unit-briefs`, { method: 'POST', headers: auth, body: JSON.stringify({ unitId: unit.id }) });
+      if (b.status !== 200) throw new Error(`staff POST unit-briefs expected 200, got ${b.status}`);
+      briefId = (await b.json()).id; mine = true;
+    }
+    const names = ['QA-PROBE Target A', 'QA-PROBE Target B'];
+    try {
+      for (const operatorName of names) {
+        const t = await fetch(`${BASE}/api/unit-briefs/${briefId}/targets`, { method: 'POST', headers: auth, body: JSON.stringify({ operatorName, priority: 'B' }) });
+        if (t.status !== 200) throw new Error(`staff POST brief target expected 200, got ${t.status}`);
+      }
+      const view = await (await fetch(`${BASE}/api/available-units/${unit.id}/brief`, { headers: auth })).json();
+      const got = (view?.targets || []).map((t) => t.operatorName);
+      for (const n of names) if (!got.includes(n)) throw new Error(`unit brief lost target ${n} (sees: ${got.join(', ') || 'none'})`);
+    } finally {
+      const view = await (await fetch(`${BASE}/api/available-units/${unit.id}/brief`, { headers: auth })).json().catch(() => null);
+      for (const t of (view?.targets || [])) {
+        if (names.includes(t.operatorName)) await fetch(`${BASE}/api/unit-briefs/targets/${t.id}`, { method: 'DELETE', headers: auth }).catch(() => {});
+      }
+      if (mine) await fetch(`${BASE}/api/unit-briefs/${briefId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-phone-chat-no-nested-controls', async () => {
+    // r541: the phone chat header nested the group-pic <button> INSIDE the
+    // group-settings <button> — invalid DOM that React warned about on every
+    // group thread. Nested interactive controls swallow taps unpredictably,
+    // so guard the whole phone chat surface, not just that one header.
+    await page.setViewportSize({ width: 390, height: 844 });
+    try {
+      await page.goto(`${BASE}/messages`);
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(2500);
+      const thread = page.locator('[data-testid^="mobile-thread-"]').first();
+      if (await thread.count()) {
+        await thread.click();
+        await page.waitForTimeout(2500);
+      }
+      const nested = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('button button, a a')).map(
+          (el) => `${el.tagName.toLowerCase()}[${el.getAttribute('data-testid') || el.className || ''}]`.slice(0, 80)
+        )
+      );
+      if (nested.length) throw new Error(`nested interactive controls on the phone chat surface: ${nested.join(', ')}`);
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 900 });
+    }
+  });
+  await step(page, p, 'staff-phone-chat-suggestions-kept', async () => {
+    // Counterpart to mark's client-mobile-chat-suggestions-landlord-voiced
+    // (r544): staff keep the BGP-voiced starter prompts on the phone.
+    // The phone shell needs a touch UA, not just a narrow viewport
+    // (use-mobile: narrow AND isTouchDevice) — resizing the desktop context
+    // leaves /messages redirecting to the desktop /chatbgp page (r545).
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      // The starter prompts live on the AI thread's empty state, reached the
+      // way a user reaches it: Messages -> the pinned ChatBGP row. A bare
+      // /chatbgp?ask=1 open does not render them.
+      await mobGoto(mob, `${BASE}/messages`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(2500);
+      await mob.locator('[data-testid="mobile-pinned-chatbgp"]').first().click();
+      await mob.waitForTimeout(2500);
+      const chips = await mob.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-testid^="mobile-suggestion-"]')).map(el => el.textContent.trim()));
+      if (chips.length < 3) throw new Error(`staff phone chat lost its starter prompts (${chips.length})`);
+      if (!chips.some(c => /HOTs/i.test(c)) || !chips.some(c => /CRM contacts/i.test(c))) {
+        throw new Error(`staff phone starter prompts no longer BGP-voiced: ${chips.join(' | ')}`);
+      }
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  await step(page, p, 'staff-unit-form-keeps-fee-split', async () => {
+    // Counterpart to mark's client-unit-form-no-bgp-fee (r552): staff keep
+    // the agency fee, the total and the BGP House 15% / agents 85% split on
+    // the Letting Tracker unit form.
+    const units = await page.evaluate(async () => {
+      const r = await fetch('/api/available-units', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      return r.ok ? await r.json() : [];
+    });
+    const u = (Array.isArray(units) ? units : []).find(x => x.unitName);
+    if (!u) throw new Error('no available units to open');
+    await page.goto(`${BASE}/available`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2000);
+    const search = page.locator('input[placeholder*="Search" i]').first();
+    if (await search.count()) { await search.fill(u.unitName.slice(0, 24)); await page.waitForTimeout(1500); }
+    const btn = page.locator(`[data-testid="button-edit-${u.id}"]`).first();
+    if (!(await btn.count())) throw new Error(`staff lost the unit edit button for ${u.unitName}`);
+    await btn.scrollIntoViewIfNeeded().catch(() => {});
+    await btn.click();
+    await page.waitForTimeout(2200);
+    const txt = await page.locator('[role="dialog"]').last().innerText().catch(() => '');
+    for (const m of [/% Agency fee/i, /Total fee/i, /BGP fee split/i, /BGP House takes 15%/i]) {
+      if (!m.test(txt)) throw new Error(`staff unit form lost ${m} (${txt.length} chars)`);
+    }
+    if (!/Quoting Rent/i.test(txt)) throw new Error('staff unit form lost Quoting Rent');
+  });
+
+  await step(page, p, 'staff-lease-event-create-and-track', async () => {
+    // r556: the Lease Events board could not be written to at all — the
+    // Drizzle schema carries matter_id (migrations/0009) but a restored
+    // database never had the column, so every "Log event" answered 400
+    // ("column matter_id does not exist"). Guards the whole write path:
+    // create -> list -> status move -> digest -> delete.
+    const name = `QA-PROBE lease event R${ROUND}`;
+    const when = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
+    const out = await page.evaluate(async ([name, when]) => {
+      const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const post = await fetch('/api/lease-events', { method: 'POST', headers: h, body: JSON.stringify({ tenant: name, address: 'Bluewater Shopping Centre', unitRef: 'QA-U1', eventType: 'Rent Review', status: 'Monitoring', sourceEvidence: 'Manual', currentRent: '£125,000', estimatedErv: '£150,000', eventDate: when }) });
+      const created = post.ok ? await post.json() : await post.text();
+      if (!post.ok) return { createStatus: post.status, created };
+      const list = await (await fetch('/api/lease-events', { headers: h })).json();
+      const row = list.find(x => x.id === created.id);
+      const patch = await fetch(`/api/lease-events/${created.id}`, { method: 'PATCH', headers: h, body: JSON.stringify({ status: 'Contacted' }) });
+      const digest = await (await fetch('/api/lease-events/digest', { headers: h })).json();
+      const del = await fetch(`/api/lease-events/${created.id}`, { method: 'DELETE', headers: h });
+      const after = await (await fetch('/api/lease-events', { headers: h })).json();
+      return {
+        createStatus: post.status, row, patchStatus: patch.status,
+        inDigest: JSON.stringify(digest).includes(name),
+        delStatus: del.status, stillThere: after.some(x => x.id === created.id),
+      };
+    }, [name, when]);
+    if (out.createStatus !== 200) throw new Error(`lease-event create ${out.createStatus}: ${JSON.stringify(out.created).slice(0, 160)}`);
+    if (!out.row) throw new Error('created lease event missing from the board list');
+    if (out.row.currentRent !== '£125,000' || out.row.estimatedErv !== '£150,000') throw new Error(`rent/ERV not round-tripped: ${JSON.stringify([out.row.currentRent, out.row.estimatedErv])}`);
+    if (out.patchStatus !== 200) throw new Error(`status move ${out.patchStatus}`);
+    if (!out.inDigest) throw new Error('a Monitoring/Contacted event is missing from the lease-event digest');
+    if (out.delStatus !== 200 || out.stillThere) throw new Error('lease event not deleted');
+  });
+
+  await step(page, p, 'staff-tracker-viewings-count-is-live', async () => {
+    // r570: available_units.viewings_count is a denormalised column nothing
+    // has ever written, so the unit payload said 0 viewings on every one of
+    // 81 units while /all-viewings-counts (the same unit_viewings rows) said
+    // 2 — the tracker read the live query, the phone letting card and the
+    // property asset brief read the dead column. The two must agree.
+    const out = await page.evaluate(async () => {
+      const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: h })).json();
+      const rows = Array.isArray(units) ? units : (units.units || []);
+      const unit = rows[0];
+      if (!unit) return { noUnit: true };
+      const post = await fetch(`/api/available-units/${unit.id}/viewings`, { method: 'POST', headers: h, body: JSON.stringify({ viewingDate: new Date().toISOString().slice(0, 10), attendees: 'QA-VIEWING-COUNT probe', outcome: 'Interested', notes: 'r570 live-count guard' }) });
+      const created = post.ok ? await post.json() : null;
+      const counts = await (await fetch('/api/available-units/all-viewings-counts', { headers: h })).json();
+      const after = await (await fetch('/api/available-units', { headers: h })).json();
+      const afterRows = Array.isArray(after) ? after : (after.units || []);
+      const mine = afterRows.find(r => r.id === unit.id);
+      const detail = await (await fetch(`/api/available-units/${unit.id}`, { headers: h })).json();
+      const mismatches = afterRows.filter(r => (r.viewingsCount || 0) !== (counts[r.id] || 0)).map(r => r.unitName);
+      if (created) await fetch(`/api/available-units/viewings/${created.id}`, { method: 'DELETE', headers: h });
+      return { createStatus: post.status, live: counts[unit.id] || 0, listCount: mine?.viewingsCount ?? null, detailCount: detail?.viewingsCount ?? null, mismatches: mismatches.slice(0, 5) };
+    });
+    if (out.noUnit) throw new Error('no available units to count viewings on');
+    if (out.createStatus !== 200 && out.createStatus !== 201) throw new Error(`viewing create ${out.createStatus}`);
+    if (!out.live) throw new Error('the live viewings-count endpoint did not see the viewing just logged');
+    if (out.listCount !== out.live) throw new Error(`unit payload says ${out.listCount} viewings, the live count says ${out.live}`);
+    if (out.detailCount !== out.live) throw new Error(`single-unit read says ${out.detailCount} viewings, the live count says ${out.live}`);
+    if (out.mismatches.length) throw new Error(`units whose viewingsCount disagrees with the live count: ${out.mismatches.join(', ')}`);
+  });
+
+  // r606 staff half of client-tenancy-tiles-account-for-every-unit: the
+  // vacant-projection rows (Letting Tracker units with no tenancy row) must
+  // reach BOTH boards in the schedule's vocabulary, not as marketing codes —
+  // a code sits in no KPI bucket, so the header count stops agreeing with
+  // Occupied + Vacant and the negotiated unit is counted nowhere.
+  await step(page, p, 'staff-tenancy-tiles-account-for-every-unit', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    const seen = await page.evaluate(async (pid) => {
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+      const tile = (id) => {
+        const el = document.querySelector(`[data-testid="tenancy-stat-${id}"]`);
+        return el ? parseInt(el.innerText.replace(/[^0-9]/g, ''), 10) : 0;
+      };
+      return {
+        status: 200,
+        total: units.length,
+        codes: units.filter((u) => /^(OPP|REP|SPEC|LIVE|AVA|NEG|HOT|SOL|EXC|COM|INV|WIT)$/.test(String(u.status || '').trim()))
+          .map((u) => `${u.unit_number || u.premises}=${u.status}`).slice(0, 3),
+        bucketed: tile('occupied') + tile('vacant') + tile('in-negotiation') + tile('under-offer') + tile('lease-event'),
+      };
+    }, BLUEWATER);
+    if (seen.status !== 200) throw new Error(`staff tenancy payload returned ${seen.status}`);
+    if (seen.codes.length) throw new Error(`staff tenancy rows ship raw status codes: ${seen.codes.join(', ')}`);
+    if (seen.bucketed !== seen.total) {
+      throw new Error(`staff tenancy board has ${seen.total} units but its tiles account for ${seen.bucketed}`);
+    }
+  });
+
+  await step(page, p, 'staff-tenancy-tile-filters-its-own-count', async () => {
+    // r556: the Occupied tile counted Occupied+Trading+Let+Not Vacant (124)
+    // but clicking it filtered on exact equality (87 rows); Vacant read 76
+    // and showed 69. A tile and the filter it applies must agree.
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    for (const tile of ['occupied', 'vacant']) {
+      const el = page.locator(`[data-testid="tenancy-stat-${tile}"]`).first();
+      if (!(await el.count())) throw new Error(`no ${tile} tile on the tenancy board`);
+      const n = parseInt((await el.innerText()).replace(/[^0-9]/g, ''), 10);
+      await el.click();
+      await page.waitForTimeout(1200);
+      const rows = await page.evaluate(() => document.querySelectorAll('tbody tr').length);
+      await el.click();
+      await page.waitForTimeout(600);
+      if (n !== rows) throw new Error(`${tile} tile says ${n} but its own filter shows ${rows} rows`);
+    }
+  });
+
+  // r567: the schedule's currency formatter tested the FIELD NAME, not the
+  // declared column type, so Rates Payable / Rateable Value / Capex / NOI /
+  // Topped Up NOI / Deposit Held / Arrears printed bare ("190,088") beside
+  // Service Charge's "£252,312" in the same Outgoings band on the same row —
+  // for staff and client alike. Client half:
+  // client-schedule-money-columns-carry-the-pound.
+  await step(page, p, 'staff-schedule-money-columns-carry-the-pound', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(3000);
+    const seen = await page.evaluate(async (pid) => {
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+      const headRow = document.querySelectorAll('thead tr')[1];
+      if (!headRow) return { noHead: true };
+      const heads = Array.from(headRow.querySelectorAll('th'))
+        .map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const pick = units.find((u) => Number(u.rates_payable) > 999 && Number(u.service_charge) > 999);
+      if (!pick) return { noRow: true };
+      const tr = Array.from(document.querySelectorAll('tbody tr'))
+        .find((r) => ((r.querySelector('td') || {}).textContent || '').includes(pick.unit_number));
+      if (!tr) return { missing: pick.unit_number };
+      const tds = Array.from(tr.querySelectorAll('td')).map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const at = (label) => tds[heads.indexOf(label)];
+      return { unit: pick.unit_number, rates: at('Rates Payable'), sc: at('Service Charge') };
+    }, BLUEWATER);
+    if (seen.status) throw new Error(`staff tenancy payload returned ${seen.status}`);
+    if (seen.noHead) throw new Error('staff tenancy schedule rendered no column header row');
+    if (seen.noRow) throw new Error('fixture has no rated, charged unit to check');
+    if (seen.missing) throw new Error(`unit ${seen.missing} is in the payload but not in the table`);
+    if (!/^£[\d,]+$/.test(seen.sc || '')) throw new Error(`staff service charge "${seen.sc}" on ${seen.unit} is not formatted money`);
+    if (!/^£[\d,]+$/.test(seen.rates || '')) {
+      throw new Error(`staff rates payable "${seen.rates}" on ${seen.unit} prints without a currency mark, beside service charge "${seen.sc}"`);
+    }
+  });
+
+  // r569: the "Avg ERV £psf" tile averaged blended_erv — a PER-ANNUM import
+  // column, null on all 199 Bluewater rows — so the headline rate read "—"
+  // on a board whose own ERV (pa) column prints figures. It now computes
+  // the rate its label promises from the payload beside it. Client half:
+  // client-tenancy-erv-psf-tile-reads-a-rate.
+  await step(page, p, 'staff-tenancy-erv-psf-tile-reads-a-rate', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    const seen = await ervPsfTile(page, BLUEWATER);
+    if (seen.status) throw new Error(`staff tenancy payload returned ${seen.status}`);
+    if (seen.noRow) throw new Error('fixture has no unit carrying both an ERV and an NIA');
+    if (seen.missing) throw new Error('no Avg ERV £psf tile on the tenancy board');
+    if (Math.abs(seen.shown - seen.expect) > 0.05) {
+      throw new Error(`staff Avg ERV £psf tile reads "${seen.txt}" but its own ${seen.priced} priced rows work out at ${seen.expect.toFixed(2)} psf`);
+    }
+  });
+
+  // r568 staff half of client-phone-tenancy-card-headline-money — the card
+  // headline rule is shared, so a regression would hit both shells.
+  await step(page, p, 'staff-phone-tenancy-card-headline-money', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/tenancy-schedule/${BLUEWATER}`, nav);
+      await mob.waitForTimeout(6000);
+      const seen = await mob.evaluate(async (pid) => {
+        const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+          headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        });
+        if (!res.ok) return { status: res.status };
+        const j = await res.json();
+        const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+        const pick = units.find((u) => !Number(u.passing_rent_pa) && Number(u.erv_pa) > 999);
+        if (!pick) return { noRow: true };
+        const card = document.querySelector(`[data-testid="tenancy-card-${pick.id}"]`);
+        if (!card) return { missing: pick.unit_number };
+        return { unit: pick.unit_number, erv: Number(pick.erv_pa), txt: card.innerText.replace(/\s+/g, ' ').trim() };
+      }, BLUEWATER);
+      if (seen.status) throw new Error(`staff tenancy payload returned ${seen.status} in the phone context`);
+      if (seen.noRow) throw new Error('fixture has no rent-free, ERV-bearing unit to check');
+      if (seen.missing) throw new Error(`unit ${seen.missing} is in the payload but has no phone card`);
+      const want = '£' + seen.erv.toLocaleString('en-GB');
+      if (!seen.txt.includes(want)) {
+        throw new Error(`staff phone card for ${seen.unit} shows no money — the row's ERV is ${want} but the card reads "${seen.txt.slice(0, 120)}"`);
+      }
+    } finally {
+      await mobCtx.close().catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-reload-shows-the-saved-value', async () => {
+    // r557: the persisted react-query cache (localStorage) restored with the
+    // dataUpdatedAt of the fetch it captured, so a snapshot written seconds
+    // before a change counted as FRESH under the 15s staleTime — the board
+    // repainted the PRE-change value and fired NO request at all, so it never
+    // corrected itself ("my change went back"). A reload must show what the
+    // database holds, and must actually ask for it.
+    const name = `QA-PROBE cache R${ROUND}`;
+    const when = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+    const id = await page.evaluate(async ([name, when]) => {
+      const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/lease-events', { method: 'POST', headers: h, body: JSON.stringify({ tenant: name, eventType: 'Rent Review', status: 'Monitoring', sourceEvidence: 'Manual', eventDate: when }) });
+      return res.ok ? (await res.json()).id : null;
+    }, [name, when]);
+    if (!id) throw new Error('could not create the probe lease event');
+    try {
+      await page.goto(`${BASE}/lease-events`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await page.waitForLoadState('networkidle').catch(() => {});
+      const row = () => page.locator('table tbody tr', { hasText: name }).first();
+      await row().waitFor({ timeout: 30000 });
+      await page.waitForTimeout(3000); // let the persister flush a pre-change snapshot
+      let gets = 0;
+      const count = (rq) => { if (rq.method() === 'GET' && rq.url().endsWith('/api/lease-events')) gets++; };
+      const patched = await page.evaluate(async (id) => {
+        const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+        return (await fetch(`/api/lease-events/${id}`, { method: 'PATCH', headers: h, body: JSON.stringify({ status: 'Contacted' }) })).status;
+      }, id);
+      if (patched !== 200) throw new Error(`status write ${patched}`);
+      page.on('request', count);
+      await page.reload().catch(() => {});
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await row().waitFor({ timeout: 30000 });
+      await page.waitForTimeout(1500);
+      page.off('request', count);
+      const shown = (await row().locator('button[role="combobox"]').nth(0).innerText()).trim();
+      if (shown !== 'Contacted') throw new Error(`reload painted the stale value: board "${shown}", database "Contacted"`);
+      if (!gets) throw new Error('reload never asked the server for /api/lease-events (restored cache counted as fresh)');
+    } finally {
+      await page.evaluate(async (id) => {
+        await fetch(`/api/lease-events/${id}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      }, id).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-unit-edit-keeps-the-deal-stage', async () => {
+    // r562: the Edit Unit dialog seeded its "Unit Status" from the unit ROW's
+    // own marketingStatus, which lags a deal that has moved past marketing.
+    // On a unit the board called Negotiating the field rendered an editable
+    // "Available", and saving ANY other field (a note after a viewing) pushed
+    // AVA back through the unit->deal status mirror and regressed the live
+    // deal — on the tracker, the deals board and the WIP stage totals.
+    // Saving the dialog must never move the deal.
+    const found = await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: h })).json();
+      const arr = Array.isArray(units) ? units : (units.units || []);
+      const deals = await (await fetch('/api/crm/deals', { headers: h })).json();
+      const byId = {}; for (const d of deals) byId[d.id] = d;
+      // NEG/HOT only — past that the unit drops out of the tracker's
+      // default view, so there would be no row to open.
+      const u = arr.find((x) => x.dealId && byId[x.dealId] && /^(NEG|HOT)$/.test(String(byId[x.dealId].status || '')));
+      return u ? { unitId: u.id, dealId: u.dealId, status: byId[u.dealId].status } : null;
+    });
+    if (!found) throw new Error('no unit linked to a past-marketing deal to test with');
+    await page.goto(`${BASE}/available`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    // desktop table uses button-edit-<id>, the phone card unit-edit-<id>
+    const edit = page.locator(`[data-testid="button-edit-${found.unitId}"], [data-testid="unit-edit-${found.unitId}"]`).first();
+    await edit.waitFor({ timeout: 30000 });
+    await edit.click();
+    const dialog = page.locator('[role="dialog"]').first();
+    await dialog.waitFor({ timeout: 15000 });
+    const shown = (await dialog.innerText()).replace(/\s+/g, ' ');
+    if (/Unit Status Available/.test(shown)) {
+      throw new Error(`Edit Unit offers "Available" on a unit whose deal is ${found.status} — saving would regress the deal`);
+    }
+    await dialog.locator('textarea').first().fill(`QA-R${ROUND} unit-edit stage guard`).catch(() => {});
+    await dialog.locator('button', { hasText: /^Save$/ }).first().click({ timeout: 15000 });
+    await page.waitForTimeout(2500);
+    const after = await page.evaluate(async (dealId) => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: h })).json();
+      return (deals.find((d) => d.id === dealId) || {}).status || null;
+    }, found.dealId);
+    if (after !== found.status) {
+      throw new Error(`saving the Edit Unit dialog moved the deal ${found.status} -> ${after}`);
+    }
+  });
+
+  await step(page, p, 'staff-tracker-status-deeplink-filters', async () => {
+    await trackerStatusDeepLink(page, 'staff');
+  });
+
+  await step(page, p, 'staff-tracker-compliance-dot-reads-the-fee', async () => {
+    // r563: the tracker's Ref-cell compliance dot flags a SOL+ deal missing
+    // AML or a fee agreement. Drives both halves on the real board and puts
+    // the deal back exactly as it found it (mark's chunk needs it at NEG).
+    const pick = await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const u = await (await fetch('/api/available-units', { headers: h })).json();
+      const d = await (await fetch('/api/crm/deals', { headers: h })).json();
+      const units = Array.isArray(u) ? u : (u.data || []);
+      const deals = Array.isArray(d) ? d : (d.data || []);
+      const dm = new Map(deals.map(x => [x.id, x]));
+      const unit = units.find(x => x.dealId && dm.get(x.dealId)?.dealRef);
+      if (!unit) return null;
+      const deal = dm.get(unit.dealId);
+      return { unitId: unit.id, dealId: deal.id, unitStatus: unit.marketingStatus,
+               status: deal.status, fee: deal.feeAgreement, aml: deal.amlCheckCompleted };
+    });
+    if (!pick) throw new Error('no tracker unit with a linked, referenced deal');
+    const put = async (body) => page.evaluate(async ([id, b]) => {
+      const r = await fetch(`/api/crm/deals/${id}`, { method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        body: JSON.stringify(b) });
+      return r.status;
+    }, [pick.dealId, body]);
+    const dotTitle = async () => {
+      await page.goto(`${BASE}/available?status=SOL`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(3000);
+      return page.evaluate((id) => {
+        const el = document.querySelector(`[data-testid="compliance-flag-${id}"]`);
+        return el ? el.getAttribute('title') : null;
+      }, pick.unitId);
+    };
+    try {
+      if (await put({ status: 'SOL', feeAgreement: 'NO', amlCheckCompleted: 'YES' }) !== 200) throw new Error('staff could not promote the deal to SOL');
+      const gap = await dotTitle();
+      if (!/Fee agreement/.test(gap || '')) throw new Error(`SOL deal with no fee agreement showed dot ${JSON.stringify(gap)}`);
+      if (await put({ feeAgreement: 'YES' }) !== 200) throw new Error('staff could not sign off the fee agreement');
+      const clear = await dotTitle();
+      if (clear) throw new Error(`fee agreement signed but the dot still reads ${JSON.stringify(clear)}`);
+    } finally {
+      await put({ status: pick.status, feeAgreement: pick.fee, amlCheckCompleted: pick.aml });
+      await page.evaluate(async ([id, st]) => {
+        await fetch(`/api/available-units/${id}`, { method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+          body: JSON.stringify({ marketingStatus: st }) });
+      }, [pick.unitId, pick.unitStatus]);
+    }
+  });
+
+  await step(page, p, 'staff-brand-add-to-deal-lands-on-deals', async () => {
+    // r559: the brand profile's "Add to deal" button navigated to
+    // /deals?search=<brand>, but /deals is the WIP REPORT — only the Deals
+    // list reads ?search=. The button landed the agent on a net-fees roll-up
+    // with nothing searched. It must land on the Deals list, brand in the box.
+    const brands = await page.evaluate(async () => {
+      const res = await fetch('/api/crm/companies?limit=5', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      const j = await res.json();
+      return Array.isArray(j) ? j : (j.companies || j.data || []);
+    });
+    const brand = brands[0];
+    if (!brand?.id) throw new Error('no CRM company to open');
+    await page.goto(`${BASE}/companies/${brand.id}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    const btn = page.locator('button', { hasText: 'Add to deal' }).first();
+    if (!(await btn.count())) throw new Error('no "Add to deal" button on the brand profile');
+    await btn.click();
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(3000);
+    if (!/\/deals\/list\?/.test(page.url())) throw new Error(`"Add to deal" landed on ${page.url()} — not the Deals list`);
+    const active = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="toggle-deals-"]')]
+      .filter(x => /bg-background/.test(x.className)).map(x => x.innerText.trim()).join(','));
+    if (!/Deals/.test(active)) throw new Error(`"Add to deal" opened the "${active}" tab, not Deals`);
+    const box = await page.evaluate(() => { const i = [...document.querySelectorAll('input')].find(x => /search/i.test(x.placeholder || '')); return i ? i.value : null; });
+    if ((box || '').trim() !== (brand.name || '').trim()) throw new Error(`Deals search box reads ${JSON.stringify(box)}, expected ${JSON.stringify(brand.name)}`);
+  });
+
+  await step(page, p, 'staff-company-links-open-the-record', async () => {
+    // r559: four call sites (comps tenant link, comps create-and-enrich,
+    // investment-comps buyer/seller) linked to /companies?highlight=<id>.
+    // Nothing anywhere reads ?highlight=, so every one of them dumped the
+    // user on the unfiltered CRM directory instead of the record. No link
+    // that promises a specific company may use that dead convention.
+    const src = await page.evaluate(async () => {
+      const files = ['/src/pages/comps.tsx', '/src/pages/investment-comps.tsx'];
+      const out = [];
+      for (const f of files) { const r = await fetch(f); out.push(r.ok ? await r.text() : ''); }
+      return out.join('\n');
+    });
+    if (src && /companies\?highlight=/.test(src)) throw new Error('a company link still uses the unread ?highlight= convention');
+    const brands = await page.evaluate(async () => {
+      const res = await fetch('/api/crm/companies?limit=5', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      const j = await res.json();
+      return Array.isArray(j) ? j : (j.companies || j.data || []);
+    });
+    const brand = brands[0];
+    await page.goto(`${BASE}/companies/${brand.id}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    const body = (await page.evaluate(() => document.body.innerText || '')).replace(/\s+/g, ' ');
+    if (!body.includes(brand.name)) throw new Error(`/companies/${brand.id} does not show ${brand.name}`);
+  });
+
+  await step(page, p, 'staff-phone-lease-event-money-labelled', async () => {
+    // r557: the phone card printed `currentRent || estimatedErv` as one
+    // unlabelled bold number, so an event holding only an ERV read as passing
+    // rent. Every money figure on the card must say which one it is.
+    const name = `QA-PROBE erv only R${ROUND}`;
+    const when = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+    const id = await page.evaluate(async ([name, when]) => {
+      const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/lease-events', { method: 'POST', headers: h, body: JSON.stringify({ tenant: name, eventType: 'Rent Review', status: 'Monitoring', sourceEvidence: 'Manual', eventDate: when, estimatedErv: '£95,000' }) });
+      return res.ok ? (await res.json()).id : null;
+    }, [name, when]);
+    if (!id) throw new Error('could not create the probe lease event');
+    await page.setViewportSize({ width: 390, height: 844 });
+    try {
+      await page.goto(`${BASE}/lease-events`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+      await page.waitForLoadState('networkidle').catch(() => {});
+      const card = page.locator(`[data-testid="lease-event-card-${id}"]`).first();
+      await card.waitFor({ timeout: 30000 });
+      const txt = (await card.innerText()).replace(/\s+/g, ' ');
+      if (!/ERV\s*£95,000/.test(txt)) throw new Error(`phone card does not label its ERV: ${txt.slice(0, 160)}`);
+      if (/Rent\s*£/i.test(txt)) throw new Error(`phone card calls an ERV-only figure rent: ${txt.slice(0, 160)}`);
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.evaluate(async (id) => {
+        await fetch(`/api/lease-events/${id}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      }, id).catch(() => {});
+    }
+  });
+
+  await step(page, p, 'staff-calendar-insights-keep-busiest-agent', async () => {
+    // Staff half of client-calendar-insights-no-agent-leaderboard (r560).
+    // Blocking the leaderboard for clients must not cost the staff strip its
+    // Busiest Agent line, and the availability count must stop reading 0.
+    const d = await page.evaluate(async () => {
+      const r = await fetch('/api/microsoft/calendar/insights', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      return r.ok ? await r.json() : { status: r.status };
+    });
+    const insights = d.insights || [];
+    if (!insights.length) throw new Error(`staff calendar insights came back empty (${JSON.stringify(d).slice(0, 160)})`);
+    const agent = insights.find((i) => i.type === 'busiestAgent');
+    if (!agent) throw new Error('staff strip lost its Busiest Agent insight');
+    // It must name a COLLEAGUE. team_events.created_by carries user ids,
+    // legacy emails and the 'client-events-sync' sentinel, so the tile has to
+    // resolve every key to a person — before r610 it printed the raw key
+    // (a UUID at the user) and split one agent's events across two of them.
+    if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(agent.detail || '')) {
+      throw new Error(`Busiest Agent printed a raw id: ${agent.detail}`);
+    }
+    if (/client-events-sync/.test(agent.detail || '')) throw new Error(`Busiest Agent named the sync sentinel: ${agent.detail}`);
+    const portfolio = insights.find((i) => i.title === 'Portfolio');
+    if (!portfolio) throw new Error('staff strip lost its Portfolio insight');
+    if (/, 0 currently available/.test(portfolio.detail)) {
+      throw new Error(`staff Portfolio insight is back to the dead property-status count: ${portfolio.detail}`);
+    }
+  });
+
+  // r561: staff half of client-deal-hides-mlro-and-billing-fields. Stamps the
+  // MLRO working notes + the Xero billing record onto a fixture deal so the
+  // client half has something real to be denied, and proves staff still read
+  // every one of them back. Values are restamped each run (idempotent) and
+  // wiped by the next fixture restore.
+  await step(page, p, 'staff-deal-keeps-mlro-and-billing-fields', async () => {
+    const stamp = `QA-R${ROUND}-MLRO`;
+    const r = await page.evaluate(async ({ stamp }) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const arr = Array.isArray(list) ? list : (list.data || []);
+      const deal = arr.find((d) => d.propertyId === window.QA_FIX.bluewater) || arr.find((d) => d.propertyId && d.status);
+      if (!deal) return { err: 'no deal to stamp' };
+      const put = await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth,
+        body: JSON.stringify({
+          amlSarReference: stamp, amlComplianceNotes: `${stamp} compliance note`,
+          amlPepNotes: `${stamp} pep note`, amlRiskLevel: 'high',
+          mlrScopeReason: `${stamp} mlr scope`, invoicingNotes: `${stamp} invoicing note`,
+          xeroContactName: `${stamp} billing entity`, xeroAccountNumber: stamp,
+        }),
+      });
+      if (!put.ok) return { err: `PUT ${put.status}` };
+      const back = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      const d = back.deal || back;
+      return { id: deal.id, propertyId: deal.propertyId, d };
+    }, { stamp });
+    if (r.err) throw new Error(`could not stamp the MLRO/billing fields: ${r.err}`);
+    for (const k of ['amlSarReference', 'amlComplianceNotes', 'amlPepNotes', 'mlrScopeReason', 'invoicingNotes', 'xeroContactName', 'xeroAccountNumber']) {
+      if (!r.d || r.d[k] == null) throw new Error(`staff lost ${k} off their own deal payload`);
+    }
+    cross.mlroDealId = r.id;
+    cross.mlroPropertyId = r.propertyId;
+    cross.mlroStamp = stamp;
+  });
+
+
+  await step(page, p, 'staff-asset-brief-scorecard-agrees-with-its-boards', async () => {
+    const r = await assetBriefScorecard(page, BLUEWATER);
+    if (r.status) throw new Error(`staff asset brief returned ${r.status}`);
+    if (r.tStatus) throw new Error(`staff tenancy schedule returned ${r.tStatus}`);
+    if (r.expectWault == null) throw new Error('fixture has no live lease expiry to weight a WAULT from');
+    if (r.wault == null) {
+      throw new Error(`asset brief WAULT reads "—" while the tenancy master carries ${r.waultUnits} live expiries worth ${r.expectWault.toFixed(1)} yrs`);
+    }
+    if (Math.abs(Number(r.wault) - r.expectWault) > 0.1) {
+      throw new Error(`asset brief WAULT ${Number(r.wault).toFixed(1)} yrs but its own tenancy rows work out at ${r.expectWault.toFixed(1)} yrs`);
+    }
+    if (r.expectOcc != null && r.occ !== r.expectOcc) {
+      throw new Error(`asset brief says ${r.occ} occupied of ${r.total} but the leasing board it counts says ${r.expectOcc} of ${r.leasingTotal}`);
+    }
+  });
+
+  // r572: the Landlord Intelligence board's portfolio size came from
+  // crm_company_properties ALONE — a supplementary link table the rest of
+  // the app always ORs with the ownership columns on crm_properties. It was
+  // empty, so "Biggest portfolios" read "0 properties" for every landlord,
+  // including one whose own profile (the page that row links to) lists two.
+  // The board's count must equal the list the click-through renders.
+  await step(page, p, 'staff-landlord-board-counts-the-portfolio-it-links-to', async () => {
+    const r = await page.evaluate(async (landsecId) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const b = await fetch('/api/crm/landlords', { headers: auth });
+      if (!b.ok) return { status: b.status };
+      const { landlords } = await b.json();
+      const out = [];
+      for (const l of landlords) {
+        const ps = await fetch(`/api/crm/companies/${l.id}/property-summary?role=landlord`, { headers: auth });
+        out.push({ name: l.name, board: Number(l.property_count) || 0, profile: ps.ok ? (await ps.json()).length : -1 });
+      }
+      return { rows: out };
+    }, LANDSEC);
+    if (r.status) throw new Error(`staff lost the landlords board (${r.status})`);
+    if (!r.rows.length) throw new Error('landlords board came back empty for staff');
+    // The fixture must still have at least one landlord holding property,
+    // otherwise the whole assertion goes vacuous against an all-zero board.
+    const withProps = r.rows.filter((x) => x.profile > 0);
+    if (!withProps.length) throw new Error('no landlord in the fixture owns a property — assertion would be vacuous');
+    for (const x of r.rows) {
+      if (x.profile < 0) throw new Error(`${x.name}: property-summary unreadable for staff`);
+      if (x.board !== x.profile) {
+        throw new Error(`${x.name}: board says ${x.board} properties, its own profile lists ${x.profile}`);
+      }
+    }
+  });
+
+  // r573: the client weekly-update PDF headlined "ACTIVE DEALS" from
+  // `status !== "completed" && status !== "lost"`, but crm_deals.status holds
+  // the canonical 3-letter codes — so a completed or withdrawn deal was
+  // counted as active on a document emailed to the client, and the list under
+  // the same heading showed them with no status at all. Node-side: the PDF is
+  // the artifact the client receives, so assert on its own text.
+  await step(page, p, 'staff-weekly-report-counts-only-live-deals', async () => {
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'content-type': 'application/json' };
+    const cRes = await fetch(`${BASE}/api/crm/contacts`, { headers: auth });
+    const cJson = await cRes.json().catch(() => null);
+    const contacts = Array.isArray(cJson) ? cJson : (cJson?.contacts || []);
+    if (!contacts.length) throw new Error('no contacts to hang a weekly report on');
+    const contact = contacts[0];
+    const made = [];
+    try {
+      for (const [name, status] of [[`QA-PROBE weekly live R${ROUND}`, 'NEG'], [`QA-PROBE weekly dead R${ROUND}`, 'WIT']]) {
+        const r = await fetch(`${BASE}/api/crm/deals`, {
+          method: 'POST', headers: auth,
+          body: JSON.stringify({ name, dealType: 'Consultant', status, clientContactId: contact.id, internalAgent: ['Victoria Broadhead'] }),
+        });
+        const d = await r.json().catch(() => null);
+        if (!d?.id) throw new Error(`probe deal create failed (${r.status})`);
+        if (d.clientContactId !== contact.id) throw new Error('probe deal did not take the client contact — assertion would be vacuous');
+        made.push(d.id);
+      }
+      const pdfRes = await fetch(`${BASE}/api/weekly-report/${contact.id}.pdf`, { headers: { Authorization: auth.Authorization } });
+      if (pdfRes.status !== 200) throw new Error(`weekly-report PDF returned ${pdfRes.status}`);
+      const buf = Buffer.from(await pdfRes.arrayBuffer());
+      const { PDFParse } = nodeRequire('pdf-parse');
+      const text = String((await new PDFParse({ data: new Uint8Array(buf) }).getText()).text);
+      const tile = text.match(/ACTIVE DEALS\s*\n\s*(\d+)/);
+      if (!tile) throw new Error('weekly report has no ACTIVE DEALS figure');
+      if (Number(tile[1]) !== 1) {
+        throw new Error(`weekly report counts ${tile[1]} active deals — one is live, one is withdrawn`);
+      }
+      if (!/Withdrawn/.test(text)) throw new Error('the withdrawn deal is listed with no status on the client\'s own report');
+      if (/^ACTIVE DEALS$/m.test(text.split('EVENTS THIS WEEK')[1] || '')) {
+        throw new Error('the deal list is still headed ACTIVE DEALS while listing closed deals too');
+      }
+    } finally {
+      for (const id of made) {
+        await fetch(`${BASE}/api/crm/deals/${id}`, { method: 'DELETE', headers: auth }).catch(() => {});
+      }
+    }
+  });
+
+  await step(page, p, 'staff-leasing-board-stays-its-own-trimmed-set', async () => {
+    // Staff half of client-portfolio-board-opens-the-schedule-it-counted
+    // (r565). The archived /leasing-schedule board is deliberately kept for
+    // staff reference and holds a SMALLER, trimmed set than the tenancy
+    // master — which is exactly why the client dashboard board, which counts
+    // the master, must not link to it. If the two sets ever converge this
+    // assertion goes vacuous, so it asserts the gap explicitly.
+    const r = await page.evaluate(async (pid) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const l = await fetch(`/api/leasing-schedule/property/${pid}`, { headers: auth });
+      const t = await fetch(`/api/tenancy-schedule/property/${pid}`, { headers: auth });
+      const arr = async (res) => { const j = await res.json(); return Array.isArray(j) ? j : (j.units || j.rows || []); };
+      return {
+        lStatus: l.status, tStatus: t.status,
+        leasing: l.ok ? (await arr(l)).length : 0,
+        tenancy: t.ok ? (await arr(t)).length : 0,
+      };
+    }, BLUEWATER);
+    if (r.lStatus !== 200) throw new Error(`staff lost the archived leasing board (${r.lStatus})`);
+    if (r.tStatus !== 200) throw new Error(`staff tenancy schedule returned ${r.tStatus}`);
+    if (!r.leasing) throw new Error('archived leasing board came back empty for staff');
+    if (r.leasing >= r.tenancy) {
+      throw new Error(`leasing board (${r.leasing}) is no longer a subset of the tenancy master (${r.tenancy})`);
+    }
+  });
+
+  // r574: HOTs (heads of terms) joined the status set on 2026-08-12, but the
+  // "live lettings / live deals" summaries were written before it and never
+  // picked it up — properties-summary, tracker-summary and the /properties
+  // header chips all matched ["OPP","REP","AVA","NEG","SOL","EXC"]. A letting
+  // sitting at heads of terms — the stage just before signature — dropped out
+  // of every one of those counts (and out of the client dashboard's
+  // Properties & Deals board entirely, since it only keeps rows with
+  // something live), while the Letting Tracker it links to still listed it.
+  await step(page, p, 'staff-hots-letting-counts-as-live', async () => {
+    const mk = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const propertyId = Array.isArray(units) && units[0] ? units[0].propertyId : null;
+      if (!propertyId) return { ok: false, why: 'no available unit to borrow a propertyId from' };
+      const res = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ propertyId, unitName: `QA-HOTS Unit R${round}`, marketingStatus: 'HOT' }) });
+      if (!res.ok) return { ok: false, why: `HOTs unit POST ${res.status}` };
+      const unit = await res.json();
+      return { ok: true, id: unit.id, propertyId };
+    }, ROUND);
+    if (!mk.ok) throw new Error(`could not stage a HOTs letting (${mk.why})`);
+    try {
+      await visit(page, p, '/properties', 'properties board');
+      await page.waitForTimeout(4000);
+      const r = await page.evaluate(async () => {
+        const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+        const units = await (await fetch('/api/available-units', { headers: auth })).json();
+        // The Letting Tracker's own pipeline: everything that is not closed.
+        const CLOSED = ['COM', 'WIT', 'INV'];
+        const feedLive = (Array.isArray(units) ? units : []).filter((u) => {
+          const s = String(u.marketingStatus || 'AVA').toUpperCase();
+          return !CLOSED.includes(s);
+        }).length;
+        const hots = (Array.isArray(units) ? units : []).filter((u) => String(u.marketingStatus || '').toUpperCase() === 'HOT').length;
+        const chip = Array.from(document.querySelectorAll('a[href="/deals/letting"]'))
+          .map((a) => (a.textContent || '').replace(/\s+/g, ' ').trim())
+          .find((t) => /live letting/i.test(t));
+        const shown = chip ? Number((chip.match(/\d[\d,]*/) || ['0'])[0].replace(/,/g, '')) : null;
+        return { feedLive, hots, chip, shown };
+      });
+      if (!r.hots) throw new Error('staged HOTs letting never reached the units feed');
+      if (r.shown == null) throw new Error('properties board lost its "live lettings" chip');
+      if (r.shown !== r.feedLive) {
+        throw new Error(`properties board counts ${r.shown} live lettings while the tracker feed holds ${r.feedLive} (${r.hots} at HOTs) — a heads-of-terms letting is being dropped`);
+      }
+    } finally {
+      await page.evaluate(async (id) => {
+        const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+        await fetch(`/api/available-units/${id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }, mk.id);
+    }
+  });
+
+  // r575: the same 2026-08-12 HOTs omission on the firm's money tile. The
+  // ski-target hero's WIP bucket (/api/dashboard/firm-summary) matched
+  // ('REP','AVA','NEG','SOL','EXC','COM') — written before HOT existed — so
+  // a deal at heads of terms contributed nothing to the firm's WIP or its
+  // forecast, while REP (deleted from WIP 2026-08-31) still inflated both.
+  await step(page, p, 'staff-hots-deal-counts-in-firm-wip', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const summary = async () => (await (await fetch('/api/dashboard/firm-summary', { headers: auth })).json());
+      const before = await summary();
+      const FEE = 12345;
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-HOTS WIP R${round}`, status: 'HOT', fee: FEE, dealType: 'New Letting' }) });
+      if (!res.ok) return { ok: false, why: `HOTs deal POST ${res.status}` };
+      const deal = await res.json();
+      const after = await summary();
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, fee: FEE, beforeWip: before.wipPence, afterWip: after.wipPence };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a HOTs deal (${r.why})`);
+    const delta = r.afterWip - r.beforeWip;
+    if (delta !== r.fee * 100) {
+      throw new Error(`firm WIP moved by ${delta}p when a \u00a3${r.fee} deal was parked at HOTs (expected ${r.fee * 100}p) — heads of terms is missing from the ski-target WIP bucket`);
+    }
+  });
+
+  // r564: the notification centre's "N deals with no fee set" alert was the
+  // one row in the bell with no destination — it carried no dealId, so the
+  // click handler did nothing at all. It now carries an explicit link, and
+  // its count is the SOL+ set the Deals list can actually show (it used to
+  // count tracker-stage deals the board excludes by design, so the alert
+  // said 5 and its own list rendered 3).
+  await step(page, p, 'staff-no-fee-alert-opens-the-list-it-counted', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const notifs = await (await fetch('/api/notifications', { headers: auth })).json();
+      const row = (Array.isArray(notifs) ? notifs : []).find((n) => n.type === 'no_fee');
+      const deals = await (await fetch('/api/crm/deals?excludeTrackerDeals=true', { headers: auth })).json();
+      const arr = Array.isArray(deals) ? deals : (deals.data || []);
+      const live = arr.filter((d) => {
+        const st = String(d.status || '').toUpperCase();
+        const feeNum = Number(d.fee);
+        const blank = d.fee == null || d.fee === '' || !Number.isFinite(feeNum) || feeNum === 0;
+        return blank && !['WIT', 'COM', 'INV'].includes(st);
+      });
+      return { row: row || null, listCount: live.length, total: arr.length };
+    });
+    if (!r.row) { if (r.listCount === 0) return; throw new Error(`${r.listCount} fee-less deals on the board but no no_fee alert`); }
+    if (!r.row.link) throw new Error('the no-fee alert still has no destination — clicking it does nothing');
+    if (!/noFee=1/.test(r.row.link)) throw new Error(`no-fee alert links somewhere unfiltered: ${r.row.link}`);
+    const said = parseInt(String(r.row.title).match(/(\d+)/)?.[1] || '-1', 10);
+    if (said !== r.listCount) throw new Error(`no-fee alert counts ${said} but its own list holds ${r.listCount}`);
+  });
+
+  // r577: the bell's "KYC not approved" alert matched ('SOL','EXC','COM',
+  // 'NEG') — a list written before HOT existed. HOT sits between NEG and
+  // SOL, and the AML gate hard-blocks the move INTO SOL, so the warning
+  // used to nag at Negotiating, fall silent the moment the deal reached
+  // heads of terms, and only return at Solicitors — by which point the
+  // gate had already refused the move. Walk one deal NEG -> HOT and the
+  // alert must survive the step.
+  await step(page, p, 'staff-kyc-alert-survives-the-step-into-hots', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const flagged = async (id) => {
+        const notifs = await (await fetch('/api/notifications', { headers: auth })).json();
+        return (Array.isArray(notifs) ? notifs : []).some((n) => n.type === 'kyc_gap' && n.dealId === id);
+      };
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-KYC HOTs R${round}`, status: 'NEG', dealType: 'New Letting', kycApproved: false }) });
+      if (!res.ok) return { ok: false, why: `deal POST ${res.status}` };
+      const deal = await res.json();
+      const atNeg = await flagged(deal.id);
+      const patch = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ status: 'HOT' }) });
+      const moved = patch.ok;
+      const atHot = moved ? await flagged(deal.id) : false;
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, atNeg, atHot, moved, patchStatus: patch.status };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a KYC-gap deal (${r.why})`);
+    if (!r.moved) throw new Error(`could not move the probe deal to HOTs (PUT ${r.patchStatus})`);
+    if (!r.atNeg) throw new Error('a KYC-unapproved deal at Negotiating raised no kyc_gap alert at all');
+    if (!r.atHot) throw new Error('the KYC alert disappeared when the deal moved NEG -> HOTs — the stage right before the AML gate is the one stage it stops warning about');
+  });
+
+  // r577: the Hunger Games strip computed "pipeline"/"most active" from
+  // ('NEG','SOL','EXC','COM') while the ski-target hero above it and the
+  // "Top team" tab beside it both counted AVA and HOT too — so an agent's
+  // deal at heads of terms showed up in the firm's WIP and in their team's
+  // total but in neither of their own boards.
+  await step(page, p, 'staff-leaderboard-pipeline-counts-the-same-stages-as-wip', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const name = (me && (me.name || (me.user && me.user.name))) || null;
+      if (!name) return { ok: false, why: 'no display name on /api/auth/me' };
+      const board = async () => {
+        const d = await (await fetch('/api/dashboard/individual-leaderboard', { headers: auth })).json();
+        const all = [...(d.topPipeline || []), ...(d.topActive || [])];
+        const row = all.find((x) => x.name === name);
+        return { pipeline: row ? row.pipelinePence : 0, active: row ? row.activeDeals : 0 };
+      };
+      const before = await board();
+      const FEE = 9876;
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-LB HOTs R${round}`, status: 'HOT', fee: FEE, dealType: 'New Letting',
+          internalAgent: [name], targetDate: new Date().toISOString().slice(0, 10) }) });
+      if (!res.ok) return { ok: false, why: `deal POST ${res.status}` };
+      const deal = await res.json();
+      const after = await board();
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, fee: FEE, before, after };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a leaderboard deal (${r.why})`);
+    const dFee = r.after.pipeline - r.before.pipeline;
+    const dCount = r.after.active - r.before.active;
+    if (dFee !== r.fee * 100) throw new Error(`a \u00a3${r.fee} deal at HOTs moved the agent's pipeline board by ${dFee}p (expected ${r.fee * 100}p) — heads of terms is missing from the leaderboard's WIP vocabulary`);
+    if (dCount !== 1) throw new Error(`a deal at HOTs moved the agent's active-deal count by ${dCount} (expected 1)`);
+  });
+
+  // r578: HOT sits between NEG and SOL, but the agent's OWN commission card
+  // bucketed NEG/SOL/EXC/COM only — so a deal moving forward one stage, from
+  // Negotiating to heads of terms, dropped straight out of their pipeline,
+  // their forecast and the phone's "My billing" tile, and came back at
+  // Solicitors. Park one fee-allocated deal on the logged-in agent and step
+  // it NEG -> HOT: the WIP total must not move.
+  await step(page, p, 'staff-own-commission-keeps-the-fee-through-hots', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const u = (me && me.user) || me || {};
+      const name = u.name; const id = u.id;
+      if (!name || !id) return { ok: false, why: 'no id/name on /api/auth/me' };
+      const wip = async () => {
+        const res = await fetch(`/api/hr/staff/${id}/commission`, { headers: auth });
+        if (!res.ok) return { err: res.status };
+        const j = await res.json();
+        return { total: j.wipTotal, stages: j.wipByStage, forecast: j.forecastPence };
+      };
+      const base = await wip();
+      if (base.err) return { ok: false, why: `commission GET ${base.err}` };
+      const FEE = 7654;
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-COMM HOTs R${round}`, status: 'NEG', fee: FEE, dealType: 'New Letting',
+          internalAgent: [name], targetDate: new Date().toISOString().slice(0, 10) }) });
+      if (!res.ok) return { ok: false, why: `deal POST ${res.status}` };
+      const deal = await res.json();
+      const cleanup = async () => { await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {}); };
+      const alloc = await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ allocations: [
+          { agentName: name, allocationType: 'percentage', percentage: 85, fixedAmount: null, isBgpHouse: false },
+          { agentName: 'BGP House', allocationType: 'percentage', percentage: 15, fixedAmount: null, isBgpHouse: true },
+        ] }) });
+      if (!alloc.ok) { await cleanup(); return { ok: false, why: `fee-allocations PUT ${alloc.status}` }; }
+      const atNeg = await wip();
+      const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ status: 'HOT' }) });
+      if (!put.ok) { await cleanup(); return { ok: false, why: `status PUT ${put.status}` }; }
+      const atHot = await wip();
+      await cleanup();
+      return { ok: true, share: Math.round(FEE * 0.85 * 100), base, atNeg, atHot };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a commission deal (${r.why})`);
+    const negDelta = r.atNeg.total - r.base.total;
+    if (negDelta !== r.share) throw new Error(`the agent's 85% of a QA deal at NEG moved their own WIP by ${negDelta}p (expected ${r.share}p)`);
+    if (r.atHot.total !== r.atNeg.total) throw new Error(`stepping the same deal NEG -> HOTs moved the agent's own WIP from ${r.atNeg.total}p to ${r.atHot.total}p — heads of terms is missing from the personal commission buckets`);
+    if ((r.atHot.stages || {}).hot !== r.share) throw new Error(`the HOTs bucket read ${(r.atHot.stages || {}).hot} instead of ${r.share}p`);
+    if (r.atHot.forecast !== r.atNeg.forecast) throw new Error(`the agent's forecast moved from ${r.atNeg.forecast}p to ${r.atHot.forecast}p on a stage step`);
+  });
+
+  // r579: the annual review's "Sync from WIP" bucketed fee allocations as
+  // INV -> achieved / SOL -> under offer / NEG -> negotiating. HOT joined the
+  // enum after that spec, so a deal stepping FORWARD out of Negotiating into
+  // heads of terms dropped out of BOTH pipeline figures on the agent's own
+  // review form.
+  await step(page, p, 'staff-review-pipeline-keeps-the-fee-through-hots', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const u = (me && me.user) || me || {};
+      const name = u.name; const id = u.id;
+      if (!name || !id) return { ok: false, why: 'no id/name on /api/auth/me' };
+      const period = `QA-REVIEW-R${round}`;
+      const rev = await fetch(`/api/hr/reviews/${id}`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ period, kind: 'annual' }) });
+      if (!rev.ok) return { ok: false, why: `review POST ${rev.status}` };
+      const review = await rev.json();
+      const dropReview = async () => { await fetch(`/api/hr/reviews/${review.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {}); };
+      const FEE = 6000;
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-REVIEW HOTs R${round}`, status: 'NEG', fee: FEE, dealType: 'New Letting',
+          internalAgent: [name], targetDate: new Date().toISOString().slice(0, 10) }) });
+      if (!res.ok) { await dropReview(); return { ok: false, why: `deal POST ${res.status}` }; }
+      const deal = await res.json();
+      const cleanup = async () => {
+        await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+        await dropReview();
+      };
+      const alloc = await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ allocations: [
+          { agentName: name, allocationType: 'percentage', percentage: 85, fixedAmount: null, isBgpHouse: false },
+          { agentName: 'BGP House', allocationType: 'percentage', percentage: 15, fixedAmount: null, isBgpHouse: true },
+        ] }) });
+      if (!alloc.ok) { await cleanup(); return { ok: false, why: `fee-allocations PUT ${alloc.status}` }; }
+      const sync = async () => {
+        const s = await fetch(`/api/hr/reviews/${review.id}/sync-from-wip`, { method: 'POST', credentials: 'include', headers: auth });
+        if (!s.ok) return { err: s.status };
+        const j = await s.json();
+        return { under: j.changes.pipeline_under_offer_pence, neg: j.changes.pipeline_negotiating_pence, matched: j.matchedAllocations };
+      };
+      const atNeg = await sync();
+      if (atNeg.err) { await cleanup(); return { ok: false, why: `sync-from-wip ${atNeg.err}` }; }
+      const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ status: 'HOT' }) });
+      if (!put.ok) { await cleanup(); return { ok: false, why: `status PUT ${put.status}` }; }
+      const atHot = await sync();
+      await cleanup();
+      return { ok: true, share: Math.round(FEE * 0.85 * 100), atNeg, atHot };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a review sync (${r.why})`);
+    if (r.atNeg.neg < r.share) throw new Error(`a fee-allocated deal at NEG put only ${r.atNeg.neg}p in the review's negotiating pipeline (expected at least the agent's ${r.share}p)`);
+    const negTotal = r.atNeg.under + r.atNeg.neg;
+    const hotTotal = r.atHot.under + r.atHot.neg;
+    if (hotTotal !== negTotal) throw new Error(`stepping the deal NEG -> HOTs moved the review's pipeline from ${negTotal}p to ${hotTotal}p — heads of terms is missing from the review's fee buckets`);
+    if (r.atHot.under < r.share) throw new Error(`at HOTs the review's under-offer pipeline read ${r.atHot.under}p, not the agent's ${r.share}p heads-of-terms slice`);
+    if (!r.atHot.matched) throw new Error(`at HOTs the sync reported ${r.atHot.matched} allocations matched — the agent's own allocation went missing from the match count`);
+  });
+
+  // r583: the agent drilldown on the WIP report kept a hand-rolled stage
+  // bucket that compared crm_deals.status (CODES) to LEGACY LABELS, so every
+  // deal from HOTs to Completed showed "pipeline" in the Stage column of the
+  // very panel that explains the agent's WIP total — while the same row's
+  // money counted as WIP. The canonical helper is deriveStageFromStatus.
+  await step(page, p, 'staff-drilldown-stages-a-solicitors-deal-as-wip', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const name = ((me && me.user) || me || {}).name;
+      if (!name) return { ok: false, why: 'no name on /api/auth/me' };
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-STAGE R${round}`, status: 'SOL', fee: 40000, dealType: 'New Letting', internalAgent: [name] }) });
+      if (!res.ok) return { ok: false, why: `deal POST ${res.status}` };
+      const deal = await res.json();
+      const drop = async () => { await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {}); };
+      const read = async () => {
+        const d = await fetch(`/api/wip/agent-drilldown/${encodeURIComponent(name)}`, { credentials: 'include', headers: auth });
+        if (!d.ok) return { err: d.status };
+        const rows = await d.json();
+        return { row: (Array.isArray(rows) ? rows : []).find(x => x.dealId === deal.id) || null };
+      };
+      const atSol = await read();
+      const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ status: 'EXC' }) });
+      const atExc = put.ok ? await read() : { gated: put.status };
+      await drop();
+      return { ok: true, atSol, atExc };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not stage a drilldown deal (${r.why})`);
+    if (r.atSol.err) throw new Error(`agent-drilldown returned ${r.atSol.err}`);
+    if (!r.atSol.row) throw new Error(`the agent's own SOL deal is missing from their WIP drilldown`);
+    if (r.atSol.row.stage !== 'wip') throw new Error(`a deal at Solicitors stages as "${r.atSol.row.stage}" in the WIP drilldown while the same row carries £${r.atSol.row.wip} of WIP`);
+    // The step to EXC can be refused by the SOL+ AML gate (409, correct
+    // behaviour and documented at r582) — only judge the stage if it moved.
+    if (!r.atExc.gated && r.atExc.row && r.atExc.row.stage !== 'wip') throw new Error(`stepping the deal to Exchanged dropped its drilldown stage to "${r.atExc.row.stage}"`);
+  });
+
+  // r583: the daily digest's critical "KYC not approved" alert filtered on
+  // legacy labels ('SOLs'/'Exchanged'/'Completing') while the column stores
+  // codes, so it never fired at any stage. /api/notifications' twin was
+  // fixed at r577; this is the copy that was missed.
+  // r584 staff half of client-tracker-ships-canonical-status-codes: the same
+  // ground truth for crm_deals.status. The CLIENT portfolio context and the
+  // client search tool excluded dead deals with NOT IN ('Dead','Withdrawn') —
+  // legacy labels against a codes column, so a WITHDRAWN deal was never
+  // dropped from what a landlord is told. Both now use NOT IN ('WIT'), which
+  // only holds while the column stays canonical.
+  await step(page, p, 'staff-deals-ship-canonical-status-codes', async () => {
+    const got = await page.evaluate(async () => {
+      const res = await fetch('/api/crm/deals', {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const rows = Array.isArray(j) ? j : (j.data || j.deals || []);
+      return { total: rows.length, statuses: [...new Set(rows.map(d => d.status).filter(Boolean))] };
+    });
+    if (got.status) throw new Error(`/api/crm/deals returned ${got.status}`);
+    if (!got.total) throw new Error('deals payload is empty — nothing to check');
+    const CODES = ['REP', 'SPEC', 'LIVE', 'OPP', 'AVA', 'NEG', 'HOT', 'SOL', 'EXC', 'COM', 'WIT', 'INV'];
+    const EXCLUDED = ['Leasing Comps', 'Investment Comps'];
+    const labels = got.statuses.filter(s => !CODES.includes(s) && !EXCLUDED.includes(s));
+    if (labels.length) {
+      throw new Error(`crm_deals ships legacy status LABELS ${JSON.stringify(labels)} — every codes-only predicate over deal status (WIP staging, the KYC alerts, the client ChatBGP context) silently stops matching those rows`);
+    }
+  });
+
+  // r586: the pathway tenancy summary derived vacancy with
+  // `(marketingStatus || "Available").toLowerCase() === "available"`, so with
+  // available_units.marketing_status canonicalised to CODES it saw ZERO vacant
+  // units and reported every scheme "let" (property-pathway.ts:2667). The
+  // pathway payload has no local GET, so this guards the INPUT the predicate
+  // consumes: the units endpoint must ship codes, and a canonical vacancy
+  // count over them must be non-zero on a fixture that is nearly all marketed.
+  await step(page, p, 'staff-units-ship-codes-so-vacancy-counts', async () => {
+    const got = await page.evaluate(async () => {
+      const res = await fetch('/api/available-units', {
+        credentials: 'include',
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const rows = Array.isArray(j) ? j : (j.data || j.units || []);
+      return { total: rows.length, statuses: [...new Set(rows.map(u => u.marketingStatus).filter(Boolean))] };
+    });
+    if (got.status) throw new Error(`/api/available-units returned ${got.status}`);
+    if (!got.total) throw new Error('units payload is empty — nothing to check');
+    const CODES = ['OPP', 'AVA', 'NEG', 'HOT', 'SOL', 'EXC', 'COM', 'WIT', 'INV'];
+    const labels = got.statuses.filter(s => !CODES.includes(s));
+    if (labels.length) {
+      throw new Error(`available_units ships legacy marketing_status LABELS ${JSON.stringify(labels)} — the code predicates over unit status (pathway vacancy, the AVA available_count, the letting tracker pills) stop matching those rows`);
+    }
+    // CONTROL: without a marketed unit in the payload the assertion above is
+    // vacuous — a fixture of nothing but COM rows would also pass it.
+    const vacant = got.statuses.filter(s => s === 'AVA').length;
+    if (!vacant) throw new Error('no AVA unit in the payload — vacancy would read 0 for a reason other than the bug');
+  });
+
+  // r587: THE HOT FAULT LINE. The asset-brief funnel folds un-dealed letting
+  // units in by marketing status, but HOT (a legal available_units.marketing_
+  // status, sitting between NEG and SOL) was in NEITHER the hots arm nor the
+  // legals arm — so a unit at HOTs with no crm_deals row was counted in NO
+  // bucket at all, silently dropped at the stage just before signature.
+  // This drives one un-dealed unit AVA -> HOT -> back and asserts the funnel
+  // total gains it. The AVA baseline read is the control: without it a
+  // non-zero hots count proves nothing.
+  await step(page, p, 'staff-asset-brief-counts-hots-units', async () => {
+    const got = await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const units = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json().catch(() => null);
+      const rows = Array.isArray(units) ? units : (units?.data || units?.units || []);
+      const unit = rows.find(u => u.marketingStatus === 'AVA' && !u.dealId && u.propertyId);
+      if (!unit) return { skip: 'no un-dealed AVA unit' };
+      const brief = async () => {
+        const r = await fetch(`/api/properties/${unit.propertyId}/asset-brief`, { credentials: 'include', headers: h });
+        if (!r.ok) return { status: r.status };
+        const j = await r.json();
+        const p = j.pipeline || {};
+        return { hots: p.hots || 0, legals: p.legals || 0,
+                 total: ['engaged','viewed','pitch_out','hots','legals','signed'].reduce((a, k) => a + (p[k] || 0), 0),
+                 named: JSON.stringify((j.pipeline_items || {}).hots || []) };
+      };
+      const setStatus = (st) => fetch(`/api/available-units/${unit.id}`, {
+        method: 'PATCH', credentials: 'include', headers: h, body: JSON.stringify({ marketingStatus: st }) });
+      const before = await brief();
+      if (before.status) return { status: before.status };
+      const put = await setStatus('HOT');
+      if (!put.ok) return { skip: `cannot set HOT (${put.status})` };
+      const after = await brief();
+      await setStatus('AVA');
+      const restored = await brief();
+      return { unit: unit.unitName || unit.id, before, after, restored };
+    });
+    if (got.skip) return;            // fixture cannot support the probe
+    if (got.status) throw new Error(`asset-brief returned ${got.status}`);
+    if (got.after.hots !== got.before.hots + 1) {
+      throw new Error(`a HOTs unit with no deal row did not reach the funnel's hots bucket: hots ${got.before.hots} -> ${got.after.hots} on ${got.unit}`);
+    }
+    if (got.after.total !== got.before.total + 1) {
+      throw new Error(`the asset-brief funnel dropped a HOTs unit entirely: total ${got.before.total} -> ${got.after.total}`);
+    }
+    if (got.after.legals !== got.before.legals) {
+      throw new Error(`a HOTs unit leaked into legals: ${got.before.legals} -> ${got.after.legals}`);
+    }
+    if (got.restored.hots !== got.before.hots) {
+      throw new Error(`probe did not restore the unit: hots left at ${got.restored.hots}, expected ${got.before.hots}`);
+    }
+  });
+
+  // r588: available_units.marketing_status is a CODES column, but three
+  // writers stamped the LABEL "Available" into it (routes.ts's two
+  // deal->unit migration handlers and the unified add-unit dialog). Such a
+  // row is invisible to every code predicate — the AVA available_count, the
+  // tracker pills, the pathway vacancy, the asset-brief funnel — until the
+  // next boot canonicalises it. The write boundary now canonicalises
+  // (storage.createAvailableUnit / updateAvailableUnit), so a posted label
+  // must come back as a code. CONTROLS ride along so the guard cannot pass
+  // by blanket-stamping everything AVA.
+  await step(page, p, 'staff-unit-writes-canonicalise-status', async () => {
+    const got = await page.evaluate(async (round) => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const props = await (await fetch('/api/crm/properties', { credentials: 'include', headers: h })).json();
+      const rows = Array.isArray(props) ? props : (props.data || props.properties || []);
+      if (!rows.length) return { skip: 'no properties' };
+      const mk = async (name, marketingStatus) => {
+        const r = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: h,
+          body: JSON.stringify({ propertyId: rows[0].id, unitName: name, marketingStatus, sqft: 900 }) });
+        return r.ok ? await r.json() : { __status: r.status };
+      };
+      const made = [];
+      const label = await mk(`QA-R588-LBL-A R${round}`, 'Available');
+      if (label.__status) return { skip: `POST refused (${label.__status})` };
+      made.push(label.id);
+      const neg = await mk(`QA-R588-LBL-N R${round}`, 'Under Negotiation');
+      if (!neg.__status) made.push(neg.id);
+      const unknown = await mk(`QA-R588-LBL-U R${round}`, 'Something Else');
+      if (!unknown.__status) made.push(unknown.id);
+      // r595: the LAST door a label still walked through. canonicaliseUnitStatus
+      // only rewrites a status that is THERE, so a POST that simply omits the
+      // field left drizzle to omit the column and postgres to apply the table
+      // default — the literal 'Available'. JSON.stringify drops an undefined
+      // value, so this really does send a body with no marketingStatus key.
+      const omitted = await mk(`QA-R588-LBL-D R${round}`, undefined);
+      if (!omitted.__status) made.push(omitted.id);
+      // Read back through the tracker endpoint the pills read.
+      const units = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
+      const all = Array.isArray(units) ? units : (units?.data || units?.units || []);
+      const find = (id) => all.find(u => u.id === id)?.marketingStatus ?? null;
+      const out = { label: find(label.id), neg: neg.__status ? 'skipped' : find(neg.id), unknown: unknown.__status ? 'skipped' : find(unknown.id),
+                    omitted: omitted.__status ? 'skipped' : find(omitted.id) };
+      // Global invariant over the whole tracker, not just this scenario's
+      // rows: available_units.marketing_status is a CODES column, so any
+      // value outside LETTING_STATUSES is a label that every code predicate
+      // (stat tiles, the in-play regex, ChatBGP's `= 'AVA'` count) walks past.
+      const CODES = ['OPP','AVA','NEG','HOT','SOL','EXC','COM','WIT','INV'];
+      // Skip the harness's own QA- rows: this scenario deliberately posts
+      // 'Something Else' just above to prove the canonicaliser leaves an
+      // unrecognised value alone, and that row is still on the board here.
+      // Matched anywhere in the name, not just at the start: the boot
+      // auto-seed re-lists a leftover QA deal as "<Scheme> – QA-…".
+      const realRows = all.filter(u => !/QA-/.test(String(u.unitName || '')));
+      out.strayTrackerStatuses = [...new Set(realRows
+        .map(u => u.marketingStatus)
+        .filter(v => typeof v === 'string' && v.trim() && !CODES.includes(v)))];
+      out.trackerRows = realRows.length;
+      // r589: one of these three rows survived the round and drifted the
+      // fixture (81 -> 82 listings), silently. Report the DELETE statuses and
+      // the survivors so a leak fails loudly instead of leaving a phantom
+      // unit for the next round to trip over.
+      // r591: POST /api/available-units ALSO auto-creates a
+      // leasing_schedule_units row, and that board has its own enum
+      // (Vacant / In Negotiation / Under Offer / Occupied / Archived).
+      // The create path used to write the marketing CODE straight in, so a
+      // just-added unit sat on the client-facing board as a raw "AVA" chip,
+      // outside the Vacant tile and outside the vacant filter.
+      const ls = await (await fetch(`/api/leasing-schedule/property/${rows[0].id}`, { credentials: 'include', headers: h })).json().catch(() => []);
+      const lsRows = Array.isArray(ls) ? ls : (ls?.units || ls?.data || []);
+      const lsMade = lsRows.filter(u => String(u.unit_name || u.unitName || '').startsWith(`QA-R588-LBL-`));
+      out.leasingStatuses = lsMade.map(u => u.status ?? null);
+      // r592: the POST ALSO mirrors a stub onto the LANDLORD'S tenancy spine
+      // (ensureTenancyRowForAvailableUnit). That board buckets its KPI tiles
+      // via STATUS_BUCKETS and colours chips from SCHEDULE_STATUS_COLOURS;
+      // the mirror used to stamp the legacy value "Marketing", which is in
+      // neither — so an agent's new unit sat in the row list, outside the
+      // Vacant tile, and outside the vacant filter the landlord's void list
+      // is built from. Count the stubs BEFORE the deletes so the teardown
+      // assertion below can't pass on an empty set.
+      const tsBefore = await (await fetch(`/api/tenancy-schedule/property/${rows[0].id}`, { credentials: 'include', headers: h })).json().catch(() => []);
+      const tsRowsB = Array.isArray(tsBefore) ? tsBefore : (tsBefore?.units || tsBefore?.data || []);
+      const tsMade = tsRowsB.filter(u => String(u.unit_number || u.unitNumber || u.premises || '').startsWith('QA-R588-LBL-'));
+      out.tenancyStatuses = tsMade.map(u => u.status ?? null);
+      const dels = [];
+      for (const id of made) {
+        const d = await fetch(`/api/available-units/${id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => ({ status: 0 }));
+        dels.push(d.status);
+      }
+      // Deleting the tracker listing does NOT remove the leasing-schedule row
+      // the POST spawned, so this scenario has to take its own board rows out
+      // or it drifts the fixture every round (r590 found three of them
+      // showing as a fake letting on the CLIENT dashboard).
+      out.leasingDels = [];
+      for (const u of lsMade) {
+        const d = await fetch(`/api/leasing-schedule/unit/${u.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => ({ status: 0 }));
+        out.leasingDels.push(d.status);
+      }
+      // r591: the POST also auto-creates a backing crm_deal named
+      // "<Scheme> – <Unit>" (EN DASH), and deleting the tracker row leaves it.
+      // A boot hook then re-materialises a tracker listing from that orphan
+      // deal with a NEW id every restart — this is the "something re-creates
+      // the row at boot" r590 was chasing. Take the deal out too.
+      const deals = await (await fetch('/api/crm/deals', { credentials: 'include', headers: h })).json().catch(() => []);
+      const dealRows = Array.isArray(deals) ? deals : (deals?.data || deals?.deals || []);
+      out.dealDels = [];
+      for (const d of dealRows.filter(x => /QA-R588-LBL-/.test(String(x.name || '')))) {
+        const r = await fetch(`/api/crm/deals/${d.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => ({ status: 0 }));
+        out.dealDels.push(r.status);
+      }
+      const stillDeals = await (await fetch('/api/crm/deals', { credentials: 'include', headers: h })).json().catch(() => []);
+      out.dealsLeft = (Array.isArray(stillDeals) ? stillDeals : (stillDeals?.data || stillDeals?.deals || []))
+        .filter(x => /QA-R588-LBL-/.test(String(x.name || ''))).length;
+      // r592: the tracker DELETE clears the untouched spine stub it created,
+      // but the predicate matched the single literal 'Marketing' — so a stub
+      // for a SOL/EXC or COM/INV unit was stranded on the landlord's schedule
+      // for good. Both sides now read TENANCY_STUB_STATUSES.
+      const tsAfter = await (await fetch(`/api/tenancy-schedule/property/${rows[0].id}`, { credentials: 'include', headers: h })).json().catch(() => []);
+      const tsRowsA = Array.isArray(tsAfter) ? tsAfter : (tsAfter?.units || tsAfter?.data || []);
+      out.tenancyLeft = tsRowsA.filter(u => String(u.unit_number || u.unitNumber || u.premises || '').startsWith('QA-R588-LBL-')).length;
+      const still = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
+      const stillRows = Array.isArray(still) ? still : (still?.data || still?.units || []);
+      out.dels = dels;
+      out.leaked = made.filter(id => stillRows.some(u => u.id === id)).length;
+      return out;
+    }, ROUND);
+    if (got.skip) { console.log(`  [skip] ${p} · staff-unit-writes-canonicalise-status — ${got.skip}`); return; }
+    if (got.label !== 'AVA') throw new Error(`a unit posted with the label "Available" came back as ${JSON.stringify(got.label)} — a label in a codes column is invisible to every code predicate`);
+    if (got.neg !== 'skipped' && got.neg !== 'NEG') throw new Error(`CONTROL failed: "Under Negotiation" came back as ${JSON.stringify(got.neg)}, not NEG — the canonicaliser is blanket-stamping`);
+    if (got.unknown !== 'skipped' && got.unknown !== 'Something Else') throw new Error(`CONTROL failed: an unrecognised status was rewritten to ${JSON.stringify(got.unknown)} instead of being left alone`);
+    if (got.omitted !== 'skipped' && got.omitted !== 'AVA') throw new Error(`a unit posted with NO marketingStatus came back as ${JSON.stringify(got.omitted)} — the postgres column default is the label 'Available', which no code predicate matches`);
+    if (!got.trackerRows) throw new Error('CONTROL failed: the tracker list came back empty, so the stray-status sweep below is vacuous');
+    if ((got.strayTrackerStatuses || []).length) throw new Error(`the letting tracker is carrying non-code status value(s) ${JSON.stringify(got.strayTrackerStatuses)} in available_units.marketing_status — invisible to every code predicate over that column`);
+    if (got.leaked) throw new Error(`this scenario leaked ${got.leaked} of its own unit row(s) into the fixture (DELETE statuses ${JSON.stringify(got.dels)}) — the next round inherits a phantom listing`);
+    // r591: LEASING_STATUSES from shared/lease-status-mirror.ts. A raw code
+    // here renders as an unrecognised grey chip and is missing from the
+    // Vacant count on the property's leasing board.
+    const LEASING = ['Vacant', 'In Negotiation', 'Under Offer', 'Occupied', 'Trading', 'Lease Event', 'Archived'];
+    const stray = (got.leasingStatuses || []).filter(v => v !== null && !LEASING.includes(v));
+    if (stray.length) throw new Error(`the auto-created leasing-schedule row(s) carry ${JSON.stringify(stray)} — a marketing CODE in the leasing board's LABEL column (chip renders raw, Vacant tile misses it)`);
+    if (!(got.leasingStatuses || []).length) throw new Error('CONTROL failed: the POST created no leasing-schedule row to check — this assertion is vacuous');
+    if (got.dealsLeft) throw new Error(`this scenario leaked ${got.dealsLeft} auto-created deal(s) (DELETE statuses ${JSON.stringify(got.dealDels)}) — a boot hook re-materialises a tracker listing from each one on the next restart`);
+    // r592: the tenancy board's tiles only bucket these. A status outside the
+    // set (the legacy 'Marketing' the mirror used to stamp) leaves the unit in
+    // the row list and in NO tile, and the vacant filter walks past it.
+    const TENANCY_BUCKETED = ['Vacant', 'Void', 'Available', 'AVA', 'Occupied', 'Trading', 'Let', 'Not Vacant', 'In Negotiation', 'Under Offer', 'Lease Event', 'Archived', 'Opportunity'];
+    const tStray = (got.tenancyStatuses || []).filter(v => v !== null && !TENANCY_BUCKETED.includes(v));
+    if (tStray.length) throw new Error(`the auto-created tenancy-spine stub(s) carry ${JSON.stringify(tStray)} — a status the landlord's own schedule buckets into no tile (missing from Occupied AND Vacant, hidden from the vacant filter, no chip colour)`);
+    if (!(got.tenancyStatuses || []).length) throw new Error('CONTROL failed: the POST created no tenancy-spine stub to check — this assertion is vacuous');
+    if (got.tenancyLeft) throw new Error(`${got.tenancyLeft} tenancy-spine stub(s) survived the tracker DELETE — stranded on the landlord's tenancy schedule with no unit behind them`);
+  });
+
+  // r588: the fee-allocation rule is that percentage rows must sum to 100%
+  // AND carry the BGP House slice. The add-unit dialog's auto-inserted lone
+  // BGP House row is 15%, so the split it posts is rejected — correctly. The
+  // bug was that the client raised its warning INSIDE mutationFn, where
+  // TOAST_LIMIT=1 let onSuccess's "Unit added" evict it, so the split was
+  // dropped silently. Guard the server rule itself (the client behaviour is
+  // covered visually): an unbalanced split must be refused, not accepted.
+  await step(page, p, 'staff-unbalanced-fee-split-is-refused', async () => {
+    const got = await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const deals = await (await fetch('/api/crm/deals', { credentials: 'include', headers: h })).json();
+      const rows = Array.isArray(deals) ? deals : (deals?.data || deals?.deals || []);
+      if (!rows.length) return { skip: 'no deals' };
+      const id = rows[0].id;
+      const put = (allocations) => fetch(`/api/crm/deals/${id}/fee-allocations`, {
+        method: 'PUT', credentials: 'include', headers: h, body: JSON.stringify({ allocations }) });
+      const lone = await put([{ agentName: 'BGP House', allocationType: 'percentage', percentage: 15, isBgpHouse: true }]);
+      const loneBody = await lone.json().catch(() => ({}));
+      const noHouse = await put([{ agentName: 'Someone', allocationType: 'percentage', percentage: 100, isBgpHouse: false }]);
+      return { lone: lone.status, loneErr: String(loneBody?.error || '').slice(0, 120), noHouse: noHouse.status };
+    });
+    if (got.skip) { console.log(`  [skip] staff-unbalanced-fee-split-is-refused — ${got.skip}`); return; }
+    if (got.lone !== 400) throw new Error(`a lone BGP House 15% split was accepted (HTTP ${got.lone}) — the 100% rule is not holding`);
+    if (!/sum to 100/i.test(got.loneErr)) throw new Error(`the 400 did not explain the imbalance: "${got.loneErr}" — the client surfaces this text to the user`);
+    if (got.noHouse !== 400) throw new Error(`a split with no BGP House row was accepted (HTTP ${got.noHouse})`);
+  });
+
+  // r593: one physical unit, three name conventions in available_units.
+  // unit_name — bare, comma-joined, and scheme-prefixed with an EN DASH.
+  // The third has a live source: POST /api/available-units names the backing
+  // deal "<Scheme> – <Unit>", and the boot auto-seed spawns a listing for any
+  // NEG deal that has no listing, copying that deal name into unit_name. The
+  // one-live-listing guard compared COMMA segments only, so a re-add of the
+  // bare name never matched the scheme-prefixed row and the unit was listed —
+  // and counted — twice. Both sides now read unitNameKey (server/unit-mirror).
+  // r597: the scenario above proves the STORAGE BOUNDARY canonicalises. It
+  // cannot prove every write path goes through that boundary — and two didn't.
+  // Both ChatBGP `create_available_unit` handlers inserted straight into the
+  // table with `marketingStatus: fnArgs.marketingStatus || "Available"`, a
+  // label into a codes column behind a fallback, unreachable from a browser
+  // (the tool only fires inside the model loop, and there is no AI key here).
+  // So guard the doors at the source: no writer of this column may hand it a
+  // literal that is not a canonical code.
+  await step(page, p, 'staff-unit-write-doors-carry-no-labels', async () => {
+    const CODES = ['OPP','AVA','NEG','HOT','SOL','EXC','COM','WIT','INV'];
+    const roots = ['server', 'shared', 'client/src'];
+    const files = [];
+    const walk = (d) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+        const f = `${d}/${e.name}`;
+        if (e.isDirectory()) walk(f);
+        else if (/\.(ts|tsx)$/.test(e.name)) files.push(f);
+      }
+    };
+    const ROOT = new URL('../', import.meta.url).pathname.replace(/\/$/, '');
+    for (const r of roots) walk(`${ROOT}/${r}`);
+    if (files.length < 100) throw new Error(`door census scanned only ${files.length} files — the walk is broken, not the app`);
+    // `marketing_status`/`marketingStatus` set to a quoted literal, allowing
+    // any number of `x || ` fallbacks between the operator and the literal.
+    const WRITE = /\b(?:marketing_status|marketingStatus)\s*(?::|=(?!=))\s*(?:[\w$.?[\]]+\s*\|\|\s*)*(['"`])([A-Za-z][A-Za-z ]{1,24})\1/g;
+    const bad = [];
+    for (const f of files) {
+      const text = readFileSync(f, 'utf8');
+      for (const m of text.matchAll(WRITE)) {
+        if (CODES.includes(m[2])) continue;
+        const line = text.slice(0, m.index).split('\n').length;
+        bad.push(`${f.slice(ROOT.length + 1)}:${line} writes ${JSON.stringify(m[2])}`);
+      }
+    }
+    if (bad.length) throw new Error(`available_units.marketing_status is a CODES column, but ${bad.length} write site(s) hand it a label — every code predicate then misses the row: ${bad.join(' | ')}`);
+  });
+
+  await step(page, p, 'staff-unit-add-dedupes-scheme-prefixed-names', async () => {
+    const got = await page.evaluate(async (round) => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const props = await (await fetch('/api/crm/properties', { credentials: 'include', headers: h })).json();
+      const rows = Array.isArray(props) ? props : (props.data || props.properties || []);
+      if (!rows.length) return { skip: 'no properties' };
+      const prop = rows[0];
+      const unit = `QA-R593-DUP R${round}`;
+      const mk = async (name) => {
+        const r = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: h,
+          body: JSON.stringify({ propertyId: prop.id, unitName: name, marketingStatus: 'AVA', sqft: 900 }) });
+        return r.ok ? await r.json() : { __status: r.status };
+      };
+      // The shape the boot auto-seed leaves behind.
+      const a = await mk(`${prop.name} – ${unit}`);
+      if (a.__status) return { skip: `POST refused (${a.__status})` };
+      const b = await mk(unit);                       // the agent's bare re-add
+      const c = await mk(`${unit}, ${prop.name}`);    // CONTROL: the comma convention
+      const d = await mk(`QA-R593-OTHER R${round}`);  // CONTROL: a different unit
+      const out = { aId: a.id, bId: b.id, bAlready: !!b.alreadyListed, cId: c.id, cAlready: !!c.alreadyListed,
+                    dId: d.id, dAlready: !!d.alreadyListed };
+      const units = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
+      const all = Array.isArray(units) ? units : (units?.data || units?.units || []);
+      out.liveForUnit = all.filter(u => String(u.unitName || '').includes(`QA-R593-DUP R${round}`)).length;
+      // Teardown, same three projections the r588 scenario clears.
+      for (const id of [...new Set([a.id, b.id, c.id, d.id].filter(Boolean))]) {
+        await fetch(`/api/available-units/${id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      }
+      const ls = await (await fetch(`/api/leasing-schedule/property/${prop.id}`, { credentials: 'include', headers: h })).json().catch(() => []);
+      for (const u of (Array.isArray(ls) ? ls : (ls?.units || ls?.data || []))
+        .filter(u => /QA-R593-/.test(String(u.unit_name || u.unitName || '')))) {
+        await fetch(`/api/leasing-schedule/unit/${u.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      }
+      const deals = await (await fetch('/api/crm/deals', { credentials: 'include', headers: h })).json().catch(() => []);
+      for (const x of (Array.isArray(deals) ? deals : (deals?.data || deals?.deals || []))
+        .filter(x => /QA-R593-/.test(String(x.name || '')))) {
+        await fetch(`/api/crm/deals/${x.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      }
+      const still = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
+      out.leaked = (Array.isArray(still) ? still : (still?.data || still?.units || []))
+        .filter(u => /QA-R593-/.test(String(u.unitName || ''))).length;
+      return out;
+    }, ROUND);
+    if (got.skip) { console.log(`  [skip] ${p} · staff-unit-add-dedupes-scheme-prefixed-names — ${got.skip}`); return; }
+    if (!got.bAlready || got.bId !== got.aId) throw new Error('a re-add of the bare unit name created a SECOND live listing for a unit already listed under its scheme-prefixed name — every vacancy counter over available_units now counts it twice');
+    if (!got.cAlready || got.cId !== got.aId) throw new Error('CONTROL failed: the comma convention was not deduped either — the one-live-listing guard is not running at all');
+    if (got.dAlready || got.dId === got.aId) throw new Error('CONTROL failed: a genuinely different unit was folded onto the first listing — the name key is over-collapsing');
+    if (got.liveForUnit !== 1) throw new Error(`${got.liveForUnit} live listings for one physical unit`);
+    if (got.leaked) throw new Error(`this scenario leaked ${got.leaked} listing(s) into the fixture`);
+  });
+
+  // r585: the My Portfolio dashboard widget was doubly broken.
+  //   (a) /api/dashboard/my-portfolio selected `c.job_title` from crm_contacts,
+  //       which has no such column (it is `role`) — so the endpoint 500'd for
+  //       ANY user who had a deal, and the widget was dead for the whole team.
+  //   (b) it excluded dead deals with `NOT IN ('Dead','Draft')` — legacy labels
+  //       against a codes column, a no-op, so a WITHDRAWN deal (and the
+  //       property it drags in) stayed on the staff member's own dashboard.
+  // This guards both: the endpoint must answer 200 with an array, and a deal
+  // the user owns at WIT must not come back.
+  await step(page, p, 'staff-my-portfolio-drops-withdrawn-deals', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const first = await fetch('/api/dashboard/my-portfolio', { credentials: 'include', headers: auth });
+      if (!first.ok) return { ok: false, why: `my-portfolio ${first.status}` };
+      const baseline = await first.json();
+      if (!Array.isArray(baseline)) return { ok: false, why: 'my-portfolio did not return an array' };
+
+      const me = await (await fetch('/api/auth/me', { credentials: 'include', headers: auth })).json();
+      const props = await (await fetch('/api/crm/properties', { credentials: 'include', headers: auth })).json();
+      const rows = Array.isArray(props) ? props : (props.data || props.properties || []);
+      if (!me?.name || !rows.length) return { ok: true, skipped: 'no user name or no properties to attach to' };
+
+      const mk = async (status) => {
+        const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ name: `QA-PORTFOLIO-${status} R${round}`, status, dealType: 'New Letting',
+            propertyId: rows[0].id, internalAgent: [me.name] }) });
+        return res.ok ? await res.json() : null;
+      };
+      const live = await mk('SOL');
+      const dead = await mk('WIT');
+      const after = await fetch('/api/dashboard/my-portfolio', { credentials: 'include', headers: auth });
+      const body = after.ok ? await after.json() : null;
+      for (const d of [live, dead]) if (d?.id) await fetch(`/api/crm/deals/${d.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      if (!after.ok) return { ok: false, why: `my-portfolio (after) ${after.status}` };
+      const names = (Array.isArray(body) ? body : []).flatMap(x => (x.deals || []).map(d => d.name));
+      return { ok: true, live: !!live, dead: !!dead, sawLive: names.includes(`QA-PORTFOLIO-SOL R${round}`), sawDead: names.includes(`QA-PORTFOLIO-WIT R${round}`) };
+    }, ROUND);
+    if (!r.ok) throw new Error(r.why);
+    if (r.skipped) return;
+    if (!r.live || !r.dead) throw new Error('could not create the probe deals');
+    // control — without this the WIT assertion below is vacuous
+    if (!r.sawLive) throw new Error('my-portfolio dropped the LIVE deal too — the widget is not reading the user\'s own deals at all');
+    if (r.sawDead) throw new Error('my-portfolio still shows a WITHDRAWN deal — the dead-deal filter is comparing status against legacy LABELS again');
+  });
+
+  // r599: the SAME dead-deal label bug as the scenario above, on the door
+  // nobody had read — a brand profile's "Portfolio activity" panel. Its
+  // "Tenant at" tier unioned the leasing schedule with every crm_deals row
+  // filtered by `status NOT IN ('Dead','Withdrawn')`, i.e. legacy LABELS over
+  // a codes column, so a WITHDRAWN deal rendered as a green "tenant at"
+  // badge on the honest-pitch view. Same shape as chatbgp's investment
+  // context (both fixed together).
+  await step(page, p, 'staff-brand-activity-drops-withdrawn-deals', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const props = await (await fetch('/api/crm/properties', { credentials: 'include', headers: auth })).json();
+      const rows = Array.isArray(props) ? props : (props.data || props.properties || []);
+      const cos = await (await fetch('/api/crm/companies', { credentials: 'include', headers: auth })).json();
+      const brands = (Array.isArray(cos) ? cos : (cos.data || [])).filter(c => c.id);
+      if (!rows.length || !brands.length) return { ok: true, skipped: 'no property or company to attach to' };
+      const brand = brands[0];
+      const mk = async (status) => {
+        const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ name: `QA-BRANDACT-${status} R${round}`, status, dealType: 'New Letting',
+            propertyId: rows[0].id, tenantId: brand.id }) });
+        return res.ok ? await res.json() : null;
+      };
+      const live = await mk('COM');
+      const dead = await mk('WIT');
+      const res = await fetch(`/api/brands/${brand.id}/portfolio-activity`, { credentials: 'include', headers: auth });
+      const body = res.ok ? await res.json() : null;
+      for (const d of [live, dead]) if (d?.id) await fetch(`/api/crm/deals/${d.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      if (!res.ok) return { ok: false, why: `portfolio-activity ${res.status}` };
+      const deals = (body?.tenantAt || []).filter(x => x.via === 'deal');
+      return { ok: true, live: !!live, dead: !!dead, brand: brand.name,
+        sawLive: deals.some(d => d.id === live?.id), sawDead: deals.some(d => d.id === dead?.id) };
+    }, ROUND);
+    if (!r.ok) throw new Error(r.why);
+    if (r.skipped) return;
+    if (!r.live || !r.dead) throw new Error('could not create the probe deals');
+    // control — without this the WIT assertion below is vacuous
+    if (!r.sawLive) throw new Error(`brand ${r.brand}'s Portfolio activity dropped the LIVE deal too — the "Tenant at" tier is not reading crm_deals at all`);
+    if (r.sawDead) throw new Error(`brand ${r.brand}'s Portfolio activity lists a WITHDRAWN deal as "Tenant at" — the dead-deal filter is comparing status against legacy LABELS again`);
+  });
+
+  // r594: a CRM picker that was never touched posts "" for its id, so a
+  // tracker offer/viewing logged without picking a company banked
+  // company_id = '' rather than NULL. Every consumer tests IS NOT NULL — the
+  // asset brief's "link the brand" gap list among them — so a blank string
+  // read as "counterparty recorded" while naming nobody, and the unit fell
+  // into the hole between the parties group and the gap list. Both writers
+  // now coalesce blanks (the interest writer always did).
+  await step(page, p, 'staff-tracker-activity-writes-null-not-blank', async () => {
+    const r = await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const units = await (await fetch('/api/available-units', { credentials: 'include', headers: h })).json();
+      const unit = (Array.isArray(units) ? units : []).find(u => u.marketingStatus === 'AVA');
+      if (!unit) return { skipped: 'no AVA unit' };
+      const blank = { companyId: '', contactId: '', companyName: '', contactName: '' };
+      const post = async (kind, extra) => {
+        const res = await fetch(`/api/available-units/${unit.id}/${kind}`, { method: 'POST', credentials: 'include',
+          headers: h, body: JSON.stringify({ ...blank, ...extra }) });
+        return res.ok ? await res.json() : { __status: res.status };
+      };
+      const offer = await post('offers', { offerDate: '2026-09-07', rentPa: 4321 });
+      const viewing = await post('viewings', { viewingDate: '2026-09-07' });
+      // control — a real id must still be stored, so the coalesce is not
+      // simply blanking every link.
+      const cos = await (await fetch('/api/crm/companies', { credentials: 'include', headers: h })).json();
+      const co = (Array.isArray(cos) ? cos : (cos.data || []))[0];
+      const named = co ? await post('offers', { offerDate: '2026-09-07', companyId: co.id }) : null;
+      for (const o of [offer, named]) if (o?.id) await fetch(`/api/available-units/offers/${o.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      if (viewing?.id) await fetch(`/api/available-units/viewings/${viewing.id}`, { method: 'DELETE', credentials: 'include', headers: h }).catch(() => {});
+      return { offer, viewing, named, coId: co?.id || null };
+    });
+    if (r.skipped) return;
+    if (r.offer?.__status || r.viewing?.__status) throw new Error(`write refused: offer ${r.offer?.__status} viewing ${r.viewing?.__status}`);
+    for (const [kind, row] of [['offer', r.offer], ['viewing', r.viewing]]) {
+      for (const k of ['companyId', 'contactId']) {
+        if (row?.[k] === '') throw new Error(`${kind}.${k} banked a BLANK STRING — every IS NOT NULL consumer now reads it as a recorded counterparty`);
+        if (row?.[k] !== null && row?.[k] !== undefined) throw new Error(`${kind}.${k} came back as ${JSON.stringify(row[k])}, expected null`);
+      }
+    }
+    if (r.coId && r.named?.companyId !== r.coId) throw new Error('CONTROL FAILED: a real companyId was not stored — the coalesce is eating good ids');
+  });
+
+  await step(page, p, 'staff-digest-flags-kyc-on-a-solicitors-deal', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-KYCGAP R${round}`, status: 'SOL', fee: 25000, dealType: 'New Letting' }) });
+      if (!res.ok) return { ok: false, why: `deal POST ${res.status}` };
+      const deal = await res.json();
+      const dig = await fetch('/api/daily-digest', { credentials: 'include', headers: auth });
+      const body = dig.ok ? await dig.json() : null;
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      if (!dig.ok) return { ok: false, why: `daily-digest ${dig.status}` };
+      const alerts = Array.isArray(body) ? body : (body && body.alerts) || [];
+      const kyc = alerts.filter(a => a.type === 'kyc_gap');
+      return { ok: true, total: alerts.length, kyc: kyc.length, severities: [...new Set(kyc.map(a => a.severity))] };
+    }, ROUND);
+    if (!r.ok) throw new Error(`could not read the digest (${r.why})`);
+    if (r.kyc === 0) throw new Error(`the daily digest raised ${r.total} alerts and not one kyc_gap, with unapproved deals sitting at Solicitors — the alert is silent at the stage that matters`);
+    if (!r.severities.includes('critical')) throw new Error(`kyc_gap alerts came back as ${r.severities.join('/')}, not critical`);
+  });
+
+  // r602: the bell and the phone-home digest wrote the RAW status CODE into
+  // a sentence a human reads ("stuck in AVA", "Deal in NEG without KYC
+  // clearance"). Every other surface renders the label. This asserts both
+  // feeds carry labels and no bare code survives in their prose.
+  await step(page, p, 'staff-alert-prose-uses-status-labels', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const [n, d] = await Promise.all([
+        fetch('/api/notifications', { credentials: 'include', headers: auth }),
+        fetch('/api/daily-digest', { credentials: 'include', headers: auth }),
+      ]);
+      if (!n.ok || !d.ok) return { ok: false, why: `notifications ${n.status} / digest ${d.status}` };
+      const notes = await n.json();
+      const dig = await d.json();
+      const prose = [
+        ...(Array.isArray(notes) ? notes : []).map(x => `${x.title || ''} ${x.description || ''}`),
+        ...(Array.isArray(dig) ? dig : []).map(x => `${x.title || ''} ${x.detail || ''}`),
+      ];
+      // Bare 3-4 letter codes, not the labels they stand for. HOT is excluded
+      // only as part of "HOTs", which IS the label.
+      const CODE = /(?:^|[\s("'])(OPP|REP|SPEC|LIVE|AVA|NEG|HOT|SOL|EXC|COM|WIT|INV)(?:$|[\s)"'.,])/;
+      const offenders = prose.filter(t => CODE.test(t.replace(/HOTs/g, 'heads')));
+      const labelled = prose.filter(t => /(stuck in|Deal in|status: )\s*(Opportunity|Reporting|Speculative|Live|Available|Negotiating|HOTs|Solicitors|Exchanged|Completed|Withdrawn|Invoiced)/.test(t));
+      return { ok: true, count: prose.length, offenders: offenders.slice(0, 3), labelled: labelled.length };
+    });
+    if (!r.ok) throw new Error(`could not read the alert feeds (${r.why})`);
+    if (r.offenders.length) throw new Error(`a raw status code reached the user's alert prose: ${JSON.stringify(r.offenders)}`);
+    if (r.count > 0 && r.labelled === 0) throw new Error(`${r.count} alerts and not one carries a status label — did the label stop being rendered at all?`);
+  });
+
+  // r603: every CRM picker offers `Create "<typed name>"` alongside the real
+  // rows. In EntityCombobox that row was rendered FIRST and cmdk auto-selects
+  // the first row, so typing "Honi" put Create "Honi" under the cursor with
+  // "Honi Poke" beneath it — r594 made a duplicate company that way. This
+  // censuses all four picker doors: the create affordance must sit BELOW the
+  // matches, must never be scored above them, and must never be what the
+  // Enter key does while candidates are still on screen.
+  await step(page, p, 'staff-picker-create-row-never-outranks-a-real-match', async () => {
+    const ROOT = new URL('../', import.meta.url).pathname.replace(/\/$/, '');
+    const read = (f) => readFileSync(`${ROOT}/${f}`, 'utf8');
+    const bad = [];
+
+    // door 1 — the shared EntityCombobox (deals, available-units, trading entities)
+    const ec = read('client/src/components/entity-combobox.tsx');
+    const ecCreate = ec.indexOf('Create {createLabel}');
+    const ecItems = ec.indexOf('{sortedItems.map((it) =>');
+    if (ecCreate < 0 || ecItems < 0) bad.push('entity-combobox.tsx: could not find the create row or the item map — the census is stale, re-read it');
+    else if (ecCreate < ecItems) bad.push('entity-combobox.tsx renders the create row ABOVE the matches, so cmdk auto-selects "create" on a partial name');
+    if (!/startsWith\(CREATE_VALUE_PREFIX\)\s*\)\s*return\s*0\.0*[1-9]/.test(ec)) bad.push('entity-combobox.tsx: the cmdk filter no longer pins the create row below every real match');
+
+    // door 2 — CrmEntityPicker's keyboard path
+    const cep = read('client/src/components/crm-entity-picker.tsx');
+    const enter = cep.slice(cep.indexOf('if (e.key === "Enter")'), cep.indexOf('if (e.key === "Enter")') + 700);
+    if (!enter.includes('matches.length === 0') || !enter.includes('createMutation.mutate')) bad.push('crm-entity-picker.tsx: Enter can create while matches are still listed (UX #298 came back on the keyboard path)');
+
+    // door 3 — PropertyCombobox shares the scoring function
+    const pc = read('client/src/components/property-combobox.tsx');
+    if (!/startsWith\("__create_by_name__"\)\s*\)\s*return\s*0\.0*[1-9]/.test(pc)) bad.push('property-combobox.tsx: the create-by-name row can outrank a mid-word property match again');
+
+    // door 4 — requirements.tsx's InlineCompanyPicker (was already correct; keep it that way)
+    const rq = read('client/src/pages/requirements.tsx');
+    const rqCreate = rq.indexOf('Create company "{search.trim()}"');
+    const rqItems = rq.indexOf('filtered.map((c) => (');
+    if (rqCreate > 0 && rqItems > 0 && rqCreate < rqItems) bad.push('requirements.tsx InlineCompanyPicker moved its create row above the matches');
+
+    if (bad.length) throw new Error(`a CRM picker offers "create a new one" ahead of the record the user was typing at: ${bad.join(' | ')}`);
+  });
+
+  // r601: every per-page footer in the PDF generators was written at a y BELOW
+  // the document's own bottom margin, so pdfkit closed the page and stamped
+  // the footer onto a fresh one — one page of content shipped as a two-page
+  // PDF with page 1 carrying no footer at all. Counts /Type /Page objects and
+  // insists the footer text is really on the page that survives.
+  await step(page, p, 'staff-report-pdfs-are-one-page', async () => {
+    const auth = { Authorization: 'Bearer ' + page.qaToken };
+    const pick = async (url, key) => {
+      const j = await (await fetch(`${BASE}${url}`, { headers: auth })).json();
+      const arr = Array.isArray(j) ? j : (j[key] || j.data || []);
+      return arr;
+    };
+    const contacts = await pick('/api/crm/contacts', 'contacts');
+    const deals = await pick('/api/crm/deals', 'deals');
+    const contact = contacts.find((c) => c.id);
+    const deal = deals.find((d) => d.id);
+    if (!contact) throw new Error('no CRM contact to render a weekly update for');
+    if (!deal) throw new Error('no deal to render deal documents for');
+    const targets = [
+      ['weekly update', `/api/weekly-report/${contact.id}.pdf`, /Confidential/],
+      ['heads of terms', `/api/deal/${deal.id}/hots.pdf`, /Subject to contract/],
+      ['offer summary', `/api/deal/${deal.id}/offer-summary.pdf`, /Subject to contract/],
+      ['completion report', `/api/deal/${deal.id}/completion.pdf`, /Completion Report/],
+    ];
+    const zlib = nodeRequire('zlib');
+    for (const [label, url, footerRe] of targets) {
+      const res = await fetch(`${BASE}${url}`, { headers: auth });
+      if (!res.ok) throw new Error(`${label} PDF returned ${res.status}`);
+      const bin = Buffer.from(await res.arrayBuffer()).toString('latin1');
+      const pages = (bin.match(/\/Type\s*\/Page[^s]/g) || []).length;
+      if (pages !== 1) throw new Error(`${label} PDF is ${pages} pages for one page of content — the footer is spilling onto a blank page`);
+      // The footer text lives in the (flate) page content stream; pdfkit
+      // writes standard-font text as hex TJ arrays, so decode to check.
+      let hay = '';
+      const re = /stream\r?\n/g; let m;
+      while ((m = re.exec(bin))) {
+        const start = m.index + m[0].length;
+        const end = bin.indexOf('endstream', start);
+        if (end < 0) continue;
+        try {
+          const out = zlib.inflateSync(Buffer.from(bin.slice(start, end), 'latin1')).toString('latin1');
+          // A TJ array interleaves hex glyph runs with kerning offsets — join
+          // only the hex runs, or a number lands mid-word and no phrase matches.
+          for (const arr of out.matchAll(/\[([^\]]*)\]\s*TJ/g)) {
+            hay += [...arr[1].matchAll(/<([0-9a-f]*)>/gi)]
+              .map((h) => Buffer.from(h[1], 'hex').toString('latin1')).join('') + '\n';
+          }
+          for (const lit of out.matchAll(/\(((?:[^()\\]|\\.)*)\)\s*Tj/g)) hay += lit[1] + '\n';
+        } catch { /* not a flate stream */ }
+      }
+      if (!footerRe.test(hay)) throw new Error(`${label} PDF lost its footer off the only page it has`);
+    }
+  });
+
+  // r605: the property-plan colour key read available_units.marketing_status
+  // with LABEL regexes (/under offer/i, /available|vacant/i) over a CODES
+  // column, so both matched nothing and every vacancy on a plan drew grey
+  // "unknown" instead of rose "vacant". Seeds one polygon over a real AVA
+  // unit, reads the endpoint, and tears the plan down again.
+  await step(page, p, 'staff-plan-colours-a-vacant-unit-vacant', async () => {
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const units = await (await fetch(`${BASE}/api/available-units`, { headers: auth })).json();
+    const list = Array.isArray(units) ? units : (units.units || units.data || []);
+    const ava = list.find((u) => u.unitId && (u.marketingStatus === 'AVA' || u.marketing_status === 'AVA'));
+    if (!ava) throw new Error('no AVA tracker unit with a linked property unit to draw a plan over');
+    const propertyId = ava.propertyId || ava.property_id;
+    // The plan create route is multipart (it stores the plan IMAGE), so the
+    // probe has to post a real file, not JSON.
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64');
+    const fd = new FormData();
+    fd.append('floor', 'QA-R605');
+    fd.append('file', new Blob([png], { type: 'image/png' }), 'r605.png');
+    const createRes = await fetch(`${BASE}/api/properties/${propertyId}/plans`, {
+      method: 'POST', headers: { Authorization: 'Bearer ' + page.qaToken }, body: fd,
+    });
+    if (!createRes.ok) throw new Error(`plan upload returned ${createRes.status}`);
+    const plan = await createRes.json();
+    const planId = plan.id || plan.planId;
+    if (!planId) throw new Error('plan upload returned no id');
+    try {
+      const poly = await (await fetch(`${BASE}/api/plans/${planId}/units`, {
+        method: 'POST', headers: auth,
+        body: JSON.stringify({ unit_id: ava.unitId || ava.unit_id, label: 'QA-R605 poly',
+                               polygon: { points: [[0, 0], [1, 0], [1, 1]] } }),
+      })).json();
+      const read = await (await fetch(`${BASE}/api/plans/${planId}/units`, { headers: auth })).json();
+      const row = (read.units || []).find((x) => x.id === poly.id);
+      if (!row) throw new Error('the polygon just created did not come back from the plan');
+      // Only assert on a unit nothing else can claim: no tenant on the
+      // leasing schedule and no lease event pending. Such a unit at AVA is
+      // vacant by definition — pre-fix it came back "unknown".
+      if (!row.tenant_name && !row.lease_expiry && !row.lease_break && row.status !== 'vacant') {
+        throw new Error(`an AVA unit with no tenant drew as "${row.status}", not "vacant" — the plan colour key is reading labels off a codes column`);
+      }
+    } finally {
+      await fetch(`${BASE}/api/plans/${planId}`, { method: 'DELETE', headers: auth }).catch(() => {});
+    }
+  });
+
+  // r630: the /leasing-schedule screen hides Archived units (the table filters
+  // them behind an "Archived (n)" toggle and each property card's unit_count
+  // excludes them) but all four export doors selected every row, so a board
+  // pack exported off a screen showing 2 units arrived with 3 — and the styled
+  // sheet has no Status column, so the archived unit read as live. Also the
+  // tabular export's Rent PSF was rounded to 2dp and then formatted "£#,##0",
+  // so £154.75 opened in Excel as "£155".
+  await step(page, p, 'staff-leasing-exports-hide-what-the-screen-hides', async () => {
+    const ExcelJSMod = await import('exceljs');
+    const ExcelJS = ExcelJSMod.default || ExcelJSMod;
+    const auth = { Authorization: 'Bearer ' + page.qaToken, 'Content-Type': 'application/json' };
+    const props = await (await fetch(`${BASE}/api/leasing-schedule/properties`, { headers: auth })).json();
+    if (!Array.isArray(props) || !props.length) throw new Error('no leasing-schedule properties to reconcile');
+    let target = null, victim = null;
+    for (const cand of [...props].sort((a, b) => Number(a.unit_count) - Number(b.unit_count))) {
+      const units = await (await fetch(`${BASE}/api/leasing-schedule/property/${cand.id}`, { headers: auth })).json();
+      // Only a unit that is ALREADY Vacant: unarchive hardcodes 'Vacant', so
+      // any other status would not survive the round trip.
+      const v = (units || []).find((u) => u.status === 'Vacant');
+      if (v) { target = cand; victim = v; break; }
+    }
+    if (!victim) throw new Error('no Vacant leasing-schedule unit to archive — cannot make the check non-vacuous');
+    const ar = await fetch(`${BASE}/api/leasing-schedule/units/${victim.id}/archive`, { method: 'PATCH', headers: auth });
+    if (!ar.ok) throw new Error(`archive returned ${ar.status}`);
+    try {
+      const after = await (await fetch(`${BASE}/api/leasing-schedule/properties`, { headers: auth })).json();
+      const card = after.find((x) => x.id === target.id);
+      const screenCount = Number(card.unit_count);
+      const units = await (await fetch(`${BASE}/api/leasing-schedule/property/${target.id}`, { headers: auth })).json();
+      const archived = (units || []).filter((u) => u.status === 'Archived');
+      if (!archived.some((u) => u.id === victim.id)) throw new Error('the archive write did not stick — nothing to reconcile');
+      if (screenCount !== units.length - archived.length) {
+        throw new Error(`fixture assumption broken: card says ${screenCount} but the table would list ${units.length - archived.length}`);
+      }
+
+      const loadXlsx = async (path, init) => {
+        const r = await fetch(`${BASE}${path}`, { headers: auth, ...(init || {}) });
+        if (!r.ok) throw new Error(`${path} returned ${r.status}`);
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(Buffer.from(await r.arrayBuffer()));
+        return wb;
+      };
+
+      // 1. the JSON export door
+      const je = await (await fetch(`${BASE}/api/leasing-schedule/property/${target.id}/export`, { headers: auth })).json();
+      if (je.some((r) => r.status === 'Archived')) throw new Error('the JSON /export door still ships Archived units the screen hides');
+      if (je.length !== screenCount) throw new Error(`JSON /export has ${je.length} rows, the screen card says ${screenCount}`);
+
+      // 2. the styled per-property .xlsx — banner count AND the row itself
+      const ws1 = (await loadXlsx(`/api/leasing-schedule/property/${target.id}/export-excel`)).worksheets[0];
+      const banner = String(ws1.getCell(2, 1).value || '');
+      const bm = banner.match(/(\d+) units/);
+      if (!bm) throw new Error(`the styled export lost its "N units" banner (banner was "${banner}")`);
+      if (Number(bm[1]) !== screenCount) {
+        throw new Error(`the styled leasing export banner says "${bm[0]}" but the screen card says ${screenCount} units`);
+      }
+      const existingCells = [];
+      ws1.eachRow((row, n) => { if (n > 4 && row.getCell(3).value) existingCells.push(String(row.getCell(3).value).trim()); });
+      if (existingCells.includes(String(victim.unit_name).trim())) {
+        throw new Error(`the archived unit "${victim.unit_name}" is still a row in the styled export, which has no Status column to flag it`);
+      }
+
+      // 3. the all-properties tabular .xlsx
+      const wsAll = (await loadXlsx('/api/leasing-schedule/export-excel')).worksheets[0];
+      let mine = 0, sawArchived = false, psfCell = null;
+      wsAll.eachRow((row, n) => {
+        if (n === 1) return;
+        const prop = String(row.getCell(1).value || '');
+        if (prop === 'TOTALS') return;
+        if (String(row.getCell(11).value || '') === 'Archived') sawArchived = true;
+        if (prop === target.name) mine++;
+        const psf = row.getCell(9).value;
+        if (!psfCell && typeof psf === 'number' && Math.round(psf) !== psf) psfCell = row.getCell(9);
+      });
+      if (sawArchived) throw new Error('the all-properties leasing export still carries rows the screen hides (Status = Archived)');
+      if (mine !== screenCount) throw new Error(`the all-properties export has ${mine} rows for ${target.name}, the screen card says ${screenCount}`);
+      if (!psfCell) throw new Error('no fractional Rent PSF in the export — the format check would pass vacuously');
+      if (!/0\.00/.test(String(psfCell.numFmt || ''))) {
+        throw new Error(`Rent PSF ${psfCell.value} is formatted "${psfCell.numFmt}" — Excel rounds the pence away on a psf`);
+      }
+
+      // 4. the multi-property .xlsx shares the same query
+      const wbMulti = await loadXlsx('/api/leasing-schedule/export-multi-excel', {
+        method: 'POST', body: JSON.stringify({ propertyIds: [target.id] }),
+      });
+      const wsM = wbMulti.worksheets[0];
+      const mBanner = String(wsM.getCell(2, 1).value || '').match(/(\d+) units/);
+      if (!mBanner) throw new Error('the multi-property export lost its "N units" banner');
+      if (Number(mBanner[1]) !== screenCount) {
+        throw new Error(`the multi-property export banner says "${mBanner[0]}" but the screen card says ${screenCount} units`);
+      }
+    } finally {
+      await fetch(`${BASE}/api/leasing-schedule/units/${victim.id}/archive`, { method: 'PATCH', headers: auth }).catch(() => {});
+    }
+  });
+
+}
+
+async function trackerStatusDeepLink(page, who) {
+  // r558: available-units read its URL params through a helper that returns
+  // "all" for a MISSING param, and viewAll compared against "all" — so the
+  // "All statuses" mode was permanently on, which short-circuits statusFilter
+  // and made every TrackerSummary lozenge deep link ("open on the Letting
+  // Tracker" pre-filtered to that stage) land on the unfiltered board.
+  const rows = async () => page.evaluate(() => document.querySelectorAll('table tbody tr').length);
+  const badges = async (label) => page.evaluate((l) => [...document.querySelectorAll('table tbody tr')]
+    .filter(r => new RegExp(`\\b${l}\\b`).test(r.innerText || '')).length, label);
+  await page.goto(`${BASE}/deals/letting`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(3000);
+  const all = await rows();
+  if (all < 5) throw new Error(`${who}: unfiltered tracker rendered only ${all} rows`);
+  await page.goto(`${BASE}/deals/letting?status=NEG`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(3000);
+  const filtered = await rows();
+  if (filtered >= all) throw new Error(`${who}: ?status=NEG changed nothing — ${filtered} rows filtered vs ${all} unfiltered`);
+  const marketing = await badges('Marketing');
+  if (marketing) throw new Error(`${who}: ?status=NEG still shows ${marketing} Marketing row(s)`);
+  if (!(await badges('Negotiating'))) throw new Error(`${who}: ?status=NEG shows no Negotiating row`);
 }
 
 async function markRound(page, cross) {
@@ -2297,6 +5843,129 @@ async function markRound(page, cross) {
   });
 
   // 4. Comps: net-effective column present, no inline editors
+  // r532 counterpart to rival-comp-files-and-reqinv-guard: scoping those two
+  // sub-reads must not lock the OWNING landlord out of their own rows.
+  await step(page, p, 'client-comp-files-and-reqinv-own-roundtrip', async () => {
+    const compId = cross.compId;
+    const reqInvId = cross.reqInvId;
+    if (!compId && !reqInvId) return;
+    const r = await page.evaluate(async ([comp, reqInv]) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const out = {};
+      if (comp) {
+        const files = await fetch(`/api/crm/comps/${comp}/files`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.filesStatus = files.status;
+        out.fileRows = files.ok ? ((await files.json().catch(() => [])) || []).length : -1;
+        const bulk = await fetch(`/api/crm/comps/files/bulk?compIds=${comp}`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.bulkRows = bulk.ok ? ((await bulk.json().catch(() => [])) || []).length : -1;
+      }
+      if (reqInv) {
+        const detail = await fetch(`/api/crm/requirements-investment/${reqInv}`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.reqInvStatus = detail.status;
+        out.reqInvName = detail.ok ? ((await detail.json().catch(() => ({}))).name || '') : '';
+      }
+      return out;
+    }, [compId, reqInvId]);
+    if (compId && r.filesStatus !== 200) throw new Error(`owning client locked out of their own comp files (${r.filesStatus})`);
+    if (compId && r.fileRows < 1) throw new Error(`own comp files came back empty (${r.fileRows} rows)`);
+    if (compId && r.bulkRows < 1) throw new Error(`own comp files/bulk came back empty (${r.bulkRows} rows)`);
+    if (reqInvId && r.reqInvStatus !== 200) throw new Error(`owning client locked out of their own investment requirement (${r.reqInvStatus})`);
+    if (reqInvId && !/QA-REQINV/.test(r.reqInvName)) throw new Error(`own investment requirement detail did not carry the row (name="${r.reqInvName}")`);
+  });
+
+  // r533 counterpart to rival-chat-media-and-deal-subreads-guard: gating
+  // chat-media must not lock the client out of files it legitimately has —
+  // its own upload, and a staff file shared into a thread it belongs to.
+  await step(page, p, 'client-chat-media-own-roundtrip', async () => {
+    const r = await page.evaluate(async ([shared, priv, round]) => {
+      const bearer = 'Bearer ' + localStorage.getItem('authToken');
+      const fd = new FormData();
+      fd.append('files', new Blob(['QA-PROBE client media'], { type: 'text/plain' }), `QA-PROBE chat media client R${round}.txt`);
+      const up = await fetch('/api/chat/upload', { method: 'POST', credentials: 'include',
+        headers: { Authorization: bearer }, body: fd });
+      const own = up.ok ? (((await up.json().catch(() => ({}))).files || [])[0] || null) : null;
+      const get = async (name) => name
+        ? (await fetch(`/api/chat-media/${name}`, { credentials: 'include', headers: { Authorization: bearer } }).catch(() => ({ status: 0 }))).status
+        : -1;
+      const out = {
+        uploadStatus: up.status,
+        ownStatus: await get(own && own.url.replace('/api/chat-media/', '')),
+        sharedStatus: await get(shared),
+        privateStatus: await get(priv),
+      };
+      out.ownName = own ? own.url.replace('/api/chat-media/', '') : null;
+      // Own deal sub-reads: keyless locally, so the pass mark is a 200
+      // carrying connected:false — not a 403.
+      const deals = await (await fetch('/api/crm/deals', { credentials: 'include', headers: { Authorization: bearer } })).json().catch(() => []);
+      const dealId = (Array.isArray(deals) ? deals : [])[0]?.id || null;
+      out.dealId = dealId;
+      if (dealId) {
+        for (const sub of ['related-emails', 'related-events']) {
+          const res = await fetch(`/api/crm/deals/${dealId}/${sub}`, { credentials: 'include', headers: { Authorization: bearer } }).catch(() => ({ status: 0 }));
+          out[sub] = res.status;
+        }
+      }
+      return out;
+    }, [cross.mediaShared || null, cross.mediaPrivate || null, ROUND]);
+    if (r.uploadStatus !== 200) throw new Error(`client could not upload to chat (${r.uploadStatus})`);
+    if (r.ownStatus !== 200) throw new Error(`client locked out of its OWN chat upload (${r.ownStatus})`);
+    if (cross.mediaShared && r.sharedStatus !== 200) throw new Error(`client locked out of a file shared into its own thread (${r.sharedStatus})`);
+    if (cross.mediaPrivate && r.privateStatus !== 403) throw new Error(`unshared staff chat-media readable by client (${r.privateStatus})`);
+    if (r.dealId && r['related-emails'] !== 200) throw new Error(`client locked out of its own deal related-emails (${r['related-emails']})`);
+    if (r.dealId && r['related-events'] !== 200) throw new Error(`client locked out of its own deal related-events (${r['related-events']})`);
+    cross.clientDealId = r.dealId;
+    cross.mediaClientOwn = r.ownName;
+  });
+
+  await step(page, p, 'client-no-tenancy-import', async () => {
+    // r551 counterpart to staff-tenancy-reimports-its-own-export: the round
+    // trip is a STAFF tool. The import handler itself carries no scope check —
+    // a clearExisting upload would wipe a schedule — so the client gateway is
+    // the only thing standing between a landlord login and someone else's
+    // rent roll. Mark keeps his export (checked below); he must not get the
+    // import, on his own property or anyone's.
+    const auth = { Authorization: 'Bearer ' + page.qaToken };
+    const rivalProp = '99999999-1111-1111-1111-111111111111'; // qa/seed-personas.sql
+    for (const pid of [BLUEWATER, rivalProp]) {
+      const fd = new FormData();
+      fd.append('file', new Blob([Buffer.from('not a real sheet')], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'x.xlsx');
+      fd.append('propertyId', pid);
+      fd.append('clearExisting', 'true');
+      const r = await fetch(`${BASE}/api/tenancy-schedule/import-excel`, { method: 'POST', headers: auth, body: fd });
+      if (r.status !== 403) throw new Error(`client tenancy import on ${pid} expected 403, got ${r.status}`);
+    }
+  });
+
+  await step(page, p, 'client-tenancy-export-agrees-with-board', async () => {
+    // r550, client half: Mark downloads the rent roll off his own property and
+    // sends it on. The file has to say the same thing the board said — same
+    // unexpired terms, same fixed term, and a header that states the unit.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const board = await (await fetch(`${BASE}/api/tenancy-schedule/property/${BLUEWATER}`, auth)).json();
+    if (!Array.isArray(board) || board.length === 0) throw new Error('client tenancy board returned no rows');
+    const ex = await fetch(`${BASE}/api/tenancy-schedule/property/${BLUEWATER}/export-excel`, auth);
+    if (ex.status !== 200) throw new Error(`client export of own property expected 200, got ${ex.status}`);
+    const XLSX = await import('../node_modules/xlsx/xlsx.mjs');
+    const wb = XLSX.read(Buffer.from(await ex.arrayBuffer()), { type: 'buffer' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    const hdr = rows[3] || [];
+    if (!hdr.includes('Unexp. Term (Expiry, mths)')) throw new Error('client export header lost the months unit');
+    const ci = { unit: hdr.indexOf('Unit'), unexp: hdr.indexOf('Unexp. Term (Expiry, mths)') };
+    const counts = new Map();
+    for (const u of board) { const k = String(u.unit_number || '').trim(); if (k) counts.set(k, (counts.get(k) || 0) + 1); }
+    const byUnit = new Map(board.filter((u) => counts.get(String(u.unit_number || '').trim()) === 1)
+      .map((u) => [String(u.unit_number || '').trim(), u]));
+    let compared = 0;
+    for (const row of rows.slice(4)) {
+      const b = byUnit.get(String(row[ci.unit] || '').trim());
+      if (!b) continue;
+      compared++;
+      const same = (x, y) => (x == null && y == null) || Number(x) === Number(y);
+      if (!same(row[ci.unexp], b.unexpired_term)) throw new Error(`${b.unit_number}: client export unexpired ${row[ci.unexp]} vs board ${b.unexpired_term}`);
+    }
+    if (compared < 20) throw new Error(`only ${compared} units cross-checked on the client export`);
+  });
+
   await step(page, p, 'client-comps-readonly', async () => {
     await page.goto(`${BASE}/comps`);
     await page.waitForLoadState('networkidle');
@@ -2505,6 +6174,8 @@ async function markRound(page, cross) {
   // company_name scoping (an exact-string compare once blanked the calendar).
   await step(page, p, 'client-calendar-sees-own-events', async () => {
     if (!cross.calMine) return; // staff step skipped (midnight window)
+    // Seeded event already in the past (chunk re-run) — nothing to assert.
+    if (cross.calValidUntil && Date.parse(cross.calValidUntil) <= Date.now()) return;
     const r = await page.evaluate(async (args) => {
       const [mine, other] = args;
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
@@ -3086,10 +6757,21 @@ async function markRound(page, cross) {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
-      return { board: await g('/api/board-report'), reporting: await g('/api/reporting/summary') };
+      return {
+        board: await g('/api/board-report'),
+        reporting: await g('/api/reporting/summary'),
+        // r536: both rode the allowed /api/dashboard/ prefix on requireAuth
+        // alone. firm-summary handed a landlord BGP's billed YTD, WIP, ski
+        // target and headcount; individual-leaderboard is the per-agent
+        // billing strip. Only the staff-only /hr page reads either.
+        firmSummary: await g('/api/dashboard/firm-summary'),
+        leaderboard: await g('/api/dashboard/individual-leaderboard'),
+      };
     });
     if (r.board !== 403) throw new Error(`client reached the board report (expected 403, got ${r.board})`);
     if (r.reporting !== 403) throw new Error(`client reached the reporting summary (expected 403, got ${r.reporting})`);
+    if (r.firmSummary !== 403) throw new Error(`client read BGP's firm fee summary (expected 403, got ${r.firmSummary})`);
+    if (r.leaderboard !== 403) throw new Error(`client read the per-agent leaderboard (expected 403, got ${r.leaderboard})`);
   });
 
   // The BGP deal-report generator (recent-deals feed + branded PDF builder) is
@@ -3346,11 +7028,24 @@ async function markRound(page, cross) {
       const list = await g('/api/leads');
       const stats = await g('/api/leads/stats');
       const generate = (await fetch('/api/leads/generate', { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status;
-      return { list, stats, generate };
+      // r535: /api/crm/leads is a DIFFERENT family from /api/leads above —
+      // BGP's own prospecting pipeline (the admin-only /leads page), and it
+      // rode the allowed /api/crm/ prefix unscoped, so a client could pull
+      // every prospect's name, email, phone and free-text notes.
+      const crmList = await g('/api/crm/leads');
+      const crmDetail = await g('/api/crm/leads/00000000-0000-0000-0000-000000000000');
+      // r535: landlord packs are one flat filename namespace across the firm;
+      // a filename no requirement in the client's slice references must be
+      // refused OUTRIGHT (403), not answered 404 (which leaks existence).
+      const strangePack = await g('/api/crm/landlord-packs/qa-probe-nonexistent-pack.pdf');
+      return { list, stats, generate, crmList, crmDetail, strangePack };
     });
     if (r.list !== 403) throw new Error(`client reached the AI leads board (expected 403, got ${r.list})`);
     if (r.stats !== 403) throw new Error(`client reached the leads stats (expected 403, got ${r.stats})`);
     if (r.generate !== 403) throw new Error(`client triggered AI lead generation (expected 403, got ${r.generate})`);
+    if (r.crmList !== 403) throw new Error(`client reached the CRM leads pipeline (expected 403, got ${r.crmList})`);
+    if (r.crmDetail !== 403) throw new Error(`client reached a CRM lead detail (expected 403, got ${r.crmDetail})`);
+    if (r.strangePack !== 403) throw new Error(`client reached an unreachable landlord pack (expected 403, got ${r.strangePack})`);
   });
 
   // The plain news feed (/api/news-feed/articles) is client-visible, but the
@@ -3369,8 +7064,13 @@ async function markRound(page, cross) {
         leads: await g('/api/news-intel/leads'),
         push: await p('/api/news-intel/leads/00000000-0000-0000-0000-000000000000/push'),
         fetch: await p('/api/news-feed/fetch'),
+        // r537: which paywalled publications BGP holds subscriber cookies
+        // for, by label + env-var name. Staff Sources tab only — a client
+        // login gets ClientNewsFeed, which never reads it.
+        cookies: await g('/api/news-feed/auth-cookies/health'),
       };
     });
+    if (r.cookies !== 403) throw new Error(`client read BGP's paywall cookie config (expected 403, got ${r.cookies})`);
     if (![200, 204].includes(r.articles)) throw new Error(`client news feed articles should be readable (expected 200, got ${r.articles})`);
     if (r.inbox !== 403) throw new Error(`client reached the news-intel inbox (expected 403, got ${r.inbox})`);
     if (r.leads !== 403) throw new Error(`client reached the news-intel leads (expected 403, got ${r.leads})`);
@@ -3469,13 +7169,18 @@ async function markRound(page, cross) {
         osStatus: await g('/api/os/ngd-status'),
         pins: await g('/api/map/pins'),
         annotations: await g('/api/map-annotations'),
+        // r537: map_annotations was already staff-only, but the LAYER list
+        // rode the allowed /api/map-layers prefix and returned every layer
+        // with shared_with_team = TRUE — so a landlord read BGP's own layer
+        // names and item counts out of the /map sidebar.
+        layers: await g('/api/map-layers'),
         external: await g('/api/external-properties'),
         plans: await g('/api/property-plans/in-viewport?bbox=51.49,-0.15,51.51,-0.13'),
       };
     });
     // OS proxies: anything but a gateway 403 — 200 with keys, 502/503 without.
     if (r.osSites === 403 || r.osStatus === 403) throw new Error(`client blocked from OS layers (sites ${r.osSites}, status ${r.osStatus}) — dead allowlist prefix regressed`);
-    for (const [k, v] of Object.entries({ pins: r.pins, annotations: r.annotations, external: r.external, plans: r.plans })) {
+    for (const [k, v] of Object.entries({ pins: r.pins, annotations: r.annotations, layers: r.layers, external: r.external, plans: r.plans })) {
       if (v !== 403) throw new Error(`BGP-internal map layer ${k} not refused for client (expected 403, got ${v})`);
     }
   });
@@ -3643,6 +7348,103 @@ async function markRound(page, cross) {
   // in the viewer's scope). A client sees it for a brand in their hospitality
   // slice (200 with {brandName, suggestions[]}) but is refused on an
   // out-of-slice brand — the handler's isClientVisibleBrand gate.
+  // The Brand Intelligence stats bar sits directly above the Brand Explorer's
+  // category cards, so its tiles are a claim about the SAME scoped brand set.
+  // (r614: "Categories" printed BRAND_CATEGORIES.length — a constant — so the
+  // client's tile said 5 while his explorer offered 4.) Assert the hub's own
+  // totals and its per-category breakdown are the same brand book.
+  await step(page, p, 'client-brands-hub-tiles-agree-with-categories', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const hub = await fetch('/api/brands/hub', { headers: auth }).catch(() => ({ ok: false }));
+      if (!hub.ok) return { ok: false };
+      const b = await hub.json();
+      const total = parseInt(b?.stats?.total_brands || '-1', 10);
+      const rows = Array.isArray(b?.categoryCounts) ? b.categoryCounts : null;
+      const sum = rows ? rows.reduce((a, x) => a + parseInt(x.count || '0', 10), 0) : -1;
+      return { ok: true, total, sum, nCats: rows ? rows.length : -1, zeroRows: rows ? rows.filter(x => parseInt(x.count || '0', 10) <= 0).length : -1 };
+    });
+    if (!r.ok) throw new Error('client cannot read /api/brands/hub');
+    if (r.total < 1) throw new Error(`hub total_brands unusable (${r.total})`);
+    if (r.sum !== r.total) throw new Error(`hub tile says ${r.total} brands but its category breakdown sums to ${r.sum}`);
+    if (r.zeroRows !== 0) throw new Error(`hub categoryCounts carried ${r.zeroRows} empty category row(s) the Explorer hides`);
+  });
+
+  // Brand Gap's "on scheme" vs the property's own occupier list — TWO DOORS
+  // OF ONE RULE, and they disagreed (r616). The gap panel's occupancy
+  // override read leasing_schedule_units (the MARKETING board, which almost
+  // never carries an occupier name) instead of tenancy_schedule_units, so on
+  // Bluewater it told the landlord Starbucks was "at other UK schemes, not
+  // here" and "Coffee & café — 0 here" while the Files & Contacts panel on the
+  // same page listed Starbucks under In occupation. Assert the two doors
+  // agree: no brand the property has in occupation may sit in any
+  // "not here" bucket. Non-vacuous — needs a real occupier list to compare.
+  await step(page, p, 'client-brand-gap-agrees-with-its-own-occupiers', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const pid = window.QA_FIX.bluewater;
+      const lcRes = await fetch(`/api/properties/${pid}/linked-contacts`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!lcRes.ok) return { ok: false, where: 'linked-contacts', status: lcRes.status };
+      const lc = await lcRes.json().catch(() => null);
+      const occ = (lc?.tenants || []).map((t) => String(t.company_name || '').toLowerCase()).filter(Boolean);
+      const gapRes = await fetch(`/api/property/${pid}/brand-gaps`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!gapRes.ok) return { ok: false, where: 'brand-gaps', status: gapRes.status };
+      const g = await gapRes.json().catch(() => null);
+      const names = (k) => (Array.isArray(g?.[k]) ? g[k] : []).map((b) => String(b.brand_name || '').toLowerCase());
+      const notHere = new Set([...names('gap'), ...names('peerGaps'), ...names('competitorGaps'), ...names('localMarket')]);
+      const onScheme = new Set(names('onScheme'));
+      const sectorHere = (Array.isArray(g?.sectors) ? g.sectors : [])
+        .reduce((a, sct) => a + (parseInt(sct.on_scheme || 0, 10) || 0), 0);
+      return {
+        ok: true, occCount: occ.length,
+        contradicted: occ.filter((n) => notHere.has(n)),
+        onSchemeCount: onScheme.size, sectorHere,
+      };
+    });
+    if (!r.ok) throw new Error(`client cannot read ${r.where} on their own property (${r.status})`);
+    if (r.occCount < 1) throw new Error('fixture regression: the property lists no tenants in occupation, so this check would be vacuous');
+    if (r.contradicted.length) throw new Error(`Brand Gap calls ${r.contradicted.length} of the property's own occupier(s) "not here": ${r.contradicted.join(', ')}`);
+    if (r.onSchemeCount < 1) throw new Error('Brand Gap reports nothing on scheme on a property with tenants in occupation');
+    if (r.sectorHere < 1) throw new Error('Brand Gap sector coverage says 0 brands here while the property has occupiers');
+  });
+
+  // "Portfolio activity — BGP team / What the BGP team is working on" is a
+  // printed claim about WHOSE tasks those are. It was counting the client's
+  // own tasks too, so a landlord who typed a focus item on his property page
+  // saw it come back as BGP work in progress (r616). Client-creates → must
+  // NOT appear on the BGP board (it still shows on My Tasks); the staff
+  // cross-check that a BGP task on the same property DOES appear is
+  // established by the agent chunk's own property tasks.
+  await step(page, p, 'client-own-task-stays-off-the-bgp-team-board', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const title = `QA r616 client focus ${Date.now()}`;
+      const mk = await fetch('/api/tasks', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title, linkedPropertyId: window.QA_FIX.bluewater, priority: 'medium' }) }).catch(() => ({ ok: false, status: 0 }));
+      if (!mk.ok) return { ok: false, status: mk.status };
+      const created = await mk.json().catch(() => ({}));
+      const id = created?.id || created?.task?.id || null;
+      try {
+        const board = await fetch(`/api/company-portfolio/${window.QA_FIX.landsec}/tasks`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+        if (!board.ok) return { ok: false, status: board.status, where: 'board' };
+        const b = await board.json().catch(() => ({}));
+        const open = Array.isArray(b?.open) ? b.open : [];
+        const mine = await fetch('/api/tasks', { headers: auth }).catch(() => ({ ok: false }));
+        const mineRows = mine.ok ? await mine.json().catch(() => []) : [];
+        return {
+          ok: true,
+          onBgpBoard: open.some((t) => t.title === title),
+          onMyTasks: (Array.isArray(mineRows) ? mineRows : (mineRows?.tasks || [])).some((t) => t.title === title),
+        };
+      } finally {
+        if (id) await fetch(`/api/tasks/${id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      }
+    });
+    if (!r.ok) throw new Error(`client task/board probe unhealthy (${r.where || 'create'} ${r.status})`);
+    if (r.onBgpBoard) throw new Error('a task the CLIENT wrote is listed on the "what the BGP team is working on" board');
+    if (!r.onMyTasks) throw new Error("the client's own task vanished from My Tasks");
+  });
+
   await step(page, p, 'client-brand-suggested-pitches-scoped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
@@ -3654,6 +7456,72 @@ async function markRound(page, cross) {
     });
     if (!r.inSliceOk || !r.shapeOk) throw new Error('client cannot read suggested-pitches on an in-slice brand');
     if (r.foreign !== 403) throw new Error(`client read suggested-pitches on an out-of-slice brand (expected 403, got ${r.foreign})`);
+  });
+
+  // r623: the client PHONE home tile prints three buckets next to the tracker
+  // total ("Available / Under offer / Let / On tracker"), but the buckets only
+  // covered 8 of the 12 status codes — a withdrawn unit was counted in the
+  // total and in no bucket, so Mark read 71 + 1 + 0 against 73 with nothing
+  // to explain the missing unit. The buckets now come from
+  // TRACKER_ROLLUP_BUCKET, which partitions the whole vocabulary. Withdraw
+  // one of the client's own units (a client PATCH he is entitled to make),
+  // assert the tile still reconciles, and put it back.
+  await step(page, p, 'client-mobile-portfolio-tile-reconciles', async () => {
+    const pick = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const u = (Array.isArray(units) ? units : []).find(x => !x.dealId && String(x.marketingStatus).toUpperCase() === 'AVA');
+      return u ? { id: u.id, status: u.marketingStatus } : null;
+    });
+    if (!pick) throw new Error('no unlinked AVA unit in the client portfolio to withdraw');
+    const setStatus = (id, status) => page.evaluate(async ([i, st]) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const r = await fetch(`/api/available-units/${i}`, { method: 'PATCH', headers: auth, body: JSON.stringify({ marketingStatus: st }) });
+      return r.status;
+    }, [id, status]);
+    // The phone shell keys off the USER AGENT + touch, not the viewport — a
+    // viewport-only 390px context renders the DESKTOP app instead.
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    const readTile = async () => {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mobGoto(mob, `${BASE}/deals`, nav);   // warm — a client route's
+      await mob.waitForTimeout(4000);             // first cold render can be
+      await mobGoto(mob, `${BASE}/`, nav);        // nav-only (r262)
+      await mob.waitForTimeout(6000);
+      if (!(await mob.locator('[data-testid="mobile-bottom-nav"]').count())) throw new Error('phone shell did not render — wrong surface');
+      const tile = mob.locator('[data-testid="mobile-home-portfolio"]');
+      if (!(await tile.count())) throw new Error('client phone home has no portfolio tile');
+      const txt = await tile.innerText();
+      const pairs = {};
+      for (const m of txt.matchAll(/(\d[\d,]*)\s*\n\s*(Available|Under offer|Let|Withdrawn|On tracker)/g)) {
+        pairs[m[2]] = Number(m[1].replace(/,/g, ''));
+      }
+      return { txt, pairs };
+    };
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      const before = await readTile();
+      if (before.pairs['On tracker'] === undefined) throw new Error(`tile has no "On tracker" total: ${before.txt.replace(/\n/g, ' | ')}`);
+      const sumOf = (t) => ['Available', 'Under offer', 'Let', 'Withdrawn'].reduce((a, k) => a + (t.pairs[k] || 0), 0);
+      if (sumOf(before) !== before.pairs['On tracker']) throw new Error(`tile does not reconcile before the write: ${before.txt.replace(/\n/g, ' | ')}`);
+      const code = await setStatus(pick.id, 'WIT');
+      if (code !== 200) throw new Error(`client withdraw of own unit returned ${code}`);
+      const after = await readTile();
+      if (!after.pairs['Withdrawn']) throw new Error(`withdrawn unit is in no bucket on the phone tile: ${after.txt.replace(/\n/g, ' | ')}`);
+      if (sumOf(after) !== after.pairs['On tracker']) throw new Error(`tile buckets sum to ${sumOf(after)} but "On tracker" says ${after.pairs['On tracker']}: ${after.txt.replace(/\n/g, ' | ')}`);
+    } finally {
+      await setStatus(pick.id, pick.status);
+      await mob.close();
+      await mobCtx.close();
+    }
   });
 
   // Compliance & KYC panel STAYS visible on client brand profiles (2026-08-01
@@ -3965,6 +7833,20 @@ async function markRound(page, cross) {
     await page.waitForTimeout(3000);
     if (!(await page.getByText('BGP Relationship', { exact: false }).count()))
       throw new Error('BGP Relationship card missing from client dashboard');
+    // Presence is not the contract — the card promises the client WHO at BGP
+    // looks after them. Assert it names a person and prints no raw key
+    // (r610's Busiest Agent tile shipped a UUID behind an exists-only check).
+    const rel = await page.evaluate(() => {
+      const head = [...document.querySelectorAll('*')].find(e => /BGP Relationship/i.test(e.textContent || '') && e.children.length < 6);
+      let box = head; for (let i = 0; i < 6 && box; i++) { if ((box.innerText || '').length > 40) break; box = box.parentElement; }
+      return (box?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+    });
+    if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(rel))
+      throw new Error(`BGP Relationship card is printing a raw UUID at the client: ${rel.slice(0, 140)}`);
+    if (/\b(undefined|null|NaN|Unknown|\[object Object\])\b/.test(rel))
+      throw new Error(`BGP Relationship card is printing a placeholder value: ${rel.slice(0, 140)}`);
+    if (!/[A-Z][a-z]+\s+[A-Z][a-z]+/.test(rel))
+      throw new Error(`BGP Relationship card names nobody — the client is told who looks after them, so it must show a person: ${rel.slice(0, 140)}`);
     // The map widget was renamed "Properties & Deals" in the canonical-family
     // rework (2026-08-03) — accept either label; the leaflet assertions below
     // are the real substance.
@@ -3974,6 +7856,30 @@ async function markRound(page, cross) {
       throw new Error('portfolio map widget missing from client dashboard');
     if (!(await page.locator('.leaflet-container').count()))
       throw new Error('portfolio map did not initialise (no leaflet container)');
+    // The "Expiring (6m)" KPI is a derived rule with several readers (r611).
+    // Check the number it prints, not that the tile is on screen: an already
+    // expired lease is expired, not expiring.
+    const exp = await page.evaluate(async () => {
+      const tile = document.querySelector('[data-testid="kpi-expiring"]');
+      if (!tile) return { missing: true };
+      // Read the count element itself — the label is "Expiring (6m)", whose
+      // own digit would otherwise be mistaken for the number.
+      const shown = parseInt((tile.querySelectorAll('p')[1]?.textContent || '').trim(), 10);
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const cid = me.companyScopeId;
+      if (!cid) return { shown, truth: null };
+      const pf = await (await fetch(`/api/company-portfolio/${cid}`, { headers: auth })).json();
+      const now = Date.now();
+      const horizon = new Date(); horizon.setMonth(horizon.getMonth() + 6);
+      const units = pf.leasingUnits || [];
+      const truth = units.filter((u) => u.lease_expiry && new Date(u.lease_expiry).getTime() > now && new Date(u.lease_expiry).getTime() <= horizon.getTime()).length;
+      const expired = units.filter((u) => u.lease_expiry && new Date(u.lease_expiry).getTime() <= now).length;
+      return { shown, truth, expired };
+    });
+    if (exp.missing) throw new Error('client dashboard "Expiring (6m)" KPI tile missing');
+    if (exp.truth !== null && exp.shown !== exp.truth)
+      throw new Error(`"Expiring (6m)" tile says ${exp.shown}, the portfolio payload holds ${exp.truth} leases running out inside 6 months (${exp.expired} already expired) — the tile is counting on a different rule`);
     const coords = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const me = await (await fetch('/api/auth/me', { headers: auth })).json();
@@ -4635,6 +8541,34 @@ async function markRound(page, cross) {
   // enrich / AI description writers (which rewrite CRM rows and spend model
   // credits). A client login must be refused every one — a 2xx here is a
   // client wiping or AI-rewriting the firm's CRM in bulk.
+  // r607, the client half of staff-deal-status-stays-canonical: whatever door
+  // a status came in through, nothing the landlord can see may carry a LABEL
+  // in the codes column — a label is invisible to every code predicate, so
+  // the deal silently leaves the WIP report and the firm's forecast.
+  await step(page, p, 'client-deal-statuses-are-not-labels', async () => {
+    const bad = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/deals', { headers: auth });
+      if (!res.ok) return { status: res.status };
+      const deals = await res.json();
+      // Labels LEGACY_MAP would rewrite into a code (shared/deal-status.ts).
+      const LABELS = ['under negotiation', 'in negotiation', 'negotiation', 'negotiating', 'hots',
+        'heads of terms', 'under offer', 'sols', 'solicitors', 'exchanged', 'completed', 'complete',
+        'let', 'invoiced', 'billed', 'opportunity', 'reporting', 'targeting', 'speculative', 'live',
+        'available', 'marketing', 'occupied', 'withdrawn', 'lost', 'dead'];
+      return {
+        status: 200,
+        offenders: (Array.isArray(deals) ? deals : [])
+          .filter((d) => LABELS.includes(String(d.status || '').trim().toLowerCase()))
+          .map((d) => `${d.name} = ${d.status}`).slice(0, 5),
+      };
+    });
+    if (bad.status !== 200) throw new Error(`client deals list returned ${bad.status}`);
+    if (bad.offenders.length) {
+      throw new Error(`deals visible to the client carry status LABELS, not codes: ${bad.offenders.join('; ')}`);
+    }
+  });
+
   await step(page, p, 'client-bulk-mutation-guard', async () => {
     const results = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
@@ -5303,6 +9237,66 @@ async function markRound(page, cross) {
     if (r.stillThere) throw new Error('deleted viewing still visible in letting activity');
   });
 
+  // r529 counterpart to rival-unit-interest-guard: scoping the interest
+  // routes must not lock the OWNING client out of their own unit.
+  await step(page, p, 'client-unit-interest-own-roundtrip', async () => {
+    const stamp = `QA-PROBE interest R${ROUND}`;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { skip: true };
+      const get = await fetch(`/api/available-units/${unit.id}/interest`, { headers: auth });
+      if (!get.ok) return { ok: false, why: `GET ${get.status}` };
+      const post = await fetch(`/api/available-units/${unit.id}/interest`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: marker }) });
+      if (!post.ok) return { ok: false, why: `POST ${post.status}` };
+      const made = await post.json();
+      const del = await fetch(`/api/available-units/interest/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      if (!del.ok) return { ok: false, why: `DELETE ${del.status}` };
+      const after = await (await fetch(`/api/available-units/${unit.id}/interest`, { headers: auth })).json();
+      return { ok: true, stillThere: JSON.stringify(after).includes(marker) };
+    }, stamp);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`client interest lifecycle on their own unit failed (${r.why})`);
+    if (r.stillThere) throw new Error('deleted interest row still listed on the unit');
+  });
+
+  // The owning landlord's own team board must keep every sub-read working —
+  // the r531 rival gate can't be "fixed" by locking the real client out of
+  // their org chart (the side sheet's property multi-select, the column list
+  // and the add-member picker all hang off these three).
+  await step(page, p, 'client-team-board-own-subroutes', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const cid = me?.companyScopeId || me?.user?.companyScopeId;
+      if (!cid) return { skip: true };
+      const board = await fetch(`/api/client-teams/${cid}`, { headers: auth });
+      if (!board.ok) return { ok: false, why: `board ${board.status}` };
+      const members = await board.json().catch(() => []);
+      const uid = (Array.isArray(members) ? members : []).map((m) => m.user_id).filter(Boolean)[0];
+      const out = { ok: true, cols: 0, cands: 0, props: null };
+      const cols = await fetch(`/api/client-teams/${cid}/columns`, { headers: auth });
+      if (!cols.ok) return { ok: false, why: `columns ${cols.status}` };
+      out.cols = (await cols.json().catch(() => [])).length;
+      const cands = await fetch(`/api/client-teams/${cid}/candidates`, { headers: auth });
+      if (!cands.ok) return { ok: false, why: `candidates ${cands.status}` };
+      out.cands = (await cands.json().catch(() => [])).length;
+      if (uid) {
+        const props = await fetch(`/api/client-teams/${cid}/member/${uid}/properties`, { headers: auth });
+        if (!props.ok) return { ok: false, why: `member properties ${props.status}` };
+        out.props = (await props.json().catch(() => [])).length;
+      }
+      return out;
+    });
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`client locked out of their own team board (${r.why})`);
+    if (r.cols === 0) throw new Error('own team board returned no columns');
+    if (r.cands === 0) throw new Error('own team board add-member picker returned no candidates');
+    if (r.props === 0) throw new Error('own team board member sheet listed no properties');
+  });
+
   // Staff-only deal operations that ride under the allowed /api/crm/deals
   // prefix must refuse clients: single + bulk delete, bulk field edits, the
   // internal per-agent fee split, and the firm-wide rent-analysis AI op.
@@ -5410,11 +9404,12 @@ async function markRound(page, cross) {
   });
 
   await step(page, p, 'client-deal-party-link-gates', async () => {
-    // r263: linking a party on an own-portfolio deal is client-allowed (PUT
-    // parity), but the staff-only AML auto-kick must NOT fire for clients
-    // (it 403s and the "Running AML checks" toast lies), and the Timeline
-    // card must be hidden (its /api/deals/:id/timeline read is gateway-403;
-    // clients keep the Audit log).
+    // UX #155 (Woody 2026-09-04): clients get READ-ONLY party slots — no
+    // "Link landlord/tenant" pickers on their own deal (staff jargon read
+    // like the deal was set up wrong); Landlord defaults to their own
+    // company. r263's AML-kick worry is moot with no client link UI, but
+    // keep the listener so a regression that re-adds the picker + kick is
+    // caught. Timeline stays hidden (gateway-403 read); Audit log stays.
     const deal = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
@@ -5435,24 +9430,18 @@ async function markRound(page, cross) {
       await page.locator('[data-testid="toggle-deal-audit"]').first()
         .waitFor({ state: 'attached', timeout: 15000 })
         .catch(() => { throw new Error('client lost the (allowed) deal Audit log card'); });
-      // Link a tenant through the inline picker, then undo. The AML kick is
-      // client-side logic, so this must go through the real UI.
-      await page.locator('button:has-text("Link tenant")').locator('visible=true').first().click();
-      await page.waitForTimeout(600);
-      await page.fill('[data-testid="inline-link-search"]', 'Starbucks');
-      await page.waitForTimeout(600);
-      const opt = page.locator('button[data-testid^="inline-link-option-"]').first();
-      if (!(await opt.count())) throw new Error('tenant picker listed no options for "Starbucks"');
-      await opt.click();
-      await page.waitForTimeout(2000);
-      if (kycHits.length) throw new Error(`client party-link fired the staff-only AML kick (${kycHits.length}× /api/kyc/run-all-checks)`);
+      // Read-only party slots must render (leasing deal → landlord+tenant)…
+      await page.locator('[data-testid="client-party-tenant"]').first()
+        .waitFor({ state: 'attached', timeout: 15000 })
+        .catch(() => { throw new Error('client deal lost the read-only Tenant party slot (UX #155)'); });
+      const landlordSlot = (await page.locator('[data-testid="client-party-landlord"]').first().textContent().catch(() => '')) || '';
+      if (!landlordSlot.trim()) throw new Error('client deal Landlord party slot rendered empty (UX #155 defaults it)');
+      // …and the staff link-pickers must NOT.
+      const pickers = await page.locator('button:has-text("Link tenant"), button:has-text("Link landlord")').locator('visible=true').count();
+      if (pickers) throw new Error(`client sees ${pickers} staff party link-picker(s) on deal detail (UX #155 made parties read-only)`);
+      if (kycHits.length) throw new Error(`client deal detail fired the staff-only AML kick (${kycHits.length}× /api/kyc/run-all-checks)`);
     } finally {
       page.off('request', onReq);
-      // restore the fixture deal whether or not the assertions passed
-      await page.evaluate(async (id) => {
-        const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-        await fetch(`/api/crm/deals/${id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ tenantId: null }) });
-      }, deal.id);
     }
   });
 
@@ -5867,6 +9856,88 @@ async function markRound(page, cross) {
     }
   });
 
+  // r544: the phone shell offered a LANDLORD the staff starter prompts
+  // ("Draft HOTs for a property", "Search CRM contacts", the BGP calendar) —
+  // the desktop chat panel has had CLIENT_AI_SUGGESTIONS since long before,
+  // the phone list was never given the same split.
+  await step(page, p, 'client-mobile-chat-suggestions-landlord-voiced', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      // Reached the way Mark reaches it: Messages -> the pinned ChatBGP row.
+      await mobGoto(mob, `${BASE}/messages`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(2500);
+      await mob.locator('[data-testid="mobile-pinned-chatbgp"]').first().click();
+      await mob.waitForTimeout(2500);
+      const chips = await mob.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-testid^="mobile-suggestion-"]')).map(el => el.textContent.trim()));
+      if (chips.length < 3) throw new Error(`client phone chat lost its starter prompts (${chips.length})`);
+      const staffVoiced = chips.filter(c => /HOTs|CRM contacts|my calendar/i.test(c));
+      if (staffVoiced.length) throw new Error(`staff-voiced starter prompts offered to a client: ${staffVoiced.join(' | ')}`);
+      if (!chips.some(c => /leases expire|vacant units/i.test(c))) {
+        throw new Error(`client starter prompts are not landlord-voiced: ${chips.join(' | ')}`);
+      }
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r552: the Letting Tracker unit form showed a LANDLORD "% Agency fee",
+  // "Total fee" and the "BGP fee split" editor — BGP House's 15% off the top,
+  // the agents' 85% and the BGP staff roster to allocate it between. The deal
+  // form has hidden all of that from clients (deals.tsx hideFees) since long
+  // before; the unit form was never given the same split. The server already
+  // strips `fee` from a client PATCH, so the fields were inert as well as
+  // confidential. Quoting rent stays — it is the landlord's own number.
+  await step(page, p, 'client-unit-form-no-bgp-fee', async () => {
+    const units = await page.evaluate(async () => {
+      const r = await fetch('/api/available-units', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      return r.ok ? await r.json() : [];
+    });
+    const u = (Array.isArray(units) ? units : []).find(x => x.unitName);
+    if (!u) throw new Error('client sees no units on their own tracker');
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/available`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(2500);
+      const search = mob.locator('input[placeholder*="Search" i]').first();
+      if (await search.count()) { await search.fill(u.unitName.slice(0, 24)); await mob.waitForTimeout(1500); }
+      const btn = mob.locator(`[data-testid="unit-edit-${u.id}"]`).first();
+      if (!(await btn.count())) throw new Error(`client lost the phone unit edit button for ${u.unitName}`);
+      await btn.scrollIntoViewIfNeeded().catch(() => {});
+      await btn.click();
+      await mob.waitForTimeout(2200);
+      const txt = await mob.locator('[role="dialog"]').last().innerText().catch(() => '');
+      const leaked = [/% Agency fee/i, /Total fee/i, /BGP fee split/i, /BGP House takes 15%/i, /remaining 85%/i]
+        .filter(m => m.test(txt)).map(String);
+      if (leaked.length) throw new Error(`BGP fee arrangements shown to a client on the unit form: ${leaked.join(', ')}`);
+      if (!/Quoting Rent/i.test(txt)) throw new Error(`client lost Quoting Rent on their own unit (${txt.length} chars)`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Targeting Brief scope (r253): the staff-created brief on the client's own
   // property is client-readable WITH its targets, the client may add a target
   // there (client-instruction parity — same decision family as tenancy row
@@ -6055,6 +10126,31 @@ async function markRound(page, cross) {
     }
   });
 
+  await step(page, p, 'client-mlro-report-gate', async () => {
+    // r545 counterpart: the MLRO AML report is counterparty CDD evidence —
+    // risk level, PEP status, sanctions, source-of-funds red flags — and is
+    // staff-only. Node-side fetch so the deliberate 403s stay out of the
+    // page issue log.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const DEAL = '11110000-0000-0000-0000-000000000302'; // fixture: U124 Bluewater — Gail's letting
+    const pdf = await fetch(`${BASE}/api/aml/deal/${DEAL}/mlro-report`, auth);
+    if (pdf.status !== 403) throw new Error(`client GET mlro-report expected 403, got ${pdf.status}`);
+    const links = await fetch(`${BASE}/api/aml/deal/${DEAL}/upload-links`, auth);
+    if (links.status !== 403) throw new Error(`client GET aml upload-links expected 403, got ${links.status}`);
+  });
+
+  await step(page, p, 'client-board-report-gate', async () => {
+    // r543: the firm-wide Board Report (every client's fees, every team's
+    // pipeline) is staff-only — the client gateway must 403 it and its
+    // Excel export. Node-side fetch so the deliberate 403s stay out of the
+    // page issue log.
+    const auth = { headers: { Authorization: 'Bearer ' + page.qaToken } };
+    const rep = await fetch(`${BASE}/api/board-report`, auth);
+    if (rep.status !== 403) throw new Error(`client GET /api/board-report expected 403, got ${rep.status}`);
+    const xls = await fetch(`${BASE}/api/board-report/export-excel`, auth);
+    if (xls.status !== 403) throw new Error(`client GET /api/board-report/export-excel expected 403, got ${xls.status}`);
+  });
+
   await step(page, p, 'client-evidence-plans-gate', async () => {
     // r471: Evidence Plans is a staff-only module (admin "Unfinished" nav,
     // not in CLIENT_ALLOWED_API) — the client gateway must 403 reads,
@@ -6084,6 +10180,890 @@ async function markRound(page, cross) {
       const k = `${s.brand_company_id}|${s.headline}|${s.signal_date || s.created_at}`;
       if (seen.has(k)) throw new Error(`duplicate story in client news feed: "${String(s.headline).slice(0, 80)}"`);
       seen.add(k);
+    }
+  });
+
+  await step(page, p, 'client-tracker-status-deeplink-filters', async () => {
+    // The client dashboard's tracker card badges are the same TrackerSummary
+    // lozenges, so a client clicking "1 Negotiating" must land pre-filtered too.
+    await trackerStatusDeepLink(page, 'client');
+  });
+
+  await step(page, p, 'client-tracker-phone-card-titles', async () => {
+    // r528: UX #130 stripped only the FULL property name from phone tracker
+    // card titles, but unit_name embeds the scheme's short form — every card
+    // still read "L112 Bluewater, Bluewater" over a "Bluewater Shopping
+    // Centre" subtitle. Also guards #135 (no em-dash Area/Rent rows).
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/available`, nav);
+      await mob.waitForTimeout(4000);
+      const cards = await mob.locator('[data-testid^="mobile-unit-"]').count();
+      if (!cards) throw new Error('no phone tracker cards rendered at 390px');
+      const bad = await mob.evaluate(() => {
+        const out = { echo: null, dash: null };
+        for (const c of Array.from(document.querySelectorAll('[data-testid^="mobile-unit-"]'))) {
+          const title = (c.querySelector('span.font-semibold')?.textContent || '').trim();
+          const sub = (c.querySelector('p.text-muted-foreground')?.textContent || '').trim();
+          // the scheme's short name = the subtitle's first word
+          const core = sub.split(/[\s,·]+/)[0];
+          if (!out.echo && core.length >= 4 && title.toLowerCase() !== core.toLowerCase()
+              && title.toLowerCase().includes(core.toLowerCase())) out.echo = `${title} | ${sub}`;
+          if (!out.dash && /(Area|Rent p\.a\.)\s*[—–-]\s*$/m.test(c.innerText)) out.dash = title;
+        }
+        return out;
+      });
+      if (bad.echo) throw new Error(`phone tracker card title repeats the property name: "${bad.echo}"`);
+      if (bad.dash) throw new Error(`phone tracker card keeps an empty Area/Rent row (UX #135): ${bad.dash}`);
+    } finally { await mobCtx.close(); }
+  });
+
+  await step(page, p, 'client-tracker-dot-never-driven-by-the-fee', async () => {
+    // r563: the dot's client half computed feeOk = deal.feeAgreement === 'YES'
+    // on a field stripDealFees deliberately nulls for clients, so EVERY
+    // instructed deal on the client board carried a red "Compliance gap:
+    // Fee agreement" that staff, on the same row, saw clear. The client may
+    // only ever be flagged on AML — the one compliance field they are sent.
+    const deals = await page.evaluate(async () => {
+      const r = await fetch('/api/crm/deals', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      const j = await r.json();
+      return Array.isArray(j) ? j : (j.data || []);
+    });
+    if (!deals.length) throw new Error('client sees no deals at all');
+    const leaked = deals.filter(d => d.feeAgreement != null).map(d => d.dealRef);
+    if (leaked.length) throw new Error(`client payload still carries feeAgreement on deal(s) ${leaked.join(',')}`);
+    await page.goto(`${BASE}/available?status=SOL`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(3000);
+    const fee = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="compliance-flag-"]')]
+      .map(e => e.getAttribute('title') || '').filter(t => /Fee agreement/.test(t)));
+    if (fee.length) throw new Error(`client board flags a fee-agreement gap it cannot see: ${fee.join(' | ')}`);
+  });
+
+  await step(page, p, 'client-tracker-no-inline-company-create', async () => {
+    // r528: the viewing/offer/interest company pickers offered clients an
+    // inline "Create company" row whose POST /api/crm/companies 403s — the
+    // row closed the picker and nothing happened, no error. Staff keep it
+    // (asserted in the victoria round).
+    const probe = await page.request.post(`${BASE}/api/crm/companies`, {
+      headers: { Authorization: `Bearer ${page.qaToken}` },
+      data: { name: 'QA-PROBE clientco 528' },
+    });
+    if (probe.status() !== 403) throw new Error(`client company create returned ${probe.status()}, expected 403`);
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/available`, nav);
+      await mob.waitForTimeout(4000);
+      const first = await mob.locator('[data-testid^="mobile-unit-"]').first().getAttribute('data-testid');
+      if (!first) throw new Error('no phone tracker card to open an offer on');
+      const uid = first.replace('mobile-unit-', '');
+      await mob.locator(`[data-testid="unit-offer-${uid}"]`).click();
+      await mob.waitForTimeout(1500);
+      await mob.locator('[data-testid="offer-company"]').click();
+      await mob.waitForTimeout(800);
+      await mob.locator('input[placeholder^="Search"]').last().fill('QA-PROBE clientco 528');
+      await mob.waitForTimeout(800);
+      if (await mob.getByText(/Create company/i).count()) {
+        throw new Error('client offer dialog still advertises inline company create (its POST 403s)');
+      }
+    } finally { await mobCtx.close(); }
+  });
+
+  await step(page, p, 'client-news-detail-not-echo', async () => {
+    // r526: Google-News-shaped signals store detail = headline + source
+    // ("Headline - The Grocer" vs "Headline  The Grocer"), so every card on
+    // the client Brand News feed printed its own headline twice. The detail
+    // line is suppressed when it adds nothing — assert no card echoes.
+    await page.goto(`${BASE}/news`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3500);
+    if (!(await page.locator('[data-testid="client-news-feed"]').count())) {
+      throw new Error('client Brand News feed did not render');
+    }
+    const echo = await page.evaluate(() => {
+      const key = (v) => (v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      for (const card of Array.from(document.querySelectorAll('[data-testid^="client-signal-"]'))) {
+        if (/^client-signal-detail-/.test(card.getAttribute('data-testid') || '')) continue;
+        const detail = card.querySelector('[data-testid^="client-signal-detail-"]');
+        if (!detail) continue;
+        const head = card.querySelector('p');
+        const h = key(head && head.textContent);
+        const d = key(detail.textContent);
+        if (h && d && (d === h || d.startsWith(h) || h.startsWith(d))) return (head.textContent || '').slice(0, 80);
+      }
+      return null;
+    });
+    if (echo) throw new Error(`client news card repeats its headline as the detail line: "${echo}"`);
+  });
+
+  await step(page, p, 'client-deals-table-read-only-parties', async () => {
+    // r534: the Deals TABLE still handed clients the "+ Link landlord" /
+    // "+ Link tenant" pickers — staff jargon on their own deal, with an
+    // inline "create company" row whose POST 403s (the r528 dead-end class).
+    // Deal DETAIL has had read-only party slots since UX #155 (Woody,
+    // 2026-09-04); the list now matches. Staff keep the pickers
+    // (staff-deals-table-editors).
+    await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForTimeout(4000);
+    if (!(await page.locator('[data-testid="inline-link-readonly"]').count())) {
+      throw new Error('client deals table rendered no read-only party cells (did the table load?)');
+    }
+    if (await page.locator('[data-testid="inline-link-select-trigger"]').count()) {
+      throw new Error('client deals table still offers an inline party picker (UX #155 is list-wide)');
+    }
+    // The create-company row behind that picker really is closed to a client.
+    const probe = await page.request.post(`${BASE}/api/crm/companies`, {
+      headers: { Authorization: `Bearer ${page.qaToken}` },
+      data: { name: `QA-PROBE Newco ${ROUND}` },
+    });
+    if (probe.status() !== 403) throw new Error(`client company create returned ${probe.status()}, expected 403`);
+  });
+
+  await step(page, p, 'client-deals-table-no-bgp-fee-or-wip', async () => {
+    // r553: the client's Deals table carried BGP's own fee reporting — a
+    // "Total fees: £0" footer and a £-subtotal on every status tile (always
+    // £0, because the API strips `fee` from a scoped caller) — and its Dates
+    // cell offered "+ Target month" over a popover that told the landlord
+    // "Target Date drives the WIP report's month / fiscal-year bucket". The
+    // month persisted on his PUT, so a client could move BGP's revenue
+    // forecast between fiscal months. Same family as r552's unit form: the
+    // fee COLUMNS were hidden for clients long ago (CLIENT_HIDDEN_COLS), the
+    // totals and the Dates cell were never given the same split. Staff keep
+    // both (staff-deals-table-fee-total-and-wip-kept).
+    await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    await page.waitForSelector('[data-testid^="dates-cell-"]', { timeout: 25000 })
+      .catch(() => { throw new Error('client deals table never rendered a dates cell (did it load?)'); });
+    const body = await page.evaluate(() => document.body.innerText);
+    if (/Total fees:/i.test(body)) throw new Error('client deals table still prints a BGP fee total');
+    const tile = await page.locator('[data-testid="card-group-all"]').first().innerText().catch(() => '');
+    if (/£/.test(tile)) throw new Error(`client deals tile still prints a fee subtotal: "${tile.replace(/\n+/g, ' ')}"`);
+    const dc = page.locator('[data-testid^="dates-cell-"]').first();
+    if (/Target month/i.test(await dc.innerText())) throw new Error('client dates cell still offers "Target month"');
+    await dc.click();
+    await page.waitForTimeout(1200);
+    const pop = await page.evaluate(() => document.querySelector('[data-radix-popper-content-wrapper]')?.innerText || '');
+    if (/WIP report/i.test(pop)) throw new Error('client dates popover still names BGP\'s WIP report');
+    if (!/Expected completion/i.test(pop)) throw new Error(`client dates popover lost the completion month: "${pop.replace(/\n+/g, ' | ')}"`);
+  });
+
+  await step(page, p, 'client-properties-table-readonly-cells', async () => {
+    // r542: the client's Properties table printed NOTHING in the Tenants and
+    // BGP Contacts cells when a property had neither linked — a client has no
+    // "+" affordance, so the row read half-broken next to the "—" every other
+    // read-only column shows. Staff keep the pickers
+    // (staff-properties-table-pickers-kept).
+    await page.goto(`${BASE}/properties`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(async (e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(1000);
+      await page.goto(`${BASE}/properties`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    });
+    // The Properties table is a TAB inside DealsHub — wait for a real
+    // tenants cell (either shape) rather than a fixed sleep.
+    await page.waitForSelector('[data-testid^="tenants-readonly-"], [data-testid^="add-tenant-"]', { timeout: 25000 })
+      .catch(() => { throw new Error('client properties table never rendered a tenants cell (did it load?)'); });
+    for (const kind of ['tenants', 'agents']) {
+      if (!(await page.locator(`[data-testid^="${kind}-readonly-"]`).count())) {
+        throw new Error(`client properties table printed a BLANK ${kind} cell instead of a read-only dash`);
+      }
+    }
+    for (const kind of ['add-tenant', 'add-agent']) {
+      if (await page.locator(`[data-testid^="${kind}-"]`).count()) {
+        throw new Error(`client properties table still offers the ${kind} picker`);
+      }
+    }
+  });
+
+  await step(page, p, 'client-calendar-insights-no-agent-leaderboard', async () => {
+    // r560: the client Calendar insight strip carried "BUSIEST AGENT —
+    // victoria@brucegillinghampollard.com — 2 events in 30 days" (a BGP
+    // staff-productivity metric keyed on the raw created_by email), and its
+    // Portfolio line read "0 currently available" off crm_properties.status,
+    // which is null for every centre — flatly contradicting the client's own
+    // Letting Tracker. Staff keep the leaderboard
+    // (staff-calendar-insights-keep-busiest-agent).
+    const d = await page.evaluate(async () => {
+      const r = await fetch('/api/microsoft/calendar/insights', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      return r.ok ? await r.json() : { status: r.status };
+    });
+    const insights = d.insights || [];
+    if (!insights.length) throw new Error(`client calendar insights came back empty (${JSON.stringify(d).slice(0, 160)})`);
+    if (insights.some((i) => i.type === 'busiestAgent')) throw new Error('client strip still carries the BGP agent leaderboard');
+    if (/brucegillinghampollard/i.test(JSON.stringify(insights))) {
+      throw new Error('client strip still prints a BGP staff email address');
+    }
+    const portfolio = insights.find((i) => i.title === 'Portfolio');
+    if (!portfolio) throw new Error('client strip lost its Portfolio insight');
+    if (/, 0 currently available/.test(portfolio.detail)) {
+      throw new Error(`client Portfolio insight says nothing is available while the tracker shows units: ${portfolio.detail}`);
+    }
+  });
+
+  await step(page, p, 'client-portfolio-board-opens-the-schedule-it-counted', async () => {
+    // r565: the client dashboard's portfolio board counted
+    // tenancy_schedule_units (the master the portfolio endpoint reads) but
+    // was titled "Leasing Schedule" and every row's "View Full" linked to
+    // /leasing-schedule/:id — a board carrying an ARCHIVED banner and a
+    // smaller, trimmed set. Bluewater read "199 units · 124 occ" on the card
+    // and 165 / 88 at the destination. The board must open the schedule it
+    // counted, and its "N occ" must equal the destination's occupied bucket.
+    await visit(page, p, '/', 'client dashboard');
+    await page.waitForTimeout(4000);
+    const card = await page.evaluate(() => {
+      const h = Array.from(document.querySelectorAll('h3'))
+        .find((e) => /Tenancy Schedule|Leasing Schedule/.test(e.textContent || ''));
+      if (!h) return null;
+      const root = h.closest('.h-full') || h.parentElement?.parentElement?.parentElement;
+      // The row's counts sit in sibling spans; reading the row's concatenated
+      // textContent glues the units badge onto the occ figure ("199124 occ").
+      const rows = Array.from(root.querySelectorAll('a[href]')).map((a) => {
+        const row = a.querySelector('[data-testid^="dash-prop-"]');
+        const occSpan = row && Array.from(row.querySelectorAll('span'))
+          .find((e) => /^\d+\s*occ$/.test((e.textContent || '').trim()));
+        return {
+          href: a.getAttribute('href'),
+          text: (a.textContent || '').replace(/\s+/g, ' ').trim(),
+          occ: occSpan ? Number((occSpan.textContent || '').trim().match(/\d+/)[0]) : null,
+        };
+      });
+      return { title: (h.textContent || '').replace(/\s+/g, ' ').trim(), rows };
+    });
+    if (!card) throw new Error('client dashboard lost its portfolio unit-schedule board');
+    if (/Leasing Schedule/.test(card.title)) {
+      throw new Error(`board is titled "${card.title}" while it counts the tenancy schedule`);
+    }
+    const propRows = card.rows.filter((r) => /View Full/.test(r.text));
+    if (!propRows.length) throw new Error('portfolio schedule board rendered no property rows');
+    for (const r of propRows) {
+      if (!/^\/tenancy-schedule\//.test(r.href || '')) {
+        throw new Error(`board row "${r.text.slice(0, 40)}" still points at ${r.href}`);
+      }
+    }
+    // The stated "N occ" must match the destination's Occupied bucket
+    // (Occupied / Trading / Let / Not Vacant — the tenancy board's own
+    // grouping). Derived Letting-Tracker vacant rows carry is_vacant and
+    // never land in it.
+    const OCCUPIED = ['Occupied', 'Trading', 'Let', 'Not Vacant'];
+    for (const r of propRows) {
+      const id = r.href.split('/').pop();
+      const stated = r.occ;
+      if (!Number.isFinite(stated)) throw new Error(`board row "${r.text.slice(0, 40)}" states no occ count`);
+      const rows = await page.evaluate(async (pid) => {
+        const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+          headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        });
+        if (!res.ok) return { status: res.status };
+        const j = await res.json();
+        return { units: Array.isArray(j) ? j : (j.units || j.rows || []) };
+      }, id);
+      if (rows.status) throw new Error(`destination /api/tenancy-schedule/property/${id} returned ${rows.status}`);
+      const occ = rows.units.filter((u) => !u.is_vacant && OCCUPIED.includes(u.status)).length;
+      if (occ !== stated) {
+        throw new Error(`board says ${stated} occ for ${id} but its destination holds ${occ}`);
+      }
+    }
+  });
+
+  // r566: the tenancy table's read-only (client) branch rendered every cell
+  // as String(raw) — the landlord read "90551.805" where the agent on the
+  // same row read "£90,552", and "2026-09-28" where staff read
+  // "28 Sept 2026". One board, one row, two readings of the client's own
+  // money. Formatting must not depend on which persona opened it.
+  await step(page, p, 'client-schedule-cells-read-like-the-staff-view', async () => {
+    await visit(page, p, '/', 'client dashboard');
+    await page.waitForTimeout(3000);
+    const href = await page.evaluate(() => {
+      const a = document.querySelector('a[href^="/tenancy-schedule/"]');
+      return a ? a.getAttribute('href') : null;
+    });
+    if (!href) throw new Error('client dashboard offers no tenancy-schedule link');
+    await visit(page, p, href, 'client tenancy schedule');
+    await page.waitForTimeout(6000);
+    const seen = await page.evaluate(async (h) => {
+      const pid = h.split('/').pop();
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+      // Column labels live in the SECOND header row; the first carries the
+      // band names ("Lease Details", "Occupational Costs", …).
+      const headRow = document.querySelectorAll('thead tr')[1];
+      if (!headRow) return { noHead: true };
+      const heads = Array.from(headRow.querySelectorAll('th'))
+        .map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const pick = units.find((u) => u.lease_expiry && Number(u.service_charge) > 999 && Number(u.nia_sqft) > 999);
+      if (!pick) return { noRow: true };
+      const tr = Array.from(document.querySelectorAll('tbody tr'))
+        .find((r) => ((r.querySelector('td') || {}).textContent || '').includes(pick.unit_number));
+      if (!tr) return { missing: pick.unit_number };
+      const tds = Array.from(tr.querySelectorAll('td')).map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const at = (label) => tds[heads.indexOf(label)];
+      return { unit: pick.unit_number, expiry: at('Expiry'), sc: at('Service Charge'), nia: at('NIA') };
+    }, href);
+    if (seen.status) throw new Error(`client tenancy payload returned ${seen.status}`);
+    if (seen.noHead) throw new Error('client tenancy schedule rendered no column header row');
+    if (seen.noRow) throw new Error('fixture has no dated, charged, measured unit to check');
+    if (seen.missing) throw new Error(`unit ${seen.missing} is in the payload but not in the table`);
+    if (/^\d{4}-\d{2}-\d{2}/.test(seen.expiry || '')) {
+      throw new Error(`client reads a raw ISO expiry "${seen.expiry}" on ${seen.unit}`);
+    }
+    if (!/\d{1,2} \S+ \d{4}/.test(seen.expiry || '')) {
+      throw new Error(`client expiry "${seen.expiry}" on ${seen.unit} is not a formatted date`);
+    }
+    if (!/^£[\d,]+$/.test(seen.sc || '')) {
+      throw new Error(`client service charge "${seen.sc}" on ${seen.unit} is not formatted money`);
+    }
+    if (!/,/.test(seen.nia || '')) {
+      throw new Error(`client NIA "${seen.nia}" on ${seen.unit} has no thousands separator`);
+    }
+  });
+
+  // r567 client half — every column DECLARED as currency must print as
+  // money on the landlord's own schedule. Pre-fix Rates Payable, Deposit
+  // Held and Arrears all rendered as bare numbers, so the landlord could not
+  // tell a rates bill from a floor area.
+  await step(page, p, 'client-schedule-money-columns-carry-the-pound', async () => {
+    const href = await page.evaluate(() => {
+      const a = document.querySelector('a[href^="/tenancy-schedule/"]');
+      return a ? a.getAttribute('href') : null;
+    });
+    const target = href || (cross.clientSchedulePath || null);
+    if (target) { await visit(page, p, target, 'client tenancy schedule'); await page.waitForTimeout(6000); }
+    const seen = await page.evaluate(async () => {
+      const pid = location.pathname.split('/').pop();
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+      const headRow = document.querySelectorAll('thead tr')[1];
+      if (!headRow) return { noHead: true };
+      const heads = Array.from(headRow.querySelectorAll('th'))
+        .map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const pick = units.find((u) => Number(u.rates_payable) > 999 && Number(u.arrears_balance) > 999);
+      if (!pick) return { noRow: true };
+      const tr = Array.from(document.querySelectorAll('tbody tr'))
+        .find((r) => ((r.querySelector('td') || {}).textContent || '').includes(pick.unit_number));
+      if (!tr) return { missing: pick.unit_number };
+      const tds = Array.from(tr.querySelectorAll('td')).map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim());
+      const at = (label) => tds[heads.indexOf(label)];
+      return { unit: pick.unit_number, rates: at('Rates Payable'), arrears: at('Arrears') };
+    });
+    if (seen.status) throw new Error(`client tenancy payload returned ${seen.status}`);
+    if (seen.noHead) throw new Error('client tenancy schedule rendered no column header row');
+    if (seen.noRow) throw new Error('fixture has no rated, in-arrears unit to check');
+    if (seen.missing) throw new Error(`unit ${seen.missing} is in the payload but not in the table`);
+    for (const [label, val] of [['rates payable', seen.rates], ['arrears', seen.arrears]]) {
+      if (!/^£[\d,]+$/.test(val || '')) {
+        throw new Error(`client ${label} "${val}" on ${seen.unit} prints without a currency mark`);
+      }
+    }
+  });
+
+  // r569 client half of staff-tenancy-erv-psf-tile-reads-a-rate — the tile
+  // is the landlord's only headline rate on his own rent roll.
+  await step(page, p, 'client-asset-brief-scorecard-agrees-with-its-boards', async () => {
+    // The landlord reads Vacancy + WAULT off his own property page. Both
+    // came from tables that could not supply them (r571).
+    const r = await assetBriefScorecard(page, BLUEWATER);
+    if (r.status) throw new Error(`client asset brief returned ${r.status}`);
+    if (r.tStatus) throw new Error(`client tenancy schedule returned ${r.tStatus}`);
+    if (r.expectWault == null) throw new Error('fixture has no live lease expiry to weight a WAULT from');
+    if (r.wault == null) {
+      throw new Error(`client asset brief WAULT reads "—" while his tenancy board carries ${r.waultUnits} live expiries worth ${r.expectWault.toFixed(1)} yrs`);
+    }
+    if (Math.abs(Number(r.wault) - r.expectWault) > 0.1) {
+      throw new Error(`client asset brief WAULT ${Number(r.wault).toFixed(1)} yrs but his own tenancy rows work out at ${r.expectWault.toFixed(1)} yrs`);
+    }
+    if (r.expectOcc != null && r.occ !== r.expectOcc) {
+      throw new Error(`client asset brief says ${r.occ} occupied of ${r.total} but the leasing board it counts says ${r.expectOcc} of ${r.leasingTotal}`);
+    }
+  });
+
+  // r606: the tenancy board projects Letting Tracker units onto the spine
+  // for the units with no tenancy row, and it used to hand the client the
+  // raw marketing_status CODE. A code is in no KPI bucket, so Bluewater's one
+  // NEG unit made the header read "200 units" over tiles summing to 199 and
+  // the unit under negotiation was counted nowhere. The projection now
+  // bridges through codeToLeasingStatus.
+  await step(page, p, 'client-tenancy-tiles-account-for-every-unit', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    const r = await page.evaluate(async (pid) => {
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      return { status: 200, rows: Array.isArray(j) ? j : (j.units || j.rows || []) };
+    }, BLUEWATER);
+    if (r.status !== 200) throw new Error(`client tenancy payload returned ${r.status}`);
+    const rows = r.rows || [];
+    if (!rows.length) throw new Error('client tenancy payload came back empty');
+    const CODES = /^(OPP|REP|SPEC|LIVE|AVA|NEG|HOT|SOL|EXC|COM|INV|WIT)$/;
+    const raw = rows.filter((u) => CODES.test(String(u.status || '').trim()));
+    if (raw.length) {
+      throw new Error(`${raw.length} tenancy row(s) ship a raw status code (e.g. ${raw[0].unit_number || raw[0].premises} = ${raw[0].status})`);
+    }
+    const BUCKETS = {
+      Occupied: ['Occupied', 'Trading', 'Let', 'Not Vacant'],
+      Vacant: ['Vacant', 'Void', 'Available', 'AVA', 'Marketing'],
+      'In Negotiation': ['In Negotiation'],
+      'Under Offer': ['Under Offer'],
+      'Lease Event': ['Lease Event'],
+    };
+    const bucketed = rows.filter((u) => Object.values(BUCKETS).some((v) => v.includes(String(u.status || '').trim())));
+    if (bucketed.length !== rows.length) {
+      const orphan = rows.find((u) => !Object.values(BUCKETS).some((v) => v.includes(String(u.status || '').trim())));
+      throw new Error(`${rows.length - bucketed.length} of ${rows.length} tenancy rows sit in no KPI tile (e.g. status "${orphan?.status}") — the header count cannot agree with Occupied + Vacant`);
+    }
+  });
+
+  await step(page, p, 'client-tenancy-erv-psf-tile-reads-a-rate', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
+    const seen = await ervPsfTile(page, BLUEWATER);
+    if (seen.status) throw new Error(`client tenancy payload returned ${seen.status}`);
+    if (seen.noRow) throw new Error('fixture has no unit carrying both an ERV and an NIA');
+    if (seen.missing) throw new Error('no Avg ERV £psf tile on the client tenancy board');
+    if (Math.abs(seen.shown - seen.expect) > 0.05) {
+      throw new Error(`client Avg ERV £psf tile reads "${seen.txt}" but its own ${seen.priced} priced rows work out at ${seen.expect.toFixed(2)} psf`);
+    }
+  });
+
+  // r568: the phone tenancy card leads with ONE money figure and it was
+  // always passing_rent_pa — null on every row of an imported rent roll (all
+  // 199 Bluewater rows), so every card was headed by a dash, including the
+  // status-Vacant rows a landlord taps the Vacant tile to price, while the
+  // same row carried an ERV the desktop's ERV column printed in full. The
+  // headline now falls back to ERV, labelled ("asking" on a vacant row,
+  // "ERV" otherwise). Staff half: staff-phone-tenancy-card-headline-money.
+  await step(page, p, 'client-phone-tenancy-card-headline-money', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mobSeedAuth(mob, page);
+      await mobGoto(mob, `${BASE}/tenancy-schedule/${BLUEWATER}`, nav);
+      await mob.waitForTimeout(6000);
+      const seen = await mob.evaluate(async (pid) => {
+        const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+          headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        });
+        if (!res.ok) return { status: res.status };
+        const j = await res.json();
+        const units = Array.isArray(j) ? j : (j.units || j.rows || []);
+        const pick = units.find((u) => !Number(u.passing_rent_pa) && Number(u.erv_pa) > 999);
+        if (!pick) return { noRow: true };
+        const card = document.querySelector(`[data-testid="tenancy-card-${pick.id}"]`);
+        if (!card) return { missing: pick.unit_number };
+        return { unit: pick.unit_number, erv: Number(pick.erv_pa), txt: card.innerText.replace(/\s+/g, ' ').trim() };
+      }, BLUEWATER);
+      if (seen.status) throw new Error(`client tenancy payload returned ${seen.status} in the phone context`);
+      if (seen.noRow) throw new Error('fixture has no rent-free, ERV-bearing unit to check');
+      if (seen.missing) throw new Error(`unit ${seen.missing} is in the payload but has no phone card`);
+      const want = '£' + seen.erv.toLocaleString('en-GB');
+      if (!seen.txt.includes(want)) {
+        throw new Error(`client phone card for ${seen.unit} shows no money — the row's ERV is ${want} but the card reads "${seen.txt.slice(0, 120)}"`);
+      }
+    } finally {
+      await mobCtx.close().catch(() => {});
+    }
+  });
+
+  // r576: the client property OVERVIEW read crm_properties.sqft for its Area
+  // figure — a column no property in the fixture (and few in prod) has ever
+  // had typed into it — and printed "—" about a centre whose own tenancy
+  // schedule, one tab across on the same page, totals 623,653 sq ft. The
+  // overview now falls back to that total. Fails if the landlord's Area cell
+  // is blank while his tenancy schedule carries NIA.
+  await step(page, p, 'client-property-area-reads-the-schedule', async () => {
+    const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+    await page.goto(`${BASE}/properties/${BLUEWATER}`, nav);
+    await page.waitForTimeout(7000);
+    const got = await page.evaluate(async (pid) => {
+      const res = await fetch(`/api/tenancy-schedule/property/${pid}`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      const rows = res.ok ? await res.json() : [];
+      const nia = (Array.isArray(rows) ? rows : []).reduce((s, u) => s + Number(u.nia_sqft || 0), 0);
+      const label = Array.from(document.querySelectorAll('p')).find(el => el.textContent.trim() === 'Area');
+      return { nia, shown: label ? (label.parentElement?.innerText || '').replace(/\s+/g, ' ').trim() : null };
+    }, BLUEWATER);
+    if (!got.nia) throw new Error('fixture tenancy schedule carries no NIA to check against');
+    if (got.shown === null) throw new Error('no Area field on the client property overview');
+    const want = Math.round(got.nia).toLocaleString('en-GB');
+    if (!got.shown.includes(want)) {
+      throw new Error(`property overview Area reads "${got.shown}" while its own tenancy schedule totals ${want} sq ft`);
+    }
+  });
+
+  // r584: BOTH of this round's fixes rest on one ground truth — every status
+  // column the fixture carries is CANONICAL CODES, so any predicate written
+  // against a legacy LABEL matches nothing. Three ChatBGP context builders
+  // still compared available_units.marketing_status to 'Available' /
+  // 'Under Offer', so the landlord's assistant was told, of a centre with 75
+  // free units, "76 units (0 available)" — immediately above a list of those
+  // same units each stamped [AVA]. Guard the invariant the fixes depend on:
+  // if a legacy label ever reappears in this column, the codes-only
+  // predicates go quietly dead again.
+  await step(page, p, 'client-tracker-ships-canonical-status-codes', async () => {
+    const got = await page.evaluate(async () => {
+      const res = await fetch('/api/available-units', {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const rows = Array.isArray(j) ? j : (j.units || j.data || []);
+      return { total: rows.length, statuses: [...new Set(rows.map(u => u.marketingStatus).filter(Boolean))] };
+    });
+    if (got.status) throw new Error(`client /api/available-units returned ${got.status}`);
+    if (!got.total) throw new Error('client tracker payload is empty — nothing to check');
+    const CODES = ['REP', 'OPP', 'AVA', 'NEG', 'HOT', 'SOL', 'EXC', 'COM', 'WIT', 'INV'];
+    const labels = got.statuses.filter(s => !CODES.includes(s));
+    if (labels.length) {
+      throw new Error(`the client letting tracker ships legacy status LABELS ${JSON.stringify(labels)} — every codes-only predicate over marketing_status silently stops matching those rows`);
+    }
+    if (!got.statuses.includes('AVA')) {
+      throw new Error(`no unit on the client tracker reads AVA (saw ${JSON.stringify(got.statuses)}) — the "N available" count ChatBGP is handed would be 0`);
+    }
+  });
+
+  // r590: Bluewater carried FOUR tracker rows for U062 and two each for L090
+  // and L130 — one canonical unit apiece (they share property_units.unit_id),
+  // spawned by re-imports that pointed each copy at a different duplicate
+  // tenancy row. Mark's dashboard, Letting Tracker, risk register and sq ft
+  // total each counted every copy, so a board paper quoting them overstated
+  // Bluewater's vacancy by five units / ~12,900 sq ft. The boot heal now
+  // collapses on the canonical key; this is the client-side guard.
+  await step(page, p, 'client-tracker-counts-each-unit-once', async () => {
+    const got = await page.evaluate(async () => {
+      const res = await fetch('/api/available-units', {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+      });
+      if (!res.ok) return { status: res.status };
+      const j = await res.json();
+      const rows = Array.isArray(j) ? j : (j.units || j.data || []);
+      const byKey = {};
+      for (const u of rows) {
+        if (!u.unitId) continue;
+        const k = `${u.propertyId}|${u.unitId}|${String(u.unitName || '').trim().toLowerCase()}`;
+        (byKey[k] = byKey[k] || []).push(u.unitName);
+      }
+      return { total: rows.length, keyed: Object.keys(byKey).length,
+               dupes: Object.values(byKey).filter(v => v.length > 1).map(v => `${v[0]} x${v.length}`) };
+    });
+    if (got.status) throw new Error(`client /api/available-units returned ${got.status}`);
+    if (!got.total) throw new Error('client tracker payload is empty — nothing to check');
+    if (!got.keyed) { console.log('  [skip] client-tracker-counts-each-unit-once — no unitId on any row'); return; }
+    if (got.dupes.length) {
+      throw new Error(`the client letting tracker lists the same canonical unit more than once (${got.dupes.join('; ')}) — every vacancy count and sq ft total it feeds is overstated`);
+    }
+  });
+
+  // r561: every deal payload a client login can read carried BGP's MLRO
+  // working file — the compliance/PEP/EDD notes, the risk rating, the MLR
+  // scope reason and whether a SAR had been filed with its NCA reference —
+  // plus the Xero billing record, sitting right beside the poNumber and
+  // invoicedAt that stripDealFees had always hidden. Nothing in the client
+  // shell renders any of it; it rode the payload to the network tab. The
+  // property sub-read was worse: it hand-nulled only fee + feeNotes, so it
+  // also shipped the agency %, the fee-agreement label and its signed
+  // document URL. Staff half: staff-deal-keeps-mlro-and-billing-fields.
+  // r598: /api/crm/contacts serves a client the WIDE set on purpose — own
+  // company + the brand slice + agent companies — so the Requirements board
+  // can name a principal/agent contact per requirement. The client CRM hub's
+  // "<team> Contacts" tab rendered that whole set as the client's OWN people,
+  // pencil and all: Starbucks' Head of Acquisitions and a Testco Agents
+  // person sat on Landsec's tab under a dialog reading "Edit contact —
+  // Landsec". This pins the two halves the fix depends on: the endpoint stays
+  // wide (do not narrow it — other boards read it), and the writability line
+  // through it is own-company + brand slice YES, agent company NO.
+  // r629: the client CRM Brand Directory's category pill row was hardcoded to
+  // the five AUTO-slice categories (Food & Dining / Cafés & Coffee / Bars /
+  // Leisure / Fitness), while the list it filters also carries the brands the
+  // client SELF-ADDED from the global directory — which are by definition
+  // outside that slice. So Mark's self-added Fashion and Jewellery brands
+  // appeared under "All" and in the header's "10 brands", but no pill could
+  // reach them: the first narrowing click made the brands he had deliberately
+  // added disappear. An always-empty "Bars" pill sat there for the same
+  // reason. Pins both halves: the pills must SUM to the header count, and
+  // every brand must be reachable by some pill.
+  await step(page, p, 'client-brand-directory-pills-reach-every-brand', async () => {
+    await page.goto(`${BASE}/companies?tab=tenants`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(2000);
+    const CURATED = [
+      /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie)/i,
+      /(caf|coffee)/i, /bar/i,
+      /(leisure|cinema|entertainment|hospitality|hotel)/i,
+      /(fitness|gym|yoga)/i,
+    ];
+    const dir = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const r = await (await fetch('/api/client/brand-directory', { headers: auth })).json();
+      return Array.isArray(r) ? r.map(b => [b.name, b.companyType]) : [];
+    });
+    if (!dir.length) throw new Error('client brand directory is empty — nothing to reconcile');
+    const outOfSlice = dir.filter(([, t]) => !CURATED.some(re => re.test(t || '')));
+    if (!outOfSlice.length) {
+      throw new Error('no out-of-slice brand in the client directory — seed-personas must leave Landsec a self-added extra or this check is vacuous');
+    }
+    const pills = await page.$$eval('[data-testid^="client-brand-cat-"]',
+      els => els.map(e => e.getAttribute('data-testid').replace('client-brand-cat-', '')));
+    if (!pills.includes('all')) throw new Error('the brand directory pill row lost its "All" pill');
+    if (!pills.includes('other')) {
+      throw new Error(`${outOfSlice.length} self-added out-of-slice brand(s) (${outOfSlice.map(b => b[0]).join(', ')}) but no "Other" pill — they are reachable only under All`);
+    }
+    const rowsFor = async (key) => {
+      await page.click(`[data-testid="client-brand-cat-${key}"]`);
+      await page.waitForTimeout(500);
+      return page.$$eval('[data-testid^="client-brand-"]',
+        els => els.filter(e => /^client-brand-[0-9a-f-]{36}$/.test(e.getAttribute('data-testid')))
+                  .map(e => e.querySelector('a')?.textContent?.trim()).filter(Boolean));
+    };
+    const all = await rowsFor('all');
+    if (all.length !== dir.length) throw new Error(`"All" shows ${all.length} brands but the directory has ${dir.length}`);
+    let sum = 0;
+    const reached = new Set();
+    for (const key of pills.filter(k => k !== 'all')) {
+      const rows = await rowsFor(key);
+      if (!rows.length) throw new Error(`pill "${key}" is offered but matches no brand — empty pills belong hidden`);
+      sum += rows.length;
+      for (const n of rows) reached.add(n);
+    }
+    if (sum !== all.length) throw new Error(`the category pills sum to ${sum} but the header prints ${all.length} brands`);
+    const missed = all.filter(n => !reached.has(n));
+    if (missed.length) throw new Error(`brand(s) reachable only under All: ${missed.join(', ')}`);
+    const other = await rowsFor('other');
+    for (const [name] of outOfSlice) {
+      if (!other.includes(name)) throw new Error(`self-added out-of-slice brand ${name} is missing from the "Other" pill`);
+    }
+  });
+
+  await step(page, p, 'client-contacts-endpoint-stays-wide-but-agents-stay-readonly', async () => {
+    const got = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const raw = await (await fetch('/api/crm/contacts', { headers: auth })).json();
+      const rows = Array.isArray(raw) ? raw : (raw.data || []);
+      const cos = await (await fetch('/api/client/brand-directory', { headers: auth })).json();
+      return { scope: me.companyScopeId, rows, brandIds: (Array.isArray(cos) ? cos : []).map(b => b.id) };
+    });
+    if (!got.scope) throw new Error('/api/auth/me gave the client no companyScopeId — the hub cannot tell its own people apart');
+    const own = got.rows.filter(c => c.companyId === got.scope);
+    const foreign = got.rows.filter(c => c.companyId && c.companyId !== got.scope);
+    if (!own.length) throw new Error('client sees none of its own contacts');
+    if (!foreign.length) throw new Error('/api/crm/contacts stopped serving the client the wider brand/agent set — the Requirements board Principal/Agent Contact columns go to "—"');
+    if (got.rows.some(c => !c.companyId)) throw new Error('a companyId-less contact reached the client');
+    // Every foreign contact must be a brand the client can see or an agent —
+    // never another landlord's private people.
+    const brandIds = new Set(got.brandIds);
+    const agentish = [];
+    for (const c of foreign) if (!brandIds.has(c.companyId)) agentish.push(c);
+    const verdicts = await page.evaluate(async (ids) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const out = {};
+      for (const id of ids) {
+        const r = await fetch('/api/crm/contacts/' + id, { method: 'PUT', headers: auth, body: JSON.stringify({ role: 'r598-writability-probe' }) });
+        out[id] = r.status;
+      }
+      return out;
+    }, agentish.map(c => c.id));
+    for (const c of agentish) {
+      if (verdicts[c.id] !== 403) {
+        throw new Error(`a client PUT on non-brand foreign contact ${c.name} (${c.companyId}) returned ${verdicts[c.id]}, expected 403`);
+      }
+    }
+  });
+
+  await step(page, p, 'client-deal-hides-mlro-and-billing-fields', async () => {
+    const propertyId = cross.mlroPropertyId || null;
+    const got = await page.evaluate(async ({ propertyId }) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const out = {};
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      out.list = Array.isArray(list) ? list : (list.data || []);
+      if (propertyId) {
+        const sub = await fetch(`/api/crm/properties/${propertyId}/deals`, { headers: auth });
+        out.subStatus = sub.status;
+        if (sub.ok) { const j = await sub.json(); out.sub = Array.isArray(j) ? j : (j.data || []); }
+      }
+      return out;
+    }, { propertyId });
+    const INTERNAL = ['amlSarFiled', 'amlSarReference', 'amlSarFiledAt', 'amlComplianceNotes',
+      'amlPepStatus', 'amlPepNotes', 'amlEddReason', 'amlRiskLevel', 'mlrScope', 'mlrScopeReason',
+      'invoicingNotes', 'invoicingEmail', 'xeroContactId', 'xeroContactName', 'xeroAccountNumber',
+      'xeroBillingAddress'];
+    const FEES = ['fee', 'feePercentage', 'feeAgreement', 'feeAgreementUrl', 'feeNotes',
+      'commission', 'poNumber', 'invoicedAt'];
+    const check = (rows, where) => {
+      for (const d of rows || []) {
+        for (const k of INTERNAL.concat(FEES)) {
+          if (d[k] != null) throw new Error(`client ${where} still carries ${k} = ${JSON.stringify(d[k])} on deal ${d.name || d.id}`);
+        }
+      }
+    };
+    if (!got.list.length) throw new Error('client deal list came back empty');
+    check(got.list, '/api/crm/deals');
+    if (propertyId) {
+      if (got.subStatus !== 200) throw new Error(`client property sub-read returned ${got.subStatus}`);
+      check(got.sub, '/api/crm/properties/:id/deals');
+    }
+    if (cross.mlroStamp && JSON.stringify(got).includes(cross.mlroStamp)) {
+      throw new Error("the staff MLRO stamp reached the client's deal payload");
+    }
+  });
+
+  // r601/UX #171: the client UI made the party pickers read-only (r534) but
+  // PUT /api/crm/deals/:id still accepted `team` and `internalAgent`, so a
+  // client could silently reassign which BGP team and which BGP agent owned
+  // their own deal. The edit door must stay OPEN (200, benign fields land)
+  // while those two fields are stripped server-side.
+  await step(page, p, 'client-deal-assignment-stays-bgps', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const arr = Array.isArray(list) ? list : (list.data || []);
+      const deal = arr.find((d) => d.id);
+      if (!deal) return { err: 'client sees no deal to edit' };
+      const before = { team: deal.team ?? null, internalAgent: deal.internalAgent ?? null, comments: deal.comments ?? null };
+      const put = await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth,
+        body: JSON.stringify({
+          team: ['QA r601 hijacked team'],
+          internalAgent: ['QA r601 hijacked agent'],
+          internalAgentIds: [],
+          comments: 'QA r601 assignment probe',
+        }),
+      });
+      const back = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      const d = back.deal || back;
+      // Put the benign field back the way the client found it.
+      await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth, body: JSON.stringify({ comments: before.comments }),
+      });
+      return { status: put.status, before, after: { team: d.team ?? null, internalAgent: d.internalAgent ?? null, comments: d.comments ?? null } };
+    });
+    if (r.err) throw new Error(r.err);
+    if (r.status !== 200) throw new Error(`a client editing their OWN deal got ${r.status} — the edit door should stay open`);
+    if (r.after.comments !== 'QA r601 assignment probe') {
+      throw new Error(`the client's benign deal edit did not land (comments = ${JSON.stringify(r.after.comments)}) — the strip is too wide`);
+    }
+    for (const k of ['team', 'internalAgent']) {
+      if (JSON.stringify(r.after[k]) !== JSON.stringify(r.before[k])) {
+        throw new Error(`a client reassigned BGP's own ${k}: ${JSON.stringify(r.before[k])} -> ${JSON.stringify(r.after[k])}`);
+      }
+      if (JSON.stringify(r.after[k] || []).includes('QA r601 hijacked')) {
+        throw new Error(`the client's ${k} value persisted on the deal`);
+      }
+    }
+  });
+
+  // r631: the client phone deal detail's Edit button (never exercised before)
+  // opened the FULL staff form — Fee, Fee Agreement, AML Check, Xero billing,
+  // PO Number, Invoiced, Team, BGP Contact and BGP's fee-allocation editor —
+  // because only the CREATE body was gated on the client flag while the EDIT
+  // path "always renders the full form". Worse, the door behind the AML Check
+  // control accepted it: amlCheckCompleted is the MLRO override the AML gate
+  // honours, so a client could set it and walk their own deal past BGP's gate
+  // to SOL/EXC/COM. Two halves, one rule: the control must not render for a
+  // client AND the field must not be writable by one.
+  await step(page, p, 'client-cannot-self-serve-the-mlro-override', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const arr = Array.isArray(list) ? list : (list.data || []);
+      const GATED = new Set(['SOL', 'EXC', 'COM', 'INV']);
+      const deal = arr.find((d) => d.id && !GATED.has(d.status));
+      if (!deal) return { err: 'client sees no un-gated deal to probe' };
+      const before = { status: deal.status ?? null, aml: deal.amlCheckCompleted ?? null };
+      if (before.aml === 'YES') return { err: 'fixture deal already carries the MLRO override — the probe would be vacuous (a PREVIOUS failing run left it set; the next run-smoke.sh restore clears it)' };
+      const put = await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth,
+        body: JSON.stringify({ amlCheckCompleted: 'YES', comments: 'QA r631 mlro probe' }),
+      });
+      let back = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      let d = back.deal || back;
+      const afterPut = { status: d.status ?? null, aml: d.amlCheckCompleted ?? null, comments: d.comments ?? null };
+      // Now try the gated status move the override would have unlocked.
+      const move = await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth, body: JSON.stringify({ status: 'SOL' }),
+      });
+      const moveBody = await move.text();
+      back = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      d = back.deal || back;
+      const afterMove = { status: d.status ?? null, aml: d.amlCheckCompleted ?? null };
+      await fetch(`/api/crm/deals/${deal.id}`, {
+        method: 'PUT', headers: auth,
+        body: JSON.stringify({ status: before.status, comments: deal.comments ?? null }),
+      });
+      return { id: deal.id, putStatus: put.status, before, afterPut, moveStatus: move.status, moveBody: moveBody.slice(0, 200), afterMove };
+    });
+    if (r.err) throw new Error(r.err);
+    if (r.putStatus !== 200) throw new Error(`a client editing their OWN deal got ${r.putStatus} — the edit door should stay open`);
+    if (r.afterPut.comments !== 'QA r631 mlro probe') throw new Error(`the client's benign deal edit did not land — the strip is too wide`);
+    if (r.afterPut.aml === 'YES') throw new Error(`a client set the MLRO override (amlCheckCompleted ${JSON.stringify(r.before.aml)} -> "YES") — that bypasses BGP's AML gate`);
+    if (r.afterMove.status === 'SOL' && r.afterPut.aml === 'YES') {
+      throw new Error('a client walked their own deal to SOL on an override they set themselves');
+    }
+    // The dialog half — the control must not even render for a client.
+    const leaks = await page.evaluate(async (dealId) => {
+      const STAFF_ONLY = ['input-deal-fee', 'select-deal-fee-agreement', 'select-deal-aml',
+        'deal-xero-contact-search', 'input-deal-po-number', 'input-deal-invoiced-at',
+        'select-deal-team', 'input-deal-agent', 'card-fee-allocation', 'button-edit-fee-allocation'];
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      if (!location.pathname.endsWith(dealId)) { history.pushState({}, '', `/deals/${dealId}`); window.dispatchEvent(new PopStateEvent('popstate')); }
+      for (let i = 0; i < 40; i++) { if (document.querySelector('[data-testid="button-edit-deal"]')) break; await sleep(250); }
+      const btn = document.querySelector('[data-testid="button-edit-deal"]');
+      if (!btn) return { err: 'no button-edit-deal on the client deal detail' };
+      btn.click();
+      let dlg = null;
+      for (let i = 0; i < 40; i++) { dlg = document.querySelector('[role="dialog"]'); if (dlg && dlg.querySelector('[data-testid="button-save-deal"]')) break; await sleep(250); }
+      if (!dlg) return { err: 'the Edit Deal dialog never opened' };
+      const found = STAFF_ONLY.filter((t) => !!dlg.querySelector(`[data-testid="${t}"]`));
+      const fields = dlg.querySelectorAll('[data-testid^="input-deal"],[data-testid^="select-deal"]').length;
+      document.querySelector('[data-testid="button-cancel-deal"]')?.click();
+      return { found, fields };
+    }, r.id);
+    if (leaks.err) throw new Error(leaks.err);
+    if (!leaks.fields) throw new Error('the client Edit Deal dialog rendered no fields at all — probe is vacuous');
+    if (leaks.found.length) {
+      throw new Error(`the client Edit Deal dialog still shows BGP-only controls: ${leaks.found.join(', ')}`);
     }
   });
 }
@@ -6211,6 +11191,123 @@ async function woodyRound(page, cross) {
       return { ok: true };
     }, AGENT_USER);
     if (!r.ok) throw new Error(`cashflow board v3 check failed (${r.why})`);
+  });
+
+  // r580: a deal moving FORWARD out of Negotiating into heads of terms must
+  // stay in the firm's forward book. The projection weight tables carried
+  // NEG/SOL/EXC only, so at HOT the deal fell out of the Xero WIP forecast
+  // AND the cashflow board's stage strip entirely, then reappeared at SOL.
+  await step(page, p, 'staff-forward-book-keeps-the-deal-through-hots', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const read = async () => {
+        const fin = await (await fetch('/api/xero/financials?refresh=1', { credentials: 'include', headers: auth })).json();
+        const cash = await (await fetch('/api/cashflow', { credentials: 'include', headers: auth })).json();
+        const stages = cash?.deals?.byStage || {};
+        const mine = Object.entries(stages).flatMap(([code, v]) => (v.deals || [])
+          .filter((d) => d.name === 'QA-FWD forward book probe').map((d) => ({ code, weighted: d.weighted })));
+        return { unweighted: fin?.wip?.unweightedPipeline ?? null, weighted: fin?.wip?.weightedPipeline ?? null, mine };
+      };
+      const mk = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: 'QA-FWD forward book probe', status: 'NEG', fee: 200000, targetDate: '2026-11-03', dealType: 'New Letting' }) });
+      if (!mk.ok) return { ok: false, why: `deal POST ${mk.status}` };
+      const deal = await mk.json();
+      try {
+        const neg = await read();
+        if (neg.mine.length !== 1 || neg.mine[0].code !== 'NEG') return { ok: false, why: `probe not in the NEG forward book (${JSON.stringify(neg.mine)})` };
+        const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ status: 'HOT' }) });
+        if (!put.ok) return { ok: false, why: `deal PUT HOT ${put.status}` };
+        const hot = await read();
+        if (!hot.mine.length) return { ok: false, why: 'stepping the deal NEG -> HOT dropped it out of the firm forward book entirely' };
+        if (hot.mine[0].code !== 'HOT') return { ok: false, why: `probe landed in ${hot.mine[0].code}, expected HOT` };
+        if (hot.unweighted !== neg.unweighted) return { ok: false, why: `unweighted WIP pipeline moved on a stage step: ${neg.unweighted} -> ${hot.unweighted}` };
+        if (!(hot.weighted > neg.weighted)) return { ok: false, why: `weighted WIP pipeline did not rise moving forward: ${neg.weighted} -> ${hot.weighted}` };
+        return { ok: true };
+      } finally {
+        await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      }
+    });
+    if (!r.ok) throw new Error(`forward book HOTs check failed (${r.why})`);
+  });
+
+  // r581: the agent's own "Working on right now" card. A deal at heads of
+  // terms was in NEITHER the card's stage-label map NOR its colour map, so it
+  // printed the raw code "HOT" against a grey bar where every other stage
+  // reads a sentence; and the endpoint's ORDER BY ranked HOT in the ELSE
+  // bucket, below Speculative, on a card that only shows the first 8.
+  await step(page, p, 'staff-active-deals-card-reads-hots', async () => {
+    const made = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json().catch(() => ({}));
+      const myId = me?.id || me?.user?.id;
+      const myName = me?.name || me?.user?.name;
+      if (!myId || !myName) return { ok: false, why: 'no self id/name from /api/auth/me' };
+      const mk = async (name, status) => {
+        const r = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ name, status, fee: 90000, targetDate: '2026-11-03', dealType: 'New Letting', internalAgent: [myName], internalAgentIds: [myId] }) });
+        return r.ok ? (await r.json()).id : null;
+      };
+      const hot = await mk('QA-ACT heads of terms probe', 'HOT');
+      const spec = await mk('QA-ACT speculative probe', 'SPEC');
+      if (!hot || !spec) return { ok: false, why: 'probe deal POST failed' };
+      const list = await (await fetch(`/api/hr/staff/${myId}/active-deals`, { credentials: 'include', headers: auth })).json();
+      const iHot = list.findIndex((d) => d.name === 'QA-ACT heads of terms probe');
+      const iSpec = list.findIndex((d) => d.name === 'QA-ACT speculative probe');
+      if (iHot < 0) return { ok: false, why: 'a deal at heads of terms is missing from the agent\'s active deals', ids: [hot, spec] };
+      if (iSpec >= 0 && iHot > iSpec) return { ok: false, why: `heads of terms sorts BELOW speculative (${iHot} vs ${iSpec})`, ids: [hot, spec] };
+      return { ok: true, myId, ids: [hot, spec] };
+    });
+    try {
+      if (!made.ok) throw new Error(`active-deals HOTs check failed (${made.why})`);
+      await visit(page, p, `/hr?person=${made.myId}`, 'HR profile');
+      await page.waitForTimeout(1500);
+      const row = page.locator(`[data-testid^="active-deal-"]`).filter({ hasText: 'QA-ACT heads of terms probe' }).first();
+      if (!(await row.count())) throw new Error('active-deals HOTs check failed (the probe row never rendered on the HR profile)');
+      const txt = (await row.innerText()).replace(/\s+/g, ' ');
+      if (/\bHOT\b/.test(txt)) throw new Error(`active-deals HOTs check failed (the card prints the raw status code: "${txt}")`);
+      const bar = (await row.locator('span').first().getAttribute('class')) || '';
+      if (/bg-muted/.test(bar)) throw new Error('active-deals HOTs check failed (heads of terms draws the unknown-status grey bar)');
+    } finally {
+      await page.evaluate(async (ids) => {
+        const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+        for (const id of (ids || []).filter(Boolean)) await fetch(`/api/crm/deals/${id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      }, made.ids);
+    }
+  });
+
+  // r582: the deal dialog's green "What did we learn from this deal?" box.
+  // The server gated the knowledge capture on the legacy LABEL "Completed"
+  // while the dialog sends the CODE "COM", then deleted `learning` from the
+  // body — so every learning an agent typed was silently discarded.
+  await step(page, p, 'staff-deal-learning-reaches-the-brand-card', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const brands = await (await fetch('/api/crm/companies', { credentials: 'include', headers: auth })).json().catch(() => []);
+      const tenant = (Array.isArray(brands) ? brands : []).find((c) => c.id);
+      if (!tenant) return { ok: false, why: 'no company to hang the learning on' };
+      const LEARNING = 'QA-LRN probe learning — 9m rent free to accept ZoneA 300.';
+      // aml_check_completed = YES is the documented MLRO override; without it
+      // the SOL+ AML gate 409s before the learning path is ever reached.
+      const mk = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: 'QA-LRN learning probe', status: 'EXC', fee: 25000,
+          dealType: 'New Letting', tenantId: tenant.id, amlCheckCompleted: 'YES' }) });
+      if (!mk.ok) return { ok: false, why: `deal POST ${mk.status}` };
+      const deal = await mk.json();
+      try {
+        const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+          body: JSON.stringify({ status: 'COM', learning: LEARNING, changeReason: 'qa-lrn probe' }) });
+        if (!put.ok) return { ok: false, why: `deal PUT COM ${put.status}` };
+        const prof = await (await fetch(`/api/brand/${tenant.id}/profile`, { credentials: 'include', headers: auth })).json().catch(() => ({}));
+        const sigs = prof?.signals || [];
+        const hit = sigs.find((x) => (x.detail || '').includes('QA-LRN probe learning'));
+        if (!hit) return { ok: false, why: 'stepping the deal to Completed discarded the learning the agent typed — nothing reached the tenant brand card' };
+        if (!/QA-LRN learning probe/.test(hit.headline || '')) return { ok: false, why: `the captured signal does not name the deal ("${hit.headline}")` };
+        return { ok: true };
+      } finally {
+        await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      }
+    });
+    if (!r.ok) throw new Error(`deal-learning capture failed (${r.why})`);
   });
 
   // Historical billings (r400): static Sage-era invoiced WIP behind the
@@ -6469,16 +11566,50 @@ async function samRound(page, cross) {
       const own = await fetch('/api/client-teams/99999999-1111-1111-1111-111111111111', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       const ownArray = own.ok ? Array.isArray(await own.json().catch(() => null)) : false;
       const foreign = (await fetch(`/api/client-teams/${window.QA_FIX.landsec}`, { headers: auth }).catch(() => ({ status: 0 }))).status;
-      return { ownOk: own.ok, ownArray, foreign };
+      // r531: the board GET was scoped but three sub-reads under the same
+      // allowed prefix were not — member/:id/properties handed a rival the
+      // landlord's whole property list (names + postcodes), and
+      // columns/candidates leaked their board config.
+      const subs = {};
+      for (const sub of ['member/00000000-0000-0000-0000-000000000000/properties', 'columns', 'candidates']) {
+        subs[sub.split('/')[0] === 'member' ? 'memberProperties' : sub] =
+          (await fetch(`/api/client-teams/${window.QA_FIX.landsec}/${sub}`, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      }
+      return { ownOk: own.ok, ownArray, foreign, subs };
     });
     if (!r.ownOk || !r.ownArray) throw new Error("rival client can't read their own team board");
     if (r.foreign !== 403) throw new Error(`rival client read the Landsec team board (expected 403, got ${r.foreign})`);
+    for (const [name, status] of Object.entries(r.subs)) {
+      if (status !== 403) throw new Error(`rival client read the Landsec team board's ${name} (expected 403, got ${status})`);
+    }
   });
 
   // The tracker-row edit endpoints (viewing/offer PATCH + DELETE) must hold
   // the tenant boundary: Sam editing or deleting the viewing/offer Victoria
   // logged on a Landsec unit must be refused. Complements
   // rival-client-write-guards, which only probes the POST side.
+  // r533: chat-media by filename, and the deal M365 sub-reads, both carried
+  // requireAuth only — a rival client could pull any chat attachment (KYC
+  // documents live in the same namespace) and probe deal existence.
+  await step(page, p, 'rival-chat-media-and-deal-subreads-guard', async () => {
+    const r = await page.evaluate(async ([shared, priv, own, dealId]) => {
+      const bearer = 'Bearer ' + localStorage.getItem('authToken');
+      const get = async (url) => url
+        ? (await fetch(url, { credentials: 'include', headers: { Authorization: bearer } }).catch(() => ({ status: 0 }))).status
+        : -1;
+      return {
+        shared: await get(shared && `/api/chat-media/${shared}`),
+        priv: await get(priv && `/api/chat-media/${priv}`),
+        own: await get(own && `/api/chat-media/${own}`),
+        emails: await get(dealId && `/api/crm/deals/${dealId}/related-emails`),
+        events: await get(dealId && `/api/crm/deals/${dealId}/related-events`),
+      };
+    }, [cross.mediaShared || null, cross.mediaPrivate || null, cross.mediaClientOwn || null, cross.clientDealId || null]);
+    for (const [k, want] of [['shared', 403], ['priv', 403], ['own', 403], ['emails', 403], ['events', 403]]) {
+      if (r[k] !== -1 && r[k] !== want) throw new Error(`rival ${k} came back ${r[k]}, expected ${want}`);
+    }
+  });
+
   await step(page, p, 'rival-viewing-offer-patch-guard', async () => {
     if (!cross.viewingId || !cross.offerId) return;
     const r = await page.evaluate(async (args) => {
@@ -6495,6 +11626,53 @@ async function samRound(page, cross) {
     if (r.vPatch !== 403) throw new Error(`rival client edited a Landsec viewing (expected 403, got ${r.vPatch})`);
     if (r.oPatch !== 403) throw new Error(`rival client edited a Landsec offer (expected 403, got ${r.oPatch})`);
     if (r.vDel !== 403) throw new Error(`rival client deleted a Landsec viewing (expected 403, got ${r.vDel})`);
+  });
+
+  // r529: the three unit-INTEREST routes were requireAuth only while their
+  // viewing/offer siblings all carried assertUnitInClientScope — a rival
+  // client could read, add and delete interest on another landlord's unit.
+  // r532 (same class as r529/r531): GET sub-reads under the client-allowed
+  // /api/crm/ prefix that answered for ANY id while their scoped siblings
+  // (comp detail, requirements-investment list) gated correctly.
+  await step(page, p, 'rival-comp-files-and-reqinv-guard', async () => {
+    const compId = cross.compId;
+    const reqInvId = cross.reqInvId;
+    if (!compId && !reqInvId) return;
+    const r = await page.evaluate(async ([comp, reqInv]) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const out = {};
+      if (comp) {
+        const files = await fetch(`/api/crm/comps/${comp}/files`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.files = files.status;
+        const bulk = await fetch(`/api/crm/comps/files/bulk?compIds=${comp}`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.bulkStatus = bulk.status;
+        out.bulkRows = bulk.ok ? ((await bulk.json().catch(() => [])) || []).length : -1;
+      }
+      if (reqInv) {
+        const detail = await fetch(`/api/crm/requirements-investment/${reqInv}`, { headers: auth }).catch(() => ({ status: 0 }));
+        out.reqInv = detail.status;
+      }
+      return out;
+    }, [compId, reqInvId]);
+    if (compId && r.files !== 403) throw new Error(`rival client read a Landsec comp's files (expected 403, got ${r.files})`);
+    if (compId && r.bulkRows !== 0) throw new Error(`rival client got ${r.bulkRows} Landsec comp file row(s) from /files/bulk (expected 0)`);
+    if (reqInvId && r.reqInv !== 403) throw new Error(`rival client read a Landsec investment requirement (expected 403, got ${r.reqInv})`);
+  });
+
+  await step(page, p, 'rival-unit-interest-guard', async () => {
+    const unitId = cross.briefUnitId;
+    if (!unitId) return;
+    const r = await page.evaluate(async (foreign) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const s = async (url, method, body) =>
+        (await fetch(url, { method, credentials: 'include', headers: auth, body: body ? JSON.stringify(body) : undefined }).catch(() => ({ status: 0 }))).status;
+      return {
+        get: await s(`/api/available-units/${foreign}/interest`, 'GET'),
+        post: await s(`/api/available-units/${foreign}/interest`, 'POST', { companyName: 'QA-PROBE rival interest' }),
+      };
+    }, unitId);
+    if (r.get !== 403) throw new Error(`rival client read a Landsec unit's interest (expected 403, got ${r.get})`);
+    if (r.post !== 403) throw new Error(`rival client added interest to a Landsec unit (expected 403, got ${r.post})`);
   });
 }
 
@@ -6569,5 +11747,8 @@ if (CROSS_FILE) writeFileSync(CROSS_FILE, JSON.stringify(cross));
 
 const byKind = {};
 for (const i of issues) byKind[i.kind] = (byKind[i.kind] || 0) + 1;
-console.log(`\n── Round ${ROUND} complete: ${issues.length} issues ──`);
+const filterNote = ONLY.length || SKIP_UNTIL || UNTIL
+  ? ` · FILTERED RUN (${[ONLY.length ? `QA_ONLY=${ONLY.join(',')}` : '', SKIP_UNTIL ? `QA_SKIP_UNTIL=${SKIP_UNTIL}` : '', UNTIL ? `QA_UNTIL=${UNTIL}` : ''].filter(Boolean).join(' ')}), ${tally.filtered} scenario(s) not run`
+  : '';
+console.log(`\n── Round ${ROUND} complete: ${tally.ok} ok, ${issues.length} issues${filterNote} ──`);
 console.log(JSON.stringify(byKind, null, 2));

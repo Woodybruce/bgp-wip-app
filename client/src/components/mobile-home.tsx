@@ -10,7 +10,7 @@ import {
   AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, RefreshCw,
   Receipt, Image as ImageIcon, Building2, Store, ClipboardList, Newspaper, Users, Mail,
 } from "lucide-react";
-import { legacyToCode } from "@shared/deal-status";
+import { legacyToCode, TRACKER_ROLLUP_BUCKET } from "@shared/deal-status";
 import { isEquityUser } from "@/lib/utils";
 import { useTeam } from "@/lib/team-context";
 
@@ -149,7 +149,7 @@ function AiDailyBriefing() {
 type Alert = { type: string; severity: "critical" | "warning" | "info"; title: string; detail?: string; entityId?: string; entityType?: string };
 type Task = { id: string; title: string; status: string; priority: string; deal_name?: string | null; property_name?: string | null; contact_name?: string | null };
 type DealSummary = { id: string; name: string; status: string; property_name?: string | null };
-type Commission = { billedPence: number; commissionEarned: number; commissionForecast: number; schemeYear: string; wipByStage?: { neg: number; sol: number; exc: number; com: number } };
+type Commission = { billedPence: number; commissionEarned: number; commissionForecast: number; schemeYear: string; wipByStage?: { neg: number; hot: number; sol: number; exc: number; com: number } };
 
 // Core boards shown on Home by default. Everything else (admin / WIP tools)
 // hides behind "Show all" so the home screen stays focused on daily work.
@@ -271,9 +271,11 @@ export default function MobileHome() {
   });
   const clientUnits = Array.isArray(clientUnitsRaw) ? clientUnitsRaw : [];
   // The linked deal's status wins over the unit's marketing status — same
-  // rule as the Letting Tracker page this widget deep-links to. Buckets
-  // cover the whole pipeline so a negotiating unit still shows in the
-  // roll-up: Available = OPP+AVA, Under offer = NEG..EXC, Let = COM+INV.
+  // rule as the Letting Tracker page this widget deep-links to. The buckets
+  // come from TRACKER_ROLLUP_BUCKET so they partition the WHOLE status
+  // vocabulary: the tile prints the total next to them, and a code in no
+  // bucket used to leave a client reading three numbers that didn't add up
+  // to the fourth (r623 — a withdrawn unit gave 71 + 1 + 0 against 73).
   const { data: clientDealsRaw } = useQuery<any[]>({
     queryKey: ["/api/crm/deals"],
     staleTime: 2 * 60 * 1000,
@@ -283,10 +285,12 @@ export default function MobileHome() {
   for (const d of (Array.isArray(clientDealsRaw) ? clientDealsRaw : [])) dealStatusById[d.id] = d.status;
   const effOf = (u: any) =>
     (u.dealId ? legacyToCode(dealStatusById[u.dealId]) : null) || legacyToCode(u.marketingStatus) || "AVA";
+  const bucketOf = (u: any) => TRACKER_ROLLUP_BUCKET[effOf(u)];
   const unitStats = {
-    available: clientUnits.filter(u => ["OPP", "AVA"].includes(effOf(u))).length,
-    underOffer: clientUnits.filter(u => ["NEG", "HOT", "SOL", "EXC"].includes(effOf(u))).length,
-    let: clientUnits.filter(u => ["COM", "INV"].includes(effOf(u))).length,
+    available: clientUnits.filter(u => bucketOf(u) === "available").length,
+    underOffer: clientUnits.filter(u => bucketOf(u) === "underOffer").length,
+    let: clientUnits.filter(u => bucketOf(u) === "let").length,
+    withdrawn: clientUnits.filter(u => bucketOf(u) === "withdrawn").length,
     total: clientUnits.length,
   };
   const { data: wipResp } = useQuery<any>({ queryKey: ["/api/wip"], staleTime: 5 * 60 * 1000, enabled: !isClientHome });
@@ -386,8 +390,16 @@ export default function MobileHome() {
               </div>
               <div>
                 <p className="text-lg font-bold tabular-nums leading-tight">{unitStats.total}</p>
-                <p className="text-[10px] opacity-70">Units</p>
+                <p className="text-[10px] opacity-70">On tracker</p>
               </div>
+              {/* Only when there is something to explain — the row stays
+                  four-across in the normal case. */}
+              {unitStats.withdrawn > 0 && (
+                <div>
+                  <p className="text-lg font-bold tabular-nums leading-tight text-white/60">{unitStats.withdrawn}</p>
+                  <p className="text-[10px] opacity-70">Withdrawn</p>
+                </div>
+              )}
             </div>
           </Link>
 
@@ -482,10 +494,14 @@ export default function MobileHome() {
                     </div>
                   </div>
                   {commission.wipByStage && (
-                    <div className="mt-2.5 pt-2.5 border-t border-white/10 grid grid-cols-2 gap-2">
+                    <div className="mt-2.5 pt-2.5 border-t border-white/10 grid grid-cols-3 gap-2">
                       <div>
                         <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.neg)}</p>
                         <p className="text-[10px] opacity-70">Negotiating</p>
+                      </div>
+                      <div>
+                        <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.hot)}</p>
+                        <p className="text-[10px] opacity-70">HOTs</p>
                       </div>
                       <div>
                         <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.sol)}</p>

@@ -1195,7 +1195,13 @@ export default function InvestmentTrackerPage() {
         (u.vendorAgent || "").toLowerCase().includes(q)
       );
     }
-    if (statusFilter !== "all") list = list.filter(u => legacyToCode(u.status) === statusFilter);
+    // `|| "REP"` matches the six sibling sites (tiles, sort, cards, table,
+    // edit form, board mapping). Without it the REP tile COUNTED a row whose
+    // status legacyToCode cannot read and clicking that tile HID it — and the
+    // app supplies such a status itself: ChatBGP's create/update_investment_
+    // tracker tools advertise "On Hold" as an example and write it verbatim,
+    // and legacyToCode has no mapping for it (r605, UX #304).
+    if (statusFilter !== "all") list = list.filter(u => (legacyToCode(u.status) || "REP") === statusFilter);
     if (assetClassFilter !== "all") list = list.filter(u => u.assetType === assetClassFilter);
     if (tenureFilter !== "all") list = list.filter(u => u.tenure === tenureFilter);
     if (agentFilter !== "all") {

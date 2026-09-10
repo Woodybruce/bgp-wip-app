@@ -260,8 +260,16 @@ export async function buildCommissionStatements(): Promise<{ fyStart: string; st
     fyStart: fyStartIso,
     statements: statements.map(s => ({ ...s })),
     assumptions: [
-      "Billing = the agent's fee-allocation share (BGP House 15% excluded); deals with no explicit split default to 85% across the deal's agents.",
-      "A deal counts in the FY of its fee-due date — the earlier of exchange / completion.",
+      // These lines are printed verbatim on the Finance page under the
+      // commission statements, so they have to describe THIS engine. Two of
+      // them didn't (r615): the first promised an 85% equal-split default
+      // that has never existed — the query INNER JOINs deal_fee_allocations,
+      // so a fee-due deal with no split rows reaches no agent at all (see
+      // the header note: a missing split is a signal to enter it, not to
+      // guess) — and the second omitted the invoice date, which fee_due
+      // takes the LEAST of alongside exchange and completion.
+      "Billing = the agent's fee-allocation share (BGP House 15% excluded); a deal with no fee-split rows is credited to nobody until its split is entered.",
+      "A deal counts in the FY of its fee-due date — the earliest of exchange, completion and invoice.",
       "Tiers: 0% to 2× salary, 30% to 3×, 40% to 4×, 50% beyond — applied in fee-due order, deals split across thresholds.",
       "Payable = client's Xero invoice(s) fully paid; paid in the month-end payroll run.",
       "Mid-year salary changes pro-rated from salary history.",
@@ -277,7 +285,9 @@ export async function buildCommissionStatements(): Promise<{ fyStart: string; st
 // cumulative billings and run through the same tier bands, giving the
 // commission the firm would owe if the weighted book lands. Deals already
 // at fee-due (EXC/COM/INV) are in the statements, not the forward book.
-const FORWARD_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75 };
+// HOT sits between NEG and SOL (enum 2026-08-12); omitting it dropped a
+// deal at heads of terms out of the forward commission projection (r580).
+const FORWARD_WEIGHTS: Record<string, number> = { NEG: 0.5, HOT: 0.6, SOL: 0.75 };
 
 export interface CommissionOutlook {
   fyStart: string;

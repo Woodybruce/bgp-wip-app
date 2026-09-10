@@ -159,6 +159,16 @@ const AI_SUGGESTIONS: Array<{ label: string; icon: typeof Sparkles }> = [
   { label: "Search CRM contacts", icon: Users },
 ];
 
+// Client logins get the landlord-voiced prompts the desktop chat panel
+// already uses (CLIENT_AI_SUGGESTIONS in chat-panel.tsx) — no BGP calendar,
+// no HOTs drafting, no CRM jargon.
+const CLIENT_AI_SUGGESTIONS: Array<{ label: string; icon: typeof Sparkles }> = [
+  { label: "Which of my leases expire in the next 12 months?", icon: CalendarDays },
+  { label: "What's happening on my vacant units?", icon: Building2 },
+  { label: "Create a targeting brief for one of my units", icon: FileText },
+  { label: "What's the latest news on brands we're targeting?", icon: Newspaper },
+];
+
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif"];
 const isImageFile = (nameOrType: string) => {
   if (nameOrType.startsWith("image/")) return true;
@@ -2635,9 +2645,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             )}
             <div className="flex-1 min-w-0">
               {isGroup ? (
-                <button onClick={() => setShowGroupEdit(true)} className="flex items-center gap-3 w-full min-w-0 text-left" data-testid="button-mobile-group-settings">
+                // The group avatar is itself a button (it opens the
+                // group-pic picker), so it has to be a SIBLING of the
+                // group-settings button, never nested inside it — React
+                // warned "<button> cannot appear as a descendant of
+                // <button>" on every group thread (r541).
+                <div className="flex items-center gap-3 w-full min-w-0">
                   {renderHeaderAvatar()}
-                  <div className="flex-1 min-w-0">
+                  <button onClick={() => setShowGroupEdit(true)} className="flex-1 min-w-0 text-left" data-testid="button-mobile-group-settings">
                     <div className="text-[17px] font-semibold truncate">{threadTitle}</div>
                     {isGroup && threadMembers.length > 0 && (
                       <div className="text-xs text-white/60 truncate">
@@ -2646,8 +2661,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                         {" · Tap to edit"}
                       </div>
                     )}
-                  </div>
-                </button>
+                  </button>
+                </div>
               ) : (
                 <div className="flex items-center gap-3 w-full min-w-0">
                   {renderHeaderAvatar()}
@@ -2734,7 +2749,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               <p className="text-[15px] text-[#78716C] leading-relaxed max-w-[280px] mx-auto">How can I help today?</p>
             </div>
             <div className="grid grid-cols-1 gap-2 w-full max-w-sm">
-              {AI_SUGGESTIONS.map(s => {
+              {(currentUser?.role === "Client" || (currentUser as any)?.companyScopeId ? CLIENT_AI_SUGGESTIONS : AI_SUGGESTIONS).map(s => {
                 const Icon = s.icon;
                 return (
                   <button
@@ -2748,7 +2763,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                     data-testid={`mobile-suggestion-${s.label.slice(0, 10)}`}
                   >
                     <Icon className="w-[18px] h-[18px] text-[#78716C] shrink-0" />
-                    <span className="truncate">{s.label}</span>
+                    <span>{s.label}</span>
                   </button>
                 );
               })}
@@ -3880,7 +3895,12 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     let base: ThreadData[];
     if (chatChip === "ai") base = aiThreads.filter(t => !!(t.title || t.lastMessage));
     else if (chatChip === "groups") base = teamThreads.filter(t => t.members.filter(m => m.id !== currentUser?.id).length > (t.isAiChat ? 0 : 1));
-    else if (chatChip === "unread") base = teamThreads.filter(t => {
+    // Unread spans BOTH buckets: the Messages nav badge counts every unseen
+    // chat_thread_members row, AI threads included, so filtering only
+    // teamThreads left a badge with nothing behind it — "1 unread" over a
+    // list reading "No conversations yet" (r600, as the Landsec client on
+    // the phone). All stays people-only; Unread is where the badge lands.
+    else if (chatChip === "unread") base = [...teamThreads, ...aiThreads].filter(t => {
       const me = t.members.find(m => m.id === currentUser?.id);
       return me ? !me.seen : false;
     });

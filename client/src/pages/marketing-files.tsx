@@ -160,9 +160,11 @@ export default function MarketingFilesPage() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{f.fileName}</p>
                         <p className="text-xs text-muted-foreground">
-                          {f.unitName && <span>{f.unitName} · </span>}
-                          {formatSize(f.fileSize)}
-                          {f.createdAt && ` · ${new Date(f.createdAt).toLocaleDateString("en-GB")}`}
+                          {[
+                            f.unitName,
+                            formatSize(f.fileSize),
+                            f.createdAt ? new Date(f.createdAt).toLocaleDateString("en-GB") : "",
+                          ].filter(Boolean).join(" · ")}
                         </p>
                       </div>
                       <div className="flex gap-1 shrink-0">

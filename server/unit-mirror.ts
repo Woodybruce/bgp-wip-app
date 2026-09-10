@@ -162,7 +162,20 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
       // Non-lettable revenue lines (lockers, vending, ATMs) never mirror
       // onto the tracker — they're schedule furniture, not shops.
       const { isJunkUnitName } = await import("./unit-junk");
-      if (!isJunkUnitName(t.unit_number)) {
+      // A duplicated spine row (the same unit listed twice on the tenancy
+      // schedule) must not spawn a second tracker card. The name-link above
+      // only adopts rows with no owner, so a sibling spine row's card is
+      // invisible to it — check by name before creating (Bluewater showed
+      // U062 four times, r539).
+      const twinAvail = unitNorm
+        ? await pool.query(
+            `SELECT id FROM available_units
+              WHERE property_id = $1 AND lower(trim(coalesce(unit_name, ''))) = $2
+              LIMIT 1`,
+            [t.property_id, unitNorm]
+          )
+        : { rows: [] as any[] };
+      if (!isJunkUnitName(t.unit_number) && twinAvail.rows.length === 0) {
         await pool.query(
           `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
            VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -186,11 +199,21 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
         [leasingStatus, tenancyId]
       );
     } else if (leasingStatus !== "Archived") {
-      await pool.query(
-        `INSERT INTO leasing_schedule_units (property_id, unit_name, sqft, rent_pa, status, tenancy_unit_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [t.property_id, t.unit_number, sqft, askingRent, leasingStatus, tenancyId]
-      );
+      const twinLs = unitNorm
+        ? await pool.query(
+            `SELECT id FROM leasing_schedule_units
+              WHERE property_id = $1 AND lower(trim(coalesce(unit_name, ''))) = $2
+              LIMIT 1`,
+            [t.property_id, unitNorm]
+          )
+        : { rows: [] as any[] };
+      if (twinLs.rows.length === 0) {
+        await pool.query(
+          `INSERT INTO leasing_schedule_units (property_id, unit_name, sqft, rent_pa, status, tenancy_unit_id)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [t.property_id, t.unit_number, sqft, askingRent, leasingStatus, tenancyId]
+        );
+      }
     }
   } catch (e: any) {
     // Best-effort — never break the tenancy write because a projection failed.
@@ -205,12 +228,31 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
 // match the schedule GET uses, so it never creates a duplicate. Idempotent:
 // if the available unit is already linked, it no-ops. This is creation-only
 // (not on every edit) to avoid surprising agents mid-edit.
+// Every status this can stamp on a fresh spine stub. The tracker's DELETE
+// path (routes.ts) clears the untouched stub it created, and used to match
+// the single literal 'Marketing' — so a stub created for a SOL or COM unit
+// was stranded on the landlord's schedule forever. One exported set drives
+// both sides so create and delete cannot drift apart (r592).
+export const TENANCY_STUB_STATUSES = [
+  "Vacant", "In Negotiation", "Under Offer", "Occupied", "Archived",
+  "Marketing", // legacy — stubs created before r592 still carry it
+] as const;
+
+// The unified schedule's own vocabulary is SCHEDULE_STATUSES in
+// client/src/components/PropertyTenancySchedule.tsx, and its KPI tiles
+// bucket via STATUS_BUCKETS. "Marketing" is in NEITHER — it's a legacy
+// imported value (see mapTenancyToMarketingStatus above), so stamping it on
+// a fresh stub put the unit in the row list but in no tile, hid it from the
+// Vacant filter the landlord's void list is built from, and left it without
+// a chip colour. Map onto canonical states instead; they round-trip back
+// through mapTenancyToMarketingStatus to the same codes (r592).
 function mapMarketingToTenancyStatus(s: string | null | undefined): string {
   switch ((s || "").trim().toUpperCase()) {
     case "SOL": case "EXC": return "Under Offer";
     case "COM": case "INV": return "Occupied";
     case "WIT": case "ARCH": return "Archived";
-    default: return "Marketing"; // AVA / LIVE / NEG / unknown → being marketed
+    case "NEG": case "HOT": return "In Negotiation";
+    default: return "Vacant"; // AVA / OPP / LIVE / unknown → empty, being marketed
   }
 }
 
@@ -292,4 +334,28 @@ export async function ensureTenancyRowForAvailableUnit(pool: Pool, availableUnit
     // Best-effort — never break unit creation because the spine sync failed.
     console.warn(`[unit-mirror] ensureTenancyRowForAvailableUnit(${availableUnitId}) failed:`, e?.message);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// One physical unit, three name conventions in available_units.unit_name:
+// bare ("MSU9"), comma-joined ("MSU9, Bluewater, Bluewater") and
+// scheme-prefixed with an EN DASH ("Bluewater Shopping Centre – MSU9").
+// The third has a named source: POST /api/available-units names the backing
+// deal `${property.name} – ${unit.unitName}`, and the boot auto-seed spawns a
+// listing for any NEG deal without one, copying that deal name straight into
+// unit_name. Every dedupe over unit_name must reduce all three to the same
+// key or the unit gets listed — and counted — twice (r593).
+// ─────────────────────────────────────────────────────────────────────────
+export function unitNameKey(unitName: string | null | undefined, propertyName?: string | null): string {
+  let n = (unitName || "").trim();
+  if (!n) return "";
+  const prop = (propertyName || "").trim();
+  if (prop) {
+    const esc = prop.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const stripped = n.replace(new RegExp(`^${esc}\\s*[–—-]\\s*`, "i"), "").trim();
+    // A listing named for the scheme alone keeps its own name — stripping it
+    // to nothing would collapse every such row onto one key.
+    if (stripped) n = stripped;
+  }
+  return n.split(",")[0].trim().toLowerCase();
 }

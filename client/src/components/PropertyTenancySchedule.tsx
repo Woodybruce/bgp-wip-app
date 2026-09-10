@@ -183,6 +183,34 @@ function fmtNum(v: number | string | null | undefined, dp = 0) {
   return n.toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 }
 
+// A money column is one DECLARED as money in COLUMNS. The field-name test
+// below is only a fallback for columns typed "num" that happen to hold
+// money: on its own it missed Rates Payable, Rateable Value, Capex, NOI,
+// Topped Up NOI, Deposit Held and Arrears, so half the Outgoings band
+// printed "34965" beside Service Charge's "£27,746" on the same row —
+// for staff and client alike (UX #232).
+const MONEY_FIELD_WORDS = ["rent", "income", "charge", "insurance", "occ_costs", "erv", "shortfall"];
+function isMoneyColumn(field: string, type: string | undefined): boolean {
+  if (type === "currency" || type === "currency_psf") return true;
+  return MONEY_FIELD_WORDS.some(w => field.includes(w));
+}
+
+// The single authority for how a schedule cell reads. Both branches of the
+// table use it — the staff cell through InlineEdit, the read-only (client)
+// cell directly — so a landlord and the agent looking at the same row read
+// the same string. Without it the client's schedule rendered raw column
+// values ("90551.805", "2026-09-28") beside the staff view's
+// "£90,552 · 28 Sept 2026" (r566).
+function fmtCellForDisplay(field: string, type: string | undefined, raw: any): string {
+  if (raw === null || raw === undefined || raw === "") return "";
+  if (type === "date") return fmtDate(String(raw));
+  if (type === "num" || type === "currency" || type === "currency_psf") {
+    if (isMoneyColumn(field, type)) return fmtCurrency(raw);
+    return fmtNum(raw, field.includes("psf") || field.includes("percent") || field.includes("term") ? 2 : 0);
+  }
+  return String(raw);
+}
+
 function fmtDate(v: string) {
   if (!v) return "—";
   try {
@@ -233,9 +261,26 @@ const SCHEDULE_STATUSES = [
   "Lease Event",    // upcoming break / expiry — actively managed
   "Archived",       // historical row, hidden from default filters
 ] as const;
+// A KPI tile counts a bucket of statuses ("Occupied" also covers Trading /
+// Let / Not Vacant from the Landsec feed) but clicking it used to filter on
+// exact string equality — so the Occupied tile read 124 and showed 87 rows,
+// and Vacant read 76 and showed 69 (r556). Tiles and their filters now share
+// one definition; a status with no bucket filters to itself.
+// r592: "Marketing" is what the Letting Tracker's mirror stamped on every
+// spine stub it created for an AVA/NEG unit (server/unit-mirror.ts). It is
+// not in SCHEDULE_STATUSES, so those units sat in the row list and in no
+// tile at all. The mirror now writes canonical states, but rows already
+// carrying the legacy value must still count as the vacancies they are.
+const STATUS_BUCKETS: Record<string, string[]> = {
+  "Occupied": ["Occupied", "Trading", "Let", "Not Vacant"],
+  "Vacant": ["Vacant", "Void", "Available", "AVA", "Marketing"],
+};
+const inStatusBucket = (status: string | null | undefined, bucket: string) =>
+  (STATUS_BUCKETS[bucket] || [bucket]).includes(status || "");
 const SCHEDULE_STATUS_COLOURS: Record<string, string> = {
   "Vacant":         "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
   "Void":           "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300", // Landsec feed
+  "Marketing":      "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300", // legacy tracker stub — a vacancy
   "Opportunity":    "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900 dark:text-fuchsia-300",
   "In Negotiation": "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
   "Under Offer":    "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",
@@ -266,12 +311,14 @@ const COLUMNS: Col[] = [
   // Break Notice is now the date by which break notice has to be served.
   { field: "break_notice",     label: "Break Notice",   band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "lease_expiry",     label: "Expiry",         band: "Lease Details", width: 100, align: "center", type: "date" },
-  { field: "term_years",       label: "Term",           band: "Lease Details", width: 70,  align: "right", type: "num" },
+  { field: "term_years",       label: "Term (yrs)",     band: "Lease Details", width: 70,  align: "right", type: "num" },
   // The three Unexp columns are server-computed from their dates on every
-  // render (months) — read-only in the grid, no manual drift.
-  { field: "unexpired_term_break", label: "Unexp (Break)", band: "Lease Details", width: 90, align: "right", type: "num" },
-  { field: "unexpired_term",   label: "Unexp (Expiry)", band: "Lease Details", width: 90,  align: "right", type: "num" },
-  { field: "unexpired_term_review" as any, label: "Unexp (Review)", band: "Lease Details", width: 95, align: "right", type: "num" },
+  // render, in MONTHS — and they sit next to Term, which is in years, so the
+  // unit has to be on the label. Without it "Term 15.2 · Unexp 1" reads as a
+  // lease with a year to run when it has three weeks.
+  { field: "unexpired_term_break", label: "Unexp (Break) mths", band: "Lease Details", width: 100, align: "right", type: "num" },
+  { field: "unexpired_term",   label: "Unexp (Expiry) mths", band: "Lease Details", width: 105,  align: "right", type: "num" },
+  { field: "unexpired_term_review" as any, label: "Unexp (Review) mths", band: "Lease Details", width: 105, align: "right", type: "num" },
   { field: "next_review_date", label: "Next Review",    band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "outside_lt_act",   label: "L&T Act",        band: "Lease Details", width: 100, align: "left" },
   { field: "area_basement_gia", label: "Basement",      band: "Areas — GIA", width: 90,  align: "right", type: "num" },
@@ -473,9 +520,9 @@ function BreakTypeChip({ value, onChange }: { value: string; onChange: (v: strin
   );
 }
 
-function InlineEdit({ value, field, unitId, onSave, type = "text", options, className = "" }: {
+function InlineEdit({ value, field, unitId, onSave, type = "text", colType, options, className = "" }: {
   value: string; field: string; unitId: string | number; onSave: (id: string | number, field: string, val: string) => void;
-  type?: string; options?: string[]; className?: string;
+  type?: string; colType?: string; options?: string[]; className?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(value || "");
@@ -494,11 +541,10 @@ function InlineEdit({ value, field, unitId, onSave, type = "text", options, clas
     if (isDate) {
       display = value ? fmtDate(value) : "—";
     } else if (isNumber) {
-      if (field.includes("rent") || field.includes("income") || field.includes("charge") || field.includes("insurance") || field.includes("occ_costs") || field.includes("erv") || field.includes("shortfall")) {
-        display = fmtCurrency(value);
-      } else {
-        display = fmtNum(value, field.includes("psf") || field.includes("percent") || field.includes("term") ? 2 : 0);
-      }
+      // Same authority as the read-only cell, and it needs the DECLARED
+      // column type — "number" here is the input type, which flattens
+      // currency and plain-number columns into one (UX #232).
+      display = fmtCellForDisplay(field, colType || "num", value) || "—";
     } else {
       display = value || "—";
     }
@@ -878,7 +924,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   }
 
   const filtered = units.filter(u => {
-    if (statusFilter && u.status !== statusFilter) return false;
+    if (statusFilter && !inStatusBucket(u.status, statusFilter)) return false;
     if (search) {
       const s = search.toLowerCase();
       const matchesSearch = [u.unit_number, u.tenant_name, u.trading_name, u.premises, u.permitted_use].some(f => f?.toLowerCase().includes(s));
@@ -920,17 +966,30 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   // Occupied + Trading both count as "in possession" for the headline
   // KPI. Vacant + In Negotiation + Under Offer + Lease Event all count
   // as "actionable" — surfaced as their own buckets below if non-zero.
-  const occupied = units.filter(u => u.status === "Occupied" || u.status === "Trading" || u.status === "Let" || u.status === "Not Vacant").length;
+  const occupied = units.filter(u => inStatusBucket(u.status, "Occupied")).length;
   // Void/Available/AVA are vacancy statuses too (dashboard counts them as
   // vacant; synthetic tracker rows arrive as their marketing status).
-  const vacant = units.filter(u => ["Vacant", "Void", "Available", "AVA"].includes(u.status || "")).length;
+  const vacant = units.filter(u => inStatusBucket(u.status, "Vacant")).length;
   const inNeg = units.filter(u => u.status === "In Negotiation").length;
   const underOffer = units.filter(u => u.status === "Under Offer").length;
   const leaseEvent = units.filter(u => u.status === "Lease Event").length;
   const totalNIA = units.reduce((s, u) => s + Number(u.nia_sqft || 0), 0);
   const totalRent = units.reduce((s, u) => s + Number(u.passing_rent_pa || 0), 0);
   const totalSC = units.reduce((s, u) => s + Number(u.service_charge || 0), 0);
-  const avgERV = units.length ? units.reduce((s, u) => s + Number(u.blended_erv || 0), 0) / units.length : 0;
+  // "Avg ERV £psf" used to average blended_erv, which is (a) a PER-ANNUM
+  // import column, not a rate, and (b) null on every row of the Landsec
+  // feed — so the tile read "—" on a board whose own ERV (pa) column
+  // prints figures. Compute the rate the label promises from the fields
+  // that are actually populated: Σ ERV pa ÷ Σ NIA over the units that
+  // carry both. Area-weighted, not a mean of per-unit rates — a 200 sq ft
+  // kiosk at £200 psf would otherwise outweigh a 90,000 sq ft cinema.
+  const ervPsfUnits = units.filter(u => Number(u.erv_pa) > 0 && Number(u.nia_sqft) > 0);
+  const ervPsfRentTotal = ervPsfUnits.reduce((s, u) => s + Number(u.erv_pa), 0);
+  const ervPsfAreaTotal = ervPsfUnits.reduce((s, u) => s + Number(u.nia_sqft), 0);
+  const avgERV = ervPsfAreaTotal > 0 ? ervPsfRentTotal / ervPsfAreaTotal : 0;
+  const avgERVBasis = avgERV
+    ? `${fmtCurrency(ervPsfRentTotal)} ERV ÷ ${fmtNum(ervPsfAreaTotal)} sq ft (${ervPsfUnits.length} of ${units.length} units priced)`
+    : undefined;
   // WAULT is rent-weighted (Σ rent × term ÷ Σ rent), not a simple mean —
   // otherwise one 999-year ground lease at a peppercorn drags the figure
   // to absurdity. Falls back to the unweighted mean when no rents exist.
@@ -1195,7 +1254,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           { label: "Passing Rent", value: fmtCurrencyCompact(totalRent), filter: null, full: fmtCurrency(totalRent) },
           // UX #133 — a literal 0 read as "the ERV is £0" rather than
           // "no ERV data"; match Passing Rent's em-dash empty state.
-          { label: "Avg ERV £psf", value: avgERV ? fmtNum(avgERV, 0) : "—", filter: null },
+          { label: "Avg ERV £psf", value: avgERV ? fmtNum(avgERV, 2) : "—", filter: null, full: avgERVBasis },
           { label: "WAULT", value: fmtNum(avgWAULT, 1) + " yrs", filter: null, sub: waultExcluded > 0 ? `${waultExcluded} excluded — placeholder expiry` : undefined },
           { label: "Occupied", value: String(occupied), filter: "Occupied" },
           { label: "Vacant", value: String(vacant), filter: "Vacant" },
@@ -1333,7 +1392,20 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                     )
                   )}
                 </div>
-                <span className="font-mono tabular-nums text-sm font-semibold shrink-0">{fmtCurrency(unit.passing_rent_pa)}</span>
+                {/* The card's one money figure. Whole imported rent rolls
+                    carry no passing rent (all 199 Bluewater rows), so every
+                    card was headed by a dash — including the 34 status-Vacant
+                    rows a landlord taps the Vacant tile to price — while the
+                    same row held an ERV. Fall back to it, labelled, the way
+                    the synthetic-vacant branch above already does with
+                    "£405,273 asking" (r568, UX #234). */}
+                <span className="font-mono tabular-nums text-sm font-semibold shrink-0">
+                  {unit.passing_rent_pa
+                    ? fmtCurrency(unit.passing_rent_pa)
+                    : unit.erv_pa
+                      ? `${fmtCurrency(unit.erv_pa)} ${isVacant ? "asking" : "ERV"}`
+                      : "—"}
+                </span>
               </div>
               <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
                 {[unit.floor_level, unit.permitted_use].filter(Boolean).join(" · ") || "—"}
@@ -1790,9 +1862,13 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               </td>
             );
           }
+          // Unexp columns are server-computed whole months and render raw
+          // for staff too — keep them identical rather than re-decimalising.
+          const isUnexp = c.field === "unexpired_term" || c.field === "unexpired_term_break" || (c.field as string) === "unexpired_term_review";
+          const readVal = isUnexp ? displayVal : fmtCellForDisplay(c.field as string, c.type, raw);
           return (
-            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
-              {displayVal || <span className="text-muted-foreground">—</span>}
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}${isUnexp ? " text-muted-foreground" : ""}`}>
+              {readVal && readVal !== "—" ? readVal : <span className="text-muted-foreground">—</span>}
             </td>
           );
         }
@@ -1935,6 +2011,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                     unitId={unit.id}
                     onSave={onUpdate}
                     type={editType}
+                    colType={c.type}
                     className="opacity-0 group-hover:opacity-60 text-[10px]"
                   />
                 </div>
@@ -1963,7 +2040,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
           // review dates on every render — display-only, no manual edits
           // to drift out of date.
           c.field === "unexpired_term" || c.field === "unexpired_term_break" || (c.field as string) === "unexpired_term_review" ? (
-            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap text-muted-foreground${stickyCls}`} title="Auto-calculated from the lease dates">
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap text-muted-foreground${stickyCls}`} title="Months remaining — auto-calculated from the lease dates">
               {displayVal || "—"}
             </td>
           ) :
@@ -1982,6 +2059,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                   unitId={unit.id}
                   onSave={onUpdate}
                   type={editType}
+                  colType={c.type}
                   className="inline-block align-middle truncate max-w-[34vw] sm:max-w-none"
                 />
                 {!letting && !unit.is_vacant && onSendToTracker && (
@@ -2013,6 +2091,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               unitId={unit.id}
               onSave={onUpdate}
               type={editType}
+              colType={c.type}
             />
             )}
           </td>

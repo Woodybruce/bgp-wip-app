@@ -101,6 +101,15 @@ function requirementAgeDays(iso: string | null | undefined): number | null {
   return isNaN(t) ? null : Math.round((Date.now() - t) / 86400000);
 }
 
+// The Fits column and its "N / M fit your available units" KPI come from a
+// SEPARATE matches query whose key is not a prefix of the list key, so list
+// invalidations never refreshed it — a requirement just created or re-sized
+// showed "—" fits until the page was remounted (r540).
+const invalidateRequirementsLeasing = () => {
+  queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing/matches"] });
+};
+
 const PROGRESS_STAGES = [
   { key: "contacted" as const, label: "Contacted", color: "bg-emerald-500", borderColor: "border-emerald-500", hoverBorder: "hover:border-emerald-400" },
   { key: "detailsSent" as const, label: "Details Sent", color: "bg-blue-500", borderColor: "border-blue-500", hoverBorder: "hover:border-blue-400" },
@@ -313,7 +322,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         const s = await sres.json();
         if (s.state === "done") {
           const d = s.result || {};
-          queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+          invalidateRequirementsLeasing();
           const parts = [
             `${d.imported ?? 0} imported`,
             d.promoted ? `${d.promoted} added to requirements` : null,
@@ -411,7 +420,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Sync failed");
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       toast({ title: "TRL synced", description: `${data.discovered} discovered · ${data.imported} imported · ${data.failed} failed` });
     } catch (err: any) {
       toast({ title: "TRL sync failed", description: err.message, variant: "destructive" });
@@ -431,7 +440,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Resync failed");
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       toast({ title: "TRL wiped and re-synced", description: `${data.deletedReqs} deleted · ${data.imported} re-imported · ${data.failed} failed` });
     } catch (err: any) {
       toast({ title: "TRL resync failed", description: err.message, variant: "destructive" });
@@ -451,7 +460,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Resync failed");
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       const parts = [
         `${data.deletedReqs} deleted`,
         `${data.imported} re-imported`,
@@ -627,7 +636,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
     mutationFn: (data: Partial<CrmRequirementsLeasing>) =>
       apiRequest("POST", "/api/crm/requirements-leasing", data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       setCreateOpen(false);
       toast({ title: "Requirement created" });
     },
@@ -638,7 +647,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
     mutationFn: ({ id, data }: { id: string; data: Partial<CrmRequirementsLeasing> }) =>
       apiRequest("PUT", `/api/crm/requirements-leasing/${id}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       setEditItem(null);
       toast({ title: "Requirement updated" });
     },
@@ -647,14 +656,14 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
 
   const inlineUpdate = (id: string, data: Partial<CrmRequirementsLeasing>) => {
     apiRequest("PUT", `/api/crm/requirements-leasing/${id}`, data)
-      .then(() => queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] }))
+      .then(() => invalidateRequirementsLeasing())
       .catch((e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }));
   };
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/crm/requirements-leasing/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       setDeleteItem(null);
       toast({ title: "Requirement deleted" });
     },
@@ -667,7 +676,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
     try {
       const res = await apiRequest("POST", `/api/crm/bulk-import/${source}`);
       const data = await res.json();
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      invalidateRequirementsLeasing();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       const created = data.requirements?.created || 0;
@@ -1297,10 +1306,12 @@ function NewBrandDialog({ open, onOpenChange, isClientView }: { open: boolean; o
 
 function RequirementMatchesDialog({ requirement, onClose }: { requirement: any | null; onClose: () => void }) {
   const { data: matches = [], isLoading } = useQuery<any[]>({
-    queryKey: ["/api/requirements/matches", requirement?.id],
+    // Same endpoint family as the Fits column — one ranker, so the dialog
+    // agrees with the cell the user clicked to open it (r548).
+    queryKey: ["/api/crm/requirements-leasing", requirement?.id, "matches"],
     queryFn: async () => {
       if (!requirement?.id) return [];
-      const res = await fetch(`/api/requirements/matches/${requirement.id}?type=leasing`, {
+      const res = await fetch(`/api/crm/requirements-leasing/${requirement.id}/matches`, {
         credentials: "include",
         headers: getAuthHeaders(),
       });
@@ -1330,16 +1341,15 @@ function RequirementMatchesDialog({ requirement, onClose }: { requirement: any |
           ) : (
             <div className="space-y-1 p-1">
               {matches.map((unit: any) => (
-                <div key={unit.id} className="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50 transition-colors" data-testid={`match-unit-${unit.id}`}>
+                <div key={unit.unitId} className="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50 transition-colors" data-testid={`match-unit-${unit.unitId}`}>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium">{unit.unit_name}</p>
-                    <p className="text-xs text-muted-foreground">{unit.property_name || ""} · {unit.use_class || ""}</p>
-                    {unit.location && <p className="text-[10px] text-muted-foreground">{unit.location}</p>}
+                    <p className="text-sm font-medium">{unit.unitName}</p>
+                    <p className="text-xs text-muted-foreground truncate">{[unit.propertyName, unit.useClass].filter(Boolean).join(" · ")}</p>
                   </div>
                   <div className="text-right shrink-0 ml-2">
-                    {unit.sqft && <p className="text-xs font-medium">{Number(unit.sqft).toLocaleString()} sqft</p>}
-                    {unit.asking_rent && <p className="text-[10px] text-muted-foreground">£{Number(unit.asking_rent).toLocaleString()} psf</p>}
-                    <Badge variant="outline" className="text-[9px] mt-0.5">{unit.marketing_status || "Available"}</Badge>
+                    <p className="text-xs font-medium">{unit.sizeUnknown ? "size not recorded" : `${Number(unit.sqft).toLocaleString()} sq ft`}</p>
+                    {unit.askingRent && <p className="text-[10px] text-muted-foreground">£{Number(unit.askingRent).toLocaleString("en-GB")} p.a.</p>}
+                    <Badge variant="outline" className="text-[9px] mt-0.5">{unit.marketingStatus === "NEG" ? "Under offer" : "Available"}</Badge>
                   </div>
                 </div>
               ))}

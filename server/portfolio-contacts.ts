@@ -2,6 +2,15 @@ import type { PortfolioContactEntry, PortfolioContactRelationship, PortfolioCont
 
 type QueryClient = { query: (text: string, values?: any[]) => Promise<{ rows: any[] }> };
 
+// .marketing_status holds CODES (boot canonicaliser + canonicaliseUnitStatus
+// on write), and the code for Heads of Terms is HOT — the alternation used to
+// offer 'hots', which needs a trailing s, so the hottest pre-solicitors stage
+// matched NOTHING: absent from the tracker-parties group AND absent from the
+// "link the brand" gap list built to catch exactly that silence (r594).
+// 'hot' also still matches the legacy labels "HOTs" / "Heads of Terms".
+// One constant, read by every query that asks "is this unit in play".
+export const IN_PLAY_STATUS_RX = "'(neg|offer|hot|sol|exc|terms)'";
+
 export interface PortfolioContactEvidenceRow {
   entry_id: string;
   kind: PortfolioContactEntry["kind"];
@@ -105,7 +114,7 @@ export function buildPortfolioContactsQuery(companyId: string, scopeCompanyId: s
       LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id AND ts.property_id = d.property_id
     ),
     portfolio_units AS (SELECT a.* FROM available_units a JOIN props p ON p.id = a.property_id),
-    active_units AS (SELECT * FROM portfolio_units WHERE lower(COALESCE(marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'),
+    active_units AS (SELECT * FROM portfolio_units WHERE lower(COALESCE(marketing_status,'')) ~ ${IN_PLAY_STATUS_RX}),
     tracker_parties AS (
       SELECT a.id AS tracker_id, co.id AS company_id, 'recorded brand'::text AS source
       FROM active_units a JOIN crm_companies co ON co.id = a.tenant_company_id

@@ -167,14 +167,20 @@ export async function generateBriefDocument(briefId: string): Promise<{
   }
 
   // Footer on every page
+  // Footer sits below the bottom margin — writing there makes pdfkit add a
+  // blank page unless the margin is zeroed for the stamp (r601; same recipe
+  // as server/deal-report.ts).
   const range = doc.bufferedPageRange();
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
+    const oldBottom = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
     doc.fontSize(7).fillColor(BGP_MUTED).font("Helvetica")
       .text(
         `Bruce Gillingham Pollard — Confidential${brief.instructedDate ? `  ·  Instructed ${fmtDate(brief.instructedDate)}` : ""}  ·  Page ${i - range.start + 1} of ${range.count}`,
-        55, doc.page.height - 46, { width: pageWidth, align: "center" }
+        55, doc.page.height - 46, { width: pageWidth, align: "center", lineBreak: false }
       );
+    doc.page.margins.bottom = oldBottom;
   }
 
   doc.end();

@@ -47,6 +47,14 @@ import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
+import { legacyToCode, isExcludedLegacyStatus, TERMINAL_STATUSES } from "@shared/deal-status";
+import { isTaskOverdue } from "@shared/task-due";
+import { amlBlockForDealStatus } from "./deal-gates";
+import { leaseExpiringSoonSql } from "@shared/lease-expiry";
+
+// Told to the model verbatim when the AML gate refuses a deal-status move, so
+// chat gives the same way out the HTTP 409 does rather than just failing.
+const AML_OVERRIDE_HINT = "MLRO override: set the deal's AML check completed = YES to bypass.";
 
 const CHATBGP_MODEL = "claude-sonnet-4-6";      // Lightweight sub-tasks only — the main chat defaults to Fable 5 via chatbgp-model-router.
 const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning fallback tier.
@@ -1882,9 +1890,9 @@ export async function getCrmContext(): Promise<string> {
           WHERE r.deal_id IS NULL ORDER BY r.created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT au.unit_name, au.use_class, au.sqft, au.asking_rent, au.marketing_status, au.location, p.name as property_name 
           FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id 
-          WHERE au.marketing_status IN ('Available', 'Under Offer') ORDER BY au.created_at DESC LIMIT 20`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
+          WHERE au.marketing_status IN ('AVA', 'NEG') ORDER BY au.created_at DESC LIMIT 20`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT asset_name as name, status, guide_price, address, asset_type, board_type FROM investment_tracker 
-          WHERE status NOT IN ('Dead', 'Withdrawn') ORDER BY updated_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
+          WHERE status NOT IN ('WIT', 'Dead', 'Withdrawn') ORDER BY updated_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT tenant, name, area_location, headline_rent, rent_psf_nia, nia_sqft, use_class, transaction_type, lease_start 
           FROM crm_comps WHERE verified = true ORDER BY created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
       ]);
@@ -1934,7 +1942,12 @@ export async function getCrmContext(): Promise<string> {
     ctx += `Total: ${properties.length} properties, ${deals.length} deals, ${companies.length} companies, ${contacts.length} contacts\n`;
 
     if (deals.length > 0) {
-      const activeDeals = deals.filter((d: any) => !["Dead", "Withdrawn", "Leasing Comps", "Investment Comps"].includes(d.status));
+      // crm_deals.status holds CODES, so the old "Dead"/"Withdrawn" labels
+      // matched nothing and withdrawn deals — and their fees — were counted
+      // in the firm's pipeline total. The comps pseudo-statuses ARE stored
+      // literally, so they keep their own check.
+      const activeDeals = deals.filter((d: any) => !isExcludedLegacyStatus(d.status)
+        && !TERMINAL_STATUSES.includes(legacyToCode(d.status) as any));
       const byStage: Record<string, number> = {};
       let totalFees = 0;
       for (const d of activeDeals) {
@@ -2113,7 +2126,7 @@ export async function getClientCrmContext(scopeCompanyId: string): Promise<strin
                   (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS tenant_name
            FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
            WHERE (d.property_id = ANY($1) OR d.landlord_id = $2)
-             AND d.status NOT IN ('Dead','Withdrawn')
+             AND d.status NOT IN ('WIT')
            ORDER BY d.updated_at DESC LIMIT 40`,
           [propIds, scopeCompanyId]
         ).catch(() => ({ rows: [] })),
@@ -2189,7 +2202,7 @@ export async function clientScopedCrmSearch(scopeCompanyId: string, rawQuery: st
             (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS "tenantName"
      FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
      WHERE (d.property_id IN (${scopedPropsSql}) OR d.landlord_id = $1)
-       AND d.status NOT IN ('Dead','Withdrawn')
+       AND d.status NOT IN ('WIT')
        AND (${like("d.name", 2)} OR ${like("p.name", 2 + patterns.length)})
      LIMIT 15`,
     [scopeCompanyId, ...patterns, ...patterns]
@@ -2608,7 +2621,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
           groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
           dealType: { type: "string", description: "Type: New Letting, Lease Acquisition, Lease Disposal, Lease Renewal, Rent Review, Sale, Purchase" },
-          status: { type: "string", description: "Status of the deal" },
+          status: { type: "string", description: "Deal status CODE: OPP, REP, SPEC, LIVE, AVA, NEG, HOT, SOL, EXC, COM, WIT (Opportunity, Reporting, Speculative, Live, Available, Negotiating, HOTs, Solicitors, Exchanged, Completed, Withdrawn). INV (Invoiced) is system-set when a Xero invoice syncs — never set it here. A label is canonicalised to its code; anything outside this vocabulary is stored verbatim and the deal drops out of the WIP report and the firm's forecast." },
           pricing: { type: "number", description: "Deal value/price in GBP" },
           fee: { type: "number", description: "BGP fee in GBP" },
           rentPa: { type: "number", description: "Annual rent in GBP" },
@@ -2631,9 +2644,9 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           id: { type: "string", description: "The deal ID (UUID)" },
           name: { type: "string" },
           team: { type: "array", items: { type: "string" } },
-          groupName: { type: "string" },
+          groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc. — NOT the status code." },
           dealType: { type: "string" },
-          status: { type: "string" },
+          status: { type: "string", description: "Deal status CODE — same vocabulary as create_deal: OPP, REP, SPEC, LIVE, AVA, NEG, HOT, SOL, EXC, COM, WIT." },
           pricing: { type: "number" },
           fee: { type: "number" },
           rentPa: { type: "number" },
@@ -2784,7 +2797,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         properties: {
           id: { type: "string", description: "The investment tracker item ID (UUID)" },
           assetName: { type: "string" },
-          status: { type: "string", description: "e.g. Reporting, Under Offer, Exchanged, Completed, Withdrawn, On Hold" },
+          status: { type: "string", description: "One of: Reporting, Speculative, Live, Available, Negotiating, Solicitors, Exchanged, Completed, Withdrawn, Invoiced. Anything else is stored but cannot be filtered on the tracker." },
           client: { type: "string" },
           clientContact: { type: "string" },
           vendor: { type: "string" },
@@ -3325,7 +3338,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         properties: {
           assetName: { type: "string", description: "Property/asset name" },
           address: { type: "string", description: "Full address" },
-          status: { type: "string", description: "e.g. Reporting, Under Offer, Exchanged, Completed, Withdrawn, On Hold" },
+          status: { type: "string", description: "One of: Reporting, Speculative, Live, Available, Negotiating, Solicitors, Exchanged, Completed, Withdrawn, Invoiced. Anything else is stored but cannot be filtered on the tracker." },
           boardType: { type: "string", enum: ["Purchases", "Sales"], description: "Which board" },
           client: { type: "string", description: "Client name" },
           clientContact: { type: "string" },
@@ -3370,7 +3383,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           condition: { type: "string", description: "e.g. Shell & Core, Cat A, Fitted" },
           location: { type: "string", description: "Region/location: Clapham, East Anglia, Ireland, London, Midlands, N. Ireland, National, North East, North West, Scotland, South East, South West, Wales" },
           availableDate: { type: "string", description: "When available" },
-          marketingStatus: { type: "string", description: "e.g. Available, Under Offer, Let, Withdrawn" },
+          marketingStatus: { type: "string", description: "Letting status CODE: OPP, AVA, NEG, HOT, SOL, EXC, COM, WIT, INV (Opportunity, Available, Negotiating, HOTs, Solicitors, Exchanged, Completed, Withdrawn, Invoiced). A label is canonicalised to its code; anything outside this vocabulary is stored verbatim and the unit drops off availability lists." },
           epcRating: { type: "string" },
           notes: { type: "string" },
           fee: { type: "number", description: "Fee percentage" },
@@ -3502,7 +3515,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           useClass: { type: "string" },
           condition: { type: "string" },
           availableDate: { type: "string" },
-          marketingStatus: { type: "string" },
+          marketingStatus: { type: "string", description: "Letting status CODE — same vocabulary as create_available_unit: OPP, AVA, NEG, HOT, SOL, EXC, COM, WIT, INV." },
           epcRating: { type: "string" },
           notes: { type: "string" },
           fee: { type: "number" },
@@ -4391,7 +4404,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "export_to_excel",
-      description: "Generate a downloadable Excel (.xlsx) file from structured table data. Use when you extract comps tables, schedules, financial data, or any tabular information from brochures, PDFs, or documents and the user wants it as an Excel file. Also use proactively when presenting tabular data that would be useful to download. Returns a download link.",
+      description: "Generate a downloadable Excel (.xlsx) file from structured table data. Use when you extract comps tables, schedules, financial data, or any tabular information from brochures, PDFs, or documents and the user wants it as an Excel file. Also use proactively when presenting tabular data that would be useful to download. Returns a download link.\n\nLIVE FORMULAS ARE SUPPORTED: any cell whose text starts with \"=\" is written as a real Excel formula, not as text — so a financial model calculates when opened (e.g. \"=B3*B4\", \"=SUM(C5:C12)\", \"=IRR(C13:M13)\", \"=Assumptions!B5\"). Sheet names containing a space need quoting exactly as Excel requires, e.g. \"='Asset Schedule'!D14\".\n\nCELL ADDRESSES — the sheet layout is fixed, so count rows before writing a reference: ROW 1 is a merged title bar carrying the sheet name, ROW 2 is your headers, and your first `rows` entry lands on ROW 3. Column A is your first header. So the third value in your second data row is cell C4.\n\nNUMBER FORMATS are otherwise guessed from the COLUMN HEADER, which is meaningless on a label/value layout. Where a cell needs a format the header cannot imply — a yield of 0.068, growth of 0.1 — pass it as a TYPED CELL instead of a string: {\"value\": 0.068, \"numFmt\": \"0.0%\"} renders 6.8%. A formula can be typed the same way: {\"formula\": \"=B3*C3\", \"numFmt\": \"£#,##0\"}.",
       parameters: {
         type: "object",
         properties: {
@@ -4404,7 +4417,29 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
               properties: {
                 name: { type: "string", description: "Sheet/tab name, e.g. 'Comps', 'Summary'" },
                 headers: { type: "array", items: { type: "string" }, description: "Column headers" },
-                rows: { type: "array", items: { type: "array", items: { type: "string" } }, description: "Array of rows, each row is an array of cell values as strings" },
+                rows: {
+                  type: "array",
+                  description: "Array of rows, each row is an array of cell values. A cell starting with \"=\" becomes a live Excel formula; remember row 1 is the title bar and row 2 the headers, so this array starts at row 3.",
+                  items: {
+                    type: "array",
+                    items: {
+                      anyOf: [
+                        { type: "string", description: "Plain cell text. A string starting with \"=\" is written as a live Excel formula." },
+                        { type: "number", description: "A numeric cell value." },
+                        {
+                          type: "object",
+                          description: "Typed cell — use when the cell needs an explicit number format.",
+                          properties: {
+                            formula: { type: "string", description: "Live Excel formula including the leading '=', e.g. '=B3*C3'." },
+                            value: { type: "number", description: "Numeric cell value." },
+                            text: { type: "string", description: "Text cell value." },
+                            numFmt: { type: "string", description: "Excel number format, e.g. '£#,##0', '0.00', '0.0%' (0.0% multiplies by 100, so 0.068 shows as 6.8%)." },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
               },
               required: ["name", "headers", "rows"],
             },
@@ -4785,7 +4820,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           ids: { type: "array", items: { type: "string" }, description: "Array of record IDs to update" },
           updates: {
             type: "object",
-            description: "Fields to update on all records. Keys are field names, values are the new values. e.g. { status: 'Under Offer', notes: 'Updated by ChatBGP' }",
+            description: "Fields to update on all records. Keys are field names, values are the new values. e.g. { status: 'SOL', notes: 'Updated by ChatBGP' }. On deals, `status` is a CODE — OPP, REP, SPEC, LIVE, AVA, NEG, HOT, SOL, EXC, COM, WIT — not a label like 'Under Offer'.",
           },
         },
         required: ["entityType", "ids", "updates"],
@@ -5120,7 +5155,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
                 niaSqft: { type: "number", description: "Net internal area (sq ft)" },
                 giaSqft: { type: "number", description: "Gross internal area (sq ft)" },
                 rateableValue: { type: "number", description: "Rateable value (£)" },
-                status: { type: "string", description: "e.g. Occupied, Vacant" },
+                status: { type: "string", description: "Unit state, from the schedule's own vocabulary: Vacant, Opportunity, In Negotiation, Under Offer, Occupied, Trading, Lease Event, Archived. Defaults to Occupied when a tenant is named, Vacant otherwise. Anything outside this set is stored but mirrors nowhere and sits in no KPI tile." },
                 comments: { type: "string", description: "Free-text commentary for this unit" },
               },
             },
@@ -6189,6 +6224,97 @@ export async function extractTextFromFile(filePath: string, originalName: string
 
 const CHAT_UPLOADS_DIR = path.join(process.cwd(), "ChatBGP", "chat-files");
 
+// r624/r626: the record-keyed WRITE tools a client ChatBGP session can reach.
+// Every one has a REST twin that resolves the company scope and refuses
+// outside it — and for the whole of `/api/crm` a client is read-only anyway
+// (the blanket gate at crm.ts:1444, with only contacts/deals PUT+POST
+// excepted) — but NEITHER dispatcher checked, so a client could rename a
+// rival landlord's company, edit their deals and contacts, re-price their
+// units, or log viewings/offers against their stock.
+// Keyed by the arg each tool reads the record id from, plus which scope rule
+// applies. `unitOrInvestment` resolves off the call's own entityType.
+type ClientScopedToolKind =
+  | "property" | "deal" | "company" | "contact" | "unit" | "investment"
+  | "requirement" | "unitOrInvestment";
+
+const CLIENT_SCOPED_TOOLS: Record<string, { arg: string; kind: ClientScopedToolKind }> = {
+  // property-keyed (r624)
+  add_property_imagery: { arg: "propertyId", kind: "property" },
+  update_property: { arg: "id", kind: "property" },
+  upsert_tenancy_schedule: { arg: "propertyId", kind: "property" },
+  create_available_unit: { arg: "propertyId", kind: "property" },
+  // company- / deal- / contact- / unit-keyed (r626)
+  update_deal: { arg: "id", kind: "deal" },
+  update_company: { arg: "id", kind: "company" },
+  update_contact: { arg: "id", kind: "contact" },
+  update_available_unit: { arg: "id", kind: "unit" },
+  update_requirement: { arg: "id", kind: "requirement" },
+  update_investment_tracker: { arg: "id", kind: "investment" },
+  log_viewing: { arg: "entityId", kind: "unitOrInvestment" },
+  log_offer: { arg: "entityId", kind: "unitOrInvestment" },
+};
+
+const CLIENT_SCOPED_TOOL_NOUN: Record<string, string> = {
+  property: "property", deal: "deal", company: "company", contact: "contact",
+  unit: "unit", investment: "investment record", requirement: "requirement",
+};
+
+// link_entities writes the JOIN TABLES the scope checks themselves read:
+// crm_company_properties is exactly what isPropertyInScope selects from, and
+// crm_company_deals what isDealInScope falls back to. Left open, a client
+// could link their own company to a rival's property and thereby make that
+// property in-scope everywhere — an escalation, not just a stray write. Both
+// ends must be in scope.
+const CLIENT_LINK_SCOPED_ENDS: Record<string, [ClientScopedToolKind, ClientScopedToolKind]> = {
+  "contact-deal": ["contact", "deal"],
+  "contact-property": ["contact", "property"],
+  "contact-requirement": ["contact", "requirement"],
+  "company-property": ["company", "property"],
+  "company-deal": ["company", "deal"],
+};
+
+// Returns the refusal text when this call is a client session reaching outside
+// its portfolio, else null. Fails CLOSED — a scope check that cannot answer
+// must not wave the write through. No-ops for the session-less `req` the email
+// processor passes, and for server-originated internal calls that forward a
+// client session (X-BGP-Internal).
+async function clientScopedToolBlock(fnName: string, fnArgs: any, req: any): Promise<string | null> {
+  const spec = CLIENT_SCOPED_TOOLS[fnName];
+  const isLink = fnName === "link_entities";
+  if ((!spec && !isLink) || !req) return null;
+  const { isInternalStaffRequest } = await import("./chatbgp-internal");
+  if (isInternalStaffRequest(req)) return null;
+  const { clientBlockedForProperty, clientBlockedForRecord } = await import("./company-scope");
+
+  const blockedFor = async (kind: ClientScopedToolKind, id: string): Promise<boolean> => {
+    try {
+      return kind === "property"
+        ? await clientBlockedForProperty(req, id)
+        : await clientBlockedForRecord(req, kind as any, id);
+    } catch { return true; }
+  };
+
+  if (isLink) {
+    const ends = CLIENT_LINK_SCOPED_ENDS[String(fnArgs?.linkType)];
+    if (!ends) return null;
+    const sourceId = fnArgs?.sourceId ? String(fnArgs.sourceId) : "";
+    const targetId = fnArgs?.targetId ? String(fnArgs.targetId) : "";
+    if (!sourceId || !targetId) return null;
+    if (await blockedFor(ends[0], sourceId) || await blockedFor(ends[1], targetId)) {
+      return "That link would join a record outside your portfolio, so it can't be created from this account. Contact your BGP team if it should be.";
+    }
+    return null;
+  }
+
+  const recordId = fnArgs?.[spec.arg] ? String(fnArgs[spec.arg]) : "";
+  if (!recordId) return null;
+  const kind: ClientScopedToolKind = spec.kind === "unitOrInvestment"
+    ? (fnArgs?.entityType === "investment" ? "investment" : "unit")
+    : spec.kind;
+  if (!(await blockedFor(kind, recordId))) return null;
+  return `That ${CLIENT_SCOPED_TOOL_NOUN[kind]} isn't part of your portfolio, so it can't be changed from this account. Contact your BGP team if it should be.`;
+}
+
 export async function executeCrmToolRaw(
   fnName: string,
   fnArgs: any,
@@ -6196,6 +6322,9 @@ export async function executeCrmToolRaw(
 ): Promise<{ data: any; action?: any }> {
   const { db } = await import("./db");
   const { pool } = await import("./db");
+
+  const scopeBlock = await clientScopedToolBlock(fnName, fnArgs, req);
+  if (scopeBlock) return { data: { success: false, error: scopeBlock } };
 
   if (fnName === "search_crm") {
     const searchScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
@@ -6369,14 +6498,18 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "update_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
     const { id, ...updates } = fnArgs;
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
-    await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
+    // Same AML counterparty gate PUT /api/crm/deals/:id enforces for SOL+.
+    const amlBlocked = await amlBlockForDealStatus(id, cleanUpdates.status);
+    if (amlBlocked) {
+      return { data: { success: false, error: amlBlocked, code: "AML_GATE_FAILED", hint: AML_OVERRIDE_HINT } };
+    }
+    // Through the write boundary — see create_deal above.
+    await storage.updateCrmDeal(id, cleanUpdates);
     return { data: { success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "deal", id } };
   }
 
@@ -6468,8 +6601,10 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "create_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const [created] = await db.insert(crmDeals).values({
+    // storage.createCrmDeal is the write boundary that canonicalises
+    // `status` — the model hands us a free-text status and a label stored
+    // in that codes column drops the deal out of the firm's WIP hero.
+    const created = await storage.createCrmDeal({
       name: fnArgs.name,
       propertyId: fnArgs.propertyId || null,
       landlordId: fnArgs.landlordId || null,
@@ -6485,7 +6620,7 @@ export async function executeCrmToolRaw(
       rentPa: fnArgs.rentPa,
       totalAreaSqft: fnArgs.totalAreaSqft,
       comments: fnArgs.comments,
-    }).returning();
+    } as any);
     return { data: { success: true, action: "created", entity: "deal", id: created.id, name: created.name }, action: { type: "crm_created", entityType: "deal", id: created.id } };
   }
 
@@ -6543,14 +6678,16 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "create_available_unit") {
-    const { availableUnits } = await import("@shared/schema");
-    const [created] = await db.insert(availableUnits).values({
+    // Through storage.createAvailableUnit, not a raw insert: marketing_status
+    // is a CODES column, and the helper is what canonicalises whatever the
+    // model passes and supplies "AVA" when it passes nothing (r595).
+    const created = await storage.createAvailableUnit({
       propertyId: fnArgs.propertyId, unitName: fnArgs.unitName, floor: fnArgs.floor,
       sqft: fnArgs.sqft, askingRent: fnArgs.askingRent, ratesPa: fnArgs.ratesPa,
       serviceChargePa: fnArgs.serviceChargePa, useClass: fnArgs.useClass, condition: fnArgs.condition,
-      location: fnArgs.location, availableDate: fnArgs.availableDate, marketingStatus: fnArgs.marketingStatus || "Available",
+      location: fnArgs.location, availableDate: fnArgs.availableDate, marketingStatus: fnArgs.marketingStatus,
       epcRating: fnArgs.epcRating, notes: fnArgs.notes, fee: fnArgs.fee,
-    }).returning();
+    });
     return { data: { success: true, action: "created", entity: "available unit", id: created.id, name: created.unitName }, action: { type: "crm_created", entityType: "unit", id: created.id } };
   }
 
@@ -6723,8 +6860,11 @@ export async function executeCrmToolRaw(
     if (!existing.length) return { data: { success: false, error: `No available unit found with ID "${id}"` } };
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) { if (v !== undefined && v !== null) cleanUpdates[k] = v; }
-    cleanUpdates.updatedAt = new Date();
-    await db.update(availableUnits).set(cleanUpdates).where(eq(availableUnits.id, id));
+    // Through storage.updateAvailableUnit, not a raw db.update: marketing_status
+    // is a CODES column and the storage helper is the single write boundary
+    // that canonicalises a label the model passes (same reason as
+    // create_available_unit above).
+    await storage.updateAvailableUnit(id, cleanUpdates);
     return { data: { success: true, action: "updated", entity: "available unit", id, name: existing[0].unitName, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "unit", id } };
   }
 
@@ -6969,7 +7109,7 @@ export async function executeCrmToolRaw(
       };
       const mapping = tableMap[linkType];
       if (!mapping) return { data: { success: false, error: `Unknown link type "${linkType}"` } };
-      await pool.query(`INSERT INTO ${mapping.table} (id, ${mapping.col1}, ${mapping.col2}) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM ${mapping.table} WHERE ${mapping.col1} = $2 AND ${mapping.col2} = $3)`, [linkId, sourceId, targetId]);
+      await pool.query(`INSERT INTO ${mapping.table} (id, ${mapping.col1}, ${mapping.col2}) SELECT $1::text, $2::text, $3::text WHERE NOT EXISTS (SELECT 1 FROM ${mapping.table} WHERE ${mapping.col1} = $2::text AND ${mapping.col2} = $3::text)`, [linkId, sourceId, targetId]);
       return { data: { success: true, action: "linked", linkType, sourceId, targetId } };
     } catch (err: any) {
       return { data: { success: false, error: err.message } };
@@ -9107,6 +9247,10 @@ export async function executeCrmToolRaw(
       const wb = new ExcelJS.Workbook();
       wb.creator = "Bruce Gillingham Pollard";
       wb.created = new Date();
+      // Formulas are written without cached results, so ask Excel to calculate
+      // on open — otherwise readers that don't recalculate for themselves
+      // (Sheets, Numbers, Excel Online, preview panes) show blanks.
+      wb.calcProperties.fullCalcOnLoad = true;
 
       const DARK_BLUE = "FF082861";
       const WHITE_FONT: any = { name: "Calibri", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
@@ -9119,7 +9263,19 @@ export async function executeCrmToolRaw(
         right: { style: "thin", color: { argb: "FFDDDFE0" } },
       };
 
-      const sheets = fnArgs.sheets as Array<{ name: string; headers: string[]; rows: string[][] }>;
+      const sheets = fnArgs.sheets as Array<{ name: string; headers: string[]; rows: any[][] }>;
+
+      // A cell written as "=..." is a live formula, not text. ExcelJS only
+      // treats it as one if it arrives as { formula }, so mark those cells
+      // before the string coercion below flattens them (which is what made
+      // every generated model inert — the formulas rendered as literal text).
+      const FORMULA_START = /^=\s*[A-Za-z0-9_$'("[+\-]/;
+      const formulaOf = (val: any): string | null => {
+        if (typeof val !== "string") return null;
+        const t = val.trim();
+        if (t.length < 2 || !FORMULA_START.test(t)) return null;
+        return t.slice(1).trim();
+      };
 
       // The model occasionally passes objects/arrays as cell values despite the
       // string[][] schema — those stringify to "[object Object]" in the workbook.
@@ -9139,7 +9295,25 @@ export async function executeCrmToolRaw(
 
       for (const sheet of sheets) {
         sheet.headers = (sheet.headers || []).map(cellText);
-        sheet.rows = (sheet.rows || []).map((r) => (r || []).map(cellText));
+        // A cell may also arrive TYPED — { formula } for a live formula, or
+        // { value, numFmt } where the model knows the format the guess below
+        // cannot infer (a yield of 0.068 under a column headed "Value").
+        const typedCell = (cell: any): any => {
+          if (cell && typeof cell === "object" && !Array.isArray(cell)) {
+            const numFmt = typeof cell.numFmt === "string" && cell.numFmt ? cell.numFmt : undefined;
+            const f = typeof cell.formula === "string" ? formulaOf(cell.formula) : null;
+            if (f) return { formula: f, numFmt };
+            if (typeof cell.value === "number" && isFinite(cell.value)) return { value: cell.value, numFmt };
+            if (numFmt !== undefined || cell.value !== undefined || cell.text !== undefined) {
+              const raw = cellText(cell.value ?? cell.text);
+              const n = Number(raw);
+              return raw.trim() !== "" && !isNaN(n) ? { value: n, numFmt } : { text: raw, numFmt };
+            }
+          }
+          const formula = formulaOf(cell);
+          return formula ? { formula } : cellText(cell);
+        };
+        sheet.rows = (sheet.rows || []).map((r) => (r || []).map(typedCell));
         const safeSheetName = sheet.name.replace(/[\\/*?\[\]:]/g, "").substring(0, 31) || "Sheet1";
         const ws = wb.addWorksheet(safeSheetName);
 
@@ -9163,16 +9337,26 @@ export async function executeCrmToolRaw(
         const colWidths = sheet.headers.map((h: string, i: number) => {
           let maxLen = h.length;
           for (const row of sheet.rows) {
-            if (row[i] && String(row[i]).length > maxLen) maxLen = String(row[i]).length;
+            const cell: any = row[i];
+            // A formula cell's width comes from its likely result, not its source
+            const len = cell && typeof cell === "object"
+              ? (cell.formula ? 14 : String(cell.value ?? cell.text ?? "").length)
+              : cell ? String(cell).length : 0;
+            if (len > maxLen) maxLen = len;
           }
           return Math.min(maxLen + 3, 50);
         });
         ws.columns = colWidths.map(w => ({ width: w }));
 
         sheet.rows.forEach((rowData, rowIdx) => {
-          const row = ws.addRow(rowData.map(val => {
+          const row = ws.addRow(rowData.map((val: any) => {
+            if (val && typeof val === "object") {
+              if (val.formula) return { formula: val.formula };
+              if (val.value !== undefined) return val.value;
+              if (val.text !== undefined) return val.text;
+            }
             const num = Number(val);
-            if (val && !isNaN(num) && val.trim() !== "") return num;
+            if (val && !isNaN(num) && String(val).trim() !== "") return num;
             return val;
           }));
           row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
@@ -9181,13 +9365,24 @@ export async function executeCrmToolRaw(
             cell.border = THIN_BORDER;
             if (rowIdx % 2 === 1) cell.fill = ALT_ROW_FILL;
 
-            if (typeof cell.value === "number") {
+            const spec: any = (rowData as any[])[colNumber - 1];
+            const isFormulaCell = cell.value && typeof cell.value === "object" && (cell.value as any).formula;
+            if (spec && typeof spec === "object" && spec.numFmt) {
+              cell.numFmt = spec.numFmt;
+            } else if (typeof cell.value === "number" || isFormulaCell) {
               const headerText = (sheet.headers[colNumber - 1] || "").toLowerCase();
+              const num = typeof cell.value === "number" ? cell.value : null;
               if (headerText.includes("£") || headerText.includes("rent") || headerText.includes("price") || headerText.includes("value") || headerText.includes("cost") || headerText.includes("income")) {
-                cell.numFmt = '£#,##0';
-              } else if (headerText.includes("%") || headerText.includes("percent") || headerText.includes("yield")) {
-                cell.numFmt = '0.0"%"';
-              } else if (cell.value > 100) {
+                // A header-guessed currency format must never swallow the number
+                // it formats: '£#,##0' renders an exit yield of 0.068 as "£0",
+                // and a label/value sheet headed "Value" hits that on EVERY row.
+                if (num === null || Math.abs(num) >= 1) cell.numFmt = '£#,##0';
+              } else if (headerText.includes("%") || headerText.includes("percent") || headerText.includes("yield") || headerText.includes("irr")) {
+                // A decimal is a real proportion — 0.1 must render as 10.0%, not
+                // "0.1%". Only a value already scaled to percentage points gets
+                // the literal suffix.
+                cell.numFmt = num !== null && Math.abs(num) > 1 ? '0.0"%"' : '0.0%';
+              } else if (num !== null && num > 100) {
                 cell.numFmt = '#,##0';
               }
             }
@@ -9195,7 +9390,12 @@ export async function executeCrmToolRaw(
           row.height = 18;
         });
 
-        ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2 + sheet.rows.length, column: sheet.headers.length } };
+        // An autofilter belongs on a table, not on a calculating model — sorting
+        // a cashflow by column would scramble every relative reference in it.
+        const hasFormulas = sheet.rows.some((r: any[]) => (r || []).some((c: any) => c && typeof c === "object" && c.formula));
+        if (!hasFormulas) {
+          ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2 + sheet.rows.length, column: sheet.headers.length } };
+        }
         ws.views = [{ state: "frozen", ySplit: 2 }];
       }
 
@@ -9488,7 +9688,7 @@ export async function executeCrmToolRaw(
         idx++;
       }
       if (fnArgs.expiringWithinMonths) {
-        conditions.push(`u.lease_expiry IS NOT NULL AND u.lease_expiry <= NOW() + INTERVAL '${Math.min(parseInt(fnArgs.expiringWithinMonths), 60)} months'`);
+        conditions.push(leaseExpiringSoonSql('u.lease_expiry', Math.min(parseInt(fnArgs.expiringWithinMonths), 60)));
       }
       conditions.push(`(c.ai_disabled IS NULL OR c.ai_disabled = FALSE)`);
       const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -10131,13 +10331,39 @@ Be thorough — include every unit row you can classify, across all properties i
         const col = allowedFields[key];
         if (col) {
           sets.push(`${col} = $${paramIdx}`);
-          params.push(value);
+          // `crm_deals.status` is the canonical CODES column read by raw SQL
+          // code predicates (the firm's WIP hero). This is the one write door
+          // that can't go through storage.updateCrmDeal, so canonicalise the
+          // model's free-text status here — 100 deals at a time otherwise
+          // land as labels no code predicate matches. Unknown values are
+          // stored verbatim (legacyToCode returns null), so 'ARCH' survives.
+          params.push(
+            entityType === "deal" && key === "status" && typeof value === "string"
+              ? legacyToCode(value) || value
+              : value,
+          );
           paramIdx++;
         }
       }
       if (sets.length === 0) return { data: { error: "No valid fields to update" } };
-      const placeholders = ids.map((_, i) => `$${paramIdx + i}`).join(", ");
-      params.push(...ids);
+      // Same AML counterparty gate the deals-list bulk update enforces: a
+      // bulk move into SOL+ is still a move into SOL+. Blocked ids are left
+      // alone and named back, so 99 clean deals still go through.
+      let targetIds = ids;
+      const amlBlocked: { id: string; reason: string }[] = [];
+      if (entityType === "deal" && typeof updates.status === "string") {
+        for (const id of ids) {
+          const reason = await amlBlockForDealStatus(id, updates.status);
+          if (reason) amlBlocked.push({ id, reason });
+        }
+        const blockedIds = new Set(amlBlocked.map(b => b.id));
+        targetIds = ids.filter(id => !blockedIds.has(id));
+        if (targetIds.length === 0) {
+          return { data: { success: false, error: "AML gate failed on every deal", code: "AML_GATE_FAILED", blocked: amlBlocked, hint: AML_OVERRIDE_HINT } };
+        }
+      }
+      const placeholders = targetIds.map((_, i) => `$${paramIdx + i}`).join(", ");
+      params.push(...targetIds);
       const result = await pool.query(
         `UPDATE ${table} SET ${sets.join(", ")} WHERE id IN (${placeholders})`,
         params
@@ -10150,6 +10376,7 @@ Be thorough — include every unit row you can classify, across all properties i
           requestedCount: ids.length,
           fieldsUpdated: Object.keys(updates),
           message: `Updated ${result.rowCount} ${entityType}(s)`,
+          ...(amlBlocked.length > 0 ? { blockedByAml: amlBlocked, hint: AML_OVERRIDE_HINT } : {}),
         },
       };
     } catch (err: any) {
@@ -10669,7 +10896,7 @@ Be thorough — include every unit row you can classify, across all properties i
            ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, due_date ASC NULLS LAST`,
           [userId]
         );
-        const overdue = result.rows.filter((t: any) => t.due_date && new Date(t.due_date) < new Date());
+        const overdue = result.rows.filter((t: any) => isTaskOverdue(t.due_date));
         return {
           data: {
             tasks: result.rows.map((t: any) => ({
@@ -11990,6 +12217,9 @@ export async function handleCrmToolCall(
     }
   } catch {}
 
+  const scopeBlock = await clientScopedToolBlock(fnName, fnArgs, req);
+  if (scopeBlock) return { handled: true, response: { reply: scopeBlock } };
+
   const summaryHelper = async (toolResult: any) => {
     const summaryMessages = [
       ...completionOptions.messages,
@@ -12005,8 +12235,10 @@ export async function handleCrmToolCall(
   };
 
   if (fnName === "create_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const [created] = await db.insert(crmDeals).values({
+    // storage.createCrmDeal is the write boundary that canonicalises
+    // `status` — the model hands us a free-text status and a label stored
+    // in that codes column drops the deal out of the firm's WIP hero.
+    const created = await storage.createCrmDeal({
       name: fnArgs.name,
       propertyId: fnArgs.propertyId || null,
       landlordId: fnArgs.landlordId || null,
@@ -12022,20 +12254,24 @@ export async function handleCrmToolCall(
       rentPa: fnArgs.rentPa,
       totalAreaSqft: fnArgs.totalAreaSqft,
       comments: fnArgs.comments,
-    }).returning();
+    } as any);
     const reply = await summaryHelper({ success: true, action: "created", entity: "deal", record: { id: created.id, name: created.name } });
     return { handled: true, response: { reply: reply || `Deal "${created.name}" created.`, action: { type: "crm_created", entityType: "deal", id: created.id, name: created.name } } };
   }
 
   if (fnName === "update_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
     const { id, ...updates } = fnArgs;
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
-    await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
+    // Same AML counterparty gate PUT /api/crm/deals/:id enforces for SOL+.
+    const amlBlocked = await amlBlockForDealStatus(id, cleanUpdates.status);
+    if (amlBlocked) {
+      return { handled: true, response: { reply: `${amlBlocked} ${AML_OVERRIDE_HINT}` } };
+    }
+    // Through the write boundary — see create_deal above.
+    await storage.updateCrmDeal(id, cleanUpdates);
     const reply = await summaryHelper({ success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) });
     return { handled: true, response: { reply: reply || `Deal updated.`, action: { type: "crm_updated", entityType: "deal", id } } };
   }
@@ -12235,8 +12471,9 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "create_available_unit") {
-    const { availableUnits } = await import("@shared/schema");
-    const [created] = await db.insert(availableUnits).values({
+    // Same door as the handler above — route the write through the helper so
+    // the codes column never takes a label (r595).
+    const created = await storage.createAvailableUnit({
       propertyId: fnArgs.propertyId,
       unitName: fnArgs.unitName,
       floor: fnArgs.floor,
@@ -12247,11 +12484,11 @@ export async function handleCrmToolCall(
       useClass: fnArgs.useClass,
       condition: fnArgs.condition,
       availableDate: fnArgs.availableDate,
-      marketingStatus: fnArgs.marketingStatus || "Available",
+      marketingStatus: fnArgs.marketingStatus,
       epcRating: fnArgs.epcRating,
       notes: fnArgs.notes,
       fee: fnArgs.fee,
-    }).returning();
+    });
     const reply = await summaryHelper({ success: true, action: "created", entity: "available unit", record: { id: created.id, name: created.unitName } });
     return { handled: true, response: { reply: reply || `Available unit "${created.unitName}" created.`, action: { type: "crm_created", entityType: "unit", id: created.id, name: created.unitName } } };
   }
@@ -12268,8 +12505,9 @@ export async function handleCrmToolCall(
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
-    cleanUpdates.updatedAt = new Date();
-    await db.update(availableUnits).set(cleanUpdates).where(eq(availableUnits.id, id));
+    // Codes column — go through the canonicalising write boundary, not a
+    // raw db.update (see the desktop twin).
+    await storage.updateAvailableUnit(id, cleanUpdates);
     const reply = await summaryHelper({ success: true, action: "updated", entity: "available unit", id, name: existing[0].unitName, fields: Object.keys(cleanUpdates) });
     return { handled: true, response: { reply: reply || `Unit "${existing[0].unitName}" updated.`, action: { type: "crm_updated", entityType: "unit", id } } };
   }
@@ -12490,15 +12728,15 @@ export async function handleCrmToolCall(
       if (linkType === "contact-deal") {
         const check = await pool.query(`SELECT id FROM crm_contacts WHERE id = $1`, [sourceId]);
         if (!check.rows.length) return { handled: true, response: { reply: `Contact with ID "${sourceId}" not found.` } };
-        await pool.query(`INSERT INTO crm_contact_deals (id, contact_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_deals WHERE contact_id = $2 AND deal_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_deals (id, contact_id, deal_id) SELECT $1::text, $2::text, $3::text WHERE NOT EXISTS (SELECT 1 FROM crm_contact_deals WHERE contact_id = $2::text AND deal_id = $3::text)`, [linkId, sourceId, targetId]);
       } else if (linkType === "contact-property") {
-        await pool.query(`INSERT INTO crm_contact_properties (id, contact_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_properties WHERE contact_id = $2 AND property_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_properties (id, contact_id, property_id) SELECT $1::text, $2::text, $3::text WHERE NOT EXISTS (SELECT 1 FROM crm_contact_properties WHERE contact_id = $2::text AND property_id = $3::text)`, [linkId, sourceId, targetId]);
       } else if (linkType === "contact-requirement") {
-        await pool.query(`INSERT INTO crm_contact_requirements (id, contact_id, requirement_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_requirements WHERE contact_id = $2 AND requirement_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_requirements (id, contact_id, requirement_id) SELECT $1::text, $2::text, $3::text WHERE NOT EXISTS (SELECT 1 FROM crm_contact_requirements WHERE contact_id = $2::text AND requirement_id = $3::text)`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-property") {
-        await pool.query(`INSERT INTO crm_company_properties (id, company_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_properties WHERE company_id = $2 AND property_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_company_properties (id, company_id, property_id) SELECT $1::text, $2::text, $3::text WHERE NOT EXISTS (SELECT 1 FROM crm_company_properties WHERE company_id = $2::text AND property_id = $3::text)`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-deal") {
-        await pool.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_deals WHERE company_id = $2 AND deal_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) SELECT $1::text, $2::text, $3::text WHERE NOT EXISTS (SELECT 1 FROM crm_company_deals WHERE company_id = $2::text AND deal_id = $3::text)`, [linkId, sourceId, targetId]);
       } else {
         return { handled: true, response: { reply: `Unknown link type "${linkType}".` } };
       }
@@ -14857,9 +15095,9 @@ export function setupChatBGPRoutes(app: Express) {
             const [propRows, dealRows, unitRows, reqRows] = await Promise.all([
               pool.query(`SELECT p.*, 
                 (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id) as unit_count,
-                (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'Available') as available_count
+                (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'AVA') as available_count
                 FROM crm_properties p WHERE p.id = $1`, [thread.propertyId]),
-              pool.query(`SELECT name, status, deal_type, fee, team FROM crm_deals WHERE property_id = $1 AND status NOT IN ('Dead','Withdrawn') ORDER BY created_at DESC LIMIT 10`, [thread.propertyId]).catch(() => ({ rows: [] })),
+              pool.query(`SELECT name, status, deal_type, fee, team FROM crm_deals WHERE property_id = $1 AND status NOT IN ('WIT') ORDER BY created_at DESC LIMIT 10`, [thread.propertyId]).catch(() => ({ rows: [] })),
               pool.query(`SELECT unit_name, use_class, sqft, asking_rent, marketing_status FROM available_units WHERE property_id = $1 ORDER BY unit_name LIMIT 15`, [thread.propertyId]).catch(() => ({ rows: [] })),
               pool.query(`SELECT r.name, r.use, r.size, c.name as company_name FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON r.company_id = c.id WHERE r.requirement_locations IS NOT NULL AND EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = $1 AND (r.requirement_locations && ARRAY[p.name])) LIMIT 5`, [thread.propertyId]).catch(() => ({ rows: [] })),
             ]);

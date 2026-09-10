@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { daysUntilDay } from "@shared/day-overdue";
 
 interface AssetBrief {
   property: { id: string; name: string; postcode: string | null; last_updated_at: string };
@@ -1169,9 +1170,18 @@ const PRIORITY_DOT: Record<string, string> = {
   low: "bg-slate-300",
 };
 
+// The sixth reader of user_tasks.due_date — missed when r610 censused the
+// other five. due_date is a TIMESTAMP every writer stamps as a DAY (midnight),
+// so measuring the gap from Date.NOW() shifted every label a whole day from
+// 00:01 onwards: a task due TODAY read "1d overdue" in rose, tomorrow's read
+// "today", and the day after tomorrow's read "tomorrow". Clients see and edit
+// this card on their own property (board parity, Woody 2026-08-03), so the
+// false red was on the landlord's screen too. Count whole calendar days —
+// same rule as My Tasks (tasks.tsx) and the dashboard (r615).
 function dueLabel(iso: string | null): { label: string; tone: "overdue" | "soon" | "later" | null } {
   if (!iso) return { label: "", tone: null };
-  const days = Math.floor((new Date(iso).getTime() - Date.now()) / 86_400_000);
+  const days = daysUntilDay(iso);
+  if (days == null) return { label: "", tone: null };
   if (days < 0) return { label: `${Math.abs(days)}d overdue`, tone: "overdue" };
   if (days === 0) return { label: "today", tone: "soon" };
   if (days === 1) return { label: "tomorrow", tone: "soon" };

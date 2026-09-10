@@ -139,7 +139,7 @@ export function UnifiedAddUnitDialog({ open, onOpenChange, mode, fixedPropertyId
           askingRent: form.askingRent ? parseFloat(form.askingRent) : null,
           useClass: form.useClass || null,
           epcRating: form.epcRating || null,
-          marketingStatus: "Available",
+          marketingStatus: "AVA",
           notes: form.notes || null,
         };
         const res = await apiRequest("POST", "/api/available-units", body);
