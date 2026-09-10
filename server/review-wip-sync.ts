@@ -22,6 +22,33 @@
 
 import { pool } from "./db";
 
+/**
+ * staff_profiles.salary_current is a mixed bag: the salary-change flow writes
+ * genuine pence, but the bulk import that populated it wrote POUNDS (Tom
+ * Cater 65000 = £65,000, Charlotte 145000 = £145,000). Read as pence, a
+ * £65,000 salary produced a £163 monthly review target instead of £16,250
+ * (Woody, 2026-09-10: "this target number isnt coreect? it should be 3 times
+ * the salary pro rata").
+ *
+ * No real BGP salary is under £10,000, and £10,000 in pence is 1,000,000 —
+ * so anything below that is pounds. Self-correcting either way, so the
+ * numbers stay right if the column is normalised later.
+ */
+export function salaryToPence(raw: number | string | null | undefined): number | null {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n < 1_000_000 ? Math.round(n * 100) : Math.round(n);
+}
+
+/** 3× salary, pro-rated to the period the review covers. */
+export function targetPenceFor(kind: string, salaryPence: number | null): number | null {
+  if (!salaryPence) return null;
+  const annual = salaryPence * 3;
+  if (kind === "monthly") return Math.round(annual / 12);
+  if (kind === "midyear") return Math.round(annual / 2);
+  return annual;
+}
+
 export interface SyncReviewResult {
   reviewId: string;
   userId: string;
@@ -35,6 +62,16 @@ export interface SyncReviewResult {
     // Monthly 1:1 only
     wip_actual_pence?: number;
     exchanged_actual?: number;
+  };
+  wipSummary?: {
+    negotiating_pence: number;
+    hots_pence: number;
+    solicitors_pence: number;
+    exchanged_pence: number;
+    invoiced_pence: number;
+    exchanged_deals: number;
+    wip_total_pence: number;
+    salary_pence: number | null;
   };
   matchedAllocations: number;
 }
@@ -51,6 +88,14 @@ interface MonthlyTotals {
   wipGbp: number;
   exchangedDeals: number;
   matchCount: number;
+  // Live book split by stage — what the 1:1 actually talks through
+  // (Woody, 2026-09-10: "we just need the WIP summaries ie in solicitors,
+  // neg, invoiced, exchanged"). Fee value the agent is credited with on
+  // deals sitting at each stage right now.
+  negGbp: number;
+  solGbp: number;
+  hotGbp: number;
+  excGbp: number;
 }
 
 function agentNameVariants(userName: string): string[] {
@@ -70,7 +115,7 @@ function agentNameVariants(userName: string): string[] {
 async function getAgentMonthlyTotals(userName: string, year: number, month: number): Promise<MonthlyTotals> {
   const from = new Date(Date.UTC(year, month - 1, 1)).toISOString();
   const to = new Date(Date.UTC(year, month, 1)).toISOString();
-  const r = await pool.query<{ invoiced_gbp: string; wip_gbp: string; exchanged_deals: string; match_count: string }>(
+  const r = await pool.query<{ invoiced_gbp: string; wip_gbp: string; exchanged_deals: string; match_count: string; neg_gbp: string; sol_gbp: string; hot_gbp: string; exc_gbp: string }>(
     `WITH normalised AS (
        SELECT
          a.deal_id,
@@ -91,7 +136,11 @@ async function getAgentMonthlyTotals(userName: string, year: number, month: numb
        COALESCE(SUM(gbp) FILTER (WHERE status = 'INV' AND invoiced_on >= $2::timestamptz AND invoiced_on < $3::timestamptz), 0)::text AS invoiced_gbp,
        COALESCE(SUM(gbp) FILTER (WHERE status IN ('AVA','NEG','HOT','SOL','EXC','COM')), 0)::text AS wip_gbp,
        COUNT(DISTINCT deal_id) FILTER (WHERE exchanged_at >= $2::timestamptz AND exchanged_at < $3::timestamptz)::text AS exchanged_deals,
-       COUNT(*)::text AS match_count
+       COUNT(*)::text AS match_count,
+       COALESCE(SUM(gbp) FILTER (WHERE status = 'NEG'), 0)::text AS neg_gbp,
+       COALESCE(SUM(gbp) FILTER (WHERE status = 'SOL'), 0)::text AS sol_gbp,
+       COALESCE(SUM(gbp) FILTER (WHERE status = 'HOT'), 0)::text AS hot_gbp,
+       COALESCE(SUM(gbp) FILTER (WHERE status IN ('EXC','COM')), 0)::text AS exc_gbp
      FROM normalised
      WHERE agent_norm = ANY($1::text[])`,
     [agentNameVariants(userName), from, to],
@@ -102,6 +151,10 @@ async function getAgentMonthlyTotals(userName: string, year: number, month: numb
     wipGbp: Number(row?.wip_gbp) || 0,
     exchangedDeals: Number(row?.exchanged_deals) || 0,
     matchCount: Number(row?.match_count) || 0,
+    negGbp: Number(row?.neg_gbp) || 0,
+    solGbp: Number(row?.sol_gbp) || 0,
+    hotGbp: Number(row?.hot_gbp) || 0,
+    excGbp: Number(row?.exc_gbp) || 0,
   };
 }
 
@@ -180,10 +233,12 @@ async function getAgentAllocationTotals(userName: string): Promise<AllocationTot
  * Persists to the staff_reviews row.
  */
 export async function syncReviewFromWip(reviewId: string): Promise<SyncReviewResult | null> {
-  const r = await pool.query<{ id: string; user_id: string; current_salary_pence: string | null; name: string | null; kind: string; period: string }>(
-    `SELECT sr.id, sr.user_id, sr.current_salary_pence, sr.kind, sr.period, u.name
+  const r = await pool.query<{ id: string; user_id: string; current_salary_pence: string | null; salary_current: string | null; name: string | null; kind: string; period: string }>(
+    `SELECT sr.id, sr.user_id, sr.current_salary_pence, sr.kind, sr.period, u.name,
+            sp.salary_current
        FROM staff_reviews sr
        LEFT JOIN users u ON u.id = sr.user_id
+       LEFT JOIN staff_profiles sp ON sp.user_id = sr.user_id
       WHERE sr.id = $1`,
     [reviewId],
   );
@@ -202,19 +257,28 @@ export async function syncReviewFromWip(reviewId: string): Promise<SyncReviewRes
     const year = Number(monthly[1]);
     const month = Number(monthly[2]);
     const totals = await getAgentMonthlyTotals(row.name, year, month);
-    const salaryPence = row.current_salary_pence ? Number(row.current_salary_pence) : null;
-    const monthlyTargetPence = salaryPence ? Math.round((salaryPence * 3) / 12) : null;
+    // Target is a FORMULA (3× salary pro rata), not a typed field, so it is
+    // recomputed every sync — the old COALESCE pinned the first (wrong)
+    // value forever. Read the live HR salary rather than the row's snapshot.
+    const salaryPence = salaryToPence(row.salary_current ?? row.current_salary_pence);
+    const monthlyTargetPence = targetPenceFor("monthly", salaryPence);
     const achievedPence = Math.round(totals.invoicedGbp * 100);
     const wipPence = Math.round(totals.wipGbp * 100);
     await pool.query(
       `UPDATE staff_reviews
-          SET fees_target_pence   = COALESCE(fees_target_pence, $1::bigint),
-              fees_achieved_pence = $2::bigint,
-              wip_actual_pence    = $3::bigint,
-              exchanged_actual    = $4::integer,
+          SET fees_target_pence          = $1::bigint,
+              fees_achieved_pence        = $2::bigint,
+              wip_actual_pence           = $3::bigint,
+              exchanged_actual           = $4::integer,
+              pipeline_negotiating_pence = $6::bigint,
+              pipeline_under_offer_pence = $7::bigint,
+              current_salary_pence       = COALESCE($8::bigint, current_salary_pence),
               updated_at = now()
         WHERE id = $5`,
-      [monthlyTargetPence, achievedPence, wipPence, totals.exchangedDeals, reviewId],
+      [
+        monthlyTargetPence, achievedPence, wipPence, totals.exchangedDeals, reviewId,
+        Math.round(totals.negGbp * 100), Math.round(totals.solGbp * 100), salaryPence,
+      ],
     );
     console.log(
       `[review-wip-sync] ${row.name} 1:1 ${row.period}: invoiced=£${totals.invoicedGbp} wip=£${totals.wipGbp} exchanged=${totals.exchangedDeals} (${totals.matchCount} allocations matched)`,
@@ -230,13 +294,25 @@ export async function syncReviewFromWip(reviewId: string): Promise<SyncReviewRes
         wip_actual_pence: wipPence,
         exchanged_actual: totals.exchangedDeals,
       },
+      // The stage strip the 1:1 reads off — live book by stage, plus what
+      // was invoiced in the review month. Computed, never typed.
+      wipSummary: {
+        negotiating_pence: Math.round(totals.negGbp * 100),
+        hots_pence: Math.round(totals.hotGbp * 100),
+        solicitors_pence: Math.round(totals.solGbp * 100),
+        exchanged_pence: Math.round(totals.excGbp * 100),
+        invoiced_pence: achievedPence,
+        exchanged_deals: totals.exchangedDeals,
+        wip_total_pence: wipPence,
+        salary_pence: salaryPence,
+      },
       matchedAllocations: totals.matchCount,
     };
   }
 
   const totals = await getAgentAllocationTotals(row.name);
-  const salaryPence = row.current_salary_pence ? Number(row.current_salary_pence) : null;
-  const targetPence = salaryPence ? salaryPence * 3 : null;
+  const salaryPence = salaryToPence(row.salary_current ?? row.current_salary_pence);
+  const targetPence = targetPenceFor(row.kind, salaryPence);
   const achievedPence = Math.round(totals.inv * 100);
   const underOfferPence = Math.round(totals.sol * 100);
   const negotiatingPence = Math.round(totals.neg * 100);
@@ -247,9 +323,10 @@ export async function syncReviewFromWip(reviewId: string): Promise<SyncReviewRes
             fees_achieved_pence        = $2::bigint,
             pipeline_under_offer_pence = $3::bigint,
             pipeline_negotiating_pence = $4::bigint,
+            current_salary_pence       = COALESCE($6::bigint, current_salary_pence),
             updated_at = now()
       WHERE id = $5`,
-    [targetPence, achievedPence, underOfferPence, negotiatingPence, reviewId],
+    [targetPence, achievedPence, underOfferPence, negotiatingPence, reviewId, salaryPence],
   );
 
   console.log(

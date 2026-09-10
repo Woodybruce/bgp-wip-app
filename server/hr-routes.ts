@@ -3552,15 +3552,18 @@ Return ONLY JSON.`,
         `SELECT sp.salary_current FROM staff_profiles sp WHERE sp.user_id = $1`,
         [req.params.userId]
       );
-      const salary = profile.rows[0]?.salary_current || null;
+      const { salaryToPence, targetPenceFor } = await import("./review-wip-sync");
+      const salaryPence = salaryToPence(profile.rows[0]?.salary_current);
 
       const r = await pool.query(
         `INSERT INTO staff_reviews (user_id, period, kind, review_date, current_salary_pence, fees_target_pence, status)
          VALUES ($1, $2, $3, $4, $5, $6, 'draft')
          ON CONFLICT (user_id, period) DO UPDATE SET kind = EXCLUDED.kind, updated_at = now()
          RETURNING *`,
-        // Annual target is 3 × salary; a monthly 1:1 gets one twelfth of it.
-        [req.params.userId, period, kind, reviewDate || null, salary, salary ? (kind === "monthly" ? Math.round((salary * 3) / 12) : salary * 3) : null]
+        // 3 × salary, pro-rated to the period. salary_current arrives in
+        // pounds from the bulk import and pence from the salary-change flow,
+        // so normalise before the maths (see salaryToPence).
+        [req.params.userId, period, kind, reviewDate || null, salaryPence, targetPenceFor(kind, salaryPence)]
       );
       res.json(r.rows[0]);
     } catch (e: any) {

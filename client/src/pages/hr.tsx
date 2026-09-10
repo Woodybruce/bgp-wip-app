@@ -3273,11 +3273,17 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   // Pull target / achieved / pipeline figures straight from the WIP
   // report — target = 3 × salary, achieved = INV fees, under offer = SOL,
   // negotiating = NEG. Maps the user's name to fee allocations server-side.
+  // Stage summaries for the open 1:1, straight off the WIP report. Held in
+  // state rather than on the review row — they're a live read, not an answer
+  // someone typed.
+  const [wipSummary, setWipSummary] = useState<any | null>(null);
   const syncFromWip = useMutation({
-    mutationFn: async ({ id }: { id: string }) =>
+    mutationFn: async ({ id }: { id: string; silent?: boolean }) =>
       apiRequest("POST", `/api/hr/reviews/${id}/sync-from-wip`).then(r => r.json()),
-    onSuccess: (data: any) => {
+    onSuccess: (data: any, vars) => {
       queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] });
+      if (data?.wipSummary) setWipSummary(data.wipSummary);
+      if (vars?.silent) return;
       const gbp = (pence: any) => ((Number(pence) || 0) / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 });
       if (data?.kind === "monthly") {
         toast({
@@ -3291,7 +3297,8 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
         description: `Achieved £${gbp(data?.changes?.fees_achieved_pence)}, Under offer £${gbp(data?.changes?.pipeline_under_offer_pence)}, Negotiating £${gbp(data?.changes?.pipeline_negotiating_pence)}`,
       });
     },
-    onError: (e: any) => {
+    onError: (e: any, vars) => {
+      if (vars?.silent) return;
       toast({
         title: "WIP sync failed",
         description: e?.message?.slice(0, 240) || "",
@@ -3345,6 +3352,19 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
 
   const editing = reviews.find(r => r.id === editingId);
   const isMonthly = editing?.kind === "monthly";
+
+  // The numbers on a 1:1 are all derived — the fee target is 3× salary pro
+  // rata and the actuals/stage summaries come off the WIP report — so they
+  // pull automatically when the form opens rather than behind a button
+  // (Woody, 2026-09-10: "this should auto pull from the wip remove the sync
+  // from WIP buttion"). Once per open, per review.
+  const autoPulled = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!editingId || !editing) return;
+    if (autoPulled.current.has(editingId)) return;
+    autoPulled.current.add(editingId);
+    syncFromWip.mutate({ id: editingId, silent: true });
+  }, [editingId, editing?.id]);
   const fieldValue = (key: string): string => {
     if (drafts[key] !== undefined && drafts[key] !== null) return String(drafts[key]);
     const v = editing ? (editing as any)[key] : null;
@@ -3464,17 +3484,13 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                     {aiDraft.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />} AI draft
                   </Button>
                 )}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-xs"
-                  onClick={() => syncFromWip.mutate({ id: editing.id })}
-                  disabled={syncFromWip.isPending}
-                  title={isMonthly ? "Fill this month's actuals from the WIP report — fees invoiced, current WIP figure, deals exchanged" : "Pull target (3× salary) and fees-achieved / under-offer / negotiating from the WIP report"}
-                  data-testid="button-sync-from-wip"
-                >
-                  {syncFromWip.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <BarChart3 className="w-3.5 h-3.5 mr-1" />} Sync from WIP
-                </Button>
+                {/* No Sync-from-WIP button — the figures pull themselves when
+                    the form opens. The spinner shows while that happens. */}
+                {syncFromWip.isPending && (
+                  <span className="inline-flex items-center text-[11px] text-muted-foreground px-1" data-testid="wip-autopull-status">
+                    <Loader2 className="w-3 h-3 mr-1 animate-spin" /> Pulling from WIP…
+                  </span>
+                )}
                 {editing.status === "draft" && isOwn && (
                   <Button size="sm" className="h-7 text-xs" onClick={() => saveNow({ status: "submitted" })}>
                     Submit to manager
@@ -3540,6 +3556,10 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 </div>
               </div>
 
+              {/* Fees is the KPI — target vs actual. Everything else the 1:1
+                  needs is the WIP book by stage, which is a summary rather
+                  than a target/actual pair (Woody, 2026-09-10). Both sides
+                  are derived, so both are read-only. */}
               <div className="rounded-md border overflow-hidden">
                 <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center bg-muted/40 px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
                   <div>Key performance indicators</div>
@@ -3548,33 +3568,44 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 </div>
                 <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center gap-2 px-3 py-2 border-t">
                   <div className="text-sm">Fees (£)</div>
-                  <MoneyInput value={moneyOrNull(editing.fees_target_pence)} onCommit={(n) => saveNow({ fees_target_pence: toPence(n) })} className="h-8" />
-                  <MoneyInput value={moneyOrNull(editing.fees_achieved_pence)} onCommit={(n) => saveNow({ fees_achieved_pence: toPence(n) })} className="h-8" />
+                  <div className="text-sm font-mono tabular-nums" data-testid="review-fees-target">
+                    {editing.fees_target_pence
+                      ? fmtSalary(editing.fees_target_pence)
+                      : <span className="text-[11px] italic text-muted-foreground">Set salary in HR</span>}
+                  </div>
+                  <div className="text-sm font-mono tabular-nums" data-testid="review-fees-actual">
+                    {fmtSalary(editing.fees_achieved_pence || 0)}
+                  </div>
                 </div>
-                <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center gap-2 px-3 py-2 border-t">
-                  <div className="text-sm">WIP figure (£)</div>
-                  <MoneyInput value={moneyOrNull(editing.wip_target_pence)} onCommit={(n) => saveNow({ wip_target_pence: toPence(n) })} className="h-8" />
-                  <MoneyInput value={moneyOrNull(editing.wip_actual_pence)} onCommit={(n) => saveNow({ wip_actual_pence: toPence(n) })} className="h-8" />
+                <div className="border-t bg-muted/20 px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  WIP summary — live from the WIP report
                 </div>
-                <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center gap-2 px-3 py-2 border-t">
-                  <div className="text-sm">Exchanged deals</div>
-                  <Input
-                    type="number" inputMode="numeric" min={0}
-                    value={fieldValue("exchanged_target")}
-                    onChange={e => queueField("exchanged_target", e.target.value === "" ? null : Number(e.target.value))}
-                    onBlur={() => void flush()}
-                    className="h-8 text-sm"
-                  />
-                  <Input
-                    type="number" inputMode="numeric" min={0}
-                    value={fieldValue("exchanged_actual")}
-                    onChange={e => queueField("exchanged_actual", e.target.value === "" ? null : Number(e.target.value))}
-                    onBlur={() => void flush()}
-                    className="h-8 text-sm"
-                  />
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-4 gap-y-2 px-3 py-2.5">
+                  {([
+                    ["Negotiating", wipSummary?.negotiating_pence ?? editing.pipeline_negotiating_pence],
+                    ["HOTs", wipSummary?.hots_pence],
+                    ["Solicitors", wipSummary?.solicitors_pence ?? editing.pipeline_under_offer_pence],
+                    ["Exchanged", wipSummary?.exchanged_pence],
+                    ["Invoiced", wipSummary?.invoiced_pence ?? editing.fees_achieved_pence],
+                  ] as Array<[string, number | null | undefined]>).map(([label, pence]) => (
+                    <div key={label} data-testid={`review-wip-${label.toLowerCase()}`}>
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+                      <div className="text-sm font-mono tabular-nums">
+                        {pence == null ? "—" : fmtSalary(pence)}
+                      </div>
+                      {label === "Exchanged" && (wipSummary?.exchanged_deals ?? editing.exchanged_actual) ? (
+                        <div className="text-[10px] text-muted-foreground">
+                          {wipSummary?.exchanged_deals ?? editing.exchanged_actual} this month
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
                 </div>
               </div>
-              <p className="text-[10px] text-muted-foreground">Actuals come from the WIP report via <span className="font-medium">Sync from WIP</span> (fees invoiced this month, your current WIP figure, deals exchanged this month). Targets are yours to set — the fee target defaults to a twelfth of 3× salary.</p>
+              <p className="text-[10px] text-muted-foreground">
+                All figures pull from the WIP report automatically. Fee target is <span className="font-medium">3× salary pro rata</span>
+                {wipSummary?.salary_pence ? <> ({fmtSalary(wipSummary.salary_pence)} salary → {fmtSalary(Math.round((wipSummary.salary_pence * 3) / 12))} a month)</> : null}; Invoiced is this month, the other stages are the current book.
+              </p>
             </div>
             ) : isFeeEarner(person.title) ? (
             <div className="grid grid-cols-2 gap-2">
