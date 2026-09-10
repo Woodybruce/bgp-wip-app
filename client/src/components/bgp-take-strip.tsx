@@ -8,7 +8,7 @@ import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary"
 type Tab = "brand" | "uk" | "activity" | "intel";
 
 const TAB_LABELS: Record<Tab, string> = {
-  brand: "BGP take — who they are",
+  brand: "BGP take — next action",
   uk: "BGP take — covenant verdict",
   activity: "BGP take — relationship read",
   intel: "BGP take — what's changed",
@@ -34,7 +34,7 @@ export function BgpTakeStrip({ companyId, tab, intro, entities }: { companyId: s
   const { toast } = useToast();
   const queryKey = ["/api/brand", companyId, "ai-take", tab];
 
-  const { data, isLoading, isError, error } = useQuery<{ text: string; cached: boolean; generatedAt: number }>({
+  const { data, isLoading, isError, error } = useQuery<{ text: string; cached: boolean; generatedAt: number; pending?: boolean; stale?: boolean }>({
     queryKey,
     queryFn: async () => {
       const r = await fetch(`/api/brand/${companyId}/ai-take/${tab}`, {
@@ -73,28 +73,30 @@ export function BgpTakeStrip({ companyId, tab, intro, entities }: { companyId: s
         </>
       )}
       <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-muted-foreground">
           <Sparkles className="w-3 h-3 text-primary" /> {TAB_LABELS[tab]}
+          {!!data?.generatedAt && <span className="font-normal">· {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}{data.stale ? " · Update pending" : ""}</span>}
         </div>
         <Button
           size="sm"
           variant="ghost"
-          className="h-5 w-5 p-0"
+          className="min-h-8 min-w-8 p-1"
           onClick={() => refresh.mutate()}
           disabled={refresh.isPending || isLoading}
           title="Refresh AI take"
+          aria-label="Refresh BGP take"
         >
           <RefreshCw className={`w-3 h-3 ${refresh.isPending ? "animate-spin" : ""}`} />
         </Button>
       </div>
       {isLoading ? (
-        <p className="text-xs text-muted-foreground italic">Generating BGP take…</p>
+        <div className="space-y-2 animate-pulse" aria-label="Loading saved BGP take"><div className="h-3 rounded bg-muted" /><div className="h-3 w-3/4 rounded bg-muted" /></div>
       ) : isError ? (
         <p className="text-xs text-muted-foreground italic">{friendlyTakeError((error as any)?.message)}</p>
       ) : data?.text ? (
         <AiCommentary text={data.text} entities={entities} />
       ) : (
-        <p className="text-xs text-muted-foreground italic">No take available.</p>
+        <p className="text-sm text-muted-foreground">The BGP brief has not been prepared yet. Saved facts remain available above.</p>
       )}
     </div>
   );

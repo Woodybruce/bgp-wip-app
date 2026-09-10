@@ -3672,6 +3672,15 @@ app.use("/api/branding/assets", express.static(
       const { isClientRequestUser } = await import("./company-scope");
       if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
       const isWrite = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+      // New brand preparation reads and official-site edits follow the same
+      // visible-brand boundary as the record itself.
+      const brandPreparation = resourcePath.match(/^\/api\/brand\/([^/]+)\/(preparation|identity)$/i);
+      if (brandPreparation && ((req.method === "GET" && brandPreparation[2] === "preparation") || (req.method === "POST" && brandPreparation[2] === "identity"))) {
+        const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+        const scope = await resolveCompanyScope(req);
+        if (scope && (scope === brandPreparation[1] || await isClientVisibleBrand(brandPreparation[1], scope))) return next();
+        return res.status(403).json({ error: "Not available for this account" });
+      }
       if (isWrite) {
         // Blocked sub-paths win even over an allowed parent (e.g. task import
         // rides on Microsoft, which stays sealed for clients).

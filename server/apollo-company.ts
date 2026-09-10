@@ -19,6 +19,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { assessBrandProviderMatch, brandProviderCacheResult, getBrandIdentity, stampBrandProviderPayload } from "./brand-identity";
 
 const router = Router();
 
@@ -29,12 +30,6 @@ async function ensureTable(): Promise<void> {
       payload JSONB NOT NULL,
       fetched_at TIMESTAMP DEFAULT now()
     )`);
-}
-
-function apolloDomainFor(row: any): string | null {
-  const raw = row.domain || row.domain_url || row.website || null;
-  if (!raw) return null;
-  return String(raw).replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").toLowerCase() || null;
 }
 
 export async function fetchApolloOrganization(domain: string): Promise<any | null> {
@@ -68,7 +63,8 @@ export function normaliseApolloOrg(org: any): any {
     name: org.name || null,
     domain: org.primary_domain || null,
     linkedinUrl: org.linkedin_url || null,
-    employees: org.estimated_num_employees ?? null,
+    employees: Number.isFinite(Number(org.estimated_num_employees)) && Number(org.estimated_num_employees) > 0
+      ? Math.round(Number(org.estimated_num_employees)) : null,
     // Growth fields are plan-dependent — keep whatever arrives.
     headcountGrowth6m: org.organization_headcount_six_month_growth ?? org.headcount_six_month_growth ?? null,
     headcountGrowth12m: org.organization_headcount_twelve_month_growth ?? org.headcount_twelve_month_growth ?? null,
@@ -80,6 +76,7 @@ export function normaliseApolloOrg(org: any): any {
     latestFundingStage: org.latest_funding_stage || null,
     latestFundingDate: org.latest_funding_round_date || null,
     hq: [org.city, org.state, org.country].filter(Boolean).join(", ") || null,
+    country: org.country || org.country_code || null,
     retailLocations: org.retail_location_count ?? null,
     description: (org.short_description || "").slice(0, 500) || null,
   };
@@ -96,87 +93,99 @@ export async function autoRefreshApolloIfStale(companyId: string): Promise<void>
   if (last && Date.now() - last < 6 * 3600_000) return;
   autoKickFired.set(companyId, Date.now());
   await ensureTable();
-  const co = (await pool.query(
-    `SELECT company_type, domain, domain_url, website FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
-  if (!co || !apolloDomainFor(co)) return;
+  const co = (await pool.query(`SELECT * FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+  const identity = getBrandIdentity(co);
+  if (!co || identity.status !== "verified") return;
   const type = (co.company_type || "").toLowerCase();
   if (["landlord", "landlord/freeholder", "investor", "reit", "developer", "fund"].includes(type)) return;
   const row = (await pool.query(
-    `SELECT fetched_at FROM brand_apollo_data WHERE company_id = $1`, [companyId])).rows[0];
-  if (row?.fetched_at && Date.now() - new Date(row.fetched_at).getTime() < 30 * 864e5) return;
+    `SELECT payload, fetched_at FROM brand_apollo_data WHERE company_id = $1`, [companyId])).rows[0];
+  if (row?.payload?._brandIdentity?.fingerprint === identity.fingerprint
+    && row?.fetched_at && Date.now() - new Date(row.fetched_at).getTime() < 30 * 864e5) return;
   await refreshApolloCompany(companyId);
-  console.log(`[apollo-company] auto-fetched firmographics for ${companyId}`);
 }
 
-async function refreshApolloCompany(companyId: string): Promise<any> {
+export async function refreshApolloCompany(companyId: string): Promise<any> {
   await ensureTable();
-  const co = (await pool.query(
-    `SELECT id, name, domain, domain_url, website, employee_count, industry, linkedin_url, founded_year
-       FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+  const co = (await pool.query(`SELECT * FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
   if (!co) throw new Error("Company not found");
-  const domain = apolloDomainFor(co);
-  if (!domain) throw new Error("No website/domain on the company record — add one first");
-
-  const org = await fetchApolloOrganization(domain);
-  if (!org) throw new Error(`Apollo has no organization for ${domain}`);
+  const identity = getBrandIdentity(co);
+  if (identity.status !== "verified" || !identity.domain) {
+    return { status: "blocked", payload: null, reason: identity.reason, gapsFilled: 0 };
+  }
+  const org = await fetchApolloOrganization(identity.domain);
   const norm = normaliseApolloOrg(org);
-
-  await pool.query(
-    `INSERT INTO brand_apollo_data (company_id, payload, fetched_at) VALUES ($1, $2, now())
-     ON CONFLICT (company_id) DO UPDATE SET payload = $2, fetched_at = now()`,
-    [companyId, JSON.stringify(norm)]);
-
-  // Fill gaps only — a human-entered value always wins.
-  const gaps: string[] = [];
-  const params: any[] = [];
-  const set = (col: string, val: any) => { params.push(val); gaps.push(`${col} = $${params.length}`); };
-  if (!co.employee_count && norm.employees) set("employee_count", norm.employees);
-  if (!co.industry && norm.industry) set("industry", norm.industry);
-  if (!co.linkedin_url && norm.linkedinUrl) set("linkedin_url", norm.linkedinUrl);
-  if (!co.founded_year && norm.foundedYear) set("founded_year", norm.foundedYear);
-  if (gaps.length) {
-    params.push(companyId);
-    await pool.query(`UPDATE crm_companies SET ${gaps.join(", ")} WHERE id = $${params.length}`, params);
-  }
-
-  // Momentum → brand_signals facts (replace previous apollo-sourced rows so
-  // refreshes never stack duplicates). Expansion Intelligence picks these up
-  // through its normal loadFacts() path.
-  await pool.query(`DELETE FROM brand_signals WHERE brand_company_id = $1 AND source = 'apollo'`, [companyId]);
-  const growth = norm.headcountGrowth12m ?? norm.headcountGrowth6m;
-  if (growth != null && Math.abs(Number(growth)) >= 0.05) {
-    const pct = Math.round(Number(growth) * 100);
-    const window = norm.headcountGrowth12m != null ? "12 months" : "6 months";
-    await pool.query(
-      `INSERT INTO brand_signals (id, brand_company_id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated, confidence)
-       VALUES (gen_random_uuid(), $1, 'hiring', $2, $3, 'apollo', now(), $4, $5, false, 'high')`,
-      [companyId,
-       `Headcount ${pct >= 0 ? "up" : "down"} ${Math.abs(pct)}% over ${window}${norm.employees ? ` (now ~${norm.employees} staff)` : ""}`,
-       `Apollo firmographics for ${domain}`,
-       Math.abs(pct) >= 25 ? "major" : "moderate",
-       pct >= 0 ? "positive" : "negative"]);
-  }
-  if (norm.latestFundingDate && Date.now() - new Date(norm.latestFundingDate).getTime() < 365 * 864e5) {
-    await pool.query(
-      `INSERT INTO brand_signals (id, brand_company_id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated, confidence)
-       VALUES (gen_random_uuid(), $1, 'funding', $2, $3, 'apollo', $4, 'moderate', 'positive', false, 'high')`,
-      [companyId,
-       `${norm.latestFundingStage || "Funding round"}${norm.totalFunding ? ` — total raised ${norm.totalFunding}` : ""}`,
-       `Apollo firmographics for ${domain}`,
-       norm.latestFundingDate]);
-  }
-
-  return { payload: norm, fetchedAt: new Date().toISOString(), gapsFilled: gaps.length };
+  const match = assessBrandProviderMatch(co, norm);
+  const fetchedAt = new Date().toISOString();
+  const payload = stampBrandProviderPayload(norm, match, fetchedAt);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const current = (await client.query(`SELECT * FROM crm_companies WHERE id = $1 FOR UPDATE`, [companyId])).rows[0];
+    if (!current || getBrandIdentity(current).fingerprint !== identity.fingerprint) {
+      await client.query("ROLLBACK");
+      return { status: "blocked", payload: null, reason: "The brand identity changed during the lookup. Refresh again.", gapsFilled: 0 };
+    }
+    await client.query(
+      `INSERT INTO brand_apollo_data (company_id, payload, fetched_at) VALUES ($1, $2, now())
+       ON CONFLICT (company_id) DO UPDATE SET payload = $2, fetched_at = now()`,
+      [companyId, JSON.stringify(payload)]);
+    // Retire only this machine source. A rejected lookup must not leave its
+    // old high-confidence hiring/funding findings in the expansion score.
+    await client.query(`DELETE FROM brand_signals WHERE brand_company_id = $1 AND source = 'apollo'`, [companyId]);
+    let gapsFilled = 0;
+    if (match.status === "matched") {
+      const sets: string[] = [], values: any[] = [], provenance: Record<string, string> = {};
+      const blank = (value: any) => value == null || typeof value === "string" && !value.trim();
+      for (const [field, value] of Object.entries({ employee_count: norm.employees, industry: norm.industry,
+        linkedin_url: norm.linkedinUrl, founded_year: norm.foundedYear })) {
+        if (!blank(current[field]) || blank(value)) continue;
+        values.push(value); sets.push(`${field} = $${values.length}`);
+        provenance[field] = `apollo ${fetchedAt}`;
+      }
+      gapsFilled = sets.length;
+      if (sets.length) {
+        values.push(JSON.stringify(provenance));
+        sets.push(`ai_generated_fields = COALESCE(ai_generated_fields, '{}'::jsonb) || $${values.length}::jsonb`, `updated_at = now()`);
+        values.push(companyId);
+        await client.query(`UPDATE crm_companies SET ${sets.join(", ")} WHERE id = $${values.length}`, values);
+      }
+      const growth = norm.headcountGrowth12m ?? norm.headcountGrowth6m;
+      if (growth != null && Number.isFinite(Number(growth)) && Math.abs(Number(growth)) >= 0.05) {
+        const pct = Math.round(Number(growth) * 100);
+        const window = norm.headcountGrowth12m != null ? "12 months" : "6 months";
+        await client.query(
+          `INSERT INTO brand_signals (id, brand_company_id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated, confidence)
+           VALUES (gen_random_uuid(), $1, 'hiring', $2, $3, 'apollo', now(), $4, $5, false, 'high')`,
+          [companyId, `Headcount ${pct >= 0 ? "up" : "down"} ${Math.abs(pct)}% over ${window}${norm.employees ? ` (now ~${norm.employees} staff)` : ""}`,
+           `Apollo firmographics for ${identity.domain}`, Math.abs(pct) >= 25 ? "major" : "moderate", pct >= 0 ? "positive" : "negative"]);
+      }
+      const fundingAge = Date.now() - new Date(norm.latestFundingDate).getTime();
+      if (norm.latestFundingDate && fundingAge >= 0 && fundingAge < 365 * 864e5) {
+        await client.query(
+          `INSERT INTO brand_signals (id, brand_company_id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated, confidence)
+           VALUES (gen_random_uuid(), $1, 'funding', $2, $3, 'apollo', $4, 'moderate', 'positive', false, 'high')`,
+          [companyId, `${norm.latestFundingStage || "Funding round"}${norm.totalFunding ? ` — total raised ${norm.totalFunding}` : ""}`,
+           `Apollo firmographics for ${identity.domain}`, norm.latestFundingDate]);
+      }
+    }
+    await client.query("COMMIT");
+    return { status: match.status, payload: match.status === "matched" ? payload : null, reason: match.reason, fetchedAt, gapsFilled };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally { client.release(); }
 }
 
 router.get("/api/brand/:companyId/apollo-company", requireAuth, async (req: Request, res: Response) => {
   try {
     await ensureTable();
+    const companyId = String(req.params.companyId);
+    const company = (await pool.query(`SELECT * FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+    if (!company) return res.status(404).json({ error: "Company not found" });
     const row = (await pool.query(
-      `SELECT payload, fetched_at FROM brand_apollo_data WHERE company_id = $1`,
-      [String(req.params.companyId)])).rows[0];
-    if (!row) return res.json({ payload: null });
-    res.json({ payload: row.payload, fetchedAt: row.fetched_at });
+      `SELECT payload, fetched_at FROM brand_apollo_data WHERE company_id = $1`, [companyId])).rows[0];
+    res.json({ ...brandProviderCacheResult(company, row?.payload), fetchedAt: row?.fetched_at || null });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -186,5 +195,4 @@ router.post("/api/brand/:companyId/apollo-company/refresh", requireAuth, async (
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-export { refreshApolloCompany };
 export default router;

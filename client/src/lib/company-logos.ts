@@ -544,7 +544,7 @@ probeBrandLibrary();
 // Cache-buster bumped whenever we change /api/brand-logo behaviour, so
 // browsers don't keep serving stale 404 responses (the old endpoint cached
 // misses for 24h). Increment when the route logic changes.
-const LOGO_CACHE_BUSTER = "v=3";
+const LOGO_CACHE_BUSTER = "v=4";
 
 export function localBrandLogoUrl(name: string | null | undefined, domain?: string | null | undefined): string | null {
   const trimmed = (name || "").trim();

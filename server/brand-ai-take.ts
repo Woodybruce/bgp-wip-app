@@ -14,6 +14,7 @@ import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
 import { safeParseJSON } from "./utils/anthropic-client";
 import crypto from "crypto";
+import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -25,7 +26,6 @@ const MODEL_FALLBACK_2 = "claude-opus-4-7";
 
 type Tab = "brand" | "uk" | "activity" | "intel";
 
-const cache = new Map<string, { text: string; generatedAt: number; expiresAt: number; dataHash: string }>();
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // 7 days
 
 function dataHash(obj: any): string {
@@ -144,12 +144,12 @@ async function loadActivitySlice(companyId: string) {
 
 async function loadIntelSlice(companyId: string) {
   const company = await pool.query(
-    `SELECT name, hunter_flag, rollout_status, store_count FROM crm_companies WHERE id = $1`,
+    `SELECT * FROM crm_companies WHERE id = $1`,
     [companyId]
   );
   if (!company.rows[0]) return null;
   const signals = await pool.query(
-    `SELECT signal_type, headline, signal_date, magnitude, sentiment
+    `SELECT signal_type, headline, signal_date, magnitude, sentiment, source
        FROM brand_signals WHERE brand_company_id = $1
         AND ai_relevant IS DISTINCT FROM FALSE
       ORDER BY COALESCE(signal_date, created_at) DESC LIMIT 10`,
@@ -183,14 +183,14 @@ async function loadIntelSlice(companyId: string) {
     hunter_flagged: company.rows[0].hunter_flag,
     rollout: company.rows[0].rollout_status,
     store_count: company.rows[0].store_count,
-    signals: signals.rows,
+    signals: signals.rows.filter((signal: any) => signal.source !== "apollo" || !!publicBrandProviderPayload(company.rows[0], apollo.rows[0]?.payload)),
     news_headlines: news.rows.slice(0, 5).map((r: any) => ({
       title: r.title, source: r.source_name,
       days_ago: r.published_at ? Math.floor((Date.now() - new Date(r.published_at).getTime()) / 86400000) : null,
     })),
     api_feeds: {
-      apollo: apollo.rows[0] ? { ...apollo.rows[0].payload, days_old: daysOld(apollo.rows[0].fetched_at) } : "never fetched",
-      rocketreach: rocketreach.rows[0] ? { ...rocketreach.rows[0].payload, days_old: daysOld(rocketreach.rows[0].fetched_at) } : "never fetched",
+      apollo: publicBrandProviderPayload(company.rows[0], apollo.rows[0]?.payload) ? { ...publicBrandProviderPayload(company.rows[0], apollo.rows[0].payload), days_old: daysOld(apollo.rows[0].fetched_at) } : "no verified source match",
+      rocketreach: publicBrandProviderPayload(company.rows[0], rocketreach.rows[0]?.payload) ? { ...publicBrandProviderPayload(company.rows[0], rocketreach.rows[0].payload), days_old: daysOld(rocketreach.rows[0].fetched_at) } : "no verified source match",
       covenant: covenant.rows[0] ? { grade: covenant.rows[0].grade, days_old: daysOld(covenant.rows[0].computed_at) } : "no covenant report",
       crm_record: expansion.rows[0] || null,
     },
@@ -200,14 +200,10 @@ async function loadIntelSlice(companyId: string) {
 // ─── Prompt builders ────────────────────────────────────────────────────
 
 function brandPrompt(d: any): string {
-  // The company description renders directly ABOVE this take on the profile
-  // page — a take that re-describes the brand reads as duplication (Woody,
-  // 2026-08-25: WatchHouse take repeated the blurb word-for-ideas). The
-  // take's job is the read the description can't give: trajectory, angle,
-  // next move.
+  // This complements the factual overview with evidence and a next action.
   return `You are a senior BGP retail-property broker writing a one-paragraph internal read on a brand for our team.
 
-Data — NOTE: the "description" field is already displayed to the reader immediately above your paragraph. Treat it as context only; do NOT repeat, paraphrase or summarise it (no founding story, no positioning recap, no site count unless it's the evidence for your point):
+Data — NOTE: the "description" field is displayed separately in the factual overview. Treat it as context only; do NOT repeat, paraphrase or summarise it (no founding story, no positioning recap, no site count unless it's the evidence for your point):
 ${JSON.stringify(d, null, 2)}
 
 Write a single 60-90 word paragraph that adds what the description doesn't say:
@@ -312,7 +308,24 @@ async function callClaude(prompt: string): Promise<string> {
   throw new Error(`AI call failed: ${lastErr?.message || "unknown"}`);
 }
 
-async function generateTake(companyId: string, tab: Tab, force = false): Promise<{ text: string; cached: boolean; generatedAt: number }> {
+const takeKey = (companyId: string, tab: Tab) => `brand-prepared-take:${companyId}:${tab}`;
+
+export async function readPreparedBrandAiTake(companyId: string, tab: Tab) {
+  const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
+  if (!company) throw new Error("Company not found");
+  const identity = getBrandIdentity(company);
+  if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, pending: true, reason: identity.reason };
+  const saved = (await pool.query("SELECT value FROM system_settings WHERE key=$1", [takeKey(companyId, tab)])).rows[0]?.value;
+  if (!saved?.text || saved.fingerprint !== identity.fingerprint) return { text: "", cached: true, generatedAt: 0, pending: true };
+  return { text: saved.text as string, cached: true, generatedAt: Number(saved.generatedAt), stale: Date.now() > saved.expiresAt };
+}
+
+export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") {
+  const company = (await pool.query("SELECT *, updated_at::text AS brief_revision FROM crm_companies WHERE id=$1", [companyId])).rows[0];
+  if (!company) throw new Error("Company not found");
+  const identity = getBrandIdentity(company);
+  if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, reason: identity.reason };
+  if (company.ai_disabled) return { text: "", cached: true, generatedAt: 0, reason: "Brand enrichment is disabled" };
   let slice: any = null;
   let prompt = "";
   switch (tab) {
@@ -323,16 +336,25 @@ async function generateTake(companyId: string, tab: Tab, force = false): Promise
   }
   if (!slice) throw new Error("Company not found");
 
-  const hash = dataHash(slice);
-  const cacheKey = `${companyId}:${tab}`;
-  const cached = cache.get(cacheKey);
-  if (!force && cached && cached.dataHash === hash && Date.now() < cached.expiresAt) {
-    return { text: cached.text, cached: true, generatedAt: cached.generatedAt };
-  }
 
+  const hash = dataHash(slice);
+  const saved = (await pool.query("SELECT value FROM system_settings WHERE key=$1", [takeKey(companyId, tab)])).rows[0]?.value;
+  if (saved?.text && saved.fingerprint === identity.fingerprint && saved.dataHash === hash && Date.now() < saved.expiresAt) {
+    return { text: saved.text as string, cached: true, generatedAt: Number(saved.generatedAt) };
+  }
   const text = await callClaude(prompt);
   const now = Date.now();
-  cache.set(cacheKey, { text, dataHash: hash, generatedAt: now, expiresAt: now + CACHE_TTL_MS });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const current = (await client.query("SELECT *, updated_at::text AS brief_revision FROM crm_companies WHERE id=$1 FOR UPDATE", [companyId])).rows[0];
+    if (getBrandIdentity(current).fingerprint !== identity.fingerprint || getBrandIdentity(current).status !== "verified" || current.brief_revision !== company.brief_revision) throw new Error("Brand identity changed during research; the brief was not published");
+    await client.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ($1,$2::jsonb,now())
+      ON CONFLICT(key) DO UPDATE SET value=$2::jsonb,updated_at=now()`,
+    [takeKey(companyId, tab), JSON.stringify({ text, fingerprint: identity.fingerprint, dataHash: hash, generatedAt: now, expiresAt: now + CACHE_TTL_MS })]);
+    await client.query("COMMIT");
+  } catch (error) { await client.query("ROLLBACK"); throw error; }
+  finally { client.release(); }
   return { text, cached: false, generatedAt: now };
 }
 
@@ -344,9 +366,17 @@ router.get("/api/brand/:companyId/ai-take/:tab", requireAuth, async (req: Reques
     if (!["brand", "uk", "activity", "intel"].includes(tab)) {
       return res.status(400).json({ error: "invalid tab" });
     }
+    const companyId = String(req.params.companyId);
+    const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req);
+    if (scope && !await isClientVisibleBrand(companyId, scope)) return res.status(403).json({ error: "Access denied" });
     const force = req.query.refresh === "1" || req.query.refresh === "true";
-    const out = await generateTake(String(req.params.companyId), tab, force);
-    res.json(out);
+    if (force) {
+      const { prepareBrandStage } = await import("./brand-enrichment");
+      const result = await prepareBrandStage(companyId, "brief", true, { tab });
+      if (result.state.status !== "ready") return res.json({ text: "", cached: true, generatedAt: 0, pending: true, reason: result.state.reason || result.reason });
+    }
+    res.json(await readPreparedBrandAiTake(companyId, tab));
   } catch (err: any) {
     // No AI credentials = environment state, not a server fault.
     if (/api ?key|authentication|authToken/i.test(err.message || "")) {
@@ -479,8 +509,7 @@ router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Req
 
 // ─── Per-brand Intel refresh ─────────────────────────────────────────────
 // Fetches the brand's Google News RSS feed, inserts new articles, links them
-// as brand_signals, then busts the intel AI-take cache so the next GET
-// returns a fresh paragraph.
+// as brand_signals, then retires the persisted intel brief for explicit refresh.
 
 router.post("/api/brand/:companyId/refresh-intel", requireAuth, async (req: Request, res: Response) => {
   try {
@@ -591,8 +620,8 @@ router.post("/api/brand/:companyId/refresh-intel", requireAuth, async (req: Requ
     //     on the next intel refresh.
     const purged = await rescreenBrandSignals(companyId, name, industry).catch(() => 0);
 
-    // 6. Bust intel AI-take cache so next GET regenerates
-    cache.delete(`${companyId}:intel`);
+    // Retire stale commentary; a read never starts another model call.
+    await pool.query("DELETE FROM system_settings WHERE key=$1", [takeKey(companyId, "intel")]);
 
     res.json({ added, signalsLinked, purged });
   } catch (err: any) {
@@ -677,9 +706,7 @@ router.post("/api/brand/:companyId/signals/rescreen", requireAuth, async (req: R
 });
 
 export function invalidateBrandAiTake(companyId: string): void {
-  for (const tab of ["brand", "uk", "activity", "intel"] as Tab[]) {
-    cache.delete(`${companyId}:${tab}`);
-  }
+  pool.query("DELETE FROM system_settings WHERE key=ANY($1::text[])", [["brand", "uk", "activity", "intel"].map(tab => takeKey(companyId, tab as Tab))]).catch(error => console.warn("[brand-ai-take] persisted cache invalidation failed:", error.message));
 }
 
 export default router;

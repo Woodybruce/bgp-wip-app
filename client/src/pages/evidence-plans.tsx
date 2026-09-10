@@ -15,6 +15,8 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { containedMarker, isValidPolygon, moveMarkerInside } from "@shared/plan-geometry";
+import { planOutlineDisplay, planOutlinePoints, type OutlinePlacement } from "@shared/plan-outline-display";
+import type { ScanReviewResponse } from "@shared/plan-scan-review";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -317,6 +319,15 @@ function PlanView({ planId }: { planId: string }) {
   const levelUnits = useMemo(
     () => units.filter(u => (u.level_id ?? levels[0]?.id) === activeLevel?.id),
     [units, levels, activeLevel]);
+  const scanReview = useQuery<ScanReviewResponse>({
+    queryKey: ["/api/evidence-plans", planId, "scan-review", activeLevel?.id],
+    enabled: !!activeLevel?.id,
+    queryFn: async () => (await apiRequest("GET", `/api/evidence-plans/${planId}/scan-review?levelId=${encodeURIComponent(activeLevel!.id)}`)).json(),
+    staleTime: 0, retry: false,
+  });
+  const outlineDisplay = useMemo(() => planOutlineDisplay(levelUnits, scanReview.isError ? null : scanReview.data?.review, {
+    planId, levelId: activeLevel?.id || "", backgroundKey: activeLevel?.background_key || null,
+  }), [levelUnits, scanReview.data, scanReview.isError, planId, activeLevel]);
 
   // ?unit=A15 deep link (from a lease advisory job) — select the unit and
   // jump to its level once the plan loads.
@@ -350,6 +361,7 @@ function PlanView({ planId }: { planId: string }) {
     setScanReport(scanJob.status === "error" ? `Scan couldn't finish: ${scanJob.error || "Try again or trace a unit individually."}`
       : summary ? `${summary.detected} boundaries detected · ${summary.added} added · ${summary.refined} refined · ${summary.current} already current · ${summary.needsReview} awaiting review. Existing unit information has been kept.`
       : `Scan finished. ${scanJob.created || 0} units added. ${scanJob.error || "Review scan to inspect the detected outlines and any boundaries awaiting review."}`);
+    if (scanJob.status === "done" && summary?.needsReview > 0 && scanJob.level_id === activeLevel?.id) setScanReviewOpen(true);
     invalidate();
   }, [scanJob]);
   const refreshUnits = async () => {
@@ -422,11 +434,11 @@ function PlanView({ planId }: { planId: string }) {
   // shop to resolve overlap; fit the disc to the available interior space.
   const markerLayout = useMemo(() => {
     const aspect = activeLevel?.background_width ? (activeLevel.background_height || 1) / activeLevel.background_width : 0.7;
-    return new Map(levelUnits.filter(u => isValidPolygon(u.polygon)).map(u => {
+    return new Map(outlineDisplay.placed.map(u => {
       const desired = dotDraft?.unitId === u.id ? dotDraft : u.dot;
       return [u.id, containedMarker(u.polygon!, desired, 0.019 / Math.sqrt(zoom), aspect)];
     }));
-  }, [levelUnits, dotDraft, zoom, activeLevel]);
+  }, [outlineDisplay, dotDraft, zoom, activeLevel]);
 
   const toPlanCoords = (clientX: number, clientY: number): Pt | null => {
     const el = surfaceRef.current;
@@ -874,15 +886,19 @@ function PlanView({ planId }: { planId: string }) {
               >
                 <img src={`/api/evidence-plans/levels/${activeLevel!.id}/background?v=${encodeURIComponent(activeLevel!.background_key || "")}${hideRedInk ? "&hideRed=1" : ""}`} alt={`${plan.name} — ${activeLevel?.name || "plan"}`} className="absolute inset-0 w-full h-full" style={{ filter: strongLines ? "contrast(1.7)" : "none" }} draggable={false} data-testid="plan-background-image" />
                 <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 ${aspect >= 1 ? 100 : 100} ${100 * aspect}`} preserveAspectRatio="none" style={{ pointerEvents: "none" }}>
-                  {overlaysVisible && levelUnits.filter(u => Array.isArray(u.polygon) && u.polygon.length >= 3).map(u => {
+                  {overlaysVisible && selected && outlineDisplay.placement.get(selected.id) === "needs_review" && isValidPolygon(selected.polygon) && (
+                    <polygon points={planOutlinePoints(selected.polygon!, 100, 100 * aspect)} fill="none" stroke="hsl(var(--muted-foreground))"
+                      strokeWidth={1.5} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" pointerEvents="none" data-testid="unit-outline-inspection">
+                      <title>Unreviewed saved outline for {selected.unit_ref}. Use Review scan or redraw to place this unit.</title>
+                    </polygon>
+                  )}
+                  {overlaysVisible && outlineDisplay.placed.map(u => {
                     const poly = u.polygon as Pt[];
-                    const pts = poly.map(p => `${p.x * 100},${p.y * 100 * aspect}`).join(" ");
+                    const pts = planOutlinePoints(poly, 100, 100 * aspect);
                     const isSel = u.id === selectedId;
                     const isHover = hover?.unitId === u.id;
-                    // No visible boxes (Woody, 2026-09-03: misplaced squares
-                    // look bad) — the dot is the marker; the outline shows
-                    // only on hover (light) or selection (strong, so a wrong
-                    // box can be seen and redrawn).
+                    // Only manually saved or current scan-backed outlines
+                    // may label a unit or capture clicks on the plan.
                     return (
                       <g key={u.id} style={{ pointerEvents: drawing || tracing || cropping ? "none" : "auto", cursor: "pointer" }}
                         onClick={e => { e.stopPropagation(); if (!suppressClick.current) selectUnit(u.id); }}
@@ -899,7 +915,7 @@ function PlanView({ planId }: { planId: string }) {
                     );
                   })}
                   {/* Labels stay in their own demise, including units awaiting evidence. */}
-                  {overlaysVisible && levelUnits.filter(u => isValidPolygon(u.polygon)).map(u => {
+                  {overlaysVisible && outlineDisplay.placed.map(u => {
                     const layout = markerLayout.get(u.id)!;
                     const isSel = u.id === selectedId;
                     const latest = latestEntryByUnit.get(u.id);
@@ -1051,12 +1067,13 @@ function PlanView({ planId }: { planId: string }) {
           <SheetContent side="bottom" hideClose={!!selected} className="max-h-[80dvh] overflow-y-auto p-0 rounded-t-2xl pb-[env(safe-area-inset-bottom)]">
             <SheetHeader className={selected ? "sr-only" : "px-4 pt-4"}><SheetTitle>{selected ? `Unit ${selected.unit_ref}` : "Units & evidence"}</SheetTitle></SheetHeader>
             {selected ? <UnitPanel key={selected.id} unit={selected} entries={selectedEntries} planId={planId} scheduleRows={data?.schedule_rows || []}
+              placement={outlineDisplay.placement.get(selected.id)} onReviewScan={() => { setDetailsOpen(false); setScanReviewOpen(true); }}
               matters={matters.filter(m => m.unit_norm && m.unit_norm === (selected.unit_norm || normRef(selected.unit_ref)))}
               onClose={() => { setSelectedId(null); setDetailsOpen(false); }}
               onSave={patch => saveUnit.mutateAsync({ id: selected.id, patch })}
               onRedraw={mode => { stopDrawing(); draftBackgroundKey.current = activeLevel?.background_key || null; setRedrawId(selected.id); setDrawing(mode === "draw"); setTracing(mode === "trace"); setDetailsOpen(false); }}
               onDeleted={() => { setSelectedId(null); invalidate(); }} />
-              : <div className="p-4"><UnitList units={levelUnits} entries={entries} search={unitSearch} onSearch={setUnitSearch} onSelect={selectUnit} /><UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} /></div>}
+              : <div className="p-4"><UnitList units={levelUnits} entries={entries} placement={outlineDisplay.placement} search={unitSearch} onSearch={setUnitSearch} onSelect={selectUnit} /><UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} /></div>}
           </SheetContent>
         </Sheet> : <div className={cleanPlan ? "hidden" : "w-[380px] shrink-0 border-l border-border overflow-y-auto bg-background"}>
           {!selected ? (
@@ -1065,12 +1082,13 @@ function PlanView({ planId }: { planId: string }) {
                   a unit is picked — hover or tap a marker, or pick a row. */}
               <h3 className="text-sm font-semibold mb-1">Units · {activeLevel?.name || "this level"}</h3>
               <p className="text-sm text-muted-foreground mb-3">Select a boundary or label to enter information. Drag a label to move it within its unit.</p>
-              <UnitList units={levelUnits} entries={entries} search={unitSearch} onSearch={setUnitSearch} onSelect={selectUnit} />
+              <UnitList units={levelUnits} entries={entries} placement={outlineDisplay.placement} search={unitSearch} onSearch={setUnitSearch} onSelect={selectUnit} />
               <UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} />
 
             </div>
           ) : (
             <UnitPanel key={selected.id} unit={selected} entries={selectedEntries} planId={planId} scheduleRows={data?.schedule_rows || []}
+              placement={outlineDisplay.placement.get(selected.id)} onReviewScan={() => setScanReviewOpen(true)}
               matters={matters.filter(m => m.unit_norm && m.unit_norm === (selected.unit_norm || normRef(selected.unit_ref)))}
               onClose={() => setSelectedId(null)}
               onSave={(patch) => saveUnit.mutateAsync({ id: selected.id, patch })}
@@ -1185,30 +1203,38 @@ function UnlinkedEvidence({ entries, units, levels, onSaved, initiallyOpen = fal
   );
 }
 
-function UnitList({ units, entries, search, onSearch, onSelect }: {
-  units: PlanUnit[]; entries: Entry[]; search: string; onSearch: (value: string) => void; onSelect: (id: string) => void;
+function UnitList({ units, entries, placement, search, onSearch, onSelect }: {
+  units: PlanUnit[]; entries: Entry[]; placement: Map<string, OutlinePlacement>; search: string; onSearch: (value: string) => void; onSelect: (id: string) => void;
 }) {
   const [page, setPage] = useState(0);
-  useEffect(() => setPage(0), [search, units.length]);
-  const matches = units.filter(u => `${u.unit_ref} ${u.tenant_name || ""}`.toLowerCase().includes(search.toLowerCase()));
+  const [needsPlacementOnly, setNeedsPlacementOnly] = useState(false);
+  const needsPlacement = units.filter(unit => ["unplaced", "needs_review"].includes(placement.get(unit.id) || "unplaced"));
+  useEffect(() => setPage(0), [search, units.length, needsPlacementOnly]);
+  const matches = (needsPlacementOnly ? needsPlacement : units).filter(u => `${u.unit_ref} ${u.tenant_name || ""}`.toLowerCase().includes(search.toLowerCase()));
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(matches.length / 12) - 1));
   return <div className="space-y-2 mb-4">
+    <div className="flex gap-2 flex-wrap"><Pill active={!needsPlacementOnly} onClick={() => setNeedsPlacementOnly(false)} data-testid="unit-list-all">All units · <span className="font-mono tabular-nums">{units.length}</span></Pill><Pill active={needsPlacementOnly} onClick={() => setNeedsPlacementOnly(true)} data-testid="unit-list-needs-placement">Needs placement · <span className="font-mono tabular-nums">{needsPlacement.length}</span></Pill></div>
+    {!!needsPlacement.length && <p className="text-[11px] text-muted-foreground">Unreviewed old outlines are kept off the plan. Their units and evidence remain here to edit or place using Review scan.</p>}
     <Input aria-label="Search units" placeholder="Find unit or tenant…" value={search} onChange={e => onSearch(e.target.value)} data-testid="input-unit-search" />
     <p className="text-[11px] text-muted-foreground font-mono">{matches.length} units</p>
-    {matches.slice(page * 12, page * 12 + 12).map(unit => {
+    {matches.slice(currentPage * 12, currentPage * 12 + 12).map(unit => {
       const evidence = entries.filter(e => e.unit_id === unit.id);
       return <button key={unit.id} data-testid={`unit-row-${unit.id}`} onClick={() => onSelect(unit.id)} className="w-full min-h-11 text-left border border-border rounded-xl bg-card p-3 hover:border-primary">
         <span className="block font-semibold text-sm">{unit.unit_ref}</span>
         <span className="block text-[11px] text-muted-foreground">{unit.tenant_name || "Tenant not entered"} · {evidence.length ? `${evidence.length} evidence entries` : "Add information"}</span>
+        {placement.get(unit.id) === "needs_review" && <span className="block text-[11px] text-muted-foreground mt-1">Outline needs review · select to inspect</span>}
+        {placement.get(unit.id) === "unplaced" && <span className="block text-[11px] text-muted-foreground mt-1">No outline placed</span>}
       </button>;
     })}
     {!matches.length && <p className="text-sm text-muted-foreground">{units.length ? "No units match your search." : "No units yet — trace a unit or draw its boundary."}</p>}
-    {matches.length > 12 && <div className="flex items-center gap-2"><Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>Previous</Button><span className="font-mono text-[11px]">{page + 1} / {Math.ceil(matches.length / 12)}</span><Button variant="outline" size="sm" disabled={(page + 1) * 12 >= matches.length} onClick={() => setPage(p => p + 1)}>Next</Button></div>}
+    {matches.length > 12 && <div className="flex items-center gap-2"><Button variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</Button><span className="font-mono text-[11px]">{currentPage + 1} / {Math.ceil(matches.length / 12)}</span><Button variant="outline" size="sm" disabled={(currentPage + 1) * 12 >= matches.length} onClick={() => setPage(currentPage + 1)}>Next</Button></div>}
   </div>;
 }
 
 // ── Unit side panel ───────────────────────────────────────────────────────
-function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, onClose, onSave, onDeleted, onRedraw }: {
+function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placement, onReviewScan, onClose, onSave, onDeleted, onRedraw }: {
   unit: PlanUnit; entries: Entry[]; planId: string; matters?: Matter[]; scheduleRows: any[];
+  placement?: OutlinePlacement; onReviewScan: () => void;
   onClose: () => void; onSave: (patch: any) => Promise<unknown>; onDeleted: () => void; onRedraw: (mode: "draw" | "trace") => void;
 }) {
   const { toast } = useToast();
@@ -1329,6 +1355,10 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, onClose,
         </div>
       </div>
 
+      {(placement === "needs_review" || placement === "unplaced") && <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-2" data-testid="unit-placement-review">
+        <p className="text-sm">{placement === "needs_review" ? "This old outline needs review. The dashed shape is an inspection preview; it is not used to position a label." : "This unit has no placed outline."} You can edit all its information and evidence below.</p>
+        <Button variant="outline" size="sm" onClick={onReviewScan}>Review scan to place unit</Button>
+      </div>}
       {editing ? (
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-2">

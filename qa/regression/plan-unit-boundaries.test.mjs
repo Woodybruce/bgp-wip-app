@@ -119,6 +119,29 @@ test('a narrow real pale recess is not repaired as black leader ink', () => {
   assert.equal(pointInPolygon(f.point(130, 121), result.polygon), false);
 });
 
+test('JPEG desaturation around a narrow ink cut does not become a notch in a kiosk wall', () => {
+  const f = fixture();
+  f.enclosed(100, 100, 126, 150);
+  f.rect(119, 119, 126, 122, [148, 184, 174]);
+  f.rect(120, 120, 140, 121, [5, 5, 5]);
+  const result = f.trace(108, 140);
+  assert.ok(result);
+  assert.equal(result.polygon.length, 4);
+  assert.ok(Math.abs(f.area(result) - 1300) < 1e-6);
+  assert.equal(pointInPolygon(f.point(123, 119.5), result.polygon), true);
+  assert.equal(pointInPolygon(f.point(130, 120), result.polygon), false, 'the external leader never extends the unit');
+});
+
+test('a light desaturated recess remains outside the unit beside a dark leader', () => {
+  const f = fixture();
+  f.enclosed(100, 100, 140, 150);
+  f.rect(122, 119, 141, 123, wall);
+  f.rect(123, 120, 142, 122, [188, 200, 196]);
+  const result = f.trace(110, 140);
+  assert.ok(result);
+  assert.equal(pointInPolygon(f.point(130, 121), result.polygon), false);
+});
+
 for (const [name, colour] of [['white', white], ['pale', [235, 228, 224]]]) {
   test(`${name} enclosed units retain their original outline and interior text holes`, () => {
     const f = fixture();

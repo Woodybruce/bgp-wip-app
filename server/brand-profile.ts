@@ -5,6 +5,8 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
+import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
 
 const router = Router();
 
@@ -19,15 +21,6 @@ pool.query(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_brand_signals_dedupe
     ON brand_signals(brand_company_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
 `).catch((e) => console.warn("[brand-signals] v2 columns:", e?.message));
-
-// Brands whose gallery has had the duplicate-image healing sweep this boot.
-const dedupeSweepFired = new Set<string>();
-// Per-brand cooldown for the server-side UK-entity auto-kick below.
-const entityKickFired = new Map<string, number>();
-// Separate, shorter cooldown for the AML auto-kick — see its comment below.
-const amlKickFired = new Map<string, number>();
-// Per-brand cooldown for the fire-and-forget AI signal-relevance judge.
-const signalJudgeFired = new Map<string, number>();
 
 // Cheap ISO 3166-1 alpha-2 inference from Google Places formatted_address.
 // We only get formatted_address back from Text Search (no structured
@@ -175,114 +168,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
   try {
     const { companyId } = req.params;
 
-    // Heal galleries that picked up duplicate images before content dedupe
-    // existed (same photo imported twice across refresh runs). Once per
-    // brand per boot, fire-and-forget — the cleaned gallery shows on the
-    // next load.
-    const sweepId = String(companyId);
-    if (!dedupeSweepFired.has(sweepId)) {
-      dedupeSweepFired.add(sweepId);
-      import("./brand-images").then(m => m.dedupeBrandImageRows(sweepId)).catch(e =>
-        console.warn(`[brand-profile] image dedupe sweep failed: ${e?.message}`)
-      );
-    }
-
-    // Server-side UK-entity auto-kick. The client-side auto-scrape only runs
-    // for staff viewers (client research POSTs 403), so a brand first opened
-    // by a client (Landsec browsing Bills) sat parked forever — no entity,
-    // no Companies House number, no Covenant card. Fire the scraper here
-    // instead, whoever is looking; guarded UPDATE + 6h cooldown per brand.
-    if (!entityKickFired.has(sweepId) || Date.now() - entityKickFired.get(sweepId)! > 6 * 3600_000) {
-      entityKickFired.set(sweepId, Date.now());
-      (async () => {
-        const row = (await pool.query(
-          `SELECT name, domain, domain_url, backers, uk_entity_name, companies_house_number
-             FROM crm_companies WHERE id = $1`, [sweepId])).rows[0];
-        if (!row) return;
-        let entityName: string | null = (row.uk_entity_name || "").trim() || null;
-        let chNumber: string | null = (row.companies_house_number || "").trim() || null;
-        if (!entityName && (row.domain || row.domain_url)) {
-          const { scrapeUkEntityFromWebsite } = await import("./companies-house");
-          const scraped = await scrapeUkEntityFromWebsite(row.domain || row.domain_url, { name: row.name, parentGroup: row.backers });
-          if (scraped.entityName) {
-            entityName = scraped.entityName;
-            await pool.query(
-              `UPDATE crm_companies SET uk_entity_name = $1
-                WHERE id = $2 AND (uk_entity_name IS NULL OR uk_entity_name = '')`,
-              [scraped.entityName, sweepId]);
-          }
-          if (scraped.chNumber && !chNumber) {
-            chNumber = scraped.chNumber;
-            await pool.query(
-              `UPDATE crm_companies SET companies_house_number = $1
-                WHERE id = $2 AND (companies_house_number IS NULL OR companies_house_number = '')`,
-              [scraped.chNumber, sweepId]);
-          }
-          if (scraped.entityName || scraped.chNumber) {
-            console.log(`[brand-profile] auto-identified entity for ${row.name}: ${scraped.entityName || "?"} / ${scraped.chNumber || "no CH#"}`);
-          }
-        }
-        // Name → number bridge. Most websites state the legal entity but not
-        // its registration number, so brands stalled at "entity set, covenant
-        // parked" forever (WatchHouse, 2026-08-26). An exact match on the
-        // registered name is unambiguous — auto-link it; anything fuzzier
-        // stays a human call.
-        if (entityName && !chNumber) {
-          const { chFetch } = await import("./companies-house");
-          const canon = (s: string) => s.toLowerCase()
-            .replace(/\bltd\b\.?/g, "limited")
-            .replace(/\bplc\b\.?/g, "public limited company")
-            .replace(/[^a-z0-9]/g, "");
-          const target = canon(entityName);
-          const search = await chFetch(`/search/companies?q=${encodeURIComponent(entityName)}&items_per_page=10`);
-          const hit = (search.items || []).find((i: any) =>
-            i.company_status === "active" && i.company_number && canon(i.title || "") === target);
-          if (hit) {
-            await pool.query(
-              `UPDATE crm_companies SET companies_house_number = $1
-                WHERE id = $2 AND (companies_house_number IS NULL OR companies_house_number = '')`,
-              [hit.company_number, sweepId]);
-            console.log(`[brand-profile] auto-matched CH number for ${row.name}: ${hit.title} / ${hit.company_number}`);
-          }
-        }
-      })().catch(e => console.warn(`[brand-profile] entity auto-kick failed: ${e?.message}`));
-      // Menu / best-sellers auto-kick, same rationale: the refresh button is
-      // a staff research POST, so brands first browsed by clients never got
-      // their menu card. One attempt per brand per cooldown window.
-      (async () => {
-        const m = (await pool.query(
-          `SELECT name, menu_intel FROM crm_companies WHERE id = $1`, [sweepId])).rows[0];
-        if (!m || m.menu_intel) return;
-        await refreshMenuIntelForCompany(sweepId);
-        console.log(`[brand-profile] auto-refreshed menu intel for ${m.name}`);
-      })().catch(e => console.warn(`[brand-profile] menu auto-kick skipped: ${e?.message}`));
-      // Apollo firmographics auto-fetch, same no-ask rule — the card was a
-      // manual "Fetch" button until 2026-08-26. Guards + 30-day freshness
-      // live in apollo-company.ts.
-      (async () => {
-        const { autoRefreshApolloIfStale } = await import("./apollo-company");
-        await autoRefreshApolloIfStale(sweepId);
-      })().catch(e => console.warn(`[brand-profile] apollo auto-kick skipped: ${e?.message}`));
-    }
-
-    // AML pass self-serves on open: the nightly sweep runs oldest-first, so
-    // a freshly-resolved brand sat unscreened at the back of its queue
-    // (Bill's, 2026-08-18). Own 30-min guard, NOT the 6h entity-kick window
-    // above — a run that recorded no outcome (pre-fix code, transient
-    // ComplyAdvantage error) must retry on the next open, not tomorrow.
-    // aml_pep_status flips non-empty on a completed screen, ending retries.
-    if (!amlKickFired.has(sweepId) || Date.now() - amlKickFired.get(sweepId)! > 30 * 60_000) {
-      amlKickFired.set(sweepId, Date.now());
-      (async () => {
-        const a = (await pool.query(
-          `SELECT name, companies_house_number, aml_pep_status FROM crm_companies WHERE id = $1`, [sweepId])).rows[0];
-        if (!a || !a.companies_house_number || (a.aml_pep_status || "").trim()) return;
-        const { runAllAmlChecks } = await import("./kyc-orchestrator");
-        await runAllAmlChecks(sweepId, null, null);
-        console.log(`[brand-profile] auto-ran AML orchestrator for ${a.name}`);
-      })().catch(e => console.warn(`[brand-profile] AML auto-kick skipped: ${e?.message}`));
-    }
-
+    // Opening a profile reads prepared data; provider work belongs to the durable queue.
     // Clients may only read their OWN company's profile here. (Landsec audit.)
     const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
     const bpScope = await resolveCompanyScope(req as any);
@@ -298,7 +184,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     const companyQ = pool.query(
       `SELECT id, name, description, company_type, companies_house_number, companies_house_data,
-              domain, domain_url, head_office_address,
+              domain, domain_url, website, trading_entities, head_office_address,
               linkedin_url, phone, industry, employee_count, annual_revenue, founded_year,
               kyc_status, kyc_expires_at, aml_risk_level, aml_pep_status,
               brand_group_id, parent_company_id,
@@ -373,7 +259,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // imports) and fall back to lowercased brand_name for older rows.
     const imagesQ = pool.query(
       `SELECT i.id, i.file_name, i.thumbnail_data, i.category, i.created_at,
-              i.tags, i.mime_type, i.description, i.source, i.company_id, i.property_id
+              i.tags, i.mime_type, i.description, i.source, i.company_id, i.property_id, i.brand_name
          FROM image_studio_images i
         WHERE i.company_id = $1
            OR (i.brand_name IS NOT NULL
@@ -537,7 +423,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     // Geocoded stores
     const storesQ = pool.query(
-      `SELECT id, name, address, lat, lng, place_id, status, store_type, notes, source_type, researched_at
+      `SELECT id, name, address, lat, lng, place_id, status, country, store_type, notes, source_type, researched_at
          FROM brand_stores
         WHERE brand_company_id = $1
         ORDER BY name ASC`,
@@ -635,6 +521,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
          COUNT(*) FILTER (WHERE signal_type = 'closure') ::int AS closures_12m
          FROM brand_signals
         WHERE brand_company_id = $1
+          AND ai_relevant IS DISTINCT FROM FALSE
           AND COALESCE(signal_date, created_at) >= now() - interval '12 months'`,
       [companyId]
     );
@@ -705,6 +592,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
        FROM months m
        LEFT JOIN brand_signals s ON date_trunc('month', COALESCE(s.signal_date, s.created_at)) = m.month
          AND s.brand_company_id = $1
+         AND s.ai_relevant IS DISTINCT FROM FALSE
        GROUP BY m.month
        ORDER BY m.month`,
       [companyId]
@@ -825,27 +713,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     const c = company.rows[0];
 
-    // Self-heal a stale store undercount HERE, not just in the client (a
-    // long-lived browser tab runs an old bundle and never fires its
-    // trigger): a chain left with a couple of stray rows by the old strict
-    // name matcher (Greggs: 1 row for 2,600 shops) re-scans in the
-    // background. startJob dedupes concurrent kicks; the 7-day recency
-    // guard stops genuinely small footprints re-burning Places quota.
-    try {
-      const found = stores.rows.length;
-      const claimed = Number(c.store_count) || 0;
-      const freshest = Math.max(0, ...stores.rows.map((s: any) => (s.researched_at ? new Date(s.researched_at).getTime() : 0)));
-      if (found > 0 && found <= 3 && claimed >= 25 && Date.now() - freshest > 7 * 24 * 3600_000) {
-        const { startJob } = await import("./brand-jobs");
-        const { alreadyRunning } = startJob(`research-stores:${companyId}:uk`, async () => {
-          const out = await researchBrandStores(String(companyId), { scope: "uk" });
-          return { ...out, scope: "uk", company: { id: companyId, name: (out as any).companyName } };
-        });
-        if (!alreadyRunning) console.log(`[brand-profile] store undercount self-heal: re-scanning ${c.name} (${found} stored vs store_count ${claimed})`);
-      }
-    } catch (e: any) {
-      console.warn(`[brand-profile] store self-heal kick failed: ${e?.message}`);
-    }
+    const identity = getBrandIdentity(c);
+    images.rows = images.rows.filter((image: any) => publishableBrandImage(c, image));
+    stores.rows = stores.rows.filter((store: any) => publishableBrandStore(c, store));
+    const apolloCache = await pool.query("SELECT payload FROM brand_apollo_data WHERE company_id = $1", [companyId]).catch(() => ({ rows: [] }));
+    const trustedApollo = publicBrandProviderPayload(c, apolloCache.rows[0]?.payload);
 
     // Resolve bgp_contact_user_ids → user display names + per-account
     // roles from crm_company_bgp_roles (Charlotte = Investment lead).
@@ -909,19 +781,6 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       );
       socialStats = sx.rows;
     } catch { /* table doesn't exist yet — first run */ }
-
-    // Fire-and-forget: if tracked brand has no analysis yet, generate one
-    // in the background so next load picks it up. Respects AI on/off.
-    if (/^tenant/i.test(c.company_type || "") && !c.ai_disabled && !c.brand_analysis) {
-      (async () => {
-        try {
-          const { refreshBrandAnalysis } = await import("./brand-analysis");
-          await refreshBrandAnalysis(c.id, true);
-        } catch (err: any) {
-          console.error("[brand-profile] background analysis failed:", err.message);
-        }
-      })();
-    }
 
     // Extract covenant data from Companies House JSONB
     const chData = c.companies_house_data;
@@ -1048,27 +907,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // Re-apply the news relevance filter at read time so historical noise
     // (US Supreme Court articles, football coach articles, etc.) drops out
     // even before the next news refresh runs to delete them properly.
-    const { articleLooksRelevantForBrand, aiJudgeSignalRelevance } = await import("./news-brand-linking");
+    const { articleLooksRelevantForBrand } = await import("./news-brand-linking");
     const filteredSignals = signals.rows.filter((s: any) => {
-      if (s.ai_relevant === false) return false;
+      if (s.ai_relevant === false || (s.source === "apollo" && !trustedApollo)) return false;
       // Heuristic collision filter on every type — junk reaches opening/
       // closure rows too (the classifier links cross-topic articles), and it
       // also backstops AI-judged-relevant rows the judge got wrong.
       return articleLooksRelevantForBrand(c.name, c.industry, s.headline || "", s.detail || null);
     }).slice(0, 20);
-
-    // Any news signal Haiku hasn't judged yet gets judged in the background —
-    // the hardcoded collision lists above only cover known ambiguous names,
-    // so a brand like Bills can drown in "energy bills" headlines until its
-    // rows are judged. Verdicts land in ai_relevant; next load drops them.
-    const unjudged = signals.rows.filter((s: any) => s.ai_relevant == null);
-    if (unjudged.length && (!signalJudgeFired.has(sweepId) || Date.now() - signalJudgeFired.get(sweepId)! > 6 * 3600_000)) {
-      signalJudgeFired.set(sweepId, Date.now());
-      aiJudgeSignalRelevance(
-        { id: sweepId, name: c.name, industry: c.industry, domain: c.domain || c.domain_url },
-        unjudged.map((s: any) => ({ id: s.id, headline: s.headline, detail: s.detail })),
-      ).catch(() => {});
-    }
 
     // One definition of "landlord" for the whole app: the same rule the
     // Landlord CRM list (/api/crm/landlords) uses — typed as a landlord, OR
@@ -1093,6 +939,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     res.json({
       company: c,
+      identity,
       isLandlord,
       signals: filteredSignals,
       // Client accounts only see tenant-rep representation — landlord-side
@@ -1217,48 +1064,67 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 });
 
 // ─── Update brand-specific fields ───────────────────────────────────────
-router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Response) => {
+async function canUseBrand(req: Request, companyId: string): Promise<boolean> {
+  const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+  const scope = await resolveCompanyScope(req as any);
+  return !scope || scope === companyId || await isClientVisibleBrand(companyId, scope);
+}
+
+async function updateBrandRecord(companyId: string, body: any, actor: string | null, identityOnly = false) {
+  const allowed = ["brand_group_id", "concept_pitch", "store_count", "rollout_status", "backers",
+    "instagram_handle", "tiktok_handle", "x_handle", "dept_store_presence", "franchise_activity", "hunter_flag", "stock_ticker",
+    "uk_entity_name", "agent_type", "concept_status", "domain", "domain_url", "folder_teams", "sharepoint_folder_url"];
+  const client = await pool.connect();
+  let identityChanged = false;
   try {
-    const { companyId } = req.params;
-    const body = req.body || {};
-    const allowed = [
-      "brand_group_id",
-      "concept_pitch", "store_count", "rollout_status", "backers",
-      "instagram_handle", "tiktok_handle", "x_handle", "dept_store_presence",
-      "franchise_activity", "hunter_flag", "stock_ticker", "uk_entity_name", "agent_type",
-      "concept_status",
-      "domain", "domain_url",
-      "folder_teams", "sharepoint_folder_url",
-    ];
-    const sets: string[] = [];
-    const vals: any[] = [];
-    let i = 1;
+    await client.query("BEGIN");
+    const company = (await client.query("SELECT * FROM crm_companies WHERE id = $1 FOR UPDATE", [companyId])).rows[0];
+    if (!company) throw Object.assign(new Error("Company not found"), { status: 404 });
+    const supplied: Record<string, any> = {};
     for (const key of allowed) {
       const camel = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-      const v = key in body ? body[key] : (camel in body ? body[camel] : undefined);
-      if (v !== undefined) {
-        sets.push(`${key} = $${i++}`);
-        vals.push(v);
-      }
+      const value = key in body ? body[key] : body[camel];
+      if (value !== undefined) supplied[key] = value;
     }
-    if (!sets.length) return res.status(400).json({ error: "no fields to update" });
+    if (!Object.keys(supplied).length && !identityOnly) throw Object.assign(new Error("No fields to update"), { status: 400 });
+    let fields: Record<string, any> = {};
+    if (identityOnly || "domain" in supplied || "domain_url" in supplied) {
+      const input = { ...body, domain: body.domain ?? supplied.domain_url };
+      const prepared = prepareBrandIdentityUpdate(company, input, actor);
+      fields = prepared.fields; identityChanged = prepared.identityChanged;
+      if (identityChanged) await quarantineBrandIdentityDependents(client, company, actor);
+    }
+    if (!identityOnly) Object.assign(fields, Object.fromEntries(Object.entries(supplied).filter(([key]) => !["domain", "domain_url"].includes(key))));
+    const metadata = { ...(fields.ai_generated_fields || company.ai_generated_fields || {}) };
+    for (const key of Object.keys(supplied)) delete metadata[key];
+    fields.ai_generated_fields = metadata;
+    const keys = Object.keys(fields);
+    await client.query(`UPDATE crm_companies SET ${keys.map((key, i) => `${key} = $${i + 2}`).join(", ")}, updated_at = now() WHERE id = $1`,
+      [companyId, ...keys.map(key => key === "ai_generated_fields" ? JSON.stringify(fields[key]) : fields[key])]);
+    await client.query("COMMIT");
+    if (identityChanged) {
+      await import("./brand-enrichment").then(module => module.enqueueBrandPreparation(companyId))
+        .catch(error => console.warn("[brand-identity] queue:", error?.message));
+    }
+    return { ok: true, identity: getBrandIdentity({ ...company, ...fields }), needsPreparation: identityChanged };
+  } catch (error) { await client.query("ROLLBACK"); throw error; }
+  finally { client.release(); }
+}
 
-    sets.push(`ai_generated_fields = (
-      SELECT CASE WHEN ai_generated_fields IS NULL THEN NULL
-                  ELSE ai_generated_fields - ARRAY[${allowed.filter(k => (k in body) || (k.replace(/_([a-z])/g, (_, c) => c.toUpperCase()) in body)).map(k => `'${k}'`).join(",") || "''"}]::text[]
-             END
-      FROM crm_companies WHERE id = $${i})`);
-    sets.push(`updated_at = now()`);
-    vals.push(companyId);
+router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const companyId = String(req.params.companyId);
+    if (!(await canUseBrand(req, companyId))) return res.status(403).json({ error: "Not available for this account" });
+    res.json(await updateBrandRecord(companyId, req.body || {}, (req as any).user?.id || null));
+  } catch (err: any) { res.status(err.status || 400).json({ error: err.message }); }
+});
 
-    await pool.query(
-      `UPDATE crm_companies SET ${sets.join(", ")} WHERE id = $${i}`,
-      vals
-    );
-    res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+router.post("/api/brand/:companyId/identity", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const companyId = String(req.params.companyId);
+    if (!(await canUseBrand(req, companyId))) return res.status(403).json({ error: "Not available for this account" });
+    res.json(await updateBrandRecord(companyId, req.body || {}, (req as any).user?.id || null, true));
+  } catch (err: any) { res.status(err.status || 400).json({ error: err.message }); }
 });
 
 // ─── Agent representations CRUD ─────────────────────────────────────────
@@ -1556,11 +1422,14 @@ router.get("/api/brand/tracked", requireAuth, async (_req: Request, res: Respons
 // ─── Brand stores: list ──────────────────────────────────────────────────
 router.get("/api/brand/:companyId/stores", requireAuth, async (req: Request, res: Response) => {
   try {
+    if (!(await canUseBrand(req, String(req.params.companyId)))) return res.status(403).json({ error: "Not available for this account" });
     const { rows } = await pool.query(
       `SELECT * FROM brand_stores WHERE brand_company_id = $1 ORDER BY name ASC`,
       [req.params.companyId]
     );
-    res.json({ stores: rows });
+    const company = (await pool.query("SELECT * FROM crm_companies WHERE id = $1", [req.params.companyId])).rows[0];
+    if (!company) return res.status(404).json({ error: "Company not found" });
+    res.json({ stores: rows.filter((store: any) => publishableBrandStore(company, store)) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1568,9 +1437,8 @@ router.get("/api/brand/:companyId/stores", requireAuth, async (req: Request, res
 
 // ─── Brand stores: research via Google Places ────────────────────────────
 // Uses Google Places Text Search to find all UK stores for a brand, then
-// geocodes and upserts them into brand_stores.
-// Look up UK stores for a brand via Google Places. Upserts into brand_stores
-// and updates store_count. Used both by the manual endpoint and the
+// verifies their websites and upserts them into brand_stores.
+// The mapped subset does not replace the reported store_count. Used by the
 // auto-enrichment scheduler. Throws if GOOGLE_API_KEY is missing.
 //
 // Diagnostics shape mirrors the KYC re-resolver — caller surfaces these in
@@ -1595,22 +1463,28 @@ const TRADE_DESCRIPTORS = new Set([
 
 export async function researchBrandStores(
   companyId: string,
-  opts: { scope?: "uk" | "global" } = {},
+  opts: { scope?: "uk" | "global"; maxPlaceChecks?: number } = {},
 ): Promise<{
   found: number; upserted: number; openCount: number; companyName: string;
   diagnostics: Array<{ step: string; outcome: string; detail?: string }>;
 }> {
   const googleKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
-  if (!googleKey) throw new Error("GOOGLE_API_KEY not configured");
   const scope = opts.scope === "global" ? "global" : "uk";
 
   const { rows } = await pool.query(
-    `SELECT id, name, domain FROM crm_companies WHERE id = $1`,
+    `SELECT * FROM crm_companies WHERE id = $1`,
     [companyId]
   );
   if (!rows[0]) throw new Error("Company not found");
   const company = rows[0];
   const diagnostics: Array<{ step: string; outcome: string; detail?: string }> = [];
+  const identity = getBrandIdentity(company);
+  if (identity.status !== "verified") return { found: 0, upserted: 0, openCount: 0, companyName: company.name,
+    diagnostics: [{ step: "identity", outcome: "blocked", detail: identity.reason || "Confirm the official website first." }] };
+  if (!googleKey) throw new Error("GOOGLE_API_KEY not configured");
+  let placeChecks = 0;
+  const maxPlaceChecks = Math.max(1, Math.min(160, opts.maxPlaceChecks || 80));
+
 
   // Query plan — was just London + "UK" suffix, which heavily under-counts
   // any chain with stores outside London. Now: bare brand name (highest
@@ -1709,7 +1583,7 @@ export async function researchBrandStores(
   const requiredWords = nonDescriptorWords.length > 0 ? nonDescriptorWords : brandWords;
   const brandFirstWord = requiredWords[0] || brandToken;
   const NOISE = new Set([
-    "pizza","tyres","tyre","cars","car","hire","cleaning","plumbing",
+    "mr","mrs","street","road","fast","takeaway","pizza","tyres","tyre","cars","car","hire","cleaning","plumbing",
     "gym","fitness","kebab","chicken","fried","fish","chips","pharmacy",
     "tile","tiles","blinds","carpet","carpets","windows","kitchens",
     "construction","builders","scaffolding","bakery","barbers","salon",
@@ -1724,7 +1598,7 @@ export async function researchBrandStores(
     const n = fold(placeName);
     if (!n) return false;
     // Exact match or starts-with: always accept (cheap, high precision)
-    if (n === brandToken || n.startsWith(brandToken + " ")) return true;
+    if (n === brandToken) return true;
     // Multi-word requirement: every required token (descriptors excluded)
     // must appear somewhere in the place name. Catches "BrandName -
     // Westfield London" and "BrandName at Selfridges" without
@@ -1736,6 +1610,7 @@ export async function researchBrandStores(
     // immediately after (avoids "Supreme Pizza", "Coach Hire", etc.).
     const re = new RegExp(`\\b${brandFirstWord}\\b(?:\\s+(\\S+))?`);
     const m = n.match(re);
+    if (m && m.index !== 0) return false;
     if (!m) {
       // Slug fallback: handles brands stored as slugs e.g. "andotherstories"
       // matching a Google Places result "& Other Stories". Normalise & → "and"
@@ -1783,7 +1658,7 @@ export async function researchBrandStores(
         const addr: string = p.formatted_address || "";
         const inUk = /\b(UK|United Kingdom|GB|England|Scotland|Wales|Northern Ireland)\b/.test(addr)
           || /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/.test(addr); // UK postcode
-        if (!inUk) {
+        if (scope === "uk" && !inUk) {
           if (rejectedSamples.length < 10) rejectedSamples.push(`[non-UK addr] ${p.name}: ${addr}`);
           continue;
         }
@@ -1792,7 +1667,16 @@ export async function researchBrandStores(
           continue;
         }
         seenPlaceIds.add(p.place_id);
-        allResults.push(p);
+        if (placeChecks >= maxPlaceChecks) continue;
+        placeChecks++;
+        // A name match is only a search candidate. The listing must link to
+        // the confirmed official website before it becomes a mapped store.
+        const detailResponse = await fetch(`https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(p.place_id)}&fields=website&key=${encodeURIComponent(googleKey)}`,
+          { signal: AbortSignal.timeout(10000) });
+        if (!detailResponse.ok) continue;
+        const details: any = await detailResponse.json();
+        if (!isOfficialBrandWebsite(company, details?.result?.website)) continue;
+        allResults.push({ ...p, verifiedWebsite: details.result.website });
         queryStats[q].kept++;
       }
       nextPage = data.next_page_token || null;
@@ -1817,45 +1701,38 @@ export async function researchBrandStores(
   }
 
   let upserted = 0;
+  const storeTransaction = await pool.connect();
+  try {
+  await storeTransaction.query("BEGIN");
+  const currentCompany = (await storeTransaction.query("SELECT * FROM crm_companies WHERE id = $1 FOR UPDATE", [companyId])).rows[0];
+  if (getBrandIdentity(currentCompany).fingerprint !== identity.fingerprint) throw new Error("The brand identity changed during store research. Refresh against the new website.");
+  diagnostics.push({ step: "identity", outcome: "checked", detail: `${placeChecks} listings checked against the official website; ${allResults.length} verified.` });
   for (const p of allResults) {
     const businessStatus = p.business_status || "OPERATIONAL";
     const status = businessStatus === "OPERATIONAL" ? "open"
       : businessStatus === "CLOSED_PERMANENTLY" ? "closed"
       : "unconfirmed";
     const country = inferCountryFromAddress(p.formatted_address);
-    await pool.query(
-      `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, country, source_type, researched_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'google_places', now(), now())
+    const written = await storeTransaction.query(
+      `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, country, source_type, notes, researched_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'google_places_verified', $9, now(), now())
        ON CONFLICT (brand_company_id, place_id) DO UPDATE SET
-         name = EXCLUDED.name, address = EXCLUDED.address,
-         lat = EXCLUDED.lat, lng = EXCLUDED.lng,
-         status = EXCLUDED.status,
-         country = COALESCE(EXCLUDED.country, brand_stores.country),
-         researched_at = now(), updated_at = now()`,
-      [company.id, p.name, p.formatted_address, p.geometry?.location?.lat, p.geometry?.location?.lng, p.place_id, status, country]
-    ).catch(async () => {
-      const exists = await pool.query(
-        `SELECT id FROM brand_stores WHERE brand_company_id = $1 AND place_id = $2`,
-        [company.id, p.place_id]
-      );
-      if (exists.rowCount === 0) {
-        await pool.query(
-          `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, country, source_type, researched_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'google_places', now())`,
-          [company.id, p.name, p.formatted_address, p.geometry?.location?.lat, p.geometry?.location?.lng, p.place_id, status, country]
-        );
-      }
-    });
-    upserted++;
+         name = EXCLUDED.name, address = EXCLUDED.address, lat = EXCLUDED.lat, lng = EXCLUDED.lng,
+         status = EXCLUDED.status, country = COALESCE(EXCLUDED.country, brand_stores.country),
+         source_type = EXCLUDED.source_type, notes = EXCLUDED.notes, researched_at = now(), updated_at = now()
+       WHERE brand_stores.source_type IN ('google_places', 'google_places_verified', 'identity_review')`,
+      [company.id, p.name, p.formatted_address, p.geometry?.location?.lat, p.geometry?.location?.lng, p.place_id, status, country,
+        JSON.stringify({ brandIdentity: { fingerprint: identity.fingerprint, website: p.verifiedWebsite, checkedAt: new Date().toISOString() } })]
+    );
+    upserted += written.rowCount || 0;
   }
 
+  await storeTransaction.query("COMMIT");
+  } catch (error) { await storeTransaction.query("ROLLBACK"); throw error; }
+  finally { storeTransaction.release(); }
+
+  // A mapped subset is not the brand's reported store total.
   const openCount = allResults.filter(p => (p.business_status || "OPERATIONAL") === "OPERATIONAL").length;
-  if (allResults.length > 0) {
-    await pool.query(
-      `UPDATE crm_companies SET store_count = $1, updated_at = now() WHERE id = $2 AND (store_count IS NULL OR store_count < $1)`,
-      [openCount, company.id]
-    );
-  }
 
   return { found: allResults.length, upserted, openCount, companyName: company.name, diagnostics };
 }
@@ -1898,117 +1775,28 @@ router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request
   }
 });
 
-// Street View image of the brand's flagship store — picks the first cached
-// Google Places store with coords and proxies Google's Street View Static
-// API. Cached 24h client-side. Returns 204 when no suitable store exists.
-// Flagship banner — try Google Places Photo first (real user/business photos
-// of the storefront), fall back to Street View. Both are sized 1600 wide so
-// the panel banner stays sharp on retina displays.
+// Serve an approved, prepared image; opening a page must not purchase a
+// Places lookup or substitute a name-matched business's photo.
 router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Request, res: Response) => {
   try {
-    const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
     const companyId = String(req.params.companyId);
-
-    const sendImage = (buf: Buffer, mime: string = "image/jpeg") => {
-      res.setHeader("Content-Type", mime);
-      res.setHeader("Cache-Control", "public, max-age=86400");
-      res.send(buf);
-    };
-
-    // 1. Try Google Places Photos for the brand's most recently researched
-    //    open store. These are user-uploaded photos vetted by Google and are
-    //    usually high-quality flagship shots.
-    if (apiKey) {
-      const { rows } = await pool.query(
-        `SELECT lat, lng, name, place_id FROM brand_stores
-          WHERE brand_company_id = $1 AND lat IS NOT NULL AND lng IS NOT NULL
-            AND status = 'open'
-          ORDER BY researched_at DESC NULLS LAST LIMIT 1`,
-        [companyId]
-      );
-      const store = rows[0];
-      if (store?.place_id) {
-        try {
-          const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(store.place_id)}&fields=photos&key=${apiKey}`;
-          const detailsResp = await fetch(detailsUrl);
-          if (detailsResp.ok) {
-            const details = await detailsResp.json();
-            const photoRef = details?.result?.photos?.[0]?.photo_reference;
-            if (photoRef) {
-              const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=1600&photo_reference=${encodeURIComponent(photoRef)}&key=${apiKey}`;
-              const photoResp = await fetch(photoUrl);
-              if (photoResp.ok) {
-                return sendImage(Buffer.from(await photoResp.arrayBuffer()));
-              }
-            }
-          }
-        } catch (e: any) {
-          console.warn("[brand-flagship] place photo failed:", e?.message);
-        }
-      }
+    if (!(await canUseBrand(req, companyId))) return res.status(403).end();
+    const company = (await pool.query("SELECT * FROM crm_companies WHERE id = $1", [companyId])).rows[0];
+    if (!company) return res.status(404).end();
+    const excludeId = typeof req.query.exclude === "string" ? req.query.exclude : null;
+    const images = (await pool.query(
+      `SELECT id, company_id, brand_name, tags, local_path, mime_type FROM image_studio_images
+        WHERE company_id = $1 AND ($2::text IS NULL OR id::text <> $2)
+        ORDER BY ('brand-hero' = ANY(tags)) DESC, created_at DESC LIMIT 60`, [companyId, excludeId])).rows;
+    const { readPersistedImage } = await import("./image-studio");
+    res.setHeader("Cache-Control", "private, no-cache");
+    for (const row of images.filter((image: any) => publishableBrandImage(company, image))) {
+      if (!row.local_path) continue;
+      const buffer = await readPersistedImage(row.local_path).catch(() => null);
+      if (buffer) return res.type(row.mime_type || "image/jpeg").send(buffer);
     }
-
-    // 2. Fall back to the highest-quality auto-fetched brand image.
-    //    Priority order from best to worst:
-    //      - landlord-website: curated portfolio photos from the brand's
-    //        own /portfolio + /our-places pages (landlord brands)
-    //      - press: official press kit
-    //      - wikipedia: often useful for retail brand flagship shots
-    //      - homepage: basic homepage scrape
-    //      - cse: paid Google Custom Search, last resort
-    //    Street View NOT used — road-level snapshots looked terrible.
-    //    Loop the top matches so we can skip rows whose local file has
-    //    been wiped on a deploy without falling through to 204 when
-    //    other valid images are sitting right behind them.
-    // The banner renders this endpoint NEXT TO a gallery image — the client
-    // passes ?exclude=<imageId> for the pane it's already showing so the
-    // fallback can't serve the same photo twice side by side ("images are
-    // in here twice", Woody).
-    const excludeId = typeof req.query.exclude === "string" && req.query.exclude ? req.query.exclude : null;
-    const fb = await pool.query(
-      `SELECT i.local_path, i.mime_type
-         FROM image_studio_images i
-         JOIN crm_companies c ON LOWER(i.brand_name) = LOWER(c.name)
-        WHERE c.id = $1
-          AND 'brand-auto' = ANY(i.tags)
-          AND ($2::text IS NULL OR i.id::text <> $2::text)
-        ORDER BY
-          CASE
-            WHEN 'landlord-website' = ANY(i.tags) THEN 1
-            WHEN 'press'            = ANY(i.tags) THEN 2
-            WHEN 'wikipedia'        = ANY(i.tags) THEN 3
-            WHEN 'homepage'         = ANY(i.tags) THEN 4
-            WHEN 'cse'              = ANY(i.tags) THEN 5
-            ELSE 6
-          END,
-          i.created_at DESC
-        LIMIT 8`,
-      [companyId, excludeId]
-    );
-    if (fb.rows.length > 0) {
-      // readPersistedImage falls back to a DB-stored copy when the local
-      // file is gone (Railway redeploys can wipe the disk). The old
-      // implementation called fs.readFile directly, so deploy-evicted
-      // images returned 204 even when there were stored fallbacks.
-      const { readPersistedImage } = await import("./image-studio");
-      for (const row of fb.rows) {
-        if (!row.local_path) continue;
-        try {
-          const buf = await readPersistedImage(row.local_path);
-          if (buf) {
-            return sendImage(buf, row.mime_type || "image/jpeg");
-          }
-        } catch (e: any) {
-          console.warn("[brand-flagship] image read failed:", e?.message);
-        }
-      }
-    }
-
     return res.status(204).end();
-  } catch (err: any) {
-    console.error("[brand-flagship]", err.message);
-    res.status(500).end();
-  }
+  } catch (error: any) { console.warn("[brand-flagship]", error?.message); res.status(500).end(); }
 });
 
 // Brand store research kicks off in the background so a long Google

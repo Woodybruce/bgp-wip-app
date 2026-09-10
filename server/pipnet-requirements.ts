@@ -4,7 +4,7 @@
 // Pipnet HTML scrape can be slow + flaky and we don't want it blocking
 // the rest of the brand profile load.
 //
-// Cache: 1 hour per brand. Re-run with ?refresh=1 to bypass.
+// Persisted cache bound to the confirmed brand identity. Refresh explicitly with ?refresh=1.
 //
 // Endpoint:
 //   GET /api/brand/:companyId/pipnet-requirements[?refresh=1]
@@ -12,40 +12,37 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { getBrandIdentity } from "./brand-identity";
+import { resolveCompanyScope, isClientVisibleBrand } from "./company-scope";
 import { searchPipnetRequirements } from "./pipnet";
 
 const router = Router();
-
-interface CachedRow {
-  rows: any[];
-  fetched_at: string;
-}
-const cache = new Map<string, { value: CachedRow; expiresAt: number }>();
-const TTL_MS = 60 * 60_000; // 1h
 
 router.get("/api/brand/:companyId/pipnet-requirements", requireAuth, async (req: Request, res: Response) => {
   try {
     const companyId = String(req.params.companyId);
     const refresh = req.query.refresh === "1" || req.query.refresh === "true";
 
-    const companyRow = await pool.query<{ name: string }>(
-      `SELECT name FROM crm_companies WHERE id = $1`,
+    const scope = await resolveCompanyScope(req as any);
+    if (scope && scope !== companyId && !await isClientVisibleBrand(companyId, scope)) return res.status(403).json({ error: "Not available for this account" });
+    const companyRow = await pool.query(
+      `SELECT * FROM crm_companies WHERE id = $1`,
       [companyId]
     );
     if (!companyRow.rowCount) return res.status(404).json({ error: "Company not found" });
     const brandName = companyRow.rows[0].name;
 
-    if (!refresh) {
-      const hit = cache.get(companyId);
-      if (hit && Date.now() < hit.expiresAt) {
-        return res.json({ ...hit.value, cached: true });
-      }
-    }
+    const identity = getBrandIdentity(companyRow.rows[0]);
+    const key = `brand-pipnet:${companyId}`;
+    const saved = (await pool.query("SELECT value FROM system_settings WHERE key = $1", [key])).rows[0]?.value;
+    if (!refresh) return res.json(saved?.fingerprint === identity.fingerprint
+      ? { ...saved, cached: true } : { rows: [], fetched_at: null, cached: true, status: "pending" });
+    if (identity.status !== "verified") return res.status(409).json({ error: identity.reason, rows: [], status: "needs_review" });
 
     let rows: Record<string, string>[] = [];
     try {
       // Pipnet's free-text client filter is fuzzy — pulls anything containing
-      // the search string. Good enough as a first pass; we can tighten later.
+      // the search string; exact confirmed aliases are checked below.
       rows = await searchPipnetRequirements({ client: brandName });
     } catch (err: any) {
       console.warn(`[pipnet-requirements] ${brandName}: ${err?.message}`);
@@ -67,32 +64,15 @@ router.get("/api/brand/:companyId/pipnet-requirements", requireAuth, async (req:
 
     // Pipnet's client filter is fuzzy substring — searching "Pret" returns
     // "Pret News Ltd" too. Filter the rows to ones that genuinely match the
-    // brand: exact (after stripping Ltd/Limited/Group/Holdings/plc), OR the
-    // brand name occupies the first word of the client name. Anything else
-    // is dropped as a false match.
+    // brand: exact confirmed names after stripping legal suffixes.
     const normaliseName = (s: string): string => s
       .toLowerCase()
       .replace(/[.,&]/g, "")
       .replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp|uk|the)\b\.?/gi, "")
       .replace(/\s+/g, " ")
       .trim();
-    const target = normaliseName(brandName);
-    const targetTokens = target.split(" ").filter(Boolean);
-    const tightlyMatched = normalised.filter((row) => {
-      if (!row.client) return false;
-      const c = normaliseName(row.client);
-      if (!c) return false;
-      if (c === target) return true;
-      // Must contain ALL of the brand's tokens AND start with the first token.
-      // Catches "Aesop UK Ltd" → "aesop" matches, but rejects "Pret News" when
-      // brand is "Pret" because tokens of "pret" all match but "pret news"
-      // starts with "pret" so... let's tighten further: client length must be
-      // close to brand length.
-      const startsWithFirst = c.split(" ")[0] === targetTokens[0];
-      const lengthRatio = target.length / c.length;
-      const allTokensPresent = targetTokens.every(t => c.includes(t));
-      return startsWithFirst && allTokensPresent && lengthRatio >= 0.5;
-    });
+    const approvedNames = new Set(identity.aliases.map(normaliseName));
+    const tightlyMatched = normalised.filter(row => row.client && approvedNames.has(normaliseName(row.client)));
 
     const droppedAsFuzzy = normalised.length - tightlyMatched.length;
     if (droppedAsFuzzy > 0) {
@@ -100,7 +80,9 @@ router.get("/api/brand/:companyId/pipnet-requirements", requireAuth, async (req:
     }
 
     const payload = { rows: tightlyMatched.slice(0, 25), fetched_at: new Date().toISOString(), dropped_fuzzy: droppedAsFuzzy };
-    cache.set(companyId, { value: payload, expiresAt: Date.now() + TTL_MS });
+    const current = (await pool.query("SELECT * FROM crm_companies WHERE id = $1", [companyId])).rows[0];
+    if (getBrandIdentity(current).fingerprint !== identity.fingerprint) return res.status(409).json({ error: "The brand identity changed. Refresh against its current website." });
+    await pool.query("INSERT INTO system_settings(key,value) VALUES ($1,$2::jsonb) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()", [key, JSON.stringify({ ...payload, fingerprint: identity.fingerprint })]);
     res.json({ ...payload, cached: false });
   } catch (err: any) {
     console.error("[pipnet-requirements] error:", err);

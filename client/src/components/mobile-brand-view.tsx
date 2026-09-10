@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
+import { Button } from "@/components/ui/button";
 // Phone-fit brand / landlord profile — the mobile answer to the desktop
 // BrandProfilePanel, which rendered effectively blank at phone widths
 // (Woody, 2026-08-04: "how the brands reflect" on the phone app). Stacked
@@ -21,11 +23,10 @@ import {
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
-import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { ActivitySummary } from "@/components/activity-summary";
 
 export function MobileBrandView({ companyId }: { companyId: string }) {
-  const { data, isLoading } = useQuery<any>({
+  const { data, isLoading, isError, refetch: reloadSavedProfile } = useQuery<any>({
     queryKey: ["/api/brand", companyId, "profile"],
     queryFn: async () => {
       const res = await fetch(`/api/brand/${companyId}/profile`, { credentials: "include", headers: getAuthHeaders() });
@@ -48,11 +49,12 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   const [section, setSection] = useState<"chat" | "contacts" | "intel" | "stores" | "social" | "compliance">("chat");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const [newsShowAllM, setNewsShowAllM] = useState(false);
-  const [storesShowAll, setStoresShowAll] = useState(false);
+  const [conversationOpen, setConversationOpen] = useState(false);
+  useEffect(() => setConversationOpen(false), [companyId]);
   const sec = (k: typeof section) => (section === k ? "space-y-3" : "hidden");
   const { toast } = useToast();
   const { data: mbvUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientViewer = mbvUser?.role === "Client" || !!mbvUser?.companyScopeId;
+  const isClientViewer = !mbvUser || mbvUser.role === "Client" || !!mbvUser.companyScopeId;
   // Clients come here for "who are they / who do I call" — land them on
   // Contacts; Chat reads as an internal BGP tool (UX #95/#75). Staff keep
   // Chat-first. One-shot when the user row arrives, so pill taps stick.
@@ -108,20 +110,16 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     staleTime: 10 * 60 * 1000,
     retry: false,
   });
-  // Auto-fire on first open when a brand has no stores at all — same as
-  // desktop, so the map fills itself instead of waiting for a tap
-  // (Woody, 2026-08-25: "I don't want to ask, I need everything automated").
-  const autoScanFired = useRef(false);
-  useEffect(() => {
-    if (autoScanFired.current || !data?.company || isClientViewer) return;
-    const co = data.company;
-    if (/landlord|client/i.test(co.company_type || "")) return;
-    if ((data.stores || []).length > 0) return;
-    autoScanFired.current = true;
-    storeScan.mutate({ auto: true });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, isClientViewer]);
+  const refreshProfile = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/brand/enrich/${companyId}`, {})).json(),
+    onSuccess: (out) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
+      toast({ title: out.reason ? "Profile needs review" : "Profile refreshed", description: out.reason || "Saved facts have been checked." });
+    },
+    onError: (error: Error) => toast({ title: "Profile could not be refreshed", description: error.message, variant: "destructive" }),
+  });
 
+  if (isError) return <Card className="p-4 space-y-3"><p className="text-sm text-muted-foreground">The saved brand profile could not be loaded.</p><Button size="sm" variant="outline" onClick={() => reloadSavedProfile()}>Try again</Button></Card>;
   if (isLoading || !data?.company) {
     return (
       <div className="p-4 space-y-3">
@@ -134,19 +132,10 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
 
   const c = data.company;
   const isLandlord = /landlord|client/i.test(c.company_type || "");
-  // Same hero cascade as the desktop banner: pinned "brand-hero" tag →
-  // flagship street view (when stores have coords) → first gallery image.
-  const srcFor = (img: any) => img.thumbnail_data
-    ? (img.thumbnail_data.startsWith("data:") ? img.thumbnail_data : `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`)
-    : `/api/brand/gallery-image/${img.id}`;
-  const heroTagged = (data.images || []).find((i: any) => Array.isArray(i.tags) && i.tags.includes("brand-hero"));
-  const hasStreetView = (data.stores || []).some((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
-  const firstImg = (data.images || [])[0];
-  const heroSrc = heroTagged
-    ? srcFor(heroTagged)
-    : hasStreetView
-      ? `/api/brand/${companyId}/flagship-image${firstImg ? `?exclude=${encodeURIComponent(firstImg.id)}` : ""}`
-      : firstImg ? srcFor(firstImg) : null;
+  const hero = (data.images || []).find((image: any) => Array.isArray(image.tags) && image.tags.includes("brand-hero")) || data.images?.[0];
+  const heroSrc = hero ? hero.thumbnail_data
+    ? (hero.thumbnail_data.startsWith("data:") ? hero.thumbnail_data : `data:${hero.mime_type || "image/jpeg"};base64,${hero.thumbnail_data}`)
+    : `/api/brand/gallery-image/${hero.id}` : null;
   const trackerComments: any[] = trackerData?.comments || [];
 
   // Same dedupe as the desktop Signals feed — Instagram + Google News often
@@ -161,10 +150,6 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       return true;
     });
   })();
-  // Same UK slice as the desktop Stores section — the map only earns its
-  // place once at least one store is geocoded.
-  const ukStores: any[] = (data.stores || []).filter((s: any) => !s.country || s.country === "GB");
-  const mappableStores = ukStores.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
   const similarTenants: any[] = (data.competitors || []).slice(0, 8);
   const similarNames = new Set(similarTenants.map((t: any) => String(t.name).toLowerCase().trim()));
   const aiCompetitors: any[] = ((c.ai_competitors as any[]) || []).filter(
@@ -175,27 +160,30 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     <div className="p-4 space-y-3 pb-6">
       {/* Hero + identity */}
       {heroSrc && (
-        <div className="h-44 rounded-xl overflow-hidden bg-muted animate-pulse">
+        <div key={`${companyId}:${hero.id}`} className="h-44 rounded-xl overflow-hidden bg-muted animate-pulse">
           <img src={heroSrc} alt="" className="w-full h-full object-cover opacity-0 transition-opacity duration-500" onLoad={(e) => { e.currentTarget.classList.remove("opacity-0"); e.currentTarget.parentElement?.classList.remove("animate-pulse"); }} onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }} />
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
         {c.company_type && <Badge variant="outline" className="text-[11px]">{String(c.company_type).replace(/\s*-\s*/g, " · ")}</Badge>}
         {c.industry && <Badge variant="outline" className="text-[11px]">{c.industry}</Badge>}
-        {c.store_count != null && <Badge variant="outline" className="text-[11px] tabular-nums">{c.store_count} stores</Badge>}
+        {c.store_count != null && <Badge variant="outline" className="text-[11px] tabular-nums">{c.store_count} reported stores</Badge>}
         {(c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
         {(c.domain_url || c.domain) && (
+          <Button variant="outline" size="sm" asChild>
           <a
             href={(c.domain_url || `https://${c.domain}`).startsWith("http") ? (c.domain_url || `https://${c.domain}`) : `https://${c.domain_url || c.domain}`}
             target="_blank" rel="noreferrer"
-            className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground"
           >
-            <Globe className="w-3 h-3" /> {String(c.domain || c.domain_url).replace(/^https?:\/\//, "").replace(/\/$/, "")}
+            <Globe className="w-4 h-4" /> Website
           </a>
+          </Button>
         )}
       </div>
+      <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
+      {!isClientViewer && <Button variant="outline" size="sm" onClick={() => refreshProfile.mutate()} disabled={refreshProfile.isPending} data-testid="button-brand-refresh">{refreshProfile.isPending ? "Refreshing…" : "Refresh profile"}</Button>}
       <div className="flex flex-wrap gap-1.5" data-testid="company-phone-sections">
-        <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Chat</Pill>
+        <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Overview</Pill>
         <Pill active={section === "contacts"} onClick={() => setSection("contacts")} data-testid="company-section-contacts">Contacts</Pill>
         <Pill active={section === "intel"} onClick={() => setSection("intel")} data-testid="company-section-intel">Intel</Pill>
         {!isLandlord && <Pill active={section === "stores"} onClick={() => setSection("stores")} data-testid="company-section-stores">Stores</Pill>}
@@ -204,14 +192,16 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
 
       <div className={sec("chat")}>
-      {/* Who they are + BGP take in ONE card (description as the opening
-          paragraph, the AI read under it) — they read as one brief, not two
-          blocks (Woody, 2026-08-25). */}
-      <BgpTakeStrip companyId={companyId} tab="brand" intro={c.description} />
-      <AskChatBGPInline brandName={c.name} />
-      {/* Chat — same thread as desktop and the main chat panel */}
-      <div className="h-[320px]">
-        <CompanyMiniChat companyId={companyId} companyName={c.name} fill />
+      <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} />
+      {!isClientViewer && <BrandImageRefreshButton companyId={companyId} />}
+      <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
+        <p className="text-sm leading-relaxed">{c.description || "The factual brand profile is awaiting preparation."}</p>
+      </div>
+      <BgpTakeStrip companyId={companyId} tab="brand" />
+      <div className="rounded-lg border border-border bg-card p-3 space-y-3">
+        <Button variant="outline" size="sm" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
+        {conversationOpen && <><AskChatBGPInline brandName={c.name} /><div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div></>}
       </div>
       </div>
 
@@ -534,73 +524,11 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
 
       <div className={sec("stores")}>
-      {/* UK stores — same data as the desktop Stores section, map first.
-          Staff see the card even at 0 stores with the same research
-          trigger desktop has; clients only once stores exist. */}
-      {!isLandlord && (mappableStores.length > 0 || ukStores.length > 0 || !isClientViewer) && (
-        <Card>
-          <CardHeader className="p-3 pb-2">
-            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-              <Store className="w-3.5 h-3.5" /> UK stores
-              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{ukStores.length}</Badge>
-              {!isClientViewer && !storeScan.isPending && (
-                <button
-                  onClick={() => storeScan.mutate({})}
-                  className="ml-auto text-[10px] px-2 py-0.5 rounded-full border bg-card hover:bg-muted normal-case tracking-normal"
-                  data-testid="btn-mobile-research-stores"
-                >
-                  {ukStores.length ? "Refresh" : "Find stores"}
-                </button>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-3 pt-0">
-            {storeScan.isPending ? (
-              <div className="text-xs text-muted-foreground border border-dashed rounded-lg px-3 py-6 text-center">
-                Researching UK stores — the map appears here when the scan finishes (can take a couple of minutes)…
-              </div>
-            ) : ukStores.length > 0 ? (
-              <div className="space-y-2">
-                {mappableStores.length > 0 && (
-                  <div className="rounded-lg overflow-hidden border border-border/50">
-                    <BrandPortfolioMap stores={mappableStores as any} height={240} />
-                  </div>
-                )}
-                {/* List under the map — every store, addressable and scannable
-                    (Woody, 2026-08-25: "can you do list as well as map"). */}
-                <div className="divide-y divide-border/60">
-                  {(storesShowAll ? ukStores : ukStores.slice(0, 5)).map((s: any) => (
-                    <div key={s.id} className="text-xs py-1.5 min-w-0 flex items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium truncate">{s.name}</div>
-                        {s.address && <div className="text-[11px] text-muted-foreground truncate">{s.address}</div>}
-                      </div>
-                      {s.status === "closed" && (
-                        <Badge variant="outline" className="text-[9px] shrink-0 text-red-600 border-red-200">Closed</Badge>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                {ukStores.length > 5 && !storesShowAll && (
-                  <button
-                    onClick={() => setStoresShowAll(true)}
-                    className="text-[11px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
-                    data-testid="btn-stores-show-all"
-                  >
-                    Show all {ukStores.length}
-                  </button>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                No store locations on file yet — Find stores researches them from Google Places and lights up the map.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-
+      {!isLandlord && ((data.stores || []).length > 0 || !isClientViewer) && <BrandStoresBoard
+        companyId={companyId} stores={data.stores || []} reportedTotal={c.store_count} canRefresh={!isClientViewer}
+        refreshing={storeScan.isPending} diagnostic={storeScan.error instanceof Error ? storeScan.error.message : null}
+        onRefresh={() => storeScan.mutate({})}
+      />}
       </div>
 
       <div className={sec("social")}>

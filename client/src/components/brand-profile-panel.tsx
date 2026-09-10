@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
 import { ContactImportResults, type ContactImportResult } from "@/components/contact-import-results";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
@@ -35,10 +36,10 @@ import {
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
   Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight, Loader2,
 } from "lucide-react";
-import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { NewsTagFilterChips } from "@/components/news-tags-manager";
 
 interface BrandProfile {
+  identity?: { status: "verified" | "review"; domain: string | null };
   company: {
     id: string;
     name: string;
@@ -70,7 +71,7 @@ interface BrandProfile {
     uk_entity_name: string | null;
     agent_type: string | null;
     concept_status: string | null;
-    ai_generated_fields: Record<string, string> | null;
+    ai_generated_fields: Record<string, any> | null;
     last_enriched_at: string | null;
     brand_analysis: string | null;
     brand_analysis_at: string | null;
@@ -395,13 +396,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
   const [contactsFinding, setContactsFinding] = useState(false);
   const [contactImport, setContactImport] = useState<{ companyId: string; result?: ContactImportResult; error?: string } | null>(null);
-  const [editingDomain, setEditingDomain] = useState(false);
-  const [domainInput, setDomainInput] = useState("");
-  const autoContactsRan = useRef(false);
-  const autoBrandIntelRan = useRef(false);
 
   const [kycRunning, setKycRunning] = useState(false);
-  const autoKycRan = useRef(false);
 
   async function runContactDiscovery() {
     setContactsFinding(true);
@@ -444,14 +440,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const isAdmin = !!currentUser?.isAdmin;
   // Client viewers (e.g. Landsec) read the profile but can't fire the
   // research/enrichment POSTs (all 403 server-side) — fail closed until
-  // the viewer is known so we never auto-fire on a client's first paint.
+  // the viewer is known before exposing staff research actions.
   const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
   // 'BGP portfolio — potential pitches' is parked as a WIP — removed from the
   // brand profile for now (the £0pa rows aren't ready). The data + code stay;
   // flip this to true (or move it to a dedicated admin page) when it's ready.
   const SHOW_PORTFOLIO_PITCHES = false;
 
-  const { data, isLoading, isError } = useQuery<BrandProfile>({
+  const { data, isLoading, isError, refetch: reloadSavedProfile } = useQuery<BrandProfile>({
     queryKey: ["/api/brand", companyId, "profile"],
     queryFn: async () => {
       const res = await fetch(`/api/brand/${companyId}/profile`, {
@@ -479,116 +475,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     });
   }, [data?.signals]);
 
-  useEffect(() => {
-    if (!data || isClientViewer || autoContactsRan.current) return;
-    autoContactsRan.current = true;
-    // Auto-discover a RocketReach property contact when the brand has none
-    // yet. "Property contact" = role mentions property / real estate /
-    // acquisition / expansion / portfolio / store-dev. Skip if we already
-    // have one so we don't burn credits on every page open.
-    const hasPropertyContact = (data.contacts || []).some((c: any) => {
-      const r = String(c.role || "").toLowerCase();
-      return /(property|real estate|acquisition|expansion|portfolio|estates|store dev|store development)/.test(r);
-    });
-    if (!hasPropertyContact) runContactDiscovery();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, currentUser]);
-
-  // Auto-fire RocketReach brand intel on first profile load — sweeps the
-  // industry_str and auto-fills BGP industry / company_type when blank.
-  // Cheap (uses unlimited searchCompany credits, no person reveal).
-  useEffect(() => {
-    if (!data || isClientViewer || autoBrandIntelRan.current) return;
-    autoBrandIntelRan.current = true;
-    const hasCategory = !!(data.company.industry && String(data.company.industry).trim());
-    const hasGoodType = !!(data.company.company_type && !["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(data.company.company_type).trim()));
-    if (hasCategory && hasGoodType) return;
-    apiRequest("POST", `/api/brand/${companyId}/rocketreach-company/refresh`)
-      .then(r => r.json())
-      .then((json: any) => {
-        if (json?.auto_filled && Object.keys(json.auto_filled).length > 0) {
-          queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-        }
-      })
-      .catch(() => { /* silent — not critical */ });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, currentUser]);
-
-  // Auto-fire the Companies House KYC sweep on first load if we have
-  // a CH number but no officers/PSCs cached yet. Brands had this
-  // parked May '26 (covenant zone disabled) but landlords need it to
-  // populate the "Officers + PSCs" downstream check in the Compliance
-  // board — without this, the row stays grey forever even on PLCs
-  // like Land Sec where the data is one CH call away. Gated on having
-  // a CH number so we don't kick off a no-op for brands without one.
-  useEffect(() => {
-    if (!data || isClientViewer || autoKycRan.current) return;
-    const hasCh = !!data.company?.companies_house_number;
-    const chData: any = data.company?.companies_house_data || {};
-    const hasOfficers = Array.isArray(chData?.officers) && chData.officers.length > 0;
-    const hasPscs = Array.isArray(chData?.pscs) && chData.pscs.length > 0;
-    if (hasCh && (!hasOfficers || !hasPscs)) {
-      autoKycRan.current = true;
-      apiRequest("POST", `/api/companies-house/auto-kyc/${companyId}`, {})
-        .then(() => queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }))
-        .catch(() => { /* failure surfaces in the compliance board's row state */ });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, currentUser]);
-
-  const autoStoresRan = useRef(false);
-  useEffect(() => {
-    if (!data || isClientViewer || autoStoresRan.current) return;
-    autoStoresRan.current = true;
-    const found = data.stores?.length || 0;
-    // Stale undercount: the old strict name matcher left big chains with a
-    // stray row or two (Greggs: 1 row for 2,600 shops), and one non-zero
-    // row blocked the zero-only auto-scan forever. Re-scan when the stored
-    // set is tiny against the brand's known store count — but only if the
-    // last scan is old, so genuinely small footprints don't re-burn Places
-    // quota on every open.
-    const claimed = data.company?.store_count ?? 0;
-    const freshest = Math.max(0, ...(data.stores || []).map((s: any) => (s.researched_at ? new Date(s.researched_at).getTime() : 0)));
-    const staleScan = Date.now() - freshest > 7 * 24 * 3600 * 1000;
-    if ((found === 0 || (found <= 3 && claimed >= 25 && staleScan)) && !researchStoresMutation.isPending) {
-      researchStoresMutation.mutate({ scope: "uk", auto: true });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, currentUser]);
-
-  // Auto-fire the UK trading-entity scraper on first brand load when we
-  // don't have one stored yet. UK law (Companies Act 2006) requires brands
-  // to disclose their trading entity on the website, so the scraper finds
-  // most of them — but for the cases it misses, the Compliance board on
-  // the sidebar lets the user paste it in manually. Until the entity is
-  // known, AML/KYC checks downstream can't run against the right CH row.
-  const autoUkEntityRan = useRef(false);
-  useEffect(() => {
-    if (!data || isClientViewer || autoUkEntityRan.current) return;
-    if (data.company?.uk_entity_name) return; // already set — don't re-scrape
-    if (!(data.company?.domain || data.company?.domain_url)) return; // no website to scrape
-    autoUkEntityRan.current = true;
-    findUkEntityMutation.mutate();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, currentUser]);
-
-  // Auto-enrich on open (staff only) when AI-fillable fields are blank OR
-  // the enrichment is stale (>14 days) — the manual enrich buttons are gone
-  // (Woody, 2026-08-18: "it should update when it's opened"). The endpoint
-  // never overwrites human-edited values, and the ref plus these gates stop
-  // repeat opens from burning AI calls.
-  const autoEnrichRan = useRef(false);
-  useEffect(() => {
-    if (!data || isClientViewer || autoEnrichRan.current) return;
-    const co: any = data.company || {};
-    const missingAiFields = !co.description || !co.concept_pitch || co.store_count == null || !co.brand_analysis;
-    const stale = !co.last_enriched_at
-      || Date.now() - new Date(co.last_enriched_at).getTime() > 14 * 24 * 60 * 60 * 1000;
-    if (!missingAiFields && !stale) return;
-    autoEnrichRan.current = true;
-    enrichMutation.mutate();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, currentUser]);
+  // Profile opens only read saved data. Provider work is scheduled in the
+  // preparation queue or started explicitly with a Refresh action.
+  const [conversationOpen, setConversationOpen] = useState(false);
+  useEffect(() => { setConversationOpen(false); setEditing(false); }, [companyId]);
 
   const patchMutation = useMutation({
     mutationFn: async (body: Partial<BrandProfile["company"]>) => {
@@ -610,14 +500,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       return res.json();
     },
     onSuccess: (out: { updated?: string[]; skipped?: string[]; reason?: string }) => {
-      if (out.reason) {
-        toast({ title: "Brand data not refreshed", description: "Automatic enrichment is unavailable right now — try Refresh later." });
-      } else if (!out.updated || out.updated.length === 0) {
-        toast({ title: "No new info found", description: "AI had nothing to add." });
-      } else {
-        toast({ title: "Enriched", description: `Updated: ${out.updated.join(", ")}` });
-      }
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      toast({ title: out.reason ? "Profile needs review" : "Profile refreshed",
+        description: out.reason || (out.updated?.length ? "New verified information has been saved." : "The saved facts are unchanged.") });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
     },
     onError: (e: any) => toast({ title: "Enrichment failed", description: e.message, variant: "destructive" }),
@@ -1007,31 +892,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     retry: false,
   });
 
-  // Stock snapshot + 90d history (only fetched if brand has a ticker)
-  const { data: stockData } = useQuery<{
-    snapshot: {
-      ticker: string; price: number | null; currency: string | null;
-      marketCap: number | null; marketCapGBP: number | null;
-      fiftyTwoWeekHigh: number | null; fiftyTwoWeekLow: number | null;
-      fiftyTwoWeekChange: number | null; peRatio: number | null;
-      exchange: string | null; shortName: string | null;
-    } | null;
-    history: Array<{ date: string; close: number }>;
-  }>({
-    queryKey: ["/api/brand", companyId, "stock"],
-    queryFn: async () => {
-      const r = await fetch(`/api/brand/${companyId}/stock`, {
-        credentials: "include",
-        headers: getAuthHeaders(),
-      });
-      if (!r.ok) return { snapshot: null, history: [] };
-      return r.json();
-    },
-    enabled: !!data?.company?.stock_ticker,
-    staleTime: 15 * 60 * 1000,
-    retry: false,
-  });
-
   // BGP portfolio units that could be pitched to this brand
   const { data: suggestedUnits } = useQuery<Array<{
     id: string; unit_name: string | null; sqft: number | null; rent_pa: number | null;
@@ -1054,7 +914,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
   const [addContactOpen, setAddContactOpen] = useState(false);
 
-  if (isLoading || !data) return null;
+  if (isLoading) return <Card className="p-4 space-y-4 animate-pulse" aria-label="Loading saved brand profile"><div className="h-6 w-1/3 rounded bg-muted" /><div className="h-16 rounded bg-muted" /><div className="h-40 rounded bg-muted" /></Card>;
+  if (isError || !data) return <Card className="p-4 space-y-3"><p className="text-sm text-muted-foreground">The saved brand profile could not be loaded.</p><Button size="sm" variant="outline" onClick={() => reloadSavedProfile()}>Try again</Button></Card>;
 
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
@@ -1162,6 +1023,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
           })()}
           {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
         </CardTitle>
+        <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <Button
@@ -1173,8 +1035,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
           >
             <Download className="w-3.5 h-3.5" />
           </Button>
-          {/* Manual enrich button removed (Woody, 2026-08-18) — enrichment
-              auto-fires on open when fields are blank or the data is stale. */}
+          {!isClientViewer && <Button variant="outline" size="sm" onClick={() => enrichMutation.mutate()} disabled={enrichMutation.isPending} data-testid="button-brand-refresh">
+            <RefreshCw className={`w-4 h-4 ${enrichMutation.isPending ? "animate-spin" : ""}`} />{enrichMutation.isPending ? "Refreshing…" : "Refresh profile"}
+          </Button>}
           {!isClientViewer && (
           <Button variant="ghost" size="sm" onClick={editing ? () => setEditing(false) : startEdit} data-testid="button-brand-edit">
             {editing ? <X className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
@@ -1183,7 +1046,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         </div>
       </CardHeader>
 
-      <CardContent className="p-3 pt-0 space-y-2.5">
+      <CardContent className="p-3 space-y-4">
         {!editing && (
           <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
             <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">Profile</Pill>
@@ -1301,6 +1164,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         ) : (
           <div className="w-full flex flex-col gap-2.5">
             <div className={panelSec("profile")}>
+            <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} />
             {/* ── Details card ─────────────────────────────── */}
             {(() => {
               const a: any = c.head_office_address;
@@ -1333,13 +1197,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   : `${c.employee_count} employees`
                 : null;
               const fmtRevenue = (v: number) => v >= 1_000_000_000 ? `$${(v / 1_000_000_000).toFixed(1)}B` : `$${(v / 1_000_000).toFixed(0)}M`;
-              const snap = stockData?.snapshot;
-              const fmtCap = (v: number | null) => {
-                if (v == null) return null;
-                if (v >= 1e9) return `£${(v / 1e9).toFixed(1)}B`;
-                if (v >= 1e6) return `£${(v / 1e6).toFixed(0)}M`;
-                return `£${(v / 1e3).toFixed(0)}K`;
-              };
               return (
                 <div className="rounded-md border border-border/40 bg-muted/20 p-2 mb-2 order-0 flex flex-wrap gap-x-3 gap-y-0.5 items-center">
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
@@ -1366,29 +1223,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     <span className="text-xs text-muted-foreground">Global revenue {fmtRevenue(c.annual_revenue)}</span>
                   )}
                   {c.founded_year && <span className="text-xs text-muted-foreground">Est. {c.founded_year}</span>}
-                  {c.stock_ticker && snap && (() => {
-                    const s = snap;
-                    const change = s.fiftyTwoWeekChange;
-                    const changeColor = change == null ? "text-muted-foreground" : change >= 0 ? "text-emerald-700" : "text-red-600";
-                    const changePct = change != null ? `${change >= 0 ? "+" : ""}${(change * 100).toFixed(1)}%` : null;
-                    const curr = s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "£";
-                    return (
-                      <a
-                        href={`https://finance.yahoo.com/quote/${encodeURIComponent(s.ticker)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground"
-                        title={`${s.shortName || s.ticker} on ${s.exchange || "Yahoo Finance"}`}
-                      >
-                        <Coins className="w-2.5 h-2.5 text-amber-600" />
-                        {s.ticker}
-                        {s.price != null && <span className="font-semibold">{curr}{s.price.toFixed(2)}</span>}
-                        {changePct && <span className={changeColor}>{changePct}</span>}
-                        {fmtCap(s.marketCapGBP) && <span className="text-muted-foreground">· {fmtCap(s.marketCapGBP)}</span>}
-                      </a>
-                    );
-                  })()}
-                  {c.stock_ticker && !snap && (
+                  {c.stock_ticker && (
                     <a
                       href={`https://finance.yahoo.com/quote/${encodeURIComponent(c.stock_ticker)}`}
                       target="_blank"
@@ -1401,196 +1236,29 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 </div>
               );
             })()}
-            {/* Outreach strip — quick-action buttons */}
-            <div className="flex items-center gap-1.5 flex-wrap mb-2 order-1 empty:hidden">
-              {editingDomain ? (
-                <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background text-xs">
-                  <Globe className="w-3 h-3 text-muted-foreground" />
-                  <input
-                    type="text"
-                    autoFocus
-                    value={domainInput}
-                    onChange={(e) => setDomainInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        const clean = domainInput.trim().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "");
-                        patchMutation.mutate({ domain: clean || null, domain_url: clean ? `https://${clean}` : null } as any);
-                        setEditingDomain(false);
-                      } else if (e.key === "Escape") {
-                        setEditingDomain(false);
-                      }
-                    }}
-                    placeholder="example.com"
-                    className="bg-transparent outline-none w-40 text-xs"
-                    data-testid="input-edit-domain"
-                  />
-                  <button
-                    onClick={() => {
-                      const clean = domainInput.trim().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "");
-                      patchMutation.mutate({ domain: clean || null, domain_url: clean ? `https://${clean}` : null } as any);
-                      setEditingDomain(false);
-                    }}
-                    title="Save"
-                    className="hover:text-emerald-600"
-                  >
-                    <Check className="w-3 h-3" />
-                  </button>
-                  <button onClick={() => setEditingDomain(false)} title="Cancel" className="hover:text-rose-600">
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ) : (c.domain_url || c.domain) ? (
-                <div className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 transition-colors">
-                  <a
-                    href={c.domain_url || `https://${c.domain}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 pl-2 pr-1 py-1 text-xs font-medium"
-                    data-testid="link-website"
-                  >
-                    <Globe className="w-3 h-3" /> Website
-                  </a>
-                  {!isClientViewer && (
-                  <button
-                    onClick={() => {
-                      setDomainInput((c.domain || (c.domain_url || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "")) || "");
-                      setEditingDomain(true);
-                    }}
-                    title="Edit website"
-                    className="pr-2 py-1 text-muted-foreground hover:text-foreground"
-                    data-testid="button-edit-domain"
-                  >
-                    <Pencil className="w-3 h-3" />
-                  </button>
-                  )}
-                </div>
-              ) : !isClientViewer ? (
-                <button
-                  onClick={() => { setDomainInput(""); setEditingDomain(true); }}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-dashed border-border/60 bg-background hover:bg-muted/50 text-xs font-medium text-muted-foreground transition-colors"
-                  data-testid="button-add-domain"
-                >
-                  <Globe className="w-3 h-3" /> Add website
-                </button>
-              ) : null}
-              {c.linkedin_url && (
-                <a
-                  href={c.linkedin_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
-                  data-testid="link-linkedin"
-                >
-                  <Linkedin className="w-3 h-3" /> LinkedIn
-                </a>
-              )}
-              {c.instagram_handle && (
-                <a
-                  href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
-                  data-testid="link-instagram"
-                >
-                  <Instagram className="w-3 h-3" /> Instagram
-                </a>
-              )}
-              {c.phone && (
-                <a
-                  href={`tel:${c.phone}`}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
-                  data-testid="link-phone"
-                >
-                  <Phone className="w-3 h-3" /> {c.phone}
-                </a>
-              )}
-              {c.domain && (
-                <a
-                  href={`https://${c.domain}/press`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
-                  title="Brand newsroom"
-                >
-                  <Newspaper className="w-3 h-3" /> Press
-                </a>
-              )}
-              {c.domain && (
-                <a
-                  href={`https://${c.domain}/careers`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
-                  title="Brand careers page"
-                >
-                  <Briefcase className="w-3 h-3" /> Careers
-                </a>
-              )}
-              {data.contacts.find((ct: any) => ct.email) && (
-                <a
-                  href={`mailto:${data.contacts.find((ct: any) => ct.email)?.email}`}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
-                  title="Email primary contact"
-                >
-                  <Phone className="w-3 h-3" /> Email
-                </a>
-              )}
-              {!isClientViewer && (
-              <button
-                type="button"
-                onClick={() => runContactDiscovery()}
-                disabled={contactsFinding}
-                className="inline-flex min-h-11 items-center gap-1 px-2 py-1 rounded-md border border-border bg-background hover:bg-muted text-sm font-medium transition-colors disabled:opacity-50"
-                data-testid="button-refresh-contacts"
-              >
-                <Sparkles className="w-3 h-3" /> {contactsFinding ? "Finding…" : "Refresh contacts"}
-              </button>
-              )}
-              {!isClientViewer && (
-              <button
-                type="button"
-                onClick={() => setAddContactOpen(true)}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
-                title="Add a contact to this company by hand"
-                data-testid="button-add-contact-brand"
-              >
-                <Plus className="w-3 h-3" /> Add contact
-              </button>
-              )}
-              {!isClientViewer && <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />}
-              {c.stock_ticker && (
-                <a
-                  href={`https://finance.yahoo.com/quote/${encodeURIComponent(c.stock_ticker)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
-                >
-                  <TrendingUp className="w-3 h-3" /> {c.stock_ticker}
-                </a>
-              )}
-              {currentUser?.role !== "Client" && (<>
-              <button
-                type="button"
-                onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-medium transition-colors"
-                title="Go to Deals to add this brand to a deal"
-              >
-                <Plus className="w-3 h-3" /> Add to deal
-              </button>
-              {!isLandlord && (
-              <button
-                type="button"
-                onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border bg-background hover:bg-muted text-xs font-medium transition-colors"
-                title="Browse available units to pitch to this brand"
-              >
-                <Building2 className="w-3 h-3" /> Pitch property
-              </button>
-              )}
-              </>)}
+            <div className="flex items-center gap-2 flex-wrap" data-testid="brand-overview-actions">
+              {(c.domain_url || c.domain) && <Button variant="outline" size="sm" asChild><a href={c.domain_url || `https://${c.domain}`} target="_blank" rel="noreferrer" data-testid="link-website"><Globe />Website</a></Button>}
+              {c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
+              {c.instagram_handle && <Button variant="outline" size="sm" asChild><a href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`} target="_blank" rel="noreferrer" data-testid="link-instagram"><Instagram />Instagram</a></Button>}
+              {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
+              {data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
+              {!isClientViewer && <>
+                <Button variant="outline" size="sm" onClick={runContactDiscovery} disabled={contactsFinding} data-testid="button-refresh-contacts"><RefreshCw className={contactsFinding ? "animate-spin" : ""} />{contactsFinding ? "Finding…" : "Refresh contacts"}</Button>
+                <Button variant="outline" size="sm" onClick={() => setAddContactOpen(true)} data-testid="button-add-contact-brand"><Plus />Add contact</Button>
+                <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />
+              </>}
+              {currentUser?.role !== "Client" && <>
+                <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>
+                {!isLandlord && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
+              </>}
             </div>
 
             {!isClientViewer && contactImport?.companyId === companyId && <div className="order-1 mt-3"><ContactImportResults result={contactImport.result} error={contactImport.error} /></div>}
+
+            <div className="space-y-2 pt-2" data-testid="brand-factual-summary">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
+              <p className="text-sm leading-relaxed break-words">{c.description || "The factual brand profile is awaiting preparation."}</p>
+            </div>
 
             {/* Single BGP AI take + Ask ChatBGP question runner — sits above
                 all zones. Client logins get both too (Woody, 2026-08-04:
@@ -1598,7 +1266,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 chat backend enforces the client tool allowlist. */}
             <div className="mt-2 order-2 space-y-3 empty:hidden">
               <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
-              <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
+
             </div>
 
             {/* Properties board — for landlords it sits directly under Ask ChatBGP
@@ -1612,75 +1280,36 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             )}
 
 
-            {/* Visual brand banner. The FIRST pane is the best available
-                image (pinned "brand-hero" → street view → first gallery
-                image); the SECOND pane is the company chat, moved up from
-                the sidebar so the conversation sits at the top of the
-                profile (Woody, 2026-08-03). */}
             {(() => {
-              const hasStreetView = stores.some((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
-              const hero = (data.images || []).find((i: any) => Array.isArray(i.tags) && i.tags.includes("brand-hero"));
-              const srcFor = (img: any) => img.thumbnail_data
-                ? (img.thumbnail_data.startsWith("data:")
-                    ? img.thumbnail_data
-                    : `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`)
-                : `/api/brand/gallery-image/${img.id}`;
-              const firstImg = data.images[0];
-              // UX #131 — the pane sat as a bare grey block for seconds on
-              // slow networks; shimmer until the image paints, then fade in.
-              const imgLoaded = (e: React.SyntheticEvent<HTMLImageElement>) => {
-                e.currentTarget.classList.remove("opacity-0");
-                e.currentTarget.parentElement?.classList.remove("animate-pulse");
-              };
-              const heroImgClass = "w-full h-full object-cover opacity-0 transition-opacity duration-500";
-              const imagePane = hero ? (
-                <img src={srcFor(hero)} alt={hero.file_name || ""} className={heroImgClass} onLoad={imgLoaded} />
-              ) : hasStreetView ? (
-                <img
-                  src={`/api/brand/${companyId}/flagship-image${firstImg ? `?exclude=${encodeURIComponent(firstImg.id)}` : ""}`}
-                  alt="Flagship store street view"
-                  className={heroImgClass}
-                  onLoad={imgLoaded}
-                  onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
-                />
-              ) : firstImg ? (
-                <img
-                  src={srcFor(firstImg)}
-                  alt=""
-                  className={heroImgClass}
-                  onLoad={imgLoaded}
-                  onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
-                />
-              ) : null;
-              return (
-                <div className={`grid gap-1.5 rounded-md ${imagePane ? "grid-cols-2" : "grid-cols-1"}`} style={{ height: 260 }}>
-                  {imagePane && (
-                    <div className="overflow-hidden rounded-md bg-muted/40 animate-pulse">{imagePane}</div>
-                  )}
-                  <div className="h-full min-h-0">
-                    <CompanyMiniChat companyId={companyId} companyName={c.name} fill />
-                  </div>
-                </div>
-              );
+              const hero = (data.images || []).find((image: any) => Array.isArray(image.tags) && image.tags.includes("brand-hero")) || data.images?.[0];
+              if (!hero) return null;
+              const src = hero.thumbnail_data
+                ? (hero.thumbnail_data.startsWith("data:") ? hero.thumbnail_data : `data:${hero.mime_type || "image/jpeg"};base64,${hero.thumbnail_data}`)
+                : `/api/brand/gallery-image/${hero.id}`;
+              return <div key={`${companyId}:${hero.id}`} className="rounded-lg overflow-hidden border border-border bg-muted/20" data-testid="brand-overview-image">
+                <img src={src} alt={`${c.name} brand image`} className="w-full max-h-64 object-contain" onError={event => { event.currentTarget.parentElement!.hidden = true; }} />
+              </div>;
             })()}
 
-            {/* ── Global brand — plain description only.
-                 The AI brand_analysis paragraph moved to sit above Hunter
-                 Intel (more logical home for AI-generated expansion narrative). */}
-            {c.description && (
-              <div className="space-y-2">
-                <p className="text-sm leading-snug text-foreground/85 break-words">{c.description}</p>
+            <div className="rounded-lg border border-border p-3 space-y-3">
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />Brand conversation</p>
+                <Button type="button" size="sm" variant="outline" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
               </div>
-            )}
+              {conversationOpen && <>
+                <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
+                <div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div>
+              </>}
+            </div>
 
             {/* Key facts row */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm empty:hidden">
               {c.store_count != null && (
                 <div>
                   <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Store className="w-3 h-3" /> Stores {aiFields.store_count && <AiChip />}
+                    <Store className="w-3 h-3" /> Reported store total {aiFields.store_count && <AiChip />}
                   </div>
-                  <div className="font-semibold flex items-center gap-1.5">
+                  <div className="font-semibold font-mono tabular-nums flex items-center gap-1.5">
                     {c.store_count.toLocaleString()}
                     {rolloutVelocity && rolloutVelocity.net12m !== 0 && (
                       <Badge
@@ -1886,101 +1515,17 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 fn is kept in the file for re-use if/when we buy company
                 lookup credits and the rich payload becomes available. */}
 
-            {/* Momentum — Apollo firmographics (headcount growth, funding).
-                Refresh fills company gaps and feeds growth/funding into
-                brand_signals → Expansion Intelligence. */}
+            {/* Verified external figures are available as supporting sources. */}
             {!isLandlord && <ApolloIntelCard companyId={c.id} companyName={c.name} />}
 
             </div>
 
             <div className={panelSec("stores")}>
-            {/* ── Stores — brand-side only. Landlords get the Ownership
-                 block below instead. UK/Global toggle was rolled back
-                 May 2026; backend + brand_stores.country schema kept in
-                 place so we can re-enable later. */}
-            {/* Staff always see the section, even at 0 stores — the auto
-                research fires on first open, and when it comes back empty
-                (Places quota, rate limit, obscure brand) the section used
-                to vanish entirely, which read as "the location map is
-                gone". Clients still only see it once stores exist. */}
-            {!isLandlord && (stores.length > 0 || !isClientViewer) && (() => {
-              const visible = stores.filter((s: any) => !s.country || s.country === "GB");
-              if (stores.length === 0) {
-                return (
-                  <div className="border-t border-border/40 mt-3 pt-2 order-5">
-                    <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-                      <Store className="w-3.5 h-3.5 text-muted-foreground" />
-                      <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
-                        UK stores
-                      </span>
-                      {!researchStoresMutation.isPending && (
-                        <button
-                          onClick={() => researchStoresMutation.mutate({ scope: "uk" })}
-                          className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted"
-                          data-testid="btn-research-stores-uk"
-                        >
-                          Re-scan UK
-                        </button>
-                      )}
-                    </div>
-                    {researchStoresMutation.isPending ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground border border-dashed rounded-md px-3 py-6 justify-center">
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        Researching UK stores — the location map will appear here when the scan finishes…
-                      </div>
-                    ) : (
-                      <div className="text-xs text-muted-foreground border border-dashed rounded-md px-3 py-4">
-                        No stores found yet{storesDiagnostic ? ` — ${storesDiagnostic}` : ""}.
-                        {" "}Re-scan to retry, or add stores manually and the map will appear.
-                      </div>
-                    )}
-                  </div>
-                );
-              }
-              return (
-                <div className="border-t border-border/40 mt-3 pt-2 order-5">
-                  <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-                    <Store className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
-                      UK stores ({visible.length})
-                    </span>
-                    {!isClientViewer && (
-                    <button
-                      onClick={() => researchStoresMutation.mutate({ scope: "uk" })}
-                      disabled={researchStoresMutation.isPending}
-                      className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
-                      data-testid="btn-research-stores-uk"
-                    >
-                      {researchStoresMutation.isPending ? "Researching…" : "Re-scan UK"}
-                    </button>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-[1fr,320px] gap-3">
-                    <BrandPortfolioMap stores={visible as any} height={380} />
-                    <div className="max-h-[380px] overflow-y-auto pr-1 text-xs grid grid-cols-2 gap-x-2 gap-y-1 content-start">
-                      {visible.map((s: any) => {
-                        // s.address can come back either as a string
-                        // (most CRM rows) or an object {street, city,
-                        // country, postcode} from the Apollo / research
-                        // mutation — stringify defensively so a fresh
-                        // research payload doesn't crash the panel.
-                        const addrStr = typeof s.address === "string"
-                          ? s.address
-                          : s.address && typeof s.address === "object"
-                            ? [s.address.street, s.address.city, s.address.postcode, s.address.country].filter(Boolean).join(", ")
-                            : "";
-                        return (
-                          <div key={s.id} className="leading-snug">
-                            <div className="font-medium truncate">{s.name}</div>
-                            {addrStr && <div className="text-[10px] text-muted-foreground truncate">{addrStr}</div>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
+            {!isLandlord && (stores.length > 0 || !isClientViewer) && <BrandStoresBoard
+              companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh={!isClientViewer}
+              refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic}
+              onRefresh={() => researchStoresMutation.mutate({ scope: "uk" })}
+            />}
 
             {/* ── Ownership (landlords only). Today: properties already
                  linked to this landlord via crm_properties.landlord_id.
@@ -2095,6 +1640,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               subjectId={companyId}
               title={`${c.name} — Activity`}
               compact
+              cachedOnly
             />
 
             {/* Interactions — the AI Activity card above is the primary view;
@@ -2464,32 +2010,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     )}
                   </div>
                 )}
-                {isLandlord ? null : c.brand_analysis ? (
-                  <div className="rounded-md border border-border bg-muted/40 p-2">
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                      <Sparkles className="w-3 h-3" /> Brand expansion
-                      {c.brand_analysis_at && (
-                        <span className="text-[10px] text-muted-foreground ml-auto">
-                          {new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                        </span>
-                      )}
-                    </div>
-                    {/* The generator ends with BGP-internal pitch guidance
-                        ("Recommendation: do not pitch until…") — strip it
-                        for client viewers (UX #40). */}
-                    <AiCommentary
-                      entities={commentaryEntities}
-                      text={isClientViewer
+                {!isLandlord && c.brand_analysis && (
+                  <details className="rounded-lg border border-border p-3">
+                    <summary className="text-sm font-medium cursor-pointer">Previous expansion research{c.brand_analysis_at ? ` · ${new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}</summary>
+                    <div className="pt-3">
+                      <AiCommentary entities={commentaryEntities} text={isClientViewer
                         ? String(c.brand_analysis).split(/\*{0,2}Recommendation\b/i)[0].replace(/[\s*—:-]+$/, "")
-                        : String(c.brand_analysis)}
-                    />
-                  </div>
-                ) : (
-                  <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-center">
-                    <p className="text-xs text-muted-foreground">
-                      {enrichMutation.isPending ? "Generating brand narrative…" : "No brand expansion narrative yet — generates automatically."}
-                    </p>
-                  </div>
+                        : String(c.brand_analysis)} />
+                    </div>
+                  </details>
                 )}
             {/* Active internal requirements — what this brand has on our books */}
             {requirements.filter(r => r.status === "Active").length > 0 && (
@@ -2958,21 +2487,8 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
     onError: (e: any) => toast({ title: "Competitor research error", description: e.message, variant: "destructive" }),
   });
 
-  // Auto-trigger research the first time we land on a brand that has no
-  // competitor set yet — saves the user a click and means the panel is
-  // populated by the time they scroll to it. Client viewers can't fire
-  // research POSTs (403 server-side), so don't auto-fire for them.
   const { data: cpViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const cpIsClient = !cpViewer || cpViewer.role === "Client" || !!cpViewer.companyScopeId;
-  const autoTriggered = useRef(false);
-  useEffect(() => {
-    if (autoTriggered.current || cpIsClient) return;
-    if (competitors.length > 0 || generatedAt) return;
-    if (research.isPending) return;
-    autoTriggered.current = true;
-    research.mutate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, competitors.length, generatedAt, cpViewer]);
 
   // Lookup by name: returns the CRM row (with id + domain) if we already
   // track this competitor, else undefined. Used to wire the "View in CRM"
@@ -3538,92 +3054,55 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
   );
 }
 
-// Apollo firmographics — the momentum feed (headcount growth, funding).
-// Same visual family as RocketReachIntelCard above; refresh also fills
-// company gaps server-side and feeds growth/funding into brand_signals so
-// the Expansion Intelligence score picks it up.
+// External company information is a source disclosure, not a BGP relationship score.
 export function ApolloIntelCard({ companyId, companyName }: { companyId: string; companyName: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { data: apViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const apIsClient = !apViewer || apViewer.role === "Client" || !!apViewer.companyScopeId;
-  const { data, isLoading } = useQuery<{ payload: any | null; fetchedAt?: string | null }>({
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [companyId]);
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClient = !viewer || viewer.role === "Client" || !!viewer.companyScopeId;
+  const { data, isLoading } = useQuery<{ payload: any | null; fetchedAt?: string | null; status?: "matched" | "no_match" | "blocked"; reason?: string }>({
     queryKey: ["/api/brand", companyId, "apollo-company"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/brand/${companyId}/apollo-company`);
-      return res.json();
-    },
+    queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/apollo-company`)).json(),
     staleTime: 5 * 60_000,
+    enabled: open,
   });
   const refresh = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/brand/${companyId}/apollo-company/refresh`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Apollo lookup failed");
-      return json;
+    mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/apollo-company/refresh`)).json(),
+    onSuccess: (out: { status?: string; reason?: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
+      toast({ title: out.status === "matched" ? "Company data refreshed" : out.status === "blocked" ? "Company match needs review" : "No verified company match",
+        description: out.status === "matched" ? companyName : out.reason || "Existing information has been kept." });
     },
-    onSuccess: (json: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "apollo-company"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-      toast({ title: "Apollo firmographics updated", description: json.gapsFilled ? `${json.gapsFilled} company field${json.gapsFilled === 1 ? "" : "s"} auto-filled` : companyName });
-    },
-    onError: (e: any) => toast({ title: "Apollo error", description: e.message, variant: "destructive" }),
+    onError: (error: Error) => toast({ title: "Company data could not be refreshed", description: error.message, variant: "destructive" }),
   });
-  if (isLoading) return null;
-  const p = data?.payload;
-  const growth = p?.headcountGrowth12m ?? p?.headcountGrowth6m;
-  const growthPct = growth != null ? Math.round(Number(growth) * 100) : null;
+  const payload = data?.status === "matched" ? data.payload : null;
+  const growth = payload?.headcountGrowth12m ?? payload?.headcountGrowth6m;
+  const growthPct = growth != null && Number.isFinite(Number(growth)) ? Math.round(Number(growth) * 100) : null;
+  const employees = payload?.employees != null && Number.isFinite(Number(payload.employees)) && Number(payload.employees) > 0 ? Number(payload.employees) : null;
   return (
-    <div className="border-t border-border/40 mt-3 pt-2 order-3">
-      <div className="flex items-center gap-1.5 mb-2">
-        <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Momentum (Apollo)</span>
-        {data?.fetchedAt && (
-          <span className="text-[10px] text-muted-foreground ml-1">· {new Date(data.fetchedAt).toLocaleDateString("en-GB")}</span>
-        )}
-        {!apIsClient && (
-          <button
-            onClick={() => refresh.mutate()}
-            disabled={refresh.isPending}
-            className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
-            data-testid="apollo-refresh"
-          >
-            {refresh.isPending ? "Fetching…" : p ? "Refresh" : "Fetch"}
-          </button>
-        )}
-      </div>
-      {!p ? null : (
-        <div className="space-y-1.5 text-xs">
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-            {p.employees != null && (
-              <div>
-                <span className="text-muted-foreground">Employees:</span>{" "}
-                <span className="font-medium tabular-nums">{Number(p.employees).toLocaleString()}</span>
-              </div>
-            )}
-            {growthPct != null && (
-              <div>
-                <span className="text-muted-foreground">Headcount:</span>{" "}
-                <span className={`font-semibold tabular-nums ${growthPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                  {growthPct >= 0 ? "↑" : "↓"} {Math.abs(growthPct)}%
-                </span>
-                <span className="text-[10px] text-muted-foreground"> {p.headcountGrowth12m != null ? "12m" : "6m"}</span>
-              </div>
-            )}
-            {p.totalFunding && <div><span className="text-muted-foreground">Funding:</span> <span className="font-medium">{p.totalFunding}</span></div>}
-            {p.latestFundingStage && <div><span className="text-muted-foreground">Latest round:</span> <span className="font-medium">{p.latestFundingStage}</span></div>}
-            {p.annualRevenue && <div><span className="text-muted-foreground">Revenue:</span> <span className="font-medium">{p.annualRevenue}</span></div>}
-            {p.foundedYear && <div><span className="text-muted-foreground">Founded:</span> <span className="font-medium">{p.foundedYear}</span></div>}
-            {p.hq && <div className="col-span-2"><span className="text-muted-foreground">HQ:</span> <span className="font-medium">{p.hq}</span></div>}
-            {p.linkedinUrl && (
-              <div className="col-span-2">
-                <a href={p.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">LinkedIn company page →</a>
-              </div>
-            )}
-          </div>
+    <details className="rounded-lg border border-border p-3" open={open} onToggle={event => setOpen(event.currentTarget.open)} data-testid="brand-company-data-source">
+      <summary className="text-sm font-medium cursor-pointer min-h-11 sm:min-h-0">Company data sources</summary>
+      {open && <div className="space-y-3 mt-3 text-sm">
+        <div className="flex flex-wrap justify-between items-center gap-2">
+          <div><p className="font-medium">Apollo</p><p className="text-[11px] text-muted-foreground">External headcount, funding and company information. This does not measure the BGP relationship.</p></div>
+          {!isClient && <Button size="sm" variant="outline" onClick={() => refresh.mutate()} disabled={refresh.isPending} data-testid="apollo-refresh"><RefreshCw className={refresh.isPending ? "animate-spin" : ""} />{refresh.isPending ? "Refreshing…" : "Refresh source"}</Button>}
         </div>
-      )}
-    </div>
+        {isLoading ? <div className="h-16 rounded bg-muted animate-pulse" aria-label="Loading saved company data" /> : payload ? <>
+          <p className="text-[11px] text-muted-foreground">Matched to the confirmed brand{data?.fetchedAt ? ` · Checked ${new Date(data.fetchedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}</p>
+          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {employees != null && <div><dt className="text-xs text-muted-foreground">Employees</dt><dd className="font-mono tabular-nums">{employees.toLocaleString()}</dd></div>}
+            {growthPct != null && <div><dt className="text-xs text-muted-foreground">Headcount change · {payload.headcountGrowth12m != null ? "12 months" : "6 months"}</dt><dd className="font-mono tabular-nums">{growthPct > 0 ? "+" : ""}{growthPct}%</dd></div>}
+            {payload.totalFunding && <div><dt className="text-xs text-muted-foreground">Reported funding</dt><dd className="font-mono tabular-nums">{payload.totalFunding}</dd></div>}
+            {payload.latestFundingStage && <div><dt className="text-xs text-muted-foreground">Latest funding round</dt><dd>{payload.latestFundingStage}</dd></div>}
+            {payload.annualRevenue && <div><dt className="text-xs text-muted-foreground">Reported revenue</dt><dd className="font-mono tabular-nums">{payload.annualRevenue}</dd></div>}
+            {payload.hq && <div><dt className="text-xs text-muted-foreground">Reported headquarters</dt><dd>{payload.hq}</dd></div>}
+          </dl>
+          {payload.linkedinUrl && <a href={payload.linkedinUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary"><Linkedin className="w-4 h-4" />Source company page</a>}
+        </> : <p className="text-muted-foreground">{data?.status === "blocked" ? "This source is awaiting an identity review. Its figures are not included in the profile." : "No verified company information is available from this source yet."}</p>}
+      </div>}
+    </details>
   );
 }
 
@@ -3713,6 +3192,15 @@ function ContactRow({ dm }: { dm: { id: string; name: string; role: string | nul
 
 // ─── Stock snapshot card (Yahoo Finance) with price chart ────────────────
 export function StockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [companyId, ticker]);
+  return <details className="rounded-lg border border-border p-3" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary className="text-sm cursor-pointer">Market data · {ticker}</summary>
+    {open && <div className="pt-3"><LoadedStockSnapshotCard companyId={companyId} ticker={ticker} /></div>}
+  </details>;
+}
+
+function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: string }) {
   const { data, isLoading } = useQuery<{ snapshot: any | null; history: Array<{ date: string; close: number }> }>({
     queryKey: ["/api/brand", companyId, "stock"],
     queryFn: async () => {
@@ -5003,48 +4491,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const [newsTab, setNewsTab] = useState<"press" | "industry">("industry");
   const [newsTagFilter, setNewsTagFilter] = useState<Set<string>>(new Set());
 
-  // Gallery lightbox + auto-refresh state. Image refresh used to be
-  // manual via two buttons (re-scrape + refresh-images). Now it's fully
-  // automatic: when this brand is opened and its image count is below
-  // target, a refresh fires in the background and the gallery updates
-  // when it finishes.
   const [lightboxImg, setLightboxImg] = useState<any | null>(null);
   const { data: sbViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const sbIsClient = !sbViewer || sbViewer.role === "Client" || !!sbViewer.companyScopeId;
-  const autoImageRefreshRan = useRef(false);
-  useEffect(() => {
-    if (autoImageRefreshRan.current || sbIsClient) return;
-    // Heuristic for "needs refresh": 0-4 images for a landlord row, 0
-    // images for any other row. Avoids the 5-min round-trip cost when
-    // we already have a decent gallery.
-    const want = isLandlord ? 5 : 1;
-    if ((data.images?.length || 0) >= want) return;
-    autoImageRefreshRan.current = true;
-    (async () => {
-      try {
-        await fetch(`/api/brand/${companyId}/refresh-images`, {
-          method: "POST", credentials: "include", headers: getAuthHeaders(),
-        });
-        // Poll quietly — don't toast unless something interesting happens.
-        const started = Date.now();
-        const poll = async () => {
-          if (Date.now() - started > 4 * 60_000) return;
-          const r = await fetch(`/api/brand/${companyId}/refresh-images/status`, { credentials: "include" });
-          if (!r.ok) { setTimeout(poll, 5000); return; }
-          const st = await r.json();
-          if (st.state === "done") {
-            if ((st.result?.imported || 0) > 0) {
-              queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-            }
-            return;
-          }
-          if (st.state === "error") return;
-          setTimeout(poll, 5000);
-        };
-        setTimeout(poll, 5000);
-      } catch { /* silent — the buttons are gone, but the user can still hit Image Studio */ }
-    })();
-  }, [companyId, isLandlord, data.images?.length, sbViewer]);
 
   const deleteImageMutation = useMutation({
     mutationFn: async (imageId: string) => {
@@ -5454,10 +4903,11 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
             </button>
           )}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="text-[10px] text-muted-foreground">
-                {data.images.length} image{data.images.length === 1 ? "" : "s"} · auto-refreshed
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <div className="text-[11px] text-muted-foreground">
+                <span className="font-mono tabular-nums">{data.images.length}</span> saved image{data.images.length === 1 ? "" : "s"}
               </div>
+              {!sbIsClient && <BrandImageRefreshButton companyId={companyId} />}
               {/* Image Studio is the full library + enhance / retag /
                   upload UI — deep-link with the brand name so it lands
                   pre-filtered. */}

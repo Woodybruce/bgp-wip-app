@@ -1,7 +1,7 @@
 // RocketReach company-level lookup. Companion to rocketreach-contacts.ts.
 //
 // Uses /v2/api/searchCompany (POST with a query body) — same pattern as the
-// people search. Picks the best match by domain, falls back to name. Returns
+// people search. Validates candidates against the verified brand identity. Returns
 // the firmographic record (description, industry, headcount, revenue band,
 // funding, HQ, social URLs, tech stack). Cached per-brand in
 // brand_rocketreach_data.
@@ -12,6 +12,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { brandProviderCacheResult, getBrandIdentity, selectBrandProviderMatch, stampBrandProviderPayload } from "./brand-identity";
 
 const router = Router();
 
@@ -19,11 +20,6 @@ function rrAuthHeader(): Record<string, string> | null {
   const key = process.env.ROCKETREACH_API_KEY;
   if (!key) return null;
   return { "Api-Key": key };
-}
-
-function extractDomain(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  return String(raw).replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/^www\./, "").toLowerCase();
 }
 
 // Map a RocketReach industry_str → BGP company_type (the "Tenant - X" tag
@@ -84,14 +80,14 @@ function mapRrIndustryToBgpType(industryStr: string | null | undefined): string 
   return null;
 }
 
-async function searchCompany(opts: { domain?: string | null; name?: string | null }): Promise<any | null> {
+async function searchCompany(opts: { domain?: string | null; name?: string | null }): Promise<any[]> {
   const auth = rrAuthHeader();
   if (!auth) throw new Error("ROCKETREACH_API_KEY not configured");
 
   const query: Record<string, string[]> = {};
   if (opts.domain) query.domain = [opts.domain];
   if (opts.name) query.name = [opts.name];
-  if (!query.domain && !query.name) return null;
+  if (!query.domain && !query.name) return [];
 
   const body = { query, page_size: 5, start: 1 };
 
@@ -101,7 +97,7 @@ async function searchCompany(opts: { domain?: string | null; name?: string | nul
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(20_000),
   });
-  if (res.status === 404) return null;
+  if (res.status === 404) return [];
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     console.error(`[rocketreach-company] searchCompany ${res.status}:`, text.slice(0, 400));
@@ -109,7 +105,7 @@ async function searchCompany(opts: { domain?: string | null; name?: string | nul
   }
   const data = (await res.json()) as any;
   const list = (data?.companies || data?.results || data?.profiles || []) as any[];
-  return list[0] || null;
+  return Array.isArray(list) ? list : [];
 }
 
 // /v2/api/lookupCompany would return the rich firmographic record
@@ -119,21 +115,71 @@ async function searchCompany(opts: { domain?: string | null; name?: string | nul
 // searchCompany stub fields: id, name, city, region, country_code,
 // email_domain, industry_str, ticker_symbol.
 
+export async function refreshRocketReachCompany(companyId: string): Promise<any> {
+  const company = (await pool.query(`SELECT * FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+  if (!company) throw new Error("Company not found");
+  const identity = getBrandIdentity(company);
+  if (identity.status !== "verified" || !identity.domain) {
+    return { status: "blocked", payload: null, reason: identity.reason, auto_filled: {} };
+  }
+  let candidates = await searchCompany({ domain: identity.domain });
+  if (!candidates.length) candidates = await searchCompany({ name: company.name });
+  const match = selectBrandProviderMatch(company, candidates);
+  const fetchedAt = new Date().toISOString();
+  const payload = stampBrandProviderPayload(match.candidate, match, fetchedAt);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const current = (await client.query(`SELECT * FROM crm_companies WHERE id = $1 FOR UPDATE`, [companyId])).rows[0];
+    if (!current || getBrandIdentity(current).fingerprint !== identity.fingerprint) {
+      await client.query("ROLLBACK");
+      return { status: "blocked", payload: null, reason: "The brand identity changed during the lookup. Refresh again.", auto_filled: {} };
+    }
+    await client.query(
+      `INSERT INTO brand_rocketreach_data (company_id, payload, fetched_at)
+       VALUES ($1, $2::jsonb, now()) ON CONFLICT (company_id) DO UPDATE
+         SET payload = EXCLUDED.payload, fetched_at = now()`, [companyId, JSON.stringify(payload)]);
+    const autoFilled: Record<string, string> = {};
+    if (match.status === "matched") {
+      const stub = match.candidate;
+      const blank = (value: any) => value == null || typeof value === "string" && !value.trim();
+      if (blank(current.industry) && typeof stub.industry_str === "string" && stub.industry_str.trim()) {
+        autoFilled.industry = stub.industry_str.trim();
+      }
+      // Existing categories can be deliberate, including generic Retail.
+      // Only an empty category may be filled by an external source.
+      if (blank(current.company_type)) {
+        const mapped = mapRrIndustryToBgpType(stub.industry_str);
+        if (mapped) autoFilled.company_type = mapped;
+      }
+      if (Object.keys(autoFilled).length) {
+        const sets: string[] = [], values: any[] = [], provenance: Record<string, string> = {};
+        for (const [field, value] of Object.entries(autoFilled)) {
+          values.push(value); sets.push(`${field} = $${values.length}`);
+          provenance[field] = `rocketreach ${fetchedAt}`;
+        }
+        values.push(JSON.stringify(provenance));
+        sets.push(`ai_generated_fields = COALESCE(ai_generated_fields, '{}'::jsonb) || $${values.length}::jsonb`, `updated_at = now()`);
+        values.push(companyId);
+        await client.query(`UPDATE crm_companies SET ${sets.join(", ")} WHERE id = $${values.length}`, values);
+      }
+    }
+    await client.query("COMMIT");
+    return { status: match.status, payload: match.status === "matched" ? payload : null, reason: match.reason,
+      fetched_at: fetchedAt, fetchedAt, auto_filled: autoFilled };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally { client.release(); }
+}
+
 router.get("/api/brand/:companyId/rocketreach-company", requireAuth, async (req: Request, res: Response) => {
   try {
     const companyId = String(req.params.companyId);
-    const row = await pool.query(
-      `SELECT payload, fetched_at FROM brand_rocketreach_data WHERE company_id = $1`,
-      [companyId]
-    );
-    if (row.rowCount) {
-      return res.json({
-        configured: !!process.env.ROCKETREACH_API_KEY,
-        payload: row.rows[0].payload,
-        fetched_at: row.rows[0].fetched_at,
-      });
-    }
-    res.json({ configured: !!process.env.ROCKETREACH_API_KEY, payload: null, fetched_at: null });
+    const company = (await pool.query(`SELECT * FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+    if (!company) return res.status(404).json({ error: "Company not found" });
+    const row = (await pool.query(`SELECT payload, fetched_at FROM brand_rocketreach_data WHERE company_id = $1`, [companyId])).rows[0];
+    res.json({ configured: !!process.env.ROCKETREACH_API_KEY, ...brandProviderCacheResult(company, row?.payload), fetched_at: row?.fetched_at || null });
   } catch (err: any) {
     console.error("[rocketreach-company] GET error:", err);
     res.status(500).json({ error: err.message });
@@ -142,80 +188,7 @@ router.get("/api/brand/:companyId/rocketreach-company", requireAuth, async (req:
 
 router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, async (req: Request, res: Response) => {
   try {
-    // Cheap deterministic fill first (skips itself when nothing is blank).
-    try {
-      const { enrichCompanyFromLogoDev } = await import("./logo-dev-brand");
-      await enrichCompanyFromLogoDev(String(req.params.companyId));
-    } catch {}
-    if (!process.env.ROCKETREACH_API_KEY) {
-      return res.status(503).json({ error: "ROCKETREACH_API_KEY not configured" });
-    }
-    const companyId = String(req.params.companyId);
-    const companyRow = await pool.query(
-      `SELECT id, name, domain, domain_url, industry, company_type FROM crm_companies WHERE id = $1`,
-      [companyId]
-    );
-    if (!companyRow.rowCount) return res.status(404).json({ error: "Company not found" });
-    const company = companyRow.rows[0];
-    const domain = extractDomain(company.domain_url || company.domain);
-
-    let stub: any = null;
-    if (domain) {
-      stub = await searchCompany({ domain });
-    }
-    if (!stub && company.name) {
-      stub = await searchCompany({ name: company.name });
-    }
-
-    if (!stub) {
-      return res.json({ payload: null, fetched_at: new Date().toISOString(), note: "No match on RocketReach" });
-    }
-
-    // Only the search-stub fields are available on the current plan
-    // (lookupCompany is credit-gated). See note above.
-    const payload: any = stub;
-
-    await pool.query(
-      `INSERT INTO brand_rocketreach_data (company_id, payload, fetched_at)
-       VALUES ($1, $2::jsonb, now())
-       ON CONFLICT (company_id) DO UPDATE
-         SET payload = EXCLUDED.payload, fetched_at = now()`,
-      [companyId, JSON.stringify(payload)]
-    );
-
-    // Auto-fill BGP categorisation from RocketReach when we don't already
-    // have it. Never overwrite a manually-set company_type or industry.
-    const autoFilled: { industry?: string; company_type?: string; domain?: string } = {};
-    const isBlankIndustry = !company.industry || !String(company.industry).trim();
-    const isGenericType = !company.company_type
-      || ["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(company.company_type).trim());
-    const isBlankDomain = !company.domain && !company.domain_url;
-
-    if (isBlankIndustry && stub.industry_str) {
-      autoFilled.industry = String(stub.industry_str);
-    }
-    if (isGenericType) {
-      const mapped = mapRrIndustryToBgpType(stub.industry_str);
-      if (mapped) autoFilled.company_type = mapped;
-    }
-    // Backfill domain from RocketReach when missing — unlocks the brand for
-    // bulk logo import (which requires a domain) and for downstream sources
-    // that key off email_domain.
-    if (isBlankDomain && stub.email_domain) {
-      autoFilled.domain = String(stub.email_domain).toLowerCase().trim();
-    }
-
-    if (Object.keys(autoFilled).length > 0) {
-      const sets: string[] = [];
-      const vals: any[] = [companyId];
-      let i = 2;
-      if (autoFilled.industry !== undefined) { sets.push(`industry = $${i++}`); vals.push(autoFilled.industry); }
-      if (autoFilled.company_type !== undefined) { sets.push(`company_type = $${i++}`); vals.push(autoFilled.company_type); }
-      if (autoFilled.domain !== undefined) { sets.push(`domain = $${i++}`); vals.push(autoFilled.domain); }
-      await pool.query(`UPDATE crm_companies SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, vals);
-    }
-
-    res.json({ payload, fetched_at: new Date().toISOString(), auto_filled: autoFilled });
+    res.json(await refreshRocketReachCompany(String(req.params.companyId)));
   } catch (err: any) {
     console.error("[rocketreach-company] refresh error:", err);
     res.status(500).json({ error: err.message });
@@ -378,12 +351,15 @@ router.post("/api/brands/rocketreach-backfill", requireAuth, async (req: Request
     setImmediate(async () => {
       try {
         let currentBatch = rows;
+        const attemptedIds = new Set<string>();
         // Auto-chain until no more eligible brands — one POST runs the
         // entire library overnight. Hard safety stop at 5000 to avoid runaway.
         let safetyCap = 5000;
         while (currentBatch.length > 0 && safetyCap > 0) {
           for (const company of currentBatch) {
             if (!backfillJob) break;
+            if (safetyCap <= 0) break;
+            attemptedIds.add(company.id);
             safetyCap--;
             backfillJob.lastBrand = company.name;
             backfillJob.attempted++;
@@ -398,43 +374,10 @@ router.post("/api/brands/rocketreach-backfill", requireAuth, async (req: Request
             }
 
             try {
-              const domain = extractDomain(company.domain_url || company.domain);
-              let stub: any = null;
-              if (domain) stub = await searchCompany({ domain });
-              if (!stub && company.name) stub = await searchCompany({ name: company.name });
+              const refreshed = await refreshRocketReachCompany(company.id);
               backfillJob.consecutiveErrors = 0;
-              if (!stub) {
-                await new Promise(r => setTimeout(r, 15_000));
-                continue;
-              }
-              backfillJob.matched++;
-              await pool.query(
-                `INSERT INTO brand_rocketreach_data (company_id, payload, fetched_at)
-                 VALUES ($1, $2::jsonb, now())
-                 ON CONFLICT (company_id) DO UPDATE SET payload = EXCLUDED.payload, fetched_at = now()`,
-                [company.id, JSON.stringify(stub)]
-              );
-              const isBlankIndustry = !company.industry || !String(company.industry).trim();
-              const isGenericType = !company.company_type
-                || ["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(company.company_type).trim());
-              const isBlankDomain = !company.domain && !company.domain_url;
-              const filled: { industry?: string; company_type?: string; domain?: string } = {};
-              if (isBlankIndustry && stub.industry_str) filled.industry = String(stub.industry_str);
-              if (isGenericType) {
-                const mapped = mapRrIndustryToBgpType(stub.industry_str);
-                if (mapped) filled.company_type = mapped;
-              }
-              if (isBlankDomain && stub.email_domain) filled.domain = String(stub.email_domain).toLowerCase().trim();
-              if (Object.keys(filled).length > 0) {
-                const sets: string[] = [];
-                const vals: any[] = [company.id];
-                let i = 2;
-                if (filled.industry !== undefined) { sets.push(`industry = $${i++}`); vals.push(filled.industry); }
-                if (filled.company_type !== undefined) { sets.push(`company_type = $${i++}`); vals.push(filled.company_type); }
-                if (filled.domain !== undefined) { sets.push(`domain = $${i++}`); vals.push(filled.domain); }
-                await pool.query(`UPDATE crm_companies SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, vals);
-                backfillJob.autoFilled++;
-              }
+              if (refreshed.status === "matched") backfillJob.matched++;
+              if (Object.keys(refreshed.auto_filled || {}).length) backfillJob.autoFilled++;
               // 30s throttle for overnight runs: 2 calls/min, 120/hr — well
               // under RR's observed 200/hr cap. Slower = safer overnight.
               await new Promise(r => setTimeout(r, 30_000));
@@ -460,16 +403,16 @@ router.post("/api/brands/rocketreach-backfill", requireAuth, async (req: Request
             }
           }
           if (!backfillJob) break;
-          // Re-query for next eligible batch — newly auto-filled rows drop out
-          // (they now have a brand_rocketreach_data row), so this naturally
-          // terminates when the library is fully swept.
+          // Each brand gets one attempt per run, including no-match and
+          // blocked identities. forceAll must not keep revisiting one batch.
           const { rows: nextRows } = await pool.query(
             `SELECT c.id, c.name, c.domain, c.domain_url, c.industry, c.company_type
                FROM crm_companies c
                ${where}
+                 AND c.id <> ALL($2::varchar[])
                ORDER BY c.last_enriched_at ASC NULLS FIRST
                LIMIT $1`,
-            [limit]
+            [limit, [...attemptedIds]]
           );
           if (nextRows.length === 0) break;
           currentBatch = nextRows;

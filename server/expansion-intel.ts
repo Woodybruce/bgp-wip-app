@@ -24,6 +24,7 @@ import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
 import { safeParseJSON } from "./utils/anthropic-client";
 import { computeExpansionScoreV2, type BgpEvidence, type ExpansionFact } from "./hunter-score";
+import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -74,30 +75,35 @@ async function covenantGradeFor(companyId: string): Promise<{ grade: string | nu
   return r.rows[0] ? { grade: r.rows[0].grade } : null;
 }
 
-async function loadFacts(companyId: string): Promise<ExpansionFact[]> {
+async function loadFacts(companyId: string, company: any): Promise<ExpansionFact[]> {
   const r = await pool.query(
-    `SELECT signal_type, headline, magnitude, sentiment, geography, confidence, signal_date, created_at
+    `SELECT signal_type, headline, magnitude, sentiment, geography, confidence, signal_date, created_at, source
        FROM brand_signals
       WHERE brand_company_id = $1
         AND ai_relevant IS DISTINCT FROM FALSE
         AND COALESCE(signal_date, created_at) >= now() - interval '24 months'`,
     [companyId]
   );
-  return r.rows;
+  if (!r.rows.some(row => row.source === "apollo")) return r.rows;
+  const cached = await pool.query(`SELECT payload FROM brand_apollo_data WHERE company_id = $1`, [companyId])
+    .catch(() => ({ rows: [] as any[] }));
+  const apolloTrusted = !!publicBrandProviderPayload(company, cached.rows[0]?.payload);
+  return r.rows.filter(row => row.source !== "apollo" || apolloTrusted);
 }
 
 export async function scoreBrandExpansion(companyId: string) {
   const brandQ = await pool.query(
     `SELECT id, name, industry, rollout_status, store_count, backers, instagram_handle,
             tiktok_handle, dept_store_presence, franchise_activity, hunter_flag,
-            concept_pitch, description, stock_ticker
+            concept_pitch, description, stock_ticker, domain, domain_url, website,
+            uk_entity_name, trading_entities, ai_generated_fields
        FROM crm_companies WHERE id = $1`,
     [companyId]
   );
   const brand = brandQ.rows[0];
   if (!brand) return null;
   const [facts, bgp, covenant] = await Promise.all([
-    loadFacts(companyId),
+    loadFacts(companyId, brand),
     gatherBgpEvidence(companyId),
     covenantGradeFor(companyId),
   ]);
@@ -116,11 +122,14 @@ export async function scoreBrandExpansion(companyId: string) {
 
 export async function normaliseBrandFacts(companyId: string): Promise<{ facts: number; error?: string }> {
   const brandQ = await pool.query(
-    `SELECT name, industry, domain_url, brand_analysis FROM crm_companies WHERE id = $1`,
+    `SELECT id, name, industry, domain, domain_url, website, uk_entity_name, trading_entities,
+            ai_generated_fields, ai_disabled, brand_analysis FROM crm_companies WHERE id = $1`,
     [companyId]
   );
   const brand = brandQ.rows[0];
   if (!brand) return { facts: 0, error: "not found" };
+  const identity = getBrandIdentity(brand);
+  if (identity.status !== "verified" || brand.ai_disabled) return { facts: 0, error: brand.ai_disabled ? "AI is disabled for this brand" : identity.reason || "Confirm the official website first" };
 
   // Feed the extractor everything machine-collected — flagged rows plus
   // legacy news-linker rows (URL-sourced, written before the flag was set).
@@ -141,9 +150,12 @@ export async function normaliseBrandFacts(companyId: string): Promise<{ facts: n
       ORDER BY published_at DESC LIMIT 25`,
     [brand.name]
   );
+  const provider = await pool.query("SELECT payload FROM brand_apollo_data WHERE company_id = $1", [companyId]).catch(() => ({ rows: [] }));
+  const trustedApollo = publicBrandProviderPayload(brand, provider.rows[0]?.payload);
+  const existingSignals = existingQ.rows.filter((signal: any) => signal.source !== "apollo" || trustedApollo);
 
   const material = [
-    ...existingQ.rows.map((s: any, i: number) => `S${i}. [${s.signal_type}${s.signal_date ? ` ${new Date(s.signal_date).toISOString().slice(0, 10)}` : ""}] ${s.headline}${s.detail ? ` — ${String(s.detail).slice(0, 160)}` : ""}${s.source?.startsWith("http") ? ` (${s.source})` : ""}`),
+    ...existingSignals.map((s: any, i: number) => `S${i}. [${s.signal_type}${s.signal_date ? ` ${new Date(s.signal_date).toISOString().slice(0, 10)}` : ""}] ${s.headline}${s.detail ? ` — ${String(s.detail).slice(0, 160)}` : ""}${s.source?.startsWith("http") ? ` (${s.source})` : ""}`),
     ...newsQ.rows.map((n: any, i: number) => `N${i}. [news${n.published_at ? ` ${new Date(n.published_at).toISOString().slice(0, 10)}` : ""}] ${n.title}${n.summary ? ` — ${String(n.summary).slice(0, 160)}` : ""} (${n.url})`),
   ];
   if (brand.brand_analysis) material.push(`RESEARCH: ${String(brand.brand_analysis).slice(0, 3000)}`);
@@ -198,17 +210,20 @@ Return [] if nothing survives.`;
 
   // Guard against a bad model day wiping a healthy fact set: if we had
   // plenty of signals and the extraction returned nothing, keep the old set.
-  if (facts.length === 0 && existingQ.rows.length > 3) {
-    console.warn(`[expansion-intel] ${brand.name}: extraction returned 0 facts (had ${existingQ.rows.length} signals) — keeping previous set. Raw starts: ${text.slice(0, 200)}`);
+  if (facts.length === 0 && existingSignals.length > 3) {
+    console.warn(`[expansion-intel] ${brand.name}: extraction returned 0 facts (had ${existingSignals.length} signals) — keeping previous set. Raw starts: ${text.slice(0, 200)}`);
     return { facts: 0, error: "kept previous facts" };
   }
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const current = (await client.query("SELECT * FROM crm_companies WHERE id = $1 FOR UPDATE", [companyId])).rows[0];
+    if (!current || current.ai_disabled || getBrandIdentity(current).fingerprint !== identity.fingerprint) throw new Error("The brand identity changed during extraction; no facts were replaced.");
     await client.query(
       `DELETE FROM brand_signals
         WHERE brand_company_id = $1 AND ai_generated = true
+          AND ai_relevant IS DISTINCT FROM FALSE
           AND (source IS NULL OR source NOT LIKE 'bgp-deal:%')`,
       [companyId]
     );
@@ -248,6 +263,9 @@ export async function nightlyNormalisePass(cap = 25): Promise<{ brands: number; 
        FROM brand_signals s
        JOIN crm_companies c ON c.id = s.brand_company_id AND c.company_type ILIKE 'tenant%'
       WHERE s.ai_generated = true AND s.dedupe_key IS NULL
+        AND s.ai_relevant IS DISTINCT FROM FALSE
+        AND c.ai_generated_fields->'brand_identity'->>'status' = 'verified'
+        AND c.ai_disabled IS DISTINCT FROM TRUE
         AND (s.source IS NULL OR s.source NOT LIKE 'bgp-deal:%')
       GROUP BY brand_company_id
       ORDER BY count(*) DESC

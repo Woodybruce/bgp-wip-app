@@ -78,7 +78,7 @@ try {
   assert.equal((await entry(id(21))).unit_id,named);assert.equal((await entry(id(24))).unit_id,named);
   const manualResult=await saveUnit(manual,{scheduleRowId:null,erv:'125.50',passingRent:'0',notes:'Human edit'},allow);
   check('explicit null schedule ID permits unmatched manual facts',()=>{assert.equal(Number(manualResult.erv),125.5);assert.equal(manualResult.passing_rent,'0');});
-  check('manual correction protects an AI-created row from later detection replacement',()=>assert.equal(manualResult.source,'manual'));
+  check('editing facts preserves them without certifying the AI outline',()=>assert.equal(manualResult.source,'ai'));
   const renumberedManual=await saveUnit(manual,{unitRef:'99',scheduleRowId:null},allow);
   check('unlinked manual units can still receive a different unit number',()=>assert.equal(renumberedManual.unit_ref,'99'));
   await reject('linked fact saves require the displayed canonical schedule ID',()=>saveUnit(named,{erv:999},allow),409);

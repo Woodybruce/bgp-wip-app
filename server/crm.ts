@@ -9878,50 +9878,10 @@ async function runAutoEnrichmentCycle() {
 
     {
       try {
-        const companies = await pool.query(`
-          SELECT id, name, company_type, domain
-          FROM crm_companies
-          WHERE (description IS NULL OR description = '' OR domain IS NULL OR domain = '')
-            AND (last_enriched_at IS NULL OR last_enriched_at < $1)
-          ORDER BY last_enriched_at ASC NULLS FIRST
-          LIMIT $2
-        `, [sixMonthsAgo.toISOString(), AUTO_ENRICH_BATCH_SIZE]).then(r => r.rows);
-
-        let enriched = 0;
-        for (const company of companies) {
-          try {
-            const completion = await callClaude({
-              model: CHATBGP_HELPER_MODEL,
-              messages: [
-                { role: "system", content: `You are a UK commercial property data researcher. Given a company name and optional type, return a JSON object with:\n- "website": the company's main website URL or null\n- "description": a brief 1-2 sentence description\n- "headOfficeCity": city of head office or null\n\nOnly return the JSON object.` },
-                { role: "user", content: `Company: "${company.name}"${company.company_type ? ` (Type: ${company.company_type})` : ""}${company.domain ? ` (Website: ${company.domain})` : ""}` }
-              ],
-              max_completion_tokens: 200,
-            });
-
-            const raw = completion.choices[0]?.message?.content?.trim() || "{}";
-            const data = parseAiJson(raw);
-            const updates: Record<string, any> = {};
-            if (data.website && !company.domain) updates.domain = data.website.replace(/\/+$/, "");
-            if (data.description) updates.description = data.description;
-            if (data.headOfficeCity) updates.head_office_address = JSON.stringify({ city: data.headOfficeCity });
-
-            if (Object.keys(updates).length > 0) {
-              updates.last_enriched_at = new Date();
-              updates.enrichment_source = "ai-auto";
-              updates.updated_at = new Date();
-              const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);
-              await pool.query(`UPDATE crm_companies SET ${setClauses.join(", ")} WHERE id = $1`, [company.id, ...Object.values(updates)]);
-              enriched++;
-            }
-          } catch (err: any) {
-            console.error(`[auto-enrich] AI company error for ${company.name}:`, err.message);
-          }
-        }
-        result.aiCompanies = { processed: companies.length, enriched };
-        if (companies.length > 0) console.log(`[auto-enrich] AI Companies: ${enriched}/${companies.length} enriched`);
+        const { runBrandPreparationBatch } = await import("./brand-enrichment");
+        result.brandPreparation = await runBrandPreparationBatch(20);
       } catch (err: any) {
-        result.aiCompanies = { error: err.message };
+        result.brandPreparation = { error: err.message };
       }
 
       try {
@@ -10016,57 +9976,8 @@ async function runAutoEnrichmentCycle() {
       }
     }
 
-    // Auto brand analysis — refresh stale AI briefing paragraphs (>14 days).
-    try {
-      const { refreshStaleBrandAnalyses } = await import("./brand-analysis");
-      const out = await refreshStaleBrandAnalyses(3);
-      result.brandAnalysis = out;
-      if (out.processed > 0) console.log(`[auto-enrich] Brand analyses: refreshed ${out.refreshed}/${out.processed}`);
-    } catch (err: any) {
-      result.brandAnalysis = { error: err.message };
-    }
-
-    // Auto store research — find Google Places stores for brands that
-    // either have no stores cached or were last researched >30 days ago.
-    // Skip brands with AI disabled. 20 per 6-hour cycle = 80/day (Woody,
-    // 2026-08-25: "open a board and it's filled... overnight, cheap") —
-    // clears the never-researched backlog in weeks, then it's just the
-    // 30-day refresh drip. Never-researched brands go first (NULLS FIRST).
-    if (process.env.GOOGLE_API_KEY) {
-      try {
-        const brandsNeedingStores = await pool.query(`
-          SELECT c.id, c.name
-          FROM crm_companies c
-          LEFT JOIN (
-            SELECT brand_company_id, MAX(researched_at) AS last_researched
-            FROM brand_stores
-            WHERE source_type = 'google_places'
-            GROUP BY brand_company_id
-          ) s ON s.brand_company_id = c.id
-          WHERE c.company_type ILIKE 'tenant%'
-            AND (c.ai_disabled IS NULL OR c.ai_disabled = FALSE)
-            AND c.merged_into_id IS NULL
-            AND (s.last_researched IS NULL OR s.last_researched < NOW() - INTERVAL '30 days')
-          ORDER BY s.last_researched ASC NULLS FIRST
-          LIMIT 20
-        `).then(r => r.rows);
-
-        let researched = 0;
-        for (const b of brandsNeedingStores) {
-          try {
-            const { researchBrandStores } = await import("./brand-profile");
-            const out = await researchBrandStores(b.id);
-            if (out.found > 0) researched++;
-          } catch (err: any) {
-            console.error(`[auto-enrich] Store research error for ${b.name}:`, err.message);
-          }
-        }
-        result.stores = { processed: brandsNeedingStores.length, researched };
-        if (brandsNeedingStores.length > 0) console.log(`[auto-enrich] Stores: researched ${researched}/${brandsNeedingStores.length} brands`);
-      } catch (err: any) {
-        result.stores = { error: err.message };
-      }
-    }
+    // Brand facts, stores, source matches and briefs share the durable,
+    // identity-gated preparation queue above rather than independent guesses.
 
     autoEnrichLastRun = new Date();
     autoEnrichLastResult = result;

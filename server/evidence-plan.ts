@@ -839,7 +839,10 @@ export async function saveEvidenceUnit(
       values.push(matched!.id);
       assignments.push(`tenancy_unit_id = $${values.length}`);
     }
-    assignments.push("source = 'manual'", "updated_at = now()");
+    // Editing rent, notes or a label position does not confirm an old AI
+    // boundary. Only an explicitly saved outline receives manual protection.
+    if ("polygon" in patch) assignments.push("source = 'manual'");
+    assignments.push("updated_at = now()");
     values.push(unit.id);
     const saved = (await db.query(`UPDATE evidence_plan_units SET ${assignments.join(", ")} WHERE id = $${values.length} RETURNING *`, values)).rows[0];
     const refreshedSchedule = await evidenceScheduleRows(plan.property_id, db);
@@ -1533,7 +1536,7 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       candidate.reviewRequired = true;
       labelReviews++;
     }
-    await checkpoint("Checking labels and saving verified boundaries…", frames.length);
+    await checkpoint("Checking labels and saving matched boundaries…", frames.length);
     const connection = await pool.connect();
     let created = 0, refined = 0, preserved = 0, linked = 0;
     try {
@@ -1616,7 +1619,7 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
         candidates: reviewCandidates, existingUnits: existing });
       await persistPlanScanReview(connection, review);
       const details = [refined ? `${refined} existing AI outlines refined; saved information and marker positions kept` : "",
-        `${review.summary.detected} verified boundaries detected; ${review.summary.current} already current; ${review.summary.needsReview} need review before they can be applied`,
+        `${review.summary.detected} candidate boundaries detected; ${review.summary.current} already current; ${review.summary.needsReview} need review before they can be applied`,
         failedTiles ? `${failedTiles} image sections could not be read` : "",
         untraced ? `${untraced} candidates lacked a reliable closed boundary` : "",
         labelReviews ? `${labelReviews} outlines need a confirmed unit label; uncertain or repeated labels were left unlabelled` : ""].filter(Boolean).join("; ");

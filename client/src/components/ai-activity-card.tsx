@@ -65,9 +65,11 @@ interface Props {
   compact?: boolean;
   /** Auto-curate on first mount if no cache exists. Default false — user must click "Analyse". */
   autoCurate?: boolean;
+  /** Read saved commentary only; staff can explicitly request fresh analysis. */
+  cachedOnly?: boolean;
 }
 
-export function AIActivityCard({ subjectType, subjectId, title, compact }: Props) {
+export function AIActivityCard({ subjectType, subjectId, title, compact, cachedOnly = false }: Props) {
   // Client logins get the commentary read-only: the curate POST is staff-
   // only server-side, so don't offer an Analyse button that would 403.
   const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -88,7 +90,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact }: Props
       setLoading(true);
       setError(null);
       try {
-        const r = await fetch(`/api/activity/${subjectType}/${encodeURIComponent(subjectId)}`, {
+        const r = await fetch(`/api/activity/${subjectType}/${encodeURIComponent(subjectId)}${cachedOnly ? "?cachedOnly=1" : ""}`, {
           headers: getAuthHeaders(),
           credentials: "include",
         });
@@ -115,7 +117,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact }: Props
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subjectType, subjectId]);
+  }, [subjectType, subjectId, cachedOnly]);
 
   // Curation runs as a background job on the server (~30–200s), kicked
   // automatically by the GET's stale-while-revalidate. We just poll the
@@ -131,7 +133,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact }: Props
         return;
       }
       try {
-        const r = await fetch(`/api/activity/${subjectType}/${encodeURIComponent(subjectId)}`, {
+        const r = await fetch(`/api/activity/${subjectType}/${encodeURIComponent(subjectId)}${cachedOnly ? "?cachedOnly=1" : ""}`, {
           headers: getAuthHeaders(),
           credentials: "include",
         });
@@ -161,6 +163,21 @@ export function AIActivityCard({ subjectType, subjectId, title, compact }: Props
     setTimeout(poll, POLL_INTERVAL_MS);
   };
 
+  const refreshAnalysis = async () => {
+    setCurating(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/activity/${subjectType}/${encodeURIComponent(subjectId)}/curate`, {
+        method: "POST", credentials: "include", headers: getAuthHeaders(),
+      });
+      if (!response.ok) throw new Error("Could not start activity analysis. Please try again.");
+      pollUntilFresh(data?.generatedAt || null);
+    } catch (error: any) {
+      setCurating(false);
+      setError(error?.message || "Could not start activity analysis.");
+    }
+  };
+
   const lastTouchPill = data?.latestActivityDate ? <LastTouchBadge iso={data.latestActivityDate} /> : null;
   const hasContent = !!data?.markdown?.trim();
 
@@ -181,8 +198,11 @@ export function AIActivityCard({ subjectType, subjectId, title, compact }: Props
                 </span>
               )}
             </CardTitle>
-            {/* Re-analyse button removed (Woody, 2026-08-19) — the analysis
-                refreshes itself on open via server stale-while-revalidate. */}
+            {cachedOnly && !!viewer && !isClientViewer && (
+              <Button variant="outline" size="sm" className="h-8 text-xs" disabled={loading || curating} onClick={refreshAnalysis}>
+                {hasContent ? "Refresh analysis" : "Analyse activity"}
+              </Button>
+            )}
             {curating && (
               <span className="text-[11px] text-muted-foreground flex items-center gap-1">
                 <Loader2 className="w-3 h-3 animate-spin" /> Analysing…
@@ -201,7 +221,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact }: Props
             <p className="text-[11px] text-muted-foreground italic">
               {isClientViewer
                 ? "No commentary yet — your BGP team publishes the relationship read here."
-                : <>No AI commentary yet — click <strong>Analyse</strong> to ask ChatBGP what's in the inboxes for this {subjectType}.</>}
+                : cachedOnly ? "No saved activity analysis yet. Analyse activity when you need a relationship summary." : "No activity commentary has been prepared yet."}
             </p>
           )}
 

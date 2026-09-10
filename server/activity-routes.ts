@@ -294,7 +294,9 @@ export function registerActivityRoutes(app: Express) {
       // Any viewer's open may trigger generation — the curation itself now
       // always runs staff-grade via the internal token (chatbgp-internal),
       // so a client-triggered run produces the same full mailbox sweep.
-      if (needsCuration && !inFlight && !coolingDown) {
+      // Brand overviews render saved research immediately. A cached-only read
+      // (including its polling requests) must never start provider work.
+      if (req.query.cachedOnly !== "1" && needsCuration && !inFlight && !coolingDown) {
         const subject = await buildSubject(subjectType, subjectId);
         if (subject) {
           const job = (async () => {

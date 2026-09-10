@@ -16,6 +16,8 @@ import crypto from "crypto";
 import sharp from "sharp";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { getBrandIdentity } from "./brand-identity";
+import { brandImageIdentityTag, isOfficialBrandWebsite, publishableBrandStore } from "./brand-publishing";
 import { storeImageFromBuffer, readPersistedImage } from "./image-studio";
 
 const router = Router();
@@ -276,19 +278,19 @@ async function findHomepageImages(domain: string): Promise<FoundImage[]> {
 // actual venues (owner + customer shots) keyed off the place_ids we already
 // hold in brand_stores from the store-finder. No scraping, no bot walls.
 
-async function findPlacesPhotos(companyId: string): Promise<FoundImage[]> {
+async function findPlacesPhotos(company: any): Promise<FoundImage[]> {
   const key = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
   if (!key) return [];
   try {
     const { rows: stores } = await pool.query<{ place_id: string; name: string | null }>(
-      `SELECT place_id, name FROM brand_stores
+      `SELECT place_id, name, source_type, notes FROM brand_stores
         WHERE brand_company_id = $1 AND place_id IS NOT NULL AND place_id <> ''
         ORDER BY (status = 'open') DESC NULLS LAST, researched_at DESC NULLS LAST
         LIMIT 6`,
-      [companyId]
+      [company.id]
     );
     const out: FoundImage[] = [];
-    for (const s of stores) {
+    for (const s of stores.filter(store => publishableBrandStore(company, store))) {
       if (out.length >= 10) break;
       try {
         const r = await fetch(
@@ -508,8 +510,8 @@ class ImageDeduper {
     try {
       const { rows } = await pool.query<{ local_path: string | null; thumbnail_data: string | null }>(
         `SELECT local_path, thumbnail_data FROM image_studio_images
-          WHERE company_id = $1
-             OR (brand_name IS NOT NULL AND LOWER(brand_name) = LOWER($2))`,
+          WHERE (company_id = $1 OR (company_id IS NULL AND brand_name IS NOT NULL AND LOWER(brand_name) = LOWER($2)))
+            AND NOT ('identity-review' = ANY(COALESCE(tags, '{}'::text[])))`,
         [companyId, brandName]
       );
       for (const r of rows) {
@@ -553,8 +555,8 @@ export async function dedupeBrandImageRows(companyId: string): Promise<{ scanned
   const { rows } = await pool.query<{ id: string; local_path: string | null; thumbnail_data: string | null; tags: string[] | null }>(
     `SELECT id, local_path, thumbnail_data, tags
        FROM image_studio_images
-      WHERE company_id = $1
-         OR (brand_name IS NOT NULL AND LOWER(brand_name) = (SELECT LOWER(name) FROM crm_companies WHERE id = $1))
+      WHERE (company_id = $1 OR (company_id IS NULL AND brand_name IS NOT NULL AND LOWER(brand_name) = (SELECT LOWER(name) FROM crm_companies WHERE id = $1)))
+        AND NOT ('identity-review' = ANY(COALESCE(tags, '{}'::text[])))
       ORDER BY ('brand-hero' = ANY(tags))::int DESC, created_at ASC`,
     [companyId]
   );
@@ -587,7 +589,7 @@ export async function dedupeBrandImageRows(companyId: string): Promise<{ scanned
 
 export async function refreshBrandImages(companyId: string, opts: {
   /**
-   * If true, delete every existing brand-auto image for this brand
+   * If true, retire unpinned automatic images for this company
    * before pulling fresh ones. Use when the stored set is junk (e.g.
    * pre-landlord-scraper CSE leftovers).
    */
@@ -606,11 +608,14 @@ export async function refreshBrandImages(companyId: string, opts: {
   deleted?: number;
 }> {
   const { rows } = await pool.query<BrandRow & { company_type: string | null }>(
-    `SELECT id, name, domain, domain_url, industry, company_type FROM crm_companies WHERE id = $1`,
+    `SELECT * FROM crm_companies WHERE id = $1`,
     [companyId]
   );
   const brand = rows[0];
   if (!brand) throw new Error("Brand not found");
+  const identity = getBrandIdentity(brand);
+  if (identity.status !== "verified") return { attempted: 0, imported: 0, bySource: {}, skipped: identity.reason || "Confirm the official website first." };
+  const identityTag = brandImageIdentityTag(brand);
 
   // Landlord-shaped rows reorder sources: their own homepage / portfolio
   // pages have far better property hero shots than Wikipedia (which is mostly
@@ -621,15 +626,14 @@ export async function refreshBrandImages(companyId: string, opts: {
 
   const target = Math.max(1, Math.min(50, opts.target ?? TARGET_IMAGES_PER_BRAND));
 
-  // Force-mode: wipe brand-auto rows first so the source pipeline
-  // re-pulls cleanly. Manual uploads (no brand-auto tag) survive.
+  // Keep retired images recoverable; only the current identity is published.
   let deleted = 0;
   if (opts.force) {
     const del = await pool.query(
-      `DELETE FROM image_studio_images
-        WHERE LOWER(brand_name) = LOWER($1)
-          AND 'brand-auto' = ANY(tags)`,
-      [brand.name]
+      `UPDATE image_studio_images SET tags = array_append(tags, 'identity-review')
+        WHERE company_id = $1 AND 'brand-auto' = ANY(tags)
+          AND NOT ('brand-hero' = ANY(tags)) AND NOT ('identity-review' = ANY(tags))`,
+      [brand.id]
     );
     deleted = del.rowCount || 0;
   }
@@ -646,9 +650,9 @@ export async function refreshBrandImages(companyId: string, opts: {
   // never counted against the cap — users always get their content back.
   const existingRow = await pool.query<{ cnt: number }>(
     `SELECT COUNT(*)::int AS cnt FROM image_studio_images
-       WHERE LOWER(brand_name) = LOWER($1)
-         AND 'brand-auto' = ANY(tags)`,
-    [brand.name]
+       WHERE company_id = $1 AND $2 = ANY(tags)
+         AND 'brand-auto' = ANY(tags) AND NOT ('identity-review' = ANY(tags))`,
+    [brand.id, identityTag]
   );
   const existing = existingRow.rows[0]?.cnt ?? 0;
   if (existing >= target) {
@@ -659,51 +663,14 @@ export async function refreshBrandImages(companyId: string, opts: {
   const domain = extractDomain(brand.domain || brand.domain_url);
   const candidates: FoundImage[] = [];
 
-  // Landlord-website images take priority for landlord-shaped rows.
-  // Landlords curate big high-quality hero galleries of their assets
-  // on /portfolio + /our-places — way better than Google CSE
-  // ("Land Securities" on CSE returns logos + headshots + stock
-  // photos, none of which are useful in our gallery).
-  const landlordImages = await findLandlordWebsiteImages(companyId);
-  candidates.push(...landlordImages);
-
-  // Google Places photos lead for retail/hospitality brands — real shots of
-  // their actual venues off the place_ids we already hold, immune to the
-  // bot walls that empty the scraping sources (Woody, 2026-08-03).
-  if (!isLandlord) {
-    candidates.push(...await findPlacesPhotos(companyId));
+  // Only the confirmed official site or verified store listings may supply
+  // automatic images. A similarly named Wikipedia/CSE result is not proof.
+  if (isLandlord) candidates.push(...await findLandlordWebsiteImages(companyId));
+  if (domain) {
+    candidates.push(...await findHomepageImages(domain));
+    if (candidates.length < targetNew * 2) candidates.push(...await findPressImages(domain));
   }
-
-  if (isLandlord) {
-    // For landlords: own-website first, then trusted press, skip Wikipedia
-    // (institutional landlord Wikipedia articles are mostly corporate logo +
-    // boardroom shots — never useful for a property gallery), then CSE.
-    if (candidates.length < targetNew * 2 && domain) {
-      candidates.push(...await findHomepageImages(domain));
-    }
-    if (candidates.length < targetNew * 2 && domain) {
-      candidates.push(...await findPressImages(domain));
-    }
-    if (candidates.length < targetNew * 2) {
-      candidates.push(...await findCseImages(brand.name, brand.industry, domain));
-    }
-  } else {
-    // Retail brand pipeline — Wikipedia stays useful (logo + flagship store
-    // shots from notable retailers like Aesop / Apple / Pret) so keeps its
-    // original position between press and homepage.
-    if (candidates.length < targetNew * 2 && domain) {
-      candidates.push(...await findPressImages(domain));
-    }
-    if (candidates.length < targetNew * 2) {
-      candidates.push(...await findWikipediaImages(brand.name));
-    }
-    if (candidates.length < targetNew * 2 && domain) {
-      candidates.push(...await findHomepageImages(domain));
-    }
-    if (candidates.length < targetNew * 2) {
-      candidates.push(...await findCseImages(brand.name, brand.industry, domain));
-    }
-  }
+  if (!isLandlord && candidates.length < targetNew * 2) candidates.push(...await findPlacesPhotos(brand));
 
   // For landlords: build a URL → property_id matcher using every CRM
   // property owned by this landlord. The matcher checks whether any
@@ -759,6 +726,7 @@ export async function refreshBrandImages(companyId: string, opts: {
 
   for (const c of candidates) {
     if (imported >= targetNew) break;
+    if (c.source !== "places" && !isOfficialBrandWebsite(brand, c.pageUrl)) continue;
     if (seenUrls.has(c.url)) continue;
     seenUrls.add(c.url);
     attempted++;
@@ -776,9 +744,9 @@ export async function refreshBrandImages(companyId: string, opts: {
     // subjects before they reach the gallery. Fails open if the judge is
     // unavailable so the pipeline still fills.
     const verdict = await aiJudgeBrandImage(brand.name, brand.industry, fetched.buffer);
-    if (verdict && !verdict.keep) {
+    if ((c.source === "places" && !verdict?.keep) || (verdict && !verdict.keep)) {
       aiRejected++;
-      console.log(`[brand-images ${brand.name}] vision judge rejected (${verdict.kind}): ${c.url.slice(0, 120)}`);
+      console.log(`[brand-images ${brand.name}] vision judge rejected (${verdict?.kind || "unverified"}): ${c.url.slice(0, 120)}`);
       continue;
     }
 
@@ -788,11 +756,13 @@ export async function refreshBrandImages(companyId: string, opts: {
     // against the property too — so the property page can pull it.
     const matchedPropertyId = matchPropertyId(c.url);
     try {
+      const current = (await pool.query("SELECT * FROM crm_companies WHERE id = $1", [brand.id])).rows[0];
+      if (getBrandIdentity(current).fingerprint !== identity.fingerprint) break;
       await storeImageFromBuffer({
         buffer: fetched.buffer,
         fileName: `${brand.name} — ${c.source}${c.caption ? `: ${c.caption.slice(0, 80)}` : ""}`,
         category: "Brands",
-        tags: ["brand-auto", brand.name, c.source, ...(verdict?.kind && verdict.kind !== "other" ? [verdict.kind] : [])],
+        tags: ["brand-auto", identityTag, brand.name, c.source, ...(verdict?.kind && verdict.kind !== "other" ? [verdict.kind] : [])],
         description: c.pageUrl ? `Auto-fetched from ${c.source} (${c.pageUrl}) for ${brand.name}` : `Auto-fetched from ${c.source} for ${brand.name}`,
         source: c.source,
         brandName: brand.name,

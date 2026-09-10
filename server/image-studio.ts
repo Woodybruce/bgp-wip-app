@@ -20,6 +20,8 @@ import fs from "fs";
 import crypto from "crypto";
 import OpenAI from "openai";
 import { saveFile, getFile } from "./file-storage";
+import { getBrandIdentity, normalizeBrandDomain } from "./brand-identity";
+import { brandImageIdentityTag, publishableBrandImage } from "./brand-publishing";
 
 // --- Multi-provider image generation helpers ---
 
@@ -716,6 +718,68 @@ export async function storeImageFromBuffer(args: {
   }
 
   return { id: inserted.id, localPath: filePath };
+}
+
+export function selectBrandLogoCompany(rows: any[], name: string, domain: string | null, preferredCompanyId?: string | null): any | null {
+  const exact = name.trim().toLowerCase();
+  const matches = rows.filter(company => {
+    const approvedAliases = company.ai_generated_fields?.brand_identity?.status === "verified"
+      && Array.isArray(company.ai_generated_fields.brand_identity.aliases) ? company.ai_generated_fields.brand_identity.aliases : [];
+    if (![company.name, ...approvedAliases].some(value => typeof value === "string" && value.trim().toLowerCase() === exact)) return false;
+    const domains = [...new Set([company.domain, company.domain_url, company.website].map(normalizeBrandDomain).filter(Boolean))];
+    return !domain || !domains.length || domains.length === 1 && domains[0] === domain;
+  });
+  const ownCompany = matches.find(company => company.id === preferredCompanyId);
+  if (ownCompany) return ownCompany;
+  return matches.length === 1 ? matches[0] : null;
+}
+
+export function isPublishableBrandLogo(company: any, image: any): boolean {
+  if (!publishableBrandImage(company, image)) return false;
+  const tags = Array.isArray(image.tags) ? image.tags.map((tag: any) => String(tag).toLowerCase()) : [];
+  const label = String(image.file_name || "").replace(/\.(?:png|jpe?g|svg|webp)$/i, "").trim().toLowerCase();
+  return tags.includes("brand-logo") || tags.includes("logo") || String(image.category || "").toLowerCase() === "logos"
+    || /(?:^|[^a-z])logo(?:[^a-z]|$)/i.test(label)
+    || image.category === "Brands" && label === String(company.name || "").trim().toLowerCase();
+}
+
+export async function prepareBrandLogo(companyId: string): Promise<{ status: "ready" | "no_match" | "needs_review" | "unavailable"; reason?: string }> {
+  const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1 AND merged_into_id IS NULL", [companyId])).rows[0];
+  if (!company) return { status: "needs_review", reason: "Company not found" };
+  const identity = getBrandIdentity(company);
+  if (identity.status !== "verified" || !identity.domain) return { status: "needs_review", reason: identity.reason || "Confirm the official website" };
+  const existing = (await pool.query(`SELECT * FROM image_studio_images
+    WHERE company_id=$1 OR (company_id IS NULL AND LOWER(TRIM(brand_name))=LOWER($2))
+    ORDER BY created_at DESC LIMIT 60`, [companyId, company.name])).rows;
+  for (const image of existing.filter((row: any) => isPublishableBrandLogo(company, row))) {
+    if (await readPersistedImage(image.local_path) || /^data:image\/[^;]+;base64,/.test(String(image.thumbnail_data || ""))) return { status: "ready" };
+  }
+  const token = process.env.LOGO_DEV_TOKEN;
+  if (!token) return { status: "unavailable", reason: "The logo source is not configured" };
+  const response = await fetch(`https://img.logo.dev/${encodeURIComponent(identity.domain)}?token=${token}&size=256&format=png`, { signal: AbortSignal.timeout(10000) });
+  const mime = response.headers.get("content-type") || "";
+  if (response.status === 404 || response.status === 204) return { status: "no_match", reason: "No logo was found for the verified domain" };
+  if (!response.ok) throw new Error(`Logo source returned ${response.status}`);
+  if (!mime.startsWith("image/") || !response.body) return { status: "no_match", reason: "The logo source did not return an image" };
+  const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+  try {
+    while (true) { const chunk = await reader.read(); if (chunk.done) break; size += chunk.value.length; if (size > 2 * 1024 * 1024) throw new Error("Logo exceeds the size limit"); chunks.push(chunk.value); }
+  } finally { await reader.cancel(); }
+  if (size < 100) return { status: "no_match", reason: "The returned logo was empty" };
+  const current = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
+  if (getBrandIdentity(current).fingerprint !== identity.fingerprint || getBrandIdentity(current).status !== "verified") return { status: "needs_review", reason: "The brand identity changed during logo preparation" };
+  const stored = await storeImageFromBuffer({
+    buffer: Buffer.concat(chunks), fileName: `${company.name} — Logo`, category: "Brands",
+    tags: ["brand-logo", "brand-auto", "logo-dev-cache", brandImageIdentityTag(company)],
+    description: `Logo from the verified domain ${identity.domain}`, source: "logo-dev-cache", companyId,
+    brandName: company.name, mimeType: mime, filenameHint: company.name,
+  });
+  const after = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
+  if (getBrandIdentity(after).fingerprint !== identity.fingerprint || getBrandIdentity(after).status !== "verified") {
+    await pool.query("UPDATE image_studio_images SET tags=array_append(tags,'identity-review') WHERE id=$1", [stored.id]);
+    return { status: "needs_review", reason: "The brand identity changed; the downloaded logo was held for review" };
+  }
+  return { status: "ready" };
 }
 
 async function ensureRunCollection(args: {
@@ -1810,170 +1874,41 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  // Public-ish brand logo lookup — used by Brand Explorer thumbnails.
-  // Returns the most recent Image Studio logo for the given brand name.
-  // 404 → frontend falls back to Clearbit. Auth required, but not admin.
-  // Self-filling logo cache. A phone opening the Brands grid fires ~2,000
-  // logo <img> requests in under a minute; redirecting every miss to
-  // logo.dev sent 1,582 parallel fetches from ONE device (2026-08-30),
-  // which logo.dev throttles — blank tiles. Instead, each miss also queues
-  // a server-side fetch (4 concurrent, deduped, 10-min negative cache) that
-  // stores the logo into the Brands library via storeImageFromBuffer, so
-  // every later request — any device — is a local 200 and logo.dev sees
-  // each brand at most once.
-  const logoDevQueued = new Set<string>();
-  const logoDevFailedAt = new Map<string, number>();
-  let logoDevActive = 0;
-  const LOGO_DEV_MAX_CONCURRENT = 4;
-  function queueLogoDevCache(name: string, domain: string) {
-    const token = process.env.LOGO_DEV_TOKEN;
-    if (!token || !domain) return;
-    const key = domain.toLowerCase();
-    const failed = logoDevFailedAt.get(key);
-    if (failed && Date.now() - failed < 10 * 60 * 1000) return;
-    if (logoDevQueued.has(key) || logoDevQueued.size > 2000) return;
-    logoDevQueued.add(key);
-    (async () => {
-      while (logoDevActive >= LOGO_DEV_MAX_CONCURRENT) await new Promise(r => setTimeout(r, 250));
-      logoDevActive++;
-      try {
-        const r = await fetch(`https://img.logo.dev/${encodeURIComponent(domain)}?token=${token}&size=256&format=png`, { signal: AbortSignal.timeout(10_000) });
-        const mime = r.headers.get("content-type") || "";
-        if (!r.ok || !mime.startsWith("image/")) { logoDevFailedAt.set(key, Date.now()); return; }
-        const buffer = Buffer.from(await r.arrayBuffer());
-        if (buffer.length < 100) { logoDevFailedAt.set(key, Date.now()); return; }
-        await storeImageFromBuffer({
-          buffer,
-          fileName: `${name} — Logo`,
-          category: "Brands",
-          tags: ["brand-logo", "logo-dev-cache"],
-          description: `Brand logo for ${name}, cached from logo.dev (${domain})`,
-          source: "logo-dev-cache",
-          brandName: name,
-          mimeType: mime,
-          filenameHint: name,
-        });
-      } catch {
-        logoDevFailedAt.set(key, Date.now());
-      } finally {
-        logoDevActive--;
-        logoDevQueued.delete(key);
-      }
-    })().catch(() => {});
-  }
-
+  // Exact company identity and local approved assets only. Missing verified
+  // logos are prepared once through the durable queue; no domain is guessed.
   app.get("/api/brand-logo/:name", requireAuth, async (req: Request, res: Response) => {
     try {
       const name = String(req.params.name || "").trim();
       if (!name) return res.status(400).json({ error: "name required" });
-      const domain = String(req.query.domain || "").trim().toLowerCase().replace(/^www\./, "");
-
-      // Build a set of name variants to try matching against. Brand names in
-      // crm_companies often have suffixes ("Ltd", "Limited", "Group", "plc")
-      // that aren't in the logo library filenames. We strip those and also
-      // try the first significant word as a loose fallback.
-      const stripped = name.replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp)\b\.?/gi, "").replace(/\s+/g, " ").trim();
-      const firstWord = name.split(/\s+/)[0] || name;
-      const variants = Array.from(new Set([name, stripped, firstWord].filter(Boolean).map(s => s.toLowerCase().trim())));
-
-      // Domain stem: "pretamanger.com" → "pretamanger"
-      const domainStem = domain ? domain.split(".")[0] : "";
-
-      const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string; thumbnail_data: string | null; brand_name: string | null; file_name: string }>(
-        `SELECT id, local_path, mime_type, thumbnail_data, brand_name, file_name
-         FROM image_studio_images
-         WHERE lower(trim(brand_name)) = ANY($1::text[])
-            OR (category = 'Brands' AND lower(trim(file_name)) = ANY($1::text[]))
-            OR (category = 'Brands' AND lower(file_name) LIKE lower($2) || '%')
-            OR (category = 'Brands' AND $3 <> '' AND lower(file_name) LIKE '%' || $3 || '%')
-            OR (category = 'Brands' AND $3 <> '' AND lower(trim(brand_name)) LIKE '%' || $3 || '%')
-         ORDER BY
-           CASE WHEN lower(trim(brand_name)) = lower(trim($4)) THEN 0
-                WHEN lower(trim(file_name))  = lower(trim($4)) THEN 1
-                WHEN $3 <> '' AND lower(file_name) LIKE $3 || '%' THEN 2
-                ELSE 3 END,
-           created_at DESC
-         LIMIT 1`,
-        [variants, name, domainStem, name]
-      );
-
-      const row = rows[0];
-      if (!row) {
-        // No local hit. Redirect to logo.dev (or Google favicons) so the <img>
-        // renders something rather than 404. Clearbit's logo API was killed by
-        // HubSpot March 2025. If no domain was supplied, slugify the name and
-        // guess `<slug>.com` — logo.dev returns a placeholder for unknown
-        // domains so the image element always loads.
-        let effectiveDomain = domain;
-        if (!effectiveDomain) {
-          const slug = name
-            .toLowerCase()
-            .replace(/['']/g, "")
-            .replace(/&/g, "and")
-            .replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp|co|company|the)\b/gi, "")
-            .replace(/[^a-z0-9]+/g, "")
-            .trim();
-          if (slug.length >= 3) effectiveDomain = `${slug}.com`;
-        }
-        if (effectiveDomain) {
-          queueLogoDevCache(name, effectiveDomain);
-          const token = process.env.LOGO_DEV_TOKEN;
-          const target = token
-            ? `https://img.logo.dev/${encodeURIComponent(effectiveDomain)}?token=${token}&size=256&format=png`
-            : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(effectiveDomain)}&sz=128`;
-          res.setHeader("Cache-Control", "public, max-age=3600");
-          return res.redirect(302, target);
-        }
-        // Short TTL on the no-logo 404 so we don't get stuck serving stale
-        // misses for a day after a fix lands.
-        res.setHeader("Cache-Control", "public, max-age=60");
-        return res.status(404).json({ error: "no logo" });
+      const domain = req.query.domain === undefined ? null : normalizeBrandDomain(String(req.query.domain));
+      if (req.query.domain !== undefined && !domain) return res.status(400).json({ error: "invalid domain" });
+      const companies = (await pool.query(`SELECT * FROM crm_companies
+        WHERE merged_into_id IS NULL AND (LOWER(TRIM(name))=LOWER($1)
+          OR (ai_generated_fields->'brand_identity'->>'status'='verified'
+            AND EXISTS(SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(ai_generated_fields->'brand_identity'->'aliases')='array'
+              THEN ai_generated_fields->'brand_identity'->'aliases' ELSE '[]'::jsonb END) alias WHERE LOWER(TRIM(alias))=LOWER($1)))) LIMIT 20`, [name])).rows;
+      const { resolveCompanyScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      const company = selectBrandLogoCompany(companies, name, domain, scope);
+      res.setHeader("Cache-Control", "private, max-age=60");
+      if (!company) return res.status(404).json({ error: "No unambiguous CRM brand identity" });
+      // Logos retain the directory's authenticated access, including agent
+      // firms and landlords outside the tenant-brand category filter.
+      const rows = (await pool.query(`SELECT * FROM image_studio_images
+        WHERE company_id=$1 OR (company_id IS NULL AND LOWER(TRIM(brand_name))=LOWER($2))
+        ORDER BY ('brand-hero'=ANY(tags)) DESC,created_at DESC LIMIT 60`, [company.id, company.name])).rows;
+      for (const row of rows.filter((image: any) => isPublishableBrandLogo(company, image))) {
+        const buffer = await readPersistedImage(row.local_path);
+        if (buffer) { res.setHeader("Content-Type", row.mime_type || "image/png"); return res.end(buffer); }
+        const thumbnail = String(row.thumbnail_data || "").match(/^data:(image\/[^;]+);base64,(.+)$/);
+        if (thumbnail) { res.setHeader("Content-Type", thumbnail[1]); return res.end(Buffer.from(thumbnail[2], "base64")); }
       }
-
-      const imgBuffer = await readPersistedImage(row.local_path);
-      if (imgBuffer) {
-        res.setHeader("Content-Type", row.mime_type || "image/jpeg");
-        res.setHeader("Cache-Control", "public, max-age=86400");
-        return res.end(imgBuffer);
+      if (getBrandIdentity(company).status === "verified" && process.env.BRAND_PREPARATION_ENABLED !== "false") {
+        const { prepareBrandStage } = await import("./brand-enrichment");
+        prepareBrandStage(company.id, "logo").catch(error => console.warn("[brand-logo] preparation failed:", error.message));
       }
-
-      if (row.thumbnail_data) {
-        const b64Match = row.thumbnail_data.match(/^data:([^;]+);base64,(.+)$/);
-        if (b64Match) {
-          const buf = Buffer.from(b64Match[2], "base64");
-          res.setHeader("Content-Type", b64Match[1]);
-          res.setHeader("Cache-Control", "public, max-age=86400");
-          return res.end(buf);
-        }
-      }
-
-      // Row exists but the blob is missing/unreadable. Don't 404 — fall through
-      // to the same logo.dev redirect path used when there's no row at all.
-      let effectiveDomain = domain;
-      if (!effectiveDomain) {
-        const slug = name
-          .toLowerCase()
-          .replace(/['']/g, "")
-          .replace(/&/g, "and")
-          .replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp|co|company|the)\b/gi, "")
-          .replace(/[^a-z0-9]+/g, "")
-          .trim();
-        if (slug.length >= 3) effectiveDomain = `${slug}.com`;
-      }
-      if (effectiveDomain) {
-        queueLogoDevCache(name, effectiveDomain);
-        const token = process.env.LOGO_DEV_TOKEN;
-        const target = token
-          ? `https://img.logo.dev/${encodeURIComponent(effectiveDomain)}?token=${token}&size=256&format=png`
-          : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(effectiveDomain)}&sz=128`;
-        res.setHeader("Cache-Control", "public, max-age=3600");
-        return res.redirect(302, target);
-      }
-      res.setHeader("Cache-Control", "public, max-age=60");
-      return res.status(404).json({ error: "no readable blob" });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
+      return res.status(404).json({ error: "A verified brand logo is not prepared yet" });
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
   });
 
   // One-shot stats — client calls this once per session to decide whether

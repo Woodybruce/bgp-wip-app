@@ -137,6 +137,17 @@ export function tracePlanUnit(raster: PlanRaster, desired: Point, expected?: Poi
     return mean < brightness - 40
       || (Math.max(...values) - Math.min(...values) < colourRange * .5 && mean < brightness + 10);
   };
+  // JPEG blends a dark wall/leader into the coloured floor. A tiny closing
+  // may include that desaturated fringe as well as the dark ink itself;
+  // pale mall pixels remain excluded. This is only for bounded small gaps,
+  // never for the flood fill across walls.
+  const isInkFringe = (pos: number) => {
+    if (isInk(pos)) return true;
+    const x = pos % rw + left, y = Math.floor(pos / rw) + top, i = (y * W + x) * 3;
+    const values = [data[i], data[i + 1], data[i + 2]];
+    return Math.max(...values) - Math.min(...values) < colourRange * .65
+      && (values[0] + values[1] + values[2]) / 3 < brightness + 10;
+  };
   const isLightInkOrFloor = (pos: number) => {
     const x = pos % rw + left, y = Math.floor(pos / rw) + top, i = (y * W + x) * 3;
     const mean = (data[i] + data[i + 1] + data[i + 2]) / 3;
@@ -236,7 +247,7 @@ export function tracePlanUnit(raster: PlanRaster, desired: Point, expected?: Poi
             let length = 1, inkOnly = true; gaps[0] = start; visited[start] = 1;
             for (let n = 0; n < length; n++) {
               const pos = gaps[n], x = pos % sw, y = Math.floor(pos / sw);
-              if (!isInk((minY + y - 2) * rw + minX + x - 2)) inkOnly = false;
+              if (!isInkFringe((minY + y - 2) * rw + minX + x - 2)) inkOnly = false;
               for (const next of [pos - 1, pos + 1, pos - sw, pos + sw]) {
                 if (next < 0 || next >= source.length || visited[next] || source[next] || !closed[next]) continue;
                 visited[next] = 1; gaps[length++] = next;
