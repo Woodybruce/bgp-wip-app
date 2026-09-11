@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-08T06:08:58.187Z",
+  "generatedAt": "2026-09-11T05:29:10.424Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -277,7 +277,7 @@
     ],
     "consultancy": [
       "Tracey Pollard",
-      "Alex Todd",
+      "Peter Wood",
       "Libby Evans"
     ]
   },
@@ -340,17 +340,42 @@
       "image": "https://www.bgp.uk.com/images/shop-boutique.jpg"
     },
     {
-      "title": "Heddon Street, The Crown Estate",
+      "title": "City of London Corporation — Ground Floor Study",
       "service": "Consultancy",
-      "url": "https://www.bgp.uk.com/case-studies/heddon-street",
-      "blurb": "Long-term advice to The Crown Estate on one of the West End's best-loved restaurant and bar destinations, off Regent Street.",
+      "url": "https://www.bgp.uk.com/case-studies/city-of-london-ground-floor-study",
+      "blurb": "A strategic study defining what makes a vibrant, consistently lively ground-floor experience across the Square Mile.",
+      "facts": {
+        "Service": "Consultancy",
+        "Client": "City of London Corporation",
+        "Partners": "Aldgate Connect, Cheapside Business Alliance, Culture Mile BID, Eastern City BID, Fleet Street Quarter",
+        "Location": "The Square Mile"
+      },
+      "image": "https://www.bgp.uk.com/images/city-towers.jpg"
+    },
+    {
+      "title": "The Crown Estate — Retail Strategy, Cambridge Business Park",
+      "service": "Consultancy",
+      "url": "https://www.bgp.uk.com/case-studies/crown-estate-cambridge-business-park",
+      "blurb": "Advice on the role, location, specification, scale and typology of day and evening uses across the site.",
       "facts": {
         "Service": "Consultancy",
         "Client": "The Crown Estate",
-        "Sector": "Restaurant & bar",
-        "Location": "West End"
+        "Location": "Cambridge Business Park"
       },
-      "image": "https://www.bgp.uk.com/images/heddon-street.jpg"
+      "image": null
+    },
+    {
+      "title": "Mayfield, Manchester — Amenity & Ground Floor Activation Strategy",
+      "service": "Consultancy",
+      "url": "https://www.bgp.uk.com/case-studies/mayfield-manchester",
+      "blurb": "A strategy providing clarity on the amenities and ground floor activation for a 1.67 million sq ft office and 1,400-home development.",
+      "facts": {
+        "Service": "Consultancy",
+        "Location": "Mayfield, Manchester",
+        "Offices": "1,666,267 sq ft",
+        "Homes": "1,400"
+      },
+      "image": null
     },
     {
       "title": "Hammerson",

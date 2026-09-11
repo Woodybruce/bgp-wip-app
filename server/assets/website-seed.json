@@ -77,7 +77,8 @@
       "email": "peter@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/peter-wood.jpg",
       "groups": [
-        "lease_advisory"
+        "lease_advisory",
+        "consultancy"
       ],
       "sortOrder": 6,
       "visible": true
@@ -192,9 +193,7 @@
       "phone": "+44 (0)7526 504 806",
       "email": "alext@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/alex-todd.jpg",
-      "groups": [
-        "consultancy"
-      ],
+      "groups": [],
       "sortOrder": 16,
       "visible": true
     },
@@ -440,13 +439,43 @@
       "published": true
     },
     {
-      "slug": "heddon-street",
-      "title": "Heddon Street, The Crown Estate",
+      "slug": "city-of-london-ground-floor-study",
+      "title": "City of London Corporation — Ground Floor Study",
       "service": "Consultancy",
-      "blurb": "Long-term advice to The Crown Estate on one of the West End's best-loved restaurant and bar destinations, off Regent Street.",
+      "blurb": "A strategic study defining what makes a vibrant, consistently lively ground-floor experience across the Square Mile.",
       "body": [
-        "Long-term advice to The Crown Estate on Heddon Street — one of the West End's best-loved restaurant and bar destinations, just off Regent Street.",
-        "[Sample] Full case study copy to follow from the consultancy team."
+        "\"Developing a consistently lively and animated ground floor experience\" — produced on behalf of the City of London Corporation and the City's five Business Improvement Districts: Aldgate Connect, Cheapside Business Alliance, Culture Mile BID, Eastern City BID and Fleet Street Quarter.",
+        "A strategic study defining what makes a vibrant, consistently lively ground-floor experience across the Square Mile."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Consultancy"
+        ],
+        [
+          "Client",
+          "City of London Corporation"
+        ],
+        [
+          "Partners",
+          "Aldgate Connect, Cheapside Business Alliance, Culture Mile BID, Eastern City BID, Fleet Street Quarter"
+        ],
+        [
+          "Location",
+          "The Square Mile"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/city-towers.jpg",
+      "sortOrder": 4,
+      "published": true
+    },
+    {
+      "slug": "crown-estate-cambridge-business-park",
+      "title": "The Crown Estate — Retail Strategy, Cambridge Business Park",
+      "service": "Consultancy",
+      "blurb": "Advice on the role, location, specification, scale and typology of day and evening uses across the site.",
+      "body": [
+        "Providing advice on the role, location, specification, scale and typology of day and evening uses — F&B, retail, leisure, culture, community anchors and services — across the site."
       ],
       "facts": [
         [
@@ -458,16 +487,43 @@
           "The Crown Estate"
         ],
         [
-          "Sector",
-          "Restaurant & bar"
+          "Location",
+          "Cambridge Business Park"
+        ]
+      ],
+      "imageUrl": null,
+      "sortOrder": 5,
+      "published": true
+    },
+    {
+      "slug": "mayfield-manchester",
+      "title": "Mayfield, Manchester — Amenity & Ground Floor Activation Strategy",
+      "service": "Consultancy",
+      "blurb": "A strategy providing clarity on the amenities and ground floor activation for a 1.67 million sq ft office and 1,400-home development.",
+      "body": [
+        "A strategy document providing clarity on the amenities and ground floor activation for Mayfield, Manchester — a development comprising 1,666,267 sq ft of offices, 1,400 new homes and the range of facilities required to serve residents, the office catchment and visitors to Mayfield.",
+        "Our work has been used to help shape ground floor unit configuration, to ensure the units are fit for purpose once built and that there is a long-term vision in place to support office lettings."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Consultancy"
         ],
         [
           "Location",
-          "West End"
+          "Mayfield, Manchester"
+        ],
+        [
+          "Offices",
+          "1,666,267 sq ft"
+        ],
+        [
+          "Homes",
+          "1,400"
         ]
       ],
-      "imageUrl": "https://www.bgp.uk.com/images/heddon-street.jpg",
-      "sortOrder": 4,
+      "imageUrl": null,
+      "sortOrder": 6,
       "published": true
     },
     {
@@ -490,7 +546,7 @@
         ]
       ],
       "imageUrl": null,
-      "sortOrder": 5,
+      "sortOrder": 7,
       "published": true
     },
     {
@@ -513,7 +569,7 @@
         ]
       ],
       "imageUrl": null,
-      "sortOrder": 6,
+      "sortOrder": 8,
       "published": true
     },
     {
@@ -536,7 +592,7 @@
         ]
       ],
       "imageUrl": null,
-      "sortOrder": 7,
+      "sortOrder": 9,
       "published": true
     },
     {
@@ -559,7 +615,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/stills-preview-royal-exchange.jpg",
-      "sortOrder": 8,
+      "sortOrder": 10,
       "published": true
     },
     {
@@ -589,7 +645,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/stills-preview-central-cafe.jpg",
-      "sortOrder": 9,
+      "sortOrder": 11,
       "published": true
     },
     {
@@ -619,7 +675,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/shop-menswear.jpg",
-      "sortOrder": 10,
+      "sortOrder": 12,
       "published": true
     },
     {
@@ -649,7 +705,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/stills-preview-gym.jpg",
-      "sortOrder": 11,
+      "sortOrder": 13,
       "published": true
     },
     {
@@ -680,7 +736,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/food-hall.jpg",
-      "sortOrder": 12,
+      "sortOrder": 14,
       "published": true
     }
   ],

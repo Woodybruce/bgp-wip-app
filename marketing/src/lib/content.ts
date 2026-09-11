@@ -137,7 +137,8 @@ export const LEASE_ADVISORY_CONTACTS = byName("Peter Wood", "Tom Cater");
 
 export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Evie North");
 
-export const CONSULTANCY_CONTACTS = byName("Tracey Pollard", "Alex Todd", "Libby Evans");
+// Tracey, 2026-09-11: Pete Wood replaces Alex on the consultancy page.
+export const CONSULTANCY_CONTACTS = byName("Tracey Pollard", "Peter Wood", "Libby Evans");
 
 export interface CaseStudy {
   slug: string;
@@ -230,22 +231,55 @@ export const CASE_STUDIES: CaseStudy[] = [
       "[Sample] Full case study copy to follow from the investment team.",
     ],
   },
+  // Consultancy case studies — Tracey's three, 2026-09-11. Photos to follow.
   {
-    slug: "heddon-street",
-    title: "Heddon Street, The Crown Estate",
+    slug: "city-of-london-ground-floor-study",
+    title: "City of London Corporation — Ground Floor Study",
     service: "Consultancy",
-    image: "/images/heddon-street.jpg",
+    image: "/images/city-towers.jpg",
     blurb:
-      "Long-term advice to The Crown Estate on one of the West End's best-loved restaurant and bar destinations, off Regent Street.",
+      "A strategic study defining what makes a vibrant, consistently lively ground-floor experience across the Square Mile.",
+    facts: [
+      ["Service", "Consultancy"],
+      ["Client", "City of London Corporation"],
+      ["Partners", "Aldgate Connect, Cheapside Business Alliance, Culture Mile BID, Eastern City BID, Fleet Street Quarter"],
+      ["Location", "The Square Mile"],
+    ],
+    body: [
+      "\"Developing a consistently lively and animated ground floor experience\" — produced on behalf of the City of London Corporation and the City's five Business Improvement Districts: Aldgate Connect, Cheapside Business Alliance, Culture Mile BID, Eastern City BID and Fleet Street Quarter.",
+      "A strategic study defining what makes a vibrant, consistently lively ground-floor experience across the Square Mile.",
+    ],
+  },
+  {
+    slug: "crown-estate-cambridge-business-park",
+    title: "The Crown Estate — Retail Strategy, Cambridge Business Park",
+    service: "Consultancy",
+    blurb:
+      "Advice on the role, location, specification, scale and typology of day and evening uses across the site.",
     facts: [
       ["Service", "Consultancy"],
       ["Client", "The Crown Estate"],
-      ["Sector", "Restaurant & bar"],
-      ["Location", "West End"],
+      ["Location", "Cambridge Business Park"],
     ],
     body: [
-      "Long-term advice to The Crown Estate on Heddon Street — one of the West End's best-loved restaurant and bar destinations, just off Regent Street.",
-      "[Sample] Full case study copy to follow from the consultancy team.",
+      "Providing advice on the role, location, specification, scale and typology of day and evening uses — F&B, retail, leisure, culture, community anchors and services — across the site.",
+    ],
+  },
+  {
+    slug: "mayfield-manchester",
+    title: "Mayfield, Manchester — Amenity & Ground Floor Activation Strategy",
+    service: "Consultancy",
+    blurb:
+      "A strategy providing clarity on the amenities and ground floor activation for a 1.67 million sq ft office and 1,400-home development.",
+    facts: [
+      ["Service", "Consultancy"],
+      ["Location", "Mayfield, Manchester"],
+      ["Offices", "1,666,267 sq ft"],
+      ["Homes", "1,400"],
+    ],
+    body: [
+      "A strategy document providing clarity on the amenities and ground floor activation for Mayfield, Manchester — a development comprising 1,666,267 sq ft of offices, 1,400 new homes and the range of facilities required to serve residents, the office catchment and visitors to Mayfield.",
+      "Our work has been used to help shape ground floor unit configuration, to ensure the units are fit for purpose once built and that there is a long-term vision in place to support office lettings.",
     ],
   },
   ...(["Hammerson", "Land Securities", "Bloomberg", "The Royal Exchange"] as const).map((client) => ({
@@ -397,15 +431,13 @@ export const LEASE_ADVISORY_CLIENTS: Client[] = [
   { name: "Barry's", domain: "barrys.com" },
 ];
 
+// Tracey's key clients list, 2026-09-11.
 export const CONSULTANCY_CLIENTS: Client[] = [
-  { name: "Landsec", domain: "landsec.com" },
+  { name: "City of London Corporation", domain: "cityoflondon.gov.uk" },
   { name: "The Crown Estate", domain: "thecrownestate.co.uk" },
-  { name: "Berkeley Group", domain: "berkeleygroup.co.uk" },
-  { name: "Nuveen", domain: "nuveen.com" },
-  { name: "Hermes", domain: "federatedhermes.com" },
-  { name: "Almacantar", domain: "almacantar.com" },
-  { name: "Consolidated Developments", domain: "consolidateddevelopments.com" },
-  { name: "St George", domain: "stgeorgeplc.co.uk" },
+  { name: "Landsec", domain: "landsec.com" },
+  { name: "Northbank BID", domain: "thenorthbank.london" },
+  { name: "Stanhope", domain: "stanhopeplc.com" },
 ];
 
 
@@ -443,7 +475,7 @@ export const CONSULTANCY_SERVICES = [
 ];
 
 export const CONSULTANCY_BODY = [
-  "With a forward-thinking approach that aligns with development timelines, we frequently collaborate with partners such as People Places Spaces and Fier & Folk.",
+  "With a forward-thinking approach that aligns with development timelines, we frequently collaborate with partners such as People Places Spaces.",
   "Together, we deliver thoughtful strategies for ground floor amenities—whether for office developments, residential schemes, or business and science parks.",
   "In long-term development, it's essential to integrate insights into global future trends and explore how to activate spaces on a meanwhile-use basis.",
 ];

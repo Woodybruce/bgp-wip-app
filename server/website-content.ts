@@ -36,7 +36,6 @@ export function ensureWebsiteContentSeed(): Promise<void> {
       const [t] = await db.select({ id: websiteTeam.id }).from(websiteTeam).limit(1);
       const [c] = await db.select({ id: websiteCaseStudies.id }).from(websiteCaseStudies).limit(1);
       const [n] = await db.select({ id: websiteNews.id }).from(websiteNews).limit(1);
-      if (t && c && n) return;
       const candidates = ["server/assets/website-seed.json", "dist/server/assets/website-seed.json"].map((p) => path.resolve(process.cwd(), p));
       const seedPath = candidates.find((p) => existsSync(p));
       if (!seedPath) {
@@ -47,7 +46,40 @@ export function ensureWebsiteContentSeed(): Promise<void> {
       if (!t && seed.team?.length) await db.insert(websiteTeam).values(seed.team.map((r: any) => ({ ...r, updatedBy: "seed" })));
       if (!c && seed.caseStudies?.length) await db.insert(websiteCaseStudies).values(seed.caseStudies.map((r: any) => ({ ...r, updatedBy: "seed" })));
       if (!n && seed.news?.length) await db.insert(websiteNews).values(seed.news.map((r: any) => ({ ...r, updatedBy: "seed" })));
-      console.log(`[website-content] seeded ${!t ? seed.team.length : 0} team, ${!c ? seed.caseStudies.length : 0} case studies, ${!n ? seed.news.length : 0} news`);
+      if (!t || !c || !n) console.log(`[website-content] seeded ${!t ? seed.team.length : 0} team, ${!c ? seed.caseStudies.length : 0} case studies, ${!n ? seed.news.length : 0} news`);
+      // Rows nobody has edited in the dashboard (updated_by still "seed")
+      // keep tracking the bundled copy, so content changes committed to
+      // marketing/ reach the live site on deploy. Anything a person has
+      // touched is theirs and is left alone.
+      const reconcile = async (table: any, key: string, rows: any[]) => {
+        const existing = (await db.select().from(table)) as any[];
+        const byKey = new Map(existing.map((r) => [String(r[key]).toLowerCase(), r]));
+        let changed = 0;
+        for (const r of rows) {
+          const cur = byKey.get(String(r[key]).toLowerCase());
+          if (!cur) {
+            await db.insert(table).values({ ...r, updatedBy: "seed" });
+            changed++;
+          } else if (cur.updatedBy === "seed") {
+            await db.update(table).set({ ...r, updatedBy: "seed", updatedAt: new Date() }).where(eq(table.id, cur.id));
+            changed++;
+          }
+        }
+        const keep = new Set(rows.map((r) => String(r[key]).toLowerCase()));
+        for (const r of existing) {
+          if (r.updatedBy === "seed" && !keep.has(String(r[key]).toLowerCase())) {
+            await db.delete(table).where(eq(table.id, r.id));
+            changed++;
+          }
+        }
+        return changed;
+      };
+      const changes = [
+        t ? await reconcile(websiteTeam, "name", seed.team || []) : 0,
+        c ? await reconcile(websiteCaseStudies, "slug", seed.caseStudies || []) : 0,
+        n ? await reconcile(websiteNews, "slug", seed.news || []) : 0,
+      ];
+      if (changes.some(Boolean)) console.log(`[website-content] reconciled seed rows: ${changes[0]} team, ${changes[1]} case studies, ${changes[2]} news`);
     })().catch((e) => {
       console.error("[website-content] seed failed:", e?.message);
       seeded = null;
