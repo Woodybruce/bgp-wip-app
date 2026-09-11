@@ -5,11 +5,13 @@ import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { SOURCE_TYPES, SOURCE_LIST, normaliseSource, type SourceType } from "@shared/source-types";
+import { SourceCell, SourcePicker } from "@/components/source-cell";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -25,6 +27,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
@@ -32,17 +35,17 @@ import {
   Search, Plus, Trash2, ChevronUp, ChevronDown, FilterX, Download,
   Calculator, Building2, MapPin, Scale, CheckCircle2,
   MoreHorizontal, Ruler, Loader2, Newspaper, Sparkles,
-  FileText, Upload, X, Paperclip, FileDown, Info, Presentation,
+  FileText, Upload, X, Paperclip, FileDown, Info,
   TrendingUp, Inbox, ArrowRight, Eye, ExternalLink, Phone, Mail, User,
-  Bell,
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
-import InvestmentCompsPage from "@/pages/investment-comps";
+import { useIsMobile } from "@/hooks/use-mobile";
 import LeaseEventsPage from "@/pages/lease-events";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 interface CompFile {
   id: string;
@@ -53,6 +56,20 @@ interface CompFile {
   mimeType: string | null;
   createdAt: string;
 }
+
+// Server-computed net effective rent (rent-free + capital spread over term certain),
+// attached to every /api/crm/comps row.
+interface CompDevaluation {
+  netEffectiveRentPa: number;
+  netEffectiveRentPsf: number | null;
+  headlineRentPa: number;
+  termCertainYears: number;
+  rentFreeMonths: number;
+  capitalDeducted: number;
+  note: string;
+}
+
+const devaluationOf = (c: CrmComp): CompDevaluation | null => (c as any).devaluation || null;
 
 interface PdfTemplateConfig {
   headerTitle?: string;
@@ -73,7 +90,7 @@ const DEFAULT_PDF_TEMPLATE: PdfTemplateConfig = {
   headerTitle: "BRUCE GILLINGHAM POLLARD",
   headerSubtitle: "Comparable Evidence Schedule",
   footerText: "Bruce Gillingham Pollard | Confidential | brucegillinghampollard.com",
-  brandColor: [25, 25, 25],
+  brandColor: [110, 12, 37],
   accentColor: [0, 82, 136],
   showDate: true,
   showCount: true,
@@ -106,7 +123,7 @@ function generateCompsPdf(comps: CrmComp[], includeFilesList: boolean = false, f
   const pageW = 210;
   const margin = 15;
   const contentW = pageW - margin * 2;
-  const brandColor = (t.brandColor || [25, 25, 25]) as [number, number, number];
+  const brandColor = (t.brandColor || [110, 12, 37]) as [number, number, number];
   const accentColor = (t.accentColor || [0, 82, 136]) as [number, number, number];
   const lightGray: [number, number, number] = [245, 245, 245];
   const medGray: [number, number, number] = [140, 140, 140];
@@ -482,26 +499,21 @@ function computeNetEffective(comp: CrmComp): number {
   return avgHeadline - annualisedIncentive;
 }
 
-// UK RPI / CPI annual averages — last 10 years (ONS published annual % change).
-// Used by the indexation calculator for RPI / CPI lease reviews. Update annually.
-const UK_INDEX_DATA: { year: number; rpi: number; cpi: number }[] = [
-  { year: 2015, rpi: 1.0, cpi: 0.0 },
-  { year: 2016, rpi: 1.8, cpi: 0.7 },
-  { year: 2017, rpi: 3.6, cpi: 2.7 },
-  { year: 2018, rpi: 3.3, cpi: 2.5 },
-  { year: 2019, rpi: 2.6, cpi: 1.8 },
-  { year: 2020, rpi: 1.5, cpi: 0.9 },
-  { year: 2021, rpi: 4.1, cpi: 2.6 },
-  { year: 2022, rpi: 11.6, cpi: 9.1 },
-  { year: 2023, rpi: 9.7, cpi: 7.3 },
-  { year: 2024, rpi: 3.6, cpi: 2.5 },
+// Fallback data used until live ONS data loads.
+const UK_INDEX_FALLBACK: { year: number; rpi: number; cpi: number }[] = [
+  { year: 2015, rpi: 1.0, cpi: 0.0 }, { year: 2016, rpi: 1.8, cpi: 0.7 },
+  { year: 2017, rpi: 3.6, cpi: 2.7 }, { year: 2018, rpi: 3.3, cpi: 2.5 },
+  { year: 2019, rpi: 2.6, cpi: 1.8 }, { year: 2020, rpi: 1.5, cpi: 0.9 },
+  { year: 2021, rpi: 4.1, cpi: 2.6 }, { year: 2022, rpi: 11.6, cpi: 9.1 },
+  { year: 2023, rpi: 9.7, cpi: 7.3 }, { year: 2024, rpi: 3.6, cpi: 2.5 },
+  { year: 2025, rpi: 4.0, cpi: 2.6 },
 ];
 
 // Inline-edit cell that stores raw numbers but displays them with thousands separators.
 // Editing exposes the raw digits; on save we strip non-numeric characters before persisting.
 function NumberCell({
-  value, onSave, suffix = "", className = "",
-}: { value: string | null | undefined; onSave: (v: string) => void; suffix?: string; className?: string }) {
+  value, onSave, suffix = "", className = "", readOnly = false,
+}: { value: string | null | undefined; onSave: (v: string) => void; suffix?: string; className?: string; readOnly?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -532,8 +544,8 @@ function NumberCell({
   }
   return (
     <span
-      onClick={() => { setDraft(n ? String(n) : ""); setEditing(true); }}
-      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
+      onClick={readOnly ? undefined : () => { setDraft(n ? String(n) : ""); setEditing(true); }}
+      className={`${readOnly ? "" : "cursor-pointer hover:bg-muted/60"} rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="number-cell-display"
     >
       {display || "—"}
@@ -541,10 +553,20 @@ function NumberCell({
   );
 }
 
+// Read-only stand-in for InlineLabelSelect on client-scoped views.
+function StaticLabel({ value, colorMap }: { value: string | null | undefined; colorMap?: Record<string, string> }) {
+  if (!value) return <span className="text-[11px] text-muted-foreground">—</span>;
+  return (
+    <span className={`${colorMap?.[value] || "bg-gray-500 text-white"} font-medium rounded-full whitespace-nowrap overflow-hidden text-ellipsis max-w-full inline-block align-middle text-[11px] px-2.5 py-1`}>
+      {value}
+    </span>
+  );
+}
+
 // Currency edit cell with £ + thousands separators. Stores raw number string.
 function CurrencyCell({
-  value, onSave, compact = false, className = "",
-}: { value: string | null | undefined; onSave: (v: string) => void; compact?: boolean; className?: string }) {
+  value, onSave, compact = false, className = "", readOnly = false,
+}: { value: string | null | undefined; onSave: (v: string) => void; compact?: boolean; className?: string; readOnly?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -575,8 +597,8 @@ function CurrencyCell({
   }
   return (
     <span
-      onClick={() => { setDraft(n ? String(n) : ""); setEditing(true); }}
-      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
+      onClick={readOnly ? undefined : () => { setDraft(n ? String(n) : ""); setEditing(true); }}
+      className={`${readOnly ? "" : "cursor-pointer hover:bg-muted/60"} rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="currency-cell-display"
     >
       {display || "—"}
@@ -587,8 +609,8 @@ function CurrencyCell({
 // Stepped headline rent cell — accepts "/"-delimited annual amounts (e.g. "100000/110000/120000").
 // Display compactly as "£100K → £110K → £120K".
 function SteppedRentCell({
-  value, onSave, className = "",
-}: { value: string | null | undefined; onSave: (v: string) => void; className?: string }) {
+  value, onSave, className = "", readOnly = false,
+}: { value: string | null | undefined; onSave: (v: string) => void; className?: string; readOnly?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -627,8 +649,8 @@ function SteppedRentCell({
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          onClick={() => { setDraft(steps.length > 1 ? steps.join("/") : (steps[0] ? String(steps[0]) : "")); setEditing(true); }}
-          className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
+          onClick={readOnly ? undefined : () => { setDraft(steps.length > 1 ? steps.join("/") : (steps[0] ? String(steps[0]) : "")); setEditing(true); }}
+          className={`${readOnly ? "" : "cursor-pointer hover:bg-muted/60"} rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
           data-testid="stepped-rent-display"
         >
           {display || "—"}
@@ -714,11 +736,27 @@ function DealCell({
 
 function RpiCpiCalculator() {
   const [baseRent, setBaseRent] = useState("");
-  const [startYear, setStartYear] = useState<number>(UK_INDEX_DATA[0].year);
-  const [endYear, setEndYear] = useState<number>(UK_INDEX_DATA[UK_INDEX_DATA.length - 1].year);
   const [index, setIndex] = useState<"rpi" | "cpi">("rpi");
   const [cap, setCap] = useState("");
   const [collar, setCollar] = useState("");
+
+  const { data: inflationResp } = useQuery<{ data: typeof UK_INDEX_FALLBACK; source: string }>({
+    queryKey: ["/api/inflation-data"],
+    staleTime: 12 * 3600 * 1000,
+  });
+  const UK_INDEX_DATA = inflationResp?.data ?? UK_INDEX_FALLBACK;
+  const isLive = inflationResp?.source === "ons";
+
+  const [startYear, setStartYear] = useState<number>(UK_INDEX_FALLBACK[0].year);
+  const [endYear, setEndYear] = useState<number>(UK_INDEX_FALLBACK[UK_INDEX_FALLBACK.length - 1].year);
+
+  // Update end year when live data loads with a newer year
+  useEffect(() => {
+    if (UK_INDEX_DATA.length > 0) {
+      const latestYear = UK_INDEX_DATA[UK_INDEX_DATA.length - 1].year;
+      setEndYear(prev => prev === UK_INDEX_FALLBACK[UK_INDEX_FALLBACK.length - 1].year ? latestYear : prev);
+    }
+  }, [UK_INDEX_DATA.length]);
 
   const rent = parseFloat(baseRent.replace(/[^0-9.-]/g, "")) || 0;
   const capN = parseFloat(cap) || Infinity;
@@ -839,7 +877,7 @@ function RpiCpiCalculator() {
           </table>
         </div>
         <p className="text-[10px] text-muted-foreground mt-2">
-          Source: UK ONS — annual averages of monthly Retail Price Index (RPI) and Consumer Price Index (CPI). Apply the cap/collar to each year's indexation before compounding (standard UK lease convention).
+          {isLive ? "Live" : "Cached"} ONS data — annual averages of RPI and CPI. Cap/collar applied per year before compounding (standard UK lease convention).
         </p>
       </div>
     </div>
@@ -919,6 +957,10 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
     zA: "", zA1: "", zB: "", zB1: "", zC: "", zC1: "", zD: "", zD1: "", rem: "",
     basStorage: "", firstTrading: "",
   });
+  const [itzaDivisors, setItzaDivisors] = useState<Record<string, string>>({
+    zA: "1", zA1: "1.5", zB: "2", zB1: "3", zC: "4", zC1: "6", zD: "8", zD1: "10", rem: "12",
+    basStorage: "20", firstTrading: "10",
+  });
   const [itzaDiscount1, setItzaDiscount1] = useState("");
   const [itzaAddition1, setItzaAddition1] = useState("");
   const [itzaEndDiscount, setItzaEndDiscount] = useState("");
@@ -927,13 +969,16 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
   const itzaRateVal = parseFloat(itzaRate) || 0;
   const groundZoneCalcs = ITZA_ZONES.map(z => {
     const a = parseFloat(itzaZoneAreas[z.key]) || 0;
-    const rate = itzaRateVal / z.div;
-    return { ...z, area: a, rate, erv: a * rate };
+    const div = parseFloat(itzaDivisors[z.key]) || z.div;
+    const rate = div > 0 ? itzaRateVal / div : 0;
+    return { ...z, div, area: a, rate, erv: a * rate };
   });
   const basStorageArea = parseFloat(itzaZoneAreas.basStorage) || 0;
   const firstTradingAreaVal = parseFloat(itzaZoneAreas.firstTrading) || 0;
-  const basStorageERV = basStorageArea * (itzaRateVal / 20);
-  const firstTradingERV = firstTradingAreaVal * (itzaRateVal / 10);
+  const basStorageDiv = parseFloat(itzaDivisors.basStorage) || 20;
+  const firstTradingDiv = parseFloat(itzaDivisors.firstTrading) || 10;
+  const basStorageERV = basStorageArea * (basStorageDiv > 0 ? itzaRateVal / basStorageDiv : 0);
+  const firstTradingERV = firstTradingAreaVal * (firstTradingDiv > 0 ? itzaRateVal / firstTradingDiv : 0);
   const itzaGIA = groundZoneCalcs.reduce((s, z) => s + z.area, 0) + basStorageArea + firstTradingAreaVal;
   const itzaITZA = groundZoneCalcs.reduce((s, z) => s + (z.div > 0 ? z.area / z.div : 0), 0);
   const groundSubTotal = groundZoneCalcs.reduce((s, z) => s + z.erv, 0);
@@ -952,7 +997,16 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
   const [giaAreas, setGiaAreas] = useState<Record<string, string>>({
     groundSales: "", groundAncillary: "",
     firstTrading: "", firstAncillary: "",
+    secondTrading: "", secondAncillary: "",
     basTrading: "", basAncillary: "", basVaults: "",
+    terrace: "",
+  });
+  const [giaWeights, setGiaWeights] = useState<Record<string, string>>({
+    groundSales: "1", groundAncillary: "0.5",
+    firstTrading: "0.5", firstAncillary: "0.25",
+    secondTrading: "0.25", secondAncillary: "0.15",
+    basTrading: "0.5", basAncillary: "0.25", basVaults: "0.125",
+    terrace: "0.15",
   });
   const [giaAdj1, setGiaAdj1] = useState("");
   const [giaAdj2, setGiaAdj2] = useState("");
@@ -965,7 +1019,8 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
   const giaRateVal = parseFloat(giaRate) || 0;
   const giaFloorCalcs = GIA_FLOORS.map(f => {
     const a = parseFloat(giaAreas[f.key]) || 0;
-    return { ...f, area: a, rate: giaRateVal * f.weight, erv: a * giaRateVal * f.weight };
+    const weight = parseFloat(giaWeights[f.key] ?? String(f.weight)) || f.weight;
+    return { ...f, area: a, weight, rate: giaRateVal * weight, erv: a * giaRateVal * weight };
   });
   const giaTotalArea = giaFloorCalcs.reduce((s, f) => s + f.area, 0);
   const giaSubTotal = giaFloorCalcs.reduce((s, f) => s + f.erv, 0);
@@ -1226,10 +1281,10 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
 
   return (
     <Tabs value={calcTab} onValueChange={v => setCalcTab(v as "ner" | "itza" | "gia")}>
-      <TabsList className="w-full grid grid-cols-3 mb-4">
-        <TabsTrigger value="ner" className="text-xs">Net Effective Rent</TabsTrigger>
-        <TabsTrigger value="itza" className="text-xs">ITZA (Retail)</TabsTrigger>
-        <TabsTrigger value="gia" className="text-xs">GIA (Restaurant / Gym)</TabsTrigger>
+      <TabsList className={`${pillTabsList} mb-4`}>
+        <TabsTrigger value="ner" className={pillTabsTrigger}>Net Effective Rent</TabsTrigger>
+        <TabsTrigger value="itza" className={pillTabsTrigger}>ITZA (Retail)</TabsTrigger>
+        <TabsTrigger value="gia" className={pillTabsTrigger}>GIA (Restaurant / Gym)</TabsTrigger>
       </TabsList>
 
       {/* ── NER tab ── */}
@@ -1368,7 +1423,17 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                   {groundZoneCalcs.map(z => (
                     <tr key={z.key} className="hover:bg-muted/20">
                       <td className="px-2 py-1">{z.label}</td>
-                      <td className="px-2 py-1 text-muted-foreground">A/{z.div}</td>
+                      <td className="px-2 py-1">
+                        <div className="flex items-center gap-0.5">
+                          <span className="text-muted-foreground text-xs">A/</span>
+                          <Input
+                            type="number"
+                            value={itzaDivisors[z.key]}
+                            onChange={e => setItzaDivisors(prev => ({ ...prev, [z.key]: e.target.value }))}
+                            className="h-6 text-xs w-14 px-1"
+                          />
+                        </div>
+                      </td>
                       <td className="px-2 py-1">
                         <Input
                           type="number"
@@ -1379,7 +1444,7 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                         />
                       </td>
                       <td className="px-2 py-1 text-right text-muted-foreground">
-                        {itzaRateVal > 0 ? `£${(itzaRateVal / z.div).toFixed(2)}` : "—"}
+                        {itzaRateVal > 0 && z.div > 0 ? `£${(itzaRateVal / z.div).toFixed(2)}` : "—"}
                       </td>
                       <td className="px-2 py-1 text-right font-medium">
                         {z.erv > 0 ? `£${Math.round(z.erv).toLocaleString()}` : "—"}
@@ -1426,32 +1491,30 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                 <tbody className="divide-y">
                   <tr className="hover:bg-muted/20">
                     <td className="px-2 py-1">Basement – Storage</td>
-                    <td className="px-2 py-1 text-muted-foreground">A/20</td>
                     <td className="px-2 py-1">
-                      <Input
-                        type="number"
-                        value={itzaZoneAreas.basStorage}
-                        onChange={e => setItzaZoneAreas(prev => ({ ...prev, basStorage: e.target.value }))}
-                        placeholder="0"
-                        className="h-7 text-xs text-right w-24 ml-auto"
-                      />
+                      <div className="flex items-center gap-0.5">
+                        <span className="text-muted-foreground text-xs">A/</span>
+                        <Input type="number" value={itzaDivisors.basStorage} onChange={e => setItzaDivisors(prev => ({ ...prev, basStorage: e.target.value }))} className="h-6 text-xs w-14 px-1" />
+                      </div>
                     </td>
-                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 ? `£${(itzaRateVal / 20).toFixed(2)}` : "—"}</td>
+                    <td className="px-2 py-1">
+                      <Input type="number" value={itzaZoneAreas.basStorage} onChange={e => setItzaZoneAreas(prev => ({ ...prev, basStorage: e.target.value }))} placeholder="0" className="h-7 text-xs text-right w-24 ml-auto" />
+                    </td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 && basStorageDiv > 0 ? `£${(itzaRateVal / basStorageDiv).toFixed(2)}` : "—"}</td>
                     <td className="px-2 py-1 text-right font-medium">{basStorageERV > 0 ? `£${Math.round(basStorageERV).toLocaleString()}` : "—"}</td>
                   </tr>
                   <tr className="hover:bg-muted/20">
                     <td className="px-2 py-1">First – Trading</td>
-                    <td className="px-2 py-1 text-muted-foreground">A/10</td>
                     <td className="px-2 py-1">
-                      <Input
-                        type="number"
-                        value={itzaZoneAreas.firstTrading}
-                        onChange={e => setItzaZoneAreas(prev => ({ ...prev, firstTrading: e.target.value }))}
-                        placeholder="0"
-                        className="h-7 text-xs text-right w-24 ml-auto"
-                      />
+                      <div className="flex items-center gap-0.5">
+                        <span className="text-muted-foreground text-xs">A/</span>
+                        <Input type="number" value={itzaDivisors.firstTrading} onChange={e => setItzaDivisors(prev => ({ ...prev, firstTrading: e.target.value }))} className="h-6 text-xs w-14 px-1" />
+                      </div>
                     </td>
-                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 ? `£${(itzaRateVal / 10).toFixed(2)}` : "—"}</td>
+                    <td className="px-2 py-1">
+                      <Input type="number" value={itzaZoneAreas.firstTrading} onChange={e => setItzaZoneAreas(prev => ({ ...prev, firstTrading: e.target.value }))} placeholder="0" className="h-7 text-xs text-right w-24 ml-auto" />
+                    </td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 && firstTradingDiv > 0 ? `£${(itzaRateVal / firstTradingDiv).toFixed(2)}` : "—"}</td>
                     <td className="px-2 py-1 text-right font-medium">{firstTradingERV > 0 ? `£${Math.round(firstTradingERV).toLocaleString()}` : "—"}</td>
                   </tr>
                 </tbody>
@@ -1540,11 +1603,21 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                   {giaFloorCalcs.map(f => (
                     <tr key={f.key} className="hover:bg-muted/20">
                       <td className="px-2 py-1">{f.label}</td>
-                      <td className="px-2 py-1 text-right text-muted-foreground">{(f.weight * 100).toFixed(1)}%</td>
+                      <td className="px-2 py-1 text-right">
+                        <div className="flex items-center justify-end gap-0.5">
+                          <Input
+                            type="number"
+                            step="0.001"
+                            value={giaWeights[f.key]}
+                            onChange={e => setGiaWeights(prev => ({ ...prev, [f.key]: e.target.value }))}
+                            className="h-6 text-xs w-16 px-1 text-right"
+                          />
+                        </div>
+                      </td>
                       <td className="px-2 py-1">
                         <Input
                           type="number"
-                          value={giaAreas[f.key]}
+                          value={giaAreas[f.key] ?? ""}
                           onChange={e => setGiaAreas(prev => ({ ...prev, [f.key]: e.target.value }))}
                           placeholder="0"
                           className="h-7 text-xs text-right w-24 ml-auto"
@@ -1791,8 +1864,11 @@ function PropertyAddressInput({ value, propertyOptions, onSelectProperty, onSele
   );
 }
 
+
 export default function Comps() {
+  const [, navigate] = useLocation();
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   useEffect(() => {
@@ -1814,7 +1890,34 @@ export default function Comps() {
   const [deleteComp, setDeleteComp] = useState<{ id: string; name: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("table");
+  // Default to Leasing. The Leads tab is parked (admin-only, reached via
+  // /admin/comps-leads → /comps?tab=leads) and not shown in the normal bar.
+  // Investment comps moved to their own page (/investment-comps) — old
+  // ?tab=investment links redirect there below.
+  const VALID_TABS = ["table", "leads", "lease-events", "pdf-template"];
+  const [activeTab, setActiveTabState] = useState(() => {
+    try {
+      const t = new URLSearchParams(window.location.search).get("tab");
+      if (t && VALID_TABS.includes(t)) return t;
+    } catch {}
+    return "table";
+  });
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get("tab") === "investment") navigate("/investment-comps", { replace: true });
+    } catch {}
+  }, [navigate]);
+  // Persist the active tab in ?tab= so refresh/back doesn't reset to 'table'.
+  const setActiveTab = useCallback((tab: string) => {
+    setActiveTabState(tab);
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (tab === "table") params.delete("tab");
+      else params.set("tab", tab);
+      const qs = params.toString();
+      navigate(`${window.location.pathname}${qs ? `?${qs}` : ""}`, { replace: true });
+    } catch {}
+  }, [navigate]);
   const [scanning, setScanning] = useState(false);
   const [pdfExporting, setPdfExporting] = useState(false);
   const [pdfConfirmComps, setPdfConfirmComps] = useState<CrmComp[]>([]);
@@ -1822,12 +1925,19 @@ export default function Comps() {
   const [includeFilesInPdf, setIncludeFilesInPdf] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Client logins (Landsec) get comps scoped to their schemes, read-only — staff writes 403 for them.
+  const { data: compsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientComps = compsViewer?.role === "Client" || !!compsViewer?.companyScopeId;
+
   const { data: comps = [], isLoading } = useQuery<CrmComp[]>({
     queryKey: ["/api/crm/comps"],
   });
 
   const { data: pdfTemplate } = useQuery<PdfTemplateConfig>({
     queryKey: ["/api/comp-pdf-template"],
+    // staff-only PDF export config — wait for the viewer to resolve so a
+    // client's first paint doesn't fire it (403)
+    enabled: !!compsViewer && !isClientComps,
   });
 
   const { data: properties = [] } = useQuery<any[]>({
@@ -1856,6 +1966,23 @@ export default function Comps() {
     contacts.map((c: any) => ({ id: c.id, name: c.name })).sort((a, b) => a.name.localeCompare(b.name)),
     [contacts]
   );
+
+  // Inline "search and set up" — create the CRM record when the typed name
+  // matches nothing, then return it so the cell can link it.
+  const createProperty = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/properties", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+    toast({ title: "Property created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+  const createContact = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/contacts", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+    toast({ title: "Contact created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
 
   const contactById = useMemo(() => {
     const m = new Map<string, any>();
@@ -1898,7 +2025,7 @@ export default function Comps() {
     return companyByName.get(n) || null;
   }, [companyByName]);
 
-  const propertyLinkFor = useCallback((comp: CrmComp): { href: string; external: boolean } => {
+  const propertyLinkFor = useCallback((comp: CrmComp): { href: string | null; external: boolean } => {
     if (comp.propertyId) return { href: `/properties/${comp.propertyId}`, external: false };
     if (comp.name) {
       const match = propertyByName.get(normName(comp.name));
@@ -1908,7 +2035,9 @@ export default function Comps() {
     const addr = comp.address as any;
     const googleUrl = buildGoogleMapsUrl(addr?.formatted || comp.name);
     if (googleUrl) return { href: googleUrl, external: true };
-    return { href: "/properties", external: false };
+    // No id and no usable address — render plain text rather than linking to
+    // the bare /properties list (which would be the wrong destination).
+    return { href: null, external: false };
   }, [propertyByName]);
 
   const { data: deals = [] } = useQuery<{ id: string; name: string; status?: string | null }[]>({
@@ -2002,7 +2131,7 @@ export default function Comps() {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       toast({ title: "Company added to CRM", description: "Enrichment started — Apollo is filling in details." });
       if (created?.id) {
-        window.location.href = `/companies?highlight=${created.id}`;
+        navigate(`/companies?highlight=${created.id}`);
       }
     },
     onError: (err: any) => {
@@ -2128,12 +2257,37 @@ export default function Comps() {
   const [newHeadlineRent, setNewHeadlineRent] = useState("");
   const [newZoneA, setNewZoneA] = useState("");
   const [newDate, setNewDate] = useState("");
+  const [newSourceEvidence, setNewSourceEvidence] = useState<string | null>(null);
+  const [newSourceUrl, setNewSourceUrl] = useState<string | null>(null);
+  const [newSourceTitle, setNewSourceTitle] = useState<string | null>(null);
 
   const resetCreateForm = () => {
     setNewName(""); setNewPropertyId(null); setNewAddress(null);
     setNewTenant(""); setNewArea(""); setNewPostcode(""); setNewUseClass("");
     setNewTxnType(""); setNewHeadlineRent(""); setNewZoneA(""); setNewDate("");
+    setNewSourceEvidence(null); setNewSourceUrl(null); setNewSourceTitle(null);
   };
+
+  // Deep-link: /comps?create=1&source=Email&sourceUrl=...&sourceTitle=...
+  // Mail viewer / pathway page navigates here with the source already
+  // populated so the user just fills in the deal details. Params are
+  // stripped after consumption so refresh doesn't re-open the dialog.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("create") !== "1") return;
+    const src = params.get("source");
+    const url = params.get("sourceUrl");
+    const title = params.get("sourceTitle");
+    const name = params.get("name");
+    if (src) setNewSourceEvidence(src);
+    if (url) setNewSourceUrl(url);
+    if (title) setNewSourceTitle(title);
+    if (name) setNewName(name);
+    setCreateOpen(true);
+    window.history.replaceState({}, "", window.location.pathname);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startPdfExport = useCallback(async (targetComps: CrmComp[]) => {
     if (!targetComps.length) return;
@@ -2212,57 +2366,30 @@ export default function Comps() {
     <TooltipProvider delayDuration={200}>
     <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col" data-testid="leasing-comps-page">
       <div className="border-b px-4 py-3 shrink-0">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Scale className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight" data-testid="text-comps-title">
-                {activeTab === "investment" ? "Investment Comps"
-                  : activeTab === "leads" ? "Comps Leads"
+        {/* flex-wrap, not a col/row switch: at half-window widths the fixed
+            action strip rode OVER the icon + subtitle. Wrapping drops the
+            buttons onto their own line instead. */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-comps-title">
+                {activeTab === "leads" ? "Comps Leads"
                   : activeTab === "lease-events" ? "Lease Events"
                   : activeTab === "pdf-template" ? "PDF Template"
                   : "Leasing Comps"}
               </h1>
               <p className="text-sm text-muted-foreground">
-                {activeTab === "investment" ? "Capital markets comparable transactions"
-                  : activeTab === "leads" ? "Unconfirmed comps extracted from news, emails & files"
+                {activeTab === "leads" ? "Unconfirmed comps extracted from news, emails & files"
                   : activeTab === "lease-events" ? "Rent reviews, breaks & expiries — BD pipeline for lease advisory"
                   : activeTab === "pdf-template" ? "Customise the PDF export template"
                   : "Rent review evidence & comparable transactions"}
               </p>
             </div>
-            <TabsList className="ml-4">
-              <TabsTrigger value="table" data-testid="tab-comps-table">
-                <Scale className="w-3.5 h-3.5 mr-1.5" />
-                Leasing
-              </TabsTrigger>
-              <TabsTrigger value="investment" data-testid="tab-comps-investment">
-                <TrendingUp className="w-3.5 h-3.5 mr-1.5" />
-                Investment
-              </TabsTrigger>
-              <TabsTrigger value="leads" data-testid="tab-comps-leads">
-                <Inbox className="w-3.5 h-3.5 mr-1.5" />
-                Leads
-                {leadComps.length > 0 && (
-                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
-                    {leadComps.length}
-                  </span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="lease-events" data-testid="tab-comps-lease-events">
-                <Bell className="w-3.5 h-3.5 mr-1.5" />
-                Lease Events
-              </TabsTrigger>
-              <TabsTrigger value="pdf-template" data-testid="tab-comps-pdf-template">
-                <Presentation className="w-3.5 h-3.5 mr-1.5" />
-                PDF Template
-              </TabsTrigger>
-            </TabsList>
           </div>
           {activeTab === "table" && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {!isMobile && (<>
+            {!isClientComps && (
             <Button
               variant="outline"
               size="sm"
@@ -2289,11 +2416,12 @@ export default function Comps() {
               data-testid="button-scan-news-comps"
             >
               {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              Scan All
+              Scan all
             </Button>
+            )}
             <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => setCalcOpen(true)} data-testid="button-open-calculator">
               <Calculator className="w-3.5 h-3.5" />
-              Net Rent Calc
+              Net rent calc
             </Button>
             <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => setRpiOpen(true)} data-testid="button-open-rpi-calc">
               <TrendingUp className="w-3.5 h-3.5" />
@@ -2303,22 +2431,114 @@ export default function Comps() {
               <Download className="w-3.5 h-3.5" />
               Export
             </Button>
+            </>)}
+            {!isClientComps && (
+            <label className="inline-flex">
+              <input
+                type="file"
+                accept=".xlsx"
+                className="hidden"
+                data-testid="input-import-dataset"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  toast({ title: "Importing dataset…", description: file.name });
+                  try {
+                    const fd = new FormData();
+                    fd.append("file", file);
+                    const res = await fetch("/api/admin/import-portfolio-comps", {
+                      method: "POST", credentials: "include", body: fd,
+                      headers: { Authorization: `Bearer ${localStorage.getItem("bgp_auth_token")}` },
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data?.error || `Server error ${res.status}`);
+                    queryClient.invalidateQueries({ queryKey: ["/api/crm/comps"] });
+                    toast({
+                      title: "Dataset imported",
+                      description: `${data.lettings} lettings across ${Object.keys(data.schemes || {}).length} schemes — ${data.inserted} new, ${data.updated} updated.`,
+                    });
+                  } catch (err: any) {
+                    toast({ title: "Import failed", description: err?.message, variant: "destructive" });
+                  }
+                }}
+              />
+              <Button size="sm" variant="outline" className="gap-1.5 h-8" asChild data-testid="button-import-dataset">
+                <span><Download className="w-3.5 h-3.5 rotate-180" /> Import dataset</span>
+              </Button>
+            </label>
+            )}
+            {!isClientComps && (
             <Button size="sm" className="gap-1.5 h-8" onClick={() => { resetCreateForm(); setCreateOpen(true); }} data-testid="button-create-comp">
               <Plus className="w-3.5 h-3.5" />
-              Add Comp
+              Add comp
             </Button>
+            )}
           </div>
           )}
         </div>
+
+        {/* Mode tabs live on their own row — inlined next to the title they
+            overlapped the heading/subtitle at mid widths. */}
+        {/* Lease advisory toolset — comps sit alongside jobs and evidence
+            plans (Woody, 2026-09-02). Staff only; clients just get comps. */}
+        {!isClientComps && (
+          <div className="flex items-center gap-1.5 mb-2">
+            <Pill onClick={() => navigate("/pla/matters")} data-testid="pill-la-jobs">Jobs</Pill>
+            <Pill onClick={() => navigate("/evidence-plans")} data-testid="pill-la-evidence-plans">Evidence plans</Pill>
+            <Pill active data-testid="pill-la-comps">Comps</Pill>
+          </div>
+        )}
+        <TabsList className={`${pillTabsList} mb-3`}>
+          <TabsTrigger value="table" className={pillTabsTrigger} data-testid="tab-comps-table">
+            Leasing
+          </TabsTrigger>
+          {activeTab === "leads" && (
+          <TabsTrigger value="leads" className={pillTabsTrigger} data-testid="tab-comps-leads">
+            Leads
+            {leadComps.length > 0 && (
+              <span className="font-mono normal-case opacity-70">
+                {leadComps.length}
+              </span>
+            )}
+          </TabsTrigger>
+          )}
+          {!isMobile && !isClientComps && (<>
+          <TabsTrigger value="lease-events" className={pillTabsTrigger} data-testid="tab-comps-lease-events">
+            Lease Events
+          </TabsTrigger>
+          <TabsTrigger value="pdf-template" className={pillTabsTrigger} data-testid="tab-comps-pdf-template">
+            PDF Template
+          </TabsTrigger>
+          </>)}
+        </TabsList>
 
         {activeTab === "table" && (
         <>
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-4 text-xs">
-            <span className="flex items-center gap-1.5"><Scale className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.total}</span> comps</span>
+            {/* Counts reflect the table below, not rows parked on the
+                admin-only Leads tab — "12 comps" over a 1-row table read
+                as data loss (UX-NOTES #10). */}
+            <span className="flex items-center gap-1.5"><Scale className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{confirmedComps.length}</span> {confirmedComps.length === 1 ? "comp" : "comps"}</span>
             <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-green-600" /> <span className="font-semibold">{stats.verified}</span> verified</span>
-            {stats.aiExtracted > 0 && <span className="flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-amber-500" /> <span className="font-semibold">{stats.aiExtracted}</span> AI</span>}
-            <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.areas}</span> areas</span>
+            {/* Admins click through to the Leads tab; non-admins get a
+                tooltip instead of a dead number (UX #26). */}
+            {leadComps.length > 0 && (compsViewer?.isAdmin ? (
+              <button
+                type="button"
+                onClick={() => setActiveTab("leads")}
+                className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground hover:underline"
+                data-testid="stat-ai-leads"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" /> <span className="font-semibold">{leadComps.length}</span> AI lead{leadComps.length !== 1 ? "s" : ""} awaiting review
+              </button>
+            ) : (
+              <span className="flex items-center gap-1.5 text-muted-foreground" title="An admin reviews these AI-found comps before they join the schedule">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" /> <span className="font-semibold">{leadComps.length}</span> AI lead{leadComps.length !== 1 ? "s" : ""} awaiting review
+              </span>
+            ))}
+            <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{new Set(confirmedComps.map(c => c.areaLocation).filter(Boolean)).size}</span> areas</span>
           </div>
           <div className="flex-1" />
           <div className="relative">
@@ -2331,6 +2551,7 @@ export default function Comps() {
               data-testid="input-search-comps"
             />
           </div>
+          {!isMobile && (<>
           <Select value={activeVerified} onValueChange={setActiveVerified}>
             <SelectTrigger className="h-8 w-32 text-xs" data-testid="select-verified-filter">
               <SelectValue placeholder="Verified" />
@@ -2364,8 +2585,19 @@ export default function Comps() {
               <FilterX className="w-3.5 h-3.5" /> Clear
             </Button>
           )}
+          </>)}
         </div>
 
+        {isMobile ? (
+          <Select value={activeArea} onValueChange={setActiveArea}>
+            <SelectTrigger className="h-9 w-full text-sm mt-3" data-testid="select-area-filter">
+              <SelectValue placeholder="All Areas" />
+            </SelectTrigger>
+            <SelectContent>
+              {AREA_GROUPS.map(area => <SelectItem key={area} value={area}>{area}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        ) : (
         <div className="flex items-center gap-1.5 mt-3 flex-wrap">
           {AREA_GROUPS.map(area => (
             <button
@@ -2382,6 +2614,7 @@ export default function Comps() {
             </button>
           ))}
         </div>
+        )}
         </>
         )}
       </div>
@@ -2389,6 +2622,7 @@ export default function Comps() {
       {(activeTab === "table" || activeTab === "leads") && selectedIds.size > 0 && (
         <div className="flex items-center gap-3 px-4 py-2 bg-muted/50 border-b text-xs">
           <span className="font-medium">{selectedIds.size} selected</span>
+          {!isClientComps && (<>
           <Button
             variant="outline"
             size="sm"
@@ -2409,6 +2643,7 @@ export default function Comps() {
           >
             <X className="w-3 h-3" /> Unverify
           </Button>
+          </>)}
           <Button
             variant="outline"
             size="sm"
@@ -2423,9 +2658,11 @@ export default function Comps() {
             {pdfExporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileDown className="w-3 h-3" />}
             Export PDF
           </Button>
+          {!isClientComps && (
           <Button variant="destructive" size="sm" className="h-7 gap-1 text-xs" onClick={() => setBulkDeleteOpen(true)}>
             <Trash2 className="w-3 h-3" /> Discard
           </Button>
+          )}
           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setSelectedIds(new Set())}>
             Clear
           </Button>
@@ -2441,15 +2678,72 @@ export default function Comps() {
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center">
             <Scale className="w-12 h-12 text-muted-foreground/20 mb-3" />
-            <h3 className="text-sm font-semibold mb-1">{comps.length === 0 ? "No comps yet" : "No matching comps"}</h3>
+            <h3 className="text-sm font-semibold mb-1">
+              {comps.length > 0 ? "No matching comps"
+                : isClientComps ? "No comparable evidence recorded for your schemes yet"
+                : "No comps yet"}
+            </h3>
             <p className="text-xs text-muted-foreground mb-4">
-              {comps.length === 0 ? "Add your first comparable transaction or ask ChatBGP to extract from your OneDrive files" : "Try adjusting your filters"}
+              {comps.length > 0 ? "Try adjusting your filters"
+                : isClientComps ? "Your BGP team adds comps as deals complete."
+                : "Add your first comparable transaction or ask ChatBGP to extract from your OneDrive files"}
             </p>
-            {comps.length === 0 && (
+            {comps.length === 0 && !isClientComps && (
               <Button size="sm" onClick={() => { resetCreateForm(); setCreateOpen(true); }}>
                 <Plus className="w-4 h-4 mr-1.5" /> Add First Comp
               </Button>
             )}
+          </div>
+        ) : isMobile ? (
+          <div className="grid grid-cols-1 gap-3 p-3">
+            {filtered.map(comp => {
+              const addr = comp.address as any;
+              const sub = comp.areaLocation || addr?.city || comp.postcode || undefined;
+              const dv = devaluationOf(comp);
+              const rows = [
+                { label: "Headline rent", value: comp.headlineRent },
+                { label: "Zone A psf", value: comp.zoneARate },
+                { label: "Net effective", value: dv ? `£${dv.netEffectiveRentPa.toLocaleString()} pa${dv.netEffectiveRentPsf != null ? ` · £${dv.netEffectiveRentPsf} psf` : ""}` : null },
+                { label: "NIA", value: comp.niaSqft ? `${comp.niaSqft} sq ft` : null },
+                { label: "ITZA", value: comp.itzaSqft ? `${comp.itzaSqft} sq ft` : null },
+                { label: "Term", value: comp.term ? `${comp.term} yrs` : null },
+                { label: "Tenant", value: comp.tenant },
+              ].filter(r => r.value);
+              return (
+                <button
+                  key={comp.id}
+                  onClick={() => setSelectedComp(comp)}
+                  className="w-full text-left rounded-xl border bg-card p-4 space-y-3 shadow-sm active:bg-muted/40"
+                  data-testid={`comp-card-${comp.id}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-sm font-semibold leading-tight block truncate">{comp.name || "Untitled"}</span>
+                      {sub && <p className="text-xs text-muted-foreground truncate mt-0.5">{sub}</p>}
+                    </div>
+                    {comp.verified
+                      ? <Badge variant="secondary" className="shrink-0 text-[10px] px-2 py-0.5 gap-1"><CheckCircle2 className="w-3 h-3 text-green-600" />Verified</Badge>
+                      : <Badge variant="outline" className="shrink-0 text-[10px] px-2 py-0.5 gap-1"><Sparkles className="w-3 h-3 text-amber-500" />AI</Badge>}
+                  </div>
+                  {(comp.useClass || comp.transactionType) && (
+                    <div className="flex flex-wrap gap-1">
+                      {comp.useClass && <Badge variant="outline" className="text-[10px] px-1.5 py-0">{comp.useClass}</Badge>}
+                      {comp.transactionType && <Badge variant="outline" className="text-[10px] px-1.5 py-0">{comp.transactionType}</Badge>}
+                    </div>
+                  )}
+                  {rows.length > 0 && (
+                    <div className="space-y-1.5">
+                      {rows.map((r, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-muted-foreground shrink-0">{r.label}</span>
+                          <span className="font-medium truncate text-right">{String(r.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         ) : (
           <table className="border-collapse" data-testid="comps-table" style={{ tableLayout: "fixed" }}>
@@ -2464,6 +2758,7 @@ export default function Comps() {
               <col style={{ width: 90 }} />
               <col style={{ width: 130 }} />
               <col style={{ width: 90 }} />
+              <col style={{ width: 120 }} />
               <col style={{ width: 90 }} />
               <col style={{ width: 110 }} />
               <col style={{ width: 90 }} />
@@ -2500,6 +2795,7 @@ export default function Comps() {
                 <SortHeader field="completionDate">Date</SortHeader>
                 <SortHeader field="headlineRent">Headline</SortHeader>
                 <SortHeader field="zoneARate">Zone A</SortHeader>
+                <th className="px-2 py-2.5 text-left text-sm font-semibold uppercase tracking-wider text-muted-foreground select-none whitespace-nowrap">Net Effective</th>
                 <SortHeader field="overallRate">Overall</SortHeader>
                 <SortHeader field="netEffectiveRent">Net Eff.</SortHeader>
                 <SortHeader field="effectiveRatePsf">Net psf</SortHeader>
@@ -2537,6 +2833,16 @@ export default function Comps() {
                     />
                   </td>
                   <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        className="p-1 rounded hover:bg-muted transition-colors"
+                        onClick={() => setSelectedComp(comp)}
+                        title="View Details"
+                        data-testid={`comp-view-${comp.id}`}
+                      >
+                        <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                      </button>
+                    {!isClientComps && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button className="p-1 rounded hover:bg-muted transition-colors" data-testid={`comp-menu-${comp.id}`}>
@@ -2564,11 +2870,23 @@ export default function Comps() {
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    )}
+                    </div>
                   </td>
                   <td className="px-2 py-1.5 align-top">
                     <div className="flex items-center gap-1">
                       {(() => {
                         const link = propertyLinkFor(comp);
+                        if (!link.href) {
+                          return (
+                            <span
+                              className="text-left font-medium truncate block"
+                              data-testid={`comp-name-${comp.id}`}
+                            >
+                              {comp.name}
+                            </span>
+                          );
+                        }
                         return link.external ? (
                           <a
                             href={link.href}
@@ -2589,6 +2907,7 @@ export default function Comps() {
                           </Link>
                         );
                       })()}
+                      {!isClientComps && (
                       <InlineLinkSelect
                         value={comp.propertyId}
                         options={propertyOptions}
@@ -2607,8 +2926,13 @@ export default function Comps() {
                             }
                           }
                         }}
+                        onCreate={async (name) => {
+                          const c = await createProperty(name);
+                          updateMutation.mutate({ id: comp.id, field: "propertyId", value: c.id });
+                        }}
                         compact
                       />
+                      )}
                       {!comp.propertyId && !propertyByName.get(normName(comp.name || "")) && (
                         <a
                           href={buildGoogleMapsUrl((comp.address as any)?.formatted || comp.name) || "#"}
@@ -2637,8 +2961,10 @@ export default function Comps() {
                   </td>
                   <td className="px-2 py-1.5 truncate">
                     <div className="flex items-center gap-1">
-                      <InlineText value={comp.tenant || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "tenant", value: v })} className="block truncate" />
-                      {comp.tenant && (() => {
+                      {isClientComps
+                        ? <span className="block truncate text-xs px-1.5 py-0.5">{comp.tenant || "—"}</span>
+                        : <InlineText value={comp.tenant || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "tenant", value: v })} className="block truncate" />}
+                      {comp.tenant && !isClientComps && (() => {
                         const companyId = findCompanyId(comp.tenant);
                         if (companyId) {
                           return (
@@ -2667,29 +2993,37 @@ export default function Comps() {
                     </div>
                   </td>
                   <td className="px-2 py-1.5 truncate">
-                    <InlineText value={comp.areaLocation || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "areaLocation", value: v })} className="block truncate" />
+                    {isClientComps
+                      ? <span className="block truncate text-xs px-1.5 py-0.5">{comp.areaLocation || "—"}</span>
+                      : <InlineText value={comp.areaLocation || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "areaLocation", value: v })} className="block truncate" />}
                   </td>
                   <td className="px-2 py-1.5">
-                    <InlineLabelSelect
-                      value={comp.useClass || ""}
-                      options={USE_CLASS_OPTIONS}
-                      colorMap={USE_CLASS_COLORS}
-                      onSave={v => updateMutation.mutate({ id: comp.id, field: "useClass", value: v })}
-                    />
+                    {isClientComps
+                      ? <StaticLabel value={comp.useClass} colorMap={USE_CLASS_COLORS} />
+                      : <InlineLabelSelect
+                          value={comp.useClass || ""}
+                          options={USE_CLASS_OPTIONS}
+                          colorMap={USE_CLASS_COLORS}
+                          onSave={v => updateMutation.mutate({ id: comp.id, field: "useClass", value: v })}
+                        />}
                   </td>
                   <td className="px-2 py-1.5">
-                    <InlineLabelSelect
-                      value={comp.transactionType || ""}
-                      options={TRANSACTION_TYPE_OPTIONS}
-                      colorMap={TXN_TYPE_COLORS}
-                      onSave={v => updateMutation.mutate({ id: comp.id, field: "transactionType", value: v })}
-                    />
+                    {isClientComps
+                      ? <StaticLabel value={comp.transactionType} colorMap={TXN_TYPE_COLORS} />
+                      : <InlineLabelSelect
+                          value={comp.transactionType || ""}
+                          options={TRANSACTION_TYPE_OPTIONS}
+                          colorMap={TXN_TYPE_COLORS}
+                          onSave={v => updateMutation.mutate({ id: comp.id, field: "transactionType", value: v })}
+                        />}
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <InlineText value={comp.completionDate || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "completionDate", value: v })} />
+                    {isClientComps
+                      ? <span className="text-xs px-1.5 py-0.5">{comp.completionDate || "—"}</span>
+                      : <InlineText value={comp.completionDate || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "completionDate", value: v })} />}
                   </td>
                   <td className="px-2 py-1.5 font-semibold whitespace-nowrap">
-                    <SteppedRentCell value={comp.headlineRent || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "headlineRent", value: v })} />
+                    <SteppedRentCell value={comp.headlineRent || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "headlineRent", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-blue-600 font-semibold">
                     <FormulaCell
@@ -2704,7 +3038,22 @@ export default function Comps() {
                       formulaLabel="Zone A = Rent ÷ ITZA"
                       disabled={!parseNum(comp.headlineRent) || !parseNum(comp.itzaSqft)}
                       currency
+                      readOnly={isClientComps}
                     />
+                  </td>
+                  <td className="px-2 py-1.5 whitespace-nowrap text-green-700">
+                    {(() => {
+                      const dv = devaluationOf(comp);
+                      if (!dv) return <span className="text-muted-foreground">—</span>;
+                      return (
+                        <div title={dv.note}>
+                          <span className="font-semibold">£{dv.netEffectiveRentPa.toLocaleString()} pa</span>
+                          {dv.netEffectiveRentPsf != null && (
+                            <span className="block text-[10px] text-muted-foreground">£{dv.netEffectiveRentPsf} psf</span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
                     <FormulaCell
@@ -2720,6 +3069,7 @@ export default function Comps() {
                       formulaLabel={`Overall = Rent ÷ ${preferredAreaField(comp.useClass) === "giaSqft" ? "GIA" : "NIA"}${!parseNum(comp[preferredAreaField(comp.useClass)]) ? " (falling back to other area)" : ""}`}
                       disabled={!parseNum(comp.headlineRent) || (!parseNum(comp.niaSqft) && !parseNum(comp.giaSqft))}
                       currency
+                      readOnly={isClientComps}
                     />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-green-600 font-semibold">
@@ -2734,6 +3084,7 @@ export default function Comps() {
                       formulaLabel="Net Eff = Avg headline (across stepped rents) − (Rent free £ + Tenant incentive £) ÷ Term"
                       disabled={!parseNum(comp.headlineRent) || !parseYears(comp.term)}
                       currency
+                      readOnly={isClientComps}
                     />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-green-700 font-semibold">
@@ -2753,47 +3104,56 @@ export default function Comps() {
                         (!parseNum(comp.niaSqft) && !parseNum(comp.giaSqft))
                       }
                       currency
+                      readOnly={isClientComps}
                     />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <NumberCell value={comp.niaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "niaSqft", value: v })} />
+                    <NumberCell value={comp.niaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "niaSqft", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <NumberCell value={comp.giaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "giaSqft", value: v })} />
+                    <NumberCell value={comp.giaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "giaSqft", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <NumberCell value={comp.itzaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "itzaSqft", value: v })} />
+                    <NumberCell value={comp.itzaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "itzaSqft", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <NumberCell value={comp.term || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "term", value: v })} />
+                    <NumberCell value={comp.term || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "term", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <NumberCell value={comp.rentFreeMonths || comp.rentFree || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "rentFreeMonths", value: v })} />
+                    <NumberCell value={comp.rentFreeMonths || comp.rentFree || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "rentFreeMonths", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-amber-700">
-                    <CurrencyCell value={comp.fitoutContribution || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "fitoutContribution", value: v })} />
+                    <CurrencyCell value={comp.fitoutContribution || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "fitoutContribution", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5">
-                    <InlineLabelSelect
-                      value={comp.ltActStatus || ""}
-                      options={LT_ACT_OPTIONS}
-                      colorMap={{
-                        "Inside L&T Act": "bg-green-600 text-white",
-                        "Outside L&T Act": "bg-red-600 text-white",
-                        "Contracted Out": "bg-amber-600 text-white",
-                      }}
-                      onSave={v => updateMutation.mutate({ id: comp.id, field: "ltActStatus", value: v })}
-                    />
+                    {isClientComps
+                      ? <StaticLabel value={comp.ltActStatus} colorMap={{
+                          "Inside L&T Act": "bg-green-600 text-white",
+                          "Outside L&T Act": "bg-red-600 text-white",
+                          "Contracted Out": "bg-amber-600 text-white",
+                        }} />
+                      : <InlineLabelSelect
+                          value={comp.ltActStatus || ""}
+                          options={LT_ACT_OPTIONS}
+                          colorMap={{
+                            "Inside L&T Act": "bg-green-600 text-white",
+                            "Outside L&T Act": "bg-red-600 text-white",
+                            "Contracted Out": "bg-amber-600 text-white",
+                          }}
+                          onSave={v => updateMutation.mutate({ id: comp.id, field: "ltActStatus", value: v })}
+                        />}
                   </td>
                   {/* Source column */}
                   <td className="px-2 py-1.5">
                     <div className="flex flex-col gap-0.5">
-                      <InlineLabelSelect
-                        value={normaliseSource(comp.sourceEvidence) || comp.sourceEvidence || ""}
-                        options={SOURCE_LIST as unknown as string[]}
-                        colorMap={SOURCE_LIST.reduce<Record<string, string>>((m, k) => { m[k] = SOURCE_TYPES[k].badgeClass; return m; }, {})}
-                        onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceEvidence", value: v })}
-                      />
+                      {isClientComps
+                        ? <span className="text-[11px] truncate block">{normaliseSource(comp.sourceEvidence) || comp.sourceEvidence || "—"}</span>
+                        : <InlineLabelSelect
+                            value={normaliseSource(comp.sourceEvidence) || comp.sourceEvidence || ""}
+                            options={SOURCE_LIST as unknown as string[]}
+                            colorMap={SOURCE_LIST.reduce<Record<string, string>>((m, k) => { m[k] = SOURCE_TYPES[k].badgeClass; return m; }, {})}
+                            onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceEvidence", value: v })}
+                          />}
                       {(comp as any).sourceUrl && (
                         <a
                           href={(comp as any).sourceUrl}
@@ -2830,12 +3190,16 @@ export default function Comps() {
                             )}
                           </div>
                         </div>
-                      ) : (
+                      ) : isClientComps ? null : (
                         <InlineLinkSelect
                           value={(comp as any).sourceContactId || ""}
                           options={contactOptions}
                           href={(comp as any).sourceContactId ? `/contacts/${(comp as any).sourceContactId}` : undefined}
                           onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceContactId", value: v })}
+                          onCreate={async (name) => {
+                            const c = await createContact(name);
+                            updateMutation.mutate({ id: comp.id, field: "sourceContactId", value: c.id });
+                          }}
                           compact
                         />
                       );
@@ -2857,7 +3221,7 @@ export default function Comps() {
                           <ExternalLink className="w-3 h-3 shrink-0" />
                           <span className="truncate text-[11px]">Link</span>
                         </a>
-                      ) : (
+                      ) : isClientComps ? null : (
                         <InlineText value="" placeholder="Add URL" onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceUrl", value: v })} className="text-[11px] truncate" />
                       )}
                     </div>
@@ -2874,7 +3238,7 @@ export default function Comps() {
                             <span className="text-[11px] font-medium truncate">{comp.contactName}</span>
                           )}
                         </div>
-                      ) : (
+                      ) : isClientComps ? null : (
                         <InlineText value="" placeholder="Name" onSave={v => updateMutation.mutate({ id: comp.id, field: "contactName", value: v })} className="text-[11px]" />
                       )}
                       {comp.contactCompany && <span className="text-[10px] text-muted-foreground truncate">{comp.contactCompany}</span>}
@@ -2887,6 +3251,9 @@ export default function Comps() {
                     </div>
                   </td>
                   <td className="px-2 py-1.5">
+                    {isClientComps ? (
+                      <span className="text-[11px] truncate block">{(comp.dealId && dealById.get(comp.dealId)?.name) || "—"}</span>
+                    ) : (
                     <DealCell
                       value={comp.dealId || ""}
                       deals={deals}
@@ -2898,11 +3265,20 @@ export default function Comps() {
                         }
                       }}
                     />
+                    )}
                   </td>
                   <td className="px-2 py-1.5 text-center">
+                    {/* Verification is a staff action — clients just see the
+                        state, no dead disabled circle (Woody, 2026-08-04). */}
+                    {isClientComps ? (
+                      comp.verified
+                        ? <CheckCircle2 className="w-4 h-4 text-green-600 inline-block" />
+                        : <span className="text-muted-foreground/40">—</span>
+                    ) : (
                     <button
                       onClick={() => updateMutation.mutate({ id: comp.id, field: "verified", value: !comp.verified })}
                       className="transition-colors"
+                      title={comp.verified ? "Verified — click to unverify" : "Mark comp as verified"}
                       data-testid={`toggle-verified-${comp.id}`}
                     >
                       {comp.verified ? (
@@ -2911,15 +3287,21 @@ export default function Comps() {
                         <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/30" />
                       )}
                     </button>
+                    )}
                   </td>
                   <td className="px-2 py-1.5 align-top">
-                    <InlineText
-                      value={comp.comments || ""}
-                      onSave={v => updateMutation.mutate({ id: comp.id, field: "comments", value: v })}
-                      multiline
-                      maxLines={2}
-                      className="block max-w-[230px] whitespace-normal"
-                    />
+                    {/* Real column width + clamp — comments were crushed into
+                        a sliver and long ones ballooned the row. Full text on
+                        hover and in the comp detail. */}
+                    {isClientComps
+                      ? <span title={comp.comments || ""} className="block min-w-[240px] max-w-[340px] whitespace-normal line-clamp-3 text-xs px-1.5 py-0.5">{comp.comments || "—"}</span>
+                      : <InlineText
+                          value={comp.comments || ""}
+                          onSave={v => updateMutation.mutate({ id: comp.id, field: "comments", value: v })}
+                          multiline
+                          maxLines={2}
+                          className="block min-w-[240px] max-w-[340px] whitespace-normal"
+                        />}
                   </td>
                 </tr>
               ))}
@@ -2929,12 +3311,12 @@ export default function Comps() {
       </div>
       </TabsContent>
 
-      <TabsContent value="investment" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden">
-        <InvestmentCompsPage embedded />
-      </TabsContent>
-
       <TabsContent value="lease-events" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden">
-        <LeaseEventsPage embedded />
+        {!isClientComps && (
+        <ErrorBoundary name="Lease Events">
+          <LeaseEventsPage embedded />
+        </ErrorBoundary>
+        )}
       </TabsContent>
 
       <TabsContent value="leads" className="flex-1 overflow-auto mt-0 p-4">
@@ -2967,7 +3349,7 @@ export default function Comps() {
             }}
           >
             {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            Scan All Sources
+            Scan all sources
           </Button>
         </div>
 
@@ -2975,10 +3357,99 @@ export default function Comps() {
           <div className="flex flex-col items-center justify-center h-64 text-center">
             <Inbox className="w-12 h-12 text-muted-foreground/20 mb-3" />
             <h3 className="text-sm font-semibold mb-1">No leads waiting</h3>
-            <p className="text-xs text-muted-foreground">Run "Scan All Sources" to extract new comps from news, team emails and SharePoint files.</p>
+            <p className="text-xs text-muted-foreground">Scan all sources to extract new comps from news, team emails and SharePoint files.</p>
           </div>
         ) : (
-          <div className="border rounded-lg overflow-hidden">
+          <>
+          {/* Phone: one card per lead (§7) — the table never ships below md. */}
+          <div className="md:hidden">
+            {selectedIds.size > 1 && (
+              <div className="flex justify-end mb-2">
+                <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-destructive" onClick={() => setBulkDeleteOpen(true)} data-testid="button-leads-bulk-delete-mobile">
+                  <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete All Selected ({selectedIds.size})
+                </Button>
+              </div>
+            )}
+            <div className="border rounded-lg divide-y divide-border overflow-hidden">
+              {leadComps.map(lead => {
+                const sourceColor =
+                  lead.sourceEvidence === "News Feed" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
+                  lead.sourceEvidence === "Team Email" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" :
+                  lead.sourceEvidence === "SharePoint File" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400" :
+                  "bg-muted text-muted-foreground";
+                const link = propertyLinkFor(lead);
+                return (
+                  <div key={lead.id} className={`px-3 py-3 ${selectedIds.has(lead.id) ? "bg-primary/5" : ""}`} data-testid={`lead-card-${lead.id}`}>
+                    <div className="flex items-start gap-2.5">
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={selectedIds.has(lead.id)}
+                        onCheckedChange={(checked) => {
+                          setSelectedIds(prev => {
+                            const next = new Set(prev);
+                            checked ? next.add(lead.id) : next.delete(lead.id);
+                            return next;
+                          });
+                        }}
+                        data-testid={`checkbox-lead-card-${lead.id}`}
+                      />
+                      <div className="min-w-0 flex-1">
+                        {!link.href ? (
+                          <span className="text-sm font-medium block truncate">{lead.name || "Untitled"}</span>
+                        ) : link.external ? (
+                          <a href={link.href} target="_blank" rel="noopener noreferrer" className="text-sm font-medium hover:text-primary hover:underline transition-colors block truncate">
+                            {lead.name || "Untitled"}
+                          </a>
+                        ) : (
+                          <Link href={link.href} className="text-sm font-medium hover:text-primary hover:underline transition-colors block truncate">
+                            {lead.name || "Untitled"}
+                          </Link>
+                        )}
+                        <div className="text-[11px] text-muted-foreground truncate">
+                          {lead.tenant || "—"}{lead.postcode ? ` · ${lead.postcode}` : ""}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-sm font-mono tabular-nums font-semibold">{formatSteppedRent(lead.headlineRent) || "—"}</div>
+                        {lead.zoneARate && (
+                          <div className="text-[11px] font-mono tabular-nums text-blue-600 font-semibold">ZA {formatGBP(parseNum(lead.zoneARate))}</div>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1 pl-7 truncate">
+                      {[lead.areaLocation, lead.useClass, lead.completionDate].filter(Boolean).join(" · ") || "—"}
+                    </p>
+                    <div className="flex items-center justify-between gap-2 mt-1 pl-7">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap ${sourceColor}`}>
+                        {lead.sourceEvidence || "AI"}
+                      </span>
+                      <div className="flex items-center">
+                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs" onClick={() => setConfirmLead(lead)} data-testid={`button-review-card-${lead.id}`}>
+                          Review
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 px-2.5 text-xs text-green-600"
+                          onClick={() => {
+                            updateMutation.mutate({ id: lead.id, field: "verified", value: true });
+                            toast({ title: "Lead verified", description: `${lead.name || "Lead"} moved to comps` });
+                          }}
+                          data-testid={`button-verify-card-${lead.id}`}
+                        >
+                          Verify
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-destructive" onClick={() => deleteMutation.mutate(lead.id)} data-testid={`button-discard-card-${lead.id}`}>
+                          Discard
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="hidden md:block border rounded-lg overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-xs" style={{ tableLayout: "fixed" }}>
                 <colgroup>
@@ -3068,6 +3539,16 @@ export default function Comps() {
                         <td className="px-2 py-1.5 truncate">
                           {(() => {
                             const link = propertyLinkFor(lead);
+                            if (!link.href) {
+                              return (
+                                <span
+                                  className="text-left font-medium truncate block w-full"
+                                  data-testid={`lead-name-${lead.id}`}
+                                >
+                                  {lead.name || "Untitled"}
+                                </span>
+                              );
+                            }
                             return link.external ? (
                               <a
                                 href={link.href}
@@ -3108,10 +3589,12 @@ export default function Comps() {
               </table>
             </div>
           </div>
+          </>
         )}
       </TabsContent>
 
       <TabsContent value="pdf-template" className="flex-1 overflow-auto mt-0 p-6 space-y-6">
+        {!isClientComps && (<>
         <DealCompPackPanel
           deals={deals}
           comps={comps}
@@ -3130,13 +3613,11 @@ export default function Comps() {
           }}
         />
         <Tabs defaultValue="leasing-template" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="leasing-template" data-testid="tab-pdf-scope-leasing">
-              <Scale className="w-3.5 h-3.5 mr-1.5" />
+          <TabsList className={pillTabsList}>
+            <TabsTrigger value="leasing-template" className={pillTabsTrigger} data-testid="tab-pdf-scope-leasing">
               Leasing Template
             </TabsTrigger>
-            <TabsTrigger value="investment-template" data-testid="tab-pdf-scope-investment">
-              <TrendingUp className="w-3.5 h-3.5 mr-1.5" />
+            <TabsTrigger value="investment-template" className={pillTabsTrigger} data-testid="tab-pdf-scope-investment">
               Investment Template
             </TabsTrigger>
           </TabsList>
@@ -3147,6 +3628,7 @@ export default function Comps() {
             <CompPdfTemplateEditor scope="investment" />
           </TabsContent>
         </Tabs>
+        </>)}
       </TabsContent>
 
       <Dialog open={!!selectedComp} onOpenChange={(open) => { if (!open) setSelectedComp(null); }}>
@@ -3154,12 +3636,23 @@ export default function Comps() {
           {selectedComp && (
             <>
               <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Building2 className="w-5 h-5 text-primary" />
-                  {selectedComp.name}
-                </DialogTitle>
+                <div className="flex items-start justify-between gap-2">
+                  <DialogTitle className="flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-primary" />
+                    {selectedComp.name}
+                  </DialogTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 h-7 text-xs shrink-0"
+                    onClick={() => { setCalcComp(selectedComp); setCalcOpen(true); }}
+                    data-testid="button-detail-ner"
+                  >
+                    <Calculator className="w-3 h-3" /> NER Calculator
+                  </Button>
+                </div>
               </DialogHeader>
-              <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
                 <div className="space-y-3">
                   <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> Property Details</h4>
                   <div className="space-y-2">
@@ -3206,7 +3699,7 @@ export default function Comps() {
                   </div>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
                 <div className="space-y-3">
                   <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><Ruler className="w-3.5 h-3.5" /> Area (RICS)</h4>
                   <div className="space-y-2">
@@ -3306,7 +3799,7 @@ export default function Comps() {
                         <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                         <a
                           href={`/api/comp-files/${f.id}/download`}
-                          className="flex-1 truncate hover:text-primary transition-colors font-medium"
+                          className="flex-1 truncate min-w-0 hover:text-primary transition-colors font-medium"
                           target="_blank"
                           rel="noopener"
                           data-testid={`link-download-file-${f.id}`}
@@ -3428,6 +3921,15 @@ export default function Comps() {
               <label className="text-xs font-medium mb-1 block">Date</label>
               <Input value={newDate} onChange={e => setNewDate(e.target.value)} placeholder="Jun 2024" className="h-9" data-testid="create-comp-date" />
             </div>
+            <div className="border-t pt-3">
+              <SourcePicker
+                evidence={newSourceEvidence}
+                url={newSourceUrl}
+                title={newSourceTitle}
+                onChange={(s) => { setNewSourceEvidence(s.evidence); setNewSourceUrl(s.url); setNewSourceTitle(s.title); }}
+              />
+              <p className="text-[10px] text-muted-foreground mt-1.5">Defaults to "BGP Direct" if not set. Pick a source type and paste a link to deep-link from the comps schedule back to the email / pathway / file.</p>
+            </div>
           </div>
           <DialogFooter className="mt-4">
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
@@ -3445,7 +3947,9 @@ export default function Comps() {
                 headlineRent: newHeadlineRent || null,
                 zoneARate: newZoneA || null,
                 completionDate: newDate || null,
-                sourceEvidence: "BGP Direct",
+                sourceEvidence: newSourceEvidence || "BGP Direct",
+                sourceUrl: newSourceUrl,
+                sourceTitle: newSourceTitle,
               })}
               data-testid="button-save-comp"
             >
@@ -3570,7 +4074,7 @@ export default function Comps() {
       <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {selectedIds.size} comps</AlertDialogTitle>
+            <AlertDialogTitle>Delete {selectedIds.size} {selectedIds.size === 1 ? "comp" : "comps"}</AlertDialogTitle>
             <AlertDialogDescription>This will permanently remove the selected comparables.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -3653,6 +4157,7 @@ function FormulaCell({
   formulaLabel,
   disabled,
   currency,
+  readOnly = false,
 }: {
   value: string;
   onSave: (v: string) => void;
@@ -3660,12 +4165,18 @@ function FormulaCell({
   formulaLabel: string;
   disabled?: boolean;
   currency?: boolean;
+  readOnly?: boolean;
 }) {
   const handleCompute = (e: React.MouseEvent) => {
     e.stopPropagation();
     const next = compute();
     if (next != null) onSave(next);
   };
+  if (readOnly) {
+    return currency
+      ? <CurrencyCell value={value} onSave={onSave} readOnly />
+      : <span className="text-xs px-1.5 py-0.5 inline-block">{value || "—"}</span>;
+  }
   return (
     <div className="flex items-center gap-1 group">
       {currency ? (

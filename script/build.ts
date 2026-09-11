@@ -3,10 +3,20 @@ import { build as viteBuild } from "vite";
 import { rm, readFile, writeFile, copyFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import pg from "pg";
+import sharp from "sharp";
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const buildOutputDir = path.resolve(process.env.BGP_BUILD_OUTPUT_DIR || "dist");
+if (buildOutputDir === process.cwd() || buildOutputDir === path.parse(buildOutputDir).root) {
+  throw new Error("Build output must be a dedicated directory");
+}
+const outputPath = (relative: string) => path.join(buildOutputDir, relative);
 
 async function runPreMigrations() {
   const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) return;
+  if (!dbUrl) throw new Error("DATABASE_URL is required for --migrate-only");
   const pool = new pg.Pool({ connectionString: dbUrl });
   try {
     const websiteCol = await pool.query(`
@@ -149,6 +159,7 @@ async function runPreMigrations() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_aml_training_attempts_module ON aml_training_attempts(module_id)`);
   } catch (err: any) {
     console.error("Pre-migration error:", err?.message);
+    throw err;
   } finally {
     await pool.end();
   }
@@ -194,15 +205,42 @@ const allowlist = [
 ];
 
 async function buildAll() {
-  await runPreMigrations();
-  await rm("dist", { recursive: true, force: true });
+  // Older deployment launchers do not pass BGP_BUILD_SHA. Bake the checked
+  // out commit into their first upgraded bundle as well, so status can
+  // confirm what actually started after the restart.
+  let buildSha: string;
+  try {
+    const { stdout } = await promisify(execFile)("git", ["rev-parse", "HEAD"], { timeout: 10_000 });
+    buildSha = stdout.trim();
+  } catch (error) {
+    // Native Railway builds may receive a source archive without .git.
+    // In-app builds prefer HEAD, since Railway's original SHA can be stale.
+    if (!/^[a-f0-9]{40}$/.test(process.env.RAILWAY_GIT_COMMIT_SHA || "")) throw error;
+    buildSha = process.env.RAILWAY_GIT_COMMIT_SHA!;
+  }
+  if (!/^[a-f0-9]{40}$/.test(buildSha) || (process.env.BGP_BUILD_SHA && process.env.BGP_BUILD_SHA !== buildSha)) {
+    throw new Error("Build checkout does not match BGP_BUILD_SHA");
+  }
+  await rm(buildOutputDir, { recursive: true, force: true });
 
   console.log("building client...");
-  await viteBuild();
+  await viteBuild({ build: { outDir: outputPath("public") } });
+
+  // Generate PNG icons for the Excel add-in manifest. Office requires PNG
+  // (not SVG). We derive them from the canonical icon-512.png — the
+  // largest brand asset we ship and the source-of-truth for the black-
+  // block BGP brand. The previous source (icon.svg) was the legacy green
+  // placeholder, deleted in favour of the proper PNG mark.
+  const iconSrc = await readFile("client/public/icon-512.png");
+  for (const size of [16, 32, 64, 80, 128, 192]) {
+    const dest = outputPath(`public/icon-${size}.png`);
+    await sharp(iconSrc).resize(size, size).png().toFile(dest);
+  }
+  console.log("generated PNG icons for Excel add-in manifest");
 
   // Bump the Service Worker cache name to the build timestamp so old caches
   // (and the stale HTML/asset map they hold) get evicted on next deploy.
-  const swPath = "dist/public/sw.js";
+  const swPath = outputPath("public/sw.js");
   if (existsSync(swPath)) {
     try {
       const buildStamp = `bgp-${Date.now()}`;
@@ -224,15 +262,20 @@ async function buildAll() {
     ...Object.keys(pkg.devDependencies || {}),
   ];
   const externals = allDeps.filter((dep) => !allowlist.includes(dep));
+  // unzipper is a transitive dep dynamically imported by server/voa.ts;
+  // bundling it drags in its optional @aws-sdk/client-s3 require and breaks
+  // the build. Resolve both at runtime instead.
+  externals.push("unzipper", "@aws-sdk/client-s3");
 
   await esbuild({
     entryPoints: ["server/index.ts"],
     platform: "node",
     bundle: true,
     format: "cjs",
-    outfile: "dist/index.cjs",
+    outfile: outputPath("index.cjs"),
     define: {
       "process.env.NODE_ENV": '"production"',
+      "process.env.BGP_BUILD_SHA": JSON.stringify(buildSha),
     },
     minify: true,
     external: externals,
@@ -240,58 +283,58 @@ async function buildAll() {
   });
 
   if (existsSync("server/seed-data.sql.gz")) {
-    await copyFile("server/seed-data.sql.gz", "dist/seed-data.sql.gz");
+    await copyFile("server/seed-data.sql.gz", outputPath("seed-data.sql.gz"));
     console.log("copied seed-data.sql.gz to dist/");
   }
 
   if (existsSync("server/seed-investment-tracker.sql.gz")) {
-    await copyFile("server/seed-investment-tracker.sql.gz", "dist/seed-investment-tracker.sql.gz");
+    await copyFile("server/seed-investment-tracker.sql.gz", outputPath("seed-investment-tracker.sql.gz"));
     console.log("copied seed-investment-tracker.sql.gz to dist/");
   }
 
   if (existsSync("server/seed-letting-tracker.sql.gz")) {
-    await copyFile("server/seed-letting-tracker.sql.gz", "dist/seed-letting-tracker.sql.gz");
+    await copyFile("server/seed-letting-tracker.sql.gz", outputPath("seed-letting-tracker.sql.gz"));
     console.log("copied seed-letting-tracker.sql.gz to dist/");
   }
 
   if (existsSync("server/investment_tracker_seed.json")) {
-    await copyFile("server/investment_tracker_seed.json", "dist/investment_tracker_seed.json");
+    await copyFile("server/investment_tracker_seed.json", outputPath("investment_tracker_seed.json"));
     console.log("copied investment_tracker_seed.json to dist/");
   }
 
   if (existsSync("server/seed-leasing-schedule.sql.gz")) {
-    await copyFile("server/seed-leasing-schedule.sql.gz", "dist/seed-leasing-schedule.sql.gz");
+    await copyFile("server/seed-leasing-schedule.sql.gz", outputPath("seed-leasing-schedule.sql.gz"));
     console.log("copied seed-leasing-schedule.sql.gz to dist/");
   }
 
   if (existsSync("server/seed-properties.sql.gz")) {
-    await copyFile("server/seed-properties.sql.gz", "dist/seed-properties.sql.gz");
+    await copyFile("server/seed-properties.sql.gz", outputPath("seed-properties.sql.gz"));
     console.log("copied seed-properties.sql.gz to dist/");
   }
 
   if (existsSync("server/seed-companies.sql.gz")) {
-    await copyFile("server/seed-companies.sql.gz", "dist/seed-companies.sql.gz");
+    await copyFile("server/seed-companies.sql.gz", outputPath("seed-companies.sql.gz"));
     console.log("copied seed-companies.sql.gz to dist/");
   }
 
   if (existsSync("server/seed-company-deals.sql.gz")) {
-    await copyFile("server/seed-company-deals.sql.gz", "dist/seed-company-deals.sql.gz");
+    await copyFile("server/seed-company-deals.sql.gz", outputPath("seed-company-deals.sql.gz"));
     console.log("copied seed-company-deals.sql.gz to dist/");
   }
 
   // Copy brand assets used by server-side Excel/PDF builders
   if (existsSync("server/assets")) {
-    await mkdir("dist/server/assets", { recursive: true });
-    for (const f of ["BGP_BlackHolder.png", "BGP_WhiteHolder.png"]) {
+    await mkdir(outputPath("server/assets"), { recursive: true });
+    for (const f of ["BGP_BlackHolder.png", "BGP_WhiteHolder.png", "historical-invoiced-wip.json", "website-seed.json"]) {
       if (existsSync(`server/assets/${f}`)) {
-        await copyFile(`server/assets/${f}`, `dist/server/assets/${f}`);
+        await copyFile(`server/assets/${f}`, outputPath(`server/assets/${f}`));
         console.log(`copied server/assets/${f} to dist/server/assets/`);
       }
     }
   }
 }
 
-buildAll().catch((err) => {
+(process.argv.includes("--migrate-only") ? runPreMigrations() : buildAll()).catch((err) => {
   console.error(err);
   process.exit(1);
 });

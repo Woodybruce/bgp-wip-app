@@ -1,7 +1,10 @@
 import { getValidMsToken } from "../microsoft";
-import { storage } from "../storage";
+import { getFile } from "../file-storage";
 import { extractTextFromFile } from "./file-extractor";
 import type { Request } from "express";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 
 // SharePoint constants
 export const BGP_KNOWLEDGE_FOLDERS = [
@@ -66,8 +69,8 @@ export async function lookupSharePointFolderIfExists(
   let parentPath = args.parentPath || "";
   const teamFolderMappings: Record<string, string> = {
     "Investment": "BGP share drive/Investment",
-    "London": "BGP share drive/London Leasing",
-    "London Leasing": "BGP share drive/London Leasing",
+    "London F&B": "BGP share drive/London F&B",
+    "London Retail": "BGP share drive/London Retail",
     "National": "BGP share drive/National Leasing",
     "National Leasing": "BGP share drive/National Leasing",
     "Development": "BGP share drive/Development & Re-purposing",
@@ -123,8 +126,8 @@ export async function executeCreateSharePointFolder(
   // Map team folder shortcuts
   const teamFolderMappings: Record<string, string> = {
     "Investment": "BGP share drive/Investment",
-    "London": "BGP share drive/London Leasing",
-    "London Leasing": "BGP share drive/London Leasing",
+    "London F&B": "BGP share drive/London F&B",
+    "London Retail": "BGP share drive/London Retail",
     "National": "BGP share drive/National Leasing",
     "National Leasing": "BGP share drive/National Leasing",
     "Development": "BGP share drive/Development & Re-purposing",
@@ -225,8 +228,8 @@ export async function executeUploadFileToSharePoint(
   let folderPath = args.folderPath || "";
   const teamFolderMappings: Record<string, string> = {
     "Investment": "BGP share drive/Investment",
-    "London": "BGP share drive/London Leasing",
-    "London Leasing": "BGP share drive/London Leasing",
+    "London F&B": "BGP share drive/London F&B",
+    "London Retail": "BGP share drive/London Retail",
     "National": "BGP share drive/National Leasing",
     "National Leasing": "BGP share drive/National Leasing",
     "Development": "BGP share drive/Development & Re-purposing",
@@ -525,16 +528,23 @@ export async function executeReadSharePointFile(
   let downloadUrl: string;
   
   if (args.url.startsWith("/api/chat-media/")) {
-    // Local file upload
-    const filename = args.url.replace("/api/chat-media/", "");
-    const localPath = storage.getPath("chat-media", filename);
-    const content = await extractTextFromFile(localPath, filename);
-    return {
-      success: true,
-      filename,
-      content,
-      metadata: { source: "upload" }
-    };
+    // Local file upload — stored in the file_storage table, not on disk.
+    const filename = path.basename(args.url.replace("/api/chat-media/", ""));
+    const dbFile = await getFile(`chat-media/${filename}`);
+    if (!dbFile) throw new Error(`Chat file not found: ${filename}`);
+    const tempPath = path.join(os.tmpdir(), `sp_${Date.now()}_${filename}`);
+    fs.writeFileSync(tempPath, dbFile.data);
+    try {
+      const content = await extractTextFromFile(tempPath, filename);
+      return {
+        success: true,
+        filename,
+        content,
+        metadata: { source: "upload" }
+      };
+    } finally {
+      try { fs.unlinkSync(tempPath); } catch {}
+    }
   } else if (args.url.includes("sharepoint.com")) {
     // SharePoint URL - construct download URL
     if (args.url.includes("/personal/")) {
@@ -571,16 +581,16 @@ export async function executeReadSharePointFile(
 
   // Save temporarily and extract
   const buffer = Buffer.from(await resp.arrayBuffer());
-  const filename = args.url.split("/").pop() || "download";
-  const tempPath = storage.getPath("temp", `sp_${Date.now()}_${filename}`);
-  
-  await storage.uploadBuffer(buffer, "temp", tempPath.split("/").pop()!);
-  const content = await extractTextFromFile(tempPath, filename);
-  
-  // Clean up
+  const filename = path.basename(args.url.split("/").pop() || "download");
+  const tempPath = path.join(os.tmpdir(), `sp_${Date.now()}_${filename}`);
+
+  fs.writeFileSync(tempPath, buffer);
+  let content: string;
   try {
-    await storage.delete("temp", tempPath.split("/").pop()!);
-  } catch {}
+    content = await extractTextFromFile(tempPath, filename);
+  } finally {
+    try { fs.unlinkSync(tempPath); } catch {}
+  }
 
   return {
     success: true,

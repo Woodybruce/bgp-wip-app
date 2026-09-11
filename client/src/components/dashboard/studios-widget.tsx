@@ -138,7 +138,7 @@ function ModelTab() {
                 {recentRuns.map(r => (
                   <Link key={r.id} href="/models">
                     <div className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-muted/50 cursor-pointer transition-colors" data-testid={`model-run-${r.id}`}>
-                      <TrendingUp className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                      <TrendingUp className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium truncate">{r.name}</p>
                         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
@@ -218,7 +218,7 @@ function DocTab() {
                 {recentRuns.map(r => (
                   <Link key={r.id} href="/documents">
                     <div className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-muted/50 cursor-pointer transition-colors" data-testid={`doc-run-${r.id}`}>
-                      <FileText className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" />
+                      <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium truncate">{r.name}</p>
                         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
@@ -240,7 +240,7 @@ function DocTab() {
 
 export function StudiosWidget() {
   return (
-    <Card className="h-full flex flex-col" data-testid="widget-studios">
+    <Card className="h-full flex flex-col overflow-hidden" data-testid="widget-studios">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-0 pt-4 px-4">
         <div className="flex items-center gap-2">
           <Layers className="w-4 h-4 text-primary" />

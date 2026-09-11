@@ -11,9 +11,15 @@
     <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152.png" />
     <link rel="apple-touch-icon" sizes="120x120" href="/apple-touch-icon-120.png" />
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#ffffff" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- "default", NOT "black-translucent": with black-translucent iOS gave
+         the installed app a window ~62pt SHORTER than the screen (top-anchored,
+         so an unpaintable system-white band sat under the bottom nav — Woody,
+         2026-08-22; reproduced on a freshly re-added icon, so not a stale
+         clip). Long-standing WebKit standalone bug tied to black-translucent.
+         Captured at Add-to-Home-Screen time — users must re-add to pick this up. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="BGP" />
     <meta name="mobile-web-app-capable" content="yes" />
     <link rel="preload" as="font" type="font/woff2" href="/fonts/tiempos-text-vf-roman.woff2" crossorigin>
@@ -68,24 +74,77 @@
       if ('serviceWorker' in navigator && !window.location.pathname.startsWith('/addin/')) {
         var refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', function() {
+          // Fires once the new SW takes over (skipWaiting below) — reload
+          // into the fresh build. Updates auto-apply (Woody, 2026-08-29).
           if (!refreshing) {
             refreshing = true;
             window.location.reload();
           }
         });
+
+        // Apply a waiting build straight away (Woody, 2026-08-29: "Why are
+        // we doing update? Just do it") — but never while the app is
+        // backgrounded (e.g. behind the OS photo picker: reloading there
+        // wipes the in-flight file selection) or mid-interaction
+        // (window.__bgpBusy, set by the app while a cropper/upload is
+        // live). Deferred updates apply a few seconds after it's safe.
+        var updatePending = false;
+        function safeToApply() {
+          return document.visibilityState === 'visible' && !window.__bgpBusy;
+        }
+        function tryApplyUpdate() {
+          if (!updatePending) return;
+          if (safeToApply()) {
+            updatePending = false;
+            window.__bgpApplyUpdate();
+          } else {
+            setTimeout(tryApplyUpdate, 3000);
+          }
+        }
+        function announceUpdate() {
+          window.__bgpUpdateReady = true;
+          updatePending = true;
+          if (safeToApply()) {
+            tryApplyUpdate();
+          } else {
+            setTimeout(tryApplyUpdate, 3000);
+          }
+        }
+        document.addEventListener('visibilitychange', function() {
+          // Returning from the picker fires this before the file input's
+          // change event lands — wait 3s so the app can open the cropper
+          // (which sets __bgpBusy) before we consider reloading.
+          if (document.visibilityState === 'visible') setTimeout(tryApplyUpdate, 3000);
+        });
+
+        // Called by the in-app "Update now" button. Promotes the waiting SW;
+        // controllerchange (above) then reloads into the fresh build.
+        window.__bgpApplyUpdate = function() {
+          navigator.serviceWorker.getRegistration().then(function(reg) {
+            if (reg && reg.waiting) {
+              reg.waiting.postMessage('skipWaiting');
+            } else {
+              window.location.reload();
+            }
+          }).catch(function() { window.location.reload(); });
+        };
+
         window.addEventListener('load', function() {
           navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).then(function(reg) {
             reg.update();
             setInterval(function() { reg.update(); }, 60000);
-            if (reg.waiting) {
-              reg.waiting.postMessage('skipWaiting');
+            // A build was already waiting from a previous visit — apply it.
+            if (reg.waiting && navigator.serviceWorker.controller) {
+              announceUpdate();
             }
             reg.addEventListener('updatefound', function() {
               var newSw = reg.installing;
               if (newSw) {
                 newSw.addEventListener('statechange', function() {
+                  // installed + an existing controller => this is an UPDATE,
+                  // not a first install. Apply it immediately.
                   if (newSw.state === 'installed' && navigator.serviceWorker.controller) {
-                    newSw.postMessage('skipWaiting');
+                    announceUpdate();
                   }
                 });
               }

@@ -1,5 +1,8 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { MobileCardView } from "@/components/mobile-card-view";
+import { Pill } from "@/components/ui/pill";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,10 +31,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, Building2, AlertCircle, ExternalLink, X, Handshake, FolderTree, Loader2, CheckCircle2, FolderOpen, ChevronRight, FileText, Plus, Star } from "lucide-react";
+import { DealsSummary } from "@/components/deals-summary";
 import { useState, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { CrmProperty, CrmDeal, CrmCompany, User } from "@shared/schema";
 import { InlineText, InlineSelect, InlineLabelSelect, InlineNumber } from "@/components/inline-edit";
@@ -76,16 +80,17 @@ const TENURE_COLORS: Record<string, string> = {
   "Leasehold": "bg-orange-500",
   "Virtual Freehold": "bg-cyan-500",
 };
-const TEAM_OPTIONS = ["Investment", "London Leasing", "National Leasing", "Lease Advisory", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
+const TEAM_OPTIONS: string[] = [...CRM_OPTIONS.dealTeam];
 const TEAM_COLORS: Record<string, string> = {
   "Investment": "bg-sky-600",
-  "London Leasing": "bg-zinc-700",
+  "London F&B": "bg-rose-500",
+  "London Retail": "bg-teal-500",
   "National Leasing": "bg-violet-500",
   "Lease Advisory": "bg-indigo-500",
-  "Tenant Rep": "bg-rose-500",
+  "Tenant Rep": "bg-pink-500",
   "Development": "bg-orange-500",
   "Office / Corporate": "bg-slate-500",
-  "Landsec": "bg-rose-500",
+  "Landsec": "bg-amber-500",
 };
 
 function getInitials(name: string): string {
@@ -130,7 +135,7 @@ function InlineEngagement({
             <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${current.includes(option) ? colorMap[option] || "bg-gray-500" : "border-muted-foreground/30"}`}>
               {current.includes(option) && <span className="text-white text-[8px]">✓</span>}
             </div>
-            <Badge className={`text-[10px] px-1.5 py-0 text-white ${colorMap[option] || "bg-gray-500"}`}>{option}</Badge>
+            <Badge variant="outline" className={`border-transparent text-[10px] px-1.5 py-0 text-white ${colorMap[option] || "bg-gray-500"}`}>{option}</Badge>
           </DropdownMenuItem>
         ))}
         {current.length > 0 && (
@@ -154,7 +159,7 @@ function InlineAgents({
   allUsers: User[];
 }) {
   const { toast } = useToast();
-  const assignedUserIds = agentLinks.filter(l => l.propertyId === propertyId).map(l => l.userId);
+  const assignedUserIds = agentLinks.filter(l => l.propertyId === propertyId).map(l => String(l.userId));
   const assignedUsers = allUsers.filter(u => assignedUserIds.includes(String(u.id)));
   const unassignedUsers = allUsers.filter(u => !assignedUserIds.includes(String(u.id)));
 
@@ -305,7 +310,7 @@ function InlineDeals({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-deal-links"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
     onError: (err: any) => { toast({ title: "Failed to link deal", description: err.message, variant: "destructive" }); },
   });
@@ -316,7 +321,7 @@ function InlineDeals({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-deal-links"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
     onError: (err: any) => { toast({ title: "Failed to unlink deal", description: err.message, variant: "destructive" }); },
   });
@@ -441,7 +446,7 @@ function InlineTenants({
   );
 }
 
-const TEAMS = ["Investment", "London Leasing", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
+const TEAMS = CRM_OPTIONS.dealTeam;
 
 interface FolderTemplate {
   team: string;
@@ -782,83 +787,16 @@ function PropertyFoldersPanel({ propertyName, folderTeams }: { propertyName: str
 }
 
 function LinkedDealsPanel({ propertyId }: { propertyId: string }) {
-  const { data: deals, isLoading } = useQuery<CrmDeal[]>({
-    queryKey: ["/api/crm/properties", propertyId, "deals"],
-    queryFn: async () => {
-      const res = await fetch(`/api/crm/properties/${propertyId}/deals`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load linked deals");
-      return res.json();
-    },
-  });
-
-  if (isLoading) {
-    return (
-      <Card data-testid="linked-deals-panel">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Handshake className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Linked Deals</h3>
-          </div>
-          <div className="space-y-2">
-            {[1, 2].map((i) => <Skeleton key={i} className="h-14" />)}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const dealsList = deals || [];
-
+  // Canonical DealsSummary card — this page previously carried its own
+  // drifted copy of the properties.tsx panel (raw status text, no counts).
   return (
     <Card data-testid="linked-deals-panel">
       <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Handshake className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Linked Deals</h3>
-            {dealsList.length > 0 && (
-              <Badge variant="secondary" className="text-[10px]">{dealsList.length}</Badge>
-            )}
-          </div>
+        <div className="flex items-center gap-2 mb-3">
+          <Handshake className="w-4 h-4" />
+          <h3 className="text-sm font-semibold">Linked Deals</h3>
         </div>
-
-        {dealsList.length === 0 ? (
-          <div className="text-center py-6">
-            <Handshake className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-xs text-muted-foreground">No deals linked to this property</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {dealsList.map((deal) => (
-              <Link
-                key={deal.id}
-                href={`/deals/${deal.id}`}
-                className="block p-3 rounded-md border hover:bg-accent transition-colors group"
-                data-testid={`deal-item-${deal.id}`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium truncate">{deal.name}</span>
-                  <ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                </div>
-                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                  {deal.groupName && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      {deal.groupName}
-                    </Badge>
-                  )}
-                  {deal.status && (
-                    <Badge variant="outline" className="text-[10px]">
-                      {deal.status}
-                    </Badge>
-                  )}
-                  {deal.internalAgent && (
-                    <span className="text-[10px] text-muted-foreground">{deal.internalAgent}</span>
-                  )}
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
+        <DealsSummary variant="card" propertyId={propertyId} />
       </CardContent>
     </Card>
   );
@@ -925,6 +863,7 @@ function InstructionsList({
     queryKey: ["/api/users"],
   });
 
+  const isMobile = useIsMobile();
   const { data: allCompanies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
   });
@@ -1056,88 +995,29 @@ function InstructionsList({
   });
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="instructions-page">
+    <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="instructions-page">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Handshake className="w-6 h-6" />
-            Instructions
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight">Instructions</h1>
           <p className="text-sm text-muted-foreground">
             {effectiveTeam ? `${effectiveTeam} instructions` : "All team instructions"}
           </p>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 overflow-x-auto pb-1">
-        <Card
-          className={`min-w-[140px] cursor-pointer transition-colors hover:border-primary/50 ${
-            typeFilter === "all" ? "border-primary bg-primary/5" : ""
-          }`}
-          onClick={() => setTypeFilter("all")}
-          data-testid="card-type-all"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Handshake className="w-4 h-4 text-muted-foreground" />
-              <div>
-                <p className="text-lg font-bold">{instructionProperties.length}</p>
-                <p className="text-xs text-muted-foreground">All Instructions</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          className={`min-w-[140px] cursor-pointer transition-colors hover:border-primary/50 ${
-            typeFilter === "leasing" ? "border-primary bg-primary/5" : ""
-          }`}
-          onClick={() => setTypeFilter(typeFilter === "leasing" ? "all" : "leasing")}
-          data-testid="card-type-leasing"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-blue-500" />
-              <div>
-                <p className="text-lg font-bold">{leasingCount}</p>
-                <p className="text-xs text-muted-foreground">Leasing</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          className={`min-w-[140px] cursor-pointer transition-colors hover:border-primary/50 ${
-            typeFilter === "lease_advisory" ? "border-primary bg-primary/5" : ""
-          }`}
-          onClick={() => setTypeFilter(typeFilter === "lease_advisory" ? "all" : "lease_advisory")}
-          data-testid="card-type-lease-advisory"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-violet-500" />
-              <div>
-                <p className="text-lg font-bold">{leaseAdvisoryCount}</p>
-                <p className="text-xs text-muted-foreground">Lease Advisory</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          className={`min-w-[140px] cursor-pointer transition-colors hover:border-primary/50 ${
-            typeFilter === "sale" ? "border-primary bg-primary/5" : ""
-          }`}
-          onClick={() => setTypeFilter(typeFilter === "sale" ? "all" : "sale")}
-          data-testid="card-type-sale"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-emerald-500" />
-              <div>
-                <p className="text-lg font-bold">{saleCount}</p>
-                <p className="text-xs text-muted-foreground">Sales</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="flex flex-wrap gap-1.5">
+        <Pill active={typeFilter === "all"} onClick={() => setTypeFilter("all")} data-testid="card-type-all">
+          All Instructions <span className={`font-mono normal-case ${typeFilter === "all" ? "opacity-80" : "opacity-60"}`}>{instructionProperties.length}</span>
+        </Pill>
+        <Pill active={typeFilter === "leasing"} onClick={() => setTypeFilter(typeFilter === "leasing" ? "all" : "leasing")} data-testid="card-type-leasing">
+          Leasing <span className={`font-mono normal-case ${typeFilter === "leasing" ? "opacity-80" : "opacity-60"}`}>{leasingCount}</span>
+        </Pill>
+        <Pill active={typeFilter === "lease_advisory"} onClick={() => setTypeFilter(typeFilter === "lease_advisory" ? "all" : "lease_advisory")} data-testid="card-type-lease-advisory">
+          Lease Advisory <span className={`font-mono normal-case ${typeFilter === "lease_advisory" ? "opacity-80" : "opacity-60"}`}>{leaseAdvisoryCount}</span>
+        </Pill>
+        <Pill active={typeFilter === "sale"} onClick={() => setTypeFilter(typeFilter === "sale" ? "all" : "sale")} data-testid="card-type-sale">
+          Sales <span className={`font-mono normal-case ${typeFilter === "sale" ? "opacity-80" : "opacity-60"}`}>{saleCount}</span>
+        </Pill>
       </div>
 
       <div className="flex items-center gap-3">
@@ -1164,13 +1044,37 @@ function InstructionsList({
         )}
       </div>
 
-      <Card>
-        <CardContent className="p-0">
+      <Card className="flex-1 min-h-0 flex flex-col">
+        <CardContent className="p-0 flex-1 min-h-0 flex flex-col">
           {isLoading ? (
             <div className="p-4 space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-12" />
               ))}
+            </div>
+          ) : isMobile ? (
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <MobileCardView
+                emptyMessage="No instructions yet"
+                emptyDescription="Add a property instruction to get started."
+                items={filteredProperties.map((property) => ({
+                  id: property.id,
+                  title: property.name || "Untitled property",
+                  subtitle: allCompanies.find((c) => c.id === property.landlordId)?.name || undefined,
+                  status: property.status || undefined,
+                  href: `/properties/${property.id}`,
+                  fields: [
+                    { label: "Asset class", value: property.assetClass },
+                    { label: "Tenure", value: property.tenure },
+                    { label: "Sq Ft", value: property.sqft ? Number(property.sqft).toLocaleString() : null },
+                  ],
+                }))}
+              />
+            </div>
+          ) : filteredProperties.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center py-16 px-6 text-center text-muted-foreground">
+              <Handshake className="w-8 h-8 mb-2 opacity-30" />
+              <p className="text-sm">No instructions yet — add a property instruction to get started.</p>
             </div>
           ) : (
             <ScrollableTable minWidth={1800}>
@@ -1319,15 +1223,6 @@ function InstructionsList({
                       </TableRow>
                     );
                   })}
-                  {filteredProperties.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
-                        <Handshake className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                        <p className="text-sm">No instructions found</p>
-                        <p className="text-xs mt-1">No properties with Instruction status</p>
-                      </TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             </ScrollableTable>

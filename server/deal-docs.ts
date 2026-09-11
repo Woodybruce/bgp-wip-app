@@ -19,8 +19,8 @@ import * as path from "path";
 import * as fs from "fs";
 
 const router = Router();
-const BGP_GREEN = "#2E5E3F";
-const BGP_DARK_GREEN = "#1A3A28";
+const BGP_GREEN = "#6E0C25";
+const BGP_DARK_GREEN = "#4A0819";
 
 async function loadDealSnapshot(dealId: string) {
   const dealQ = pool.query(
@@ -104,7 +104,7 @@ router.post("/api/deal/:dealId/hots", requireAuth, async (req: Request & { user?
 // ─── PDF helpers ────────────────────────────────────────────────────────
 
 function drawBgpHeader(doc: any, pageW: number, leftM: number, subtitle: string) {
-  const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark.png");
+  const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark_trimmed.png");
   const logoExists = fs.existsSync(logoPath);
   doc.rect(0, 0, 595, 8).fill(BGP_GREEN);
   if (logoExists) { try { doc.image(logoPath, leftM, 18, { width: 70 }); } catch {} }
@@ -299,7 +299,7 @@ router.get("/api/deal/:dealId/offer-summary.pdf", requireAuth, async (req, res) 
       { label: "Rent free", v: deal.rent_free ? `${deal.rent_free} months` : null },
       { label: "Capital contribution", v: money(deal.capital_contribution) },
       { label: "Total area", v: deal.total_area_sqft ? `${Number(deal.total_area_sqft).toLocaleString()} sqft` : null },
-      { label: "Completion", v: deal.completion_date || deal.completion_target_date || null },
+      { label: "Target date", v: deal.target_date ? new Date(deal.target_date).toLocaleDateString("en-GB") : null },
     ];
     const colW = (pageW - 24) / 3;
     for (let i = 0; i < offer.length; i++) {
@@ -363,7 +363,7 @@ router.get("/api/deal/:dealId/completion.pdf", requireAuth, async (req, res) => 
     const summary = [
       { label: "Price / Rent", v: money(deal.pricing || deal.rent_pa) },
       { label: "Term", v: deal.lease_length ? `${deal.lease_length} years` : null },
-      { label: "Completed", v: deal.completion_date || (deal.hots_completed_at ? new Date(deal.hots_completed_at).toLocaleDateString("en-GB") : null) },
+      { label: "Completed", v: deal.completed_at ? new Date(deal.completed_at).toLocaleDateString("en-GB") : (deal.exchanged_at ? new Date(deal.exchanged_at).toLocaleDateString("en-GB") : null) },
       { label: "Fee", v: money(deal.fee) },
     ];
     const colW = (pageW - 24) / 2;

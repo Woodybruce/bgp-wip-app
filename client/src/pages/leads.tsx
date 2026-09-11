@@ -1,5 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
+import { MobileCardView } from "@/components/mobile-card-view";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -22,13 +24,15 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Search, AlertCircle, X, UserPlus, Plus, Pencil, Trash2, ArrowRightCircle, Users } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { countLabel } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineSelect, InlineLabelSelect } from "@/components/inline-edit";
-import { SOURCE_TYPES, SOURCE_LIST, normaliseSource } from "@shared/source-types";
+import { SOURCE_TYPES, SOURCE_LIST, normaliseSource, type SourceType } from "@shared/source-types";
+import { SourcePicker } from "@/components/source-cell";
 import { ExternalLink } from "lucide-react";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS } from "@/lib/crm-options";
@@ -36,13 +40,32 @@ import { Link } from "wouter";
 import type { CrmLead, CrmContact } from "@shared/schema";
 
 export default function Leads() {
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createOpen, setCreateOpen] = useState(false);
+  const [createPrefill, setCreatePrefill] = useState<Partial<CrmLead> | null>(null);
   const [editItem, setEditItem] = useState<CrmLead | null>(null);
   const [deleteItem, setDeleteItem] = useState<CrmLead | null>(null);
   const { toast } = useToast();
+
+  // Deep-link: /leads?create=1&source=Email&sourceUrl=...&sourceTitle=...
+  // Mail viewer / pathway page navigates here with the source attribution
+  // pre-attached. Strip params after consumption.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("create") !== "1") return;
+    setCreatePrefill({
+      source: params.get("source") || "",
+      sourceUrl: params.get("sourceUrl") || "",
+      sourceTitle: params.get("sourceTitle") || "",
+      name: params.get("name") || "",
+    } as Partial<CrmLead>);
+    setCreateOpen(true);
+    window.history.replaceState({}, "", window.location.pathname);
+  }, []);
 
   const { data: items = [], isLoading, error } = useQuery<CrmLead[]>({
     queryKey: ["/api/crm/leads"],
@@ -199,22 +222,17 @@ export default function Leads() {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="leads-page">
+    <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="leads-page">
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <UserPlus className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Leads</h1>
-            <p className="text-sm text-muted-foreground">
-              CRM Leads — {items.length} total
-            </p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Leads</h1>
+          <p className="text-sm text-muted-foreground">
+            {countLabel(items.length, "lead")}
+          </p>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-lead">
           <Plus className="w-4 h-4 mr-1" />
-          Add Lead
+          Add lead
         </Button>
       </div>
 
@@ -306,8 +324,27 @@ export default function Leads() {
                 </p>
               </CardContent>
             </Card>
+          ) : isMobile ? (
+            <div className="flex-1 min-h-0 overflow-y-auto -mx-3">
+              <MobileCardView
+                emptyMessage="No leads found"
+                items={filteredItems.map((item) => ({
+                  id: item.id,
+                  title: item.name || item.email || "Unnamed lead",
+                  subtitle: item.groupName || undefined,
+                  status: item.status || undefined,
+                  fields: [
+                    { label: "Type", value: item.leadType },
+                    { label: "Assigned to", value: item.assignedTo },
+                    { label: "Source", value: item.source },
+                    { label: "Email", value: item.email },
+                    { label: "Phone", value: item.phone },
+                  ],
+                }))}
+              />
+            </div>
           ) : (
-            <Card>
+            <Card className="flex-1 min-h-0 flex flex-col">
               <ScrollableTable minWidth={1200}>
                 <Table>
                   <TableHeader>
@@ -349,8 +386,8 @@ export default function Leads() {
                             <div className="flex flex-wrap gap-1 mt-0.5">
                               {contactMatchMap.get(item.id)!.slice(0, 2).map(c => (
                                 <Link key={c.id} href={`/contacts/${c.id}`}>
-                                  <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted border-violet-300 dark:border-violet-700" data-testid={`lead-match-contact-${c.id}`}>
-                                    <Users className="w-2.5 h-2.5 text-violet-500" />{c.name}
+                                  <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted" data-testid={`lead-match-contact-${c.id}`}>
+                                    <Users className="w-2.5 h-2.5 text-muted-foreground" />{c.name}
                                   </Badge>
                                 </Link>
                               ))}
@@ -429,7 +466,7 @@ export default function Leads() {
                                 title="Convert to CRM Contact"
                                 data-testid={`button-convert-lead-${item.id}`}
                               >
-                                <ArrowRightCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                <ArrowRightCircle className="w-3.5 h-3.5" />
                               </Button>
                             )}
                             <Button
@@ -462,11 +499,12 @@ export default function Leads() {
 
       <LeadFormDialog
         open={createOpen}
-        onOpenChange={setCreateOpen}
+        onOpenChange={(o) => { setCreateOpen(o); if (!o) setCreatePrefill(null); }}
         onSubmit={(data) => createMutation.mutate(data)}
         isPending={createMutation.isPending}
         title="Create Lead"
         groups={groups}
+        defaultValues={createPrefill || undefined}
       />
 
       {editItem && (
@@ -530,6 +568,8 @@ function LeadFormDialog({
     leadType: defaultValues?.leadType || "",
     assignedTo: defaultValues?.assignedTo || "",
     source: defaultValues?.source || "",
+    sourceUrl: (defaultValues as any)?.sourceUrl || "",
+    sourceTitle: (defaultValues as any)?.sourceTitle || "",
     email: defaultValues?.email || "",
     phone: defaultValues?.phone || "",
     notes: defaultValues?.notes || "",
@@ -594,14 +634,6 @@ function LeadFormDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label>Source</Label>
-              <Input
-                value={form.source}
-                onChange={(e) => setForm({ ...form, source: e.target.value })}
-                data-testid="input-lead-source"
-              />
-            </div>
-            <div className="space-y-2">
               <Label>Email</Label>
               <Input
                 type="email"
@@ -610,13 +642,21 @@ function LeadFormDialog({
                 data-testid="input-lead-email"
               />
             </div>
+            <div className="space-y-2">
+              <Label>Phone</Label>
+              <Input
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                data-testid="input-lead-phone"
+              />
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label>Phone</Label>
-            <Input
-              value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
-              data-testid="input-lead-phone"
+          <div className="rounded-md border p-3 bg-muted/30">
+            <SourcePicker
+              evidence={form.source}
+              url={form.sourceUrl}
+              title={form.sourceTitle}
+              onChange={(s) => setForm({ ...form, source: s.evidence || "", sourceUrl: s.url || "", sourceTitle: s.title || "" })}
             />
           </div>
           <div className="space-y-2">

@@ -9,6 +9,7 @@ export type SourceType =
   | "News"
   | "SharePoint"
   | "Dropbox"
+  | "Pathway"
   | "Manual"
   | "ChatBGP"
   | "BGP Direct";
@@ -27,6 +28,7 @@ export const SOURCE_TYPES: Record<SourceType, SourceMeta> = {
   "News":       { label: "News",      badgeClass: "bg-amber-100 text-amber-700 border-amber-200",        description: "Picked up from news feed" },
   "SharePoint": { label: "SharePoint",badgeClass: "bg-cyan-100 text-cyan-700 border-cyan-200",           description: "Direct SharePoint source" },
   "Dropbox":    { label: "Dropbox",   badgeClass: "bg-blue-100 text-blue-700 border-blue-200",           description: "Direct Dropbox source" },
+  "Pathway":    { label: "Pathway",   badgeClass: "bg-violet-100 text-violet-700 border-violet-200",     description: "Surfaced by Property Pathway research" },
   "Manual":     { label: "Manual",    badgeClass: "bg-slate-100 text-slate-700 border-slate-200",        description: "Manually entered by user" },
   "ChatBGP":    { label: "ChatBGP",   badgeClass: "bg-indigo-100 text-indigo-700 border-indigo-200",     description: "Created via ChatBGP AI" },
   "BGP Direct": { label: "BGP",       badgeClass: "bg-emerald-100 text-emerald-700 border-emerald-200",  description: "BGP-originated deal" },
@@ -51,7 +53,23 @@ const LEGACY_MAP: Record<string, SourceType> = {
   "chatbgp": "ChatBGP",
   "bgp direct": "BGP Direct",
   "BGP": "BGP Direct",
+  "pathway": "Pathway",
+  "Property Pathway": "Pathway",
 };
+
+// Best-effort label for a sourceUrl when no explicit sourceTitle was stored.
+// Used by SourceCell to give a clickable link a sensible default name.
+export function defaultSourceLabel(type: SourceType | null, url: string | null | undefined): string {
+  if (!url) return type ? SOURCE_TYPES[type].label : "Source";
+  if (type === "Email") return "View email";
+  if (type === "Pathway") return "View pathway";
+  if (type === "News") return "Read article";
+  if (type === "WhatsApp") return "Open WhatsApp";
+  if (type === "File" || type === "SharePoint") return "Open file";
+  if (type === "Brochure") return "Open brochure";
+  if (type === "Dropbox") return "Open Dropbox";
+  return "View source";
+}
 
 export function normaliseSource(raw: string | null | undefined): SourceType | null {
   if (!raw) return null;

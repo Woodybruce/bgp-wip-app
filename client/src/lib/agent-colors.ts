@@ -46,3 +46,44 @@ export function buildUserIdColorMap(users: { id: string; name: string }[] | unde
   }
   return map;
 }
+
+/**
+ * Resolve a deal's agent payload into a unified list. Prefers the IDs
+ * column (internalAgentIds, populated by storage.normaliseInternalAgents
+ * on every write since the name→id migration) so a user rename doesn't
+ * grey out the chip. Falls back to the legacy names column for historic
+ * rows whose IDs haven't been backfilled.
+ *
+ * Returns one entry per resolved user. Unresolvable entries (a name that
+ * no longer exists in users) are dropped to avoid orphan chips.
+ */
+export function resolveDealAgents(
+  deal: { internalAgent?: string[] | null; internalAgentIds?: string[] | null },
+  users: { id: string; name: string }[] | undefined,
+): { userId: string; name: string; color: string }[] {
+  if (!users || users.length === 0) return [];
+  const userById = new Map(users.map(u => [u.id, u]));
+  const userByName = new Map(users.map(u => [u.name, u]));
+  const idMap = buildUserIdColorMap(users);
+  const nameMap = buildUserColorMap(users);
+
+  const resolved = new Map<string, { userId: string; name: string; color: string }>();
+
+  const ids = Array.isArray(deal.internalAgentIds) ? deal.internalAgentIds : [];
+  for (const id of ids) {
+    const u = userById.get(id);
+    if (u) resolved.set(u.id, { userId: u.id, name: u.name, color: idMap[u.id] || "bg-zinc-500" });
+  }
+
+  // Fall back to names for historic deals whose IDs column is still NULL
+  // (or for any name entry whose ID isn't in the IDs array yet).
+  if (resolved.size === 0) {
+    const names = Array.isArray(deal.internalAgent) ? deal.internalAgent : [];
+    for (const n of names) {
+      const u = userByName.get(n);
+      if (u) resolved.set(u.id, { userId: u.id, name: u.name, color: nameMap[u.name] || "bg-zinc-500" });
+    }
+  }
+
+  return Array.from(resolved.values());
+}

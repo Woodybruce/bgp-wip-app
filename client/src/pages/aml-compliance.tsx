@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
   ShieldCheck, UserCog, GraduationCap, Clock, AlertTriangle, Play,
@@ -113,7 +113,7 @@ function TrainingRecords() {
   // to re-take and jump straight into the quiz.
   const { data: modules = [] } = useQuery<Array<{ id: string; title: string }>>({
     queryKey: ["/api/aml/training-modules"],
-    queryFn: () => fetch("/api/aml/training-modules", { credentials: "include" }).then(r => r.json()),
+    queryFn: () => fetch("/api/aml/training-modules", { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
   });
   const moduleByTitle = new Map(modules.map(m => [m.title.toLowerCase(), m.id]));
   const moduleByType = (trainingType: string): string | null => {
@@ -563,7 +563,7 @@ function FirmRiskAssessment() {
               </div>
             ))}
             <div className="flex gap-2">
-              <Button size="sm" onClick={() => saveMutation.mutate({ firmRiskAssessment: assessment, firmRiskAssessmentUpdatedBy: "current_user" })} disabled={saveMutation.isPending}>
+              <Button size="sm" onClick={() => saveMutation.mutate({ firmRiskAssessment: assessment })} disabled={saveMutation.isPending}>
                 <Save className="w-3 h-3 mr-1" /> Save Assessment
               </Button>
               <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
@@ -641,8 +641,8 @@ export default function AmlCompliancePage() {
       </div>
 
       <div className="p-6 space-y-6 max-w-4xl">
-        <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 text-xs text-blue-800 dark:text-blue-300">
-          <p className="font-semibold mb-1">UK Money Laundering Regulations 2017 — Estate Agent Obligations</p>
+        <div className="p-3 rounded-lg bg-muted/40 border border-border text-xs text-muted-foreground">
+          <p className="font-semibold mb-1 text-foreground">UK Money Laundering Regulations 2017 — Estate Agent Obligations</p>
           <p>Estate agents are subject to the MLR 2017 and must implement Customer Due Diligence (CDD), maintain policies & procedures, appoint a Nominated Officer (MLRO), ensure staff training, and conduct ongoing monitoring. HMRC is the supervisory authority for estate agents.</p>
         </div>
 

@@ -1,9 +1,10 @@
 import ReactDOM from "react-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { useTeam } from "@/lib/team-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import {
@@ -31,7 +32,9 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles } from "lucide-react";
+import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles, MessageCircle, Target, Flame } from "lucide-react";
+import { countLabel } from "@/lib/utils";
+import { TENANT_CATEGORIES, CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +44,8 @@ import {
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileCardView } from "@/components/mobile-card-view";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { CRM_OPTIONS } from "@/lib/crm-options";
@@ -75,6 +80,27 @@ function parseLocationData(raw: string | null): LocationEntry[] {
   try { return JSON.parse(raw); } catch { return []; }
 }
 
+// Recency badge for the requirement date — landlords should discount stale
+// demand at a glance. Green ≤30d, amber ≤90d, red older.
+function FreshBadge({ iso }: { iso: string | null | undefined }) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (isNaN(t)) return null;
+  const days = Math.max(0, Math.round((Date.now() - t) / 86400000));
+  const cls = days <= 30 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+    : days <= 90 ? "bg-amber-50 text-amber-700 border-amber-200"
+    : "bg-red-50 text-red-600 border-red-200";
+  const label = days === 0 ? "today" : days < 7 ? `${days}d` : days < 60 ? `${Math.round(days / 7)}w` : `${Math.round(days / 30)}mo`;
+  return <Badge variant="outline" className={`${cls} text-[9px] px-1 py-0 shrink-0`}>{label}</Badge>;
+}
+
+// How many days old a requirement is — used by the "Fresh 90d" filter.
+function requirementAgeDays(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return isNaN(t) ? null : Math.round((Date.now() - t) / 86400000);
+}
+
 const PROGRESS_STAGES = [
   { key: "contacted" as const, label: "Contacted", color: "bg-emerald-500", borderColor: "border-emerald-500", hoverBorder: "hover:border-emerald-400" },
   { key: "detailsSent" as const, label: "Details Sent", color: "bg-blue-500", borderColor: "border-blue-500", hoverBorder: "hover:border-blue-400" },
@@ -88,7 +114,7 @@ function ProgressTickCell({
   onUpdate,
   testIdPrefix,
 }: {
-  item: { contacted: boolean; detailsSent: boolean; viewing: boolean; shortlisted: boolean; underOffer: boolean };
+  item: { contacted: boolean | null; detailsSent: boolean | null; viewing: boolean | null; shortlisted: boolean | null; underOffer: boolean | null };
   onUpdate: (data: Record<string, boolean>) => void;
   testIdPrefix: string;
 }) {
@@ -197,7 +223,7 @@ function MapLocationsCell({
       {locations.map((loc) => (
         <div key={loc.placeId} className="flex items-center gap-1 group">
           <button
-            className="text-[11px] text-blue-600 hover:underline cursor-pointer flex items-center gap-0.5 truncate max-w-[160px]"
+            className="text-[11px] text-primary hover:underline cursor-pointer flex items-center gap-0.5 truncate max-w-[160px]"
             onClick={() => {
               if (loc.lat && loc.lng) {
                 navigate(`/map?lat=${loc.lat}&lng=${loc.lng}&zoom=15`);
@@ -240,21 +266,293 @@ function MapLocationsCell({
   );
 }
 
-function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
+function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: string | null; companyFilter?: string | null; autoCreate?: boolean }) {
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(!!autoCreate);
   const [editItem, setEditItem] = useState<CrmRequirementsLeasing | null>(null);
+  const isMobile = useIsMobile();
   const [deleteItem, setDeleteItem] = useState<CrmRequirementsLeasing | null>(null);
   const [matchItem, setMatchItem] = useState<CrmRequirementsLeasing | null>(null);
+  const [pipnetSyncing, setPipnetSyncing] = useState(false);
+  const [freshOnly, setFreshOnly] = useState(false);
+  const [fitsOnly, setFitsOnly] = useState(false);
+  const [newBrandOpen, setNewBrandOpen] = useState(false);
+  const [discussingId, setDiscussingId] = useState<string | null>(null);
   const { toast } = useToast();
   const [, navigate] = useLocation();
+  // Client logins (e.g. Landsec) get a read-only market view — no sync /
+  // inspect / add controls (the writes are gated server-side anyway).
+  const { data: reqUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientView = reqUser?.role === "Client";
+
+  const syncPipnet = async () => {
+    setPipnetSyncing(true);
+    try {
+      // Kick off as a background job — a full sync (per-row detail fetch +
+      // brochure download + Claude vision) far exceeds the request timeout, so
+      // we start it and poll for completion.
+      const res = await fetch("/api/external-requirements/import-pipnet-async", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ allPages: true, monthsBack: 3, autoPromote: true }),
+      });
+      const kick = await res.json();
+      if (!res.ok) throw new Error(kick.message || "Sync failed");
+      toast({ title: "PIPnet sync started", description: "Importing in the background — this can take a few minutes." });
+
+      const started = Date.now();
+      while (Date.now() - started < 15 * 60_000) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const sres = await fetch("/api/external-requirements/import-pipnet-status", {
+          credentials: "include",
+          headers: { ...getAuthHeaders() },
+        });
+        const s = await sres.json();
+        if (s.state === "done") {
+          const d = s.result || {};
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+          const parts = [
+            `${d.imported ?? 0} imported`,
+            d.promoted ? `${d.promoted} added to requirements` : null,
+            d.skippedOld ? `${d.skippedOld} older skipped` : null,
+          ].filter(Boolean).join(" · ");
+          toast({ title: "PIPnet synced", description: parts || "No new requirements found" });
+          return;
+        }
+        if (s.state === "error") throw new Error(s.error || "Import failed");
+      }
+      toast({ title: "PIPnet sync still running", description: "Taking longer than expected — check back shortly." });
+    } catch (err: any) {
+      toast({ title: "PIPnet sync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
+
+  const [pipnetHeadersText, setPipnetHeadersText] = useState<string | null>(null);
+  const inspectPipnetDetail = async () => {
+    try {
+      const res = await fetch("/api/external-requirements/pipnet-inspect-detail", {
+        credentials: "include",
+        headers: { ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed");
+      console.log("[PIPnet detail]", data);
+      const lines: string[] = [];
+      lines.push(`Detail URL: ${data.detailUrl || "(none found)"}`);
+      lines.push(`HTML size: ${data.htmlLength} bytes`);
+      lines.push("");
+      lines.push("--- Candidate links (first 20) ---");
+      lines.push(...(data.candidateLinks || []));
+      lines.push("");
+      lines.push("--- Fields extracted ---");
+      const entries = Object.entries(data.fields || {});
+      if (entries.length === 0) {
+        lines.push("(none — see HTML preview below)");
+      } else {
+        for (const [k, v] of entries) lines.push(`${k}: ${v}`);
+      }
+      lines.push("");
+      lines.push("--- View All Images (brochure) ---");
+      if (data.brochure) {
+        lines.push(`URL: ${data.brochure.url}`);
+        lines.push(`Content-Type: ${data.brochure.contentType}`);
+        lines.push(`Size: ${data.brochure.bytes} bytes`);
+        lines.push(`Is HTML: ${data.brochure.isHtml}`);
+        if (data.brochure.imageUrls?.length) {
+          lines.push(`Image URLs (${data.brochure.imageUrls.length}):`);
+          lines.push(...data.brochure.imageUrls);
+        }
+        if (data.brochure.htmlPreview) {
+          lines.push("");
+          lines.push("Brochure HTML preview:");
+          lines.push(data.brochure.htmlPreview);
+        }
+      } else {
+        lines.push("(no View All Images link found on this requirement)");
+      }
+      lines.push("");
+      lines.push("--- Detail HTML preview (first 1200 chars) ---");
+      lines.push(data.htmlPreview || "");
+      setPipnetHeadersText(lines.join("\n"));
+    } catch (err: any) {
+      toast({ title: "Detail inspect failed", description: err.message, variant: "destructive" });
+    }
+  };
+  const inspectPipnetHeaders = async () => {
+    try {
+      const res = await fetch("/api/external-requirements/pipnet-headers", {
+        credentials: "include",
+        headers: { ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed");
+      console.log("[PIPnet headers]", data);
+      const summary = (data.headers || [])
+        .map((h: any) => `${h.name} (${h.presentIn}) → ${h.samples.join(" | ") || "—"}`)
+        .join("\n");
+      setPipnetHeadersText(`Inspected ${data.rowsInspected} rows.\n\n` + (summary || "No headers found."));
+    } catch (err: any) {
+      toast({ title: "Header inspect failed", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const syncTrl = async () => {
+    setPipnetSyncing(true);
+    try {
+      const res = await fetch("/api/external-requirements/sync-trl", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Sync failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      toast({ title: "TRL synced", description: `${data.discovered} discovered · ${data.imported} imported · ${data.failed} failed` });
+    } catch (err: any) {
+      toast({ title: "TRL sync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
+
+  const wipeAndResyncTrl = async () => {
+    if (!confirm("This will delete every TRL-sourced requirement and re-import them. Any manual edits on those rows will be lost. Continue?")) return;
+    setPipnetSyncing(true);
+    try {
+      const res = await fetch("/api/external-requirements/resync-trl", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Resync failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      toast({ title: "TRL wiped and re-synced", description: `${data.deletedReqs} deleted · ${data.imported} re-imported · ${data.failed} failed` });
+    } catch (err: any) {
+      toast({ title: "TRL resync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
+
+  const wipeAndResyncPipnet = async () => {
+    if (!confirm("This will delete every PIPnet-sourced requirement and re-import them with the corrected agent/contact mapping. Any manual edits on those rows will be lost. Continue?")) return;
+    setPipnetSyncing(true);
+    try {
+      const res = await fetch("/api/external-requirements/resync-pipnet", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Resync failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      const parts = [
+        `${data.deletedReqs} deleted`,
+        `${data.imported} re-imported`,
+        data.promoted ? `${data.promoted} re-promoted` : null,
+      ].filter(Boolean).join(" · ");
+      toast({ title: "PIPnet wiped and re-synced", description: parts });
+    } catch (err: any) {
+      toast({ title: "PIPnet resync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
 
   const { data: items = [], isLoading, error } = useQuery<CrmRequirementsLeasing[]>({
     queryKey: ["/api/crm/requirements-leasing"],
   });
+
+  // Requirement → vacancy matches ("Fits" column). Server-scoped: staff see
+  // fits across every instructed unit, a Landsec login only their portfolio.
+  const { data: matchData } = useQuery<{ unitPool: number; matches: Record<string, { count: number; top: any[] }> }>({
+    queryKey: ["/api/crm/requirements-leasing/matches"],
+  });
+  const fitsMap = matchData?.matches || {};
+
+  // "Discuss" — spin up a chat about this requirement with the brand smart-
+  // tagged and ChatBGP in the room, then jump straight into it.
+  const discussRequirement = async (item: CrmRequirementsLeasing) => {
+    if (discussingId) return;
+    setDiscussingId(item.id);
+    try {
+      const res = await apiRequest("POST", "/api/chat/threads", {
+        title: `${item.name} — requirement`,
+        memberIds: ["__chatbgp__"],
+        isAiChat: false,
+      });
+      const thread = await res.json();
+      const tag = item.companyId ? `@[${item.name}](tag:company/${item.companyId})` : item.name;
+      const sizeText = Array.isArray(item.size) ? item.size.join(", ") : (item.size || "");
+      await apiRequest("POST", `/api/chat/threads/${thread.id}/messages`, {
+        content: `${tag} requirement${sizeText ? ` (${sizeText})` : ""} — @ChatBGP what do we know about this brand, and which of our available units could fit?`,
+      });
+      navigate(`/chatbgp?thread=${thread.id}`);
+    } catch (e: any) {
+      toast({ title: "Couldn't start the conversation", description: e?.message, variant: "destructive" });
+    } finally {
+      setDiscussingId(null);
+    }
+  };
+
+  // "Intro pack" — put this brand on the unit's Operator Targeting Brief
+  // (creating the brief if the unit doesn't have one yet).
+  const sendToBrief = async (match: any, item: CrmRequirementsLeasing) => {
+    try {
+      const listRes = await apiRequest("GET", "/api/unit-briefs");
+      const rows = await listRes.json();
+      let brief = (Array.isArray(rows) ? rows : [])
+        .map((r: any) => r.brief || r)
+        .find((b: any) => b.unitId === match.unitId);
+      if (!brief) {
+        const createRes = await apiRequest("POST", "/api/unit-briefs", { unitId: match.unitId });
+        brief = await createRes.json();
+      }
+      if (!brief?.id) throw new Error("Could not open a brief for this unit");
+      const sizeText = Array.isArray(item.size) ? item.size.join(", ") : (item.size || "");
+      await apiRequest("POST", `/api/unit-briefs/${brief.id}/targets`, {
+        operatorName: item.name,
+        companyId: item.companyId || undefined,
+        rationale: `Live requirement${sizeText ? ` (${sizeText})` : ""} — added from the Requirements board`,
+      });
+      toast({ title: `${item.name} → ${match.unitName} brief`, description: `Added as a target operator at ${match.propertyName}` });
+    } catch (e: any) {
+      toast({ title: "Couldn't add to brief", description: e?.message, variant: "destructive" });
+    }
+  };
+
+  // Demand read-out: what the requirements say the market wants right now.
+  const demand = useMemo(() => {
+    const active = items.filter((i) => i.status === "Active" || !i.status);
+    const sizeBands: Record<string, number> = { "under 1,000": 0, "1,000–3,000": 0, "3,000–10,000": 0, "10,000+": 0 };
+    for (const i of active) {
+      const raw = (Array.isArray(i.size) ? i.size.join(" ") : i.size || "").replace(/,/g, "");
+      const nums = raw.match(/\d{3,}/g)?.map(Number) || [];
+      if (!nums.length) continue;
+      const mid = nums.length > 1 ? (nums[0] + nums[1]) / 2 : nums[0];
+      if (mid < 1000) sizeBands["under 1,000"]++;
+      else if (mid < 3000) sizeBands["1,000–3,000"]++;
+      else if (mid < 10000) sizeBands["3,000–10,000"]++;
+      else sizeBands["10,000+"]++;
+    }
+    const topBand = Object.entries(sizeBands).sort((a, b) => b[1] - a[1])[0];
+    const locCounts: Record<string, number> = {};
+    for (const i of active) {
+      for (const l of (Array.isArray(i.requirementLocations) ? i.requirementLocations : [])) {
+        locCounts[l] = (locCounts[l] || 0) + 1;
+      }
+    }
+    const topLocs = Object.entries(locCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    const fitsCount = active.filter((i) => fitsMap[i.id]?.count).length;
+    const fresh90 = active.filter((i) => { const d = requirementAgeDays(i.requirementDate); return d !== null && d <= 90; }).length;
+    return { topBand, topLocs, fitsCount, fresh90, total: active.length };
+  }, [items, fitsMap]);
 
   const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
@@ -320,7 +618,7 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
   }, [deals]);
 
   const userMap = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; email: string; role: string; department: string }>();
+    const map = new Map<string, BgpUser>();
     users.forEach((u) => map.set(u.id, u));
     return map;
   }, [users]);
@@ -434,12 +732,17 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
+      if (companyFilter && item.companyId !== companyFilter) return false;
       if (teamUserIds) {
         const ids = item.bgpContactUserIds || (item.bgpContactUserId ? [item.bgpContactUserId] : []);
         if (ids.length > 0 && !ids.some(id => teamUserIds.has(id))) return false;
       }
-      if (groupFilter !== "all" && item.groupName !== groupFilter) return false;
-      if (statusFilter !== "all" && item.status !== statusFilter) return false;
+      if (groupFilter !== "all" && (item.groupName || "Ungrouped") !== groupFilter) return false;
+      if (freshOnly) {
+        const age = requirementAgeDays(item.requirementDate);
+        if (age === null || age > 90) return false;
+      }
+      if (fitsOnly && !fitsMap[item.id]?.count) return false;
       if (columnFilters.status?.length && !columnFilters.status.includes(item.status || "")) return false;
       if (columnFilters.use?.length) {
         const vals = Array.isArray(item.use) ? item.use : [];
@@ -468,7 +771,7 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
       }
       return true;
     });
-  }, [items, groupFilter, statusFilter, columnFilters, search, teamUserIds]);
+  }, [items, groupFilter, columnFilters, search, teamUserIds, companyFilter, freshOnly, fitsOnly, fitsMap]);
 
   const activeItems = useMemo(() => filteredItems.filter((i) => i.status === "Active" || !i.status), [filteredItems]);
   const pastItems = useMemo(() => filteredItems.filter((i) => i.status === "Past"), [filteredItems]);
@@ -499,13 +802,18 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
 
   return (
     <div className="space-y-4">
+      {Object.keys(groupCounts).some((group) => group !== "Ungrouped") && (
       <div className="flex items-center gap-3 flex-wrap">
-        {Object.entries(groupCounts).map(([group, count]) => {
+        {Object.entries(groupCounts).filter(([group]) => group !== "Ungrouped").map(([group, count]) => {
           const groupColor = group === "Active" ? "bg-emerald-500" :
             group === "Prospect" ? "bg-blue-500" :
             group === "Target" ? "bg-amber-500" :
             group === "Under Offer" ? "bg-purple-500" :
             group === "Completed" ? "bg-slate-500" :
+            group === "F&B" ? "bg-rose-500" :
+            group === "Fitness & Wellness" ? "bg-blue-500" :
+            group === "Leisure" ? "bg-purple-500" :
+            group === "Retail" ? "bg-amber-500" :
             "bg-gray-500";
           return (
             <Card
@@ -518,7 +826,7 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
             >
               <CardContent className="p-3">
                 <div className="flex items-center gap-2">
-                  <Badge className={`${groupColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group}</Badge>
+                  <Badge variant="outline" className={`border-transparent ${groupColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group}</Badge>
                   <div>
                     <p className="text-lg font-bold">{count}</p>
                   </div>
@@ -527,24 +835,58 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
             </Card>
           );
         })}
-        <Card
-          className={`flex-1 min-w-[130px] cursor-pointer transition-colors ${
-            groupFilter === "all" ? "border-primary" : ""
-          }`}
-          onClick={() => setGroupFilter("all")}
-          data-testid="card-leasing-group-all"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-muted-foreground" />
-              <div>
-                <p className="text-lg font-bold">{items.length}</p>
-                <p className="text-xs text-muted-foreground">All</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
+      )}
+
+      {/* Demand read-out: what the live requirements say the market wants —
+          complements the group cards (use mix) with size, geography and how
+          much of that demand fits the caller's own vacancies. */}
+      {demand.total > 0 && (
+        <div className="flex items-stretch gap-3 flex-wrap">
+          <Card className={`flex-1 min-w-[170px] cursor-pointer transition-colors ${fitsOnly ? "border-primary" : ""}`} data-testid="card-demand-fits" onClick={() => setFitsOnly(!fitsOnly)}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <Target className="w-4 h-4 text-muted-foreground shrink-0" />
+                <div>
+                  <p className="text-lg font-bold tabular-nums">{demand.fitsCount}<span className="text-xs font-normal text-muted-foreground"> / {demand.total}</span></p>
+                  <p className="text-xs text-muted-foreground">fit your available units</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className={`flex-1 min-w-[170px] cursor-pointer transition-colors ${freshOnly ? "border-primary" : ""}`} data-testid="card-demand-fresh" onClick={() => setFreshOnly(!freshOnly)}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <Flame className="w-4 h-4 text-muted-foreground shrink-0" />
+                <div>
+                  <p className="text-lg font-bold tabular-nums">{demand.fresh90}</p>
+                  <p className="text-xs text-muted-foreground">active in the last 90 days</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          {demand.topBand && demand.topBand[1] > 0 && (
+            <Card className="flex-1 min-w-[170px]" data-testid="card-demand-size">
+              <CardContent className="p-3">
+                <p className="text-lg font-bold tabular-nums">{demand.topBand[0]} <span className="text-xs font-normal text-muted-foreground">sq ft</span></p>
+                <p className="text-xs text-muted-foreground">most-wanted size ({demand.topBand[1]} requirements)</p>
+              </CardContent>
+            </Card>
+          )}
+          {demand.topLocs.length > 0 && (
+            <Card className="flex-1 min-w-[200px]" data-testid="card-demand-locations">
+              <CardContent className="p-3">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {demand.topLocs.map(([loc, n]) => (
+                    <Badge key={loc} variant="outline" className="text-[10px]">{loc} · {n}</Badge>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">hottest locations</p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
@@ -557,23 +899,119 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
             data-testid="input-search-leasing"
           />
         </div>
-        {(search || groupFilter !== "all" || hasColumnFilters) && (
+        {(search || groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly) && (
           <Button
             variant="outline"
             size="sm"
-            onClick={() => { setSearch(""); setGroupFilter("all"); setStatusFilter("all"); setColumnFilters({}); }}
+            onClick={() => { setSearch(""); setGroupFilter("all"); setColumnFilters({}); setFreshOnly(false); setFitsOnly(false); }}
             data-testid="button-clear-leasing-filters"
           >
             <X className="w-3.5 h-3.5 mr-1" />
             Clear
           </Button>
         )}
+        {/* Staff only: POST /api/crm/companies is read-only for client
+            accounts, so the dialog could never save for them. Clients add
+            existing brands via the brands-hub Add brand flow instead. */}
+        {!isClientView && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setNewBrandOpen(true)}
+          data-testid="button-new-brand"
+          title="Create a brand in the CRM — AI fills in description, industry and imagery"
+        >
+          <Sparkles className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
+          New Brand
+        </Button>
+        )}
+        {/* Admin/debug sync + inspect tools — hidden on mobile so the board is
+            a clean Search + Add + cards layout, uniform with the others.
+            Hidden for clients too: sync/import are staff-only writes. */}
+        {!isMobile && !isClientView && (
+        /* UX #132 — the six sync/inspect/wipe controls sat at equal weight
+           with everyday actions (two starting with "Wipe", one click from
+           the search box). One "Sync tools" dropdown keeps the everyday row
+           to Search + New Brand + Add requirement. */
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" data-testid="button-sync-tools" title="PIPnet / TRL import and debug tools">
+              {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+              Sync tools
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={syncPipnet} disabled={pipnetSyncing} data-testid="button-sync-pipnet">Refresh PIPnet</DropdownMenuItem>
+            <DropdownMenuItem onClick={wipeAndResyncPipnet} disabled={pipnetSyncing} data-testid="button-resync-pipnet">Wipe &amp; resync PIPnet</DropdownMenuItem>
+            <DropdownMenuItem onClick={inspectPipnetHeaders} data-testid="button-inspect-pipnet">Inspect PIPnet</DropdownMenuItem>
+            <DropdownMenuItem onClick={inspectPipnetDetail} data-testid="button-inspect-pipnet-detail">Inspect Detail</DropdownMenuItem>
+            <DropdownMenuItem onClick={syncTrl} disabled={pipnetSyncing} data-testid="button-sync-trl">Refresh TRL</DropdownMenuItem>
+            <DropdownMenuItem onClick={wipeAndResyncTrl} disabled={pipnetSyncing} data-testid="button-resync-trl">Wipe &amp; resync TRL</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        )}
+        {!isClientView && (
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />
-          Add Requirement
+          Add requirement
         </Button>
+        )}
       </div>
 
+      {isMobile ? (
+        <MobileCardView
+          emptyMessage="No requirements"
+          emptyDescription={search || groupFilter !== "all" || Object.keys(columnFilters).length > 0
+            ? "Try adjusting your filters"
+            : isClientView ? "No live requirements for your portfolio yet — BGP logs these on your behalf" : "No live requirements yet"}
+          items={[...activeItems, ...pastItems, ...archivedItems].map((item) => ({
+            id: item.id,
+            title: item.name,
+            subtitle: item.companyId ? companyMap.get(item.companyId)?.name : undefined,
+            status: item.status || "Active",
+            statusColor: item.status === "Past" ? "bg-zinc-400" : item.status === "Archived" ? "bg-zinc-300" : "bg-emerald-500",
+            fields: [
+              { label: "Use", value: Array.isArray(item.use) ? item.use.join(", ") : (item.use as any) },
+              { label: "Size", value: Array.isArray(item.size) ? item.size.join(", ") : (item.size as any) },
+              { label: "Locations", value: Array.isArray(item.requirementLocations) ? item.requirementLocations.join(", ") : (item.requirementLocations as any) },
+              { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
+            ],
+            onEdit: () => setEditItem(item),
+            onDelete: () => setDeleteItem(item),
+            footer: (() => {
+              let pack: { url?: string; name?: string } | null = null;
+              if (item.landlordPack) { try { pack = JSON.parse(item.landlordPack); } catch {} }
+              return (
+                <span className="inline-flex items-center gap-3">
+                  {/* Match was desktop-only, stranding the "N fit your units"
+                      KPI on phones (UX #29). */}
+                  <button
+                    type="button"
+                    onClick={() => setMatchItem(item)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
+                    data-testid={`mobile-match-${item.id}`}
+                  >
+                    <Target className="w-3.5 h-3.5" />
+                    Match
+                  </button>
+                  {pack?.url && (
+                    <a
+                      href={pack.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
+                      data-testid={`download-landlord-pack-${item.id}`}
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Landlord pack
+                    </a>
+                  )}
+                </span>
+              );
+            })(),
+          }))}
+        />
+      ) : (<>
       <LeasingSection
         title="Active Requirements"
         items={activeItems}
@@ -590,6 +1028,10 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
         onEdit={setEditItem}
         onDelete={setDeleteItem}
         onMatch={setMatchItem}
+        fitsMap={fitsMap}
+        onDiscuss={discussRequirement}
+        discussingId={discussingId}
+        onBrief={sendToBrief}
         columnFilters={columnFilters}
         filterOptions={leasingFilterOptions}
         onToggleFilter={toggleColumnFilter}
@@ -625,6 +1067,10 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
               onEdit={setEditItem}
               onDelete={setDeleteItem}
               onMatch={setMatchItem}
+              fitsMap={fitsMap}
+              onDiscuss={discussRequirement}
+              discussingId={discussingId}
+              onBrief={sendToBrief}
               isArchived
               columnFilters={columnFilters}
               filterOptions={leasingFilterOptions}
@@ -664,6 +1110,10 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
               onEdit={setEditItem}
               onDelete={setDeleteItem}
               onMatch={setMatchItem}
+              fitsMap={fitsMap}
+              onDiscuss={discussRequirement}
+              discussingId={discussingId}
+              onBrief={sendToBrief}
               isArchived
               columnFilters={columnFilters}
               filterOptions={leasingFilterOptions}
@@ -674,6 +1124,7 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
           )}
         </div>
       )}
+      </>)}
 
       <LeasingFormDialog
         open={createOpen}
@@ -724,11 +1175,123 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={!!pipnetHeadersText} onOpenChange={(o) => !o && setPipnetHeadersText(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>PIPnet column headers</DialogTitle>
+            <DialogDescription>Format: header name (rows it appears in) → sample values</DialogDescription>
+          </DialogHeader>
+          <textarea
+            readOnly
+            className="w-full h-80 font-mono text-xs p-2 border rounded bg-muted"
+            value={pipnetHeadersText ?? ""}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (pipnetHeadersText) {
+                  navigator.clipboard.writeText(pipnetHeadersText);
+                  toast({ title: "Copied to clipboard" });
+                }
+              }}
+            >
+              Copy
+            </Button>
+            <Button onClick={() => setPipnetHeadersText(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <RequirementMatchesDialog
         requirement={matchItem}
         onClose={() => setMatchItem(null)}
       />
+
+      <NewBrandDialog
+        open={newBrandOpen}
+        onOpenChange={setNewBrandOpen}
+        isClientView={isClientView}
+      />
     </div>
+  );
+}
+
+// Create a brand straight from the requirements board, then kick the brand-
+// AI stack (description, industry, logo + imagery via /api/brand/enrich).
+// Clients get the client CRM category slice; staff get the full taxonomy.
+function NewBrandDialog({ open, onOpenChange, isClientView }: { open: boolean; onOpenChange: (o: boolean) => void; isClientView?: boolean }) {
+  const { toast } = useToast();
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("");
+  const [website, setWebsite] = useState("");
+  const [saving, setSaving] = useState(false);
+  const categories = isClientView ? CLIENT_CRM_CATEGORIES : TENANT_CATEGORIES;
+
+  const submit = async () => {
+    if (!name.trim() || !category || saving) return;
+    setSaving(true);
+    try {
+      const res = await apiRequest("POST", "/api/crm/companies", {
+        name: name.trim(),
+        companyType: category,
+        domainUrl: website.trim() || undefined,
+      });
+      const created = await res.json();
+      // Fire the AI enrichment in the background — logo, description,
+      // industry, imagery land on the brand profile as it completes.
+      apiRequest("POST", `/api/brand/enrich/${created.id}`, {}).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      toast({ title: `${created.name} created`, description: "AI enrichment running — description, logo and imagery will appear on the brand profile shortly." });
+      setName(""); setCategory(""); setWebsite("");
+      onOpenChange(false);
+    } catch (e: any) {
+      toast({ title: "Couldn't create brand", description: e?.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>New brand</DialogTitle>
+          <DialogDescription>Creates the brand in the CRM and runs the AI enrichment (description, industry, logo, imagery).</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label>Brand name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Blank Street Coffee" data-testid="input-new-brand-name" />
+          </div>
+          <div className="space-y-2">
+            <Label>Category</Label>
+            <Select value={category || undefined} onValueChange={setCategory}>
+              <SelectTrigger data-testid="select-new-brand-category">
+                <SelectValue placeholder="Select category" />
+              </SelectTrigger>
+              <SelectContent className="max-h-[280px]">
+                {categories.map((c) => (
+                  <SelectItem key={c} value={c}>{c.replace(/^Tenant - /, "")}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Website <span className="text-muted-foreground font-normal">(optional — helps the AI)</span></Label>
+            <Input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://…" data-testid="input-new-brand-website" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={!name.trim() || !category || saving} data-testid="button-submit-new-brand">
+            {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+            Create brand
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -816,14 +1379,14 @@ function FormMultiLocationPicker({
           {locations.map((loc) => (
             <div
               key={loc.placeId}
-              className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-full px-2.5 py-1 text-[11px]"
+              className="flex items-center gap-1 bg-muted/40 border border-border rounded-full px-2.5 py-1 text-[11px]"
             >
-              <MapPin className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-              <span className="text-blue-700 max-w-[180px] truncate" title={loc.formatted}>{loc.formatted.split(",")[0]}</span>
+              <MapPin className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
+              <span className="max-w-[180px] truncate" title={loc.formatted}>{loc.formatted.split(",")[0]}</span>
               <button
                 type="button"
                 onClick={() => removeLocation(loc.placeId)}
-                className="text-blue-400 hover:text-red-500 ml-0.5"
+                className="text-muted-foreground hover:text-destructive ml-0.5"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -885,7 +1448,7 @@ function LandlordPackCell({ itemId, landlordPack }: { itemId: string; landlordPa
           href={pack.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-xs text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
+          className="text-xs text-primary hover:underline flex items-center gap-1 cursor-pointer"
           data-testid={`link-landlord-pack-${itemId}`}
         >
           <File className="w-3 h-3 shrink-0" />
@@ -957,12 +1520,37 @@ function InlineCompanyPicker({
   navigate: (to: string) => void;
   testIdPrefix: string;
 }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  // Inline-create capability mirrors the TenantBrandPicker / CrmEntityPicker
+  // shape: when the user types a name that doesn't match any existing
+  // company, a green 'Create company "X"' row appears at the bottom of
+  // the dropdown. POSTs to /api/crm/companies, then selects the new
+  // row so the requirement is linked straight away.
+  const createMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const r = await apiRequest("POST", "/api/crm/companies", {
+        name: name.trim(),
+        companyType: "Tenant",
+      });
+      return r.json();
+    },
+    onSuccess: (created: any) => {
+      qc.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      qc.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
+      onSelect(String(created.id), created.name);
+      setEditing(false);
+      toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't create company", description: e?.message, variant: "destructive" }),
+  });
 
   useEffect(() => {
     if (!editing) return;
@@ -998,13 +1586,13 @@ function InlineCompanyPicker({
     return (
       <div className="flex items-center gap-1.5 group">
         {company ? (
-          <Building2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         ) : (
           <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         )}
         {company ? (
           <button
-            className="text-left text-blue-600 hover:text-blue-800 hover:underline cursor-pointer font-medium truncate"
+            className="text-left text-primary hover:underline cursor-pointer font-medium truncate"
             onClick={() => navigate(`/companies/${currentCompanyId}`)}
             data-testid={`${testIdPrefix}-link`}
           >
@@ -1056,7 +1644,7 @@ function InlineCompanyPicker({
               <X className="w-3 h-3 inline mr-1" /> Remove company link
             </button>
           )}
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && !search.trim() ? (
             <div className="p-3 text-xs text-muted-foreground text-center">No companies found</div>
           ) : (
             filtered.map((c) => (
@@ -1074,6 +1662,18 @@ function InlineCompanyPicker({
                 )}
               </button>
             ))
+          )}
+          {search.trim() && !filtered.some(c => c.name.toLowerCase() === search.trim().toLowerCase()) && (
+            <button
+              type="button"
+              disabled={createMutation.isPending}
+              className="w-full text-left px-3 py-2 text-xs border-t hover:bg-muted flex items-center gap-2 text-primary font-medium"
+              onClick={() => createMutation.mutate(search.trim())}
+              data-testid={`${testIdPrefix}-create`}
+            >
+              {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+              Create company "{search.trim()}"
+            </button>
           )}
         </div>,
         document.body
@@ -1138,7 +1738,7 @@ function InlineUserPicker({
       <div className="flex items-center gap-1.5 group">
         {user ? (
           <>
-            <User className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             <div className="min-w-0">
               <span className="text-xs font-medium truncate block max-w-[120px]">{user.name}</span>
               {user.department && (
@@ -1203,7 +1803,7 @@ function InlineUserPicker({
                 onClick={() => { onSelect(u.id); setEditing(false); }}
                 data-testid={`${testIdPrefix}-option-${u.id}`}
               >
-                <User className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <div className="min-w-0 flex-1">
                   <span className="text-xs font-medium truncate block">{u.name}</span>
                   {u.department && <span className="text-[10px] text-muted-foreground">{u.department}</span>}
@@ -1352,7 +1952,7 @@ function InlineMultiUserPicker({
                   <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${isActive ? (colorMap?.[u.id] || "bg-emerald-500") + " border-transparent" : "border-muted-foreground/30"}`}>
                     {isActive && <Check className="w-3 h-3 text-white" />}
                   </div>
-                  <User className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                   <div className="min-w-0 flex-1">
                     <span className="text-xs font-medium truncate block">{u.name}</span>
                     {u.department && <span className="text-[10px] text-muted-foreground">{u.department}</span>}
@@ -1385,12 +1985,36 @@ function InlineContactPicker({
   navigate: (to: string) => void;
   testIdPrefix: string;
 }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  // Same inline-create pattern as InlineCompanyPicker. Requires a
+  // companyId so the contact lands attached to the right company —
+  // without it we just hide the create row, since an orphan contact
+  // is rarely useful.
+  const createMutation = useMutation({
+    mutationFn: async (name: string) => {
+      if (!companyId) throw new Error("Pick a company first");
+      const r = await apiRequest("POST", "/api/crm/contacts", {
+        name: name.trim(),
+        companyId,
+      });
+      return r.json();
+    },
+    onSuccess: (created: any) => {
+      qc.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      onSelect(String(created.id));
+      setEditing(false);
+      toast({ title: "Contact created", description: `${created.name} added to CRM.` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't create contact", description: e?.message, variant: "destructive" }),
+  });
 
   useEffect(() => {
     if (!editing) return;
@@ -1434,10 +2058,10 @@ function InlineContactPicker({
       <div className="flex items-center gap-1.5 group">
         {contact ? (
           <>
-            <User className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+            <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             <div className="min-w-0">
               <button
-                className="text-left text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer truncate block max-w-[140px]"
+                className="text-left text-xs font-medium text-primary hover:underline cursor-pointer truncate block max-w-[140px]"
                 onClick={() => navigate(`/contacts/${contact.id}`)}
                 data-testid={`${testIdPrefix}-link`}
               >
@@ -1503,7 +2127,7 @@ function InlineContactPicker({
               <X className="w-3 h-3 inline mr-1" /> Remove contact
             </button>
           )}
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && !search.trim() ? (
             <div className="px-3 py-2 text-xs text-muted-foreground">No contacts found</div>
           ) : (
             filtered.map((c) => (
@@ -1514,7 +2138,7 @@ function InlineContactPicker({
                 onClick={() => { onSelect(c.id); setEditing(false); }}
                 data-testid={`${testIdPrefix}-option-${c.id}`}
               >
-                <User className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <div className="min-w-0 flex-1">
                   <span className="text-xs font-medium truncate block">{c.name}</span>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -1524,6 +2148,18 @@ function InlineContactPicker({
                 </div>
               </button>
             ))
+          )}
+          {search.trim() && companyId && !filtered.some(c => c.name.toLowerCase() === search.trim().toLowerCase()) && (
+            <button
+              type="button"
+              disabled={createMutation.isPending}
+              className="w-full text-left px-3 py-2 text-xs border-t hover:bg-muted flex items-center gap-2 text-primary font-medium"
+              onClick={() => createMutation.mutate(search.trim())}
+              data-testid={`${testIdPrefix}-create`}
+            >
+              {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+              Create contact "{search.trim()}"
+            </button>
           )}
         </div>,
         document.body
@@ -1550,6 +2186,10 @@ function LeasingSection({
   onEdit,
   onDelete,
   onMatch,
+  fitsMap = {},
+  onDiscuss,
+  discussingId,
+  onBrief,
   isArchived,
   columnFilters,
   filterOptions,
@@ -1572,6 +2212,10 @@ function LeasingSection({
   onEdit: (item: CrmRequirementsLeasing) => void;
   onDelete: (item: CrmRequirementsLeasing) => void;
   onMatch?: (item: CrmRequirementsLeasing) => void;
+  fitsMap?: Record<string, { count: number; top: any[] }>;
+  onDiscuss?: (item: CrmRequirementsLeasing) => void;
+  discussingId?: string | null;
+  onBrief?: (match: any, item: CrmRequirementsLeasing) => void;
   isArchived?: boolean;
   columnFilters?: Record<string, string[]>;
   filterOptions?: { status: string[]; use: string[]; requirementType: string[]; size: string[]; requirementLocations: string[] };
@@ -1583,9 +2227,9 @@ function LeasingSection({
     <Card>
       <CardContent className="p-0">
         {title && (
-          <div className={`px-4 py-2 border-b ${isArchived ? "bg-muted/30" : "bg-emerald-500/5"}`}>
-            <h3 className={`text-sm font-semibold ${isArchived ? "text-muted-foreground" : "text-emerald-700"}`} data-testid={`text-section-${isArchived ? "archived" : "active"}`}>
-              {title} ({items.length})
+          <div className={`px-4 py-2 border-b ${isArchived ? "bg-muted/30" : "bg-muted/40"}`}>
+            <h3 className={`text-sm font-semibold ${isArchived ? "text-muted-foreground" : ""}`} data-testid={`text-section-${isArchived ? "archived" : "active"}`}>
+              {title === "Active Requirements" ? countLabel(items.length, "active requirement") : `${title} (${items.length})`}
             </h3>
           </div>
         )}
@@ -1596,11 +2240,11 @@ function LeasingSection({
             ))}
           </div>
         ) : (
-          <ScrollableTable minWidth={2400}>
+          <ScrollableTable minWidth={2740}>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="min-w-[120px] sticky left-0 bg-background z-10">Name</TableHead>
+                  <TableHead className="min-w-[130px] w-[180px] max-w-[180px] sticky left-0 bg-background z-10">Name</TableHead>
                   <TableHead className="min-w-[100px]">Date</TableHead>
                   <TableHead className="min-w-[100px]">
                     {filterOptions && onToggleFilter ? (
@@ -1612,7 +2256,6 @@ function LeasingSection({
                       />
                     ) : "Status"}
                   </TableHead>
-                  <TableHead className="min-w-[100px] text-center">Progress</TableHead>
                   <TableHead className="min-w-[140px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
@@ -1623,7 +2266,7 @@ function LeasingSection({
                       />
                     ) : "Use"}
                   </TableHead>
-                  <TableHead className="min-w-[100px]">
+                  <TableHead className="min-w-[150px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Requirement Type"
@@ -1633,7 +2276,7 @@ function LeasingSection({
                       />
                     ) : "Requirement Type"}
                   </TableHead>
-                  <TableHead className="min-w-[100px]">
+                  <TableHead className="min-w-[150px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Size"
@@ -1643,7 +2286,7 @@ function LeasingSection({
                       />
                     ) : "Size"}
                   </TableHead>
-                  <TableHead className="min-w-[150px]">
+                  <TableHead className="min-w-[280px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Req. Locations"
@@ -1653,13 +2296,12 @@ function LeasingSection({
                       />
                     ) : "Req. Locations"}
                   </TableHead>
+                  <TableHead className="min-w-[230px]">Fits</TableHead>
                   <TableHead className="min-w-[220px]">Map Locations</TableHead>
                   <TableHead className="min-w-[220px]">Principal Contact</TableHead>
                   <TableHead className="min-w-[220px]">Agent Contact</TableHead>
-                  <TableHead className="min-w-[160px]">BGP Contact</TableHead>
                   <TableHead className="min-w-[180px]">Deal</TableHead>
                   <TableHead className="min-w-[120px]">Landlord Pack</TableHead>
-                  <TableHead className="min-w-[120px]">Extract</TableHead>
                   <TableHead className="min-w-[150px]">Comments</TableHead>
                   <TableHead className="min-w-[80px]">Actions</TableHead>
                 </TableRow>
@@ -1667,7 +2309,7 @@ function LeasingSection({
               <TableBody>
                 {items.map((item) => (
                   <TableRow key={item.id} className={`text-xs ${isArchived ? "opacity-60" : ""}`} data-testid={`row-leasing-${item.id}`}>
-                    <TableCell className="px-1.5 py-1 font-medium text-sm sticky left-0 bg-background z-10">
+                    <TableCell className="px-1.5 py-1 font-medium text-sm w-[180px] max-w-[180px] truncate sticky left-0 bg-background z-10">
                       <InlineCompanyPicker
                         companies={companies}
                         currentCompanyId={item.companyId}
@@ -1681,12 +2323,28 @@ function LeasingSection({
                         navigate={navigate}
                         testIdPrefix={`name-leasing-${item.id}`}
                       />
+                      {item.sources && item.sources.length > 0 && (
+                        <div className="flex gap-0.5 mt-0.5 flex-wrap">
+                          {item.sources.map((s) => (
+                            <span
+                              key={s}
+                              className={`text-[9px] px-1 py-px rounded ${s === "PIPnet" ? "bg-blue-100 text-blue-700" : s === "TRL" ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-700"}`}
+                              data-testid={`source-${item.id}-${s}`}
+                            >
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
-                      <InlineDate
-                        value={item.requirementDate || null}
-                        onSave={(v) => inlineUpdate(item.id, { requirementDate: v || null })}
-                      />
+                      <div className="flex items-center gap-1">
+                        <InlineDate
+                          value={item.requirementDate || null}
+                          onSave={(v) => inlineUpdate(item.id, { requirementDate: v || null })}
+                        />
+                        <FreshBadge iso={item.requirementDate} />
+                      </div>
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
                       <InlineLabelSelect
@@ -1695,13 +2353,6 @@ function LeasingSection({
                         colorMap={CRM_OPTIONS.reqLeasingStatusColors}
                         onSave={(v) => inlineUpdate(item.id, { status: v || null })}
                         placeholder="Set status"
-                      />
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1 text-center">
-                      <ProgressTickCell
-                        item={item}
-                        onUpdate={(data) => inlineUpdate(item.id, data)}
-                        testIdPrefix={`tick-leasing-${item.id}`}
                       />
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
@@ -1744,6 +2395,41 @@ function LeasingSection({
                         testId={`select-locations-${item.id}`}
                       />
                     </TableCell>
+                    <TableCell className="px-1.5 py-1" data-testid={`cell-fits-${item.id}`}>
+                      {(() => {
+                        const fit = fitsMap[item.id];
+                        if (!fit?.count) return <span className="text-[10px] text-muted-foreground">—</span>;
+                        return (
+                          <div className="space-y-0.5">
+                            {fit.top.slice(0, 2).map((m: any) => (
+                              <div key={m.unitId} className="flex items-center gap-1 group/fit">
+                                <button
+                                  className="text-[11px] text-primary hover:underline truncate max-w-[150px] text-left"
+                                  onClick={() => navigate(`/properties/${m.propertyId}`)}
+                                  title={`${m.unitName} · ${m.propertyName} · ${m.sizeUnknown ? "size not recorded" : Number(m.sqft).toLocaleString() + " sq ft"}${m.locationHit ? " · location match" : ""}`}
+                                >
+                                  {m.unitName} · {m.propertyName}
+                                </button>
+                                <span className="text-[9px] text-muted-foreground tabular-nums shrink-0">{m.sizeUnknown ? "size?" : Number(m.sqft).toLocaleString()}</span>
+                                {onBrief && (
+                                  <button
+                                    className="text-[9px] text-primary hover:underline opacity-0 group-hover/fit:opacity-100 shrink-0"
+                                    onClick={() => onBrief(m, item)}
+                                    title="Add this brand to the unit's targeting brief"
+                                    data-testid={`button-brief-${item.id}-${m.unitId}`}
+                                  >
+                                    + brief
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                            {fit.count > 2 && (
+                              <span className="text-[9px] text-muted-foreground">+{fit.count - 2} more</span>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </TableCell>
                     <TableCell className="px-1.5 py-1">
                       <MapLocationsCell
                         itemId={item.id}
@@ -1755,8 +2441,8 @@ function LeasingSection({
                         <div className="flex flex-wrap gap-0.5 mt-1">
                           {propertyMatchMap.get(item.id)!.slice(0, 3).map(p => (
                             <Link key={p.id} href={`/properties/${p.id}`}>
-                              <Badge variant="outline" className="text-[8px] gap-0.5 cursor-pointer hover:bg-muted border-blue-300 dark:border-blue-700" data-testid={`req-prop-match-${item.id}-${p.id}`}>
-                                <Building2 className="w-2 h-2 text-blue-500" />{p.name}
+                              <Badge variant="outline" className="text-[8px] gap-0.5 cursor-pointer hover:bg-muted" data-testid={`req-prop-match-${item.id}-${p.id}`}>
+                                <Building2 className="w-2 h-2 text-muted-foreground" />{p.name}
                               </Badge>
                             </Link>
                           ))}
@@ -1786,22 +2472,12 @@ function LeasingSection({
                       />
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
-                      <InlineMultiUserPicker
-                        users={users}
-                        currentUserIds={item.bgpContactUserIds || (item.bgpContactUserId ? [item.bgpContactUserId] : [])}
-                        userMap={userMap}
-                        onSelect={(userIds) => inlineUpdate(item.id, { bgpContactUserIds: userIds })}
-                        testIdPrefix={`bgp-contact-${item.id}`}
-                        colorMap={colorMap}
-                      />
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
                       {(() => {
                         const deal = item.dealId ? dealMap.get(item.dealId) : null;
                         if (!deal) return <span className="text-muted-foreground">—</span>;
                         return (
                           <button
-                            className="font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer flex items-center gap-1"
+                            className="font-medium text-primary hover:underline cursor-pointer flex items-center gap-1"
                             onClick={() => navigate(`/deals/${deal.id}`)}
                             data-testid={`link-deal-${item.id}`}
                           >
@@ -1818,15 +2494,6 @@ function LeasingSection({
                       <LandlordPackCell itemId={item.id} landlordPack={item.landlordPack} />
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
-                      <InlineLabelSelect
-                        value={item.extract}
-                        options={CRM_OPTIONS.reqLeasingExtract}
-                        colorMap={CRM_OPTIONS.reqLeasingExtractColors}
-                        onSave={(v) => inlineUpdate(item.id, { extract: v || null })}
-                        placeholder="Set"
-                      />
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
                       <InlineText
                         value={item.comments || ""}
                         onSave={(v) => inlineUpdate(item.id, { comments: v || null })}
@@ -1837,11 +2504,24 @@ function LeasingSection({
                     </TableCell>
                     <TableCell className="px-1 py-1">
                       <div className="flex items-center gap-0.5">
+                        {onDiscuss && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                            onClick={() => onDiscuss(item)}
+                            disabled={discussingId === item.id}
+                            data-testid={`button-discuss-leasing-${item.id}`}
+                            title="Discuss in chat — brand tagged, ChatBGP in the room"
+                          >
+                            {discussingId === item.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}
+                          </Button>
+                        )}
                         {onMatch && (
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7 text-purple-500 hover:text-purple-700"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
                             onClick={() => onMatch(item)}
                             data-testid={`button-match-leasing-${item.id}`}
                             title="Find matching units"
@@ -1917,21 +2597,37 @@ function CompanySearchPicker({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const [creating, setCreating] = useState(false);
   const filtered = useMemo(() => {
-    if (!search) return companies.slice(0, 20);
+    const sorted = [...companies].sort((a, b) => a.name.localeCompare(b.name));
+    if (!search) return sorted.slice(0, 30);
     const s = search.toLowerCase();
-    return companies.filter((c) =>
+    return sorted.filter((c) =>
       c.name.toLowerCase().includes(s) ||
       (c.companyType || "").toLowerCase().includes(s)
-    ).slice(0, 20);
+    ).slice(0, 30);
   }, [companies, search]);
+  const trimmed = search.trim();
+  const exactMatch = companies.some((c) => c.name.trim().toLowerCase() === trimmed.toLowerCase());
+  const createCompany = async () => {
+    if (!trimmed || creating) return;
+    setCreating(true);
+    try {
+      const res = await apiRequest("POST", "/api/crm/companies", { name: trimmed });
+      const created = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      onSelect(created);
+      setSearch(""); setOpen(false);
+    } catch { /* surfaced by the global error toast */ }
+    finally { setCreating(false); }
+  };
 
   if (selectedId && selectedName) {
     const company = companies.find((c) => c.id === selectedId);
     return (
       <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30">
-        <Building2 className="w-4 h-4 text-blue-500 shrink-0" />
-        <span className="text-sm font-medium flex-1 truncate">{selectedName}</span>
+        <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
+        <span className="text-sm font-medium flex-1 truncate min-w-0">{selectedName}</span>
         {company?.companyType && (
           <Badge variant="outline" className="text-[10px] shrink-0">{company.companyType}</Badge>
         )}
@@ -1961,8 +2657,8 @@ function CompanySearchPicker({
           ref={dropdownRef}
           className="absolute z-50 mt-1 w-full bg-popover border rounded-md shadow-md max-h-48 overflow-y-auto"
         >
-          {filtered.length === 0 ? (
-            <div className="p-3 text-xs text-muted-foreground text-center">No companies found</div>
+          {filtered.length === 0 && !trimmed ? (
+            <div className="p-3 text-xs text-muted-foreground text-center">Start typing to search companies</div>
           ) : (
             filtered.map((c) => (
               <button
@@ -1973,12 +2669,24 @@ function CompanySearchPicker({
                 data-testid={`option-company-${c.id}`}
               >
                 <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <span className="flex-1 truncate">{c.name}</span>
+                <span className="flex-1 truncate min-w-0">{c.name}</span>
                 {c.companyType && (
                   <Badge variant="outline" className="text-[10px] shrink-0">{c.companyType}</Badge>
                 )}
               </button>
             ))
+          )}
+          {trimmed && !exactMatch && (
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 hover:bg-accent flex items-center gap-2 text-sm border-t text-primary font-medium disabled:opacity-50"
+              onClick={createCompany}
+              disabled={creating}
+              data-testid="option-company-create"
+            >
+              <Plus className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{creating ? "Adding…" : `Add “${trimmed}” as a new company`}</span>
+            </button>
           )}
         </div>
       )}
@@ -2046,7 +2754,7 @@ function ContactSearchPicker({
     if (contact && (!filterCompanyId || contact.companyId === filterCompanyId) && (!filterContactType || contact.contactType?.toLowerCase() === filterContactType.toLowerCase())) {
       return (
         <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30">
-          <User className="w-4 h-4 text-blue-500 shrink-0" />
+          <User className="w-4 h-4 text-muted-foreground shrink-0" />
           <div className="flex-1 min-w-0">
             <span className="text-sm font-medium truncate block">{contact.name}</span>
             <div className="flex items-center gap-2 flex-wrap">
@@ -2179,8 +2887,8 @@ function DealSearchPicker({
     if (deal) {
       return (
         <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30">
-          <FileText className="w-4 h-4 text-blue-500 shrink-0" />
-          <span className="text-sm font-medium flex-1 truncate">{deal.name}</span>
+          <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+          <span className="text-sm font-medium flex-1 truncate min-w-0">{deal.name}</span>
           {deal.status && (
             <Badge variant="outline" className="text-[10px] shrink-0">{deal.status}</Badge>
           )}
@@ -2223,7 +2931,7 @@ function DealSearchPicker({
                 data-testid={`option-deal-${d.id}`}
               >
                 <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <span className="flex-1 truncate">{d.name}</span>
+                <span className="flex-1 truncate min-w-0">{d.name}</span>
                 {d.status && (
                   <Badge variant="outline" className="text-[10px] shrink-0">{d.status}</Badge>
                 )}
@@ -2272,7 +2980,6 @@ function LeasingFormDialog({
     size: Array.isArray(defaultValues?.size) ? defaultValues.size : defaultValues?.size ? [defaultValues.size as string] : [],
     requirementLocations: Array.isArray(defaultValues?.requirementLocations) ? defaultValues.requirementLocations : defaultValues?.requirementLocations ? [defaultValues.requirementLocations as string] : [],
     locationData: defaultValues?.locationData || null,
-    extract: defaultValues?.extract || "",
     comments: defaultValues?.comments || "",
   });
 
@@ -2491,36 +3198,13 @@ function LeasingFormDialog({
               onChange={(data) => setForm({ ...form, locationData: data })}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Extract</Label>
-              <Select value={form.extract || undefined} onValueChange={(v) => setForm({ ...form, extract: v === "__clear__" ? "" : v })}>
-                <SelectTrigger data-testid="select-leasing-extract">
-                  <SelectValue placeholder="Select" />
-                </SelectTrigger>
-                <SelectContent>
-                  {CRM_OPTIONS.reqLeasingExtract.map((e) => (
-                    <SelectItem key={e} value={e}>
-                      <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full ${CRM_OPTIONS.reqLeasingExtractColors[e] || "bg-gray-400"}`} />
-                        {e}
-                      </div>
-                    </SelectItem>
-                  ))}
-                  <SelectItem value="__clear__">
-                    <span className="text-muted-foreground">Clear</span>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Comments</Label>
-              <Textarea
-                value={form.comments}
-                onChange={(e) => setForm({ ...form, comments: e.target.value })}
-                data-testid="input-leasing-comments"
-              />
-            </div>
+          <div className="space-y-2">
+            <Label>Comments</Label>
+            <Textarea
+              value={form.comments}
+              onChange={(e) => setForm({ ...form, comments: e.target.value })}
+              data-testid="input-leasing-comments"
+            />
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -2534,12 +3218,13 @@ function LeasingFormDialog({
   );
 }
 
-function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
+function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | null; autoCreate?: boolean }) {
   const [, navigate] = useLocation();
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(!!autoCreate);
   const [editItem, setEditItem] = useState<CrmRequirementsInvestment | null>(null);
   const [deleteItem, setDeleteItem] = useState<CrmRequirementsInvestment | null>(null);
   const [importing, setImporting] = useState(false);
@@ -2692,7 +3377,7 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
         const ids = (item as any).bgpContactUserIds || [];
         if (ids.length > 0 && !ids.some((id: string) => teamUserIds.has(id))) return false;
       }
-      if (groupFilter !== "all" && item.groupName !== groupFilter) return false;
+      if (groupFilter !== "all" && (item.groupName || "Ungrouped") !== groupFilter) return false;
       if (columnFilters.group?.length && !columnFilters.group.includes(item.groupName || "")) return false;
       if (columnFilters.use?.length) {
         const vals = Array.isArray(item.use) ? item.use : [];
@@ -2715,8 +3400,7 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
         return (
           item.name.toLowerCase().includes(s) ||
           (Array.isArray(item.use) ? item.use.join(" ") : (item.use || "")).toLowerCase().includes(s) ||
-          item.locations?.toLowerCase().includes(s) ||
-          item.extract?.toLowerCase().includes(s)
+          item.locations?.toLowerCase().includes(s)
         );
       }
       return true;
@@ -2746,8 +3430,9 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
 
   return (
     <div className="space-y-4">
+      {Object.keys(groupCounts).some((group) => group !== "Ungrouped") && (
       <div className="flex items-center gap-3 flex-wrap">
-        {Object.entries(groupCounts).map(([group, count]) => {
+        {Object.entries(groupCounts).filter(([group]) => group !== "Ungrouped").map(([group, count]) => {
           const badgeColor = group === "Institutional" ? "bg-indigo-500" :
             group === "Active Buyers" ? "bg-emerald-500" :
             group === "Target Buyers" ? "bg-amber-500" :
@@ -2763,7 +3448,7 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
             >
               <CardContent className="p-3">
                 <div className="flex items-center gap-2">
-                  <Badge className={`${badgeColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group}</Badge>
+                  <Badge variant="outline" className={`border-transparent ${badgeColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group}</Badge>
                   <div>
                     <p className="text-lg font-bold">{count}</p>
                   </div>
@@ -2772,24 +3457,8 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
             </Card>
           );
         })}
-        <Card
-          className={`flex-1 min-w-[130px] cursor-pointer transition-colors ${
-            groupFilter === "all" ? "border-primary" : ""
-          }`}
-          onClick={() => setGroupFilter("all")}
-          data-testid="card-invest-group-all"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-muted-foreground" />
-              <div>
-                <p className="text-lg font-bold">{items.length}</p>
-                <p className="text-xs text-muted-foreground">All</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
+      )}
 
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
@@ -2849,10 +3518,31 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
         />
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-investment">
           <Plus className="w-4 h-4 mr-1" />
-          Add Requirement
+          Add requirement
         </Button>
       </div>
 
+      {isMobile ? (
+        <MobileCardView
+          emptyMessage="No requirements"
+          emptyDescription={search ? "Try adjusting your filters" : "No live requirements yet"}
+          items={filteredItems.map((item) => ({
+            id: item.id,
+            title: (item.companyId ? companyMap.get(item.companyId)?.name : null) || item.name,
+            subtitle: item.contactName || undefined,
+            status: item.status || "Active",
+            statusColor: item.status === "Past" ? "bg-zinc-400" : item.status === "Archived" ? "bg-zinc-300" : "bg-emerald-500",
+            fields: [
+              { label: "Use", value: Array.isArray(item.use) ? item.use.join(", ") : (item.use as any) },
+              { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
+              { label: "Lot size", value: Array.isArray(item.size) ? item.size.join(", ") : (item.size as any) },
+              { label: "Locations", value: Array.isArray(item.requirementLocations) ? item.requirementLocations.join(", ") : (item.requirementLocations as any) },
+            ],
+            onEdit: () => setEditItem(item),
+            onDelete: () => setDeleteItem(item),
+          }))}
+        />
+      ) : (
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -2921,7 +3611,7 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
                       <TableCell className="px-1.5 py-1 font-medium text-sm max-w-[120px] sticky left-0 bg-background z-10">
                         {item.companyId && companyMap.has(item.companyId) ? (
                           <button
-                            className="flex items-center gap-2 text-left hover:underline cursor-pointer text-blue-600 dark:text-blue-400 max-w-full"
+                            className="flex items-center gap-2 text-left hover:underline cursor-pointer text-primary max-w-full"
                             onClick={() => navigate(`/contacts?company=${item.companyId}`)}
                             data-testid={`link-company-invest-${item.id}`}
                           >
@@ -2938,18 +3628,18 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
                       <TableCell className="text-xs">
                         {item.contactName ? (
                           <div className="space-y-0.5">
-                            <div className="font-medium flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                            <div className="font-medium flex items-center gap-1">
                               <User className="w-3 h-3 shrink-0" />
                               {item.contactName}
                             </div>
                             {item.contactEmail && (
-                              <a href={`mailto:${item.contactEmail}`} className="text-blue-500/70 hover:text-blue-600 hover:underline flex items-center gap-1">
+                              <a href={`mailto:${item.contactEmail}`} className="text-primary hover:underline flex items-center gap-1">
                                 <Mail className="w-3 h-3 shrink-0" />
                                 {item.contactEmail}
                               </a>
                             )}
                             {item.contactMobile && (
-                              <a href={`tel:${item.contactMobile}`} className="text-blue-500/70 hover:text-blue-600 hover:underline flex items-center gap-1">
+                              <a href={`tel:${item.contactMobile}`} className="text-primary hover:underline flex items-center gap-1">
                                 <Phone className="w-3 h-3 shrink-0" />
                                 {item.contactMobile}
                               </a>
@@ -3024,8 +3714,8 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
                           <div className="flex flex-wrap gap-0.5 mt-1">
                             {invPropertyMatchMap.get(item.id)!.slice(0, 3).map(p => (
                               <Link key={p.id} href={`/properties/${p.id}`}>
-                                <Badge variant="outline" className="text-[8px] gap-0.5 cursor-pointer hover:bg-muted border-blue-300 dark:border-blue-700" data-testid={`inv-prop-match-${item.id}-${p.id}`}>
-                                  <Building2 className="w-2 h-2 text-blue-500" />{p.name}
+                                <Badge variant="outline" className="text-[8px] gap-0.5 cursor-pointer hover:bg-muted" data-testid={`inv-prop-match-${item.id}-${p.id}`}>
+                                  <Building2 className="w-2 h-2 text-muted-foreground" />{p.name}
                                 </Badge>
                               </Link>
                             ))}
@@ -3047,7 +3737,7 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
                           value={item.comments || ""}
                           onSave={(v) => inlineUpdate(item.id, { comments: v || null })}
                           placeholder="Add comments..."
-                          testId={`input-inv-comments-${item.id}`}
+                          data-testid={`input-inv-comments-${item.id}`}
                           multiline
                           maxLines={2}
                         />
@@ -3090,6 +3780,7 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
           )}
         </CardContent>
       </Card>
+      )}
 
       <InvestmentFormDialog
         open={createOpen}
@@ -3161,7 +3852,6 @@ function InvestmentFormDialog({
     requirementType: Array.isArray(defaultValues?.requirementType) ? defaultValues.requirementType.join(", ") : (defaultValues?.requirementType || ""),
     size: Array.isArray(defaultValues?.size) ? defaultValues.size.join(", ") : (defaultValues?.size || ""),
     locations: defaultValues?.locations || "",
-    extract: defaultValues?.extract || "",
     contactName: defaultValues?.contactName || "",
     contactEmail: defaultValues?.contactEmail || "",
     contactMobile: defaultValues?.contactMobile || "",
@@ -3271,14 +3961,6 @@ function InvestmentFormDialog({
               data-testid="input-invest-locations"
             />
           </div>
-          <div className="space-y-2">
-            <Label>Extract</Label>
-            <Textarea
-              value={form.extract}
-              onChange={(e) => setForm({ ...form, extract: e.target.value })}
-              data-testid="input-invest-extract"
-            />
-          </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit" disabled={isPending || !form.name} data-testid="button-submit-invest">
@@ -3296,42 +3978,52 @@ export default function Requirements() {
   const urlParams = new URLSearchParams(window.location.search);
   const typeParam = urlParams.get("type");
   const teamParam = urlParams.get("team");
+  const companyIdParam = urlParams.get("companyId");
+  const newParam = urlParams.get("new");
   const effectiveTeam = activeTeam === "all" ? userTeam : activeTeam;
+  // Investment requirements are BGP's own acquisition mandates — not relevant
+  // to a landlord client, so the toggle is hidden and the view forced to
+  // Leasing for client logins (Woody, 2026-08).
+  const { data: pageUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientView = pageUser?.role === "Client";
   const defaultIsInvestment = effectiveTeam === "Investment";
   const initialView = typeParam ? typeParam === "investment" : defaultIsInvestment;
   const [isInvestmentView, setIsInvestmentView] = useState(initialView);
+  const showInvestment = isInvestmentView && !isClientView;
+  // ?new=1 (dashboard widget "Add") opens the create dialog for the view we
+  // landed on; strip it from the URL so a refresh doesn't reopen the dialog.
+  const [autoCreateView] = useState(newParam ? (initialView ? "investment" : "leasing") : null);
+  useEffect(() => {
+    if (!newParam) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("new");
+    window.history.replaceState(null, "", url.pathname + url.search);
+  }, [newParam]);
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="requirements-page">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <FileText className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
-            <p className="text-sm text-muted-foreground">{isInvestmentView ? "Investment requirements" : "Leasing requirements"}{teamParam ? ` · Filtered by ${teamParam} team` : ""}</p>
-          </div>
+    <div className="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto" data-testid="requirements-page">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
+          <p className="text-sm text-muted-foreground">
+            {showInvestment ? "Investment requirements" : "Leasing requirements"}
+            {teamParam ? ` · Filtered by ${teamParam} team` : ""}
+            {companyIdParam ? " · Filtered by company" : ""}
+          </p>
         </div>
-        <div className="flex items-center gap-1 bg-muted rounded-lg p-1" data-testid="view-toggle">
-          <button
-            onClick={() => setIsInvestmentView(false)}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${!isInvestmentView ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            data-testid="button-leasing-view"
-          >
+        {!isClientView && (
+        <div className="flex items-center gap-1.5 shrink-0" data-testid="view-toggle">
+          <Pill active={!isInvestmentView} onClick={() => setIsInvestmentView(false)} data-testid="button-leasing-view">
             Leasing
-          </button>
-          <button
-            onClick={() => setIsInvestmentView(true)}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${isInvestmentView ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            data-testid="button-investment-view"
-          >
+          </Pill>
+          <Pill active={isInvestmentView} onClick={() => setIsInvestmentView(true)} data-testid="button-investment-view">
             Investment
-          </button>
+          </Pill>
         </div>
+        )}
       </div>
 
-      {isInvestmentView ? <InvestmentTable teamFilter={teamParam} /> : <LeasingTable teamFilter={teamParam} />}
+      {showInvestment ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} />}
     </div>
   );
 }

@@ -31,7 +31,136 @@ interface OverpassNode { id: number; lat: number; lon: number; }
 interface OverpassWay { id: number; nodes: number[]; tags?: Record<string, string>; }
 interface OverpassData { nodes: Map<number, OverpassNode>; buildings: OverpassWay[]; roads: OverpassWay[]; }
 
+/**
+ * Fetch building polygons from OS NGD — the same source Edozo uses for
+ * its live UK building outlines. Reliable because we authenticate with
+ * our OS_PLACES_API_KEY (not the public Overpass mirror, which
+ * rate-limits Railway IPs into oblivion).
+ *
+ * Returns the same OverpassData shape the renderer expects so we don't
+ * have to refactor the projection / drawing code — synthetic node IDs
+ * stand in for OSM node IDs, but the ways carry the real polygon
+ * geometry.
+ */
+async function fetchOsNgdBuildings(bbox: { south: number; north: number; west: number; east: number }): Promise<OverpassData> {
+  const key = process.env.OS_PLACES_API_KEY;
+  if (!key) throw new Error("OS_PLACES_API_KEY not configured");
+
+  const ngdBase = "https://api.os.uk/features/ngd/ofa/v1";
+  const ngdBbox = `${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
+  const filterCrs = "filter-crs=http://www.opengis.net/def/crs/EPSG/0/4326";
+  // Try buildingpart first (more detailed parts), fall back to building.
+  const collections = ["bld-fts-buildingpart-1", "bld-fts-building-1"];
+
+  let features: any[] = [];
+  for (const coll of collections) {
+    const url = `${ngdBase}/collections/${coll}/items?${filterCrs}&bbox=${ngdBbox}&limit=500&key=${encodeURIComponent(key)}`;
+    try {
+      const resp = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+      if (resp.ok) {
+        const data: any = await resp.json();
+        features = Array.isArray(data?.features) ? data.features : [];
+        if (features.length > 0) break;
+      } else {
+        const body = await resp.text().catch(() => "");
+        console.warn(`[goad-plan/os-ngd] ${coll} HTTP ${resp.status}: ${body.slice(0, 200)}`);
+      }
+    } catch (err: any) {
+      console.warn(`[goad-plan/os-ngd] ${coll} failed:`, err?.message);
+    }
+  }
+
+  // Convert OS NGD GeoJSON features → OverpassWay format. NGD returns
+  // Polygon or MultiPolygon geometries; we flatten MultiPolygons into
+  // separate ways so each ring is its own building outline.
+  const nodes = new Map<number, OverpassNode>();
+  const buildings: OverpassWay[] = [];
+  let nextNodeId = 1_000_000_000;
+  let nextWayId = 2_000_000_000;
+  for (const feat of features) {
+    const geom = feat?.geometry;
+    if (!geom) continue;
+    const polygons: number[][][][] =
+      geom.type === "Polygon" ? [geom.coordinates] :
+      geom.type === "MultiPolygon" ? geom.coordinates :
+      [];
+    for (const poly of polygons) {
+      // poly[0] = outer ring; ignore inner rings (holes) for our purposes.
+      const ring = poly[0];
+      if (!Array.isArray(ring) || ring.length < 3) continue;
+      const wayNodes: number[] = [];
+      for (const [lng, lat] of ring) {
+        if (typeof lat !== "number" || typeof lng !== "number") continue;
+        const id = nextNodeId++;
+        nodes.set(id, { id, lat, lon: lng });
+        wayNodes.push(id);
+      }
+      if (wayNodes.length < 3) continue;
+      buildings.push({ id: nextWayId++, nodes: wayNodes, tags: { building: "yes" } });
+    }
+  }
+  return { nodes, buildings, roads: [] };
+}
+
+/**
+ * Roads-only Overpass query — much smaller/faster than the buildings-
+ * and-highways combo, so much more likely to succeed against the public
+ * Overpass mirror even when the buildings query times out.
+ */
+async function fetchOverpassRoads(bbox: { south: number; north: number; west: number; east: number }): Promise<{ nodes: Map<number, OverpassNode>; roads: OverpassWay[] }> {
+  const b = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
+  const query = `[out:json][timeout:15];
+(way["highway"](${b}););
+out body;
+>;
+out skel qt;`;
+  const res = await fetch("https://overpass-api.de/api/interpreter", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `data=${encodeURIComponent(query)}`,
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Overpass ${res.status}`);
+  const data: any = await res.json();
+  const nodes = new Map<number, OverpassNode>();
+  const roads: OverpassWay[] = [];
+  for (const el of data.elements || []) {
+    if (el.type === "node") nodes.set(el.id, { id: el.id, lat: el.lat, lon: el.lon });
+    else if (el.type === "way" && el.tags?.highway) {
+      roads.push({ id: el.id, nodes: el.nodes, tags: el.tags });
+    }
+  }
+  return { nodes, roads };
+}
+
 async function fetchOsm(bbox: { south: number; north: number; west: number; east: number }): Promise<OverpassData> {
+  // Primary: OS NGD for buildings (reliable, authenticated, no rate-limit).
+  // Roads come from a SEPARATE Overpass call — buildings-only NGD doesn't
+  // give us roads, but the smaller "highways only" Overpass query is much
+  // less flaky than the combined query was.
+  if (process.env.OS_PLACES_API_KEY) {
+    try {
+      const ngd = await fetchOsNgdBuildings(bbox);
+      if (ngd.buildings.length > 0) {
+        // Try to enrich with roads via a small Overpass call. If it fails,
+        // we still have buildings — better than nothing.
+        try {
+          const r = await fetchOverpassRoads(bbox);
+          for (const [id, n] of r.nodes) ngd.nodes.set(id, n);
+          ngd.roads = r.roads;
+        } catch (err: any) {
+          console.warn("[goad-plan] roads-only Overpass failed (continuing without roads):", err?.message);
+        }
+        return ngd;
+      }
+      console.warn("[goad-plan] OS NGD returned 0 buildings, falling through to Overpass");
+    } catch (err: any) {
+      console.warn("[goad-plan] OS NGD failed, falling through to Overpass:", err?.message);
+    }
+  }
+
+  // Fallback path — full public OSM Overpass query. Flaky but covers
+  // non-UK and OS-not-configured cases.
   const b = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
   const query = `[out:json][timeout:25];
 (
@@ -223,6 +352,91 @@ interface PolyBuilding {
   centroid: Pt;
 }
 
+/**
+ * Pull the leading street number / range out of an address — e.g.
+ * "GROUND FLOOR, 14 MOUNT STREET" → "14", "18-22 HAYMARKET" → "18-22".
+ * Used as a fallback label when we don't have a tenant name (Goad
+ * shows house numbers in those cases, which reads cleaner than empty).
+ */
+function extractHouseNumber(address: string | null | undefined): string {
+  if (!address) return "";
+  // Skip floor prefixes ("GROUND FLOOR", "FIRST FLOOR", "BASEMENT", "BST &")
+  // and grab the first number-or-range we find.
+  const m = address.match(/\b(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\b/i);
+  return m ? m[1].replace(/\s*-\s*/g, "-") : "";
+}
+
+/**
+ * Edozo-style label fitter. Given a polygon's min-area-rectangle width
+ * and height in pixels, find the largest font size from a try-list at
+ * which the tenant name (+ optional house number) wraps cleanly into
+ * the box without mid-word truncation. Returns null if nothing fits —
+ * caller should drop the label rather than render it scruffy.
+ */
+function fitLabelToRect(
+  tenant: string | null | undefined,
+  houseNum: string,
+  pixelW: number,
+  pixelH: number,
+): { lines: string[]; fontSize: number } | null {
+  const charWidth = (size: number) => size * 0.55;
+  const lineHeight = (size: number) => size * 1.3;
+  const cleanTenant = (tenant || "").trim();
+
+  const buildText = (): string => {
+    if (cleanTenant && houseNum) return `${houseNum} ${cleanTenant}`;
+    if (cleanTenant) return cleanTenant;
+    return houseNum;
+  };
+  let display = buildText();
+  if (!display) return null;
+  display = display.toUpperCase();
+
+  // Effective writable area inside the box (15% safe-margin each side
+  // so labels don't touch the polygon stroke).
+  const padW = pixelW * 0.85;
+  const padH = pixelH * 0.78;
+  if (padW < 22 || padH < 14) return null;
+
+  const tryFit = (size: number, text: string): string[] | null => {
+    const cw = charWidth(size);
+    const lh = lineHeight(size);
+    const maxCharsPerLine = Math.floor(padW / cw);
+    if (maxCharsPerLine < 3) return null;
+    const words = text.split(/\s+/);
+    const lines: string[] = [];
+    let cur = "";
+    for (const w of words) {
+      // Never break a word mid-character. If a single word is wider
+      // than the line, abandon this size and try a smaller one.
+      if (w.length > maxCharsPerLine) return null;
+      if (cur && cur.length + 1 + w.length > maxCharsPerLine) {
+        lines.push(cur);
+        cur = w;
+      } else {
+        cur = cur ? `${cur} ${w}` : w;
+      }
+    }
+    if (cur) lines.push(cur);
+    const maxLines = Math.floor(padH / lh);
+    if (maxLines < 1 || lines.length > maxLines) return null;
+    return lines;
+  };
+
+  for (const size of [11, 10, 9, 8, 7]) {
+    const lines = tryFit(size, display);
+    if (lines) return { lines, fontSize: size };
+  }
+  // Couldn't fit tenant + number. Try just the house number.
+  if (houseNum && houseNum !== display) {
+    for (const size of [11, 10, 9, 8, 7]) {
+      const lines = tryFit(size, houseNum.toUpperCase());
+      if (lines) return { lines, fontSize: size };
+    }
+  }
+  return null;
+}
+
 function wayToPoints(way: OverpassWay, data: OverpassData, project: Projector["project"]): Pt[] {
   const pts: Pt[] = [];
   for (const id of way.nodes) {
@@ -294,13 +508,24 @@ export async function renderGoadPlan(args: RenderGoadPlanArgs): Promise<RenderGo
   const projector = makeProjector(args.bbox, mapWidth, mapHeight, mapX, mapY);
   const project = projector.project;
 
-  // 1. Overpass.
+  // 1. Overpass. Retry once after 1s if the first call fails or returns
+  // an empty buildings set — the public Overpass API is flaky and a
+  // second attempt usually succeeds. Logs the raw counts so blank
+  // renders are diagnosable from Railway logs.
   let osm: OverpassData = { nodes: new Map(), buildings: [], roads: [] };
-  try {
-    osm = await fetchOsm(args.bbox);
-  } catch (err: any) {
-    console.warn("[goad-plan] Overpass failed:", err?.message);
+  let osmAttempts = 0;
+  for (let i = 0; i < 2; i++) {
+    osmAttempts++;
+    try {
+      osm = await fetchOsm(args.bbox);
+      if (osm.buildings.length > 0) break;
+      console.warn(`[goad-plan] Overpass returned 0 buildings (attempt ${i + 1}) for bbox ${JSON.stringify(args.bbox)}`);
+    } catch (err: any) {
+      console.warn(`[goad-plan] Overpass failed (attempt ${i + 1}):`, err?.message);
+    }
+    if (i === 0) await new Promise((r) => setTimeout(r, 1000));
   }
+  console.log(`[goad-plan] Overpass: ${osm.buildings.length} buildings, ${osm.roads.length} roads after ${osmAttempts} attempt(s)`);
 
   // 2. Project every building + road.
   const buildings: PolyBuilding[] = [];
@@ -432,30 +657,36 @@ function buildSvg(a: BuildSvgArgs): string {
     parts.push(`<path d="${d}" fill="${PLAN_COLORS.subjectFill}" stroke="${PLAN_COLORS.subjectLine}" stroke-width="2.6" stroke-linejoin="round"/>`);
   }
 
-  // Tenant labels — rotated along long axis, use-class under tenant
+  // Tenant labels — rotated along the building's long axis, multi-line
+  // with auto-fit font sizing (Edozo-style). Prefer the tenant name;
+  // fall back to house number if no name; drop entirely if nothing fits
+  // cleanly without mid-word truncation.
   for (const [unit, b] of a.unitToBuilding.entries()) {
-    if (!unit.tenantName && !unit.voaDescription) continue;
     const rect = minAreaRect(b.pts);
-    // Skip if polygon is too small to hold any text
-    if (rect.longSide < 22) continue;
-
-    // How much text fits? Rough: ~5.5 px per char at 10px font
-    const maxChars = Math.max(3, Math.floor(rect.longSide / 5.8));
-    const tenantRaw = unit.tenantName || unit.voaDescription || "";
-    const tenant = truncate(tenantRaw, maxChars);
+    if (rect.longSide < 22 || rect.shortSide < 10) continue;
+    const houseNum = extractHouseNumber(unit.address);
+    const tenantSource = unit.tenantName || unit.voaDescription || "";
+    const fit = fitLabelToRect(tenantSource, houseNum, rect.longSide, rect.shortSide);
+    if (!fit) continue;
     const style = CATEGORY_STYLES[unit.category];
     const useLabel = shortUseLabel(unit.category);
-
-    const fontSize = rect.shortSide >= 28 ? 11 : rect.shortSide >= 18 ? 9 : 8;
     const degrees = (rect.angle * 180) / Math.PI;
-    const cx = rect.cx, cy = rect.cy;
+    const fs = fit.fontSize;
+    const lh = fs * 1.25;
+    const lineCount = fit.lines.length;
+    const showUseClass = rect.shortSide >= (lh * (lineCount + 0.9)) && unit.tenantName;
+    // Vertically centre the block. Use-class line sits under the tenant
+    // block at 78% size + reduced opacity.
+    const totalHeight = lh * lineCount + (showUseClass ? lh * 0.85 : 0);
+    let y = -totalHeight / 2 + lh * 0.78; // SVG text baseline trick
 
-    parts.push(`<g transform="translate(${cx.toFixed(1)} ${cy.toFixed(1)}) rotate(${degrees.toFixed(1)})">`);
-    if (rect.shortSide >= 20) {
-      parts.push(`<text class="tenant" y="-${(fontSize * 0.55).toFixed(1)}" font-size="${fontSize}" fill="${style.textColor}">${esc(tenant)}</text>`);
-      parts.push(`<text class="use" y="${(fontSize * 0.7).toFixed(1)}" font-size="${(fontSize * 0.78).toFixed(1)}" fill="${style.textColor}" opacity="0.82">${esc(useLabel)}</text>`);
-    } else {
-      parts.push(`<text class="tenant" font-size="${fontSize}" fill="${style.textColor}">${esc(tenant)}</text>`);
+    parts.push(`<g transform="translate(${rect.cx.toFixed(1)} ${rect.cy.toFixed(1)}) rotate(${degrees.toFixed(1)})">`);
+    for (const line of fit.lines) {
+      parts.push(`<text class="tenant" y="${y.toFixed(1)}" font-size="${fs}" fill="${style.textColor}" text-anchor="middle">${esc(line)}</text>`);
+      y += lh;
+    }
+    if (showUseClass) {
+      parts.push(`<text class="use" y="${y.toFixed(1)}" font-size="${(fs * 0.78).toFixed(1)}" fill="${style.textColor}" text-anchor="middle" opacity="0.78">${esc(useLabel)}</text>`);
     }
     parts.push(`</g>`);
   }

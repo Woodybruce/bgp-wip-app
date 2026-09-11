@@ -130,8 +130,7 @@ const BRAND_DICTIONARY: Record<string, RetailCategory> = {
   "lush": "beauty", "the body shop": "beauty", "body shop": "beauty", "rituals": "beauty",
   "l'occitane": "beauty", "loccitane": "beauty", "jo malone": "beauty", "charlotte tilbury": "beauty",
   "mac": "beauty", "mac cosmetics": "beauty", "kiehl's": "beauty", "aesop": "beauty",
-  "space nk": "beauty", "sephora": "beauty", "boots": "beauty",
-  "superdrug": "beauty",
+  "space nk": "beauty", "sephora": "beauty",
   "timpson": "services", "johnsons cleaners": "beauty", "jeeves": "beauty",
 };
 

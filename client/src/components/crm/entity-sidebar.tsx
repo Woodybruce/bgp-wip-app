@@ -205,7 +205,7 @@ export function EntitySidebarProvider({ children }: { children: React.ReactNode 
             <>
               <SheetHeader className="px-5 pt-5 pb-3 border-b">
                 <div className="flex items-center gap-2 pr-6">
-                  <Badge className={`text-[10px] px-1.5 py-0.5 ${TYPE_COLORS[entity.type]} text-white`}>
+                  <Badge variant="outline" className={`border-transparent text-[10px] px-1.5 py-0.5 ${TYPE_COLORS[entity.type]} text-white`}>
                     {TYPE_LABELS[entity.type]}
                   </Badge>
                 </div>

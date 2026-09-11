@@ -40,6 +40,8 @@ type SidebarContextProps = {
   setOpenMobile: (open: boolean) => void
   isMobile: boolean
   toggleSidebar: () => void
+  peeking: boolean
+  setPeeking: (peeking: boolean) => void
 }
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null)
@@ -88,6 +90,11 @@ function SidebarProvider({
     [setOpenProp, open]
   )
 
+  // Transient peek state — when the user hovers a collapsed sidebar, it
+  // expands as a floating overlay without shifting the main content.
+  // Distinct from `open` (the pinned/persisted state).
+  const [peeking, setPeeking] = React.useState(false)
+
   // Helper to toggle the sidebar.
   const toggleSidebar = React.useCallback(() => {
     return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open)
@@ -111,7 +118,8 @@ function SidebarProvider({
 
   // We add a state so that we can do data-state="expanded" or "collapsed".
   // This makes it easier to style the sidebar with Tailwind classes.
-  const state = open ? "expanded" : "collapsed"
+  // Peek temporarily expands the visual state without changing `open`.
+  const state = open || peeking ? "expanded" : "collapsed"
 
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
@@ -122,8 +130,10 @@ function SidebarProvider({
       openMobile,
       setOpenMobile,
       toggleSidebar,
+      peeking,
+      setPeeking,
     }),
-    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar]
+    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar, peeking]
   )
 
   return (
@@ -163,7 +173,9 @@ function Sidebar({
   variant?: "sidebar" | "floating" | "inset"
   collapsible?: "offcanvas" | "icon" | "none"
 }) {
-  const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+  const { isMobile, state, openMobile, setOpenMobile, open, peeking } = useSidebar()
+  // Peek mode: expanded visually but content layout stays collapsed.
+  const isPeeking = peeking && !open
 
   if (collapsible === "none") {
     return (
@@ -210,6 +222,9 @@ function Sidebar({
       className="group peer text-sidebar-foreground hidden md:block"
       data-state={state}
       data-collapsible={state === "collapsed" ? collapsible : ""}
+      // Peek = visually expanded but layout slot kept at icon width so the
+      // expanded panel floats over the main content instead of pushing it.
+      data-peek={isPeeking ? "true" : undefined}
       data-variant={variant}
       data-side={side}
       data-slot="sidebar"
@@ -223,7 +238,12 @@ function Sidebar({
           "group-data-[side=right]:rotate-180",
           variant === "floating" || variant === "inset"
             ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+var(--spacing-4))]"
-            : "group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)]"
+            : "group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)]",
+          // During peek, the gap must NOT widen — the expanded container
+          // floats above content rather than reserving layout space.
+          variant === "floating" || variant === "inset"
+            ? "group-data-[peek=true]:w-[calc(var(--sidebar-width-icon)+var(--spacing-4))]!"
+            : "group-data-[peek=true]:w-[var(--sidebar-width-icon)]!"
         )}
       />
       <div
@@ -237,6 +257,9 @@ function Sidebar({
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+var(--spacing-4)+2px)]"
             : "group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)] group-data-[side=left]:border-r group-data-[side=right]:border-l",
+          // When peeking, lift the container above content with a shadow so
+          // it reads as a floating overlay rather than a docked panel.
+          "group-data-[peek=true]:shadow-2xl group-data-[peek=true]:z-30",
           className
         )}
         {...props}

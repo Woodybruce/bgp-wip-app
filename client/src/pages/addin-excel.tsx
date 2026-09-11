@@ -16,12 +16,19 @@ import {
 import bgpLogoBlack from "@assets/BGP_BlackHolder_1771853582461.png";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { AddinHeader } from "@/components/addin-header";
+import { Pill } from "@/components/ui/pill";
+import { useToast } from "@/hooks/use-toast";
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  // Auto-read data round-trips stay in the API context but never render —
+  // dumping 200 rows of CSV into the visible thread buried the conversation.
+  hidden?: boolean;
+  // Set when auto-apply wrote this message's actions into the workbook.
+  autoApplied?: { ok: number; fail: number };
 }
 
 interface SPItem {
@@ -40,10 +47,10 @@ const TOKEN_KEY = "bgp_addin_token";
 const USER_KEY = "bgp_addin_user";
 
 const QUICK_ACTIONS = [
-  { label: "Write a formula", prompt: "Help me write an Excel formula to ", icon: FileSpreadsheet, color: "text-emerald-500" },
-  { label: "Property data", prompt: "Look up CRM data for property ", icon: Building2, color: "text-blue-500" },
-  { label: "Financial model", prompt: "Help me build a financial model for ", icon: BarChart3, color: "text-amber-500" },
-  { label: "Contact lookup", prompt: "Find contact details for ", icon: Users, color: "text-violet-500" },
+  { label: "Write a formula", prompt: "Help me write an Excel formula to ", icon: FileSpreadsheet, color: "text-muted-foreground" },
+  { label: "Property data", prompt: "Look up CRM data for property ", icon: Building2, color: "text-muted-foreground" },
+  { label: "Financial model", prompt: "Help me build a financial model for ", icon: BarChart3, color: "text-muted-foreground" },
+  { label: "Contact lookup", prompt: "Find contact details for ", icon: Users, color: "text-muted-foreground" },
 ];
 
 function CodeBlock({ code, language }: { code: string; language: string }) {
@@ -120,6 +127,53 @@ function AddinLogin({ onLogin }: { onLogin: (token: string, name: string) => voi
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [msLoading, setMsLoading] = useState(false);
+
+  // Sign in with Microsoft — opens the existing SSO flow in an Office dialog
+  // (reusing /api/auth/microsoft + the registered callback, so no new Azure
+  // redirect URI). The completion page posts a one-time code back here, which
+  // we swap for a bearer token via /api/auth/sso-exchange.
+  const signInWithMicrosoft = () => {
+    setError("");
+    const OfficeRef = (window as any).Office;
+    if (!OfficeRef?.context?.ui?.displayDialogAsync) {
+      setError("Microsoft sign-in needs to run inside the Office task pane.");
+      return;
+    }
+    setMsLoading(true);
+    const url = `${window.location.origin}/api/auth/microsoft?addin=1`;
+    OfficeRef.context.ui.displayDialogAsync(url, { height: 60, width: 30, promptBeforeOpen: false }, (result: any) => {
+      if (result.status !== "succeeded" || !result.value) {
+        setMsLoading(false);
+        setError("Couldn't open the Microsoft sign-in window.");
+        return;
+      }
+      const dialog = result.value;
+      const finish = () => { try { dialog.close(); } catch {} setMsLoading(false); };
+      dialog.addEventHandler(OfficeRef.EventType.DialogMessageReceived, async (arg: any) => {
+        let msg: any = {};
+        try { msg = JSON.parse(arg.message || "{}"); } catch {}
+        if (msg.sso_code) {
+          finish();
+          try {
+            const r = await fetch("/api/auth/sso-exchange", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({ code: msg.sso_code }),
+            });
+            const data = await r.json();
+            if (r.ok && data.token) onLogin(data.token, data.name || data.username || "");
+            else setError(data.message || "Microsoft sign-in failed.");
+          } catch { setError("Microsoft sign-in failed. Please try again."); }
+        } else {
+          finish();
+          setError(msg.error || "Microsoft sign-in was cancelled.");
+        }
+      });
+      dialog.addEventHandler(OfficeRef.EventType.DialogEventReceived, () => { finish(); });
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -178,6 +232,34 @@ function AddinLogin({ onLogin }: { onLogin: (token: string, name: string) => voi
           <h2 style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.01em", margin: 0 }}>ChatBGP for Excel</h2>
           <p style={{ fontSize: 11, color: "#6b7280", marginTop: 4, margin: 0 }}>Sign in to get started</p>
         </div>
+        <button
+          type="button"
+          onClick={signInWithMicrosoft}
+          disabled={msLoading}
+          data-testid="button-login-microsoft"
+          style={{
+            width: "100%", height: 40, borderRadius: 12, fontSize: 13, fontWeight: 500,
+            background: "#fff", color: "#111", border: "1px solid rgba(0,0,0,0.15)", cursor: msLoading ? "wait" : "pointer",
+            display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 14,
+          }}
+        >
+          {msLoading ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 23 23" aria-hidden="true">
+              <rect x="1" y="1" width="10" height="10" fill="#F25022" />
+              <rect x="12" y="1" width="10" height="10" fill="#7FBA00" />
+              <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
+              <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
+            </svg>
+          )}
+          Sign in with Microsoft
+        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
+          <div style={{ flex: 1, height: 1, background: "rgba(0,0,0,0.1)" }} />
+          <span style={{ fontSize: 10, color: "#9ca3af" }}>or sign in with email</span>
+          <div style={{ flex: 1, height: 1, background: "rgba(0,0,0,0.1)" }} />
+        </div>
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <input
             type="text"
@@ -219,7 +301,7 @@ function AddinLogin({ onLogin }: { onLogin: (token: string, name: string) => voi
             }}
           >
             {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-            Sign In
+            Sign in
           </button>
         </form>
       </div>
@@ -529,7 +611,7 @@ function SharePointBrowser({ getHeaders }: { getHeaders: () => Record<string, st
           </div>
         ) : sortedItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-20 text-[11px] text-muted-foreground">
-            {searchQuery ? "No matching files" : "Drop files here or click Upload"}
+            {searchQuery ? "No matching files" : "Drop files here, or upload"}
           </div>
         ) : (
           <div className="py-1">
@@ -966,64 +1048,76 @@ async function buildModelInWorkbook(
       cellsWritten, totalCells, formulasWritten, namedRangesSet,
     });
 
-    // Batch write: process cells in chunks via single Excel.run calls
+    // Batch write: process cells in chunks via single Excel.run calls.
+    // If a chunked sync() throws (one bad formula/format rejects the whole
+    // batch in Excel), we fall back to cell-by-cell so only the specific
+    // bad cells are lost rather than all 50 in the chunk.
     const BATCH_SIZE = 50;
+    const applyCellOps = (sheet: any, cellDef: any) => {
+      const range = sheet.getRange(cellDef.cell);
+      if (cellDef.formula) {
+        const f = cellDef.formula.startsWith("=") ? cellDef.formula : `=${cellDef.formula}`;
+        range.formulas = [[f]];
+      } else if (cellDef.value !== undefined) {
+        range.values = [[cellDef.value]];
+      }
+      if (cellDef.numberFormat) range.numberFormat = [[cellDef.numberFormat]];
+      if (cellDef.bold) range.format.font.bold = true;
+      if (cellDef.fontColor) range.format.font.color = argbToHex(cellDef.fontColor);
+      if (cellDef.fillColor) range.format.fill.color = argbToHex(cellDef.fillColor);
+      if (cellDef.fontSize) range.format.font.size = cellDef.fontSize;
+      if (cellDef.horizontalAlignment) range.format.horizontalAlignment = cellDef.horizontalAlignment;
+      if (cellDef.borders) {
+        const styleMap: Record<string, string> = { thin: "Thin", medium: "Medium", thick: "Thick" };
+        const style = styleMap[cellDef.borders] || "Thin";
+        const border = range.format.borders;
+        for (const edge of ["EdgeTop", "EdgeBottom", "EdgeLeft", "EdgeRight"]) {
+          const b = border.getItem(edge);
+          b.style = style;
+          b.color = "#B0BEC5";
+        }
+      }
+      if (cellDef.merge) {
+        const mergeRange = sheet.getRange(cellDef.merge);
+        mergeRange.merge();
+      }
+    };
+
     for (let batchStart = 0; batchStart < sheetDef.cells.length; batchStart += BATCH_SIZE) {
       const batch = sheetDef.cells.slice(batchStart, batchStart + BATCH_SIZE);
+      let batchWritten = 0;
+      let batchFormulas = 0;
       try {
         await window.Excel.run(async (context: any) => {
           const sheet = context.workbook.worksheets.getItem(sheetDef.name);
           for (const cellDef of batch) {
-            const range = sheet.getRange(cellDef.cell);
-
-            // Set value or formula
-            if (cellDef.formula) {
-              const f = cellDef.formula.startsWith("=") ? cellDef.formula : `=${cellDef.formula}`;
-              range.formulas = [[f]];
-              formulasWritten++;
-            } else if (cellDef.value !== undefined) {
-              range.values = [[cellDef.value]];
-            }
-
-            // Apply number format
-            if (cellDef.numberFormat) {
-              range.numberFormat = [[cellDef.numberFormat]];
-            }
-
-            // Apply formatting
-            if (cellDef.bold) range.format.font.bold = true;
-            if (cellDef.fontColor) range.format.font.color = argbToHex(cellDef.fontColor);
-            if (cellDef.fillColor) range.format.fill.color = argbToHex(cellDef.fillColor);
-            if (cellDef.fontSize) range.format.font.size = cellDef.fontSize;
-            if (cellDef.horizontalAlignment) range.format.horizontalAlignment = cellDef.horizontalAlignment;
-
-            // Borders
-            if (cellDef.borders) {
-              const styleMap: Record<string, string> = { thin: "Thin", medium: "Medium", thick: "Thick" };
-              const style = styleMap[cellDef.borders] || "Thin";
-              const border = range.format.borders;
-              for (const edge of ["EdgeTop", "EdgeBottom", "EdgeLeft", "EdgeRight"]) {
-                const b = border.getItem(edge);
-                b.style = style;
-                b.color = "#B0BEC5";
-              }
-            }
-
-            // Merge
-            if (cellDef.merge) {
-              const mergeRange = sheet.getRange(cellDef.merge);
-              mergeRange.merge();
-            }
-
-            cellsWritten++;
+            applyCellOps(sheet, cellDef);
+            batchWritten++;
+            if (cellDef.formula) batchFormulas++;
           }
           await context.sync();
         });
+        cellsWritten += batchWritten;
+        formulasWritten += batchFormulas;
       } catch (e: any) {
-        console.warn(`[build-model] Batch error on ${sheetDef.name}:`, e?.message);
+        console.warn(`[build-model] Batch failed on ${sheetDef.name} (cells ${batchStart}-${batchStart + batch.length}). Retrying cell-by-cell:`, e?.message);
+        // Per-cell fallback — slow but guarantees one bad cell only loses
+        // itself, not the 49 healthy neighbours.
+        for (const cellDef of batch) {
+          try {
+            await window.Excel.run(async (context: any) => {
+              const sheet = context.workbook.worksheets.getItem(sheetDef.name);
+              applyCellOps(sheet, cellDef);
+              await context.sync();
+            });
+            cellsWritten++;
+            if (cellDef.formula) formulasWritten++;
+          } catch (cellErr: any) {
+            console.warn(`[build-model] Dropped cell ${sheetDef.name}!${cellDef.cell}: ${cellErr?.message}${cellDef.formula ? ` (formula: ${cellDef.formula})` : ""}`);
+          }
+        }
       }
 
-      // Progress update after each batch
       onProgress({
         phase: "Writing cells",
         sheetName: sheetDef.name,
@@ -1068,16 +1162,32 @@ interface ExcelAction {
   value?: string | number;
 }
 
+// Whitelist of action types the add-in actually implements. The AI sometimes
+// hallucinates richer actions (highlightCell, mergeCells, applyFormat, etc) —
+// those silently produce no effect after the user clicks Apply, which is
+// confusing. We filter them out at the parser so they don't even render as
+// buttons. Update this list when adding new Office.js action handlers below.
+const SUPPORTED_EXCEL_ACTIONS = new Set(["writeValue", "writeFormula"]);
+
+// How many columns of the active sheet to package up and send to the model.
+// Was 30 — bumped after the Landsec tenancy export (43 cols) couldn't see
+// past column AD. Trade-off is payload size on chat-with-files calls; 100
+// covers virtually every real-world export without breaking the cache.
+const EXCEL_MAX_COLS = 100;
+
 function parseExcelActions(content: string): ExcelAction[] {
   const actions: ExcelAction[] = [];
-  // Parse JSON action blocks
+  // Parse JSON action blocks — a block may hold one action object OR an
+  // array of them (the model batches when writing many cells).
   const jsonBlockRegex = /```json\s*\n?([\s\S]*?)```/g;
   let match;
   while ((match = jsonBlockRegex.exec(content)) !== null) {
     try {
       const parsed = JSON.parse(match[1].trim());
-      if (parsed.action && parsed.sheet && parsed.cell) {
-        actions.push(parsed);
+      for (const p of Array.isArray(parsed) ? parsed : [parsed]) {
+        if (!p || !p.action || !p.sheet || !p.cell) continue;
+        if (!SUPPORTED_EXCEL_ACTIONS.has(p.action)) continue;
+        actions.push(p);
       }
     } catch {}
   }
@@ -1092,6 +1202,35 @@ function parseExcelActions(content: string): ExcelAction[] {
   return actions;
 }
 
+// Strip the machine-readable action blocks (```json {action…}``` and
+// ```excel =FORMULA```) from the message so the chat shows ONLY the
+// human prose. The blocks are rendered separately as Apply buttons by
+// parseExcelActions — without this strip they'd appear twice: once as
+// raw JSON the user shouldn't see, once as the clean button. Only
+// strips json blocks that actually parse to a supported action, so a
+// legitimate ```json``` snippet the user asked for stays visible.
+function stripExcelActionBlocks(content: string): string {
+  let out = content.replace(/```json\s*\n?([\s\S]*?)```/g, (full, body) => {
+    try {
+      const parsed = JSON.parse(String(body).trim());
+      // Strip ANY action block — writes render as Apply buttons, reads are
+      // fulfilled automatically, and hallucinated verbs are dropped. Every
+      // one of them is machinery the user shouldn't see. (Previously only
+      // supported writes were stripped, so readRange/readSheet blocks showed
+      // as raw JSON in the chat — the "code-y commentary" complaint.)
+      const items = Array.isArray(parsed) ? parsed : [parsed];
+      if (items.length && items.every((p: any) => p && typeof p.action === "string")) return "";
+    } catch {}
+    return full; // not an action block — leave it
+  });
+  // Bare (unfenced) read requests the model sometimes emits inline in prose.
+  out = out.replace(/\{[^{}]*"action"\s*:\s*"(?:readRange|readSheet)"[^{}]*\}/g, "");
+  // Excel formula blocks always become buttons — strip them all.
+  out = out.replace(/```excel\s*\n?[\s\S]*?```/g, "");
+  // Collapse the blank-line gaps left behind so the prose stays tight.
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 interface WorkbookInfo {
   fileName: string;
   activeSheetName: string;
@@ -1103,6 +1242,7 @@ interface WorkbookInfo {
     frozenRows: number;
     frozenCols: number;
     headers: string[];
+    data: string;
   }>;
   activeSheetData: string;
 }
@@ -1185,7 +1325,7 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
       const activeSheetName = activeSheet.name;
       const sheetInfos: WorkbookInfo["sheets"] = [];
 
-      const rangeInfos: Array<{sheet: any; usedRange: any; headerRange: any; frozenRange: any}> = [];
+      const rangeInfos: Array<{sheet: any; usedRange: any; headerRange: any; frozenRange: any; dataRange: any}> = [];
       for (const sheet of sheets.items) {
         const usedRange = sheet.getUsedRangeOrNullObject();
         usedRange.load(["rowCount", "columnCount"]);
@@ -1194,15 +1334,25 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
           frozenRange = sheet.freezePanes.getLocationOrNullObject();
           frozenRange.load(["rowIndex", "columnIndex", "rowCount", "columnCount"]);
         } catch {}
-        rangeInfos.push({ sheet, usedRange, headerRange: null, frozenRange });
+        rangeInfos.push({ sheet, usedRange, headerRange: null, frozenRange, dataRange: null });
       }
       await context.sync();
 
+      let dataSheetsLoaded = 0;
       for (const info of rangeInfos) {
         if (!info.usedRange.isNullObject && info.usedRange.columnCount > 0) {
-          const colCount = Math.min(info.usedRange.columnCount, 30);
+          const colCount = Math.min(info.usedRange.columnCount, EXCEL_MAX_COLS);
           info.headerRange = info.sheet.getRangeByIndexes(0, 0, 1, colCount);
           info.headerRange.load("values");
+          // Pull EACH sheet's data (capped) so ChatBGP sees the whole workbook,
+          // not just the active sheet. Bounded to keep the payload sane.
+          if (dataSheetsLoaded < 25) {
+            const capRows = info.sheet.name === activeSheetName ? 200 : 150;
+            const rowCount = Math.min(info.usedRange.rowCount, capRows);
+            info.dataRange = info.sheet.getRangeByIndexes(0, 0, rowCount, colCount);
+            info.dataRange.load("values");
+            dataSheetsLoaded++;
+          }
         }
       }
       await context.sync();
@@ -1224,6 +1374,11 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
             .filter((s: string) => s.length > 0);
         }
 
+        let sheetData = "";
+        if (info.dataRange && info.dataRange.values) {
+          sheetData = valuesToCsv(info.dataRange.values, isActive ? 200 : 150, EXCEL_MAX_COLS);
+        }
+
         sheetInfos.push({
           name: info.sheet.name,
           rows: info.usedRange.isNullObject ? 0 : info.usedRange.rowCount,
@@ -1232,6 +1387,7 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
           frozenRows,
           frozenCols,
           headers,
+          data: sheetData,
         });
       }
 
@@ -1241,7 +1397,7 @@ async function readFullWorkbook(): Promise<WorkbookInfo | null> {
         activeUsedRange.load(["values", "rowCount", "columnCount", "address"]);
         await context.sync();
         if (!activeUsedRange.isNullObject && activeUsedRange.values) {
-          activeSheetData = valuesToCsv(activeUsedRange.values, 200, 30);
+          activeSheetData = valuesToCsv(activeUsedRange.values, 200, EXCEL_MAX_COLS);
         }
       } catch {}
 
@@ -1271,8 +1427,15 @@ function formatWorkbookContext(info: WorkbookInfo): string {
       ctx += `    Columns: ${sheet.headers.join(" | ")}\n`;
     }
   }
-  ctx += `\n=== ACTIVE SHEET DATA: ${info.activeSheetName} ===\n`;
-  ctx += info.activeSheetData;
+  // Dump each sheet's data so ChatBGP can work across the whole workbook,
+  // not just the active sheet. Total-size guard so a huge workbook can't
+  // blow the context window.
+  const MAX_CTX = 60000;
+  for (const sheet of info.sheets) {
+    if (!sheet.data) continue;
+    if (ctx.length > MAX_CTX) { ctx += `\n…[further sheet data truncated — ask me to read a specific sheet]\n`; break; }
+    ctx += `\n=== SHEET: ${sheet.name}${sheet.isActive ? " (ACTIVE)" : ""} ===\n${sheet.data}\n`;
+  }
   return ctx;
 }
 
@@ -1288,12 +1451,79 @@ async function readExcelSelection(): Promise<string> {
       if (!rows || rows.length === 0 || (rows.length === 1 && rows[0].length === 1 && !rows[0][0])) return "";
 
       let csv = `\n=== CURRENT SELECTION: ${range.address} (${range.rowCount} rows x ${range.columnCount} cols) ===\n`;
-      csv += valuesToCsv(rows, 100, 30);
+      csv += valuesToCsv(rows, 100, EXCEL_MAX_COLS);
       return csv;
     });
   } catch (err) {
     console.error("[Excel] Failed to read selection:", err);
     return "";
+  }
+}
+
+// Read any sheet/range on demand (fulfils the AI's readRange/readSheet actions).
+async function readExcelRange(sheetName: string, rangeAddr?: string): Promise<string> {
+  const tag = `${sheetName || "active"}${rangeAddr ? "!" + rangeAddr : ""}`;
+  try {
+    if (!window.Excel) return `\n=== ${tag}: Excel not available ===\n`;
+    return await window.Excel.run(async (context: any) => {
+      let ws: any;
+      if (sheetName) {
+        ws = context.workbook.worksheets.getItemOrNullObject(sheetName);
+        ws.load("isNullObject");
+        await context.sync();
+        if (ws.isNullObject) return `\n=== Sheet "${sheetName}" not found ===\n`;
+      } else {
+        ws = context.workbook.worksheets.getActiveWorksheet();
+      }
+      const range = rangeAddr ? ws.getRange(rangeAddr) : ws.getUsedRangeOrNullObject();
+      range.load(["values", "rowCount", "columnCount", "isNullObject", "address"]);
+      await context.sync();
+      if (range.isNullObject) return `\n=== ${tag}: (empty) ===\n`;
+      let csv = `\n=== ${tag} (${range.rowCount} rows x ${range.columnCount} cols) ===\n`;
+      csv += valuesToCsv(range.values, 200, EXCEL_MAX_COLS);
+      return csv;
+    });
+  } catch (err: any) {
+    return `\n=== ${tag}: read failed (${err?.message || "error"}) ===\n`;
+  }
+}
+
+// Pull the AI's read requests out of a reply (readRange / readSheet action blocks).
+function extractReadRequests(text: string): Array<{ sheet: string; range?: string }> {
+  const out: Array<{ sheet: string; range?: string }> = [];
+  const re = /\{[^{}]*"action"\s*:\s*"(?:readRange|readSheet)"[^{}]*\}/g;
+  for (const m of text.match(re) || []) {
+    try {
+      const o = JSON.parse(m);
+      if (o.sheet || o.range) out.push({ sheet: o.sheet || "", range: o.range });
+    } catch { /* ignore malformed */ }
+  }
+  return out;
+}
+
+// Return the currently selected cell as { sheet, cell } so Apply
+// buttons can default to it when the AI didn't name a target. Returns
+// null if Excel isn't available or nothing's selected.
+async function getActiveCellRef(): Promise<{ sheet: string; cell: string } | null> {
+  try {
+    if (!window.Excel) return null;
+    return await window.Excel.run(async (context: any) => {
+      const range = context.workbook.getSelectedRange();
+      const sheet = context.workbook.worksheets.getActiveWorksheet();
+      range.load(["address"]);
+      sheet.load(["name"]);
+      await context.sync();
+      // range.address is like "Sheet1!A1" or "'Royal Exchange'!A1:B3" —
+      // peel off the sheet and take the top-left cell of the selection.
+      const addr: string = range.address || "";
+      const parts = addr.split("!");
+      const cellPart = parts.length > 1 ? parts[1] : parts[0];
+      const cell = cellPart.split(":")[0].replace(/\$/g, "");
+      return { sheet: sheet.name, cell };
+    });
+  } catch (err) {
+    console.error("[Excel] Failed to read active cell:", err);
+    return null;
   }
 }
 
@@ -1462,26 +1692,26 @@ function ModelBuilder({ getHeaders }: { getHeaders: () => Record<string, string>
   };
 
   const fields: Array<{ key: string; label: string; prefix?: string; suffix?: string; step?: number }> = [
-    { key: "propertyName", label: "Property Name" },
-    { key: "purchasePrice", label: "Purchase Price", prefix: "\u00a3" },
-    { key: "totalAreaSqFt", label: "Net Area", suffix: "sq ft" },
+    { key: "propertyName", label: "Property name" },
+    { key: "purchasePrice", label: "Purchase price", prefix: "\u00a3" },
+    { key: "totalAreaSqFt", label: "Net area", suffix: "sq ft" },
     { key: "ervPerSqFt", label: "Rent per sq ft", prefix: "\u00a3" },
-    { key: "currentRentPA", label: "Current Rent p.a.", prefix: "\u00a3" },
-    { key: "voidPeriodMonths", label: "Void Period", suffix: "months", step: 1 },
+    { key: "currentRentPA", label: "Current rent p.a.", prefix: "\u00a3" },
+    { key: "voidPeriodMonths", label: "Void period", suffix: "months", step: 1 },
     { key: "ltv", label: "LTV", suffix: "%" },
-    { key: "interestRate", label: "Interest Rate", suffix: "%" },
-    { key: "exitCapRate", label: "Exit Cap Rate", suffix: "%" },
-    { key: "holdPeriodYears", label: "Hold Period", suffix: "years", step: 1 },
-    { key: "rentGrowthPA", label: "Rent Growth p.a.", suffix: "%" },
-    { key: "stampDutyRate", label: "SDLT Rate", suffix: "%" },
+    { key: "interestRate", label: "Interest rate", suffix: "%" },
+    { key: "exitCapRate", label: "Exit cap rate", suffix: "%" },
+    { key: "holdPeriodYears", label: "Hold period", suffix: "years", step: 1 },
+    { key: "rentGrowthPA", label: "Rent growth p.a.", suffix: "%" },
+    { key: "stampDutyRate", label: "SDLT rate", suffix: "%" },
   ];
 
   return (
     <div className="flex flex-col h-full">
       <div className="px-3 py-2.5 border-b border-border/40 shrink-0">
         <div className="flex items-center gap-2 mb-2">
-          <Hammer className="w-4 h-4 text-amber-500" />
-          <span className="text-[12px] font-semibold">Model Builder</span>
+          <Hammer className="w-4 h-4 text-muted-foreground" />
+          <span className="text-[12px] font-semibold">Model builder</span>
         </div>
         <select
           value={modelType}
@@ -1569,7 +1799,7 @@ function ModelBuilder({ getHeaders }: { getHeaders: () => Record<string, string>
           ) : (
             <Play className="w-3.5 h-3.5 mr-1.5" />
           )}
-          Build Model in Excel
+          Build model in Excel
         </Button>
         <Button
           variant="outline"
@@ -1579,7 +1809,7 @@ function ModelBuilder({ getHeaders }: { getHeaders: () => Record<string, string>
           data-testid="button-sync-assumptions"
         >
           <RefreshCw className="w-3 h-3 mr-1.5" />
-          Sync Assumptions from Sheet
+          Refresh assumptions from sheet
         </Button>
       </div>
     </div>
@@ -1588,31 +1818,59 @@ function ModelBuilder({ getHeaders }: { getHeaders: () => Record<string, string>
 
 // ─── Excel Action Button Component ────────────────────────────────────────
 
-function ExcelActionButton({ action, onApply }: { action: ExcelAction; onApply: (a: ExcelAction) => void }) {
+// Friendly button label — "Set D24 to 5.5%" or "Add formula to D24" —
+// instead of the machine-y "Write to Sheet1!D24". Falls back to "the
+// selected cell" when no target is set yet.
+function describeAction(a: ExcelAction): string {
+  const where = a.cell
+    ? (a.sheet ? `${a.sheet}!${a.cell}` : a.cell)
+    : "the selected cell";
+  if (a.formula) {
+    return `Add formula to ${where}`;
+  }
+  if (a.value !== undefined && a.value !== null) {
+    let v = typeof a.value === "number"
+      ? a.value.toLocaleString("en-GB", { maximumFractionDigits: 2 })
+      : String(a.value);
+    if (v.length > 24) v = v.slice(0, 22) + "…";
+    return `Set ${where} to ${v}`;
+  }
+  return `Update ${where}`;
+}
+
+function ExcelActionButton({ action, onApply }: { action: ExcelAction; onApply: (a: ExcelAction) => Promise<void> | void }) {
   const [applied, setApplied] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleApply = async () => {
     setApplying(true);
-    onApply(action);
-    setApplied(true);
-    setApplying(false);
+    setError(null);
+    try {
+      await onApply(action);
+      setApplied(true);
+    } catch (e: any) {
+      setError(e?.message || "Couldn't apply");
+    } finally {
+      setApplying(false);
+    }
   };
 
-  const label = action.formula
-    ? `Apply formula to ${action.sheet ? `${action.sheet}!` : ""}${action.cell || "..."}`
-    : `Write to ${action.sheet}!${action.cell}`;
+  const label = describeAction(action);
 
   return (
     <button
       onClick={handleApply}
       disabled={applying || applied}
-      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium transition-all ${
+      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
         applied
           ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-          : "bg-primary/10 text-primary hover:bg-primary/20"
+          : error
+            ? "bg-destructive/10 text-destructive hover:bg-destructive/20"
+            : "bg-primary/10 text-primary hover:bg-primary/20"
       }`}
       data-testid="button-excel-action"
+      title={error || (action.formula ? `Formula: ${action.formula}` : action.value !== undefined ? `Value: ${action.value}` : "")}
     >
       {applied ? (
         <Check className="w-3 h-3" />
@@ -1621,7 +1879,7 @@ function ExcelActionButton({ action, onApply }: { action: ExcelAction; onApply: 
       ) : (
         <Zap className="w-3 h-3" />
       )}
-      {applied ? "Applied" : label}
+      {applied ? "Done" : error ? `Failed — ${error}` : label}
     </button>
   );
 }
@@ -1755,7 +2013,7 @@ function SharePointAttachPicker({
               <Loader2 className="w-4 h-4 animate-spin" />
             </div>
           ) : error ? (
-            <div className="px-3 py-4 text-[12px] text-red-500">{error}</div>
+            <div className="px-3 py-4 text-[12px] text-destructive">{error}</div>
           ) : (
             <div>
               {folders.map((it) => (
@@ -1802,7 +2060,7 @@ function SharePointAttachPicker({
             <Button size="sm" variant="ghost" onClick={onClose} className="h-7 text-[12px]">Cancel</Button>
             <Button size="sm" onClick={attachSelected} disabled={selectedCount === 0 || attaching} className="h-7 text-[12px]" data-testid="button-sp-picker-attach">
               {attaching ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-              Attach {selectedCount > 0 ? `(${selectedCount})` : ""}
+              Attach{selectedCount > 0 ? <span className="font-mono tabular-nums ml-1">{selectedCount}</span> : null}
             </Button>
           </div>
         </div>
@@ -1812,6 +2070,7 @@ function SharePointAttachPicker({
 }
 
 function AddinExcel() {
+  const { toast } = useToast();
   const [token, setToken] = useState<string | null>(() => {
     try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
   });
@@ -1822,6 +2081,20 @@ function AddinExcel() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // Live status from the server's SSE progress events ("Searching CRM…",
+  // "Reading 2 files…") so long tool runs never look like a dead spinner.
+  const [chatProgress, setChatProgress] = useState<string | null>(null);
+  // Auto-apply (Claude add-in parity): write actions land in the workbook as
+  // they arrive, no clicking. Only explicitly-targeted cells — never the
+  // current selection. Off switch persists per machine.
+  const [autoApply, setAutoApply] = useState<boolean>(() => {
+    try { return localStorage.getItem("bgp-excel-autoapply") !== "off"; } catch { return true; }
+  });
+  const autoApplyRef = useRef(autoApply);
+  useEffect(() => {
+    autoApplyRef.current = autoApply;
+    try { localStorage.setItem("bgp-excel-autoapply", autoApply ? "on" : "off"); } catch {}
+  }, [autoApply]);
   const [excelContext, setExcelContext] = useState("");
   const [workbookInfo, setWorkbookInfo] = useState<WorkbookInfo | null>(null);
   const [readingSheet, setReadingSheet] = useState(false);
@@ -1969,9 +2242,11 @@ function AddinExcel() {
     return headers;
   }, [token]);
 
-  const sendMessage = async (text?: string) => {
+  const autoReadRoundsRef = useRef(0);
+  const sendMessage = async (text?: string, opts?: { autoRead?: boolean }) => {
     const msg = (text || input).trim();
-    if ((!msg && attachedFiles.length === 0) || loading) return;
+    if ((!msg && attachedFiles.length === 0) || (loading && !opts?.autoRead)) return;
+    if (!opts?.autoRead) autoReadRoundsRef.current = 0; // reset on a human-initiated turn
     if (!text) setInput("");
     const filesForThisSend = attachedFiles;
     setAttachedFiles([]);
@@ -1981,10 +2256,12 @@ function AddinExcel() {
       role: "user",
       content: msg || (filesForThisSend.length > 0 ? `(Uploaded ${filesForThisSend.length} file${filesForThisSend.length === 1 ? "" : "s"})` : ""),
       timestamp: new Date(),
+      hidden: opts?.autoRead || undefined,
     };
 
     setMessages(prev => [...prev, userMsg]);
     setLoading(true);
+    if (opts?.autoRead) setChatProgress("Reading the workbook…");
 
     let ctx = excelContext;
     try {
@@ -2065,6 +2342,7 @@ function AddinExcel() {
             if (line.startsWith("data: ")) {
               try {
                 const data = JSON.parse(line.slice(6));
+                if (data.progress) setChatProgress(String(data.progress));
                 if (data.reply) {
                   fullReply = data.reply;
                 }
@@ -2088,6 +2366,41 @@ function AddinExcel() {
           timestamp: new Date(),
         };
         setMessages(prev => [...prev, assistantMsg]);
+
+        // Auto-apply: write the reply's actions straight into the workbook.
+        // Only actions with an explicit sheet+cell — auto-writing into
+        // whatever cell happens to be selected would be a footgun.
+        if (autoApplyRef.current) {
+          const targeted = parseExcelActions(fullReply).filter(a => a.sheet && a.cell && (a.formula || a.value !== undefined));
+          if (targeted.length > 0) {
+            setChatProgress(`Applying ${targeted.length} change${targeted.length === 1 ? "" : "s"} to the workbook…`);
+            let ok = 0, fail = 0, lastError = "";
+            for (const a of targeted) {
+              try {
+                if (a.formula) await setFormulaInCell(a.sheet, a.cell, a.formula);
+                else await writeToCell(a.sheet, a.cell, a.value as string | number);
+                ok++;
+              } catch (e: any) { fail++; lastError = e?.message || String(e); }
+            }
+            setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, autoApplied: { ok, fail } } : m));
+            if (fail > 0) {
+              toast({ title: `${ok} of ${targeted.length} changes applied`, description: lastError, variant: ok === 0 ? "destructive" : undefined });
+            }
+          }
+        }
+      }
+
+      // Auto-fulfil any read requests — read the sheets/ranges live from Excel
+      // and send them straight back so the AI can see the whole workbook and
+      // continue (capped to avoid runaway loops).
+      const reads = fullReply ? extractReadRequests(fullReply) : [];
+      if (reads.length > 0 && autoReadRoundsRef.current < 5) {
+        autoReadRoundsRef.current += 1;
+        setChatProgress(`Reading ${reads.slice(0, 8).map(r => r.range ? `${r.sheet}!${r.range}` : r.sheet).join(", ")}…`);
+        let data = "";
+        for (const r of reads.slice(0, 8)) data += await readExcelRange(r.sheet, r.range);
+        await sendMessage(`Here is the Excel data you requested (read live from the workbook):\n${data}`, { autoRead: true });
+        return;
       }
     } catch (err: any) {
       const errorMsg: Message = {
@@ -2100,12 +2413,19 @@ function AddinExcel() {
     }
 
     setLoading(false);
+    setChatProgress(null);
     inputRef.current?.focus();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Match by both key and code — Excel's task-pane webview occasionally
+    // reports a localised key (e.g. "Send" via a stylus shortcut) instead
+    // of the plain "Enter". Also stop propagation so the host Excel
+    // doesn't grab the keystroke and re-fire it into the active cell.
+    const isEnter = e.key === "Enter" || (e as any).code === "Enter" || (e as any).code === "NumpadEnter";
+    if (isEnter && !e.shiftKey) {
       e.preventDefault();
+      e.stopPropagation();
       sendMessage();
     }
   };
@@ -2167,7 +2487,7 @@ function AddinExcel() {
     <div className="flex flex-col h-screen bg-background text-foreground" style={{ maxWidth: 450 }}>
       <AddinHeader
         title="ChatBGP"
-        subtitle={linkedModelRunName ? `Model: ${linkedModelRunName}` : "Opus 4.6 · Hardcore Builder"}
+        subtitle={linkedModelRunName ? `Model: ${linkedModelRunName}` : "Claude Fable 5 · Hardcore Builder"}
         onNewChat={clearChat}
       >
         {linkedModelRunId && (
@@ -2196,34 +2516,16 @@ function AddinExcel() {
         </Button>
       </AddinHeader>
 
-      <div className="flex items-center h-9 border-b border-border/40 shrink-0">
-        <button
-          onClick={() => setActiveTab("chat")}
-          className={`flex-1 flex items-center justify-center gap-1.5 h-full text-[11px] font-medium transition-all relative ${activeTab === "chat" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-          data-testid="tab-chat"
-        >
-          <MessageSquare className="w-3.5 h-3.5" />
+      <div className="flex items-center flex-wrap gap-1.5 px-3 py-2 border-b border-border/40 shrink-0">
+        <Pill active={activeTab === "chat"} onClick={() => setActiveTab("chat")} data-testid="tab-chat">
           Chat
-          {activeTab === "chat" && <div className="absolute bottom-0 left-3 right-3 h-[2px] bg-primary rounded-full" />}
-        </button>
-        <button
-          onClick={() => setActiveTab("models")}
-          className={`flex-1 flex items-center justify-center gap-1.5 h-full text-[11px] font-medium transition-all relative ${activeTab === "models" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-          data-testid="tab-models"
-        >
-          <Hammer className="w-3.5 h-3.5" />
+        </Pill>
+        <Pill active={activeTab === "models"} onClick={() => setActiveTab("models")} data-testid="tab-models">
           Models
-          {activeTab === "models" && <div className="absolute bottom-0 left-3 right-3 h-[2px] bg-primary rounded-full" />}
-        </button>
-        <button
-          onClick={() => setActiveTab("files")}
-          className={`flex-1 flex items-center justify-center gap-1.5 h-full text-[11px] font-medium transition-all relative ${activeTab === "files" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-          data-testid="tab-files"
-        >
-          <FolderOpen className="w-3.5 h-3.5" />
+        </Pill>
+        <Pill active={activeTab === "files"} onClick={() => setActiveTab("files")} data-testid="tab-files">
           SharePoint
-          {activeTab === "files" && <div className="absolute bottom-0 left-3 right-3 h-[2px] bg-primary rounded-full" />}
-        </button>
+        </Pill>
       </div>
 
       {activeTab === "chat" ? (
@@ -2294,7 +2596,7 @@ function AddinExcel() {
               </div>
             ) : (
               <div className="px-4 py-3 space-y-4">
-                {messages.map((msg) => (
+                {messages.filter(m => !m.hidden).map((msg) => (
                   <div key={msg.id} data-testid={`message-${msg.role}-${msg.id}`}>
                     {msg.role === "user" ? (
                       <div className="flex justify-end">
@@ -2304,24 +2606,44 @@ function AddinExcel() {
                       </div>
                     ) : (
                       <div className="text-[13px] text-foreground leading-relaxed">
-                        <ChatBGPMarkdown content={msg.content} />
+                        <ChatBGPMarkdown content={stripExcelActionBlocks(msg.content)} />
                         {(() => {
                           const actions = parseExcelActions(msg.content);
                           if (actions.length === 0) return null;
+                          // Auto-applied cleanly — a quiet receipt instead of a
+                          // wall of already-done Apply buttons.
+                          if (msg.autoApplied && msg.autoApplied.fail === 0) {
+                            return (
+                              <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border/30 text-[11px] font-medium text-emerald-600">
+                                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                Applied {msg.autoApplied.ok} change{msg.autoApplied.ok === 1 ? "" : "s"} to the workbook
+                              </div>
+                            );
+                          }
+                          // Default to the active sheet + currently selected cell when
+                          // the model didn't name a target. Previously a `prompt()` dialog
+                          // ran here — but iframe prompts don't render in Excel's task
+                          // pane, so the click silently bailed out. Now we read the
+                          // selection from Office.js and apply against that, or fail loudly.
                           const applyOne = async (a: ExcelAction) => {
                             let sheet = a.sheet;
                             let cell = a.cell;
                             if (!sheet || !cell) {
-                              const cellRef = prompt("Enter cell reference (e.g. Sheet1!A1):");
-                              if (!cellRef) return;
-                              const parts = cellRef.split("!");
-                              sheet = parts.length > 1 ? parts[0] : (workbookInfo?.activeSheetName || "Sheet1");
-                              cell = parts.length > 1 ? parts[1] : parts[0];
+                              const active = await getActiveCellRef();
+                              if (active) {
+                                sheet = sheet || active.sheet;
+                                cell = cell || active.cell;
+                              }
+                            }
+                            if (!sheet || !cell) {
+                              throw new Error("No target cell — click a cell in Excel first, then tap apply.");
                             }
                             if (a.formula) {
                               await setFormulaInCell(sheet, cell, a.formula);
                             } else if (a.value !== undefined) {
                               await writeToCell(sheet, cell, a.value);
+                            } else {
+                              throw new Error("Action has no value or formula");
                             }
                           };
                           return (
@@ -2329,17 +2651,22 @@ function AddinExcel() {
                               {actions.length > 1 && (
                                 <button
                                   onClick={async () => {
-                                    let ok = 0, fail = 0;
+                                    let ok = 0, fail = 0; let lastError = "";
                                     for (const a of actions) {
-                                      try { await applyOne(a); ok++; } catch { fail++; }
+                                      try { await applyOne(a); ok++; } catch (e: any) { fail++; lastError = e?.message || String(e); }
                                     }
                                     console.log(`[excel-apply-all] applied=${ok} failed=${fail} total=${actions.length}`);
+                                    toast({
+                                      title: fail === 0 ? `Applied all ${ok} changes` : `${ok} of ${actions.length} applied`,
+                                      description: fail > 0 ? lastError : undefined,
+                                      variant: fail > 0 && ok === 0 ? "destructive" : undefined,
+                                    });
                                   }}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-primary text-primary-foreground hover:opacity-90"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-primary text-primary-foreground hover:opacity-90"
                                   data-testid="button-apply-all"
                                   title={`Apply all ${actions.length} changes to the workbook`}
                                 >
-                                  <Zap className="w-3 h-3" /> Apply all ({actions.length})
+                                  <Zap className="w-3 h-3" /> Apply all {actions.length} changes
                                 </button>
                               )}
                               {actions.map((act, idx) => (
@@ -2363,7 +2690,7 @@ function AddinExcel() {
                       <div className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: "150ms" }} />
                       <div className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: "300ms" }} />
                     </div>
-                    <span className="text-xs text-muted-foreground">Thinking...</span>
+                    <span className="text-xs text-muted-foreground">{chatProgress || "Thinking..."}</span>
                   </div>
                 )}
               </div>
@@ -2476,8 +2803,16 @@ function AddinExcel() {
                 {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               </button>
             </div>
-            <div className="flex items-center justify-center mt-1.5">
-              <span className="text-[9px] text-muted-foreground/50">Opus 4.6 · Hardcore Builder · BGP CRM</span>
+            <div className="flex items-center justify-center gap-2 mt-1.5">
+              <span className="text-[9px] text-muted-foreground/50">Claude Fable 5 · BGP CRM</span>
+              <Pill
+                active={autoApply}
+                onClick={() => setAutoApply(v => !v)}
+                title={autoApply ? "Changes are written to the workbook automatically — switch to Apply buttons" : "Changes wait for you to apply them — switch to writing them automatically"}
+                data-testid="button-toggle-autoapply"
+              >
+                Auto-apply {autoApply ? "on" : "off"}
+              </Pill>
             </div>
           </div>
         </>

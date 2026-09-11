@@ -104,7 +104,7 @@ export function setupAdvancedModelsRoutes(app: Express) {
       const { variable1, variable2, baseInputs } = req.body;
       if (!variable1) return res.status(400).json({ message: "At least one variable is required" });
 
-      const template = await storage.getExcelTemplate(req.params.id);
+      const template = await storage.getExcelTemplate(req.params.id as string);
       if (!template) return res.status(404).json({ message: "Template not found" });
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) return res.status(500).json({ message: "AI not configured" });
 
@@ -230,7 +230,7 @@ Return ONLY valid JSON:
 
   app.get("/api/models/runs/:id/memo", requireAuth, async (req: Request, res: Response) => {
     try {
-      const run = await storage.getExcelModelRun(req.params.id);
+      const run = await storage.getExcelModelRun(req.params.id as string);
       if (!run) return res.status(404).json({ message: "Run not found" });
 
       const template = run.templateId ? await storage.getExcelTemplate(run.templateId) : null;
@@ -330,7 +330,7 @@ Be specific with numbers. Use professional property investment language. Keep it
         return res.status(400).json({ message: "Maximum 20 scenarios per batch" });
       }
 
-      const template = await storage.getExcelTemplate(req.params.id);
+      const template = await storage.getExcelTemplate(req.params.id as string);
       if (!template) return res.status(404).json({ message: "Template not found" });
 
       const inputMapping = JSON.parse(template.inputMapping || "{}");
@@ -417,7 +417,7 @@ Return ONLY valid JSON:
 
   app.get("/api/models/templates/:id/dependencies", requireAuth, async (req: Request, res: Response) => {
     try {
-      const template = await storage.getExcelTemplate(req.params.id);
+      const template = await storage.getExcelTemplate(req.params.id as string);
       if (!template) return res.status(404).json({ message: "Template not found" });
 
       const wb = XLSX.readFile(template.filePath);
@@ -514,7 +514,7 @@ Return ONLY valid JSON:
 
   app.get("/api/models/templates/:id/versions", requireAuth, async (req: Request, res: Response) => {
     try {
-      const template = await storage.getExcelTemplate(req.params.id);
+      const template = await storage.getExcelTemplate(req.params.id as string);
       if (!template) return res.status(404).json({ message: "Template not found" });
 
       let rootId = template.id;
@@ -537,7 +537,7 @@ Return ONLY valid JSON:
           description: startTemplate.description,
           originalFileName: startTemplate.originalFileName,
           createdAt: startTemplate.createdAt,
-          isCurrent: startTemplate.id === template.id,
+          isCurrent: startTemplate.id === template!.id,
         });
 
         const children = allTemplates.filter(t => t.previousVersionId === startTemplate.id);

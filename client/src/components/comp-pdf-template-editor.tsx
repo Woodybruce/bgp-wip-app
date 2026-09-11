@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -47,6 +48,7 @@ function hexToRgb(hex: string): number[] {
 }
 
 export function CompPdfTemplateEditor({ scope = "leasing" }: { scope?: "leasing" | "investment" } = {}) {
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const [dirty, setDirty] = useState(false);
 
@@ -435,11 +437,6 @@ export function CompPdfTemplateEditor({ scope = "leasing" }: { scope?: "leasing"
                 </div>
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-green-600" />
-                  <span>London Leasing</span>
-                  <Badge variant="default" className="text-[10px] ml-auto">Can Edit</Badge>
-                </div>
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-green-600" />
                   <span>National Leasing</span>
                   <Badge variant="default" className="text-[10px] ml-auto">Can Edit</Badge>
                 </div>
@@ -475,7 +472,7 @@ export function CompPdfTemplateEditor({ scope = "leasing" }: { scope?: "leasing"
                   variant="outline"
                   size="sm"
                   className="text-xs h-7"
-                  onClick={() => window.location.href = "/comps"}
+                  onClick={() => navigate("/comps")}
                   data-testid="button-go-to-comps"
                 >
                   <ExternalLink className="w-3 h-3 mr-1" />

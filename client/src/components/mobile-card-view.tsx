@@ -1,7 +1,11 @@
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
-import { Eye, Pencil, Inbox } from "lucide-react";
-import { Link } from "wouter";
+import { Pencil, Inbox, Trash2 } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { useEffect } from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
+import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 
@@ -17,10 +21,16 @@ export type MobileCardItem = {
   title: string;
   subtitle?: string;
   href?: string;
+  /** Tap anywhere on the card (used where a detail opens in-page rather
+      than at a route). Ignored when href is set. */
+  onClick?: () => void;
   status?: string;
   statusColor?: string;
   fields: MobileCardField[];
   onEdit?: () => void;
+  onDelete?: () => void;
+  /** Optional extra control rendered in the action row (e.g. a download). */
+  footer?: ReactNode;
 };
 
 function StatusDot({ color }: { color?: string }) {
@@ -31,13 +41,14 @@ function StatusDot({ color }: { color?: string }) {
   );
 }
 
-export function MobileCardView({ items, emptyMessage, emptyIcon }: { items: MobileCardItem[]; emptyMessage?: string; emptyIcon?: LucideIcon }) {
+export function MobileCardView({ items, emptyMessage, emptyIcon, emptyDescription }: { items: MobileCardItem[]; emptyMessage?: string; emptyIcon?: LucideIcon; emptyDescription?: string }) {
+  const [, navigate] = useLocation();
   if (items.length === 0) {
     return (
       <EmptyState
         icon={emptyIcon || Inbox}
         title={emptyMessage || "No items found"}
-        description="Try adjusting your filters"
+        description={emptyDescription ?? "Try adjusting your filters"}
       />
     );
   }
@@ -47,7 +58,8 @@ export function MobileCardView({ items, emptyMessage, emptyIcon }: { items: Mobi
       {items.map((item) => (
         <div
           key={item.id}
-          className="rounded-xl border bg-card p-4 space-y-3 shadow-sm"
+          onClick={item.href ? () => navigate(item.href!) : item.onClick}
+          className={`rounded-xl border bg-card p-4 space-y-3 shadow-sm ${item.href || item.onClick ? "cursor-pointer active:bg-muted/40" : ""}`}
           data-testid={`mobile-card-${item.id}`}
         >
           {/* Card header */}
@@ -85,7 +97,7 @@ export function MobileCardView({ items, emptyMessage, emptyIcon }: { items: Mobi
           <div className="space-y-1.5">
             {item.fields
               .filter((f) => f.value != null && f.value !== "")
-              .slice(0, 6)
+              .slice(0, 5)
               .map((field, idx) => (
                 <div
                   key={idx}
@@ -111,33 +123,35 @@ export function MobileCardView({ items, emptyMessage, emptyIcon }: { items: Mobi
           </div>
 
           {/* Action buttons */}
-          <div className="flex items-center gap-2 pt-1 border-t">
-            {item.href && (
-              <Link href={item.href}>
+          {(item.onEdit || item.onDelete || item.footer) && (
+            <div className="flex items-center gap-2 pt-1 border-t" onClick={(e) => e.stopPropagation()}>
+              {item.onEdit && (
                 <Button
                   variant="ghost"
                   size="sm"
                   className="h-9 px-3 text-xs gap-1.5"
-                  data-testid={`button-view-card-${item.id}`}
+                  onClick={item.onEdit}
+                  data-testid={`button-edit-card-${item.id}`}
                 >
-                  <Eye className="w-3.5 h-3.5" />
-                  View
+                  <Pencil className="w-3.5 h-3.5" />
+                  Edit
                 </Button>
-              </Link>
-            )}
-            {item.onEdit && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-9 px-3 text-xs gap-1.5"
-                onClick={item.onEdit}
-                data-testid={`button-edit-card-${item.id}`}
-              >
-                <Pencil className="w-3.5 h-3.5" />
-                Edit
-              </Button>
-            )}
-          </div>
+              )}
+              {item.onDelete && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 px-3 text-xs gap-1.5 text-red-600 hover:text-red-700"
+                  onClick={item.onDelete}
+                  data-testid={`button-delete-card-${item.id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete
+                </Button>
+              )}
+              {item.footer && <div className="ml-auto">{item.footer}</div>}
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -158,27 +172,31 @@ export function ViewToggle({
   onToggle: (view: "table" | "card" | "board") => void;
   showBoard?: boolean;
 }) {
+  // Tables never ship to the phone (DESIGN.md §6) — hide the Table option
+  // below md and snap any lingering "table" state back to cards, so no page
+  // using this toggle can leak its desktop table onto a phone.
+  const isMobile = useIsMobile();
+  useEffect(() => {
+    if (isMobile && view === "table") onToggle("card");
+  }, [isMobile, view, onToggle]);
+
   const options: { key: "table" | "card" | "board"; label: string }[] = [
-    { key: "table", label: "Table" },
+    ...(isMobile ? [] : [{ key: "table" as const, label: "Table" }]),
     { key: "card", label: "Cards" },
     ...(showBoard ? [{ key: "board" as const, label: "Board" }] : []),
   ];
 
   return (
-    <div className="inline-flex items-center rounded-lg border bg-card p-0.5 gap-0.5">
+    <div className="inline-flex items-center gap-1.5">
       {options.map((opt) => (
-        <button
+        <Pill
           key={opt.key}
+          active={view === opt.key}
           onClick={() => onToggle(opt.key)}
-          className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-            view === opt.key
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
           data-testid={`button-view-${opt.key}`}
         >
           {opt.label}
-        </button>
+        </Pill>
       ))}
     </div>
   );

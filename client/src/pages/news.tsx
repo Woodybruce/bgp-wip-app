@@ -2,11 +2,13 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill, PillCount, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NewsSourcesTab } from "@/components/news-sources-tab";
+import { InsightsFeed } from "@/components/insights-feed";
 import {
   Select,
   SelectContent,
@@ -45,13 +47,15 @@ import {
 import { useState, useMemo } from "react";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { NewsArticle, EmailIngest, NewsLead } from "@shared/schema";
 
 const TEAMS = [
   "For You",
   "All",
+  "London F&B",
+  "London Retail",
   "Investment",
-  "London Leasing",
   "Lease Advisory",
   "National Leasing",
   "Tenant Rep",
@@ -61,6 +65,16 @@ const TEAMS = [
 ];
 
 const CATEGORIES = ["All", "Property", "Retail", "Investment", "Hospitality", "Planning"];
+
+// UX #143 — wire feeds often copy the headline into the description; a
+// summary that just repeats the title is noise, so hide it.
+function summaryAddsInfo(article: { title?: string | null; aiSummary?: string | null; summary?: string | null }): boolean {
+  const s = (article.aiSummary || article.summary || "").trim();
+  if (!s) return false;
+  const t = (article.title || "").trim().toLowerCase();
+  const sl = s.toLowerCase();
+  return !t || (sl !== t && !sl.startsWith(t));
+}
 
 function timeAgo(date: string | Date | null): string {
   if (!date) return "";
@@ -99,7 +113,7 @@ function RelevanceBar({ score }: { score: number }) {
   const label = score >= 70 ? "High" : score >= 40 ? "Medium" : "Low";
   return (
     <div className="flex items-center gap-1.5" data-testid="relevance-bar" title={`${label} relevance (${score}/100)`}>
-      <div className="w-14 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+      <div className="w-14 h-1.5 bg-muted rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${color}`}
           style={{ width: `${score}%` }}
@@ -195,6 +209,7 @@ function FeedTab() {
   const [activeTeam, setActiveTeam] = useState("For You");
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const [showStats, setShowStats] = useState(false);
   const [savedArticles, setSavedArticles] = useState<Set<string>>(new Set());
   const [dismissedArticles, setDismissedArticles] = useState<Set<string>>(new Set());
@@ -206,7 +221,15 @@ function FeedTab() {
 
   const userTeam = currentUser?.team || "Investment";
   const isSavedTab = activeTeam === "Saved";
-  const effectiveTeam = activeTeam === "For You" ? userTeam : activeTeam;
+  const isInsightsTab = activeTeam === "Insights";
+  // Client logins: articles are never relevance-scored against client teams
+  // (e.g. "Landsec"), so "For You" would filter the feed to nothing — give
+  // them the whole curated trade feed instead, and skip the BGP team tabs.
+  const isClientNews = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
+  const visibleTeams = isClientNews
+    ? ["For You", "Insights", "Saved"]
+    : ["For You", "Insights", ...TEAMS.filter(t => t !== "For You")];
+  const effectiveTeam = activeTeam === "For You" ? (isClientNews ? "All" : userTeam) : activeTeam;
 
   const { data: articles, isLoading } = useQuery<NewsArticle[]>({
     queryKey: ["/api/news-feed/articles", effectiveTeam, search],
@@ -222,7 +245,7 @@ function FeedTab() {
       if (!res.ok) throw new Error("Failed to fetch articles");
       return res.json();
     },
-    enabled: !isSavedTab,
+    enabled: !isSavedTab && !isInsightsTab,
   });
 
   const { data: savedArticlesList, isLoading: isSavedLoading } = useQuery<NewsArticle[]>({
@@ -300,15 +323,67 @@ function FeedTab() {
 
   const filteredArticles = useMemo(() => {
     if (!articles) return [];
+    // The same story often arrives twice — raw feed headline vs normalised
+    // signal ("… - London Evening Standard" suffix etc). Collapse
+    // near-duplicates by normalised headline, same rule as the brand
+    // profile Signals list (UX #12/#91). First occurrence wins.
+    const seen: string[] = [];
+    const norm = (h: string) => (h || "").toLowerCase().replace(/\s+-\s+[^-]{3,40}$/, "").replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
     return articles.filter((a) => {
       if (dismissedArticles.has(a.id)) return false;
       if (categoryFilter !== "All") {
         const articleCat = (a.category || "").toLowerCase();
         if (!articleCat.includes(categoryFilter.toLowerCase())) return false;
       }
+      if (tagFilter.size > 0) {
+        const articleTags = new Set((a.aiTags || []).map(t => t.toLowerCase()));
+        let matched = false;
+        for (const wanted of tagFilter) {
+          if (articleTags.has(wanted)) { matched = true; break; }
+        }
+        if (!matched) return false;
+      }
+      const n = norm(a.title || (a as any).headline);
+      if (n) {
+        const dup = seen.some(p => p === n || (n.length >= 30 && p.startsWith(n)) || (p.length >= 30 && n.startsWith(p)));
+        if (dup) return false;
+        seen.push(n);
+      }
       return true;
     });
+  }, [articles, categoryFilter, tagFilter, dismissedArticles]);
+
+  // Matches per tag in the loaded feed, ignoring the tag filter itself, so
+  // the chips can grey out zero-hit tags instead of silently emptying the
+  // feed when clicked (UX #49).
+  const tagCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const a of articles || []) {
+      if (dismissedArticles.has(a.id)) continue;
+      if (categoryFilter !== "All") {
+        const articleCat = (a.category || "").toLowerCase();
+        if (!articleCat.includes(categoryFilter.toLowerCase())) continue;
+      }
+      for (const t of a.aiTags || []) {
+        const key = t.toLowerCase();
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    }
+    return counts;
   }, [articles, categoryFilter, dismissedArticles]);
+
+  // Tag vocabulary for the filter pill row (same endpoint the tags manager
+  // curates). Zero-hit tags grey out and disable so a sparse feed reads as
+  // a data gap, not a broken filter (UX #49).
+  const { data: newsTags = [] } = useQuery<{ id: string; name: string; label: string; active: boolean; sortOrder: number }[]>({
+    queryKey: ["/api/news-feed/tags"],
+    queryFn: async () => {
+      const r = await fetch("/api/news-feed/tags", { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const activeNewsTags = newsTags.filter((t) => t.active);
 
   const totalArticles = articles?.length || 0;
   const scoredArticles = articles?.filter((a) => a.processed)?.length || 0;
@@ -319,7 +394,7 @@ function FeedTab() {
       <div className="flex items-start justify-between gap-4">
         <p className="text-sm text-muted-foreground">
           AI-curated property intelligence from {activeSources} sources
-          {activeTeam !== "All" && (
+          {activeTeam !== "All" && effectiveTeam !== "All" && (
             <span>
               {" "}· Sorted for{" "}
               <span className="font-medium text-foreground">
@@ -344,6 +419,7 @@ function FeedTab() {
               <ChevronDown className="w-3 h-3 ml-1" />
             )}
           </Button>
+          {currentUser?.role !== "Client" && (
           <Button
             variant="outline"
             size="sm"
@@ -358,6 +434,7 @@ function FeedTab() {
             )}
             {fetchMutation.isPending ? "Fetching..." : "Refresh"}
           </Button>
+          )}
         </div>
       </div>
 
@@ -388,18 +465,16 @@ function FeedTab() {
 
       <Tabs value={activeTeam} onValueChange={setActiveTeam}>
         <TabsList
-          className="flex overflow-x-auto h-auto gap-1 bg-transparent p-0"
+          className={pillTabsList}
           data-testid="tabs-team-filter"
         >
-          {TEAMS.map((team) => (
+          {visibleTeams.map((team) => (
             <TabsTrigger
               key={team}
               value={team}
-              className="data-[state=active]:bg-black data-[state=active]:text-white dark:data-[state=active]:bg-white dark:data-[state=active]:text-black text-xs px-3 py-1.5 rounded-full border shrink-0"
+              className={pillTabsTrigger}
               data-testid={`tab-team-${team.toLowerCase().replace(/\s/g, "-")}`}
             >
-              {team === "For You" && <Zap className="w-3 h-3 mr-1" />}
-              {team === "Saved" && <Bookmark className="w-3 h-3 mr-1" />}
               {team}
             </TabsTrigger>
           ))}
@@ -432,7 +507,46 @@ function FeedTab() {
         </Select>
       </div>
 
-      {isSavedTab ? (
+      {activeNewsTags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {activeNewsTags.map((t) => {
+            const on = tagFilter.has(t.name);
+            const n = tagCounts[t.name] ?? 0;
+            const dead = n === 0 && !on;
+            return (
+              <Pill
+                key={t.id}
+                active={on}
+                disabled={dead}
+                title={dead ? "No matching articles in this feed" : undefined}
+                className={dead ? "opacity-40" : undefined}
+                onClick={() => {
+                  const next = new Set(tagFilter);
+                  if (on) next.delete(t.name); else next.add(t.name);
+                  setTagFilter(next);
+                }}
+                data-testid={`chip-news-tag-${t.name}`}
+              >
+                {t.label}
+                {n > 0 && <PillCount n={n} active={on} />}
+              </Pill>
+            );
+          })}
+          {tagFilter.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setTagFilter(new Set())}
+              className="text-xs text-muted-foreground hover:text-foreground underline self-center ml-1"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
+      {isInsightsTab ? (
+        <InsightsFeed isStaff={!isClientNews} />
+      ) : isSavedTab ? (
         isSavedLoading ? (
           <div className="space-y-3">
             {[1, 2, 3, 4, 5].map((i) => (
@@ -460,6 +574,15 @@ function FeedTab() {
               >
                 <CardContent className="p-4 space-y-2">
                   <div className="flex items-start justify-between gap-3">
+                    {article.imageUrl && (
+                      <img
+                        src={article.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        className="w-20 h-20 rounded object-cover border border-border/40 shrink-0"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    )}
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         {article.sourceName && (
@@ -474,7 +597,7 @@ function FeedTab() {
                         {article.category &&
                           article.category !== "general" && (
                             <Badge
-                              variant="secondary"
+                              variant="outline"
                               className="text-[10px] capitalize"
                             >
                               {article.category}
@@ -502,7 +625,7 @@ function FeedTab() {
                         {article.title}
                       </h3>
 
-                      {(article.aiSummary || article.summary) && (
+                      {summaryAddsInfo(article) && (
                         <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
                           {article.aiSummary ? (
                             <>
@@ -539,6 +662,7 @@ function FeedTab() {
                       Unsave
                     </Button>
                     <div className="flex-1" />
+                    {!isClientNews && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -558,6 +682,7 @@ function FeedTab() {
                       <Zap className="w-3 h-3 mr-1" />
                       Extract Leads
                     </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -605,6 +730,15 @@ function FeedTab() {
               >
                 <CardContent className="p-4 space-y-2">
                   <div className="flex items-start justify-between gap-3">
+                    {article.imageUrl && (
+                      <img
+                        src={article.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        className="w-20 h-20 rounded object-cover border border-border/40 shrink-0"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    )}
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         {article.sourceName && (
@@ -619,7 +753,7 @@ function FeedTab() {
                         {article.category &&
                           article.category !== "general" && (
                             <Badge
-                              variant="secondary"
+                              variant="outline"
                               className="text-[10px] capitalize"
                             >
                               {article.category}
@@ -647,7 +781,7 @@ function FeedTab() {
                         {article.title}
                       </h3>
 
-                      {(article.aiSummary || article.summary) && (
+                      {summaryAddsInfo(article) && (
                         <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
                           {article.aiSummary ? (
                             <>
@@ -704,6 +838,7 @@ function FeedTab() {
                       Less like this
                     </Button>
                     <div className="flex-1" />
+                    {!isClientNews && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -723,6 +858,7 @@ function FeedTab() {
                       <Zap className="w-3 h-3 mr-1" />
                       Extract Leads
                     </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -740,21 +876,34 @@ function FeedTab() {
       ) : (
         <div className="text-center py-16 text-muted-foreground">
           <Newspaper className="w-12 h-12 mx-auto mb-3 opacity-20" />
-          <p className="text-sm font-medium">No articles yet</p>
-          <p className="text-xs mt-1">
-            Click Refresh to fetch the latest news from {activeSources} sources
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-4"
-            onClick={() => fetchMutation.mutate()}
-            disabled={fetchMutation.isPending}
-            data-testid="button-refresh-empty"
-          >
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-            Fetch News
-          </Button>
+          {totalArticles > 0 || search || categoryFilter !== "All" || tagFilter.size > 0 ? (
+            <>
+              <p className="text-sm font-medium">No matching articles</p>
+              <p className="text-xs mt-1">
+                Try clearing the search or tag filters
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-medium">No articles yet</p>
+              <p className="text-xs mt-1">
+                Click Refresh to fetch the latest news from {activeSources} sources
+              </p>
+              {currentUser?.role !== "Client" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => fetchMutation.mutate()}
+                  disabled={fetchMutation.isPending}
+                  data-testid="button-refresh-empty"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                  Fetch News
+                </Button>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -1149,30 +1298,218 @@ function WhatsAppTab() {
   );
 }
 
+// Mobile: just the feed. No team tabs, search, category filters, or the
+// Leads/Inbox/WhatsApp/Sources chrome — those stay desktop-only.
+function MobileNewsFeed() {
+  const [mobileTab, setMobileTab] = useState<"latest" | "saved">("latest");
+  const { data: latestArticles, isLoading: latestLoading } = useQuery<NewsArticle[]>({
+    queryKey: ["/api/news-feed/articles"],
+  });
+  // Saved list is fetched on both tabs — on Latest it drives the bookmark
+  // state so an article saved on desktop shows as saved on the phone too.
+  const { data: savedList, isLoading: savedLoading } = useQuery<NewsArticle[]>({
+    queryKey: ["/api/news-feed/saved"],
+  });
+  const savedIds = useMemo(() => new Set((savedList || []).map(a => a.id)), [savedList]);
+
+  const saveMutation = useMutation({
+    mutationFn: (articleId: string) =>
+      apiRequest("POST", "/api/news-feed/engage", { articleId, action: "save" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/news-feed/saved"] }),
+  });
+  const unsaveMutation = useMutation({
+    mutationFn: (articleId: string) =>
+      apiRequest("POST", "/api/news-feed/unsave", { articleId }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/news-feed/saved"] }),
+  });
+  const toggleSave = (article: NewsArticle) => {
+    if (savedIds.has(article.id)) unsaveMutation.mutate(article.id);
+    else saveMutation.mutate(article.id);
+  };
+
+  const articles = mobileTab === "saved" ? savedList : latestArticles;
+  const isLoading = mobileTab === "saved" ? savedLoading : latestLoading;
+
+  return (
+    <div
+      className="bg-[#FAF9F7] dark:bg-background min-h-full px-4 pt-3 pb-4 space-y-3"
+      data-testid="news-page"
+    >
+      <div className="flex gap-1.5">
+        <Pill active={mobileTab === "latest"} onClick={() => setMobileTab("latest")} data-testid="mobile-news-tab-latest">
+          Latest
+        </Pill>
+        <Pill active={mobileTab === "saved"} onClick={() => setMobileTab("saved")} data-testid="mobile-news-tab-saved">
+          <Bookmark className="w-3.5 h-3.5" />
+          Saved
+          {(savedList?.length || 0) > 0 && <span className="tabular-nums font-semibold">{savedList!.length}</span>}
+        </Pill>
+      </div>
+
+      {isLoading && (
+        <div className="flex items-center justify-center py-16">
+          <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
+        </div>
+      )}
+
+      {!isLoading && (!articles || articles.length === 0) && (
+        <div className="flex flex-col items-center justify-center py-16 gap-3">
+          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+            {mobileTab === "saved" ? <Bookmark className="w-8 h-8 text-muted-foreground/70" /> : <Newspaper className="w-8 h-8 text-muted-foreground/70" />}
+          </div>
+          <p className="text-[15px] text-muted-foreground/70">{mobileTab === "saved" ? "No saved articles yet — tap the bookmark on any card" : "No news articles yet"}</p>
+        </div>
+      )}
+
+      {!isLoading && articles && articles.length > 0 && articles.map(article => (
+        <a
+          key={article.id}
+          href={article.url || "#"}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block bg-white dark:bg-card rounded-2xl overflow-hidden border border-border shadow-sm active:bg-muted"
+          data-testid={`news-card-${article.id}`}
+        >
+          {article.imageUrl && (
+            <div className="aspect-[16/9] w-full overflow-hidden bg-muted/50">
+              <img
+                src={article.imageUrl}
+                alt=""
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover"
+                onError={(e) => { const img = e.currentTarget as HTMLImageElement; if (img.parentElement) img.parentElement.style.display = "none"; }}
+              />
+            </div>
+          )}
+          <div className="p-4">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              {article.sourceName && <span className="text-[11px] font-medium text-muted-foreground">{article.sourceName}</span>}
+              {article.publishedAt && (
+                <>
+                  <span className="text-muted-foreground/70">·</span>
+                  <span className="text-[11px] text-muted-foreground/70">{timeAgo(article.publishedAt)}</span>
+                </>
+              )}
+              {article.category && article.category !== "general" && (
+                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">{article.category}</span>
+              )}
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSave(article); }}
+                className="ml-auto -my-1.5 -mr-1.5 p-2 rounded-full text-muted-foreground/70 active:bg-muted"
+                aria-label={savedIds.has(article.id) ? "Remove from saved" : "Save article"}
+                data-testid={`mobile-news-save-${article.id}`}
+              >
+                {savedIds.has(article.id)
+                  ? <BookmarkCheck className="w-[18px] h-[18px] text-emerald-600" />
+                  : <Bookmark className="w-[18px] h-[18px]" />}
+              </button>
+            </div>
+            <div className="text-[16px] font-semibold text-foreground leading-snug mb-1.5 tracking-tight">{article.title}</div>
+            {summaryAddsInfo(article) && (
+              <div className="text-[13px] text-muted-foreground leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
+            )}
+          </div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
+// Read-only client news feed (UX #35): brand signals across the client's
+// visible brand slice + self-added brands. Staff keep the full News page.
+function ClientNewsFeed() {
+  const { data: signals = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/client/news-signals"],
+    queryFn: async () => {
+      const r = await fetch("/api/client/news-signals", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const sentimentDot = (sent: string | null) =>
+    sent === "positive" ? "bg-emerald-500" : sent === "negative" ? "bg-red-500" : "bg-zinc-400";
+  return (
+    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4" data-testid="client-news-feed">
+      <div>
+        <h1 className="text-2xl font-bold">Brand News</h1>
+        <p className="text-sm text-muted-foreground">Latest signals across your tenant brands</p>
+      </div>
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : signals.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No brand news yet — signals appear here as they're picked up.</p>
+      ) : (
+        <div className="space-y-2">
+          {signals.map((sig: any) => (
+            <Card key={sig.id} data-testid={`client-signal-${sig.id}`}>
+              <CardContent className="p-3">
+                <div className="flex items-start gap-2.5">
+                  <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${sentimentDot(sig.sentiment)}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium leading-snug">{sig.headline}</p>
+                    {sig.detail && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{sig.detail}</p>}
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      <a href={`/companies/${sig.brand_company_id}`} className="text-primary hover:underline">{sig.brand_name}</a>
+                      {" · "}{sig.signal_type}
+                      {sig.signal_date ? ` · ${new Date(sig.signal_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function News() {
+  const { data: newsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  if (newsViewer && (newsViewer.role === "Client" || newsViewer.companyScopeId)) return <ClientNewsFeed />;
+  return <StaffNews />;
+}
+
+function StaffNews() {
+  const isMobile = useIsMobile();
+  const { data: newsUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientNewsPage = newsUser?.role === "Client" || !!(newsUser as any)?.companyScopeId;
   const { data: intelStatus } = useQuery<{
     connected: boolean;
     emailAddress?: string;
   }>({
     queryKey: ["/api/news-intel/status"],
     queryFn: getQueryFn({ on401: "throw" }),
+    enabled: !isMobile && !isClientNewsPage,
   });
+
+  if (isMobile) return <MobileNewsFeed />;
+
+  // Client logins get the curated Feed only — Leads / Inbox / WhatsApp /
+  // Sources are BGP lead-intelligence tools and stay staff-only.
+  if (isClientNewsPage) {
+    return (
+      <div className="p-4 sm:p-6 space-y-5" data-testid="news-page">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">News</h1>
+          <p className="text-sm text-muted-foreground">AI-curated property &amp; retail market news</p>
+        </div>
+        <FeedTab />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-6 space-y-5" data-testid="news-page">
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Newspaper className="w-5 h-5 text-primary" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-              News
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              AI-powered property news, intelligence and lead generation
-            </p>
-          </div>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
+            News
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            AI-powered property news, intelligence and lead generation
+          </p>
         </div>
         {intelStatus?.emailAddress && (
           <div className="flex items-center gap-2 bg-muted px-3 py-1.5 rounded-md">
@@ -1194,25 +1531,20 @@ export default function News() {
       </div>
 
       <Tabs defaultValue="feed">
-        <TabsList className="mb-4" data-testid="tabs-news-main">
-          <TabsTrigger value="feed" data-testid="tab-feed">
-            <Newspaper className="w-4 h-4 mr-1" />
+        <TabsList className={`${pillTabsList} mb-4`} data-testid="tabs-news-main">
+          <TabsTrigger value="feed" className={pillTabsTrigger} data-testid="tab-feed">
             Feed
           </TabsTrigger>
-          <TabsTrigger value="leads" data-testid="tab-leads">
-            <Zap className="w-4 h-4 mr-1" />
+          <TabsTrigger value="leads" className={pillTabsTrigger} data-testid="tab-leads">
             Leads
           </TabsTrigger>
-          <TabsTrigger value="inbox" data-testid="tab-inbox">
-            <Mail className="w-4 h-4 mr-1" />
+          <TabsTrigger value="inbox" className={pillTabsTrigger} data-testid="tab-inbox">
             Inbox
           </TabsTrigger>
-          <TabsTrigger value="whatsapp" data-testid="tab-whatsapp">
-            <MessageCircle className="w-4 h-4 mr-1" />
+          <TabsTrigger value="whatsapp" className={pillTabsTrigger} data-testid="tab-whatsapp">
             WhatsApp
           </TabsTrigger>
-          <TabsTrigger value="sources" data-testid="tab-sources">
-            <Rss className="w-4 h-4 mr-1" />
+          <TabsTrigger value="sources" className={pillTabsTrigger} data-testid="tab-sources">
             Sources
           </TabsTrigger>
         </TabsList>

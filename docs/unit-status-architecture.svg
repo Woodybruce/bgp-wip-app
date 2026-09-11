@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1700" height="1360" viewBox="0 0 1700 1360" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="green" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L9,4 L0,8 Z" fill="#15803D"/>
+    </marker>
+    <marker id="greenStart" markerWidth="12" markerHeight="12" refX="0" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M9,0 L0,4 L9,8 Z" fill="#15803D"/>
+    </marker>
+    <marker id="blue" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L9,4 L0,8 Z" fill="#1D4ED8"/>
+    </marker>
+    <marker id="blueStart" markerWidth="12" markerHeight="12" refX="0" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M9,0 L0,4 L9,8 Z" fill="#1D4ED8"/>
+    </marker>
+    <marker id="red" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L9,4 L0,8 Z" fill="#DC2626"/>
+    </marker>
+  </defs>
+
+  <rect width="1700" height="1360" fill="#FAF9F7"/>
+
+  <!-- Title -->
+  <text x="60" y="54" font-size="30" font-weight="700" fill="#1F2937">BGP — Unit Status Architecture <tspan fill="#B45309">(current state)</tspan></text>
+  <text x="60" y="85" font-size="15" fill="#6B7280">Four boards · two sync engines · one shared code set. Status lives on every board and is kept in step by automatic mirrors. Red = cleanup candidates.</text>
+
+  <!-- Legend -->
+  <g font-size="13" fill="#374151">
+    <line x1="62" y1="108" x2="104" y2="108" stroke="#15803D" stroke-width="3" marker-end="url(#green)"/>
+    <text x="112" y="113">Engine 1 — fanOut (Tenancy ➜ down, one-way)</text>
+    <line x1="470" y1="108" x2="512" y2="108" stroke="#1D4ED8" stroke-width="3" marker-end="url(#blue)" marker-start="url(#blueStart)"/>
+    <text x="520" y="113">Engine 2 — 4-way mirror (Tracker ⇄ Deals ⇄ Leasing)</text>
+    <line x1="930" y1="108" x2="972" y2="108" stroke="#DC2626" stroke-width="3" stroke-dasharray="6 4" marker-end="url(#red)"/>
+    <text x="980" y="113">Mirror back to rent roll — coarse / lossy</text>
+    <rect x="1320" y="100" width="16" height="16" rx="3" fill="#FEE2E2" stroke="#DC2626"/>
+    <text x="1344" y="113">cleanup candidate</text>
+  </g>
+
+  <!-- ================= TOP ROW: three "active" boards ================= -->
+
+  <!-- Letting Tracker -->
+  <g>
+    <rect x="70" y="150" width="460" height="210" rx="12" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1.5"/>
+    <rect x="70" y="150" width="460" height="40" rx="12" fill="#7C3AED"/>
+    <rect x="70" y="172" width="460" height="18" fill="#7C3AED"/>
+    <text x="90" y="177" font-size="17" font-weight="700" fill="#FFFFFF">LETTING TRACKER</text>
+    <text x="430" y="177" font-size="12" fill="#E9D5FF">marketing board</text>
+    <text x="90" y="222" font-size="14" fill="#6B7280">table</text>
+    <text x="200" y="222" font-size="14" font-weight="600" fill="#1F2937" font-family="monospace">available_units</text>
+    <text x="90" y="250" font-size="14" fill="#6B7280">field</text>
+    <text x="200" y="250" font-size="14" font-weight="600" fill="#1F2937" font-family="monospace">marketing_status</text>
+    <text x="90" y="282" font-size="14" fill="#6B7280">codes</text>
+    <text x="200" y="282" font-size="13.5" font-weight="600" fill="#7C3AED">AVA · NEG · SOL · EXC · COM · WIT</text>
+    <text x="90" y="332" font-size="12.5" fill="#9CA3AF">Owns viewings · offers · files · agents.</text>
+    <text x="90" y="350" font-size="12.5" fill="#9CA3AF">Add ➜ also makes Deal + Tenancy + Leasing.</text>
+  </g>
+
+  <!-- Deals -->
+  <g>
+    <rect x="620" y="150" width="460" height="210" rx="12" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1.5"/>
+    <rect x="620" y="150" width="460" height="40" rx="12" fill="#0F766E"/>
+    <rect x="620" y="172" width="460" height="18" fill="#0F766E"/>
+    <text x="640" y="177" font-size="17" font-weight="700" fill="#FFFFFF">DEALS</text>
+    <text x="980" y="177" font-size="12" fill="#CCFBF1">pipeline</text>
+    <text x="640" y="222" font-size="14" fill="#6B7280">table</text>
+    <text x="750" y="222" font-size="14" font-weight="600" fill="#1F2937" font-family="monospace">crm_deals</text>
+    <text x="640" y="250" font-size="14" fill="#6B7280">field</text>
+    <text x="750" y="250" font-size="14" font-weight="600" fill="#1F2937" font-family="monospace">status</text>
+    <text x="640" y="282" font-size="14" fill="#6B7280">codes</text>
+    <text x="750" y="282" font-size="13.5" font-weight="600" fill="#0F766E">AVA · NEG · SOL · EXC · COM · INV · WIT</text>
+    <text x="640" y="332" font-size="12.5" fill="#9CA3AF">Same code set as the Tracker.</text>
+    <text x="640" y="350" font-size="12.5" fill="#9CA3AF">Add ➜ links a unit only if one is picked.</text>
+  </g>
+
+  <!-- Leasing Schedule -->
+  <g>
+    <rect x="1170" y="150" width="460" height="210" rx="12" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1.5"/>
+    <rect x="1170" y="150" width="460" height="40" rx="12" fill="#B45309"/>
+    <rect x="1170" y="172" width="460" height="18" fill="#B45309"/>
+    <text x="1190" y="177" font-size="17" font-weight="700" fill="#FFFFFF">LEASING SCHEDULE</text>
+    <text x="1530" y="177" font-size="12" fill="#FDE68A">client board</text>
+    <text x="1190" y="222" font-size="14" fill="#6B7280">table</text>
+    <text x="1300" y="222" font-size="13" font-weight="600" fill="#1F2937" font-family="monospace">leasing_schedule_units</text>
+    <text x="1190" y="250" font-size="14" fill="#6B7280">field</text>
+    <text x="1300" y="250" font-size="14" font-weight="600" fill="#1F2937" font-family="monospace">status</text>
+    <text x="1190" y="282" font-size="14" fill="#6B7280">own enum</text>
+    <text x="1190" y="306" font-size="13" font-weight="600" fill="#B45309">Vacant · In Negotiation · Under Offer ·</text>
+    <text x="1190" y="324" font-size="13" font-weight="600" fill="#B45309">Occupied · Trading · Lease Event · Archived</text>
+    <text x="1190" y="350" font-size="12.5" fill="#9CA3AF">Bridges to the others via tenancy_unit_id.</text>
+  </g>
+
+  <!-- 4-way mirror arrows among the three top boards -->
+  <line x1="530" y1="240" x2="620" y2="240" stroke="#1D4ED8" stroke-width="3" marker-end="url(#blue)" marker-start="url(#blueStart)"/>
+  <line x1="1080" y1="240" x2="1170" y2="240" stroke="#1D4ED8" stroke-width="3" marker-end="url(#blue)" marker-start="url(#blueStart)"/>
+  <!-- arc connecting Tracker and Leasing over the top -->
+  <path d="M 300 150 C 300 70, 1400 70, 1400 150" fill="none" stroke="#1D4ED8" stroke-width="3" marker-end="url(#blue)" marker-start="url(#blueStart)"/>
+  <text x="850" y="62" font-size="13" font-weight="600" fill="#1D4ED8" text-anchor="middle">all three mirror each other — lease-status-mirror.ts</text>
+
+  <!-- ================= TENANCY SPINE ================= -->
+  <g>
+    <rect x="250" y="480" width="1200" height="180" rx="12" fill="#1F2937"/>
+    <text x="280" y="522" font-size="19" font-weight="700" fill="#FFFFFF">TENANCY — rent roll  <tspan font-size="14" fill="#9CA3AF" font-weight="400">canonical spine · source of truth</tspan></text>
+    <text x="280" y="556" font-size="14" fill="#9CA3AF">table</text>
+    <text x="380" y="556" font-size="14" font-weight="600" fill="#FFFFFF" font-family="monospace">tenancy_schedule_units</text>
+    <text x="800" y="556" font-size="14" fill="#9CA3AF">field</text>
+    <text x="870" y="556" font-size="14" font-weight="600" fill="#FFFFFF" font-family="monospace">status</text>
+    <text x="280" y="592" font-size="13.5" fill="#9CA3AF">direct edit (dropdown):</text>
+    <text x="500" y="592" font-size="13.5" font-weight="600" fill="#FBBF24">Vacant · In Negotiation · Under Offer · Occupied · Trading · Lease Event · Archived</text>
+    <text x="280" y="624" font-size="13.5" fill="#9CA3AF">auto-written by mirrors:</text>
+    <text x="500" y="624" font-size="13.5" font-weight="700" fill="#FCA5A5">Occupied · Vacant  ONLY  ← richer states get clobbered on reverse-mirror</text>
+  </g>
+
+  <!-- Engine 1: fanOut (green, UP from tenancy to Tracker & Leasing) -->
+  <line x1="300" y1="480" x2="300" y2="362" stroke="#15803D" stroke-width="3" marker-end="url(#green)"/>
+  <text x="312" y="430" font-size="12.5" font-weight="600" fill="#15803D">fanOut ↑</text>
+  <text x="312" y="446" font-size="11" fill="#15803D">creates Tracker row</text>
+  <line x1="1400" y1="480" x2="1400" y2="362" stroke="#15803D" stroke-width="3" marker-end="url(#green)"/>
+  <text x="1280" y="430" font-size="12.5" font-weight="600" fill="#15803D">fanOut ↑ creates Leasing row</text>
+
+  <!-- Reverse mirror back to tenancy (red dashed, DOWN) -->
+  <line x1="360" y1="362" x2="360" y2="480" stroke="#DC2626" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#red)"/>
+  <line x1="850" y1="362" x2="850" y2="480" stroke="#DC2626" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#red)"/>
+  <text x="862" y="430" font-size="12.5" font-weight="600" fill="#DC2626">coarse ↓</text>
+  <line x1="1340" y1="362" x2="1340" y2="480" stroke="#DC2626" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#red)"/>
+
+  <!-- Gap marker: Tenancy never drives Deals -->
+  <line x1="850" y1="480" x2="850" y2="400" stroke="#DC2626" stroke-width="2.5" stroke-dasharray="2 6"/>
+  <g>
+    <rect x="690" y="408" width="320" height="46" rx="8" fill="#FEE2E2" stroke="#DC2626" stroke-width="1.5"/>
+    <text x="850" y="427" font-size="12.5" font-weight="700" fill="#991B1B" text-anchor="middle">✗ no Engine-1 path to Deals</text>
+    <text x="850" y="444" font-size="11.5" fill="#991B1B" text-anchor="middle">adding/editing a Tenancy unit never creates a deal</text>
+  </g>
+
+  <!-- ================= BOTTOM CALLOUTS ================= -->
+
+  <!-- Canonical mapping -->
+  <g>
+    <rect x="70" y="710" width="510" height="320" rx="12" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1.5"/>
+    <text x="92" y="742" font-size="16" font-weight="700" fill="#1F2937">Canonical mapping</text>
+    <text x="92" y="762" font-size="12" fill="#9CA3AF" font-family="monospace">shared/lease-status-mirror.ts</text>
+    <g font-size="13.5">
+      <text x="92" y="796" fill="#374151" font-family="monospace">REP/SPEC/LIVE/AVA</text><text x="350" y="796" fill="#15803D">➜ Vacant</text><text x="470" y="796" fill="#9CA3AF" font-size="11.5">roll: Vacant</text>
+      <text x="92" y="824" fill="#374151" font-family="monospace">NEG</text><text x="350" y="824" fill="#B45309">➜ In Negotiation</text><text x="470" y="824" fill="#9CA3AF" font-size="11.5">roll: Vacant</text>
+      <text x="92" y="852" fill="#374151" font-family="monospace">SOL</text><text x="350" y="852" fill="#B45309">➜ Under Offer</text><text x="470" y="852" fill="#9CA3AF" font-size="11.5">roll: Vacant</text>
+      <text x="92" y="880" fill="#374151" font-family="monospace">EXC</text><text x="350" y="880" fill="#B45309">➜ Under Offer</text><text x="470" y="880" fill="#15803D" font-size="11.5" font-weight="700">roll: OCCUPIED</text>
+      <text x="92" y="908" fill="#374151" font-family="monospace">COM/INV</text><text x="350" y="908" fill="#0F766E">➜ Occupied</text><text x="470" y="908" fill="#9CA3AF" font-size="11.5">roll: Occupied</text>
+      <text x="92" y="936" fill="#374151" font-family="monospace">WIT</text><text x="350" y="936" fill="#6B7280">➜ Archived</text><text x="470" y="936" fill="#9CA3AF" font-size="11.5">roll: Vacant</text>
+    </g>
+    <line x1="92" y1="956" x2="558" y2="956" stroke="#E5E7EB"/>
+    <text x="92" y="980" font-size="12.5" font-weight="600" fill="#1F2937">Rent roll flips to Occupied at EXCHANGE (EXC),</text>
+    <text x="92" y="998" font-size="12.5" font-weight="600" fill="#1F2937">not at offer — rent hasn't started before then.</text>
+  </g>
+
+  <!-- Safety rule -->
+  <g>
+    <rect x="610" y="710" width="470" height="320" rx="12" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1.5"/>
+    <text x="632" y="742" font-size="16" font-weight="700" fill="#1F2937">Safety rule — bucket-aware</text>
+    <text x="632" y="762" font-size="12" fill="#9CA3AF">reverse maps pick the least-progressive code per bucket</text>
+    <g font-size="13.5" fill="#374151">
+      <text x="632" y="798">• A schedule edit to “Under Offer” will NOT</text>
+      <text x="648" y="818">drag an EXC deal back to SOL (same bucket).</text>
+      <text x="632" y="850">• Moving AVA ➜ “Under Offer” DOES promote</text>
+      <text x="648" y="870">the tracker + deal up to SOL.</text>
+      <text x="632" y="902">• Stops a round-trip silently downgrading a</text>
+      <text x="648" y="922">more-advanced deal.</text>
+    </g>
+    <rect x="632" y="946" width="426" height="64" rx="8" fill="#F0FDF4" stroke="#86EFAC"/>
+    <text x="648" y="972" font-size="12.5" font-weight="600" fill="#166534">Net effect: forward edits promote freely;</text>
+    <text x="648" y="992" font-size="12.5" font-weight="600" fill="#166534">backward edits can’t demote across buckets.</text>
+  </g>
+
+  <!-- Cleanup candidates -->
+  <g>
+    <rect x="1110" y="710" width="520" height="320" rx="12" fill="#FEF2F2" stroke="#DC2626" stroke-width="2"/>
+    <text x="1132" y="742" font-size="16" font-weight="700" fill="#991B1B">🔴 Cleanup candidates</text>
+    <text x="1132" y="762" font-size="12" fill="#B91C1C">why the boards can feel “not linked”</text>
+    <g font-size="13" fill="#7F1D1D">
+      <text x="1132" y="794" font-weight="700">1.</text><text x="1158" y="794">Tenancy “Add” never creates a Deal —</text>
+      <text x="1158" y="812">voids sit with no pipeline entry.</text>
+      <text x="1132" y="840" font-weight="700">2.</text><text x="1158" y="840">Deal “Add” creates nothing on the boards</text>
+      <text x="1158" y="858">unless a unit is explicitly picked.</text>
+      <text x="1132" y="886" font-weight="700">3.</text><text x="1158" y="886">Reverse-mirror coarsens Tenancy to</text>
+      <text x="1158" y="904">Occupied/Vacant — clobbers hand-set</text>
+      <text x="1158" y="922">Trading / Lease Event.</text>
+      <text x="1132" y="950" font-weight="700">4.</text><text x="1158" y="950">Unrecognised status ➜ silent no-op (the</text>
+      <text x="1158" y="968">historic In Neg / Held / Trading gap).</text>
+      <text x="1132" y="996" font-weight="700">5.</text><text x="1158" y="996">Two mapping sources (unit-mirror.ts inline</text>
+      <text x="1158" y="1014">vs shared map) — risk of drift.</text>
+    </g>
+  </g>
+
+  <!-- Engine notes footer -->
+  <g>
+    <rect x="70" y="1060" width="1560" height="240" rx="12" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1.5"/>
+    <text x="92" y="1094" font-size="16" font-weight="700" fill="#1F2937">The two engines, precisely</text>
+
+    <circle cx="100" cy="1126" r="6" fill="#15803D"/>
+    <text x="118" y="1131" font-size="14" font-weight="700" fill="#15803D">Engine 1 — unit-mirror.ts · fanOutTenancyStatus()</text>
+    <text x="118" y="1153" font-size="13" fill="#374151">Fires when you edit status ON the Tenancy schedule (or add a tenancy row). One-way DOWN: creates/updates the</text>
+    <text x="118" y="1173" font-size="13" fill="#374151">Letting Tracker + Leasing rows. Does NOT touch Deals. Has its OWN inline status maps (separate from the shared file).</text>
+
+    <circle cx="100" cy="1212" r="6" fill="#1D4ED8"/>
+    <text x="118" y="1217" font-size="14" font-weight="700" fill="#1D4ED8">Engine 2 — lease-status-mirror.ts · mirrorFromAvailableUnit / mirrorFromDeal / mirrorFromLeasingSchedule</text>
+    <text x="118" y="1239" font-size="13" fill="#374151">Fires when you edit status on the Tracker, a Deal, or the Leasing Schedule. Each fans out to the other two AND writes</text>
+    <text x="118" y="1259" font-size="13" fill="#374151">back to the Tenancy rent roll (coarse Occupied/Vacant). Uses the shared canonical maps + the bucket-aware safety rule.</text>
+    <text x="118" y="1285" font-size="13" font-weight="600" fill="#991B1B">Tenancy is the only node that does not drive Deals — and the only one whose auto-written vocabulary is binary.</text>
+  </g>
+</svg>

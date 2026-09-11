@@ -66,3 +66,74 @@ export function useIsMobile() {
 
   return isMobile
 }
+
+// NOTE (2026-08-22, dead band under the bottom nav on Woody's iPhone): the
+// band is NOT paintable by the app — iOS had given the installed web app a
+// window ~62pt shorter than the screen (shift-the-nav-down experiments
+// proved painting clips at the short window's edge). No CSS/JS fix exists;
+// the cure is deleting and re-adding the Home Screen icon so iOS recreates
+// the window at full size. Don't reintroduce screen.height-based nav
+// shifting — it pushes the labels off the visible area.
+
+// True while the on-screen keyboard is (probably) open — the visual
+// viewport shrinks well below the layout viewport. Used to hide the fixed
+// bottom nav while typing (it otherwise floats above the iOS keyboard) and
+// to collapse the nav-clearance padding under chat composers.
+export function useKeyboardOpen() {
+  const [open, setOpen] = React.useState(false)
+
+  React.useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    // BOTH conditions required: a text field is focused AND the visual
+    // viewport has shrunk. Viewport height alone misfires — Safari's
+    // collapsing toolbar and slow post-dismiss viewport restores left the
+    // nav hidden with a blank band at the bottom (Woody, 2026-08-22
+    // "lots of space at the bottom").
+    const textFocused = () => {
+      const el = document.activeElement as HTMLElement | null
+      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+    }
+    const update = () => setOpen(textFocused() && window.innerHeight - vv.height > 140)
+    // iOS standalone (home-screen) bug: after the keyboard dismisses, WebKit
+    // sometimes leaves the layout viewport SHORT, so bottom-anchored fixed
+    // elements (the tab bar) float above a dead white band (Woody, 2026-08-22
+    // screenshot: ~68pt gap under the nav, no keyboard up). A scroll nudge +
+    // one-frame root-height jiggle forces the viewport to recompute. Safe on
+    // our mobile shells: they're `fixed inset-0` with inner scrollers, so the
+    // window itself never legitimately scrolls.
+    const healViewport = () => {
+      if (textFocused()) return
+      window.scrollTo(0, 0)
+      const de = document.documentElement
+      de.style.height = "100.1%"
+      requestAnimationFrame(() => { de.style.height = "" })
+    }
+    // focusout fires before the viewport grows back — schedule a re-check
+    // so the nav returns promptly once the keyboard is gone.
+    const deferredUpdate = () => {
+      update()
+      setTimeout(update, 120)
+      setTimeout(() => { update(); healViewport() }, 400)
+    }
+    // Returning to a backgrounded app can land on an already-stuck viewport.
+    const onShow = () => { if (!document.hidden) setTimeout(healViewport, 100) }
+    vv.addEventListener("resize", update)
+    vv.addEventListener("scroll", update)
+    window.addEventListener("focusin", deferredUpdate)
+    window.addEventListener("focusout", deferredUpdate)
+    window.addEventListener("pageshow", onShow)
+    document.addEventListener("visibilitychange", onShow)
+    update()
+    return () => {
+      vv.removeEventListener("resize", update)
+      vv.removeEventListener("scroll", update)
+      window.removeEventListener("focusin", deferredUpdate)
+      window.removeEventListener("focusout", deferredUpdate)
+      window.removeEventListener("pageshow", onShow)
+      document.removeEventListener("visibilitychange", onShow)
+    }
+  }, [])
+
+  return open
+}

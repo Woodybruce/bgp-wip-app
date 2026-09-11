@@ -2,6 +2,7 @@
 // Used by AddressAutocomplete, Street View panorama capture, and anywhere else
 // we need `google.maps` in the browser. Ensures we only ever inject the
 // <script> tag once, with one set of libraries, per page load.
+import { getAuthHeaders } from "@/lib/queryClient";
 
 let loaded = false;
 let loading = false;
@@ -12,7 +13,7 @@ let cachedKey: string | null = null;
 async function fetchKey(): Promise<string> {
   if (cachedKey !== null) return cachedKey;
   try {
-    const res = await fetch("/api/config/maps-key", { credentials: "include" });
+    const res = await fetch("/api/config/maps-key", { credentials: "include", headers: getAuthHeaders() });
     if (res.ok) {
       const data = await res.json();
       const key: string = data.key || "";
@@ -42,7 +43,16 @@ export function loadGoogleMaps(): Promise<boolean> {
     }
 
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places`;
+    // v=beta enables Map3DElement (Photorealistic 3D Tiles). The other
+    // libraries we use (places, geometry) work the same on the beta channel.
+    //
+    // NOTE: do NOT add `loading=async` here — the existing
+    // StreetViewPanoramaCapture component (and other call sites) use
+    // the synchronous `new google.maps.StreetViewPanorama(…)` pattern.
+    // `loading=async` forces all map constructors through
+    // `google.maps.importLibrary(…)`, which breaks them silently /
+    // makes them hang forever.
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places,geometry&v=beta`;
     script.async = true;
     script.onload = () => {
       loaded = true;

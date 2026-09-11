@@ -2,4 +2,10 @@
 # poppler_utils gives us `pdfimages` (extracts embedded photos) and
 # `pdftoppm` (rasterises pages) — used by server/pdf-image-extract.ts
 # for property-pathway Stage 8 brochure image sweeps.
-nixPkgs = ["...", "poppler_utils"]
+#
+# ffmpeg is required by server/chatbgp.ts transcribe_audio: video
+# uploads (Teams recordings, .mp4, .mov etc.) get their audio track
+# stripped via `ffmpeg -i ... -vn -acodec libmp3lame` before being
+# handed to Whisper. ffprobe (bundled with ffmpeg) is also used for
+# the segmenter that splits files >25 MB into 10-min chunks.
+nixPkgs = ["...", "poppler_utils", "ffmpeg"]

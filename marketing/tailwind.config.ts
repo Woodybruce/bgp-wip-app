@@ -1,8 +1,8 @@
 import type { Config } from "tailwindcss";
 
 // Palette + type per BGP Rebrand v19 (the fixed "Serif." route):
-// Titles FreightText Pro Light Italic & Medium (Adobe Fonts — Lora stands in
-// until a web kit exists), body Lato Light/Medium (exact, Google Fonts).
+// Titles FreightText Pro (Adobe Fonts kit use.typekit.net/nan4etq.css,
+// Lora fallback), body Lato Light/Medium (exact, Google Fonts).
 // Bordeaux #6e0c25 / Nectar #fc9f8d / Stone #c2baa3.
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
@@ -27,7 +27,7 @@ export default {
       },
       fontFamily: {
         sans: ["Lato", "Helvetica Neue", "Arial", "sans-serif"],
-        display: ["Lora", "FreightText Pro", "Georgia", "serif"],
+        display: ["freight-text-pro", "Lora", "Georgia", "serif"],
       },
       letterSpacing: {
         widest2: "0.14em",

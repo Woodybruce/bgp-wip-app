@@ -34,6 +34,17 @@ export function trackRecentItem(item: Omit<RecentItem, "viewedAt">) {
   window.dispatchEvent(new Event("bgp_recent_updated"));
 }
 
+// Drop a dead entry (e.g. a company the viewer removed from their list or
+// that was merged away) so Quick Access stops offering a 404.
+export function removeRecentItem(type: RecentItem["type"], id: string) {
+  const items = loadRecent();
+  const filtered = items.filter(i => !(i.id === id && i.type === type));
+  if (filtered.length !== items.length) {
+    saveRecent(filtered);
+    window.dispatchEvent(new Event("bgp_recent_updated"));
+  }
+}
+
 export function useRecentItems(limit?: number): RecentItem[] {
   const [items, setItems] = useState<RecentItem[]>(() => {
     const all = loadRecent();

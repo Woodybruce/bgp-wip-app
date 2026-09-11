@@ -8,6 +8,7 @@ import { GripVertical, EyeOff } from "lucide-react";
 interface GridItem {
   id: string;
   label?: string;
+  description?: string;
   content: React.ReactNode;
   defaultW?: number;
   defaultH?: number;
@@ -104,6 +105,8 @@ function buildInitialLayouts(
           h: m.defaultH || 4,
           minW: m.minW || 1,
           minH: m.minH || 2,
+          maxW: m.maxW,
+          maxH: m.maxH,
         });
         addY += m.defaultH || 4;
       }
@@ -133,6 +136,13 @@ export function DraggableGrid({
     hadSavedRef.current = !!savedLayout;
   }
 
+  // Layouts are CONTROLLED state. Previously the grid was fed a frozen
+  // initial-layouts ref: a drag moved the board, then the next parent
+  // re-render (any widget refetching data) snapped everything back to the
+  // stale prop — and the snap-back is what got saved. Boards appeared
+  // impossible to move.
+  const [layouts, setLayouts] = useState<ResponsiveLayouts>(initialLayoutsRef.current);
+
   const itemIdsKey = items.map(i => i.id).sort().join(",");
   const prevItemIdsRef = useRef(itemIdsKey);
   const needsRebuild =
@@ -142,12 +152,13 @@ export function DraggableGrid({
     initialLayoutsRef.current = buildInitialLayouts(items, savedLayout, cols);
     prevItemIdsRef.current = itemIdsKey;
     hadSavedRef.current = !!savedLayout;
+    setLayouts(initialLayoutsRef.current);
   }
 
   const pendingLayoutRef = useRef<ResponsiveLayouts | null>(null);
   const onLayoutSaveRef = useRef(onLayoutSave);
   onLayoutSaveRef.current = onLayoutSave;
-  const computeSignature = (lg: LayoutItem[] | undefined) =>
+  const computeSignature = (lg: Layout | undefined) =>
     lg ? JSON.stringify(lg.map(l => `${l.i}:${l.x},${l.y},${l.w},${l.h}`).sort()) : "";
   const lastSavedLayoutRef = useRef<string>(computeSignature(initialLayoutsRef.current?.lg));
 
@@ -156,6 +167,7 @@ export function DraggableGrid({
   }
 
   const handleLayoutChange = useCallback((_currentLayout: Layout, allLayouts: ResponsiveLayouts) => {
+    setLayouts(allLayouts);
     if (!editing) return;
     const sig = computeSignature(allLayouts.lg);
     if (sig === lastSavedLayoutRef.current) return;
@@ -180,6 +192,62 @@ export function DraggableGrid({
     };
   }, []);
 
+  // Auto-scroll while dragging near the viewport edge. react-grid-layout
+  // doesn't scroll the page itself, so a board deep in a long dashboard
+  // could never be dragged "to the top" in one gesture — the drag just
+  // stalled at the viewport boundary. The app scrolls in an inner
+  // overflow container (not the window), so walk up from the grid to the
+  // nearest scrollable ancestor.
+  const autoScrollSpeed = useRef(0);
+  useEffect(() => {
+    if (!editing) return;
+    const EDGE = 90;
+    const MAX_SPEED = 22;
+    const findScrollParent = (): HTMLElement | null => {
+      let el: HTMLElement | null = (containerRef as React.RefObject<HTMLDivElement>).current;
+      while (el) {
+        const style = getComputedStyle(el);
+        if (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight) return el;
+        el = el.parentElement;
+      }
+      return null;
+    };
+    const isDraggingNow = () => !!document.querySelector(".react-draggable-dragging");
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      if (!isDraggingNow()) { autoScrollSpeed.current = 0; return; }
+      const clientY = "touches" in e ? (e.touches[0]?.clientY ?? 0) : e.clientY;
+      if (clientY < EDGE) {
+        autoScrollSpeed.current = -Math.min(MAX_SPEED, (EDGE - clientY) / 3);
+      } else if (clientY > window.innerHeight - EDGE) {
+        autoScrollSpeed.current = Math.min(MAX_SPEED, (clientY - (window.innerHeight - EDGE)) / 3);
+      } else {
+        autoScrollSpeed.current = 0;
+      }
+    };
+    const onEnd = () => { autoScrollSpeed.current = 0; };
+    let raf: number;
+    const tick = () => {
+      if (autoScrollSpeed.current !== 0 && isDraggingNow()) {
+        const scroller = findScrollParent();
+        if (scroller) scroller.scrollTop += autoScrollSpeed.current;
+        else window.scrollBy(0, autoScrollSpeed.current);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    window.addEventListener("mousemove", onMove, true);
+    window.addEventListener("touchmove", onMove, true);
+    window.addEventListener("mouseup", onEnd, true);
+    window.addEventListener("touchend", onEnd, true);
+    raf = requestAnimationFrame(tick);
+    return () => {
+      window.removeEventListener("mousemove", onMove, true);
+      window.removeEventListener("touchmove", onMove, true);
+      window.removeEventListener("mouseup", onEnd, true);
+      window.removeEventListener("touchend", onEnd, true);
+      cancelAnimationFrame(raf);
+    };
+  }, [editing, containerRef]);
+
   const labelMap = useMemo(() => {
     const map = new Map<string, string>();
     items.forEach(item => { if (item.label) map.set(item.id, item.label); });
@@ -189,12 +257,12 @@ export function DraggableGrid({
   if (items.length === 0) return null;
 
   return (
-    <div className={`relative ${className}`} ref={containerRef}>
+    <div className={`relative ${className}`} ref={containerRef as React.RefObject<HTMLDivElement>}>
       {width > 0 && (
         <ResponsiveGridLayout
           className="dashboard-grid"
           width={width}
-          layouts={initialLayoutsRef.current!}
+          layouts={layouts}
           breakpoints={{ lg: 1, md: 0, sm: 0, xs: 0 }}
           cols={cols}
           rowHeight={rowHeight}
@@ -217,7 +285,12 @@ export function DraggableGrid({
                 {editing && (
                   <div className="grid-drag-handle flex-shrink-0 relative z-50 bg-muted/90 border border-border rounded-t-md px-3 py-1 cursor-grab active:cursor-grabbing flex items-center gap-1.5 select-none">
                     <GripVertical className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-medium flex-1">{labelMap.get(item.id) || item.id}</span>
+                    <span className="text-[10px] text-muted-foreground font-medium flex-1 truncate" title={item.description || undefined}>
+                      {labelMap.get(item.id) || item.id}
+                      {item.description && (
+                        <span className="font-normal text-muted-foreground/70"> — {item.description}</span>
+                      )}
+                    </span>
                     {onHideItem && (
                       <button
                         onClick={(e) => { e.stopPropagation(); onHideItem(item.id); }}

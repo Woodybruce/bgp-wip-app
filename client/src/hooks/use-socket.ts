@@ -58,6 +58,14 @@ export function useSocket(userId: string | null) {
       queryClient.invalidateQueries({ queryKey: ["/api/chat/notifications"] });
     };
 
+    const handleIngestComplete = (data: { filename: string; target: string; written: number; userId: string }) => {
+      toast({
+        title: "Import complete",
+        description: `${data.filename} → ${data.written} record(s) written to ${data.target}`,
+        duration: 5000,
+      });
+    };
+
     socket.on("new_message", handleNewMessage);
     socket.on("notification", handleNotification);
     socket.on("message_updated", handleMessageUpdated);
@@ -66,6 +74,7 @@ export function useSocket(userId: string | null) {
     socket.on("member_added", handleMemberAdded);
     socket.on("member_removed", handleMemberRemoved);
     socket.on("thread_seen", handleThreadSeen);
+    socket.on("ingest_complete", handleIngestComplete);
 
     return () => {
       socket.off("new_message", handleNewMessage);
@@ -76,6 +85,7 @@ export function useSocket(userId: string | null) {
       socket.off("member_added", handleMemberAdded);
       socket.off("member_removed", handleMemberRemoved);
       socket.off("thread_seen", handleThreadSeen);
+      socket.off("ingest_complete", handleIngestComplete);
     };
   }, [userId, toast]);
 

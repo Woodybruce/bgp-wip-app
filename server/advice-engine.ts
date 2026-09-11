@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
+import { contentDispositionFor } from "./utils/http-headers";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -123,7 +124,7 @@ export function setupAdviceEngineRoutes(app: Express) {
       }
 
       res.setHeader("Content-Type", contentType);
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Disposition", contentDispositionFor(filename));
 
       const buffer = Buffer.from(await response.arrayBuffer());
       res.send(buffer);

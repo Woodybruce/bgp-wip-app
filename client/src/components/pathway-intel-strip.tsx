@@ -92,7 +92,7 @@ export default function PathwayIntelStrip({ propertyId, address, postcode }: Pat
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
           <div className="flex items-start gap-2 p-2 rounded-md bg-muted/30">
-            <Landmark className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <Landmark className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
             <div className="min-w-0">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Business Rates</p>
               {voaRv ? (
@@ -107,7 +107,7 @@ export default function PathwayIntelStrip({ propertyId, address, postcode }: Pat
           </div>
 
           <div className="flex items-start gap-2 p-2 rounded-md bg-muted/30">
-            <FileText className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+            <FileText className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
             <div className="min-w-0">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Planning</p>
               <p className="text-sm font-bold">{planningCount}</p>
@@ -116,7 +116,7 @@ export default function PathwayIntelStrip({ propertyId, address, postcode }: Pat
           </div>
 
           <div className="flex items-start gap-2 p-2 rounded-md bg-muted/30">
-            <Building2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+            <Building2 className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
             <div className="min-w-0">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Title</p>
               <p className="text-sm font-bold">{titleCount}</p>
@@ -134,7 +134,7 @@ export default function PathwayIntelStrip({ propertyId, address, postcode }: Pat
           </div>
 
           <div className="flex items-start gap-2 p-2 rounded-md bg-muted/30">
-            <TrendingUp className="w-4 h-4 text-purple-600 mt-0.5 shrink-0" />
+            <TrendingUp className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
             <div className="min-w-0">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Market</p>
               {marketTone?.retail?.rentPsf ? (

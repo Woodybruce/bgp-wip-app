@@ -1,6 +1,7 @@
-import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
-import { logoKitEnabled, logoKitUrl } from "@/lib/logokit";
-import { useRoute, Link } from "wouter";
+import { lazy, Suspense, useState, useMemo, useEffect, useRef, useId } from "react";
+import { ContactDataHealth } from "@/components/contact-data-health";
+import { ContactFormDialog } from "@/pages/contacts";
+import { useRoute, useLocation, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -8,20 +9,26 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useTeam } from "@/lib/team-context";
 import type { User } from "@shared/schema";
+import type { ClientAgentBrand, ClientAgentDirectoryEntry } from "@shared/client-agent-directory";
 import {
   Building2, Users, Crown, Search, Globe, MapPin,
   ChevronRight, ChevronDown, Building, Briefcase,
-  Phone, Mail, X, TrendingUp, Trash2,
-  Handshake, ClipboardList,
+  Phone, Mail, X, TrendingUp, Trash2, Pencil, Plus, Target,
+  Handshake, ClipboardList, Landmark, AlertCircle,
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
+import { Pill } from "@/components/ui/pill";
+import { countLabel } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CRM_OPTIONS } from "@/lib/crm-options";
-import { guessDomain, extractDomain } from "@/lib/company-logos";
+import { guessDomain, extractDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty, CrmRequirementsLeasing, CrmRequirementsInvestment, InvestmentTracker } from "@shared/schema";
 
 const CompanyDetailPage = lazy(() => import("@/pages/companies"));
@@ -47,20 +54,15 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   const textSize = size === "sm" ? "text-xs" : size === "lg" ? "text-lg" : "text-sm";
   const px = size === "sm" ? 32 : size === "lg" ? 56 : 40;
 
-  const domain = company.domainUrl || company.logoUrl || company.domain;
+  const domain = company.domainUrl || (company as any).logoUrl || company.domain;
   const d = extractDomain(domain || null);
   const guessed = guessDomain(company.name);
 
-  // Build ordered list of logo URLs to try
+  // Only source: /api/brand-logo/... — server redirects to logo.dev when no
+  // local image exists. Clearbit's DNS is dead (HubSpot killed it Mar 2025).
   const logoSources: string[] = [];
-  if (d) {
-    if (logoKitEnabled) logoSources.push(logoKitUrl(d, Math.min(px * 3, 512)));
-    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
-  }
-  if (guessed && guessed !== d) {
-    if (logoKitEnabled) logoSources.push(logoKitUrl(guessed, Math.min(px * 3, 512)));
-    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${guessed}&size=128`);
-  }
+  const local = localBrandLogoUrl(company.name, domain ?? guessed ?? null);
+  if (local) logoSources.push(local);
 
   if (failCount >= logoSources.length) {
     const initials = (company.name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
@@ -75,23 +77,37 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
     <img
       src={logoSources[failCount]}
       alt={company.name}
+      loading="lazy"
+      decoding="async"
       className={`${sizeClass} rounded-lg object-contain bg-white border shrink-0`}
       onError={() => setFailCount(c => c + 1)}
     />
   );
 }
 
-function StatCard({ label, value, icon: Icon, color }: { label: string; value: number | string; icon: any; color: string }) {
+function StatCard({ label, value, active }: { label: string; value: number | string; active?: boolean }) {
   return (
-    <div className="flex items-center gap-3 bg-card border rounded-lg px-4 py-3">
-      <div className={`w-9 h-9 rounded-lg ${color} flex items-center justify-center`}>
-        <Icon className="w-4 h-4 text-white" />
-      </div>
-      <div>
-        <p className="text-xl font-bold leading-none">{value}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
-      </div>
+    <div className={`bg-card border rounded-lg px-4 py-3 transition-shadow ${active ? "ring-2 ring-primary" : ""}`}>
+      <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className="text-xl font-bold font-mono tabular-nums mt-0.5">{value}</p>
     </div>
+  );
+}
+
+// Brands don't live on this page — a zero-hit search that matches a company
+// name is usually someone hunting a brand (UX-NOTES #13; the hint moved here
+// from the old contacts list when /contacts became this page).
+function BrandSearchHint({ search, companies, resultCount }: { search: string; companies: CrmCompany[]; resultCount: number }) {
+  if (resultCount > 0 || search.trim().length < 2) return null;
+  const s = search.trim().toLowerCase();
+  const matchesCompany = companies.some((c) => (c.name || "").toLowerCase().includes(s));
+  if (!matchesCompany) return null;
+  return (
+    <p className="text-sm text-center text-muted-foreground py-4" data-testid="brand-search-hint">
+      <Link href="/brands" className="text-primary hover:underline">
+        Looking for a brand? Search Brand Intelligence →
+      </Link>
+    </p>
   );
 }
 
@@ -112,6 +128,7 @@ function LandlordsTab({
   onDeleteCompany?: (id: string, name: string) => void;
   viewMode?: "table" | "card" | "board";
 }) {
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [landlordFilter, setLandlordFilter] = useState<"all" | "clients" | "non-clients">("all");
 
@@ -176,17 +193,24 @@ function LandlordsTab({
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Pill active={landlordFilter === "all"} onClick={() => setLandlordFilter("all")} data-testid="stat-total-landlords">
+          Total Landlords <span className="font-mono tabular-nums">{landlords.length}</span>
+        </Pill>
+        <Pill active={landlordFilter === "clients"} onClick={() => setLandlordFilter(landlordFilter === "clients" ? "all" : "clients")} data-testid="stat-bgp-clients">
+          BGP Clients <span className="font-mono tabular-nums">{clientLandlords.length}</span>
+        </Pill>
+        <Pill active={landlordFilter === "non-clients"} onClick={() => setLandlordFilter(landlordFilter === "non-clients" ? "all" : "non-clients")} data-testid="stat-non-clients">
+          Non-Clients <span className="font-mono tabular-nums">{nonClientLandlords.length}</span>
+        </Pill>
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="cursor-pointer" onClick={() => setLandlordFilter("all")} data-testid="stat-total-landlords">
-          <StatCard label="Total Landlords" value={landlords.length} icon={Building2} color={landlordFilter === "all" ? "bg-slate-900 ring-2 ring-slate-400" : "bg-slate-700"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setLandlordFilter(landlordFilter === "clients" ? "all" : "clients")} data-testid="stat-bgp-clients">
-          <StatCard label="BGP Clients" value={clientLandlords.length} icon={Crown} color={landlordFilter === "clients" ? "bg-amber-800 ring-2 ring-amber-400" : "bg-amber-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setLandlordFilter(landlordFilter === "non-clients" ? "all" : "non-clients")} data-testid="stat-non-clients">
-          <StatCard label="Non-Clients" value={nonClientLandlords.length} icon={Building} color={landlordFilter === "non-clients" ? "bg-slate-700 ring-2 ring-slate-400" : "bg-slate-500"} />
-        </div>
-        <StatCard label="Total Contacts" value={contacts.filter(c => landlords.find(l => l.id === c.companyId)).length} icon={Users} color="bg-blue-600" />
+        {/* Same definition as the page-header count: contacts at landlord OR
+            agent companies (brand/tenant contacts live in Brands Hub). The
+            two previously counted different sets and showed different totals
+            on the same screen. */}
+        <StatCard label="Total Contacts" value={contacts.filter(c => c.companyId && (landlords.some(l => l.id === c.companyId) || companies.some(co => co.id === c.companyId && (co.companyType || "").toLowerCase().trim() === "agent"))).length}  />
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -205,8 +229,10 @@ function LandlordsTab({
             </button>
           )}
         </div>
-        <p className="text-sm text-muted-foreground">{filtered.length} results</p>
+        <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>
       </div>
+
+      <BrandSearchHint search={search} companies={companies} resultCount={filtered.length} />
 
       {viewMode === "table" ? (
         <Card className="overflow-hidden">
@@ -229,7 +255,7 @@ function LandlordsTab({
                   const compDeals = dealsByLandlord[company.id] || [];
                   const isClient = clientLandlords.some((cl) => cl.id === company.id);
                   return (
-                    <TableRow key={company.id} className="cursor-pointer hover:bg-muted/50 group" onClick={() => window.location.href = `/companies/${company.id}`}>
+                    <TableRow key={company.id} className="cursor-pointer hover:bg-muted/50 group" onClick={() => navigate(`/companies/${company.id}`)}>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <CompanyLogo company={company} size="sm" />
@@ -249,10 +275,10 @@ function LandlordsTab({
                       <TableCell className="text-right">
                         <div className="flex items-center gap-1 justify-end">
                           {onScopeLandlord && (
-                            <button onClick={(e) => { e.stopPropagation(); onScopeLandlord(company.id); }} className="text-xs text-primary hover:text-primary/80 font-medium whitespace-nowrap">View People</button>
+                            <button onClick={(e) => { e.stopPropagation(); onScopeLandlord(company.id); }} className="text-xs text-primary hover:text-primary/80 font-medium whitespace-nowrap">Open people</button>
                           )}
                           {onDeleteCompany && (
-                            <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
+                            <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           )}
@@ -278,7 +304,7 @@ function LandlordsTab({
                 {onDeleteCompany && (
                   <button
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
-                    className="absolute top-2 right-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
+                    className="absolute top-2 right-2 p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
                     title="Delete"
                     data-testid={`button-delete-landlord-${company.id}`}
                   >
@@ -321,7 +347,7 @@ function LandlordsTab({
                         data-testid={`button-scope-${company.id}`}
                       >
                         <Users className="w-3 h-3" />
-                        View People
+                        Open people
                         <ChevronRight className="w-3 h-3" />
                       </button>
                     )}
@@ -348,6 +374,7 @@ function AgentsTab({
   defaultTenantRep?: boolean;
   onDeleteCompany?: (id: string, name: string) => void;
 }) {
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [specialtyFilter, setSpecialtyFilter] = useState<string | null>(defaultTenantRep ? "Tenant Rep" : null);
   const [locationFilter, setLocationFilter] = useState<string | null>(null);
@@ -423,12 +450,6 @@ function AgentsTab({
     }
     return map;
   }, [investmentItems]);
-
-  const companyMap = useMemo(() => {
-    const m: Record<string, CrmCompany> = {};
-    for (const c of companies) m[c.id] = c;
-    return m;
-  }, [companies]);
 
   const agentCompanies = useMemo(() => {
     return companies.filter((c) => (c.companyType || "").toLowerCase() === "agent");
@@ -512,25 +533,25 @@ function AgentsTab({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="cursor-pointer" onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-agent-firms">
-          <StatCard label="Agent Firms" value={agentCompanies.length} icon={Briefcase} color={!specialtyFilter ? "bg-blue-800 ring-2 ring-blue-400" : "bg-blue-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-individual-agents">
-          <StatCard label="Individual Agents" value={agentContacts.length} icon={Users} color={!specialtyFilter ? "bg-indigo-800 ring-2 ring-indigo-400" : "bg-indigo-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Leasing" ? null : "Leasing")} data-testid="stat-leasing">
-          <StatCard label="Leasing" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length} icon={Building} color={specialtyFilter === "Leasing" ? "bg-sky-800 ring-2 ring-sky-400" : "bg-sky-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Investment" ? null : "Investment")} data-testid="stat-investment">
-          <StatCard label="Investment" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "investment").length} icon={TrendingUp} color={specialtyFilter === "Investment" ? "bg-emerald-800 ring-2 ring-emerald-400" : "bg-emerald-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Tenant Rep" ? null : "Tenant Rep")} data-testid="stat-tenant-rep">
-          <StatCard label="Tenant Rep" value={agentContacts.filter(c => agentReqCounts[c.id] > 0).length} icon={Handshake} color={specialtyFilter === "Tenant Rep" ? "bg-purple-800 ring-2 ring-purple-400" : "bg-purple-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Lease Advisory" ? null : "Lease Advisory")} data-testid="stat-lease-advisory">
-          <StatCard label="Lease Advisory" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length} icon={Crown} color={specialtyFilter === "Lease Advisory" ? "bg-amber-800 ring-2 ring-amber-400" : "bg-amber-600"} />
-        </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Pill active={!specialtyFilter} onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-agent-firms">
+          Agent Firms <span className="font-mono tabular-nums">{agentCompanies.length}</span>
+        </Pill>
+        <Pill active={!specialtyFilter} onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-individual-agents">
+          Individual Agents <span className="font-mono tabular-nums">{agentContacts.length}</span>
+        </Pill>
+        <Pill active={specialtyFilter === "Leasing"} onClick={() => setSpecialtyFilter(specialtyFilter === "Leasing" ? null : "Leasing")} data-testid="stat-leasing">
+          Leasing <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length}</span>
+        </Pill>
+        <Pill active={specialtyFilter === "Investment"} onClick={() => setSpecialtyFilter(specialtyFilter === "Investment" ? null : "Investment")} data-testid="stat-investment">
+          Investment <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "investment").length}</span>
+        </Pill>
+        <Pill active={specialtyFilter === "Tenant Rep"} onClick={() => setSpecialtyFilter(specialtyFilter === "Tenant Rep" ? null : "Tenant Rep")} data-testid="stat-tenant-rep">
+          Tenant Rep <span className="font-mono tabular-nums">{agentContacts.filter(c => agentReqCounts[c.id] > 0).length}</span>
+        </Pill>
+        <Pill active={specialtyFilter === "Lease Advisory"} onClick={() => setSpecialtyFilter(specialtyFilter === "Lease Advisory" ? null : "Lease Advisory")} data-testid="stat-lease-advisory">
+          Lease Advisory <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length}</span>
+        </Pill>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -590,8 +611,10 @@ function AgentsTab({
           </select>
         )}
 
-        <p className="text-sm text-muted-foreground">{filtered.length} firms</p>
+        <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "firm")}</p>
       </div>
+
+      <BrandSearchHint search={search} companies={companies} resultCount={filtered.length} />
 
       <div className="space-y-2">
         {filtered.map((company) => {
@@ -607,7 +630,7 @@ function AgentsTab({
                 {onDeleteCompany && (
                   <button
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
-                    className="absolute top-2 right-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
+                    className="absolute top-2 right-2 p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
                     title="Delete"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -770,15 +793,285 @@ function AgentsTab({
   );
 }
 
-type PeopleTab = "landlords" | "agents";
+const LENDER_TYPES = [
+  "lender", "clearing bank", "investment bank", "insurance lender",
+  "pension fund", "debt fund", "private credit", "mezzanine",
+  "bridging", "development finance", "building society",
+];
+
+function isLenderCompany(companyType: string | null | undefined): boolean {
+  const t = (companyType || "").toLowerCase().trim();
+  return LENDER_TYPES.some((lt) => t.includes(lt.replace(/ /g, " ")));
+}
+
+function lenderSubType(companyType: string | null | undefined): "Banks" | "Debt Funds" | "Insurance/Pension" | "Private/Bridge" | "Other" {
+  const t = (companyType || "").toLowerCase().trim();
+  if (t.includes("clearing bank") || t.includes("investment bank") || t.includes("building society")) return "Banks";
+  if (t.includes("debt fund")) return "Debt Funds";
+  if (t.includes("insurance") || t.includes("pension")) return "Insurance/Pension";
+  if (t.includes("private credit") || t.includes("mezzanine") || t.includes("bridging") || t.includes("development finance")) return "Private/Bridge";
+  return "Other";
+}
+
+type LenderSubFilter = "all" | "Banks" | "Debt Funds" | "Insurance/Pension" | "Private/Bridge";
+
+function LendersTab({
+  companies,
+  contacts,
+  properties,
+  onAddCompany,
+}: {
+  companies: CrmCompany[];
+  contacts: CrmContact[];
+  properties: CrmProperty[];
+  onAddCompany?: () => void;
+}) {
+  const [, navigate] = useLocation();
+  const [search, setSearch] = useState("");
+  const [subFilter, setSubFilter] = useState<LenderSubFilter>("all");
+
+  const lenders = useMemo(() => companies.filter((c) => isLenderCompany(c.companyType)), [companies]);
+
+  const activeCount = useMemo(() => lenders.filter((c) => (c as any).lendingActive === true).length, [lenders]);
+
+  const typeCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    lenders.forEach((c) => {
+      const t = (c.companyType || "Other");
+      map[t] = (map[t] || 0) + 1;
+    });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  }, [lenders]);
+
+  const contactsByCompany = useMemo(() => {
+    const map: Record<string, CrmContact[]> = {};
+    contacts.forEach((c) => {
+      if (c.companyId) {
+        if (!map[c.companyId]) map[c.companyId] = [];
+        map[c.companyId].push(c);
+      }
+    });
+    return map;
+  }, [contacts]);
+
+  const propertiesByLender = useMemo(() => {
+    const map: Record<string, number> = {};
+    properties.forEach((p) => {
+      const sid = (p as any).seniorLenderId;
+      const jid = (p as any).juniorLenderId;
+      if (sid) map[sid] = (map[sid] || 0) + 1;
+      if (jid && jid !== sid) map[jid] = (map[jid] || 0) + 1;
+    });
+    return map;
+  }, [properties]);
+
+  const filtered = useMemo(() => {
+    let list = lenders;
+    if (subFilter !== "all") {
+      list = list.filter((c) => lenderSubType(c.companyType) === subFilter);
+    }
+    if (search.trim()) {
+      const s = search.toLowerCase();
+      list = list.filter((c) =>
+        c.name.toLowerCase().includes(s) ||
+        (c.companyType || "").toLowerCase().includes(s) ||
+        (c.description || "").toLowerCase().includes(s)
+      );
+    }
+    return list;
+  }, [lenders, subFilter, search]);
+
+  const subFilterOptions: { key: LenderSubFilter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "Banks", label: "Banks" },
+    { key: "Debt Funds", label: "Debt Funds" },
+    { key: "Insurance/Pension", label: "Insurance/Pension" },
+    { key: "Private/Bridge", label: "Private/Bridge" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="Total Lenders" value={lenders.length} />
+        <StatCard label="Currently Active" value={activeCount} />
+        {typeCounts.map(([type, count]) => (
+          <StatCard key={type} label={type} value={count} />
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="inline-flex rounded-lg border bg-muted p-0.5">
+          {subFilterOptions.map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => setSubFilter(opt.key)}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                subFilter === opt.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search lenders..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 h-9"
+          />
+          {search && (
+            <button className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => setSearch("")}>
+              <X className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>
+        {onAddCompany && (
+          <Button size="sm" onClick={onAddCompany} className="ml-auto">
+            <Landmark className="w-4 h-4 mr-1.5" />
+            Add Lender
+          </Button>
+        )}
+      </div>
+
+      <Card className="overflow-hidden">
+        {/* Phone: one card per lender (§7) — the table never ships below md. */}
+        <div className="md:hidden divide-y divide-border">
+          {filtered.map((company) => {
+            const compContacts = contactsByCompany[company.id] || [];
+            const propCount = propertiesByLender[company.id] || 0;
+            const lendingActive = (company as any).lendingActive;
+            const typicalLtvMax = (company as any).typicalLtvMax;
+            const loanMin = (company as any).typicalLoanSizeMinM;
+            const loanMax = (company as any).typicalLoanSizeMaxM;
+            const loanRange = loanMin != null && loanMax != null
+              ? `£${loanMin}m – £${loanMax}m`
+              : loanMin != null
+              ? `£${loanMin}m+`
+              : loanMax != null
+              ? `up to £${loanMax}m`
+              : null;
+            return (
+              <div
+                key={company.id}
+                className="flex items-start gap-3 px-4 py-3 cursor-pointer active:bg-muted/50"
+                onClick={() => navigate(`/companies/${company.id}`)}
+                data-testid={`card-lender-${company.id}`}
+              >
+                <CompanyLogo company={company} size="sm" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-medium text-sm truncate">{company.name}</span>
+                    {typicalLtvMax != null && (
+                      <span className="text-sm font-mono tabular-nums shrink-0">{typicalLtvMax}% LTV</span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground truncate">
+                    {[company.companyType, loanRange].filter(Boolean).join(" · ") || "—"}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    <Badge
+                      variant={lendingActive ? "default" : "secondary"}
+                      className={`whitespace-nowrap ${lendingActive ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : ""}`}
+                    >
+                      {lendingActive ? "Active" : "Paused"}
+                    </Badge>
+                    <span className="text-[11px] text-muted-foreground">
+                      {countLabel(propCount, "property", "properties")} · {countLabel(compContacts.length, "contact")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {filtered.length === 0 && (
+            <p className="py-8 text-center text-sm text-muted-foreground">No lenders found</p>
+          )}
+        </div>
+        <div className="hidden md:block overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Sub-type</TableHead>
+                <TableHead>Typical LTV</TableHead>
+                <TableHead>Loan Range</TableHead>
+                <TableHead>Appetite</TableHead>
+                <TableHead className="text-center">Properties</TableHead>
+                <TableHead className="text-center">Contacts</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((company) => {
+                const compContacts = contactsByCompany[company.id] || [];
+                const propCount = propertiesByLender[company.id] || 0;
+                const lendingActive = (company as any).lendingActive;
+                const typicalLtvMax = (company as any).typicalLtvMax;
+                const loanMin = (company as any).typicalLoanSizeMinM;
+                const loanMax = (company as any).typicalLoanSizeMaxM;
+                const loanRange = loanMin != null && loanMax != null
+                  ? `£${loanMin}m – £${loanMax}m`
+                  : loanMin != null
+                  ? `£${loanMin}m+`
+                  : loanMax != null
+                  ? `up to £${loanMax}m`
+                  : "—";
+                return (
+                  <TableRow
+                    key={company.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => navigate(`/companies/${company.id}`)}
+                  >
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <CompanyLogo company={company} size="sm" />
+                        <div className="min-w-0">
+                          <span className="font-medium text-sm truncate block">{company.name}</span>
+                          {company.description && (
+                            <span className="text-xs text-muted-foreground truncate block max-w-[200px]">{company.description}</span>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{company.companyType || "—"}</TableCell>
+                    <TableCell className="text-sm">{typicalLtvMax != null ? `${typicalLtvMax}%` : "—"}</TableCell>
+                    <TableCell className="text-sm">{loanRange}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={lendingActive ? "default" : "secondary"}
+                        className={lendingActive ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : ""}
+                      >
+                        {lendingActive ? "Active" : "Paused"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-center text-sm">{propCount}</TableCell>
+                    <TableCell className="text-center text-sm">{compContacts.length}</TableCell>
+                  </TableRow>
+                );
+              })}
+              {filtered.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    No lenders found
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+type PeopleTab = "landlords" | "agents" | "lenders";
 
 const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "landlords", label: "Landlords", icon: Building2 },
   { key: "agents", label: "Agents", icon: Briefcase },
-];
-
-const SCOPED_TABS: { key: PeopleTab; label: string; icon: any }[] = [
-  { key: "agents", label: "Agents", icon: Briefcase },
+  { key: "lenders", label: "Lenders", icon: Landmark },
 ];
 
 const LANDSEC_TABS: { key: PeopleTab; label: string; icon: any }[] = [
@@ -788,6 +1081,7 @@ const LANDSEC_TABS: { key: PeopleTab; label: string; icon: any }[] = [
 export default function PeoplePage() {
   const [, companyParams] = useRoute("/companies/:id");
   const [, contactParams] = useRoute("/contacts/:id");
+  const { data: user, isLoading: userLoading } = useQuery<User>({ queryKey: ["/api/auth/me"] });
 
   if (companyParams?.id) {
     return (
@@ -805,11 +1099,560 @@ export default function PeoplePage() {
     );
   }
 
+  // Client logins (e.g. Landsec) get a purpose-built CRM: their own
+  // contacts plus a brand-contact directory limited to the hospitality /
+  // food / café / fitness slice. The staff hub (landlords, agents,
+  // lenders) is BGP-internal.
+  if (userLoading) return <PageLoader />;
+  if (user?.role === "Client" || !!(user as any)?.companyScopeId) return <ClientCrmHub />;
+
   return <PeopleHub />;
+}
+
+// ── Client CRM hub — brand-contact lookup + own contacts ─────────────────
+const CLIENT_BRAND_CATS: { key: string; label: string; re: RegExp | null }[] = [
+  { key: "all", label: "All", re: null },
+  { key: "food", label: "Food & Dining", re: /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie)/i },
+  { key: "cafe", label: "Cafés & Coffee", re: /(caf|coffee)/i },
+  { key: "bars", label: "Bars", re: /bar/i },
+  { key: "leisure", label: "Leisure", re: /(leisure|cinema|entertainment|hospitality|hotel)/i },
+  { key: "fitness", label: "Fitness", re: /(fitness|gym|yoga)/i },
+];
+
+interface DirectoryBrand {
+  id: string;
+  name: string;
+  companyType: string | null;
+  domain: string | null;
+  contacts: { id: string; name: string; role: string | null; email: string | null; phone: string | null }[];
+  isExistingTenant?: boolean;
+  targetedAt?: { propertyId: string; propertyName: string; unitName: string | null }[];
+}
+
+const CLIENT_REL_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "tenant", label: "Existing tenants" },
+  { key: "targeted", label: "Being targeted" },
+  { key: "contact", label: "With contacts" },
+] as const;
+
+function AgentBrandLinks({ brands, limit = 3, searching = false }: { brands: ClientAgentBrand[]; limit?: number; searching?: boolean }) {
+  const [showAll, setShowAll] = useState(false);
+  const listId = useId();
+  const expanded = showAll || searching;
+  const displayedBrands = expanded ? brands : brands.slice(0, limit);
+  return (
+    <div className="space-y-2">
+      <ul id={listId} className="space-y-1">
+        {displayedBrands.map(brand => (
+          <li key={brand.brandId} className="min-w-0 text-sm">
+            <Link href={`/companies/${brand.brandId}`} className="inline-flex min-h-11 max-w-full items-center [overflow-wrap:anywhere] text-primary hover:underline md:min-h-0">
+              {brand.brandName}
+            </Link>
+            <p className="text-[11px] text-muted-foreground break-words">
+              {brand.sources.map(source => source === "requirement" ? "Current requirement" : "Recorded representation").join(" · ")}
+              {brand.regions.length > 0 && ` · ${brand.regions.join(", ")}`}
+            </p>
+          </li>
+        ))}
+      </ul>
+      {brands.length > limit && !searching && (
+        <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={() => setShowAll(!showAll)} aria-expanded={expanded} aria-controls={listId}>
+          {showAll ? "Show fewer brands" : <>Show all <span className="font-mono tabular-nums">{brands.length.toLocaleString()}</span> brands</>}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function ClientAgentCard({ agent, searching, contactPreviewLimit }: { agent: ClientAgentDirectoryEntry; searching: boolean; contactPreviewLimit: number }) {
+  const [showAllContacts, setShowAllContacts] = useState(false);
+  const contactsExpanded = showAllContacts || searching;
+  const displayedContacts = contactsExpanded ? agent.contacts : agent.contacts.slice(0, contactPreviewLimit);
+  const namedContactBrandIds = new Set(agent.contacts.flatMap(contact => contact.represents.map(brand => brand.brandId)));
+  const otherFirmBrands = agent.represents.filter(brand => !namedContactBrandIds.has(brand.brandId));
+
+  return (
+    <Card className="min-w-0 overflow-hidden rounded-2xl border-border bg-card md:rounded-lg" data-testid={`client-agent-${agent.id}`}>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-start gap-2">
+          {agent.kind === "firm" ? (
+            <CompanyLogo company={{ id: agent.companyId, name: agent.name, domain: agent.domain } as CrmCompany} size="sm" />
+          ) : (
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
+              <Users className="h-4 w-4" aria-hidden="true" />
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-semibold break-words">{agent.name}</h2>
+            <p className="text-[11px] text-muted-foreground">{agent.kind === "firm" ? "Brand agent firm" : "Firm not confirmed"}</p>
+          </div>
+        </div>
+
+        {agent.kind === "firm" && agent.contacts.length > 0 && (
+          <p className="text-[11px] text-muted-foreground">
+            <span className="font-mono tabular-nums">{agent.represents.length.toLocaleString()}</span> {agent.represents.length === 1 ? "brand" : "brands"} · <span className="font-mono tabular-nums">{agent.contacts.length.toLocaleString()}</span> named {agent.contacts.length === 1 ? "agent" : "agents"}
+          </p>
+        )}
+
+        {agent.kind === "firm" && agent.contacts.length === 0 && (
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Brands represented <span className="font-mono tabular-nums">{agent.represents.length.toLocaleString()}</span>
+            </h3>
+            <AgentBrandLinks brands={agent.represents} limit={6} searching={searching} />
+          </div>
+        )}
+
+        {agent.contacts.length > 0 ? (
+          <div className="space-y-3 border-t border-border pt-3">
+            <div id={`agent-contacts-${agent.id}`} className="space-y-4">
+              {displayedContacts.map(contact => (
+                <div key={contact.id} className="min-w-0 space-y-1" data-testid={`client-agent-contact-${contact.id}`}>
+                  {agent.kind === "firm" && <p className="text-sm font-medium break-words">{contact.name}</p>}
+                  {(contact.role || contact.specialty) && <p className="text-[11px] text-muted-foreground break-words">{[contact.role, contact.specialty].filter(Boolean).join(" · ")}</p>}
+                  <div className="flex flex-col items-start text-sm">
+                    {contact.email && (
+                      <a href={`mailto:${contact.email}`} className="inline-flex min-h-11 max-w-full items-center gap-2 text-primary hover:underline md:min-h-8">
+                        <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /><span className="break-all">{contact.email}</span>
+                      </a>
+                    )}
+                    {contact.phone && (
+                      <a href={`tel:${contact.phone}`} className="inline-flex min-h-11 max-w-full items-center gap-2 text-primary hover:underline md:min-h-8">
+                        <Phone className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /><span className="break-all">{contact.phone}</span>
+                      </a>
+                    )}
+                    {!contact.email && !contact.phone && <p className="text-[11px] text-muted-foreground">No email or phone recorded.</p>}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">Acts for</p>
+                  <AgentBrandLinks brands={contact.represents} searching={searching} />
+                </div>
+              ))}
+            </div>
+            {agent.contacts.length > contactPreviewLimit && !searching && (
+              <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={() => setShowAllContacts(!showAllContacts)} aria-expanded={contactsExpanded} aria-controls={`agent-contacts-${agent.id}`} data-testid={`client-agent-show-contacts-${agent.id}`}>
+                {showAllContacts ? "Show fewer contacts" : <>Show all <span className="font-mono tabular-nums">{agent.contacts.length.toLocaleString()}</span> contacts</>}
+              </Button>
+            )}
+            {agent.kind === "firm" && otherFirmBrands.length > 0 && (
+              <div className="space-y-2 border-t border-border pt-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Other firm links</h3>
+                <AgentBrandLinks brands={otherFirmBrands} searching={searching} />
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="border-t border-border pt-3 text-[11px] text-muted-foreground">No named representative is recorded for this firm’s linked brands.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ClientCrmHub() {
+  const isMobile = useIsMobile();
+  const [tab, setTab] = useState<"brands" | "agents" | "contacts">("brands");
+  const [search, setSearch] = useState("");
+  const [agentSearch, setAgentSearch] = useState("");
+  const [cat, setCat] = useState("all");
+  const [rel, setRel] = useState<string>("all");
+  const [propFilter, setPropFilter] = useState<string>("all");
+  const [contactDialog, setContactDialog] = useState<{ companyId: string; companyName: string; contact?: any } | null>(null);
+
+  const { data: hubUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const { data: brands = [], isLoading: brandsLoading } = useQuery<DirectoryBrand[]>({
+    queryKey: ["/api/client/brand-directory"],
+  });
+  const { data: myContacts = [] } = useQuery<CrmContact[]>({ queryKey: ["/api/crm/contacts"] });
+  const { data: agentData, isLoading: agentsLoading, isError: agentsError, isFetching: agentsFetching, refetch: refetchAgents } = useQuery<ClientAgentDirectoryEntry[]>({ queryKey: ["/api/client/agent-directory"] });
+  const agents = agentData || [];
+  const agentFirmCount = agents.filter(agent => agent.kind === "firm").length;
+  const namedAgentCount = new Set(agents.flatMap(agent => agent.contacts.map(contact => contact.id))).size;
+  const filteredAgents = useMemo(() => {
+    const q = agentSearch.trim().toLowerCase();
+    if (!q) return agents;
+    return agents.filter(agent => [
+      agent.name,
+      ...agent.represents.map(brand => brand.brandName),
+      ...agent.contacts.flatMap(contact => [contact.name, contact.role, contact.email, contact.phone, ...contact.represents.map(brand => brand.brandName)]),
+    ].some(value => value?.toLowerCase().includes(q)));
+  }, [agentData, agentSearch]);
+
+  // Properties this client is actively targeting brands at — drives the
+  // "targeting at" dropdown without another fetch.
+  const targetProperties = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const b of brands) for (const t of b.targetedAt || []) m.set(t.propertyId, t.propertyName);
+    return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [brands]);
+
+  const filteredBrands = useMemo(() => {
+    const catRe = CLIENT_BRAND_CATS.find(c => c.key === cat)?.re || null;
+    const q = search.trim().toLowerCase();
+    return brands.filter(b => {
+      if (catRe && !catRe.test(b.companyType || "")) return false;
+      if (rel === "tenant" && !b.isExistingTenant) return false;
+      if (rel === "targeted" && !(b.targetedAt || []).length) return false;
+      if (rel === "contact" && b.contacts.length === 0) return false;
+      if (propFilter !== "all" && !(b.targetedAt || []).some(t => t.propertyId === propFilter)) return false;
+      if (!q) return true;
+      if (b.name.toLowerCase().includes(q)) return true;
+      return b.contacts.some(c => c.name?.toLowerCase().includes(q));
+    });
+  }, [brands, cat, rel, propFilter, search]);
+
+  const typeLabel = (t: string | null) => (t || "").replace(/^Tenant - /, "");
+
+  return (
+    <div className="p-4 md:p-6 space-y-4" data-testid="client-crm-hub">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">CRM</h1>
+        <p className="text-sm text-muted-foreground">
+          <span className="font-mono tabular-nums">{brands.length.toLocaleString()}</span> brands · {agentsLoading ? "Agents loading" : agentsError && !agentData ? "Agents unavailable" : <><span className="font-mono tabular-nums">{agentFirmCount.toLocaleString()}</span> agent {agentFirmCount === 1 ? "firm" : "firms"} · <span className="font-mono tabular-nums">{namedAgentCount.toLocaleString()}</span> named {namedAgentCount === 1 ? "agent" : "agents"}</>} · <span className="font-mono tabular-nums">{myContacts.length.toLocaleString()}</span> of your contacts
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        {([["brands", "Brand Directory"], ["agents", "Agents"], ["contacts", `${hubUser?.team || "Your"} Contacts`]] as const).map(([key, label]) => (
+          <Pill
+            key={key}
+            active={tab === key}
+            onClick={() => setTab(key)}
+            data-testid={`client-crm-tab-${key}`}
+          >
+            {label}
+          </Pill>
+        ))}
+      </div>
+
+      {tab === "brands" ? (
+        <>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Input
+              placeholder="Search brands or people…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="max-w-xs"
+              data-testid="client-brand-search"
+            />
+            <div className="flex gap-1.5 flex-wrap">
+              {CLIENT_BRAND_CATS.map(c => (
+                <button
+                  key={c.key}
+                  onClick={() => setCat(c.key)}
+                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                    cat === c.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-muted-foreground ml-auto">{filteredBrands.length} brands</span>
+          </div>
+
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex gap-1.5 flex-wrap">
+              {CLIENT_REL_FILTERS.map(f => (
+                <button
+                  key={f.key}
+                  onClick={() => setRel(f.key)}
+                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                    rel === f.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"
+                  }`}
+                  data-testid={`client-rel-${f.key}`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            {targetProperties.length > 0 && (
+              <select
+                value={propFilter}
+                onChange={e => setPropFilter(e.target.value)}
+                className="h-7 rounded-full border bg-background px-2.5 text-xs text-muted-foreground"
+                data-testid="client-prop-filter"
+              >
+                <option value="all">Targeted at: any property</option>
+                {targetProperties.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {brandsLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} className="h-28" />)}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filteredBrands.map(b => (
+                <Card key={b.id} className="overflow-hidden" data-testid={`client-brand-${b.id}`}>
+                  <CardContent className="p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <CompanyLogo company={{ id: b.id, name: b.name, domain: b.domain } as CrmCompany} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <Link href={`/companies/${b.id}`}>
+                          <p className="text-sm font-semibold truncate hover:underline cursor-pointer">{b.name}</p>
+                        </Link>
+                        {b.companyType && <Badge variant="secondary" className="text-[9px]">{typeLabel(b.companyType)}</Badge>}
+                      </div>
+                    </div>
+                    {(b.isExistingTenant || (b.targetedAt || []).length > 0) && (
+                      <div className="flex gap-1 flex-wrap">
+                        {b.isExistingTenant && (
+                          <Badge className="text-[9px] bg-emerald-100 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                            Existing tenant
+                          </Badge>
+                        )}
+                        {(b.targetedAt || []).map((t, i) => (
+                          <Badge
+                            key={`${t.propertyId}-${t.unitName || i}`}
+                            variant="outline"
+                            className="text-[9px] gap-1 max-w-full border-amber-400 text-amber-700 dark:text-amber-400"
+                            title={`${t.unitName ? `${t.unitName} · ` : ""}${t.propertyName}`}
+                          >
+                            <Target className="w-2.5 h-2.5 shrink-0" />
+                            <span className="truncate">{t.unitName ? `${t.unitName} · ` : ""}{t.propertyName}</span>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    {b.contacts.length > 0 ? (
+                      <div className="space-y-1 pt-1 border-t">
+                        {b.contacts.slice(0, 3).map(c => (
+                          <div key={c.id} className="text-xs flex items-baseline gap-2 min-w-0 group">
+                            <Link href={`/contacts/${c.id}`}>
+                              <span className="font-medium hover:underline cursor-pointer whitespace-nowrap">{c.name}</span>
+                            </Link>
+                            {c.role && <span className="text-muted-foreground truncate">{c.role}</span>}
+                            <span className="ml-auto shrink-0 flex items-center gap-2">
+                              {c.email && (
+                                <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline">email</a>
+                              )}
+                              <button
+                                onClick={() => setContactDialog({ companyId: b.id, companyName: b.name, contact: c })}
+                                className="opacity-60 md:opacity-0 md:group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+                                title="Edit contact"
+                                data-testid={`client-edit-contact-${c.id}`}
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            </span>
+                          </div>
+                        ))}
+                        {b.contacts.length > 3 && (
+                          <p className="text-[10px] text-muted-foreground">+{b.contacts.length - 3} more</p>
+                        )}
+                        <button
+                          onClick={() => setContactDialog({ companyId: b.id, companyName: b.name })}
+                          className="text-[11px] text-primary hover:underline flex items-center gap-0.5"
+                          data-testid={`client-add-contact-${b.id}`}
+                        >
+                          <Plus className="w-3 h-3" /> Add contact
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="pt-1 border-t flex items-center justify-between gap-2">
+                        <p className="text-[11px] text-muted-foreground">No contacts on file.</p>
+                        <button
+                          onClick={() => setContactDialog({ companyId: b.id, companyName: b.name })}
+                          className="text-[11px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
+                          data-testid={`client-add-contact-${b.id}`}
+                        >
+                          <Plus className="w-3 h-3" /> Add contact
+                        </button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+              {filteredBrands.length === 0 && (
+                <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No brands match.</p>
+              )}
+            </div>
+          )}
+        </>
+      ) : tab === "agents" ? (
+        <>
+          <p className="text-sm text-muted-foreground">Agents acting for brands in your Brand Directory, linked through current requirements or recorded representations. Only people with a recorded brand link are listed.</p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Input
+              placeholder="Search agents, people or brands…"
+              aria-label="Search agents, people or brands"
+              value={agentSearch}
+              onChange={e => setAgentSearch(e.target.value)}
+              className="min-h-11 w-full md:max-w-sm"
+              data-testid="client-agent-search"
+            />
+            {!agentsLoading && agentData && (
+              <p className="text-sm text-muted-foreground" aria-live="polite" data-testid="client-agent-results-count">
+                {agentSearch.trim() ? <><span className="font-mono tabular-nums">{filteredAgents.length.toLocaleString()}</span> of <span className="font-mono tabular-nums">{agents.length.toLocaleString()}</span> {agents.length === 1 ? "entry" : "entries"}</> : <><span className="font-mono tabular-nums">{agentFirmCount.toLocaleString()}</span> {agentFirmCount === 1 ? "firm" : "firms"} · <span className="font-mono tabular-nums">{namedAgentCount.toLocaleString()}</span> named {namedAgentCount === 1 ? "agent" : "agents"}</>}
+              </p>
+            )}
+          </div>
+          {agentsError && (
+            <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-4" data-testid="client-agent-error">
+              <AlertCircle className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <p className="min-w-0 flex-1 text-sm">{agentData ? "Agents couldn’t be refreshed. Showing the last loaded links." : "Agents couldn’t be loaded. Please try again."}</p>
+              <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={() => refetchAgents()} disabled={agentsFetching} data-testid="client-agent-retry">{agentsFetching ? "Retrying…" : "Retry"}</Button>
+            </div>
+          )}
+          {agentsLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" aria-label="Loading agents" data-testid="client-agent-loading">
+              {[1, 2, 3].map(i => <Skeleton key={i} className="h-64 rounded-2xl md:rounded-lg" />)}
+            </div>
+          ) : agentData && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 items-start gap-3">
+              {filteredAgents.map(agent => <ClientAgentCard key={agent.id} agent={agent} searching={!!agentSearch.trim()} contactPreviewLimit={isMobile ? 1 : 3} />)}
+              {filteredAgents.length === 0 && (
+                <div className="col-span-full flex flex-col items-center gap-3 rounded-2xl border border-border bg-card px-4 py-8 text-center md:rounded-lg" data-testid="client-agent-empty">
+                  <Briefcase className="h-6 w-6 text-muted-foreground" aria-hidden="true" />
+                  <p className="text-sm text-muted-foreground">{agentSearch.trim() ? "No agents match your search." : "No agents are linked to brands in your Brand Directory yet."}</p>
+                  {agentSearch.trim() && <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={() => setAgentSearch("")}>Clear search</Button>}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {hubUser?.companyScopeId && (
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setContactDialog({ companyId: hubUser.companyScopeId, companyName: hubUser.team || "Your company" })}
+                data-testid="client-add-own-contact"
+              >
+                <Plus className="w-3.5 h-3.5 mr-1" /> Add contact
+              </Button>
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {myContacts.map((c: any) => (
+              <Card key={c.id} className="group" data-testid={`client-contact-${c.id}`}>
+                <CardContent className="p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <Link href={`/contacts/${c.id}`}>
+                      <p className="text-sm font-semibold hover:underline cursor-pointer">{c.name}</p>
+                    </Link>
+                    <button
+                      onClick={() => setContactDialog({ companyId: c.companyId, companyName: hubUser?.team || "Your company", contact: c })}
+                      className="opacity-60 md:opacity-0 md:group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity shrink-0"
+                      title="Edit contact"
+                      data-testid={`client-edit-own-contact-${c.id}`}
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {c.role && <p className="text-xs text-muted-foreground">{c.role}</p>}
+                  <div className="flex gap-3 mt-1 text-xs">
+                    {c.email && <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline">{c.email}</a>}
+                    {(c.phoneMobile || c.phone) && <span className="text-muted-foreground">{c.phoneMobile || c.phone}</span>}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+            {myContacts.length === 0 && (
+              <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No contacts yet.</p>
+            )}
+          </div>
+        </>
+      )}
+
+      {contactDialog && (
+        <ContactQuickDialog
+          companyId={contactDialog.companyId}
+          companyName={contactDialog.companyName}
+          contact={contactDialog.contact}
+          onClose={() => setContactDialog(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ContactQuickDialog({ companyId, companyName, contact, onClose }: {
+  companyId: string;
+  companyName: string;
+  contact?: any;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [name, setName] = useState(contact?.name || "");
+  const [role, setRole] = useState(contact?.role || "");
+  const [email, setEmail] = useState(contact?.email || "");
+  const [phone, setPhone] = useState(contact?.phoneMobile || contact?.phone || "");
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const body = {
+        name: name.trim(),
+        role: role.trim() || null,
+        email: email.trim() || null,
+        phoneMobile: phone.trim() || null,
+        companyId,
+      };
+      if (contact?.id) {
+        return apiRequest("PUT", `/api/crm/contacts/${contact.id}`, body);
+      }
+      return apiRequest("POST", "/api/crm/contacts", body);
+    },
+    onSuccess: () => {
+      toast({ title: contact?.id ? "Contact updated" : "Contact added" });
+      queryClient.invalidateQueries({ queryKey: ["/api/client/brand-directory"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      onClose();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{contact?.id ? "Edit contact" : "Add contact"} — {companyName}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="cq-name">Name</Label>
+            <Input id="cq-name" value={name} onChange={e => setName(e.target.value)} placeholder="Full name" data-testid="contact-dialog-name" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cq-role">Role</Label>
+            <Input id="cq-role" value={role} onChange={e => setRole(e.target.value)} placeholder="e.g. Head of Acquisitions" data-testid="contact-dialog-role" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cq-email">Email</Label>
+            <Input id="cq-email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@company.com" data-testid="contact-dialog-email" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cq-phone">Phone</Label>
+            <Input id="cq-phone" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+44…" data-testid="contact-dialog-phone" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            onClick={() => saveMutation.mutate()}
+            disabled={!name.trim() || saveMutation.isPending}
+            data-testid="contact-dialog-save"
+          >
+            {saveMutation.isPending ? "Saving…" : contact?.id ? "Save changes" : "Add contact"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function PeopleHub() {
   const { activeTeam } = useTeam();
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const { data: user } = useQuery<User>({ queryKey: ["/api/auth/me"] });
   const effectiveTeam = activeTeam && activeTeam !== "all" ? activeTeam : user?.team;
@@ -817,7 +1660,7 @@ function PeopleHub() {
 
   const [tab, setTab] = useState<PeopleTab>(isLandsec ? "agents" : "landlords");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
-  const [scopedLandlord, setScopedLandlord] = useState<string | null>(null);
+  const [hubAddContactOpen, setHubAddContactOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
 
   const deleteMutation = useMutation({
@@ -836,7 +1679,6 @@ function PeopleHub() {
   });
 
   const onDeleteCompany = (id: string, name: string) => setDeleteTarget({ type: "company", id, name });
-  const onDeleteContact = (id: string, name: string) => setDeleteTarget({ type: "contact", id, name });
   const landsecAppliedRef = useRef(false);
   useEffect(() => {
     if (isLandsec && !landsecAppliedRef.current && tab === "landlords") {
@@ -870,62 +1712,64 @@ function PeopleHub() {
     });
   }, [companies]);
 
-  const scopedLandlordCompany = scopedLandlord ? companies.find(c => c.id === scopedLandlord) : null;
-  const tabs = scopedLandlord ? SCOPED_TABS : isLandsec ? LANDSEC_TABS : ALL_TABS;
+  const agentCompaniesCount = useMemo(() => {
+    return companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent").length;
+  }, [companies]);
 
+  const lendersCompanies = useMemo(() => {
+    return companies.filter((c) => isLenderCompany(c.companyType));
+  }, [companies]);
+
+  // Contacts visible in this hub = those tied to a landlord or agent company.
+  // Excludes brand/tenant contacts (which live in Brands Hub).
+  const hubContactCount = useMemo(() => {
+    const hubCompanyIds = new Set<string>([
+      ...landlordCompanies.map((c) => c.id),
+      ...companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent").map((c) => c.id),
+    ]);
+    return contacts.filter((c) => c.companyId && hubCompanyIds.has(c.companyId)).length;
+  }, [contacts, companies, landlordCompanies]);
+
+  const tabs = isLandsec ? LANDSEC_TABS : ALL_TABS;
+
+  // "View People" on a landlord card goes to the company profile, where its
+  // contacts actually live. (It used to flip to a "scoped" agents tab that
+  // was never filtered by the landlord and never showed its contacts.)
   const handleScopeLandlord = (id: string) => {
-    setScopedLandlord(id);
-    setTab("agents");
-  };
-
-  const handleClearScope = () => {
-    setScopedLandlord(null);
-    setTab(isLandsec ? "agents" : "landlords");
+    navigate(`/companies/${id}`);
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-4">
+    <div className="p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
+      <ContactDataHealth />
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-            {scopedLandlordCompany ? `${scopedLandlordCompany.name} — People Hub` : "People Hub"}
+            CRM
           </h1>
           <p className="text-sm text-muted-foreground">
-            {scopedLandlordCompany
-              ? "Agents & tenants relevant to this landlord"
-              : `${companies.length.toLocaleString()} companies · ${contacts.length.toLocaleString()} contacts`}
+            {`${countLabel(landlordCompanies.length, "landlord")} · ${countLabel(agentCompaniesCount, "agent")} · ${countLabel(hubContactCount, "contact")}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setHubAddContactOpen(true)} data-testid="button-hub-add-contact">
+            <Plus className="w-4 h-4 mr-1" /> Add contact
+          </Button>
           <ViewToggle view={viewMode} onToggle={setViewMode} />
-          {scopedLandlord && (
-          <button
-            onClick={handleClearScope}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border rounded-md px-3 py-1.5 hover:bg-muted transition-colors"
-            data-testid="button-clear-scope"
-          >
-            <X className="w-3.5 h-3.5" />
-            Show all
-          </button>
-        )}
         </div>
       </div>
+      <ContactFormDialog open={hubAddContactOpen} onOpenChange={setHubAddContactOpen} />
 
-      <div className="flex items-center gap-1 border-b">
+      <div className="flex flex-wrap gap-1.5">
         {tabs.map((t) => (
-          <button
+          <Pill
             key={t.key}
+            active={tab === t.key}
             onClick={() => setTab(t.key)}
-            className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              tab === t.key
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
-            }`}
             data-testid={`tab-${t.key}`}
           >
-            <t.icon className="w-4 h-4" />
             {t.label}
-          </button>
+          </Pill>
         ))}
       </div>
 
@@ -933,7 +1777,7 @@ function PeopleHub() {
         <PageLoader />
       ) : (
         <>
-          {tab === "landlords" && !scopedLandlord && (
+          {tab === "landlords" && (
             <LandlordsTab
               companies={companies}
               contacts={contacts}
@@ -946,6 +1790,9 @@ function PeopleHub() {
           )}
           {tab === "agents" && (
             <AgentsTab companies={companies} contacts={contacts} defaultTenantRep={isLandsec} onDeleteCompany={onDeleteCompany} />
+          )}
+          {tab === "lenders" && (
+            <LendersTab companies={lendersCompanies} contacts={contacts} properties={properties} />
           )}
         </>
       )}

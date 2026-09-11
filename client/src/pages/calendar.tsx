@@ -1,8 +1,15 @@
+import { IntelligenceFooter } from "@/components/intelligence-footer";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { CRM_OPTIONS } from "@/lib/crm-options";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiRequest, getQueryFn, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, getQueryFn, getAuthHeaders, queryClient } from "@/lib/queryClient";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import {
   Calendar as CalendarIcon,
   Clock,
@@ -39,9 +46,11 @@ import {
   Shield,
   ArrowRight,
   Loader2,
+  Plus,
 } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "wouter";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface CalendarEvent {
   id: string;
@@ -122,6 +131,24 @@ interface CrmLinks {
   companies: { id: string; name: string }[];
 }
 
+// Synced client events all carry the flat type 'client-sync', which made
+// the Landsec diary's Event Types legend useless (Woody, 2026-08-05: "the
+// main diary needs full usability including the intelligence on event
+// types"). Generic types get the same title classification Outlook events
+// already use; explicit types (viewing, call…) are kept as stored.
+const GENERIC_TEAM_TYPES = new Set(["client-sync", "other", "event", ""]);
+// Stored types arrive in whatever case/plurality the writer used ("Meetings",
+// "meeting", "Viewing"…) — normalise to the canonical singular lowercase keys
+// or the Event Types legend splits one type into look-alike rows.
+const TEAM_TYPE_ALIASES: Record<string, string> = {
+  meetings: "meeting", viewings: "viewing", calls: "call", deadlines: "deadline",
+  inspections: "inspection", "personal / leave": "personal", leave: "personal",
+};
+function teamEventType(te: TeamEvent): string {
+  const stored = (te.event_type || "").toLowerCase();
+  return GENERIC_TEAM_TYPES.has(stored) ? classifyOutlookEvent(te.title) : (TEAM_TYPE_ALIASES[stored] || stored);
+}
+
 function teamEventToCalendarEvent(te: TeamEvent): CalendarEvent {
   return {
     id: `crm-${te.id}`,
@@ -132,14 +159,19 @@ function teamEventToCalendarEvent(te: TeamEvent): CalendarEvent {
     bodyPreview: te.notes || undefined,
     isAllDay: false,
     _source: "crm",
-    _eventType: te.event_type,
+    _eventType: teamEventType(te),
     _propertyName: te.property_name || undefined,
     _companyName: te.company_name || undefined,
     _attendeeNames: te.attendees || [],
-    attendees: (te.attendees || []).map(name => ({
-      emailAddress: { name, address: "" },
-      status: { response: "accepted" },
-    })),
+    // Synced rows store attendees as "Name <email>" — split them so the
+    // details panel shows the person and the briefing can match contacts.
+    attendees: (te.attendees || []).map(raw => {
+      const m = /^(.*?)\s*<([^>]+)>$/.exec(raw);
+      return {
+        emailAddress: { name: m ? m[1] : raw, address: m ? m[2] : "" },
+        status: { response: "accepted" },
+      };
+    }),
   };
 }
 
@@ -149,8 +181,8 @@ const HOUR_HEIGHT = 56;
 const START_HOUR = 6;
 const END_HOUR = 22;
 const TOTAL_HOURS = END_HOUR - START_HOUR;
-const TEAMS = ["All", "Investment", "London Leasing", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
-const INTERNAL_BGP_TEAMS = new Set(["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate"]);
+const TEAMS = ["All", ...CRM_OPTIONS.dealTeam];
+const INTERNAL_BGP_TEAMS = new Set<string>(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 function formatTime(dateStr: string) {
   return new Date(dateStr).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -289,7 +321,10 @@ function findCrmLinks(
   const externalEmails = attendeeEmails.filter(e => !e.includes("brucegillinghampollard"));
   for (const p of properties) {
     const pName = (p.name || "").toLowerCase();
-    const pAddr = (p.address || "").toLowerCase();
+    // address is a jsonb column — it can be a structured object rather than a
+    // string, which made `.toLowerCase` crash the whole calendar page.
+    const rawAddr: any = p.address;
+    const pAddr = (typeof rawAddr === "string" ? rawAddr : rawAddr?.formatted || "").toLowerCase();
     if (pName.length > 3 && subject.includes(pName)) {
       links.properties.push({ id: p.id, name: p.name });
     } else if (pAddr.length > 5) {
@@ -328,29 +363,29 @@ function CrmLinkBadges({ links }: { links: CrmLinks }) {
     <div className="flex flex-wrap gap-1 mt-1.5" data-testid="crm-links">
       {links.properties.map(p => (
         <Link key={p.id} href={`/properties/${p.id}`}>
-          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted border-blue-300 dark:border-blue-700">
-            <Home className="w-2.5 h-2.5 text-blue-500" />{p.name}
+          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
+            <Home className="w-2.5 h-2.5 text-muted-foreground" />{p.name}
           </Badge>
         </Link>
       ))}
       {links.deals.map(d => (
         <Link key={d.id} href={`/deals/${d.id}`}>
-          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted border-green-300 dark:border-green-700">
-            <Handshake className="w-2.5 h-2.5 text-green-500" />{d.name}
+          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
+            <Handshake className="w-2.5 h-2.5 text-muted-foreground" />{d.name}
           </Badge>
         </Link>
       ))}
       {links.contacts.map(c => (
         <Link key={c.id} href={`/contacts/${c.id}`}>
-          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted border-violet-300 dark:border-violet-700">
-            <UserCheck className="w-2.5 h-2.5 text-violet-500" />{c.name}
+          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
+            <UserCheck className="w-2.5 h-2.5 text-muted-foreground" />{c.name}
           </Badge>
         </Link>
       ))}
       {links.companies.map(co => (
         <Link key={co.id} href={`/companies/${co.id}`}>
-          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted border-amber-300 dark:border-amber-700">
-            <Building2 className="w-2.5 h-2.5 text-amber-500" />{co.name}
+          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
+            <Building2 className="w-2.5 h-2.5 text-muted-foreground" />{co.name}
           </Badge>
         </Link>
       ))}
@@ -375,8 +410,8 @@ function ConnectPrompt() {
   return (
     <div className="h-full flex items-center justify-center" data-testid="calendar-connect-prompt">
       <div className="text-center space-y-4 max-w-sm px-6">
-        <div className="w-20 h-20 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto">
-          <CalendarIcon className="w-10 h-10 text-blue-500" />
+        <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto">
+          <CalendarIcon className="w-10 h-10 text-primary" />
         </div>
         <div>
           <h2 className="text-xl font-semibold">Outlook Calendar</h2>
@@ -392,10 +427,14 @@ function ConnectPrompt() {
 }
 
 function DaySummaryBar() {
+  // M365 is sealed for client logins — skip the probe (guaranteed 403).
+  const { data: dsUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const dsIsClient = !!dsUser && (dsUser.role === "Client" || !!dsUser.companyScopeId);
   const { data, isLoading } = useQuery<DaySummary>({
     queryKey: ["/api/microsoft/calendar/summary"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     staleTime: 5 * 60 * 1000,
+    enabled: !dsIsClient,
   });
   if (isLoading || !data) return null;
   return (
@@ -408,19 +447,43 @@ function DaySummaryBar() {
 }
 
 function computeEventLayout(dayEvents: CalendarEvent[]) {
-  const timedEvents = dayEvents.filter(e => !e.isAllDay && getEventDurationMinutes(e.start.dateTime, e.end.dateTime) < 24 * 60);
+  // Width-share by overlap CLUSTER, not by the whole day: one three-way
+  // clash at 15:00 was third-widthing every other event on the board
+  // ("meetings only show half"). Events squeeze only against the events
+  // they actually overlap.
+  const timedEvents = dayEvents
+    .filter(e => !e.isAllDay && getEventDurationMinutes(e.start.dateTime, e.end.dateTime) < 24 * 60)
+    .map(e => {
+      const s = new Date(e.start.dateTime);
+      const en = new Date(e.end.dateTime);
+      const startMin = s.getHours() * 60 + s.getMinutes();
+      const endMin = Math.max(startMin + 15, en.getHours() * 60 + en.getMinutes());
+      return { event: e, startMin, endMin };
+    })
+    .sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin);
+
   const layout: { event: CalendarEvent; col: number; totalCols: number }[] = [];
-  const columns: { end: number }[] = [];
-  timedEvents.forEach(event => {
-    const startMin = new Date(event.start.dateTime).getHours() * 60 + new Date(event.start.dateTime).getMinutes();
-    const endMin = new Date(event.end.dateTime).getHours() * 60 + new Date(event.end.dateTime).getMinutes();
-    let placed = false;
-    for (let c = 0; c < columns.length; c++) {
-      if (startMin >= columns[c].end) { columns[c].end = endMin; layout.push({ event, col: c, totalCols: 0 }); placed = true; break; }
+  let cluster: typeof timedEvents = [];
+  let clusterEnd = -1;
+  const flushCluster = () => {
+    if (!cluster.length) return;
+    const colEnds: number[] = [];
+    const start = layout.length;
+    for (const item of cluster) {
+      let c = colEnds.findIndex(end => item.startMin >= end);
+      if (c === -1) { colEnds.push(item.endMin); c = colEnds.length - 1; }
+      else colEnds[c] = item.endMin;
+      layout.push({ event: item.event, col: c, totalCols: 0 });
     }
-    if (!placed) { columns.push({ end: endMin }); layout.push({ event, col: columns.length - 1, totalCols: 0 }); }
-  });
-  layout.forEach(item => { item.totalCols = columns.length; });
+    for (let i = start; i < layout.length; i++) layout[i].totalCols = colEnds.length;
+    cluster = [];
+  };
+  for (const item of timedEvents) {
+    if (cluster.length && item.startMin >= clusterEnd) flushCluster();
+    clusterEnd = cluster.length ? Math.max(clusterEnd, item.endMin) : item.endMin;
+    cluster.push(item);
+  }
+  flushCluster();
   return layout;
 }
 
@@ -443,7 +506,7 @@ function DayColumn({ date, events, hours, today, nowTop, onSelectEvent, selected
   const eventLayout = computeEventLayout(events);
 
   return (
-    <div className={`flex-1 relative border-l ${isColumnToday && !isTeamMember ? "bg-blue-500/[0.03]" : ""} min-w-0`}>
+    <div className={`flex-1 relative border-l ${isColumnToday && !isTeamMember ? "bg-primary/[0.03]" : ""} min-w-0`}>
       {hours.map(hour => (
         <div key={hour} className="absolute w-full border-t border-border/40" style={{ top: `${(hour - START_HOUR) * HOUR_HEIGHT}px`, height: `${HOUR_HEIGHT}px` }}>
           <div className="absolute w-full border-t border-border/20 border-dashed" style={{ top: `${HOUR_HEIGHT / 2}px` }} />
@@ -459,8 +522,12 @@ function DayColumn({ date, events, hours, today, nowTop, onSelectEvent, selected
         const startDate = new Date(event.start.dateTime);
         const startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
         const duration = getEventDurationMinutes(event.start.dateTime, event.end.dateTime);
-        const top = ((startMinutes - START_HOUR * 60) / 60) * HOUR_HEIGHT;
-        const height = Math.max(22, (duration / 60) * HOUR_HEIGHT - 1);
+        // Events starting before the grid's first hour used to get a negative
+        // top and render as an unreadable clipped sliver — pin them to the top
+        // of the grid and keep the block's bottom at the real end time.
+        const top = Math.max(0, ((startMinutes - START_HOUR * 60) / 60) * HOUR_HEIGHT);
+        const visibleStart = Math.max(startMinutes, START_HOUR * 60);
+        const height = Math.max(22, ((startMinutes + duration - visibleStart) / 60) * HOUR_HEIGHT - 1);
         const isSelected = selectedEventId === event.id;
         const colWidth = totalCols > 1 ? (100 / totalCols) : 100;
         const colLeft = col * colWidth;
@@ -489,6 +556,7 @@ function DayColumn({ date, events, hours, today, nowTop, onSelectEvent, selected
         return (
           <button
             key={event.id}
+            title={`${event.subject || "Meeting"} · ${formatTime(event.start.dateTime)}–${formatTime(event.end.dateTime)}`}
             className={`absolute rounded-[4px] border-l-[3px] ${color.border} ${color.bg} px-1.5 py-0.5 text-left transition-all hover:shadow-md cursor-pointer overflow-hidden ${isSelected ? "ring-2 ring-blue-500 shadow-md" : ""}`}
             style={{ top: `${top}px`, height: `${height}px`, left: `${colLeft}%`, width: `calc(${colWidth}% - 4px)`, marginLeft: "2px" }}
             onClick={() => onSelectEvent(event)}
@@ -626,21 +694,26 @@ function TimeGrid({
         <div className="w-[52px] shrink-0" />
         {dates.map(date => {
           const isToday = isSameDay(date, today);
+          // Today's header takes the primary accent on weekdays only — a
+          // weekend "SUN 23" in the red-leaning terracotta read as negative
+          // (design review 2026-08-23). Weekend today stays bold but muted.
+          const isWeekendDay = [0, 6].includes(date.getDay());
+          const todayAccent = isToday && !isWeekendDay;
           const teamCols = teamColumnsByDay.get(date.toDateString()) || [];
           const totalCols = showTeamColumns ? 1 + teamCols.length : 1;
           return (
             <div key={date.toDateString()} className="flex-1 border-l min-w-0">
               {!showTeamColumns ? (
-                <div className={`text-center py-2 ${isToday ? "bg-blue-500/5" : ""}`}>
-                  <p className={`text-[10px] uppercase tracking-wider ${isToday ? "text-blue-600 dark:text-blue-400 font-bold" : "text-muted-foreground font-medium"}`}>
+                <div className={`text-center py-2 ${isToday ? "bg-primary/5" : ""}`}>
+                  <p className={`text-[10px] uppercase tracking-wider ${todayAccent ? "text-primary font-bold" : isToday ? "text-muted-foreground font-bold" : "text-muted-foreground font-medium"}`}>
                     {date.toLocaleDateString("en-GB", { weekday: "short" })}
                   </p>
-                  <p className={`text-lg leading-tight ${isToday ? "text-blue-600 dark:text-blue-400 font-bold" : "font-semibold"}`}>{date.getDate()}</p>
+                  <p className={`text-lg leading-tight ${todayAccent ? "text-primary font-bold" : isToday ? "font-bold" : "font-semibold"}`}>{date.getDate()}</p>
                 </div>
               ) : (
                 <div className="flex">
-                  <div className={`flex-1 text-center py-1.5 border-r border-border/30 ${isToday ? "bg-blue-500/5" : ""}`}>
-                    <p className={`text-[10px] uppercase tracking-wider font-bold ${isToday ? "text-blue-600 dark:text-blue-400" : ""}`}>
+                  <div className={`flex-1 text-center py-1.5 border-r border-border/30 ${isToday ? "bg-primary/5" : ""}`}>
+                    <p className={`text-[10px] uppercase tracking-wider font-bold ${todayAccent ? "text-primary" : isToday ? "text-muted-foreground" : ""}`}>
                       {date.toLocaleDateString("en-GB", { weekday: "short" })} {date.getDate()}
                     </p>
                     <p className="text-[9px] text-muted-foreground font-semibold">You</p>
@@ -756,6 +829,7 @@ interface BriefingResponse {
     recentHistory: any[];
   };
   briefing: BriefingData;
+  aiError?: string | null;
 }
 
 function EventBriefing({ event }: { event: CalendarEvent }) {
@@ -789,7 +863,7 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
     return (
       <div className="space-y-3 py-2">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-500" />
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
           <span>Preparing meeting briefing...</span>
         </div>
         <div className="space-y-2">
@@ -802,9 +876,10 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
   }
 
   if (briefingMutation.isError) {
+    const errMsg = (briefingMutation.error as any)?.message || "";
     return (
       <div className="space-y-2">
-        <p className="text-xs text-rose-500">Failed to generate briefing</p>
+        <p className="text-xs text-rose-500">Couldn't generate the briefing{errMsg ? ` — ${errMsg.replace(/^\d+:\s*/, "").slice(0, 160)}` : ""}</p>
         <Button variant="outline" size="sm" className="w-full gap-2" onClick={() => briefingMutation.mutate()} data-testid="button-retry-briefing">
           <Sparkles className="w-3.5 h-3.5" />Retry AI Briefing
         </Button>
@@ -818,12 +893,12 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
         <Button
           variant="outline"
           size="sm"
-          className="w-full gap-2 bg-gradient-to-r from-violet-500/5 to-blue-500/5 border-violet-200 dark:border-violet-800 hover:from-violet-500/10 hover:to-blue-500/10"
+          className="w-full gap-2"
           onClick={() => briefingMutation.mutate()}
           data-testid="button-generate-briefing"
         >
-          <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-          <span className="text-violet-700 dark:text-violet-300 font-medium">AI Meeting Prep</span>
+          <Sparkles className="w-3.5 h-3.5 text-primary" />
+          <span className="font-medium">AI Meeting Prep</span>
         </Button>
       </div>
     );
@@ -835,16 +910,21 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
     <div className="space-y-3" data-testid="meeting-briefing">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-          <p className="text-xs font-semibold text-violet-700 dark:text-violet-300 uppercase tracking-wider">AI Briefing</p>
+          <Sparkles className="w-3.5 h-3.5 text-primary" />
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">AI Briefing</p>
         </div>
         <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px]" onClick={() => briefingMutation.mutate()} data-testid="button-refresh-briefing">
           Refresh
         </Button>
       </div>
 
+      {briefingMutation.data?.aiError && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          AI enrichment unavailable ({briefingMutation.data.aiError.replace(/^\d+\s+/, "").slice(0, 120)}) — showing CRM facts only. Refresh to retry.
+        </p>
+      )}
       {briefing.summary && (
-        <div className="rounded-lg bg-violet-500/5 border border-violet-200 dark:border-violet-800/50 px-3 py-2">
+        <div className="rounded-lg bg-muted/40 border border-border px-3 py-2">
           <p className="text-[12px] leading-relaxed text-foreground/80">{briefing.summary}</p>
         </div>
       )}
@@ -852,13 +932,13 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
       {briefing.talkingPoints.length > 0 && (
         <div className="space-y-1.5">
           <div className="flex items-center gap-1.5">
-            <MessageSquare className="w-3 h-3 text-blue-500" />
+            <MessageSquare className="w-3 h-3 text-muted-foreground" />
             <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Talking Points</p>
           </div>
           <div className="space-y-1">
             {briefing.talkingPoints.map((point, i) => (
               <div key={i} className="flex items-start gap-2 text-[11px] leading-relaxed">
-                <span className="text-blue-500 font-bold mt-0.5 shrink-0">{i + 1}.</span>
+                <span className="text-primary font-bold mt-0.5 shrink-0">{i + 1}.</span>
                 <span className="text-foreground/80">{point}</span>
               </div>
             ))}
@@ -888,7 +968,7 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
           {briefing.dealContext && (
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
-                <Handshake className="w-3 h-3 text-green-500" />
+                <Handshake className="w-3 h-3 text-muted-foreground" />
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Deal Context</p>
               </div>
               <p className="text-[11px] text-foreground/80 leading-relaxed">{briefing.dealContext}</p>
@@ -908,13 +988,13 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
           {briefing.preparation.length > 0 && (
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
-                <FileText className="w-3 h-3 text-sky-500" />
+                <FileText className="w-3 h-3 text-muted-foreground" />
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Preparation</p>
               </div>
               <div className="space-y-1">
                 {briefing.preparation.map((item, i) => (
                   <div key={i} className="flex items-start gap-1.5 text-[11px]">
-                    <span className="text-sky-500 mt-0.5 shrink-0">•</span>
+                    <span className="text-primary mt-0.5 shrink-0">•</span>
                     <span className="text-foreground/80">{item}</span>
                   </div>
                 ))}
@@ -942,13 +1022,13 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
           {briefing.followUpSuggestions.length > 0 && (
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
-                <ArrowRight className="w-3 h-3 text-violet-500" />
+                <ArrowRight className="w-3 h-3 text-muted-foreground" />
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Follow-up</p>
               </div>
               <div className="space-y-1">
                 {briefing.followUpSuggestions.map((s, i) => (
                   <div key={i} className="flex items-start gap-1.5 text-[11px]">
-                    <span className="text-violet-500 mt-0.5 shrink-0">→</span>
+                    <span className="text-primary mt-0.5 shrink-0">→</span>
                     <span className="text-foreground/80">{s}</span>
                   </div>
                 ))}
@@ -959,7 +1039,7 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
           {crmContext && crmContext.recentHistory.length > 0 && (
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
-                <Clock className="w-3 h-3 text-gray-500" />
+                <Clock className="w-3 h-3 text-muted-foreground" />
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Recent History</p>
               </div>
               <div className="space-y-1">
@@ -980,7 +1060,7 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
         briefing.riskFlags.length > 0 || briefing.followUpSuggestions.length > 0 ||
         (crmContext && crmContext.recentHistory.length > 0)) && (
         <button
-          className="flex items-center gap-1 text-[10px] text-violet-500 hover:text-violet-700 dark:hover:text-violet-300 font-medium"
+          className="flex items-center gap-1 text-[10px] text-primary hover:underline font-medium"
           onClick={() => setExpanded(!expanded)}
           data-testid="button-toggle-briefing-details"
         >
@@ -1037,8 +1117,8 @@ function EventDetailPanel({ event, onClose, crmLinks }: { event: CalendarEvent; 
           )}
           {event.isOnlineMeeting && joinUrl && (
             <div className="flex items-start gap-3">
-              <Video className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
-              <a href={joinUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-500 hover:underline" data-testid="link-join-meeting">Join online meeting</a>
+              <Video className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+              <a href={joinUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline" data-testid="link-join-meeting">Join online meeting</a>
             </div>
           )}
           {event.organizer && (
@@ -1125,9 +1205,9 @@ function MiniCalendar({ selectedDate, onSelectDate, events }: { selectedDate: Da
           const isToday = isSameDay(date, today);
           const hasEvents = eventDates.has(`${year}-${month}-${day}`);
           return (
-            <button key={day} className={`relative w-full aspect-square flex items-center justify-center text-[11px] rounded-full transition-colors ${isSelected ? "bg-blue-600 text-white font-bold" : isToday ? "font-bold text-blue-600 dark:text-blue-400" : "hover:bg-muted"}`} onClick={() => onSelectDate(date)} data-testid={`cal-day-${day}`}>
+            <button key={day} className={`relative w-full aspect-square flex items-center justify-center text-[11px] rounded-full transition-colors ${isSelected ? "bg-primary text-primary-foreground font-bold" : isToday ? "font-bold text-primary" : "hover:bg-muted"}`} onClick={() => onSelectDate(date)} data-testid={`cal-day-${day}`}>
               {day}
-              {hasEvents && !isSelected && <div className="absolute bottom-0.5 w-1 h-1 rounded-full bg-blue-500" />}
+              {hasEvents && !isSelected && <div className="absolute bottom-0.5 w-1 h-1 rounded-full bg-primary" />}
             </button>
           );
         })}
@@ -1189,7 +1269,7 @@ function UpcomingList({ events, selectedDate, onSelectEvent }: { events: Calenda
                 </div>
                 <div className="shrink-0 pt-0.5">
                   {TypeIcon && <TypeIcon className={`w-3.5 h-3.5 ${color.text} opacity-60 group-hover:opacity-100 transition-opacity`} />}
-                  {!TypeIcon && event.isOnlineMeeting && <Video className="w-3.5 h-3.5 text-blue-400 opacity-60 group-hover:opacity-100 transition-opacity" />}
+                  {!TypeIcon && event.isOnlineMeeting && <Video className="w-3.5 h-3.5 text-muted-foreground opacity-60 group-hover:opacity-100 transition-opacity" />}
                 </div>
               </button>
             );
@@ -1200,98 +1280,86 @@ function UpcomingList({ events, selectedDate, onSelectEvent }: { events: Calenda
   );
 }
 
-interface BackendInsight {
-  type: string;
-  title: string;
-  detail: string;
-  priority: number;
-}
 
-const INSIGHT_ICONS: Record<string, typeof Building2> = {
-  todaySummary: CalendarIcon,
-  hotProperty: Flame,
-  viewingTrend: TrendingUp,
-  activeTenant: Building2,
-  busiestAgent: UserCheck,
-  pipeline: Handshake,
-  coldProperty: AlertTriangle,
-  busiestDay: BarChart3,
-};
+// Client "+ Add event": writes a team_events row (the server forces the
+// caller's company attribution), so the meeting shows on this company's
+// calendar for every login immediately — no Outlook involvement.
+function AddEventDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [title, setTitle] = useState("");
+  const [date, setDate] = useState(today);
+  const [startTime, setStartTime] = useState("10:00");
+  const [endTime, setEndTime] = useState("11:00");
+  const [location, setLocation] = useState("");
+  const [notes, setNotes] = useState("");
 
-const INSIGHT_COLORS: Record<string, string> = {
-  todaySummary: "text-blue-500",
-  hotProperty: "text-rose-500",
-  viewingTrend: "text-emerald-500",
-  activeTenant: "text-amber-500",
-  busiestAgent: "text-violet-500",
-  pipeline: "text-green-500",
-  coldProperty: "text-orange-500",
-  busiestDay: "text-sky-500",
-};
+  const reset = () => { setTitle(""); setDate(today); setStartTime("10:00"); setEndTime("11:00"); setLocation(""); setNotes(""); };
 
-function IntelligenceFooter({ connected }: { connected: boolean }) {
-  const { data: insightsData, isLoading } = useQuery<{ insights: BackendInsight[] }>({
-    queryKey: ["/api/microsoft/calendar/insights"],
-    staleTime: 5 * 60 * 1000,
-    refetchInterval: 5 * 60 * 1000,
+  const create = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/team-events", {
+        title: title.trim(),
+        event_type: "meeting",
+        start_time: `${date}T${startTime}:00`,
+        end_time: `${date}T${endTime}:00`,
+        location: location.trim() || null,
+        notes: notes.trim() || null,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/team-events"] });
+      onOpenChange(false);
+      reset();
+    },
   });
 
-  const insights = insightsData?.insights || [];
+  const valid = title.trim().length > 0 && date && startTime && endTime && endTime > startTime;
 
   return (
-    <div className="border-t bg-muted/15 shrink-0" data-testid="calendar-footer">
-      <div className="flex items-center px-5 py-3 gap-4">
-        <div className="flex items-center gap-2.5 shrink-0 pr-4 border-r border-border/40">
-          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Brain className="w-4.5 h-4.5 text-primary" />
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md" data-testid="add-event-dialog">
+        <DialogHeader>
+          <DialogTitle>Add event</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="ae-title">Title</Label>
+            <Input id="ae-title" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Portfolio review — Liverpool ONE" data-testid="add-event-title" />
           </div>
-          <span className="text-sm font-semibold text-foreground/70 uppercase tracking-wider">Intelligence</span>
-        </div>
-
-        <div className="flex-1 flex items-center gap-4 overflow-x-auto scrollbar-none">
-          {isLoading ? (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <div className="w-3 h-3 border-2 border-muted-foreground/30 border-t-muted-foreground rounded-full animate-spin" />
-              <span className="text-sm">Analysing CRM data...</span>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="ae-date">Date</Label>
+              <Input id="ae-date" type="date" value={date} onChange={e => setDate(e.target.value)} data-testid="add-event-date" />
             </div>
-          ) : insights.length === 0 ? (
-            <span className="text-sm text-muted-foreground">No insights available yet</span>
-          ) : (
-            insights.map((insight, i) => {
-              const Icon = INSIGHT_ICONS[insight.type] || Brain;
-              const color = INSIGHT_COLORS[insight.type] || "text-muted-foreground";
-              return (
-                <div
-                  key={`${insight.type}-${i}`}
-                  className="flex items-center gap-2.5 shrink-0 rounded-lg px-2.5 py-1.5 hover:bg-muted/40 transition-colors group"
-                  data-testid={`insight-${insight.type}`}
-                >
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${color.replace("text-", "bg-")}/10`}>
-                    <Icon className={`w-4 h-4 ${color} shrink-0`} />
-                  </div>
-                  <div className="flex flex-col text-left">
-                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider leading-tight whitespace-nowrap">{insight.title}</span>
-                    <span className="text-[13px] font-medium leading-tight whitespace-nowrap">{insight.detail}</span>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        <div className="flex items-center gap-3 shrink-0 pl-4 border-l border-border/40">
-          {connected && (
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-xs text-muted-foreground">Live</span>
+            <div className="space-y-1.5">
+              <Label htmlFor="ae-start">Start</Label>
+              <Input id="ae-start" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} data-testid="add-event-start" />
             </div>
-          )}
-          <span className="text-xs text-muted-foreground/50">
-            {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
-          </span>
+            <div className="space-y-1.5">
+              <Label htmlFor="ae-end">End</Label>
+              <Input id="ae-end" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} data-testid="add-event-end" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ae-location">Location <span className="text-muted-foreground font-normal">(optional)</span></Label>
+            <Input id="ae-location" value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Bluewater management suite" data-testid="add-event-location" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ae-notes">Notes <span className="text-muted-foreground font-normal">(optional)</span></Label>
+            <Textarea id="ae-notes" value={notes} onChange={e => setNotes(e.target.value)} rows={2} data-testid="add-event-notes" />
+          </div>
+          {create.isError && <p className="text-xs text-red-600">Couldn't save the event — please try again.</p>}
         </div>
-      </div>
-    </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button size="sm" disabled={!valid || create.isPending} onClick={() => create.mutate()} data-testid="add-event-save">
+            {create.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />}
+            Add event
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1301,21 +1369,38 @@ export default function Calendar() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
+  const isMobile = useIsMobile();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("workWeek");
+  // A 5-column week grid is unreadable on a phone — mobile starts in Day view.
+  // Weekends fall outside Work week's Mon–Fri grid, so landing on a Sat/Sun
+  // would hide "today" entirely — open in full Week view instead (UX #18).
+  const todayIsWeekend = [0, 6].includes(new Date().getDay());
+  const [viewMode, setViewMode] = useState<ViewMode>(isMobile ? "day" : todayIsWeekend ? "week" : "workWeek");
   const [showCrmEvents, setShowCrmEvents] = useState(true);
+  const [showAddEvent, setShowAddEvent] = useState(false);
   const [showOutlookEvents, setShowOutlookEvents] = useState(true);
   const [showTeam, setShowTeam] = useState(true);
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
   const [activeEventType, setActiveEventType] = useState<string | null>(null);
   const userTeam = currentUser?.team || "All";
+  const isClientViewer = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const isClientTeam = !!userTeam && !INTERNAL_BGP_TEAMS.has(userTeam) && userTeam !== "All";
   const effectiveTeamFilter = isClientTeam ? userTeam : (teamFilter ?? (TEAMS.includes(userTeam) ? userTeam : "All"));
+  // A selected CLIENT team (e.g. "Landsec") is an event-attribution filter, not
+  // a BGP-member filter. Keep the member query unfiltered ("All") so we search
+  // every BGP diary, then narrow the events themselves in mergedEvents.
+  const clientTeamFilter =
+    effectiveTeamFilter && effectiveTeamFilter !== "All" && !INTERNAL_BGP_TEAMS.has(effectiveTeamFilter)
+      ? effectiveTeamFilter
+      : null;
+  const memberTeamFilter = clientTeamFilter ? "All" : effectiveTeamFilter;
 
   const { data: status, isLoading: statusLoading } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/microsoft/status"],
     queryFn: getQueryFn({ on401: "returnNull" }),
+    // M365 is sealed for client logins — don't probe it (guaranteed 403).
+    enabled: !isClientViewer,
   });
 
   const { data: outlookEvents, isLoading: outlookLoading } = useQuery<CalendarEvent[]>({
@@ -1333,12 +1418,12 @@ export default function Calendar() {
   });
 
   const { data: teamSchedules } = useQuery<TeamMemberSchedule[]>({
-    queryKey: ["/api/microsoft/team-calendar", effectiveTeamFilter],
+    queryKey: ["/api/microsoft/team-calendar", memberTeamFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (effectiveTeamFilter !== "All") params.set("team", effectiveTeamFilter);
+      if (memberTeamFilter !== "All") params.set("team", memberTeamFilter);
       params.set("days", "14");
-      const res = await fetch(`/api/microsoft/team-calendar?${params}`, { credentials: "include" });
+      const res = await fetch(`/api/microsoft/team-calendar?${params}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to fetch team calendar");
       return res.json();
     },
@@ -1378,27 +1463,55 @@ export default function Calendar() {
 
   const mergedEvents = useMemo(() => {
     const events: CalendarEvent[] = [];
-    if (showOutlookEvents && outlookEvents) events.push(...outlookEvents.map(e => ({
+    if (showOutlookEvents && outlookEvents) events.push(...outlookEvents
+      // Organiser-cancelled meetings linger in Outlook as "Cancelled: …" until
+      // each person removes them — dead entries that just clutter the board.
+      .filter(e => !/^cancell?ed:/i.test((e.subject || "").trim()))
+      .map(e => ({
       ...e,
       _source: "outlook" as const,
       _eventType: e._eventType || classifyOutlookEvent(e.subject, e.categories),
     })));
     if (showCrmEvents && teamEventsRaw) events.push(...teamEventsRaw.map(teamEventToCalendarEvent));
-    if (activeEventType) {
-      return events.filter(e => e._eventType === activeEventType);
+    let out = events;
+    // Picking a CLIENT team (e.g. "Landsec") means "show me that client's
+    // calendar". The server-side team filter matches BGP staff by users.team,
+    // which no client team ever matches — so it just emptied the board. Filter
+    // by the event's client attribution instead: the CRM company tag, the
+    // client's name in the subject/location, or an attendee on their domain.
+    if (clientTeamFilter) {
+      const needle = clientTeamFilter.toLowerCase();
+      const domains = (crmContacts || [])
+        .filter(c => (c.company_name || "").toLowerCase() === needle && c.email && c.email.includes("@"))
+        .map(c => c.email!.split("@")[1].toLowerCase());
+      const uniqDomains = Array.from(new Set(domains));
+      out = out.filter(e => {
+        if ((e._companyName || "").toLowerCase() === needle) return true;
+        const hay = `${e.subject || ""} ${e.location?.displayName || ""} ${e.bodyPreview || ""}`.toLowerCase();
+        if (hay.includes(needle)) return true;
+        const atts = (e.attendees || []) as any[];
+        return atts.some(a => {
+          const addr = (a?.emailAddress?.address || "").toLowerCase();
+          return !!addr && uniqDomains.some(d => addr.endsWith("@" + d));
+        });
+      });
     }
-    return events;
-  }, [outlookEvents, teamEventsRaw, showCrmEvents, showOutlookEvents, activeEventType]);
+    if (activeEventType) {
+      return out.filter(e => e._eventType === activeEventType);
+    }
+    return out;
+  }, [outlookEvents, teamEventsRaw, showCrmEvents, showOutlookEvents, activeEventType, clientTeamFilter, crmContacts]);
 
   const eventsLoading = teamEventsLoading || (status?.connected && outlookLoading);
 
   const eventTypeCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     if (teamEventsRaw) {
-      teamEventsRaw.forEach(e => { counts[e.event_type] = (counts[e.event_type] || 0) + 1; });
+      teamEventsRaw.forEach(e => { const t = teamEventType(e); counts[t] = (counts[t] || 0) + 1; });
     }
     if (outlookEvents) {
       outlookEvents.forEach(e => {
+        if (/^cancell?ed:/i.test((e.subject || "").trim())) return;
         const type = classifyOutlookEvent(e.subject, e.categories);
         counts[type] = (counts[type] || 0) + 1;
       });
@@ -1438,7 +1551,10 @@ export default function Calendar() {
     <div className="h-full flex flex-col" data-testid="calendar-page">
       <DaySummaryBar />
 
-      <div className="flex items-center justify-between px-3 py-2 border-b shrink-0 bg-background">
+      {/* flex-wrap: at phone widths the view toggle + CRM/Outlook/Team chips
+          drop to a second row — without it they clip past the viewport with
+          no way to scroll to them. */}
+      <div className="flex items-center justify-between flex-wrap gap-y-1.5 px-3 py-2 border-b shrink-0 bg-background">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setSelectedDate(navigateView(selectedDate, viewMode, -1))} data-testid="button-prev-day">
             <ChevronLeft className="w-4 h-4" />
@@ -1447,39 +1563,41 @@ export default function Calendar() {
             <ChevronRight className="w-4 h-4" />
           </Button>
           <Button variant="outline" size="sm" className="text-xs h-7 px-3" onClick={() => setSelectedDate(new Date())} data-testid="button-today">Today</Button>
+          {/* Staff get the same lightweight team_events write as clients —
+              without it a staff phone had no in-app way to jot a CRM
+              meeting (the only write path was the Outlook app, losing CRM
+              linkage). Outlook sync is untouched; these rows stay separate. */}
+          <Button size="sm" className="text-xs h-7 px-3" onClick={() => setShowAddEvent(true)} data-testid="button-add-event">
+            <Plus className="w-3.5 h-3.5 mr-1" />Add event
+          </Button>
           <span className="text-sm font-semibold ml-2 hidden sm:inline">{headerLabel}</span>
         </div>
 
         <div className="flex items-center gap-1">
-          <div className="flex bg-muted rounded-md p-0.5">
+          <div className="flex gap-1">
             {(["day", "workWeek", "week"] as ViewMode[]).map(mode => (
-              <button
-                key={mode}
-                className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${viewMode === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                onClick={() => setViewMode(mode)}
-                data-testid={`view-${mode}`}
-              >
+              <Pill key={mode} active={viewMode === mode} onClick={() => setViewMode(mode)} data-testid={`view-${mode}`}>
                 {mode === "day" ? "Day" : mode === "workWeek" ? "Work week" : "Week"}
-              </button>
+              </Pill>
             ))}
           </div>
-          <div className="flex items-center gap-1.5 ml-2">
-            <button className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${showCrmEvents ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`} onClick={() => setShowCrmEvents(!showCrmEvents)} data-testid="toggle-crm-events">
+          <div className="flex items-center gap-1 ml-2">
+            <Pill active={showCrmEvents} onClick={() => setShowCrmEvents(!showCrmEvents)} data-testid="toggle-crm-events">
               <Building2 className="w-3 h-3" />CRM
-            </button>
+            </Pill>
             {status?.connected && (
-              <button className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${showOutlookEvents ? "bg-blue-500/15 text-blue-700 dark:text-blue-300" : "bg-muted text-muted-foreground"}`} onClick={() => setShowOutlookEvents(!showOutlookEvents)} data-testid="toggle-outlook-events">
+              <Pill active={showOutlookEvents} onClick={() => setShowOutlookEvents(!showOutlookEvents)} data-testid="toggle-outlook-events">
                 <Cloud className="w-3 h-3" />Outlook
-              </button>
+              </Pill>
             )}
             {status?.connected && (
-              <button
-                className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${showTeam ? "bg-violet-500/15 text-violet-700 dark:text-violet-300" : "bg-muted text-muted-foreground"}`}
+              <Pill
+                active={showTeam}
                 onClick={() => { setShowTeam(!showTeam); if (!showTeam && viewMode !== "day") setViewMode("day"); }}
                 data-testid="toggle-team"
               >
                 <Users className="w-3 h-3" />Team
-              </button>
+              </Pill>
             )}
           </div>
         </div>
@@ -1491,7 +1609,7 @@ export default function Calendar() {
             <button
               key={t}
               onClick={() => setTeamFilter(t)}
-              className={`text-[10px] px-2.5 py-0.5 rounded-full border transition-colors ${effectiveTeamFilter === t ? "bg-black text-white dark:bg-white dark:text-black border-transparent" : "bg-background hover:bg-muted border-border text-foreground"}`}
+              className={`text-[11px] leading-none font-semibold uppercase tracking-wide whitespace-nowrap px-2.5 py-[5px] rounded-full border transition-colors ${effectiveTeamFilter === t ? "bg-foreground text-background border-transparent" : "bg-background hover:bg-muted border-border text-muted-foreground"}`}
               data-testid={`team-pill-${t.toLowerCase().replace(/[\s/]+/g, "-")}`}
             >
               {t}
@@ -1512,7 +1630,7 @@ export default function Calendar() {
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Event Types</p>
                 {activeEventType && (
                   <button
-                    className="text-[9px] text-blue-500 hover:text-blue-700 font-medium"
+                    className="text-[9px] text-primary hover:underline font-medium"
                     onClick={() => setActiveEventType(null)}
                     data-testid="clear-event-type-filter"
                   >
@@ -1545,7 +1663,41 @@ export default function Calendar() {
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 bg-background">
-          {!status?.connected && !teamEventsRaw ? (
+          {/* Phone: "when's our next meeting?" is the number-one question and
+              Day view of an empty today can't answer it — surface the next
+              five events across days up top (UX #37). Tapping one jumps the
+              grid to that day and opens the event. */}
+          {isMobile && mergedEvents.length > 0 && (() => {
+            const now = new Date();
+            const upcoming = mergedEvents
+              .filter(e => new Date(e.start.dateTime) >= now)
+              .sort((a, b) => new Date(a.start.dateTime).getTime() - new Date(b.start.dateTime).getTime())
+              .slice(0, 5);
+            if (upcoming.length === 0) return null;
+            return (
+              <div className="border-b px-3 py-2 space-y-1" data-testid="mobile-upcoming-agenda">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Upcoming</p>
+                {upcoming.map((e, i) => {
+                  const d = new Date(e.start.dateTime);
+                  return (
+                    <button
+                      key={e.id || i}
+                      type="button"
+                      className="w-full flex items-center gap-2 text-xs px-1.5 py-1 rounded hover:bg-muted text-left"
+                      onClick={() => { setSelectedDate(d); setSelectedEvent(e); }}
+                      data-testid={`upcoming-event-${i}`}
+                    >
+                      <span className="tabular-nums text-muted-foreground shrink-0 w-24">
+                        {d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} {d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                      <span className="truncate font-medium">{e.subject || "(no title)"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+          {!status?.connected && !teamEventsRaw && !isClientViewer ? (
             <ConnectPrompt />
           ) : eventsLoading ? (
             <div className="p-4 space-y-3 flex-1">{[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-16 w-full" />)}</div>
@@ -1580,6 +1732,8 @@ export default function Calendar() {
           </div>
         </div>
       )}
+
+      <AddEventDialog open={showAddEvent} onOpenChange={setShowAddEvent} />
     </div>
   );
 }

@@ -47,7 +47,62 @@ import {
 } from "@shared/schema";
 import { escapeLike } from "./utils/escape-like";
 import { db, pool } from "./db";
-import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull } from "drizzle-orm";
+import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull, arrayContains } from "drizzle-orm";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve an internalAgent payload (which historically was a `text[]` of
+ * display names but came to leak user-id GUIDs from the available-units
+ * auto-create paths) into the canonical pair of columns:
+ *   - internalAgent      = display names (legacy readers — kanban color
+ *                           map, hr-routes fee allocation, aml filters)
+ *   - internalAgentIds   = user IDs (new readers — survives renames)
+ *
+ * Caller can pass either internalAgent (names or IDs) or internalAgentIds
+ * (IDs); both columns get filled in. Entries that can't be resolved to a
+ * users row are dropped — better to lose an unmatched chip than to leave
+ * a stale name lingering in the array.
+ */
+async function normaliseInternalAgents<T extends Record<string, any>>(payload: T): Promise<T> {
+  const hasNames = Array.isArray(payload?.internalAgent);
+  const hasIds   = Array.isArray(payload?.internalAgentIds);
+  if (!hasNames && !hasIds) return payload;
+
+  const collected = new Set<string>();
+  if (hasNames) for (const v of payload.internalAgent) { if (v) collected.add(String(v)); }
+  if (hasIds)   for (const v of payload.internalAgentIds) { if (v) collected.add(String(v)); }
+  if (collected.size === 0) return { ...payload, internalAgent: [], internalAgentIds: [] };
+
+  const inputs = Array.from(collected);
+  const idCandidates = inputs.filter(s => UUID_RE.test(s));
+  const nameCandidates = inputs.filter(s => !UUID_RE.test(s));
+
+  const matched: { id: string; name: string }[] = [];
+  if (idCandidates.length > 0 || nameCandidates.length > 0) {
+    const { rows } = await pool.query<{ id: string; name: string }>(
+      `SELECT id, name FROM users
+        WHERE ($1::varchar[] IS NOT NULL AND id   = ANY($1::varchar[]))
+           OR ($2::text[]    IS NOT NULL AND name = ANY($2::text[]))`,
+      [
+        idCandidates.length > 0 ? idCandidates : null,
+        nameCandidates.length > 0 ? nameCandidates : null,
+      ]
+    );
+    for (const r of rows) matched.push({ id: r.id, name: r.name });
+  }
+
+  // De-dup by id, preserving first-seen order from the original input
+  // when possible.
+  const byId = new Map<string, { id: string; name: string }>();
+  for (const m of matched) if (!byId.has(m.id)) byId.set(m.id, m);
+
+  return {
+    ...payload,
+    internalAgent: Array.from(byId.values()).map(m => m.name),
+    internalAgentIds: Array.from(byId.values()).map(m => m.id),
+  };
+}
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -143,7 +198,7 @@ export interface IStorage {
   deleteMemory(id: string): Promise<void>;
   clearMemories(userId: string): Promise<void>;
 
-  getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]>;
+  getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]>;
   getCrmCompany(id: string): Promise<CrmCompany | undefined>;
   createCrmCompany(company: InsertCrmCompany): Promise<CrmCompany>;
   updateCrmCompany(id: string, updates: Partial<InsertCrmCompany>): Promise<CrmCompany>;
@@ -155,7 +210,7 @@ export interface IStorage {
   updateCrmContact(id: string, updates: Partial<InsertCrmContact>): Promise<CrmContact>;
   deleteCrmContact(id: string): Promise<void>;
 
-  getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]>;
+  getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; excludeComps?: boolean; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]>;
   getCrmProperty(id: string): Promise<CrmProperty | undefined>;
   createCrmProperty(property: InsertCrmProperty): Promise<CrmProperty>;
   updateCrmProperty(id: string, updates: Partial<InsertCrmProperty>): Promise<CrmProperty>;
@@ -195,7 +250,7 @@ export interface IStorage {
   deleteCrmLead(id: string): Promise<void>;
 
   crmSearchAll(query: string): Promise<{ type: string; id: string; name: string; detail?: string }[]>;
-  getCrmStats(): Promise<{ properties: number; deals: number; companies: number; contacts: number; leads: number; comps: number; requirementsLeasing: number; requirementsInvestment: number }>;
+  getCrmStats(): Promise<{ properties: number; deals: number; activeDeals: number; companies: number; contacts: number; leads: number; comps: number; requirementsLeasing: number; requirementsInvestment: number }>;
 
   getAppChangeRequests(): Promise<AppChangeRequest[]>;
   getAppChangeRequest(id: string): Promise<AppChangeRequest | undefined>;
@@ -221,7 +276,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllUsers(): Promise<User[]> {
-    return db.select().from(users);
+    // Sort by name so every BGP-contact picker in the app gets
+    // alphabetical order by default. ~80% of callers forgot to re-sort
+    // on the client; doing it at source fixes them all at once.
+    return db.select().from(users).orderBy(sql`lower(${users.name})`);
   }
 
   async updateUserDashboardWidgets(userId: string, widgets: string[]): Promise<void> {
@@ -709,7 +767,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(chatbgpMemories).where(eq(chatbgpMemories.userId, userId));
   }
 
-  async getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]> {
+  async getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]> {
     // Hide companies that have been merged into another — they shouldn't
     // appear in any list view. Their FK references have been rewritten so
     // nothing depends on them any more.
@@ -717,14 +775,21 @@ export class DatabaseStorage implements IStorage {
     if (filters?.search) conditions.push(ilike(crmCompanies.name, `%${escapeLike(filters.search)}%`));
     if (filters?.groupName) conditions.push(eq(crmCompanies.groupName, filters.groupName));
     if (filters?.companyType) conditions.push(eq(crmCompanies.companyType, filters.companyType));
+    // Hide invoicing/billing entities (Sage-imported SPVs, shell cos used for
+    // invoicing) from the main CRM list by default. They're still resolvable
+    // by ID for the deal page billing-entity link and KYC checks. Pass
+    // includeBillingEntities=true or filter explicitly by companyType to see them.
+    else if (!filters?.includeBillingEntities) {
+      conditions.push(sql`(${crmCompanies.companyType} IS NULL OR ${crmCompanies.companyType} NOT IN ('Billing','Billing Entity'))`);
+    }
     const where = and(...conditions);
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;
       const [countResult] = await db.select({ count: sql<number>`count(*)::int` }).from(crmCompanies).where(where);
-      const data = await db.select().from(crmCompanies).where(where).orderBy(crmCompanies.name).limit(filters.limit).offset(offset);
+      const data = await db.select().from(crmCompanies).where(where).orderBy(sql`lower(${crmCompanies.name})`).limit(filters.limit).offset(offset);
       return { data, total: countResult.count };
     }
-    return db.select().from(crmCompanies).where(where).orderBy(crmCompanies.name);
+    return db.select().from(crmCompanies).where(where).orderBy(sql`lower(${crmCompanies.name})`);
   }
 
   async getCrmCompany(id: string): Promise<CrmCompany | undefined> {
@@ -744,10 +809,24 @@ export class DatabaseStorage implements IStorage {
 
   async deleteCrmCompany(id: string): Promise<void> {
     await db.transaction(async (tx) => {
+      // Null out every deal FK that can point at this brand. Earlier
+      // versions only handled landlord/tenant — vendor/purchaser and
+      // the four agent FKs were added later and never picked up the
+      // delete unhook, leaving orphan refs that rendered as silent "—"
+      // in the deal detail.
       await tx.update(crmDeals).set({ landlordId: null }).where(eq(crmDeals.landlordId, id));
       await tx.update(crmDeals).set({ tenantId: null }).where(eq(crmDeals.tenantId, id));
-      await tx.update(crmDeals).set({ invoicingEntityId: null }).where(eq(crmDeals.invoicingEntityId, id));
+      await tx.update(crmDeals).set({ vendorId: null }).where(eq(crmDeals.vendorId, id));
+      await tx.update(crmDeals).set({ purchaserId: null }).where(eq(crmDeals.purchaserId, id));
+      await tx.update(crmDeals).set({ vendorAgentId: null }).where(eq(crmDeals.vendorAgentId, id));
+      await tx.update(crmDeals).set({ acquisitionAgentId: null }).where(eq(crmDeals.acquisitionAgentId, id));
+      await tx.update(crmDeals).set({ purchaserAgentId: null }).where(eq(crmDeals.purchaserAgentId, id));
+      await tx.update(crmDeals).set({ leasingAgentId: null }).where(eq(crmDeals.leasingAgentId, id));
       await tx.update(crmProperties).set({ landlordId: null }).where(eq(crmProperties.landlordId, id));
+      await tx.update(crmProperties).set({ freeholderId: null }).where(eq(crmProperties.freeholderId, id));
+      await tx.update(crmProperties).set({ longLeaseholderId: null }).where(eq(crmProperties.longLeaseholderId, id));
+      await tx.update(crmProperties).set({ seniorLenderId: null }).where(eq(crmProperties.seniorLenderId, id));
+      await tx.update(crmProperties).set({ juniorLenderId: null }).where(eq(crmProperties.juniorLenderId, id));
       await tx.update(crmContacts).set({ companyId: null }).where(eq(crmContacts.companyId, id));
       await tx.update(crmRequirementsLeasing).set({ companyId: null }).where(eq(crmRequirementsLeasing.companyId, id));
       await tx.delete(crmCompanyProperties).where(eq(crmCompanyProperties.companyId, id));
@@ -769,7 +848,7 @@ export class DatabaseStorage implements IStorage {
       and(eq(crmCompanyProperties.companyId, companyId), eq(crmCompanyProperties.propertyId, propertyId))
     );
     if (existing.length === 0) {
-      await db.insert(crmCompanyProperties).values({ companyId, propertyId });
+      await db.insert(crmCompanyProperties).values({ companyId, propertyId }).onConflictDoNothing();
     }
   }
 
@@ -784,10 +863,23 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCompanyDeals(companyId: string): Promise<CrmDeal[]> {
-    const links = await db.select().from(crmCompanyDeals).where(eq(crmCompanyDeals.companyId, companyId));
-    if (links.length === 0) return [];
-    const dealIds = links.map(l => l.dealId);
-    return db.select().from(crmDeals).where(inArray(crmDeals.id, dealIds));
+    // Source from BOTH the direct counterparty FKs on crm_deals AND the
+    // crm_company_deals join. The join was the original linkage; the four
+    // direct FKs (landlord/tenant/vendor/purchaser) were added later for
+    // kanban perf and deal create/edit only populates those — anything
+    // created through the UI since wouldn't appear if we only queried
+    // the join.
+    const linked = await db.select({ id: crmCompanyDeals.dealId }).from(crmCompanyDeals).where(eq(crmCompanyDeals.companyId, companyId));
+    const linkedIds = linked.map(l => l.id);
+    return db.select().from(crmDeals).where(
+      or(
+        eq(crmDeals.landlordId, companyId),
+        eq(crmDeals.tenantId, companyId),
+        eq(crmDeals.vendorId, companyId),
+        eq(crmDeals.purchaserId, companyId),
+        linkedIds.length > 0 ? inArray(crmDeals.id, linkedIds) : sql`false`,
+      )
+    );
   }
 
   async linkCompanyDeal(companyId: string, dealId: string): Promise<void> {
@@ -795,7 +887,7 @@ export class DatabaseStorage implements IStorage {
       and(eq(crmCompanyDeals.companyId, companyId), eq(crmCompanyDeals.dealId, dealId))
     );
     if (existing.length === 0) {
-      await db.insert(crmCompanyDeals).values({ companyId, dealId });
+      await db.insert(crmCompanyDeals).values({ companyId, dealId }).onConflictDoNothing();
     }
   }
 
@@ -820,10 +912,21 @@ export class DatabaseStorage implements IStorage {
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;
       const [countResult] = await db.select({ count: sql<number>`count(*)::int` }).from(crmContacts).where(where);
-      const data = await db.select().from(crmContacts).where(where).orderBy(crmContacts.name).limit(filters.limit).offset(offset);
+      const data = await db.select().from(crmContacts).where(where).orderBy(sql`lower(${crmContacts.name})`).limit(filters.limit).offset(offset);
       return { data, total: countResult.count };
     }
-    return db.select().from(crmContacts).where(where).orderBy(crmContacts.name);
+    const rows = await db.select().from(crmContacts).where(where).orderBy(sql`lower(${crmContacts.name})`);
+    // Deduplicate within a company scope: keep the most-recently-updated row per (name, companyId).
+    if (filters?.companyId) {
+      const seen = new Map<string, typeof rows[0]>();
+      for (const r of rows) {
+        const key = `${(r.name || "").toLowerCase()}__${r.companyId || ""}`;
+        const existing = seen.get(key);
+        if (!existing || (r.updatedAt && (!existing.updatedAt || r.updatedAt > existing.updatedAt))) seen.set(key, r);
+      }
+      return Array.from(seen.values()).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    }
+    return rows;
   }
 
   async getCrmContact(id: string): Promise<CrmContact | undefined> {
@@ -857,21 +960,24 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]> {
+  async getCrmProperties(filters?: { search?: string; groupName?: string; status?: string; assetClass?: string; bgpEngagement?: string; excludeComps?: boolean; page?: number; limit?: number }): Promise<{ data: CrmProperty[]; total: number } | CrmProperty[]> {
     const conditions: any[] = [];
     if (filters?.search) conditions.push(ilike(crmProperties.name, `%${escapeLike(filters.search)}%`));
     if (filters?.groupName) conditions.push(eq(crmProperties.groupName, filters.groupName));
     if (filters?.status) conditions.push(eq(crmProperties.status, filters.status));
     if (filters?.assetClass) conditions.push(sql`${crmProperties.assetClass} @> ARRAY[${filters.assetClass}]::text[]`);
     if (filters?.bgpEngagement) conditions.push(sql`${crmProperties.bgpEngagement} @> ARRAY[${filters.bgpEngagement}]::text[]`);
+    if (filters?.excludeComps) {
+      conditions.push(sql`(${crmProperties.groupName} IS NULL OR ${crmProperties.groupName} NOT IN ('Investment Comp', 'Investment Comps', 'Leasing Comp', 'Leasing Comps'))`);
+    }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;
       const [countResult] = await db.select({ count: sql<number>`count(*)::int` }).from(crmProperties).where(where);
-      const data = await db.select().from(crmProperties).where(where).orderBy(crmProperties.name).limit(filters.limit).offset(offset);
+      const data = await db.select().from(crmProperties).where(where).orderBy(sql`lower(${crmProperties.name})`).limit(filters.limit).offset(offset);
       return { data, total: countResult.count };
     }
-    return db.select().from(crmProperties).where(where).orderBy(crmProperties.name);
+    return db.select().from(crmProperties).where(where).orderBy(sql`lower(${crmProperties.name})`);
   }
 
   async getCrmProperty(id: string): Promise<CrmProperty | undefined> {
@@ -907,18 +1013,21 @@ export class DatabaseStorage implements IStorage {
     if (filters?.search) conditions.push(ilike(crmDeals.name, `%${escapeLike(filters.search)}%`));
     if (filters?.groupName) conditions.push(eq(crmDeals.groupName, filters.groupName));
     if (filters?.status) conditions.push(eq(crmDeals.status, filters.status));
-    if (filters?.team) conditions.push(eq(crmDeals.team, filters.team));
+    // team is a text[] column — `eq` would generate `team = $1` against a
+    // string and throw in Postgres. Match deals whose team array contains it.
+    if (filters?.team) conditions.push(arrayContains(crmDeals.team, [filters.team]));
     if (filters?.dealType) conditions.push(eq(crmDeals.dealType, filters.dealType));
     if (filters?.propertyId) conditions.push(eq(crmDeals.propertyId, filters.propertyId));
     if (filters?.excludeTrackerDeals) {
-      const trackerDealIds = await db
-        .select({ dealId: availableUnits.dealId })
-        .from(availableUnits)
-        .where(sql`${availableUnits.dealId} IS NOT NULL`);
-      const ids = trackerDealIds.map(r => r.dealId).filter(Boolean) as string[];
-      if (ids.length > 0) {
-        conditions.push(sql`${crmDeals.id} NOT IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`);
-      }
+      // Deals CRM is SOL+ ONLY (Woody's team, 2026-08-25): the pre-Solicitors
+      // pipeline — Reporting / Available / Negotiating / HOTs, tracker-linked
+      // or not — lives on the Letting Tracker and the WIP report. The Deals
+      // board shows instructed deals from Solicitors onwards. NULL/unknown
+      // statuses stay visible rather than silently vanishing.
+      conditions.push(sql`(${crmDeals.status} IS NULL OR lower(${crmDeals.status}) NOT IN (
+        'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live',
+        'ava', 'available', 'neg', 'negotiating', 'negotiation',
+        'under negotiation', 'in negotiation', 'hot', 'hots', 'heads of terms'))`);
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     if (filters?.page && filters?.limit) {
@@ -936,26 +1045,46 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createCrmDeal(deal: InsertCrmDeal): Promise<CrmDeal> {
-    const [d] = await db.insert(crmDeals).values(deal).returning();
+    // Coerce date-string values to Date objects for Drizzle timestamp columns.
+    // Direct callers (e.g. the Letting Tracker SOL promotion) pass ISO strings
+    // straight in, bypassing the Zod schema that would parse them; Drizzle's
+    // timestamp serializer calls .toISOString() and throws on a raw string.
+    // Mirrors the same coercion in updateCrmDeal.
+    const tsFields = ["kycApprovedAt", "instructedAt", "targetDate", "exchangedAt", "completedAt", "invoicedAt", "amlEddCompletedAt", "amlIdVerifiedAt", "amlSarFiledAt"];
+    const coerced: any = { ...deal };
+    for (const f of tsFields) {
+      if (coerced[f] && typeof coerced[f] === "string") {
+        coerced[f] = new Date(coerced[f]);
+      }
+    }
+    const normalised = await normaliseInternalAgents(coerced);
+    const [d] = await db.insert(crmDeals).values(normalised).returning();
     return d;
   }
 
   async updateCrmDeal(id: string, updates: Partial<InsertCrmDeal>): Promise<CrmDeal> {
     // Coerce any date-string values to Date objects for Drizzle timestamp columns
-    const tsFields = ["kycApprovedAt", "hotsCompletedAt", "amlEddCompletedAt", "amlIdVerifiedAt", "amlSarFiledAt"];
+    const tsFields = ["kycApprovedAt", "instructedAt", "targetDate", "exchangedAt", "completedAt", "invoicedAt", "amlEddCompletedAt", "amlIdVerifiedAt", "amlSarFiledAt"];
     const coerced: any = { ...updates };
     for (const f of tsFields) {
       if (coerced[f] && typeof coerced[f] === "string") {
         coerced[f] = new Date(coerced[f]);
       }
     }
-    const [d] = await db.update(crmDeals).set({ ...coerced, updatedAt: new Date() }).where(eq(crmDeals.id, id)).returning();
+    const normalised = await normaliseInternalAgents(coerced);
+    const [d] = await db.update(crmDeals).set({ ...normalised, updatedAt: new Date() }).where(eq(crmDeals.id, id)).returning();
     return d;
   }
 
   async deleteCrmDeal(id: string): Promise<void> {
+    const { tenancyScheduleUnits } = await import("@shared/schema");
     await db.transaction(async (tx) => {
       await tx.update(crmRequirementsLeasing).set({ dealId: null }).where(eq(crmRequirementsLeasing.dealId, id));
+      // Unlink (not delete) the unit-spine rows pointing at this deal —
+      // otherwise the Letting Tracker / rent roll keep a dangling deal_id
+      // and their rows silently drop off the status mirror.
+      await tx.update(availableUnits).set({ dealId: null }).where(eq(availableUnits.dealId, id));
+      await tx.update(tenancyScheduleUnits).set({ dealId: null }).where(eq(tenancyScheduleUnits.dealId, id));
       await tx.delete(crmDealLeads).where(eq(crmDealLeads.dealId, id));
       await tx.delete(crmCompanyDeals).where(eq(crmCompanyDeals.dealId, id));
       await tx.delete(crmContactDeals).where(eq(crmContactDeals.dealId, id));
@@ -970,10 +1099,28 @@ export class DatabaseStorage implements IStorage {
   }
 
   async setDealFeeAllocations(dealId: string, allocations: InsertDealFeeAllocation[]): Promise<DealFeeAllocation[]> {
+    // Resolve agent_user_id from the agent name where we can (case-insensitive)
+    // so commission joins downstream survive renames. BGP House rows aren't
+    // linked to a user — leave the id null.
+    const nameSet = Array.from(new Set(
+      allocations.filter(a => !a.isBgpHouse && a.agentName).map(a => a.agentName.toLowerCase())
+    ));
+    let nameToUserId = new Map<string, string>();
+    if (nameSet.length > 0) {
+      const { rows: userRows } = await pool.query<{ id: string; name: string }>(
+        "SELECT id, name FROM users WHERE LOWER(name) = ANY($1::text[])",
+        [nameSet]
+      );
+      nameToUserId = new Map(userRows.map(r => [r.name.toLowerCase(), r.id]));
+    }
     return await db.transaction(async (tx) => {
       await tx.delete(dealFeeAllocations).where(eq(dealFeeAllocations.dealId, dealId));
       if (allocations.length === 0) return [];
-      const rows = allocations.map(a => ({ ...a, dealId }));
+      const rows = allocations.map(a => ({
+        ...a,
+        dealId,
+        agentUserId: a.isBgpHouse ? null : (nameToUserId.get((a.agentName || "").toLowerCase()) ?? null),
+      }));
       return tx.insert(dealFeeAllocations).values(rows).returning();
     });
   }
@@ -1122,7 +1269,7 @@ export class DatabaseStorage implements IStorage {
       db.select().from(crmComps).where(ilike(crmComps.name, q)).limit(10),
     ]);
     props.forEach(p => results.push({ type: "property", id: p.id, name: p.name, detail: p.status || undefined }));
-    deals.forEach(({ deal: d, propertyName }) => results.push({ type: "deal", id: d.id, name: propertyName || d.name, detail: d.groupName || undefined }));
+    deals.forEach(({ deal: d, propertyName }) => results.push({ type: "deal", id: d.id, name: d.name, detail: propertyName || d.groupName || undefined }));
     companies.forEach(c => results.push({ type: "company", id: c.id, name: c.name, detail: c.companyType || undefined }));
     contactsR.forEach(c => results.push({ type: "contact", id: c.id, name: c.name, detail: c.email || undefined }));
     leads.forEach(l => results.push({ type: "lead", id: l.id, name: l.name, detail: l.status || undefined }));
@@ -1130,10 +1277,14 @@ export class DatabaseStorage implements IStorage {
     return results;
   }
 
-  async getCrmStats(): Promise<{ properties: number; deals: number; companies: number; contacts: number; leads: number; comps: number; requirementsLeasing: number; requirementsInvestment: number }> {
-    const [[p], [d], [co], [ct], [l], [cm], [rl], [ri]] = await Promise.all([
+  async getCrmStats(): Promise<{ properties: number; deals: number; activeDeals: number; companies: number; contacts: number; leads: number; comps: number; requirementsLeasing: number; requirementsInvestment: number }> {
+    const [[p], [d], [ad], [co], [ct], [l], [cm], [rl], [ri]] = await Promise.all([
       db.select({ count: sql<number>`count(*)` }).from(crmProperties),
       db.select({ count: sql<number>`count(*)` }).from(crmDeals),
+      // "active" matches the landlord board: anything not archived,
+      // completed, invoiced or withdrawn is still being worked.
+      db.select({ count: sql<number>`count(*)` }).from(crmDeals)
+        .where(sql`${crmDeals.status} IS NULL OR ${crmDeals.status} NOT IN ('ARCH','COM','INV','WIT')`),
       db.select({ count: sql<number>`count(*)` }).from(crmCompanies),
       db.select({ count: sql<number>`count(*)` }).from(crmContacts),
       db.select({ count: sql<number>`count(*)` }).from(crmLeads),
@@ -1142,7 +1293,8 @@ export class DatabaseStorage implements IStorage {
       db.select({ count: sql<number>`count(*)` }).from(crmRequirementsInvestment),
     ]);
     return {
-      properties: Number(p.count), deals: Number(d.count), companies: Number(co.count),
+      properties: Number(p.count), deals: Number(d.count), activeDeals: Number(ad.count),
+      companies: Number(co.count),
       contacts: Number(ct.count), leads: Number(l.count), comps: Number(cm.count),
       requirementsLeasing: Number(rl.count), requirementsInvestment: Number(ri.count),
     };
@@ -1191,10 +1343,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteAvailableUnit(id: string): Promise<void> {
-    const { unitMarketingFiles } = await import("@shared/schema");
+    const { unitMarketingFiles, unitViewings, unitOffers, tenancyScheduleUnits } = await import("@shared/schema");
     const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, id));
     await db.transaction(async (tx) => {
       await tx.delete(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, id));
+      await tx.delete(unitViewings).where(eq(unitViewings.unitId, id));
+      await tx.delete(unitOffers).where(eq(unitOffers.unitId, id));
+      // Clear the rent roll's back-reference so it doesn't point at a
+      // deleted tracker row.
+      await tx.update(tenancyScheduleUnits).set({ lettingTrackerUnitId: null }).where(eq(tenancyScheduleUnits.lettingTrackerUnitId, id));
       await tx.delete(availableUnits).where(eq(availableUnits.id, id));
     });
     for (const f of files) {

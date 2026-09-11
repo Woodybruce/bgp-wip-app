@@ -58,18 +58,18 @@ export interface ResidentialSoldTone {
 }
 
 /**
- * Progressive-widen the postcode until we get a non-empty response.
- * Tries: full → sector (outer + 1 char) → district (outer only).
+ * Only the full postcode is used. District-level (e.g. W1F) and even
+ * sector-level (e.g. W1F8) averages mix wildly different micro-markets
+ * (Mayfair vs Soho vs Marylebone all sit inside W1) so the resulting
+ * "tone" misleads more than it informs. If PropertyData has no data at
+ * the precise postcode, we'd rather show nothing.
  */
 function widenPostcode(raw: string): string[] {
   const pc = (raw || "").toUpperCase().replace(/\s+/g, "");
   if (!pc) return [];
   const m = pc.match(/^([A-Z]{1,2}\d[A-Z\d]?)(\d[A-Z]{2})$/);
   if (!m) return [pc];
-  const outward = m[1];
-  const inward = m[2];
-  const sector = `${outward}${inward[0]}`;
-  return [`${outward} ${inward}`, sector, outward];
+  return [`${m[1]} ${m[2]}`];
 }
 
 async function pdFetch(endpoint: string, params: Record<string, string>): Promise<any | null> {

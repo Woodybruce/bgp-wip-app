@@ -439,7 +439,9 @@ export function setupCanvaRoutes(app: Express) {
         canvaFields.lease_length = d.lease_length ? `${d.lease_length} years` : "";
         canvaFields.break_option = d.break_option ? `Year ${d.break_option}` : "";
         canvaFields.rent_free = d.rent_free ? `${d.rent_free} months` : "";
-        canvaFields.completion_date = d.completion_date || "";
+        canvaFields.completion_date = d.completed_at
+          ? new Date(d.completed_at).toLocaleDateString("en-GB")
+          : (d.target_date ? new Date(d.target_date).toLocaleDateString("en-GB") : "");
         canvaFields.fee = d.fee ? `£${Number(d.fee).toLocaleString()}` : "";
         canvaFields.total_area_sqft = d.total_area_sqft ? `${Number(d.total_area_sqft).toLocaleString()} sq ft` : "";
         canvaFields.gf_area = d.gf_area_sqft ? `${Number(d.gf_area_sqft).toLocaleString()} sq ft` : "";
