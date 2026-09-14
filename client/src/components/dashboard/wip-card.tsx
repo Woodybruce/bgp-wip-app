@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "wouter";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 import { useTeam } from "@/lib/team-context";
 import {
   BarChart3,
@@ -16,7 +16,17 @@ import {
 import type { User } from "@shared/schema";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { FilterDropdown } from "@/components/wip-filter-dropdown";
+import { Pill } from "@/components/ui/pill";
 import { formatCurrencyFull, getWipMonthSortKey } from "./helpers";
+
+// Same abbreviation the full WIP report uses on its boards (£1.2M / £340K).
+function formatCurrencyBoard(value: number): string {
+  if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `£${(value / 1_000).toFixed(0)}K`;
+  return `£${value.toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
+}
+
+type BoardDim = "client" | "team" | "month" | "agent" | "project" | "status";
 
 export function WipDashboardCard({ user }: { user: User | undefined }) {
   const { activeTeam } = useTeam();
@@ -117,33 +127,97 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
     clearAllFilters();
   }
 
-  const filteredEntries = useMemo(() => {
-    return teamEntries.filter(e => {
-      if (selectedClients.size > 0) {
-        if (!e.client || !selectedClients.has(e.client)) return false;
+  // Same matcher as the full WIP report: `skip` leaves one dimension out so
+  // that dimension's board shows every option (highlighted, not vanished)
+  // and the boards cross-filter each other. "Unassigned" rows are the fees
+  // with no attribution, kept so the boards add up to the header total.
+  const entryMatches = useCallback((e: any, skip?: BoardDim) => {
+    if (skip !== "client" && selectedClients.size > 0) {
+      const ok = e.client ? selectedClients.has(e.client) : selectedClients.has("Unassigned");
+      if (!ok) return false;
+    }
+    if (skip !== "team" && selectedTeams.size > 0) {
+      const entryTeams = e.team ? (e.team as string).split(",").map((t: string) => t.trim()).filter(Boolean) : [];
+      const ok = entryTeams.length > 0 ? entryTeams.some((t: string) => selectedTeams.has(t)) : selectedTeams.has("Unassigned");
+      if (!ok) return false;
+    }
+    if (skip !== "month" && selectedMonths.size > 0) {
+      if (e.month && !selectedMonths.has(e.month)) return false;
+    }
+    if (skip !== "agent" && selectedAgents.size > 0) {
+      const agentParts = e.agent ? (e.agent as string).split(",").map((a: string) => a.trim()).filter(Boolean) : [];
+      const ok = agentParts.length > 0 ? agentParts.some((a: string) => selectedAgents.has(a)) : selectedAgents.has("Unassigned");
+      if (!ok) return false;
+    }
+    if (skip !== "project" && selectedProjects.size > 0) {
+      const ok = e.project ? selectedProjects.has(e.project) : selectedProjects.has("Unassigned");
+      if (!ok) return false;
+    }
+    if (skip !== "status" && selectedStatuses.size > 0) {
+      if (!e.dealStatus || !selectedStatuses.has(e.dealStatus)) return false;
+    }
+    return true;
+  }, [selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses]);
+
+  const filteredEntries = useMemo(() => teamEntries.filter(e => entryMatches(e)), [teamEntries, entryMatches]);
+
+  const totalWip = useMemo(() => filteredEntries.reduce((s, e) => s + (e.amtWip || 0), 0), [filteredEntries]);
+  const totalInvoiced = useMemo(() => filteredEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0), [filteredEntries]);
+
+  // At-a-glance boards — mirror of the full report's desktop layout (the
+  // Equity_WIP Power BI): fees-by-month columns, stage mix and ranked
+  // Client / Property / Team / Contact boards, all clickable. Woody,
+  // 2026-09-14: "WIP report on the Dashboard doesn't have the charts like
+  // the main one — mirror".
+  const monthlyFees = useMemo(() => {
+    const byMonth = new Map<string, { wip: number; invoiced: number; deals: Set<string> }>();
+    for (const e of teamEntries) {
+      if (!entryMatches(e, "month")) continue;
+      const key = e.month || "TBC";
+      const cur = byMonth.get(key) || { wip: 0, invoiced: 0, deals: new Set<string>() };
+      cur.wip += e.amtWip || 0;
+      cur.invoiced += e.amtInvoice || 0;
+      cur.deals.add(e.dealId || e.id);
+      byMonth.set(key, cur);
+    }
+    return [...byMonth.entries()]
+      .map(([month, v]) => ({ month, wip: v.wip, invoiced: v.invoiced, count: v.deals.size, total: v.wip + v.invoiced }))
+      .sort((a, b) => (a.month === "TBC" ? 1 : b.month === "TBC" ? -1 : getWipMonthSortKey(a.month) - getWipMonthSortKey(b.month)));
+  }, [teamEntries, entryMatches]);
+
+  const stageMix = useMemo(() => {
+    const byStage = new Map<string, { total: number; deals: Set<string> }>();
+    for (const e of teamEntries) {
+      if (!e.dealStatus || !entryMatches(e, "status")) continue;
+      const cur = byStage.get(e.dealStatus) || { total: 0, deals: new Set<string>() };
+      cur.total += (e.amtWip || 0) + (e.amtInvoice || 0);
+      cur.deals.add(e.dealId || e.id);
+      byStage.set(e.dealStatus, cur);
+    }
+    return [...byStage.entries()].map(([status, v]) => ({ status, total: v.total, count: v.deals.size })).sort((a, b) => b.total - a.total);
+  }, [teamEntries, entryMatches]);
+
+  const feeBoards = useMemo(() => {
+    const build = (skip: "client" | "project" | "team" | "agent", keyOf: (e: any) => string[]) => {
+      const agg = new Map<string, number>();
+      for (const e of teamEntries) {
+        if (!entryMatches(e, skip)) continue;
+        const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
+        const keys = keyOf(e);
+        const share = skip === "agent" && keys.length > 0 ? fee / keys.length : fee;
+        for (const k of keys) agg.set(k, (agg.get(k) || 0) + share);
       }
-      if (selectedTeams.size > 0) {
-        if (!e.team) return false;
-        const entryTeams = (e.team as string).split(",").map((t: string) => t.trim()).filter(Boolean);
-        if (!entryTeams.some((t: string) => selectedTeams.has(t))) return false;
-      }
-      if (selectedMonths.size > 0) {
-        if (!e.month || !selectedMonths.has(e.month)) return false;
-      }
-      if (selectedAgents.size > 0) {
-        if (!e.agent) return false;
-        const agentParts = (e.agent as string).split(",").map((a: string) => a.trim()).filter(Boolean);
-        if (!agentParts.some((a: string) => selectedAgents.has(a))) return false;
-      }
-      if (selectedProjects.size > 0) {
-        if (!e.project || !selectedProjects.has(e.project)) return false;
-      }
-      if (selectedStatuses.size > 0) {
-        if (!e.dealStatus || !selectedStatuses.has(e.dealStatus)) return false;
-      }
-      return true;
-    });
-  }, [teamEntries, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses]);
+      return [...agg.entries()].map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
+    };
+    const orUnassigned = (keys: string[]) => (keys.length > 0 ? keys : ["Unassigned"]);
+    return {
+      client: build("client", (e) => orUnassigned(e.client ? [e.client] : [])),
+      project: build("project", (e) => orUnassigned(e.project ? [e.project] : [])),
+      team: build("team", (e) => orUnassigned(e.team ? (e.team as string).split(",").map((t: string) => t.trim()).filter(Boolean) : [])),
+      agent: build("agent", (e) => orUnassigned(e.agent ? (e.agent as string).split(",").map((a: string) => a.trim()).filter(Boolean) : [])),
+    };
+  }, [teamEntries, entryMatches]);
+  const [expandedBoards, setExpandedBoards] = useState<Set<string>>(new Set());
 
   const totalNetFees = useMemo(
     () => filteredEntries.reduce((s, e) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0),
@@ -286,12 +360,13 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
     // ~22 rows tall and the card used to stop at a fixed 400px table,
     // leaving a band of bare page inside the cell ("whats this gap",
     // Woody 2026-09-08). The deal table now takes whatever height is left.
-    <Card className="p-4 flex flex-col gap-3 h-full min-h-0" data-testid="wip-dashboard-card">
+    <Card className="p-4 flex flex-col gap-3 h-full min-h-0 overflow-y-auto" data-testid="wip-dashboard-card">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-bold text-foreground" data-testid="wip-dash-title">{title}</h2>
           <p className="text-xs text-muted-foreground">
             {mergedDetailEntries.length} deal{mergedDetailEntries.length !== 1 ? "s" : ""} · Total net fees: {formatCurrencyFull(totalNetFees)}
+            <span className="hidden sm:inline"> · WIP {formatCurrencyFull(totalWip)} · <span className="text-green-700">Invoiced {formatCurrencyFull(totalInvoiced)}</span></span>
           </p>
         </div>
         <Link href="/wip-report">
@@ -370,7 +445,126 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
         )}
       </div>
 
-      <div className="bg-card border border-border rounded-lg overflow-hidden flex-1 min-h-0 flex flex-col" data-testid="wip-dash-detail-table">
+      {/* At-a-glance boards — same visuals as the full report's desktop
+          layout; every element clicks to filter, shared with the dropdowns. */}
+      <div className="hidden md:block space-y-3" data-testid="wip-dash-boards">
+        {monthlyFees.length > 0 && (
+          <div className="bg-card border border-border rounded-lg overflow-hidden">
+            <div className="bg-muted/50 border-b px-3 py-1.5 flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Net fees by month</span>
+              <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded" style={{ backgroundColor: "#86efac" }} />WIP</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded" style={{ backgroundColor: "#22c55e" }} />Invoiced</span>
+                <span>click to filter</span>
+              </div>
+            </div>
+            <div className="flex items-end gap-1 px-3 pt-2 pb-2">
+              {(() => {
+                const maxM = Math.max(...monthlyFees.map(m => m.total), 1);
+                const colH = 84;
+                return monthlyFees.map(m => {
+                  const tappable = m.month !== "TBC";
+                  const active = selectedMonths.has(m.month);
+                  return (
+                    <button
+                      key={m.month}
+                      disabled={!tappable}
+                      className={`flex-1 min-w-0 flex flex-col items-center justify-end gap-1 rounded px-0.5 pt-1 pb-0.5 transition-colors ${active ? "bg-green-50 ring-1 ring-green-300" : tappable ? "hover:bg-muted" : ""}`}
+                      onClick={() => tappable && toggleFilter(selectedMonths, setSelectedMonths, m.month)}
+                      title={`${m.month} · ${formatCurrencyFull(m.total)} · ${m.count} deal${m.count !== 1 ? "s" : ""}`}
+                      data-testid={`wip-dash-month-${m.month}`}
+                    >
+                      <span className="text-[10px] font-mono text-muted-foreground">{formatCurrencyBoard(m.total)}</span>
+                      <div className="w-full max-w-[40px] flex flex-col justify-end rounded-t overflow-hidden" style={{ height: colH }}>
+                        {m.wip > 0 && <div className="w-full" style={{ height: `${Math.max(2, (m.wip / maxM) * colH)}px`, backgroundColor: active ? "#16a34a" : "#86efac" }} />}
+                        {m.invoiced > 0 && <div className="w-full" style={{ height: `${Math.max(2, (m.invoiced / maxM) * colH)}px`, backgroundColor: active ? "#15803d" : "#22c55e" }} />}
+                      </div>
+                      <span className={`text-[10px] whitespace-nowrap ${active ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{m.month}</span>
+                    </button>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+        )}
+        {stageMix.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {stageMix.map(s => {
+              const code = legacyToCode(s.status);
+              const label = code && code === s.status ? DEAL_STATUS_LABELS[code] : s.status;
+              return (
+                <Pill
+                  key={s.status}
+                  active={selectedStatuses.has(s.status)}
+                  onClick={() => toggleFilter(selectedStatuses, setSelectedStatuses, s.status)}
+                  className="shrink-0"
+                  data-testid={`wip-dash-stage-${s.status}`}
+                >
+                  {label} · {formatCurrencyBoard(s.total)} · {s.count}
+                </Pill>
+              );
+            })}
+          </div>
+        )}
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+          {([
+            { key: "client", title: "Client", rows: feeBoards.client, selected: selectedClients, setter: setSelectedClients },
+            { key: "project", title: "Property", rows: feeBoards.project, selected: selectedProjects, setter: setSelectedProjects },
+            { key: "team", title: "Team", rows: feeBoards.team, selected: selectedTeams, setter: setSelectedTeams },
+            { key: "agent", title: "BGP Contact", rows: feeBoards.agent, selected: selectedAgents, setter: setSelectedAgents },
+          ] as const).map(board => {
+            if (board.rows.length === 0) return null;
+            const expanded = expandedBoards.has(board.key);
+            const shown = expanded ? board.rows.slice(0, 60) : board.rows.slice(0, 6);
+            const maxB = Math.max(...board.rows.map(r => r.total), 1);
+            const boardTotal = board.rows.reduce((s, r) => s + r.total, 0);
+            return (
+              <div key={board.key} className="bg-card border border-border rounded-lg overflow-hidden flex flex-col" data-testid={`wip-dash-board-${board.key}`}>
+                <div className="bg-muted/50 border-b px-3 py-1.5 flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Net fees by {board.title}</span>
+                  <span className="text-[11px] font-mono text-muted-foreground">{formatCurrencyBoard(boardTotal)}</span>
+                </div>
+                <div className={`p-2 ${expanded ? "max-h-64 overflow-y-auto" : ""}`}>
+                  {shown.map(r => {
+                    const active = board.selected.has(r.name);
+                    return (
+                      <button
+                        key={r.name}
+                        className={`w-full rounded px-1.5 py-1 text-left transition-colors ${active ? "bg-green-50 ring-1 ring-green-300" : "hover:bg-muted"}`}
+                        onClick={() => toggleFilter(board.selected, board.setter, r.name)}
+                        data-testid={`wip-dash-${board.key}-row`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`text-xs truncate min-w-0 ${active ? "font-semibold text-foreground" : "text-foreground"}`}>{r.name}</span>
+                          <span className="text-xs font-mono text-muted-foreground shrink-0">{formatCurrencyFull(r.total)}</span>
+                        </div>
+                        <div className="h-1 bg-muted rounded overflow-hidden mt-0.5">
+                          <div className="h-full" style={{ width: `${Math.max(1, (r.total / maxB) * 100)}%`, backgroundColor: active ? "#16a34a" : "#86efac" }} />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {board.rows.length > 6 && (
+                  <button
+                    className="w-full text-center text-[11px] text-primary py-1.5 border-t border-border"
+                    onClick={() => setExpandedBoards(prev => {
+                      const next = new Set(prev);
+                      if (next.has(board.key)) next.delete(board.key); else next.add(board.key);
+                      return next;
+                    })}
+                    data-testid={`wip-dash-board-${board.key}-more`}
+                  >
+                    {expanded ? "Show top 6" : `All ${Math.min(board.rows.length, 60)}${board.rows.length > 60 ? ` of ${board.rows.length}` : ""} →`}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="bg-card border border-border rounded-lg overflow-hidden flex-1 min-h-[260px] flex flex-col" data-testid="wip-dash-detail-table">
         <button
           onClick={() => setDetailOpen(prev => !prev)}
           className="w-full bg-muted/50 border-b px-3 py-1.5 flex items-center justify-between hover:bg-muted transition-colors"
