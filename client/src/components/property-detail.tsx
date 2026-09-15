@@ -447,7 +447,12 @@ export function PropertyDetail({ id }: { id: string }) {
           ]}
         />
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+      {/* Container queries, not viewport breakpoints: with the ChatBGP panel
+          pinned open the page loses ~400px but the viewport doesn't change,
+          so lg:/xl: grids kept splitting into columns that no longer fit
+          (Woody, 2026-09-15: "still overlap"). The page and the main column
+          are inline-size containers; the grids below key off THEIR width. */}
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden [container-type:inline-size]">
         {/* Single page-level scroll. A 2-col grid splits content from
             the reference stack: main content on the left, fixed-width
             sticky reference column on the right. Each reference board
@@ -458,8 +463,8 @@ export function PropertyDetail({ id }: { id: string }) {
             BIG windows — Landsec's window hit it, BGP's didn't, and the two
             looked like different apps (Woody, 2026-08-03). Single ~340px
             aside always. */}
-        <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-4 lg:gap-6 items-start">
-          <div className="min-w-0 space-y-3">
+        <div className="p-4 sm:p-6 grid grid-cols-1 [@container(min-width:1000px)]:grid-cols-[minmax(0,1fr)_340px] gap-4 lg:gap-6 items-start">
+          <div className="min-w-0 space-y-3 [container-type:inline-size]">
             <div className="flex items-center gap-3 flex-wrap">
               {/* Hidden on phones — the mobile top bar + breadcrumb already
                   give two ways back; a third row just eats screen. */}
@@ -621,7 +626,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 inside (Status/Asset/Team/Website at 4-col) overflowed
                 their cells. Single column at lg means each card gets
                 full main-col width before the side-by-side kicks in. */}
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-3">
+            <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-3">
               {/* Left column stack: Asset Owner card + Weekly Focus
                   beneath. h-full lets the grid cell stretch and the
                   inner flex-1 on Weekly Focus compute properly. */}
@@ -703,7 +708,7 @@ export function PropertyDetail({ id }: { id: string }) {
                         // No ownership recorded yet — show one inline
                         // row to start with (Freeholder) so the team
                         // can click to add without an extra step.
-                        <div className="grid grid-cols-[130px,1fr] items-center gap-2 text-[11px]">
+                        <div className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2 text-[11px]">
                           <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                           <div className="min-w-0">
                             <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} />
@@ -722,7 +727,7 @@ export function PropertyDetail({ id }: { id: string }) {
                               and every save 403s, so editing renders as
                               broken "+ Add owner" affordances. */}
                           {filled.map(row => (
-                            <div key={row.field} className="grid grid-cols-[130px,1fr] items-center gap-2">
+                            <div key={row.field} className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={row.label}>{row.label}</span>
                               <div className="min-w-0">
                                 {isClientViewer ? (
@@ -734,7 +739,7 @@ export function PropertyDetail({ id }: { id: string }) {
                             </div>
                           ))}
                           {empty.length > 0 && !isClientViewer && (
-                            <div className="grid grid-cols-[130px,1fr] items-center gap-2">
+                            <div className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                               <div className="min-w-0">
                                 <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} />
@@ -877,7 +882,7 @@ export function PropertyDetail({ id }: { id: string }) {
             <BgpCommentaryWrapper propertyId={property.id} />
 
             {isClientViewer ? null : streetViewExpanded ? (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-stretch">
+              <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-3 items-stretch">
                 <StreetViewSection
                   address={formatAddress(property.address) || property.name}
                   propertyId={property.id}
