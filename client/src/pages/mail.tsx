@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -30,6 +31,8 @@ import {
   Users,
   Bot,
   Plus,
+  Scale,
+  UserPlus,
   X,
   MailOpen,
   Eye,
@@ -44,7 +47,7 @@ import {
   Calendar,
   Check,
 } from "lucide-react";
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect, type TouchEvent as ReactTouchEvent } from "react";
 
 interface EmailAddress {
   emailAddress: { name: string; address: string };
@@ -63,6 +66,7 @@ interface MailMessage {
   hasAttachments: boolean;
   importance?: string;
   meetingMessageType?: "meetingRequest" | "meetingCancelled" | "meetingAccepted" | "meetingTenativelyAccepted" | "meetingDeclined" | null;
+  webLink?: string;
 }
 
 interface MailFolder {
@@ -262,8 +266,8 @@ function ConnectPrompt() {
   return (
     <div className="h-full flex items-center justify-center" data-testid="mail-connect-prompt">
       <div className="text-center space-y-4 max-w-sm px-6">
-        <div className="w-20 h-20 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto">
-          <MailIcon className="w-10 h-10 text-blue-500" />
+        <div className="w-20 h-20 rounded-2xl bg-muted/40 flex items-center justify-center mx-auto">
+          <MailIcon className="w-10 h-10 text-primary" />
         </div>
         <div>
           <h2 className="text-xl font-semibold">Outlook Mail</h2>
@@ -475,56 +479,87 @@ function MessageRow({
   message,
   selected,
   onClick,
+  onDelete,
 }: {
   message: MailMessage;
   selected: boolean;
   onClick: () => void;
+  onDelete?: () => void;
 }) {
   const senderName = message.from?.emailAddress?.name || message.from?.emailAddress?.address || "Unknown";
   const initials = getInitials(senderName);
   const color = getAvatarColor(senderName);
+  // Swipe-left-to-delete (touch). Drag the row left; release past the
+  // threshold to delete it.
+  const [dragX, setDragX] = useState(0);
+  const startX = useRef<number | null>(null);
+  const moved = useRef(false);
+  const onTouchStart = (e: ReactTouchEvent) => { startX.current = e.touches[0].clientX; moved.current = false; };
+  const onTouchMove = (e: ReactTouchEvent) => {
+    if (startX.current == null) return;
+    const dx = e.touches[0].clientX - startX.current;
+    if (dx < -4) { moved.current = true; setDragX(Math.max(dx, -110)); }
+  };
+  const onTouchEnd = () => {
+    if (dragX < -64 && onDelete) onDelete();
+    setDragX(0);
+    startX.current = null;
+  };
 
   return (
-    <button
-      className={`w-full text-left px-4 py-3 flex items-start gap-3 transition-colors border-b border-border/50 ${
-        selected
-          ? "bg-primary/10 dark:bg-primary/20"
-          : "hover:bg-muted/50"
-      }`}
-      onClick={onClick}
-      data-testid={`mail-row-${message.id}`}
-    >
-      <div className={`w-9 h-9 rounded-full ${color} flex items-center justify-center shrink-0 mt-0.5`}>
-        <span className="text-white text-xs font-semibold">{initials}</span>
+    <div className="relative overflow-hidden border-b border-border/40" data-testid={`mail-row-wrap-${message.id}`}>
+      {/* Red delete layer — only while actively swiping left, so it never
+          bleeds through a translucent selected/active row background (that
+          bleed was making the selected email look red). */}
+      {dragX < 0 && (
+        <div className="absolute inset-y-0 right-0 left-0 flex items-center justify-end pr-5 bg-red-500">
+          <Trash2 className="w-5 h-5 text-white" />
+        </div>
+      )}
+      <button
+        className={`relative w-full text-left pl-2 pr-4 py-3 flex items-start gap-2.5 ${
+          selected ? "bg-blue-100 dark:bg-blue-900/40" : "bg-white dark:bg-card active:bg-muted/50"
+        }`}
+        style={{ transform: `translateX(${dragX}px)`, transition: startX.current == null ? "transform 0.18s ease" : "none" }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onClick={() => { if (!moved.current) onClick(); }}
+        data-testid={`mail-row-${message.id}`}
+      >
+      {/* Unread indicator — far left, Outlook-style */}
+      <div className="w-2.5 shrink-0 self-center flex justify-center">
+        {!message.isRead && <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />}
+      </div>
+      <div className={`w-11 h-11 rounded-full ${color} flex items-center justify-center shrink-0`}>
+        <span className="text-white text-sm font-semibold">{initials}</span>
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2">
-          <p className={`text-sm truncate ${!message.isRead ? "font-semibold text-gray-900" : "font-medium text-gray-800"}`}>
+        <div className="flex items-baseline justify-between gap-2">
+          <p className={`text-[15px] truncate ${!message.isRead ? "font-bold text-foreground" : "font-semibold text-foreground"}`}>
             {senderName}
           </p>
-          <span className="text-[11px] text-gray-500 shrink-0">
+          <span className="text-[12px] text-muted-foreground shrink-0">
             {formatMailDate(message.receivedDateTime)}
           </span>
         </div>
-        <p className={`text-[13px] truncate mt-0.5 ${!message.isRead ? "font-medium text-gray-900" : "text-gray-700"}`}>
-          {message.subject || "(No subject)"}
-        </p>
-        <div className="flex items-center gap-1.5 mt-0.5">
-          <p className="text-xs text-gray-500 truncate flex-1">
-            {message.bodyPreview}
+        <div className="flex items-center gap-1.5">
+          <p className={`text-[14px] truncate flex-1 ${!message.isRead ? "font-semibold text-foreground" : "text-foreground"}`}>
+            {message.subject || "(No subject)"}
           </p>
           {message.meetingMessageType && (
-            <Calendar className="w-3 h-3 text-blue-500 shrink-0" />
+            <Calendar className="w-3.5 h-3.5 text-blue-500 shrink-0" />
           )}
           {message.hasAttachments && (
-            <Paperclip className="w-3 h-3 text-muted-foreground shrink-0" />
+            <Paperclip className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           )}
         </div>
+        <p className="text-[13px] text-muted-foreground line-clamp-2 mt-0.5 leading-snug">
+          {message.bodyPreview}
+        </p>
       </div>
-      {!message.isRead && (
-        <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0 mt-1.5" />
-      )}
-    </button>
+      </button>
+    </div>
   );
 }
 
@@ -652,8 +687,20 @@ function MessageDetail({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [calendarResponding, setCalendarResponding] = useState<string | null>(null);
   const [calendarResponded, setCalendarResponded] = useState<string | null>(null);
+
+  // Build a CRM deep-link that opens the relevant create dialog with the
+  // current email's webLink + subject pre-attached as the source.
+  const crmDeepLink = (kind: "comp" | "lead", msg: MailMessage) => {
+    const url = msg.webLink || "";
+    const fromName = msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown";
+    const subject = msg.subject || "(no subject)";
+    const title = `${fromName}: ${subject}`.slice(0, 200);
+    const params = new URLSearchParams({ create: "1", source: "Email", sourceUrl: url, sourceTitle: title });
+    return `${kind === "comp" ? "/comps" : "/leads"}?${params.toString()}`;
+  };
 
   const { data: fullMessage } = useQuery<MailMessage>({
     queryKey: mailType === "personal"
@@ -787,7 +834,29 @@ function MessageDetail({
           variant="ghost"
           size="sm"
           className="text-xs gap-1.5 shrink-0"
-          onClick={() => window.open(`https://outlook.office365.com/mail/inbox`, "_blank")}
+          onClick={() => navigate(crmDeepLink("comp", message))}
+          title="Create a leasing comp pre-filled with this email as the source"
+          data-testid="button-create-comp-from-email"
+        >
+          <Scale className="w-3.5 h-3.5 shrink-0" />
+          <span className="hidden md:inline">Create comp</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-xs gap-1.5 shrink-0"
+          onClick={() => navigate(crmDeepLink("lead", message))}
+          title="Create a CRM lead pre-filled with this email as the source"
+          data-testid="button-create-lead-from-email"
+        >
+          <UserPlus className="w-3.5 h-3.5 shrink-0" />
+          <span className="hidden md:inline">Create lead</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-xs gap-1.5 shrink-0"
+          onClick={() => window.open(message.webLink || `https://outlook.office365.com/mail/inbox`, "_blank")}
           data-testid="button-open-outlook"
         >
           <ExternalLink className="w-3.5 h-3.5 shrink-0" />
@@ -1053,10 +1122,15 @@ export function MailView({
 
   useEffect(() => {
     if (!selectedFolderId && topLevelFolders.length > 0) {
-      const inbox = topLevelFolders.find(f => f.displayName === "Inbox");
+      // Prefer the Inbox (exact, then case-insensitive); fall back to the
+      // first folder so messages still load if the mailbox names it
+      // differently — otherwise the list runs with no folder and looks empty.
+      const inbox = topLevelFolders.find(f => f.displayName === "Inbox")
+        || topLevelFolders.find(f => f.displayName?.toLowerCase() === "inbox")
+        || topLevelFolders[0];
       if (inbox) {
         setSelectedFolderId(inbox.id);
-        setSelectedFolderName("Inbox");
+        setSelectedFolderName(inbox.displayName || "Inbox");
       }
     }
   }, [topLevelFolders, selectedFolderId]);
@@ -1300,9 +1374,9 @@ export function MailView({
           <RefreshCw className="w-3.5 h-3.5" />
         </Button>
         <div className="flex-1" />
-        <div className="flex items-center gap-0.5 text-xs text-muted-foreground">
+        <div className="hidden sm:flex items-center gap-0.5 text-xs text-muted-foreground">
           <Cloud className="w-3.5 h-3.5 text-emerald-500" />
-          <span className="hidden sm:inline text-[11px] truncate max-w-[180px]">
+          <span className="text-[11px] truncate max-w-[180px]">
             {isPersonal ? "Connected" : status?.email || "Connected"}
           </span>
         </div>
@@ -1371,6 +1445,7 @@ export function MailView({
                     message={msg}
                     selected={selectedId === msg.id}
                     onClick={() => handleSelect(msg.id)}
+                    onDelete={() => handleDelete(msg)}
                   />
                 ))
               )}
@@ -1403,26 +1478,11 @@ export function MailView({
 }
 
 export default function Mail() {
-  const [activeTab, setActiveTab] = useState<string>("shared");
-
+  // Personal inbox only. The ChatBGP (shared) inbox isn't needed here.
   return (
     <div className="h-full flex flex-col" data-testid="mail-page-wrapper">
-      <div className="px-4 py-2.5 shrink-0 mail-tab-bar">
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="h-9 mail-tab-list">
-            <TabsTrigger value="shared" className={`text-xs gap-1.5 ${activeTab === "shared" ? "mail-tab-active" : "mail-tab-inactive"}`} data-testid="tab-shared-inbox">
-              <Bot className="w-3.5 h-3.5" />
-              ChatBGP Inbox
-            </TabsTrigger>
-            <TabsTrigger value="personal" className={`text-xs gap-1.5 ${activeTab === "personal" ? "mail-tab-active" : "mail-tab-inactive"}`} data-testid="tab-personal-inbox">
-              <MailIcon className="w-3.5 h-3.5" />
-              My Inbox
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
       <div className="flex-1 min-h-0">
-        {activeTab === "shared" ? <MailView mailType="shared" /> : <MailView mailType="personal" />}
+        <MailView mailType="personal" />
       </div>
     </div>
   );

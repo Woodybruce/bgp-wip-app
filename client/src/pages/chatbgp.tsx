@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { MAX_CHAT_FILES, prepareChatFiles } from "@/lib/chat-attachments";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -185,13 +186,13 @@ function renderTextWithImages(text: string, keyPrefix: string) {
         parts.push(<span key={`${keyPrefix}-t-${m.index}`}>{m[0]}</span>);
       }
     } else if (m[3] && m[4]) {
-      parts.push(<a key={`${keyPrefix}-link-${m.index}`} href={m[4]} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">{m[3]}</a>);
+      parts.push(<a key={`${keyPrefix}-link-${m.index}`} href={m[4]} target="_blank" rel="noopener noreferrer" className="text-primary underline">{m[3]}</a>);
     } else if (m[5]) {
       parts.push(<strong key={`${keyPrefix}-b-${m.index}`}>{m[5]}</strong>);
     } else if (m[6]) {
       const url = m[6].replace(/[.,;:!?]+$/, "");
       const trailing = m[6].slice(url.length);
-      parts.push(<a key={`${keyPrefix}-url-${m.index}`} href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline break-all">{url}</a>);
+      parts.push(<a key={`${keyPrefix}-url-${m.index}`} href={url} target="_blank" rel="noopener noreferrer" className="text-primary underline break-all">{url}</a>);
       if (trailing) parts.push(<span key={`${keyPrefix}-tr-${m.index}`}>{trailing}</span>);
     }
     lastIdx = m.index + m[0].length;
@@ -368,7 +369,7 @@ function ActionCheckboxGroup({ actions, completedActions, onSubmit }: {
         </div>
       )}
       {sending && (
-        <div className="flex items-center gap-2 mt-2 text-sm text-blue-600 animate-pulse">
+        <div className="flex items-center gap-2 mt-2 text-sm text-primary animate-pulse">
           <span>Sending…</span>
         </div>
       )}
@@ -1271,7 +1272,7 @@ function ProjectRightPanel({
             <div className="border-t border-border/50 pt-5">
               <div className="flex items-center justify-between mb-2.5">
                 <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                  <Globe className="w-4 h-4 text-blue-500" />
+                  <Globe className="w-4 h-4 text-muted-foreground" />
                   SharePoint
                 </h4>
               </div>
@@ -1566,7 +1567,7 @@ function ThreadInfoPanel({
       <div className="px-4 pt-4 pb-3 border-b shrink-0">
         <div className="flex items-center justify-between mb-3">
           <button
-            onClick={() => onNavigate(`/properties?id=${propertyId}`)}
+            onClick={() => onNavigate(`/properties/${propertyId}`)}
             className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
             data-testid="button-view-property-board"
           >
@@ -1601,7 +1602,7 @@ function ThreadInfoPanel({
               </span>
             )}
             {propertyDetail.assetClass && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-[10px] font-medium">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-[10px] font-medium">
                 {propertyDetail.assetClass}
               </span>
             )}
@@ -1995,6 +1996,32 @@ export default function ChatBGP() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
 
+  // Same attach rules as the ChatBGP side panel: a dropped ZIP is unpacked in
+  // the browser and its contents attached individually, so a plans archive
+  // that would blow the per-file upload limit arrives as its plans.
+  const attachChatFiles = useCallback(async (picked: File[]) => {
+    if (picked.some(f => f.name.toLowerCase().endsWith(".zip"))) {
+      toast({ title: "Unpacking archive…", description: "Reading the files inside" });
+    }
+    const { files, notices } = await prepareChatFiles(picked, { validateTypes: false });
+    for (const n of notices) {
+      toast({ title: n.title, description: n.description, ...(n.error ? { variant: "destructive" as const } : {}) });
+    }
+    if (files.length === 0) return;
+    setAttachedFiles(prev => {
+      const combined = [...prev, ...files];
+      if (combined.length > MAX_CHAT_FILES) {
+        toast({
+          title: "Too many files",
+          description: `Maximum ${MAX_CHAT_FILES} files at a time — the first ${MAX_CHAT_FILES} are attached, send those and drop the rest after.`,
+          variant: "destructive",
+        });
+        return combined.slice(0, MAX_CHAT_FILES);
+      }
+      return combined;
+    });
+  }, [toast]);
+
   const { data: currentUser } = useQuery<{ id: string; name: string }>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -2080,6 +2107,27 @@ export default function ChatBGP() {
     return threads.filter((t) => t.isAiChat);
   }, [threads]);
 
+  // Team chats join the same Messages list (one screen, WhatsApp-style —
+  // Woody, 2026-08-21). Clicking one opens the Team Chat panel on that
+  // thread; the panel owns team messaging (sockets, typing, members).
+  const teamThreads = useMemo(() => {
+    if (!threads) return [];
+    const mine = threads.filter((t: any) => {
+      if (t.isAiChat) return false;
+      const others = (t.members || []).filter((m: any) => m.id !== currentUser?.id);
+      if (others.length === 0 && t.createdBy === currentUser?.id && !t.lastMessage) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        return (t.title || "").toLowerCase().includes(q)
+          || (t.lastMessage?.content || "").toLowerCase().includes(q)
+          || (t.members || []).some((m: any) => (m.name || "").toLowerCase().includes(q));
+      }
+      return true;
+    });
+    return mine.sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  }, [threads, currentUser?.id, searchQuery]);
+  const [showAllTeamThreads, setShowAllTeamThreads] = useState(false);
+
   const filteredThreads = useMemo(() => {
     if (!searchQuery.trim()) return aiThreads;
     const q = searchQuery.toLowerCase();
@@ -2100,8 +2148,7 @@ export default function ChatBGP() {
       for (const t of allThreads) {
         if (
           t.title?.toLowerCase().includes(q) ||
-          t.linkedName?.toLowerCase().includes(q) ||
-          t.lastMessage?.content?.toLowerCase().includes(q)
+          t.linkedName?.toLowerCase().includes(q)
         ) {
           matched.push(t);
         }
@@ -2177,6 +2224,10 @@ export default function ChatBGP() {
     onSuccess: (thread: ThreadData) => {
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
       setActiveThreadId(thread.id);
+      // Prime the ref immediately — callers fire sendMutation in the same
+      // tick, before the state-sync effect runs, and the send body needs
+      // the thread id (server-side reply save + thread-aware tools).
+      activeThreadIdRef.current = thread.id;
     },
   });
 
@@ -2283,7 +2334,7 @@ export default function ChatBGP() {
       const attemptSend = async (attempt: number): Promise<any> => {
         const controller = new AbortController();
         abortControllerRef.current = controller;
-        const timeoutId = setTimeout(() => controller.abort(), 300000);
+        const timeoutId = setTimeout(() => controller.abort(), 600000);  // 10 min — long Why Buy / Pathway turns hit 4-5 min routinely
         let streamedText = "";
         try {
           const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -2292,7 +2343,11 @@ export default function ChatBGP() {
           const res = await fetch("/api/chatbgp/chat", {
             method: "POST",
             headers,
-            body: JSON.stringify({ messages: newMessages }),
+            // threadId anchors the request to the saved thread — without it
+            // the server can't save the assistant reply or run thread-aware
+            // tools (chat sharing said "isn't a saved thread yet" forever).
+            // chat-panel and mobile-app already send it; this page didn't.
+            body: JSON.stringify({ messages: newMessages, threadId: activeThreadIdRef.current || undefined }),
             credentials: "include",
             signal: controller.signal,
           });
@@ -2365,13 +2420,20 @@ export default function ChatBGP() {
       };
       return attemptSend(1);
     },
-    onSuccess: async (data: { reply: string; action?: any }) => {
+    onSuccess: async (data: { reply: string; action?: any; savedToThread?: boolean }) => {
       setProgressLabel("");
       setStreamingContent("");
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
       const threadId = activeThreadIdRef.current;
       if (threadId) {
-        await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+        // Server already wrote the assistant reply via sendResult ->
+        // storage.createChatMessage and tells us so with savedToThread.
+        // Don't double-save here — otherwise the same reply ends up on
+        // the thread twice and shows up duplicated whenever the thread
+        // gets reloaded (or any consumer refetches /chat/threads/:id).
+        if (!data.savedToThread) {
+          await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+        }
         apiRequest("POST", `/api/chat/threads/${threadId}/auto-title`, {})
           .then(() => queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] }))
           .catch(() => {});
@@ -2426,6 +2488,17 @@ export default function ChatBGP() {
       loadThread(initialThreadId);
     }
   }, [status?.connected, initialThreadId]);
+
+  // Safety net: if we land here with an active thread already in context
+  // (e.g. expanded from the dock, or restored after a reload) but no
+  // messages loaded yet, pull them from the server so the conversation
+  // doesn't appear blank. Only fires when there's nothing to lose.
+  useEffect(() => {
+    if (!initialThreadId && activeThreadId && status?.connected && messagesRef.current.length === 0) {
+      loadThread(activeThreadId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.connected]);
 
   const isNearBottom = useCallback(() => {
     if (!scrollRef.current) return true;
@@ -2522,7 +2595,18 @@ export default function ChatBGP() {
           content: m.content,
           userId: m.userId,
         }));
-        setMessages(loaded);
+        // Defensive dedup — older threads have consecutive identical
+        // assistant replies from the double-save bug (server + client
+        // both wrote the same reply). Collapse them so old threads
+        // render cleanly. New replies don't hit this path because the
+        // double-save was fixed at source.
+        const deduped: LocalMessage[] = [];
+        for (const m of loaded) {
+          const last = deduped[deduped.length - 1];
+          if (last && last.role === m.role && last.content === m.content) continue;
+          deduped.push(m);
+        }
+        setMessages(deduped);
       }
     } catch {
       setMessages([]);
@@ -2548,7 +2632,10 @@ export default function ChatBGP() {
     const headers: Record<string, string> = {};
     if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch("/api/chat/upload", { method: "POST", body: formData, credentials: "include", headers });
-    if (!res.ok) throw new Error("Upload failed");
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null);
+      throw new Error(detail?.message || "Upload failed");
+    }
     const data = await res.json();
     return data.files || data;
   };
@@ -2661,8 +2748,8 @@ export default function ChatBGP() {
       try {
         setUploading(true);
         uploadedAttachments = await uploadFiles(attachedFiles);
-      } catch {
-        toast({ title: "Upload failed", description: "Could not upload files. Please try again.", variant: "destructive" });
+      } catch (err: any) {
+        toast({ title: "Upload failed", description: err?.message || "Could not upload files. Please try again.", variant: "destructive" });
         setUploading(false);
         return;
       }
@@ -2824,6 +2911,45 @@ export default function ChatBGP() {
     const clipData = e.clipboardData;
     if (!clipData) return;
 
+    // A file copied in Finder / Explorer arrives with BOTH the real file
+    // in clipboardData.files AND its filename as text/plain — without this
+    // check the text-preference guard below wins and pasting just inserts
+    // the file's NAME (Woody, 2026-08-05). Copied styled text (Word /
+    // Docs) also carries an image-preview file, so only attach when the
+    // text is nothing more than the copied files' own names/paths.
+    const copiedFiles = Array.from(clipData.files || []).filter(f => f && f.size > 0);
+    const clipText = clipData.getData("text/plain") || "";
+    const textIsJustFileNames = copiedFiles.length > 0 && (
+      !clipText.trim() ||
+      clipText.trim().split(/[\r\n]+/).every(line => {
+        const l = line.trim().toLowerCase();
+        if (!l) return true;
+        if (l.startsWith("file://")) return true;
+        return copiedFiles.some(f => {
+          const n = (f.name || "").toLowerCase();
+          return !!n && (l === n || l.endsWith("/" + n) || l.endsWith("\\" + n));
+        });
+      })
+    );
+    if (copiedFiles.length > 0 && textIsJustFileNames) {
+      e.preventDefault();
+      pasteHandledRef.current = true;
+      setTimeout(() => { pasteHandledRef.current = false; }, 100);
+      addPastedImages(copiedFiles);
+      return;
+    }
+
+    // Prefer text. macOS Word / Pages / Google Docs / styled web pages
+    // put BOTH text/plain AND an image preview on the clipboard when
+    // you copy formatted text. Without this guard, pasted text lands
+    // as an image attachment. If meaningful plain text is present, let
+    // the default browser paste insert it into the textarea and skip
+    // image extraction entirely. Same fix as chat-panel.tsx (9109144).
+    const plainText = clipData.getData("text/plain");
+    if (plainText && plainText.trim().length > 0) {
+      return;
+    }
+
     const imageFiles = extractImagesFromClipboardEvent(clipData);
 
     if (imageFiles.length > 0) {
@@ -2911,6 +3037,12 @@ export default function ChatBGP() {
       if (pasteHandledRef.current) return;
       const clipData = e.clipboardData;
       if (!clipData) return;
+      // Same text-preference rule as handlePaste — the document-level
+      // listener also has to bail out when text is present, or pasting
+      // Word/Docs text outside the textarea still gets hijacked into
+      // an image attachment.
+      const plainText = clipData.getData("text/plain");
+      if (plainText && plainText.trim().length > 0) return;
       const imageFiles = extractImagesFromClipboardEvent(clipData);
       if (imageFiles.length > 0) {
         e.preventDefault();
@@ -3117,7 +3249,7 @@ export default function ChatBGP() {
             data-testid="button-chatbgp-home"
           >
             <Sparkles className="w-5 h-5 shrink-0" />
-            <span className="truncate">Chat BGP</span>
+            <span className="truncate">ChatBGP</span>
           </button>
 
           <button
@@ -3142,6 +3274,74 @@ export default function ChatBGP() {
         <div className="h-px bg-border mx-4 my-1 shrink-0" />
 
         <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+          {/* Team chats — same Messages list as the panel, one screen.
+              Staff only: clients have no Team Chat panel to open into. */}
+          {teamThreads.length > 0 && (currentUser as any)?.role !== "Client" && (
+            <div className="px-2 py-1">
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-3 pt-2 pb-1">
+                Team chats
+              </p>
+              {(showAllTeamThreads ? teamThreads : teamThreads.slice(0, 5)).map((t: any) => {
+                const others = (t.members || []).filter((m: any) => m.id !== currentUser?.id);
+                const isDm = others.length === 1;
+                const title = t.title || (isDm ? others[0]?.name : null) || "Conversation";
+                const initials = (isDm ? (others[0]?.name || "") : title)
+                  .split(/\s+/).map((w: string) => w[0]).join("").slice(0, 2).toUpperCase() || "T";
+                const me = (t.members || []).find((m: any) => m.id === currentUser?.id);
+                const unread = me ? !me.seen : false;
+                return (
+                  <button
+                    key={t.id}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-muted/60 transition-colors text-left"
+                    onClick={() => {
+                      setSidebarOpen(false);
+                      window.dispatchEvent(new CustomEvent("bgp:open-team-thread", { detail: { threadId: t.id } }));
+                    }}
+                    data-testid={`button-team-thread-${t.id}`}
+                  >
+                    <div className="relative shrink-0">
+                      <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center text-[12px] font-bold text-muted-foreground">
+                        {initials}
+                      </div>
+                      {t.hasAiMember && (
+                        <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-foreground text-background flex items-center justify-center border-2 border-background">
+                          <Sparkles className="w-2 h-2" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[13.5px] truncate ${unread ? "font-bold" : "font-medium"}`}>{title}</span>
+                        {t.lastMessage?.createdAt && (
+                          <span className="text-[10.5px] text-muted-foreground shrink-0">
+                            {new Date(t.lastMessage.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) === new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+                              ? new Date(t.lastMessage.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+                              : new Date(t.lastMessage.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[12px] truncate ${unread ? "text-foreground" : "text-muted-foreground"}`}>
+                          {t.lastMessage ? `${t.lastMessage.senderName}: ${t.lastMessage.content}` : "No messages yet"}
+                        </span>
+                        {unread && <span className="w-2 h-2 rounded-full bg-foreground shrink-0" />}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+              {teamThreads.length > 5 && (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-[11.5px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => setShowAllTeamThreads(v => !v)}
+                  data-testid="button-toggle-all-team-threads"
+                >
+                  {showAllTeamThreads ? "Show fewer" : `Show all ${teamThreads.length}`}
+                </button>
+              )}
+              <div className="h-px bg-border mx-3 my-2" />
+            </div>
+          )}
           <div className="px-2 py-1">
             {threadsLoading ? (
               <div className="space-y-2 px-3 py-2">
@@ -3284,7 +3484,7 @@ export default function ChatBGP() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => navigate(`/properties?id=${activeProjectView.id}`)} data-testid="menu-edit-property">
+                  <DropdownMenuItem onClick={() => navigate(`/properties/${activeProjectView.id}`)} data-testid="menu-edit-property">
                     <Pencil className="w-4 h-4 mr-2" />
                     Edit Property
                   </DropdownMenuItem>
@@ -3413,7 +3613,7 @@ export default function ChatBGP() {
               e.preventDefault();
               setIsDragOver(false);
               const files = Array.from(e.dataTransfer.files);
-              if (files.length) setAttachedFiles(prev => [...prev, ...files].slice(0, 20));
+              if (files.length) void attachChatFiles(files);
             }}
           >
             {isDragOver && (
@@ -3716,10 +3916,10 @@ export default function ChatBGP() {
                     </div>
 
                     <div className="w-full max-w-xl mt-8">
-                      <div className="flex items-center gap-4 border-b mb-3">
-                        <button className="text-sm font-medium pb-2 border-b-2 border-foreground" data-testid="tab-your-chats">
+                      <div className="mb-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="tab-your-chats">
                           Your chats
-                        </button>
+                        </p>
                       </div>
                       <div className="text-center py-4">
                         {threadsLoading ? (
@@ -3821,10 +4021,9 @@ export default function ChatBGP() {
               className="sr-only"
               tabIndex={-1}
               onChange={(e) => {
-                if (e.target.files) {
-                  setAttachedFiles(prev => [...prev, ...Array.from(e.target.files!)]);
-                }
+                const picked = e.target.files ? Array.from(e.target.files) : [];
                 e.target.value = "";
+                if (picked.length) void attachChatFiles(picked);
               }}
               data-testid="input-file-upload"
             />
@@ -3901,6 +4100,10 @@ export default function ChatBGP() {
                   placeholder="Ask ChatBGP..."
                   className="flex-1 resize-none min-h-[44px] max-h-[200px] rounded-2xl bg-muted/50 border-0 px-4 py-3 text-[16px] focus-visible:ring-1 transition-colors"
                   rows={1}
+                  spellCheck
+                  autoCorrect="on"
+                  autoCapitalize="sentences"
+                  lang="en-GB"
                   data-testid="input-chat-message"
                 />
                 {sendMutation.isPending ? (

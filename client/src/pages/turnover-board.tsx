@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
+import { Pill } from "@/components/ui/pill";
 import {
   TrendingUp, Search, Plus, Trash2, X, Check, Loader2,
   Building2, MapPin, BarChart3, ArrowUpDown,
@@ -47,10 +48,26 @@ const SOURCES = ["Annual Accounts", "Landlord Report", "Conversation", "News", "
 const CONFIDENCES = ["High", "Medium", "Low"];
 const CATEGORIES = ["F&B", "Retail", "Leisure", "Services", "Health & Beauty", "Grocery", "Fashion", "Technology", "Hospitality", "Other"];
 
+function categoryFromCompanyType(t?: string | null): string {
+  const s = (t || "").toLowerCase();
+  if (!s) return "";
+  if (/restaurant|caf|coffee|food|bakery|pub|bar|f&b/.test(s)) return "F&B";
+  if (/fashion|apparel|clothing/.test(s)) return "Fashion";
+  if (/leisure|gym|fitness|cinema|entertainment/.test(s)) return "Leisure";
+  if (/grocery|supermarket|convenience/.test(s)) return "Grocery";
+  if (/health|beauty|pharmacy|salon/.test(s)) return "Health & Beauty";
+  if (/tech|electronic|phone/.test(s)) return "Technology";
+  if (/hotel|hospitality/.test(s)) return "Hospitality";
+  if (/service/.test(s)) return "Services";
+  if (/retail|tenant/.test(s)) return "Retail";
+  return "";
+}
+
 function formatCurrency(val: number | null) {
   if (val == null) return "—";
-  if (val >= 1_000_000) return `£${(val / 1_000_000).toFixed(1)}m`;
-  if (val >= 1_000) return `£${(val / 1_000).toFixed(0)}k`;
+  // Round before picking the unit so 999,999 shows as £1.0m, not £1000k.
+  if (Math.round(val / 1_000) >= 1_000) return `£${(val / 1_000_000).toFixed(1)}m`;
+  if (Math.round(val) >= 1_000) return `£${(val / 1_000).toFixed(0)}k`;
   return `£${val.toFixed(0)}`;
 }
 
@@ -100,6 +117,10 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
   const [findingStores, setFindingStores] = useState<string | null>(null); // brand name being queried
   const [foundStores, setFoundStores] = useState<Record<string, any[]>>({}); // brand -> stores
   const [populatingComps, setPopulatingComps] = useState(false);
+
+  // Client logins (e.g. Landsec) get the board read-only — edit POSTs are 403 for them.
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = viewer?.role === "Client" || !!viewer?.companyScopeId;
 
   const { data: entries = [], isLoading } = useQuery<TurnoverEntry[]>({
     queryKey: ["/api/turnover"],
@@ -218,7 +239,14 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
       const res = await apiRequest("POST", "/api/turnover/populate-from-comps", {});
       const data = await res.json();
       queryClient.invalidateQueries({ queryKey: ["/api/turnover"] });
-      toast({ title: `Created ${data.created} draft entries from CRM comps (${data.skipped} skipped)` });
+      if (data.created === 0) {
+        toast({
+          title: "No entries created from CRM comps",
+          description: "Comps match brands by exact tenant name — check tenant spellings on the Comps board against the brand book.",
+        });
+      } else {
+        toast({ title: `Created ${data.created} draft entries from CRM comps (${data.skipped} skipped)` });
+      }
     } catch {
       toast({ title: "Failed to populate from comps", variant: "destructive" });
     } finally {
@@ -280,6 +308,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
   }
 
   function startEdit(id: string, field: string, currentValue: any) {
+    if (isClientViewer) return;
     setEditingCell({ id, field });
     setEditValue(currentValue?.toString() || "");
   }
@@ -292,7 +321,14 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
   function handleCompanySelect(companyId: string) {
     const company = companies.find((c: any) => c.id === companyId);
     if (company) {
-      setForm(f => ({ ...f, company_id: companyId, company_name: company.name }));
+      setForm(f => ({
+        ...f,
+        company_id: companyId,
+        company_name: company.name,
+        // Default the category from the brand's type so hand-added rows
+        // land in the same filter bucket as the AI-estimate rows.
+        category: f.category || categoryFromCompanyType(company.companyType || company.company_type),
+      }));
     }
   }
 
@@ -326,62 +362,45 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
               </h1>
               <p className="text-sm text-muted-foreground">Brand revenue intelligence across your portfolio</p>
             </div>
-            <Button onClick={() => setShowAdd(true)} data-testid="button-add-entry">
-              <Plus className="w-4 h-4 mr-1" /> Add Entry
-            </Button>
+            {!isClientViewer && (
+              <Button onClick={() => setShowAdd(true)} data-testid="button-add-entry">
+                <Plus className="w-4 h-4 mr-1" /> Add entry
+              </Button>
+            )}
           </div>
         )}
-        {embedded && (
+        {embedded && !isClientViewer && (
           <div className="flex justify-end">
             <Button onClick={() => setShowAdd(true)} data-testid="button-add-entry">
-              <Plus className="w-4 h-4 mr-1" /> Add Entry
+              <Plus className="w-4 h-4 mr-1" /> Add entry
             </Button>
           </div>
         )}
 
-        <div className="flex items-center gap-3 overflow-x-auto pb-1">
-          <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-total-entries">
+        {/* 2-up grid on phone so the third tile doesn't clip at the edge. */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Card data-testid="stat-total-entries">
             <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-primary/60" />
-                <div>
-                  <p className="text-lg font-bold">{stats.total}</p>
-                  <p className="text-xs text-muted-foreground">Entries</p>
-                </div>
-              </div>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Entries</p>
+              <p className="text-2xl font-bold font-mono tabular-nums">{stats.total}</p>
             </CardContent>
           </Card>
-          <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-unique-brands">
+          <Card data-testid="stat-unique-brands">
             <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                <div>
-                  <p className="text-lg font-bold">{stats.brands}</p>
-                  <p className="text-xs text-muted-foreground">Brands</p>
-                </div>
-              </div>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Brands</p>
+              <p className="text-2xl font-bold font-mono tabular-nums">{stats.brands}</p>
             </CardContent>
           </Card>
-          <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-avg-turnover">
+          <Card data-testid="stat-avg-turnover">
             <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                <div>
-                  <p className="text-lg font-bold">{formatCurrency(stats.avgTurnover)}</p>
-                  <p className="text-xs text-muted-foreground">Avg Turnover</p>
-                </div>
-              </div>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Avg Turnover</p>
+              <p className="text-2xl font-bold font-mono tabular-nums">{stats.avgTurnover ? formatCurrency(stats.avgTurnover) : "—"}</p>
             </CardContent>
           </Card>
-          <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-avg-psf">
+          <Card data-testid="stat-avg-psf">
             <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                <div>
-                  <p className="text-lg font-bold">{stats.avgPsf ? `£${stats.avgPsf.toFixed(0)}` : "—"}</p>
-                  <p className="text-xs text-muted-foreground">Avg £/sqft</p>
-                </div>
-              </div>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Avg £/sqft</p>
+              <p className="text-2xl font-bold font-mono tabular-nums">{stats.avgPsf ? `£${stats.avgPsf.toFixed(0)}` : "—"}</p>
             </CardContent>
           </Card>
         </div>
@@ -415,24 +434,20 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
               {SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
-          <div className="flex items-center border rounded-md overflow-hidden ml-auto">
-            <button
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === "table" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-              onClick={() => setViewMode("table")}
-            >
-              <BarChart3 className="w-3.5 h-3.5 inline mr-1" />Table
-            </button>
-            <button
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === "brands" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-              onClick={() => setViewMode("brands")}
-            >
-              <Building2 className="w-3.5 h-3.5 inline mr-1" />By Brand
-            </button>
+          <div className="flex items-center gap-1.5 ml-auto">
+            <Pill active={viewMode === "table"} onClick={() => setViewMode("table")} data-testid="pill-view-table">
+              <BarChart3 className="w-3 h-3" />Table
+            </Pill>
+            <Pill active={viewMode === "brands"} onClick={() => setViewMode("brands")} data-testid="pill-view-brands">
+              <Building2 className="w-3 h-3" />By Brand
+            </Pill>
           </div>
-          <Button variant="outline" size="sm" onClick={handlePopulateFromComps} disabled={populatingComps} data-testid="button-populate-comps">
-            {populatingComps ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Store className="w-3.5 h-3.5 mr-1" />}
-            From CRM Comps
-          </Button>
+          {!isClientViewer && (
+            <Button variant="outline" size="sm" onClick={handlePopulateFromComps} disabled={populatingComps} data-testid="button-populate-comps">
+              {populatingComps ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Store className="w-3.5 h-3.5 mr-1" />}
+              From CRM Comps
+            </Button>
+          )}
         </div>
 
         {isLoading ? (
@@ -444,13 +459,18 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
             <CardContent className="py-12 text-center">
               <BarChart3 className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
               {entries.length === 0 ? (
+                isClientViewer ? (
+                  <h3 className="font-medium mb-1">No turnover data yet.</h3>
+                ) : (
                 <>
                   <h3 className="font-medium mb-1">No turnover data yet</h3>
                   <p className="text-sm text-muted-foreground mb-4">Add your first entry to start tracking brand revenue</p>
-                  <Button onClick={() => setShowAdd(true)} data-testid="button-add-first">
-                    <Plus className="w-4 h-4 mr-1" /> Add Entry
+                  {/* Outline: the header already carries the one filled primary (§5). */}
+                  <Button variant="outline" onClick={() => setShowAdd(true)} data-testid="button-add-first">
+                    <Plus className="w-4 h-4 mr-1" /> Add entry
                   </Button>
                 </>
+                )
               ) : (
                 <>
                   <h3 className="font-medium mb-1">No matching entries</h3>
@@ -463,7 +483,59 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
             </CardContent>
           </Card>
         ) : viewMode === "table" ? (
-          <Card className="overflow-hidden">
+          <>
+            {/* Phone: one card per entry (docs/DESIGN.md §7) — the wide table
+                below is desktop-only (§6/§13). Cards are a read-only summary;
+                staff keep the draft-confirm / delete actions. */}
+            <div className="md:hidden space-y-2" data-testid="turnover-mobile-cards">
+              {filtered.map(entry => (
+                <div
+                  key={entry.id}
+                  className={`rounded-2xl bg-card border border-border p-3 shadow-sm ${entry.is_draft ? "opacity-60" : ""}`}
+                  data-testid={`row-entry-${entry.id}-card`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex items-center gap-1.5">
+                      <p className="text-sm font-medium truncate">{entry.company_name}</p>
+                      {entry.is_draft && <Badge variant="secondary" className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0 shrink-0">Draft</Badge>}
+                    </div>
+                    <span className="shrink-0 text-sm font-mono tabular-nums font-semibold">{formatCurrency(entry.turnover)}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                    {[entry.store_name || entry.property_name || entry.location, entry.period].filter(Boolean).join(" · ") || "—"}
+                    {entry.lat && entry.lng ? (
+                      <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="ml-1 inline-flex align-middle text-muted-foreground hover:text-primary">
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : null}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    <Badge variant="secondary" className={`text-[10px] ${sourceBadge(entry.source)}`}>{entry.source}</Badge>
+                    <Badge variant="secondary" className={`text-[10px] ${confidenceBadge(entry.confidence)}`}>{entry.confidence}</Badge>
+                    {entry.category && <span className="text-[10px] text-muted-foreground">{entry.category}</span>}
+                    {entry.turnover_per_sqft ? (
+                      <span className="text-[10px] text-muted-foreground font-mono tabular-nums">£{entry.turnover_per_sqft.toFixed(0)}/sqft</span>
+                    ) : null}
+                    {!isClientViewer && (
+                      <span className="ml-auto flex items-center gap-0.5">
+                        {entry.is_draft && (
+                          <Button size="icon" variant="ghost" className="h-7 w-7 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store" data-testid={`button-confirm-${entry.id}-card`}>
+                            <Check className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                        <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete this entry?")) deleteMutation.mutate(entry.id); }} data-testid={`button-delete-${entry.id}-card`}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div className="px-1 text-xs text-muted-foreground" data-testid="text-results-count-mobile">
+                {filtered.length} {filtered.length === 1 ? "entry" : "entries"}{search || categoryFilter !== "all" || sourceFilter !== "all" ? " (filtered)" : ""}
+              </div>
+            </div>
+          <Card className="overflow-hidden hidden md:block">
             <div className="overflow-x-auto">
               <table className="w-full" data-testid="table-turnover">
                 <thead className="border-b">
@@ -493,7 +565,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                           </div>
                         ) : (
                           <div className="flex items-center gap-1.5">
-                            <span className="text-xs font-medium cursor-pointer hover:text-blue-600" onClick={() => startEdit(entry.id, "company_name", entry.company_name)} data-testid={`cell-brand-${entry.id}`}>
+                            <span className="text-xs font-medium cursor-pointer hover:text-primary" onClick={() => startEdit(entry.id, "company_name", entry.company_name)} data-testid={`cell-brand-${entry.id}`}>
                               {entry.company_name}
                             </span>
                             {entry.is_draft && <Badge variant="secondary" className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0">Draft</Badge>}
@@ -527,7 +599,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                               {entry.store_name || entry.property_name || entry.location || <span className="text-muted-foreground/60 italic">—</span>}
                             </span>
                             {entry.lat && entry.lng && (
-                              <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-600">
+                              <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary">
                                 <ExternalLink className="w-3 h-3" />
                               </a>
                             )}
@@ -615,21 +687,23 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                           </div>
                         ) : (
                           <span className="text-xs text-muted-foreground cursor-pointer truncate block" onClick={() => startEdit(entry.id, "notes", entry.notes || "")} title={entry.notes || ""} data-testid={`cell-notes-${entry.id}`}>
-                            {entry.notes || <span className="italic">Click to add</span>}
+                            {entry.notes || <span className="italic">{isClientViewer ? "—" : "Click to add"}</span>}
                           </span>
                         )}
                       </td>
                       <td className="px-2 py-2.5">
-                        <div className="flex items-center gap-0.5">
-                          {entry.is_draft && (
-                            <Button size="icon" variant="ghost" className="h-6 w-6 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store" data-testid={`button-confirm-${entry.id}`}>
-                              <Check className="w-3 h-3" />
+                        {!isClientViewer && (
+                          <div className="flex items-center gap-0.5">
+                            {entry.is_draft && (
+                              <Button size="icon" variant="ghost" className="h-6 w-6 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store" data-testid={`button-confirm-${entry.id}`}>
+                                <Check className="w-3 h-3" />
+                              </Button>
+                            )}
+                            <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete this entry?")) deleteMutation.mutate(entry.id); }} data-testid={`button-delete-${entry.id}`}>
+                              <Trash2 className="w-3 h-3" />
                             </Button>
-                          )}
-                          <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete this entry?")) deleteMutation.mutate(entry.id); }} data-testid={`button-delete-${entry.id}`}>
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        </div>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -640,6 +714,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
               {filtered.length} {filtered.length === 1 ? "entry" : "entries"}{search || categoryFilter !== "all" || sourceFilter !== "all" ? " (filtered)" : ""}
             </div>
           </Card>
+          </>
         ) : (
           // Brand grouped view
           <div className="space-y-2">
@@ -654,7 +729,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
               return (
                 <Card key={brandName} className="overflow-hidden">
                   <div
-                    className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                    className="flex items-center gap-x-3 gap-y-1 flex-wrap px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
                     onClick={() => setExpandedBrands(prev => {
                       const n = new Set(prev);
                       if (n.has(brandName)) n.delete(brandName); else n.add(brandName);
@@ -663,40 +738,42 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                   >
                     {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
                     <Building2 className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                    <span className="font-medium text-sm flex-1">{brandName}</span>
+                    <span className="font-medium text-sm flex-1 min-w-[8rem] truncate" data-testid="text-brand-group-name">{brandName}</span>
                     {draftCount > 0 && <Badge variant="secondary" className="text-[10px] bg-amber-100 text-amber-700">{draftCount} draft</Badge>}
                     <span className="text-xs text-muted-foreground">{brandEntries.length} store{brandEntries.length !== 1 ? "s" : ""}</span>
                     {totalTurnover > 0 && <span className="text-xs font-semibold tabular-nums">{formatCurrency(totalTurnover)}</span>}
                     {avgPsf && <span className="text-xs text-muted-foreground tabular-nums">£{avgPsf.toFixed(0)}/sqft avg</span>}
-                    <div className="flex items-center gap-1 ml-2" onClick={e => e.stopPropagation()}>
-                      <Button
-                        size="sm" variant="outline"
-                        className="h-7 text-xs"
-                        disabled={findingStores === brandName}
-                        onClick={() => handleFindStores(brandName)}
-                      >
-                        {findingStores === brandName ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <MapPin className="w-3 h-3 mr-1" />}
-                        Find Stores
-                      </Button>
-                    </div>
+                    {!isClientViewer && (
+                      <div className="flex items-center gap-1 ml-2" onClick={e => e.stopPropagation()}>
+                        <Button
+                          size="sm" variant="outline"
+                          className="h-7 text-xs"
+                          disabled={findingStores === brandName}
+                          onClick={() => handleFindStores(brandName)}
+                        >
+                          {findingStores === brandName ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <MapPin className="w-3 h-3 mr-1" />}
+                          Find Stores
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
-                  {previewStores && previewStores.length > 0 && (
-                    <div className="px-4 pb-2 border-t bg-blue-50 dark:bg-blue-950/20">
+                  {!isClientViewer && previewStores && previewStores.length > 0 && (
+                    <div className="px-4 pb-2 border-t bg-muted/40">
                       <div className="flex items-center justify-between py-2">
-                        <span className="text-xs font-medium text-blue-700 dark:text-blue-300">{previewStores.length} stores found via OpenStreetMap</span>
+                        <span className="text-xs font-medium">{previewStores.length} stores found via OpenStreetMap</span>
                         <div className="flex gap-2">
                           <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => setFoundStores(prev => { const n = { ...prev }; delete n[brandName]; return n; })}>
                             Dismiss
                           </Button>
-                          <Button size="sm" className="h-6 text-xs bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handlePopulateStores(brandName, brandEntries[0]?.company_id || null)}>
+                          <Button size="sm" className="h-6 text-xs" onClick={() => handlePopulateStores(brandName, brandEntries[0]?.company_id || null)}>
                             Import as Drafts
                           </Button>
                         </div>
                       </div>
                       <div className="space-y-1 max-h-40 overflow-y-auto">
                         {previewStores.slice(0, 8).map((s: any, i: number) => (
-                          <div key={i} className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                          <div key={i} className="text-xs text-muted-foreground flex items-center gap-1.5">
                             <Store className="w-3 h-3 flex-shrink-0" />
                             <span>{s.address || s.name || "Unknown address"}</span>
                           </div>
@@ -706,8 +783,55 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                     </div>
                   )}
 
-                  {isExpanded && (
-                    <div className="border-t">
+                  {isExpanded && (<>
+                    {/* Phone: card per store (§7) — the per-store table below
+                        is desktop-only. */}
+                    <div className="md:hidden border-t p-3 space-y-2 bg-muted/10">
+                      {brandEntries.map(entry => (
+                        <div
+                          key={entry.id}
+                          className={`rounded-2xl bg-card border border-border p-3 shadow-sm ${entry.is_draft ? "opacity-60" : ""}`}
+                          data-testid={`row-entry-${entry.id}-brandcard`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex items-center gap-1.5">
+                              <p className="text-sm font-medium truncate">{entry.store_name || entry.property_name || entry.location || "—"}</p>
+                              {entry.is_draft && <Badge variant="secondary" className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0 shrink-0">Draft</Badge>}
+                            </div>
+                            <span className="shrink-0 text-sm font-mono tabular-nums font-semibold">
+                              {entry.is_draft && !entry.turnover ? <span className="text-muted-foreground italic font-sans font-normal text-xs">No turnover</span> : formatCurrency(entry.turnover)}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                            {[entry.period, entry.sqft ? `${entry.sqft.toLocaleString()} sqft` : null].filter(Boolean).join(" · ") || "—"}
+                            {entry.lat && entry.lng ? (
+                              <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="ml-1 inline-flex align-middle text-muted-foreground hover:text-primary">
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            ) : null}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                            <Badge variant="secondary" className={`text-[10px] ${sourceBadge(entry.source)}`}>{entry.source}</Badge>
+                            {entry.turnover_per_sqft ? (
+                              <span className="text-[10px] text-muted-foreground font-mono tabular-nums">£{entry.turnover_per_sqft.toFixed(0)}/sqft</span>
+                            ) : null}
+                            {!isClientViewer && (
+                              <span className="ml-auto flex items-center gap-0.5">
+                                {entry.is_draft && (
+                                  <Button size="icon" variant="ghost" className="h-7 w-7 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store">
+                                    <Check className="w-3.5 h-3.5" />
+                                  </Button>
+                                )}
+                                <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete?")) deleteMutation.mutate(entry.id); }}>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="border-t hidden md:block">
                       <table className="w-full text-xs">
                         <thead className="bg-muted/30">
                           <tr>
@@ -728,7 +852,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                                   <MapPin className="w-3 h-3 text-muted-foreground flex-shrink-0" />
                                   <span className="font-medium">{entry.store_name || entry.property_name || entry.location || "—"}</span>
                                   {entry.lat && entry.lng && (
-                                    <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-600">
+                                    <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary">
                                       <ExternalLink className="w-3 h-3" />
                                     </a>
                                   )}
@@ -747,23 +871,25 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                                 <Badge variant="secondary" className={`text-[10px] ${sourceBadge(entry.source)}`}>{entry.source}</Badge>
                               </td>
                               <td className="px-2 py-2.5">
-                                <div className="flex items-center gap-0.5">
-                                  {entry.is_draft && (
-                                    <Button size="icon" variant="ghost" className="h-6 w-6 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store">
-                                      <Check className="w-3 h-3" />
+                                {!isClientViewer && (
+                                  <div className="flex items-center gap-0.5">
+                                    {entry.is_draft && (
+                                      <Button size="icon" variant="ghost" className="h-6 w-6 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store">
+                                        <Check className="w-3 h-3" />
+                                      </Button>
+                                    )}
+                                    <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete?")) deleteMutation.mutate(entry.id); }}>
+                                      <Trash2 className="w-3 h-3" />
                                     </Button>
-                                  )}
-                                  <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete?")) deleteMutation.mutate(entry.id); }}>
-                                    <Trash2 className="w-3 h-3" />
-                                  </Button>
-                                </div>
+                                  </div>
+                                )}
                               </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                  )}
+                  </>)}
                 </Card>
               );
             })}
@@ -900,7 +1026,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                 data-testid="button-save"
               >
                 {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                Add Entry
+                Add entry
               </Button>
             </div>
           </div>

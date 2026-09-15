@@ -1,35 +1,253 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { requireAuth } from "./auth";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { chatbgpEmailLog, crmContacts, crmCompanies, crmInteractions, users } from "@shared/schema";
 import { eq, desc, sql, and } from "drizzle-orm";
-import { getSharedMailboxMessages, getSharedMailboxMessageById, sendFromSharedMailbox, replyToSharedMailboxMessage, markMessageRead, getAppToken, EmailAttachment } from "./shared-mailbox";
+import { getSharedMailboxMessages, getSharedMailboxMessageById, sendFromSharedMailbox, replyToSharedMailboxMessage, markMessageRead, getAppToken, EmailAttachment, graphRequest, getSharedMailboxConversation } from "./shared-mailbox";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { generateAutonomousDocument, exportDocumentToPdf } from "./document-templates";
+import { ingestBytes } from "./universal-ingest";
 
 const SHARED_MAILBOX = "chatbgp@brucegillinghampollard.com";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+
+const DATA_MIME_TYPES = new Set([
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/csv",
+  "application/csv",
+  "application/pdf",
+  "text/plain",
+  "application/vnd.oasis.opendocument.spreadsheet",
+]);
+
+function isDataFile(filename: string, contentType?: string): boolean {
+  if (contentType && DATA_MIME_TYPES.has(contentType.split(";")[0].trim().toLowerCase())) return true;
+  const ext = (filename || "").split(".").pop()?.toLowerCase() || "";
+  // .docx (Word) was previously dropped — it isn't in DATA_MIME_TYPES and
+  // wasn't in this list, so emailed Word docs were silently skipped. Include
+  // it (and .doc) so they're persisted/processed like other data files.
+  return ["xlsx", "xls", "csv", "pdf", "txt", "ods", "docx", "doc"].includes(ext);
+}
+
+function isImageFile(filename: string, contentType?: string): boolean {
+  if (contentType && contentType.split(";")[0].trim().toLowerCase().startsWith("image/")) return true;
+  const ext = (filename || "").split(".").pop()?.toLowerCase() || "";
+  return ["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "tiff"].includes(ext);
+}
+
+async function fetchAndIngestAttachments(messageId: string, fromEmail: string): Promise<string> {
+  try {
+    const attList = await graphRequest(
+      `/users/${SHARED_MAILBOX}/messages/${messageId}/attachments?$select=id,name,contentType,size,isInline`
+    );
+    // Inline attachments are no longer excluded — inline images (and inline
+    // data files) carry real content and were being dropped by the old
+    // `!a.isInline` guard. Images are persisted to durable storage below;
+    // data files (incl. .docx) flow through the existing ingest path.
+    const dataAtts = (attList.value || []).filter(
+      (a: any) => (isDataFile(a.name, a.contentType) || isImageFile(a.name, a.contentType)) && (a.size || 0) < 25 * 1024 * 1024
+    );
+    if (dataAtts.length === 0) return "";
+    const summaries: string[] = [];
+    for (const att of dataAtts) {
+      try {
+        const detail = await graphRequest(`/users/${SHARED_MAILBOX}/messages/${messageId}/attachments/${att.id}`);
+        const bytes = Buffer.from(detail.contentBytes, "base64");
+
+        // Images — persist to durable file_storage (same chat-media/ pattern
+        // as ChatBGP uploads + the WhatsApp media handler) so an emailed/
+        // inline photo is retrievable later. They aren't run through
+        // ingestBytes (which is for tabular/document data, not raw photos).
+        if (isImageFile(att.name, att.contentType)) {
+          try {
+            const crypto = await import("crypto");
+            const safeName = (att.name || "image").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+            const stamped = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}`;
+            const { saveFile } = await import("./file-storage");
+            await saveFile(`chat-media/${stamped}`, bytes, att.contentType || "image/jpeg", att.name);
+            summaries.push(`**${att.name}**: image saved to media library`);
+          } catch (imgErr: any) {
+            console.warn(`[email-ingest] image save failed for ${att.name}: ${imgErr?.message}`);
+            summaries.push(`**${att.name}**: image could not be saved (${imgErr?.message})`);
+          }
+          continue;
+        }
+
+        // Try brochure pipeline first for PDFs — match/create the property,
+        // file the brochure under it, run bespoke ingest. If it's not a
+        // brochure (single-page receipt etc.), fall through to ingestBytes.
+        const isPdf = /\.pdf$/i.test(att.name) || /pdf/i.test(att.contentType || "");
+        if (isPdf) {
+          // Available-property (to-let) flyer? Route it to the external_properties
+          // store (OUTSIDE the CRM, deduped on address) so market listings land
+          // on the Available Properties map without cluttering the CRM. Only
+          // catches confident available-space docs; anything else falls through
+          // to the existing brochure pipeline unchanged.
+          try {
+            const { ingestAvailableProperty } = await import("./property-ingest");
+            const avail = await ingestAvailableProperty({ source: "Email", pdfBuffer: bytes, originalName: att.name });
+            if (avail.ok && avail.confidence !== "low") {
+              summaries.push(`**${att.name}**: added to Available Properties — ${avail.address}${avail.duplicate ? " (updated existing)" : ""}`);
+              continue;
+            }
+          } catch (err: any) {
+            console.warn(`[email-ingest] available-property ingest failed for ${att.name}: ${err?.message}`);
+          }
+
+          const messages: string[] = [];
+          try {
+            const { tryIngestBrochure } = await import("./whatsapp-brochure-pipeline");
+            const result = await tryIngestBrochure({
+              bytes,
+              mimeType: att.contentType || "application/pdf",
+              filename: att.name,
+              source: "email",
+              userId: null,
+              sendReply: async (text: string) => { messages.push(text); },
+            });
+            if (result.handled) {
+              summaries.push(`**${att.name}**\n${messages.join("\n")}`);
+              continue;
+            }
+          } catch (err: any) {
+            console.warn(`[email-ingest] brochure pipeline failed for ${att.name}: ${err?.message}`);
+          }
+        }
+
+        const result = await ingestBytes({ bytes, filename: att.name, userId: fromEmail, userName: fromEmail });
+        summaries.push(`**${att.name}**: ${result.narrative}`);
+      } catch (err: any) {
+        console.warn(`[email-ingest] Attachment ${att.name} failed: ${err?.message}`);
+        summaries.push(`**${att.name}**: could not parse (${err?.message})`);
+      }
+    }
+    return summaries.join("\n");
+  } catch (err: any) {
+    console.warn(`[email-ingest] fetchAndIngestAttachments failed: ${err?.message}`);
+    return "";
+  }
+}
+
+// Forwarded-as-attachment extractor. When a newsletter/email is forwarded
+// "as an attachment" (Outlook → an itemAttachment carrying the original
+// message; or a dragged-in .eml file), the outer body is just the covering
+// note and the real content lives inside the attachment. The body extractor
+// then sees almost nothing — the recurring "bulletin came through truncated"
+// symptom. Graph exposes the nested message via
+// $expand=microsoft.graph.itemAttachment/item; .eml files arrive as raw
+// RFC822 bytes. Pull whatever readable text we can so the classifier + reply
+// read the actual bulletin.
+async function extractForwardedMessageText(messageId: string): Promise<string> {
+  try {
+    const attList = await graphRequest(
+      `/users/${SHARED_MAILBOX}/messages/${messageId}/attachments?$expand=microsoft.graph.itemAttachment/item`
+    );
+    const parts: string[] = [];
+    for (const att of (attList.value || [])) {
+      const odataType = String(att["@odata.type"] || "");
+      // (a) Outlook "forward as attachment" → itemAttachment whose .item is the
+      //     original message. Reuse the robust body extractor on the nested item.
+      if (/itemAttachment/i.test(odataType) && att.item) {
+        const inner = extractEmailBodyText(att.item);
+        if (inner && inner.trim().length > 20) {
+          parts.push(`--- Forwarded message: "${att.item.subject || att.name || "message"}" ---\n${inner.trim()}`);
+        }
+        continue;
+      }
+      // (b) Dragged-in .eml (raw RFC822 file attachment).
+      if (/\.eml$/i.test(att.name || "") || /message\/rfc822/i.test(att.contentType || "")) {
+        try {
+          const detail = await graphRequest(`/users/${SHARED_MAILBOX}/messages/${messageId}/attachments/${att.id}`);
+          if (detail?.contentBytes) {
+            const txt = rfc822ToText(Buffer.from(detail.contentBytes, "base64").toString("utf8"));
+            if (txt && txt.trim().length > 20) parts.push(`--- Attached email: "${att.name}" ---\n${txt.trim()}`);
+          }
+        } catch (emlErr: any) {
+          console.warn(`[email-processor] .eml parse failed for ${att.name}: ${emlErr?.message}`);
+        }
+      }
+    }
+    return parts.join("\n\n");
+  } catch (err: any) {
+    console.warn(`[email-processor] extractForwardedMessageText failed: ${err?.message}`);
+    return "";
+  }
+}
+
+// Best-effort RFC822 → text for raw .eml attachments (no MIME-parser dep).
+// Picks the text/html part (preferred) or text/plain, quoted-printable-decodes
+// it, and runs HTML through htmlToText. Guarded: if the result still looks like
+// a binary/base64 blob (high non-printable ratio) we return "" rather than feed
+// Claude garbage — the itemAttachment path above covers the common case anyway.
+function rfc822ToText(rfc: string): string {
+  const norm = rfc.replace(/\r\n/g, "\n");
+  const slicePart = (ctRe: RegExp): string | null => {
+    const idx = norm.search(ctRe);
+    if (idx < 0) return null;
+    const bodyStart = norm.indexOf("\n\n", idx);
+    if (bodyStart < 0) return null;
+    let chunk = norm.slice(bodyStart + 2);
+    const boundary = chunk.search(/\n--[-_A-Za-z0-9]+/);
+    if (boundary > 0) chunk = chunk.slice(0, boundary);
+    return chunk;
+  };
+  const decodeQP = (s: string) =>
+    s.replace(/=\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  const clean = (s: string): string => {
+    const t = s.trim();
+    if (!t) return "";
+    const nonPrintable = (t.match(/[^\x09\x0A\x0D\x20-\x7E -￿]/g) || []).length;
+    return nonPrintable / t.length > 0.15 ? "" : t; // looks like base64/binary → bail
+  };
+  const html = slicePart(/content-type:\s*text\/html/i);
+  if (html) { const out = clean(htmlToText(decodeQP(html))); if (out) return out; }
+  const plain = slicePart(/content-type:\s*text\/plain/i);
+  if (plain) { const out = clean(decodeQP(plain)); if (out) return out; }
+  const blank = norm.indexOf("\n\n");
+  return blank > 0 ? clean(htmlToText(norm.slice(blank + 2))) : "";
+}
 
 // Convert Microsoft Graph message HTML/text body to a plain-text string
 // that preserves readable structure. The old extractor preferred
 // bodyPreview (always just ~255 chars from Graph) or did a crude tag
 // strip — result was empty or near-empty text for forwarded newsletters
 // where the actual content sits in nested HTML.
+//
+// IMPORTANT: We extract image alt text BEFORE stripping tags. Most
+// commercial newsletters (Green Street News, Property Week, EGi, etc)
+// build the visible content as <img> elements with meaningful alt
+// attributes — strip the tags naively and you get a body of stray
+// "No" / "View in browser" / unsubscribe-footer fragments.
 function htmlToText(html: string): string {
   if (!html) return "";
   let s = html;
-  // Drop scripts/styles entirely.
+  // Work on the RAW markup first so real tags are removed while any
+  // entity-encoded tags ("&lt;p&gt;…") are still inert text. Decoding
+  // entities FIRST (the previous approach) let the tag-stripper swallow
+  // real content whenever the decoded text contained a stray "<…>" pair —
+  // that's what collapsed the Green Street News bulletin to a single word
+  // ("Bond", and "£" before that).
+  // Drop scripts/styles/comments entirely.
   s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
   s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
   s = s.replace(/<!--[\s\S]*?-->/g, "");
+  // Replace <img> tags with their alt text — without this, image-heavy
+  // newsletters look empty after tag-stripping.
+  s = s.replace(/<img\b[^>]*\balt=(?:"([^"]*)"|'([^']*)')[^>]*>/gi, (_m, d, s2) => {
+    const alt = (d || s2 || "").trim();
+    return alt ? `\n${alt}\n` : "";
+  });
+  s = s.replace(/<img\b[^>]*>/gi, "");          // Images without alt → drop silently
   // Block-level and <br> tags become newlines BEFORE stripping remaining tags.
   s = s.replace(/<\s*br\s*\/?\s*>/gi, "\n");
-  s = s.replace(/<\/(p|div|li|tr|h[1-6]|blockquote|article|section)\s*>/gi, "\n");
+  s = s.replace(/<\/(p|div|li|tr|td|th|h[1-6]|blockquote|article|section)\s*>/gi, "\n");
   s = s.replace(/<\s*hr\s*\/?\s*>/gi, "\n---\n");
-  // Strip all remaining tags.
+  // Strip all remaining real tags.
   s = s.replace(/<[^>]+>/g, " ");
-  // Decode the common HTML entities. Anything else we leave — the classifier
-  // can cope with a stray &mdash;.
+  // NOW decode HTML entities. Forwarded / re-wrapped emails sometimes
+  // arrive with their markup entity-encoded ("&lt;p&gt;£5M&lt;/p&gt;");
+  // at this point those become literal "<p>" markers in the text.
   s = s.replace(/&nbsp;/g, " ")
        .replace(/&amp;/g, "&")
        .replace(/&lt;/g, "<")
@@ -39,6 +257,15 @@ function htmlToText(html: string): string {
        .replace(/&apos;/g, "'")
        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
        .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  // ...so do ONE more strip to clear any de-encoded tag markers. This pass
+  // only matches KNOWN tag names (incl. Office "o:p"/"v:"/"w:" namespaces),
+  // so genuine prose like "Bond <Street deal>" or "rent < £50/sqft"
+  // survives untouched — important so we don't re-introduce the
+  // content-eating bug on text that legitimately contains angle brackets.
+  s = s.replace(
+    /<\/?(?:[a-z]+:[a-z0-9-]+|(?:p|div|span|a|br|hr|img|table|tbody|thead|tfoot|tr|td|th|ul|ol|li|dl|dt|dd|h[1-6]|b|strong|i|em|u|font|center|blockquote|article|section|header|footer|nav|main|aside|figure|figcaption|html|body|head|meta|link|title|style|script|pre|code|sup|sub|small|mark|abbr|cite|q|time|label|button))\b[^>]*>/gi,
+    " ",
+  );
   // Collapse runs of whitespace but keep paragraph breaks.
   s = s.replace(/[ \t]+/g, " ")
        .replace(/\n[ \t]+/g, "\n")
@@ -50,6 +277,10 @@ function htmlToText(html: string): string {
 // Pick the richest readable body for a Microsoft Graph message. Falls
 // back through body.content → bodyPreview so forwarded newsletters
 // (where the bulletin HTML is in body.content) no longer look blank.
+// Also handles the image-heavy newsletter case where htmlToText comes
+// back with very little text relative to the HTML size: we extract
+// hrefs (typical newsletter content is link-rich) and surface them so
+// Claude can at least see "what topics this email touched on".
 function extractEmailBodyText(msg: any): string {
   const raw = msg?.body?.content || "";
   const type = (msg?.body?.contentType || "").toLowerCase();
@@ -57,12 +288,74 @@ function extractEmailBodyText(msg: any): string {
   if (raw) {
     text = type === "html" ? htmlToText(raw) : raw;
   }
-  // If Graph gave us nothing useful but had a preview, use that so we
-  // at least get SOMETHING through to the classifier.
-  if (!text.trim() && msg?.bodyPreview) text = msg.bodyPreview;
-  // Cap at 20k chars — classifier only reads ~6k, but we keep some
-  // headroom so specialist prompts can see more context later.
-  return text.slice(0, 20000);
+
+  // Image-heavy newsletter detection — if the HTML is sizeable but the
+  // extracted text is tiny, the body is almost certainly built from
+  // images. Pull link anchors as a last-ditch content source so Claude
+  // sees the headlines (newsletters always link to each story).
+  if (type === "html" && raw.length > 2000 && text.trim().length < 300) {
+    const links = extractLinkAnchors(raw);
+    if (links.length > 0) {
+      text = `${text.trim()}\n\n[Email content was image-heavy; the following headlines/links were extracted from the HTML]\n${links.join("\n")}`;
+    }
+  }
+
+  // bodyPreview safety net. Graph's bodyPreview (~255 chars) is an
+  // INDEPENDENT extraction of the message text. If our htmlToText came
+  // back empty OR shorter than the preview, we almost certainly
+  // under-extracted (malformed / entity-encoded markup), so we'd be
+  // feeding Claude a collapsed fragment — the "I can only see the word
+  // 'Bond'" symptom. In that case lead with the preview instead.
+  //
+  // Guard: skip when the preview is just a forwarding envelope
+  // ("FW: From: … Sent: … Subject:") — that's noise, and better to send
+  // the real (if short) body than a misleading header snippet.
+  const preview = String(msg?.bodyPreview || "").trim();
+  if (preview && preview.length > text.trim().length) {
+    const looksLikeForwardingEnvelope =
+      /^(fw|fwd|re):/i.test(preview) ||
+      /^from:\s/im.test(preview.slice(0, 200)) ||
+      /^-+\s*(forwarded|original)\s+message/i.test(preview);
+    if (!looksLikeForwardingEnvelope) {
+      // Keep any real text we did extract, but only when the preview
+      // doesn't already contain it (avoids duplicating the same words).
+      const extracted = text.trim();
+      text = extracted && !preview.includes(extracted) ? `${preview}\n\n${extracted}` : preview;
+    }
+  }
+  // Cap at 60k chars — long forwarded threads (especially with the full
+  // chain quoted underneath) were getting truncated below the structure
+  // people actually wanted ChatBGP to read. 60k is well within Claude's
+  // context but still bounds runaway emails.
+  return text.slice(0, 60000);
+}
+
+// Pull headline-shaped link anchors from newsletter HTML — i.e. an
+// <a href> wrapping text that looks like a real headline (>= 8 chars,
+// not just "click here" / "unsubscribe"). Used as a fallback when the
+// body is mostly images.
+function extractLinkAnchors(html: string): string[] {
+  const out: string[] = [];
+  const SKIP = /\b(unsubscribe|view\s+in\s+browser|view\s+online|click\s+here|read\s+more|subscribe|preferences|terms|privacy|forward\s+to)\b/i;
+  const re = /<a\b[^>]*\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  const seen = new Set<string>();
+  while ((m = re.exec(html)) !== null) {
+    const href = m[1];
+    const innerText = m[2]
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (innerText.length < 8 || innerText.length > 250) continue;
+    if (SKIP.test(innerText)) continue;
+    const key = innerText.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(`• ${innerText}${href.startsWith("http") ? ` (${href.slice(0, 80)}${href.length > 80 ? "…" : ""})` : ""}`);
+    if (out.length >= 30) break;
+  }
+  return out;
 }
 
 let registeredUserEmails: Set<string> | null = null;
@@ -129,7 +422,7 @@ Also extract:
 - For "news" type: the property/area/opportunity mentioned
 - Which BGP team member sent/forwarded it (if any)
 - Any external contact names and email addresses
-- Which BGP teams/departments should know about this email. Teams are: London Leasing, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Landsec, Office / Corporate, Accounts. Pick ALL relevant teams. For example: a retail availability in Mayfair → London Leasing; an investment opportunity → Investment; a lease renewal query → Lease Advisory; a nationwide requirement → National Leasing.
+- Which BGP teams/departments should know about this email. Teams are: London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Landsec, Office / Corporate, Accounts. Pick ALL relevant teams. For example: a retail availability in Mayfair → London Retail; an F&B operator opportunity → London F&B; an investment opportunity → Investment; a lease renewal query → Lease Advisory; a nationwide requirement → National Leasing.
 - A short "intelligence briefing" (1-2 sentences) explaining why this email matters and what BGP should do about it, written for a senior director.
 
 You MUST return ONLY a valid JSON object with no additional text, explanation, or markdown formatting. Do not wrap in code fences.
@@ -142,7 +435,7 @@ You MUST return ONLY a valid JSON object with no additional text, explanation, o
   "requestedAction": "description of what to do (for instructions)",
   "propertyContext": "property/area mentioned if any",
   "urgency": "high|normal|low",
-  "relevantTeams": ["London Leasing", "Investment"],
+  "relevantTeams": ["London Retail", "Investment"],
   "briefing": "Short intelligence note for the team — why this matters and what to do"
 }`;
 
@@ -185,7 +478,16 @@ Return JSON:
   ],
   "replyToSender": "The response to email back to the team member (mention what docs were generated/attached)",
   "summary": "What was done"
-}`;
+}
+
+REPLY STYLE:
+- Write like a competent colleague replying inside an active email thread, NOT a help-desk bot. The recipient will see your reply on top of the original Outlook conversation — don't pretend the thread doesn't exist or ask them to "resend the full chain". If the body looks truncated, do your best with what you've got and ask one specific follow-up question if anything's missing.
+- Professional but warm. Business English. Contractions OK ("I've", "we'll"). No emojis, no exclamation marks, no jokes.
+- 2-5 sentences. Lead with what you did or what you found, then any caveats or asks. Don't pad with "Thanks for forwarding" / "Happy to help" boilerplate.
+- If you took CRM actions (logged an interaction, created a deal etc.), mention them in one short sentence inline — don't dump a bullet list of "Actions taken" at the bottom.
+- Never write "This is an automated response" or anything like it — the system doesn't append a footer any more.
+- Never lecture about what wasn't included, what threshold the request met, etc.
+- Sign off with "ChatBGP" on its own line. No corporate signature, no disclaimers — the recipient already has BGP's signature in the thread below.`;
 
 interface EmailClassification {
   classification: string;
@@ -260,8 +562,122 @@ async function processInstruction(
   subject: string,
   bodyText: string,
   from: string,
-  classification: EmailClassification
+  classification: EmailClassification,
+  messageId?: string,
 ): Promise<{ actions: ProcessedAction[]; reply: string; attachments?: EmailAttachment[] }> {
+  // Entity pre-fetch — extract postcodes, addresses, and capitalised
+  // company names from the email body, then look them up in the CRM
+  // and join the matches into the AI prompt. Closes the "I don't know
+  // what you're referring to" gap by grounding the AI in the actual
+  // data BGP has — no more inventing properties from thin air.
+  let entityContext = "";
+  try {
+    const text = `${subject} ${bodyText}`;
+    // Postcodes — UK format
+    const postcodes = Array.from(
+      new Set(
+        (text.match(/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi) || [])
+          .map((s) => s.toUpperCase().replace(/\s+/g, " ").trim()),
+      ),
+    ).slice(0, 5);
+    // Capitalised multi-word phrases — likely company / property names
+    const capPhrases = Array.from(
+      new Set(
+        (text.match(/\b([A-Z][a-zA-Z0-9&'.-]+(?:\s+[A-Z][a-zA-Z0-9&'.-]+){1,4})\b/g) || [])
+          .filter((s) => !/^(Subject|From|To|Cc|Sent|Date|Hi|Dear|Best|Regards|Kind|Many|Thanks|Thank|RE|FW|FWD)\b/i.test(s))
+          .map((s) => s.trim()),
+      ),
+    ).slice(0, 12);
+
+    const chunks: string[] = [];
+    if (postcodes.length > 0) {
+      const matchedProps = await pool.query<any>(
+        `SELECT name, address, postcode, group_name, status FROM crm_properties
+          WHERE postcode = ANY($1::text[]) OR REPLACE(UPPER(postcode), ' ', '') = ANY($2::text[])
+          LIMIT 12`,
+        [postcodes, postcodes.map((p) => p.replace(/\s+/g, ""))],
+      );
+      if (matchedProps.rows.length > 0) {
+        chunks.push(`Properties at mentioned postcodes (${postcodes.join(", ")}):`);
+        for (const p of matchedProps.rows) {
+          chunks.push(`  - ${p.name} (${p.postcode || "no postcode"}) ${p.group_name ? `[${p.group_name}]` : ""} ${p.status ? `· ${p.status}` : ""}`);
+        }
+      }
+    }
+    if (capPhrases.length > 0) {
+      const matchedCompanies = await pool.query<any>(
+        `SELECT name, industry, type FROM crm_companies
+          WHERE lower(name) = ANY($1::text[])
+             OR EXISTS (
+               SELECT 1 FROM unnest($1::text[]) AS phrase
+                WHERE lower(crm_companies.name) LIKE '%' || phrase || '%'
+                  OR phrase LIKE '%' || lower(crm_companies.name) || '%'
+             )
+          LIMIT 12`,
+        [capPhrases.map((s) => s.toLowerCase())],
+      );
+      if (matchedCompanies.rows.length > 0) {
+        chunks.push(`Companies matching mentioned names:`);
+        for (const c of matchedCompanies.rows) {
+          chunks.push(`  - ${c.name}${c.industry ? ` · ${c.industry}` : ""}${c.type ? ` (${c.type})` : ""}`);
+        }
+      }
+
+      // Also look for matching properties by name fragment (Lots Rd,
+      // Hanover Square, etc.) — common case the user complained about.
+      const matchedByName = await pool.query<any>(
+        `SELECT name, address, postcode, status FROM crm_properties
+          WHERE EXISTS (
+            SELECT 1 FROM unnest($1::text[]) AS phrase
+             WHERE lower(crm_properties.name) LIKE '%' || phrase || '%'
+          )
+          LIMIT 12`,
+        [capPhrases.map((s) => s.toLowerCase())],
+      );
+      if (matchedByName.rows.length > 0) {
+        chunks.push(`Properties matching mentioned names:`);
+        for (const p of matchedByName.rows) {
+          chunks.push(`  - ${p.name} (${p.postcode || "no postcode"}) ${p.status ? `· ${p.status}` : ""}`);
+        }
+      }
+    }
+    if (chunks.length > 0) {
+      entityContext = `\n\nENTITIES MATCHED IN CRM (use these for context — don't invent properties / companies that aren't here):\n${chunks.join("\n")}\n`;
+    } else if (postcodes.length > 0 || capPhrases.length > 0) {
+      entityContext = `\n\nENTITIES NOT FOUND IN CRM: ${[...postcodes, ...capPhrases.slice(0, 5)].join(", ")} — be honest that BGP doesn't have records for these. Don't make up details.\n`;
+    }
+  } catch (err: any) {
+    console.warn(`[email-processor] entity pre-fetch failed: ${err?.message}`);
+  }
+
+  // Pull prior messages in the same email thread so the AI has context
+  // when the user replies "yes go ahead" or "what about the second
+  // option" — without this, every reply is a cold start.
+  let conversationHistory = "";
+  if (messageId) {
+    try {
+      const current = await getSharedMailboxMessageById(messageId);
+      const convId = current?.conversationId;
+      if (convId) {
+        const prior = await getSharedMailboxConversation(convId, messageId);
+        if (prior.length > 0) {
+          const formatted = prior
+            .slice(0, 8)            // most recent 8 prior messages, oldest first below
+            .reverse()
+            .map((m: any) => {
+              const sender = m.from?.emailAddress?.address || m.from?.emailAddress?.name || "(unknown)";
+              const when = m.receivedDateTime ? new Date(m.receivedDateTime).toISOString().slice(0, 16).replace("T", " ") : "";
+              const preview = (m.bodyPreview || "").replace(/\s+/g, " ").trim().slice(0, 400);
+              return `[${when}] ${sender}: ${preview}`;
+            })
+            .join("\n");
+          conversationHistory = `\n\nPRIOR THREAD (oldest first, most recent ${prior.length} messages — use this for context):\n${formatted}\n`;
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[email-processor] thread history fetch failed: ${err?.message}`);
+    }
+  }
   const allContacts = await db.select({
     id: crmContacts.id,
     name: crmContacts.name,
@@ -290,7 +706,11 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
           { role: "system", content: INSTRUCTION_PROMPT + "\n\n" + crmContext },
           {
             role: "user",
-            content: `Subject: ${subject}\nFrom: ${from}\n\nBody:\n${(bodyText || "").slice(0, 6000)}\n\nClassification context: ${JSON.stringify(classification)}` + (attempt > 0 ? "\n\nIMPORTANT: Return ONLY valid JSON." : ""),
+            // Was sliced to 6k — long forwarded structuring proposals
+            // were being cut off below the headline, so ChatBGP replied
+            // "the forwarded email was truncated" even when we had the
+            // full body in hand. 50k gives the full thread to Claude.
+            content: `Subject: ${subject}\nFrom: ${from}${entityContext}${conversationHistory}\n\nBody:\n${(bodyText || "").slice(0, 50000)}\n\nClassification context: ${JSON.stringify(classification)}` + (attempt > 0 ? "\n\nIMPORTANT: Return ONLY valid JSON." : ""),
           },
         ],
         max_completion_tokens: 2048,
@@ -458,6 +878,71 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
             break;
           }
 
+          case "update_contact":
+          case "create_contact":
+          case "create_company":
+          case "update_company":
+          case "create_deal":
+          case "update_deal": {
+            // Delegate explicit emailed CRM instructions to the agentic CRM
+            // executor (executeCrmToolRaw) in chatbgp.ts rather than
+            // reimplementing write logic here. Dynamic import avoids a circular
+            // dependency (chatbgp ↔ email-processor) — matching the dynamic
+            // import style used throughout this file. These writes only fire
+            // for an explicit instruction action; we never auto-create records
+            // from email prose.
+            try {
+              const { executeCrmToolRaw } = await import("./chatbgp");
+              // Normalize the email-instruction action shape onto the flat
+              // fnArgs the CRM executor expects. The prompt emits
+              // create_deal/details, and update_*/email + fields.
+              let fnArgs: any = { ...action };
+              delete fnArgs.type;
+              if (action.details && typeof action.details === "object") fnArgs = { ...fnArgs, ...action.details };
+              if (action.fields && typeof action.fields === "object") fnArgs = { ...fnArgs, ...action.fields };
+              delete fnArgs.details;
+              delete fnArgs.fields;
+              // The CRM update tools key on id; the email prompt addresses
+              // contacts/companies by email/name. Resolve to an id when we
+              // only have an email (update_contact) so the write can land.
+              if ((action.type === "update_contact") && !fnArgs.id && fnArgs.email) {
+                const match = allContacts.find(c => c.email && c.email.toLowerCase() === String(fnArgs.email).toLowerCase());
+                if (match) fnArgs.id = match.id;
+              }
+              if ((action.type === "update_company") && !fnArgs.id && fnArgs.name) {
+                const match = allCompanies.find(c => c.name.toLowerCase() === String(fnArgs.name).toLowerCase());
+                if (match) fnArgs.id = match.id;
+              }
+              if ((action.type === "update_contact" || action.type === "update_company" || action.type === "update_deal") && !fnArgs.id) {
+                executedActions.push({
+                  type: action.type,
+                  result: `Could not resolve which record to update (no matching ${action.type.replace(/^update_/, "")} found) — skipped`,
+                  success: false,
+                });
+                break;
+              }
+              // executeCrmToolRaw's CRM write paths use db/fnArgs only, not the
+              // request — a minimal stub is safe here (no session/cookies).
+              const raw = await executeCrmToolRaw(action.type, fnArgs, { headers: {} } as any);
+              const data = raw?.data || {};
+              executedActions.push({
+                type: action.type,
+                result: data.error
+                  ? `CRM ${action.type} failed: ${data.error}`
+                  : `${data.action || "executed"} ${data.entity || ""}${data.name ? ` "${data.name}"` : ""}${data.fields ? ` (${(data.fields as string[]).join(", ")})` : ""}`.trim(),
+                success: !data.error,
+              });
+            } catch (delErr: any) {
+              console.warn(`[email-processor] CRM delegation for "${action.type}" failed: ${delErr?.message}`);
+              executedActions.push({
+                type: action.type,
+                result: `Error executing ${action.type}: ${delErr?.message}`,
+                success: false,
+              });
+            }
+            break;
+          }
+
           default: {
             executedActions.push({
               type: action.type,
@@ -476,9 +961,33 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
     }
   }
 
+  // Attachment hallucination guard. The AI's reply text sometimes claims
+  // "the document is attached" but no generate_document action was emitted
+  // (e.g. it intended to but didn't, or it was paraphrasing). If we don't
+  // actually have an attachment to send, strip the claim from the reply —
+  // better to undersell than mislead. ("Attaching the doc separately" reads
+  // better than "PFA" with no attachment.)
+  let finalReply = parsed.replyToSender || "Your instruction has been received and processed.";
+  if (generatedAttachments.length === 0) {
+    const claimsAttachment = /attach(?:ed|ing|ment|ments)|enclos(?:ed|ure)|please find|\bPFA\b|is attached|find attached/i.test(finalReply);
+    if (claimsAttachment) {
+      // Drop any sentence containing an attachment claim.
+      finalReply = finalReply
+        .split(/(?<=[.!?])\s+/)
+        .filter((s: string) => !/attach(?:ed|ing|ment|ments)|enclos(?:ed|ure)|please find|\bPFA\b|find attached/i.test(s))
+        .join(" ")
+        .trim();
+      // If we stripped everything, fall back to a neutral acknowledgement.
+      if (!finalReply) {
+        finalReply = "Thanks for the email — I've logged this. Reply if you need anything else.";
+      }
+      console.warn(`[email-processor] stripped attachment claim from reply — no document was actually generated`);
+    }
+  }
+
   return {
     actions: executedActions,
-    reply: parsed.replyToSender || "Your instruction has been received and processed.",
+    reply: finalReply,
     attachments: generatedAttachments.length > 0 ? generatedAttachments : undefined,
   };
 }
@@ -512,6 +1021,23 @@ async function trackCcCorrespondence(
 
   const isBgpOutbound = from.toLowerCase().endsWith(BGP_DOMAIN);
 
+  // Bounded auto-create scope: only addresses that appeared in the CC line of
+  // this tracked correspondence are eligible. Noise (automated senders,
+  // bounce/daemon addresses, calendar invites) and internal firm addresses
+  // are excluded so we don't pollute the CRM with non-people.
+  const ccSet = new Set(ccRecipients.map(e => (e || "").toLowerCase().trim()).filter(Boolean));
+  const isNoiseAddress = (email: string): boolean => {
+    const e = (email || "").toLowerCase().trim();
+    if (!e || !e.includes("@")) return true;
+    if (e.endsWith(BGP_DOMAIN)) return true; // internal firm domain
+    const local = e.split("@")[0];
+    const domain = e.split("@")[1] || "";
+    if (/^(no-?reply|do-?not-?reply|noreply|donotreply|mailer-daemon|postmaster|bounce|bounces|notifications?|notify|auto|automated|calendar|invite|invites|invitations?|via-)/.test(local)) return true;
+    if (/(no-?reply|do-?not-?reply|mailer-daemon|bounce|postmaster)/.test(local)) return true;
+    if (/(calendar|calendly|mailer-daemon|bounce|email\.|mailgun|sendgrid|amazonses|mcsv\.net|sparkpostmail)/.test(domain)) return true;
+    return false;
+  };
+
   for (const extEmail of allEmails) {
     const normalized = extEmail.toLowerCase().trim();
     const matchedContact = allContacts.find(c => c.email && c.email.toLowerCase().trim() === normalized);
@@ -544,17 +1070,49 @@ async function trackCcCorrespondence(
         }
       }
     } else {
-      if (classification.externalContacts?.length) {
-        const extContact = classification.externalContacts.find(
-          ec => ec.email && ec.email.toLowerCase() === normalized
-        );
-        if (extContact) {
+      const extContact = classification.externalContacts?.find(
+        ec => ec.email && ec.email.toLowerCase() === normalized
+      );
+      // Bounded auto-create: a genuinely-unknown person who was CC'd on a
+      // thread we're already tracking. Skip automated/noise/internal
+      // addresses. Anything outside the CC line (an unknown From/To, or
+      // a noise address) falls back to a non-committal suggestion only —
+      // we never auto-create deals or records from prose.
+      if (ccSet.has(normalized) && !isNoiseAddress(normalized)) {
+        try {
+          const derivedName = extContact?.name
+            || normalized.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+            || normalized;
+          const { executeCrmToolRaw } = await import("./chatbgp");
+          const raw = await executeCrmToolRaw("create_contact", {
+            name: derivedName,
+            email: normalized,
+            companyName: extContact?.company || null,
+            contactType: "external",
+            notes: `Auto-added from CC on tracked correspondence "${(subject || "").slice(0, 120)}"`,
+          }, { headers: {} } as any);
+          const data = raw?.data || {};
           actions.push({
-            type: "suggest_contact",
-            result: `Unknown contact: ${extContact.name} (${extContact.email}${extContact.company ? ", " + extContact.company : ""}) — consider adding to CRM`,
-            success: true,
+            type: "create_contact",
+            result: data.error
+              ? `Could not auto-add CC contact ${normalized}: ${data.error}`
+              : `Auto-added CC contact ${derivedName} (${normalized})${extContact?.company ? `, ${extContact.company}` : ""}`,
+            success: !data.error,
+          });
+        } catch (ccErr: any) {
+          console.warn(`[email-processor] CC contact auto-create failed for ${normalized}: ${ccErr?.message}`);
+          actions.push({
+            type: "create_contact",
+            result: `Could not auto-add CC contact ${normalized}: ${ccErr?.message}`,
+            success: false,
           });
         }
+      } else if (extContact) {
+        actions.push({
+          type: "suggest_contact",
+          result: `Unknown contact: ${extContact.name} (${extContact.email}${extContact.company ? ", " + extContact.company : ""}) — consider adding to CRM`,
+          success: true,
+        });
       }
     }
   }
@@ -705,8 +1263,8 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
 
     console.log(`[email-processor] Found ${unreadMessages.length} unread messages`);
 
-    for (const msg of unreadMessages) {
-      const messageId = msg.id;
+    for (const listMsg of unreadMessages) {
+      const messageId = listMsg.id;
 
       const existing = await db.select({ id: chatbgpEmailLog.id })
         .from(chatbgpEmailLog)
@@ -717,13 +1275,81 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
         continue;
       }
 
+      // Refetch the canonical full message before processing. The list
+      // endpoint truncates subject + body for some forwarded messages
+      // (we saw "Grand centra" instead of the full subject, and bodies
+      // collapsing to bodyPreview). Fetching by ID gives the full data.
+      // Fall back to the list payload if the by-id call fails.
+      const fullMsg = await getSharedMailboxMessageById(messageId).catch(() => null);
+      if (!fullMsg) console.warn(`[email-processor] full-message fetch returned null for ${messageId} — falling back to truncated list payload (subject/body may be incomplete)`);
+      const msg = fullMsg || listMsg;
+
       const fromEmail = msg.from?.emailAddress?.address || "";
       const fromName = msg.from?.emailAddress?.name || "";
       const subject = msg.subject || "";
-      const bodyText = extractEmailBodyText(msg);
+      let bodyText = extractEmailBodyText(msg);
+      // Rich diagnostic for the recurring "forwarded bulletin came through
+      // empty / only the header" reports. Fires when extraction is tiny OR
+      // when the email is image-dominated but yielded little text (the
+      // image-based-newsletter case — content baked into <img>, so the only
+      // text is the forwarding header). One log line tells us which case it
+      // is. Grep Railway logs for "[email-processor] thin body".
+      {
+        const rawContent = String(msg?.body?.content || "");
+        const rawType = (msg?.body?.contentType || "?").toLowerCase();
+        const imgCount = (rawContent.match(/<img\b/gi) || []).length;
+        const extractedLen = bodyText.trim().length;
+        const thin = extractedLen < 50 || (imgCount >= 5 && extractedLen < 500);
+        if (thin) {
+          const rawSnippet = rawContent.replace(/\s+/g, " ").slice(0, 600);
+          console.warn(
+            `[email-processor] thin body (extracted=${extractedLen} chars) from "${subject}" by ${fromEmail} ` +
+            `| contentType=${rawType} rawLen=${rawContent.length} imgTags=${imgCount} hasAttachments=${!!msg?.hasAttachments} fullFetch=${!!fullMsg} ` +
+            `| previewLen=${String(msg?.bodyPreview || "").length} | rawSnippet="${rawSnippet}"`,
+          );
+        }
+      }
+
+      // Recovery: a thin body on a message WITH attachments is almost always a
+      // forward-as-attachment — the bulletin is the attached message, not the
+      // covering note. Pull the attached message's text in so the classifier
+      // and reply read the actual content instead of "the body looks truncated".
+      if (bodyText.trim().length < 200 && msg?.hasAttachments) {
+        const forwarded = await extractForwardedMessageText(messageId);
+        if (forwarded && forwarded.trim().length > bodyText.trim().length) {
+          bodyText = `${bodyText.trim()}\n\n${forwarded}`.trim().slice(0, 60000);
+          console.log(`[email-processor] recovered ${forwarded.trim().length} chars from forwarded attachment(s) for "${subject}"`);
+        }
+      }
       const receivedAt = msg.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
       const toRecipients = (msg.toRecipients || []).map((r: any) => r.emailAddress?.address || "");
       const ccRecipients = (msg.ccRecipients || []).map((r: any) => r.emailAddress?.address || "");
+
+      // Index every incoming email body into the knowledge base so the
+      // archivist surface (search, "what did Jack say about TCR?",
+      // chatbgp recall) can quote from it later. Skipped if the body
+      // is essentially empty or under the 50-char threshold the
+      // archivist itself enforces. Fire-and-forget — failure here
+      // must not block the reply path.
+      const kbContent = `From: ${fromName || fromEmail} <${fromEmail}>\nDate: ${receivedAt.toISOString()}\nSubject: ${subject}\n\n${bodyText}`;
+      const kbPath = `email://shared/${messageId}`;
+      (async () => {
+        try {
+          const { summarizeAndIndex } = await import("./archivist");
+          await summarizeAndIndex(
+            `Email: ${subject}`,
+            kbPath,
+            msg.webLink || null,
+            "email://shared",
+            kbContent,
+            kbContent.length,
+            receivedAt,
+            "email",
+          );
+        } catch (kbErr: any) {
+          console.warn(`[email-processor] KB index failed for ${messageId}:`, kbErr?.message || kbErr);
+        }
+      })();
 
       try {
         const classification = await classifyEmail(subject, bodyText, fromEmail, toRecipients, ccRecipients);
@@ -752,11 +1378,18 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
               break;
             }
 
-            const result = await processInstruction(subject, bodyText, fromEmail, classification);
+            const result = await processInstruction(subject, bodyText, fromEmail, classification, messageId);
             actionsTaken = result.actions;
             console.log(`[email-processor] Instruction processed for "${subject}": ${result.actions.length} actions, reply=${!!result.reply}`);
 
-            const replyText = result.reply || `Hi — I've received your email "${subject}" and logged it. If you need me to take a specific action, try sending a more detailed instruction via the ChatBGP dashboard or email.`;
+            // Also ingest any data file attachments alongside the instruction.
+            const attachIngest = await fetchAndIngestAttachments(messageId, fromEmail);
+            if (attachIngest) {
+              actionsTaken.push({ type: "attachment_ingested", result: attachIngest, success: true });
+            }
+
+            const replyText = (result.reply || `Hi — I've received your email "${subject}" and logged it.`) +
+              (attachIngest ? `\n\nAttachment import:\n${attachIngest}` : "");
             replySent = await sendReplyWithFallback(messageId, fromEmail, subject, replyText, actionsTaken, result.attachments);
             break;
           }
@@ -792,14 +1425,23 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
           }
 
           case "document": {
-            actionsTaken.push({
-              type: "document_received",
-              result: `Document email noted: ${subject}. Attachments should be filed via the dashboard.`,
-              success: true,
-            });
-            if (isRegisteredUser) {
-              const docReply = `Thanks — I've received the document "${subject}". It's been noted and can be filed via the BGP dashboard.`;
-              replySent = await sendReplyWithFallback(messageId, fromEmail, subject, docReply, actionsTaken);
+            const ingestSummary = await fetchAndIngestAttachments(messageId, fromEmail);
+            if (ingestSummary) {
+              actionsTaken.push({ type: "attachment_ingested", result: ingestSummary, success: true });
+              if (isRegisteredUser) {
+                const docReply = `Thanks — I've processed the attachments from "${subject}":\n\n${ingestSummary}`;
+                replySent = await sendReplyWithFallback(messageId, fromEmail, subject, docReply, actionsTaken);
+              }
+            } else {
+              actionsTaken.push({
+                type: "document_received",
+                result: `Document email noted: ${subject}. No importable data files found.`,
+                success: true,
+              });
+              if (isRegisteredUser) {
+                const docReply = `Thanks — I've received your email "${subject}". I couldn't find any importable data files (Excel, CSV, or PDF). If you meant to send a leasing schedule or similar, try attaching the file directly.`;
+                replySent = await sendReplyWithFallback(messageId, fromEmail, subject, docReply, actionsTaken);
+              }
             }
             break;
           }
@@ -891,24 +1533,15 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
   return { processed, errors };
 }
 
-function formatReplyHtml(reply: string, actions: ProcessedAction[]): string {
-  const actionList = actions
-    .filter(a => a.success)
-    .map(a => `<li>${a.result}</li>`)
-    .join("");
-
-  return `
-    <div style="font-family: Arial, Helvetica, sans-serif; color: #333;">
-      <p>${reply.replace(/\n/g, "<br>")}</p>
-      ${actionList ? `
-        <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;">
-        <p style="color: #666; font-size: 13px;"><strong>Actions taken:</strong></p>
-        <ul style="color: #666; font-size: 13px;">${actionList}</ul>
-      ` : ""}
-      <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;">
-      <p style="color: #999; font-size: 11px;">This is an automated response from ChatBGP. For complex requests, please use the <a href="https://bgp-wip-app-production-efac.up.railway.app/chatbgp">ChatBGP dashboard</a>.</p>
-    </div>
-  `;
+function formatReplyHtml(reply: string, _actions: ProcessedAction[]): string {
+  // Strip everything that made the reply read like a bot: the "Logged
+  // in BGP" bullet list and the "This is an automated response" footer.
+  // The reply body alone — written by the Claude prompt as a normal
+  // email — is what we send. Outlook's quoted thread is appended by
+  // replyToSharedMailboxMessage below, so the recipient sees a clean
+  // human-style reply on top of the conversation history they expect.
+  const escapedHtml = reply.replace(/\n/g, "<br>");
+  return `<div style="font-family: Arial, Helvetica, sans-serif; color: #222;">${escapedHtml}</div>`;
 }
 
 let processingInterval: ReturnType<typeof setInterval> | null = null;
@@ -1039,7 +1672,8 @@ export function registerEmailProcessorRoutes(app: Express) {
 
   app.post("/api/email-processor/reprocess/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const logId = parseInt(req.params.id);
+      const logId = parseInt(String(req.params.id));
+      if (isNaN(logId)) return res.status(400).json({ message: "Invalid log ID" });
       const [logEntry] = await db.select().from(chatbgpEmailLog).where(eq(chatbgpEmailLog.id, logId)).limit(1);
       if (!logEntry) return res.status(404).json({ message: "Log entry not found" });
       if (!logEntry.messageId) return res.status(400).json({ message: "No message ID to reprocess" });
@@ -1071,7 +1705,7 @@ export function registerEmailProcessorRoutes(app: Express) {
       }
 
       if (classification.classification === "instruction") {
-        const result = await processInstruction(subject, bodyText, fromEmail, classification);
+        const result = await processInstruction(subject, bodyText, fromEmail, classification, logEntry.messageId);
         actionsTaken = result.actions;
         const replyText = result.reply || `Hi — I've received your email "${subject}" and logged it. If you need me to take a specific action, try sending a more detailed instruction via the ChatBGP dashboard or email.`;
         replySent = await sendReplyWithFallback(logEntry.messageId, fromEmail, subject, replyText, actionsTaken, result.attachments);

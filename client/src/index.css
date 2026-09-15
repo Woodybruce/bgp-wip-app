@@ -48,6 +48,9 @@
 html {
   height: 100%;
   overflow: hidden;
+  /* Belt-and-braces: stops any stray element wider than 100vw from
+     hijacking the whole document into a horizontal pan on mobile. */
+  overflow-x: hidden;
 }
 
 body {
@@ -55,11 +58,19 @@ body {
   overscroll-behavior: none;
   height: 100%;
   overflow: hidden;
+  overflow-x: hidden;
 }
 
 #root {
   height: 100%;
-  overflow: auto;
+  /* Lock to vertical scroll only — wide content gets clipped (or its
+     own overflow-x: auto container) instead of nudging the root frame
+     left and right. Mirrors the Claude app's no-horizontal-bounce feel. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Stop rubber-band bounce on the x-axis specifically; keeps the y
+     pull-to-refresh-style overscroll intentional rather than glitchy. */
+  overscroll-behavior-x: none;
 }
 
 @media all and (display-mode: standalone) {
@@ -71,7 +82,8 @@ body {
   }
   #root {
     height: 100dvh;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 }
 
@@ -96,11 +108,20 @@ body {
 .table-scroll-container {
   overflow-x: auto;
   overflow-y: auto;
-  max-height: calc(100vh - 280px);
+  max-height: calc(100vh - 200px);
+  flex: 1 1 0%;
+  min-height: 0;
 }
 .table-scroll-container::-webkit-scrollbar {
   width: 8px;
   height: 0;
+}
+/* Safari (classic scrollbars mode) ignores height:0 for the horizontal bar,
+   so the tracker showed two bars — the container's own plus the synced
+   bottom bar (Woody, 2026-08-04). Kill the horizontal one explicitly. */
+.table-scroll-container::-webkit-scrollbar:horizontal {
+  height: 0;
+  display: none;
 }
 .table-scroll-container::-webkit-scrollbar-track {
   background: transparent;
@@ -112,12 +133,24 @@ body {
 .table-scroll-container::-webkit-scrollbar-thumb:hover {
   background: rgba(0,0,0,0.35);
 }
-.table-scroll-container thead th {
+/* Excel-style sticky table headers across the app. Applies to every
+   <thead><th> by default — sticky uses whatever scroll context is
+   nearest (a .table-scroll-container if wrapped, otherwise the page
+   outlet). Background is set so rows scrolling underneath don't bleed
+   through. */
+thead th {
   position: sticky;
   top: 0;
   z-index: 10;
   background: hsl(var(--card));
   border-bottom: 1px solid hsl(var(--border));
+}
+/* The frozen first column carries `sticky left-0 z-10` on BOTH its header cell
+   and its body cells. On a z-index tie the later DOM node wins, so the name
+   cells scrolled over the header row. Class-level specificity is needed here —
+   a bare `thead th` rule loses to Tailwind's .z-10 utility. */
+thead th.sticky {
+  z-index: 30;
 }
 
 .sync-scroll-bottom {
@@ -462,13 +495,36 @@ body {
   }
 }
 
+/* Container-query pair for detail-page bodies: Tailwind's lg:grid-cols-2
+   keys off the VIEWPORT, but the ChatBGP side panel shrinks the CONTAINER —
+   two-up card grids were rendering in space that only fits one, crushing
+   text to a word per line. Two-up only when the container itself is wide. */
+.cq-body {
+  container-type: inline-size;
+}
+.cq-two-up {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.625rem;
+  align-items: start;
+}
+@container (min-width: 44rem) {
+  .cq-two-up {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .dashboard-grid .react-grid-item {
   transition: all 200ms ease;
 }
 .dashboard-grid .react-grid-item.react-grid-placeholder {
-  background: hsl(var(--primary) / 0.1);
-  border: 2px dashed hsl(var(--primary) / 0.3);
+  /* The library also sets an inline/base opacity of 0.2 on the placeholder,
+     which multiplied with the 10% tint made the landing slot invisible —
+     drags looked like they "didn't open a gap". Force it visible. */
+  background: hsl(var(--primary) / 0.12) !important;
+  border: 2px dashed hsl(var(--primary) / 0.55);
   border-radius: 0.5rem;
+  opacity: 1 !important;
 }
 .dashboard-grid .react-grid-item > .react-resizable-handle {
   width: 20px;
@@ -532,6 +588,15 @@ body {
   border-radius: 0.5rem;
 }
 
+/* Mobile chrome — the dark header/tile colour on the phone shell. Hardcoded
+   #1C1917 ignored the colour schemes (Woody, 2026-08-23); each scheme now
+   tints it. Used as bg-[hsl(var(--mobile-chrome))] in the mobile components. */
+:root { --mobile-chrome: 24 8% 10%; }
+:root.scheme-claude { --mobile-chrome: 25 32% 16%; }
+:root.scheme-ocean { --mobile-chrome: 330 55% 20%; }
+:root.scheme-ember { --mobile-chrome: 45 65% 16%; }
+:root.scheme-landsec { --mobile-chrome: 200 100% 11%; }
+
 :root.scheme-claude {
   --primary: 25 60% 45%;
   --primary-foreground: 30 20% 98%;
@@ -576,19 +641,13 @@ body {
   --sidebar-ring: 25 35% 50%;
 }
 
-/* Claude scheme: remap hardcoded green/emerald to warm tones across all pages */
-.scheme-claude .text-emerald-600, .scheme-claude .text-emerald-500, .scheme-claude .text-green-600, .scheme-claude .text-green-700 { color: hsl(25 60% 45%) !important; }
-.scheme-claude .text-emerald-400 { color: hsl(25 50% 55%) !important; }
-.scheme-claude .bg-emerald-600, .scheme-claude .bg-green-600 { background-color: hsl(25 60% 45%) !important; }
-.scheme-claude .bg-emerald-500, .scheme-claude .bg-green-500 { background-color: hsl(25 55% 50%) !important; }
-.scheme-claude .bg-emerald-100, .scheme-claude .bg-green-100 { background-color: hsl(30 40% 92%) !important; }
-.scheme-claude .bg-emerald-50, .scheme-claude .bg-green-50 { background-color: hsl(30 30% 96%) !important; }
-.scheme-claude .border-emerald-600, .scheme-claude .border-green-600 { border-color: hsl(25 60% 45%) !important; }
-.scheme-claude .border-emerald-200, .scheme-claude .border-green-200 { border-color: hsl(30 30% 85%) !important; }
-.scheme-claude .ring-emerald-500, .scheme-claude .ring-green-500 { --tw-ring-color: hsl(25 50% 50%) !important; }
-.scheme-claude .hover\:bg-emerald-700:hover { background-color: hsl(25 55% 38%) !important; }
-.scheme-claude .hover\:bg-green-50:hover { background-color: hsl(30 30% 94%) !important; }
-.scheme-claude .focus-visible\:ring-emerald-500:focus-visible { --tw-ring-color: hsl(25 50% 50%) !important; }
+/* The old "Claude scheme: remap all hardcoded Tailwind colours" block was
+   removed 2026-08-23 (design review): after the token sweep the only
+   remaining green/emerald/violet utilities are SEMANTIC status colours
+   (deal stages, KYC states, success/warning) — remapping them to warm
+   browns made every status read the same and "Completed" rendered tan.
+   Scheme identity lives in the tokens above (--primary, --ring, etc.);
+   status colours stay true in every scheme (DESIGN.md §1). */
 
 :root.scheme-ocean {
   --background: 330 100% 97%;
@@ -731,19 +790,8 @@ body {
   --sidebar-ring: 197 80% 48%;
 }
 
-/* Landsec scheme: remap hardcoded green/emerald to Landsec blue tones */
-.scheme-landsec .text-emerald-600, .scheme-landsec .text-emerald-500, .scheme-landsec .text-green-600, .scheme-landsec .text-green-700 { color: hsl(200 100% 11%) !important; }
-.scheme-landsec .text-emerald-400 { color: hsl(197 100% 44%) !important; }
-.scheme-landsec .bg-emerald-600, .scheme-landsec .bg-green-600 { background-color: hsl(200 100% 11%) !important; }
-.scheme-landsec .bg-emerald-500, .scheme-landsec .bg-green-500 { background-color: hsl(197 100% 44%) !important; }
-.scheme-landsec .bg-emerald-100, .scheme-landsec .bg-green-100 { background-color: hsl(197 40% 92%) !important; }
-.scheme-landsec .bg-emerald-50, .scheme-landsec .bg-green-50 { background-color: hsl(197 30% 96%) !important; }
-.scheme-landsec .border-emerald-600, .scheme-landsec .border-green-600 { border-color: hsl(200 100% 11%) !important; }
-.scheme-landsec .border-emerald-200, .scheme-landsec .border-green-200 { border-color: hsl(197 30% 85%) !important; }
-.scheme-landsec .ring-emerald-500, .scheme-landsec .ring-green-500 { --tw-ring-color: hsl(197 100% 44%) !important; }
-.scheme-landsec .hover\:bg-emerald-700:hover { background-color: hsl(200 80% 14%) !important; }
-.scheme-landsec .hover\:bg-green-50:hover { background-color: hsl(197 30% 94%) !important; }
-.scheme-landsec .focus-visible\:ring-emerald-500:focus-visible { --tw-ring-color: hsl(197 100% 44%) !important; }
+/* Landsec green→blue utility remap removed 2026-08-23 — same reasoning
+   as the Claude block above: status colours must stay semantic. */
 
 /* ─── Global Design Uniformity ─── */
 
@@ -773,35 +821,48 @@ html {
 .dark *::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
 }
+/* Firefox (and modern Chrome) honour scrollbar-color. Pin it to a soft
+   neutral globally so no colour scheme — including Claude's warm gold —
+   can tint the right-edge scrollbar into an aggressive band. */
+:root, html { scrollbar-color: rgba(0, 0, 0, 0.2) transparent; }
+.dark { scrollbar-color: rgba(255, 255, 255, 0.2) transparent; }
 
-/* Consistent focus ring (BGP green) */
+/* Consistent focus ring — token-driven so every colour scheme keeps its
+   own accent (was hardcoded legacy green #2E5E3F). */
 *:focus-visible {
-  outline: 2px solid #2E5E3F;
+  outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
-
-/* Consistent link color (BGP green) */
-a:not([class]) {
-  color: #2E5E3F;
-}
-a:not([class]):hover {
-  color: #1A3A28;
-}
-.dark a:not([class]) {
-  color: #7FBF95;
-}
-.dark a:not([class]):hover {
-  color: #A8D4B4;
+/* …except command-palette / picker search inputs (cmdk). They autofocus
+   the moment the popover opens, and the offset outline draws OUTSIDE the
+   input — overflowing the panel's rounded corners and reading as a bleed
+   (Woody: brand picker on the Letting Tracker, 2026-08-03). The wrapper's
+   border-b is the focus affordance for these. */
+[cmdk-input-wrapper] input:focus-visible {
+  outline: none;
 }
 
-/* Selection highlight color (BGP light green) */
+/* Consistent link color — bare TEXT links take the scheme's primary accent
+   (was hardcoded legacy green). Anchors that merely wrap a Button (the
+   wouter <Link><Button/></Link> pattern all over the app) are excluded —
+   the button would inherit the accent and every outline button turned
+   orange (Woody's deal-page screenshot, 2026-08-23). */
+a:not([class]):not(:has(button)) {
+  color: hsl(var(--primary));
+}
+a:not([class]):not(:has(button)):hover {
+  filter: brightness(0.85);
+}
+.dark a:not([class]):not(:has(button)):hover {
+  filter: brightness(1.15);
+}
+
+/* Selection highlight — primary tint (was BGP light green). */
 ::selection {
-  background-color: #E8F0EB;
-  color: #1A3A28;
+  background-color: hsl(var(--primary) / 0.18);
 }
 .dark ::selection {
-  background-color: rgba(46, 94, 63, 0.4);
-  color: #E8F0EB;
+  background-color: hsl(var(--primary) / 0.35);
 }
 
 /* ─── End Design Uniformity ─── */
@@ -810,10 +871,14 @@ a:not([class]):hover {
    Mobile / Touch-friendly improvements
    ======================================================================== */
 
-/* Minimum 44px touch targets on mobile for all interactive elements */
+/* Minimum 44px touch targets on mobile for all interactive elements.
+   rounded-full buttons are EXEMPT (Woody, 2026-08-23: every chip/pill built
+   as a button was ballooning to 44px — "massive pills… full sweep").
+   Capsule chips render at their natural slim size; genuine round icon
+   buttons keep their explicit w/h classes. */
 @media (max-width: 767px) {
-  button:not([data-no-min-touch]):not(.inline-edit-btn):not([class*="h-5"]):not([class*="h-4"]):not([class*="w-5"]):not([class*="w-4"]),
-  [role="button"]:not([data-no-min-touch]):not(.inline-edit-btn) {
+  button:not([data-no-min-touch]):not(.inline-edit-btn):not([class*="rounded-full"]):not([class*="h-5"]):not([class*="h-4"]):not([class*="w-5"]):not([class*="w-4"]),
+  [role="button"]:not([data-no-min-touch]):not(.inline-edit-btn):not([class*="rounded-full"]) {
     min-height: 44px;
   }
 
@@ -822,6 +887,25 @@ a:not([class]):hover {
   [data-sidebar="menu"] button {
     padding-top: 0.625rem;
     padding-bottom: 0.625rem;
+  }
+
+  /* iOS WebKit date/time inputs ignore min-width:0 and bulge out of
+     two-column dialog grids on REAL devices (Chromium emulation doesn't
+     reproduce it — Woody's iPhone, 2026-09-01: Interest/Viewings/Offers
+     dialogs). appearance:none makes WebKit lay them out like text fields
+     so they respect the grid track; the shadcn Input classes already
+     supply border/height/padding, and the value stays left-aligned via
+     the shadow-part rule below. */
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  input[type="month"] {
+    -webkit-appearance: none;
+    appearance: none;
+    min-width: 0;
+  }
+  input::-webkit-date-and-time-value {
+    text-align: left;
   }
 }
 
@@ -867,7 +951,8 @@ a:not([class]):hover {
 .chatbgp-markdown tbody td { padding: 0.3rem 0.625rem; border-bottom: 1px solid hsl(var(--border)); }
 .chatbgp-markdown tbody tr:last-child td { border-bottom: none; }
 .chatbgp-markdown blockquote { border-left: 3px solid hsl(var(--primary)); padding-left: 0.75rem; margin: 0.5rem 0; color: hsl(var(--muted-foreground)); font-style: italic; }
-.chatbgp-markdown code:not(pre code) { background: hsl(var(--muted)); padding: 0.125rem 0.3rem; border-radius: 0.25rem; font-size: 0.8125rem; font-family: var(--font-mono); }
+.chatbgp-markdown code:not(pre code) { background: hsl(var(--muted)); padding: 0.125rem 0.3rem; border-radius: 0.25rem; font-size: 0.8125rem; font-family: var(--font-mono); overflow-wrap: anywhere; word-break: break-word; }
+.chatbgp-markdown { overflow-wrap: anywhere; word-break: break-word; }
 
 /* ChatBGP streaming cursor blink */
 @keyframes cursor-blink {

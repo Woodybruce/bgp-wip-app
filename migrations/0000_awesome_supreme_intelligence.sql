@@ -1154,3 +1154,24 @@ CREATE TABLE "xero_invoices" (
 	"created_at" timestamp DEFAULT now(),
 	"updated_at" timestamp DEFAULT now()
 );
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "tenant_rep_searches" (
+	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"client_name" text NOT NULL,
+	"company_id" varchar,
+	"contact_id" varchar,
+	"deal_id" varchar,
+	"status" text NOT NULL DEFAULT 'Brief Received',
+	"target_use" text[],
+	"size_min" integer,
+	"size_max" integer,
+	"target_locations" text[],
+	"budget_min" integer,
+	"budget_max" integer,
+	"next_action" text,
+	"next_action_date" text,
+	"notes" text,
+	"assigned_to" text,
+	"created_at" timestamp DEFAULT now(),
+	"updated_at" timestamp DEFAULT now()
+);

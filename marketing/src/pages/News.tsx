@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { ARTICLES } from "../lib/content";
+import { useSiteContent } from "../lib/site-content";
 
 const INITIAL_VISIBLE = 6;
 
@@ -10,13 +10,14 @@ export default function News() {
   const [kind, setKind] = useState<"" | "News" | "Opinion">("");
   const [category, setCategory] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const { articles } = useSiteContent();
 
   const types = useMemo(
-    () => Array.from(new Set(ARTICLES.map((a) => a.category).filter((c) => c !== "News" && c !== "Opinion"))),
-    [],
+    () => Array.from(new Set(articles.map((a) => a.category).filter((c) => c !== "News" && c !== "Opinion"))),
+    [articles],
   );
 
-  const filtered = ARTICLES.filter((a) => {
+  const filtered = articles.filter((a) => {
     if (kind && a.category !== kind) return false;
     if (category && a.category !== category) return false;
     return true;
@@ -30,8 +31,9 @@ export default function News() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-14">
-      <h1 className="display text-3xl md:text-4xl">News and insights</h1>
+    <div className="mx-auto max-w-6xl px-4 py-14 md:py-16">
+      <span className="section-label">Journal</span>
+      <h1 className="display text-3xl md:text-5xl">News and insights</h1>
 
       <div className="mt-6 flex flex-wrap items-center gap-x-8 gap-y-3 border-y border-bgp-wine/30 py-3">
         <span className="label-caps text-bgp-ink/60">Filter by</span>
@@ -72,12 +74,12 @@ export default function News() {
             <span>{featured.category}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-            <Placeholder className="aspect-[4/3] w-full" src={featured.image} alt={featured.title} />
+            <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={featured.image} alt={featured.title} /></div>
             <div>
               <h2 className="display text-2xl md:text-3xl leading-tight group-hover:text-bgp-red transition-colors">
                 {featured.title}
               </h2>
-              <p className="mt-4 text-sm font-light text-bgp-ink/70 leading-relaxed max-w-sm">{featured.standfirst}</p>
+              <p className="mt-4 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed max-w-sm">{featured.standfirst}</p>
               <p className="mt-4"><span className="explore-link inline-block">Read more</span></p>
             </div>
           </div>
@@ -88,14 +90,14 @@ export default function News() {
         <p className="py-16 text-center text-sm font-light text-bgp-ink/60">Nothing in that category yet.</p>
       )}
 
-      <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-8">
+      <div className="mt-10 card-strip sm:grid-cols-3 sm:gap-8">
         {visibleRest.map((a) => (
           <Link key={a.slug} href={`/news/${a.slug}`} className="group block border-t border-bgp-wine/40 pt-3">
             <div className="flex justify-between label-caps text-bgp-wine mb-3">
               <span>{a.category}</span>
               <span className="text-bgp-ink/50">{a.date}</span>
             </div>
-            <Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} />
+            <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
             <h3 className="mt-3 text-base font-semibold leading-snug group-hover:text-bgp-red transition-colors">{a.title}</h3>
             <p className="mt-2 label-caps text-bgp-ink/50">Read more</p>
           </Link>

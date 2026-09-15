@@ -1,4 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { AIActivityCard } from "@/components/ai-activity-card";
+import { InteractionsBoard } from "@/components/interactions-board";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -6,6 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -29,19 +37,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Users, AlertCircle, X, Plus, ArrowLeft, Loader2, Pencil, Trash2, Mail, Send, CheckCircle2, Building, UserCircle, Phone, AtSign, Calendar, ArrowUpRight, ArrowDownLeft, Clock, RefreshCw, Video, MessageSquare, Handshake, ClipboardList, Globe, MapPin, Sparkles, UserPlus, Archive, ChevronLeft, ChevronRight, Crown, Linkedin, Zap, Briefcase, TrendingUp } from "lucide-react";
+import { Search, Users, AlertCircle, X, Plus, ArrowLeft, Loader2, Pencil, Trash2, Mail, Send, CheckCircle2, Building, UserCircle, Phone, AtSign, Calendar, ArrowUpRight, ArrowDownLeft, Clock, RefreshCw, Video, MessageSquare, Handshake, ClipboardList, Globe, MapPin, Sparkles, UserPlus, Archive, ChevronLeft, ChevronRight, Crown, Linkedin, Zap, Briefcase, TrendingUp, MoreHorizontal } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileCardView } from "@/components/mobile-card-view";
 import { useRoute, Link } from "wouter";
 import { apiRequest, queryClient, getQueryFn, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineSelect, InlineLabelSelect, InlineMultiLabelSelect } from "@/components/inline-edit";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import type { CrmContact, CrmCompany, CrmDeal, CrmProperty, CrmRequirementsLeasing, CrmRequirementsInvestment, CrmInteraction } from "@shared/schema";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill } from "@/components/ui/pill";
 import { EntityPicker } from "@/components/entity-picker";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 
@@ -224,24 +234,27 @@ function MailOutDialog({
   );
 }
 
-function ContactFormDialog({
+export function ContactFormDialog({
   open,
   onOpenChange,
   contact,
   companies,
+  defaultCompanyId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   contact?: CrmContact | null;
   companies?: CrmCompany[];
+  /** Pre-selects the company for new contacts (brand-profile Add contact). */
+  defaultCompanyId?: string;
 }) {
   const { toast } = useToast();
   const isEdit = !!contact;
-  const [formData, setFormData] = useState({
+  const buildInitial = () => ({
     name: contact?.name || "",
     groupName: contact?.groupName || "",
     role: contact?.role || "",
-    companyId: contact?.companyId || "",
+    companyId: contact?.companyId || defaultCompanyId || "",
     companyName: contact?.companyName || "",
     email: contact?.email || "",
     phone: contact?.phone || "",
@@ -251,6 +264,8 @@ function ContactFormDialog({
     nextMeetingDate: contact?.nextMeetingDate || "",
     notes: contact?.notes || "",
   });
+  const [formData, setFormData] = useState(buildInitial);
+  useEffect(() => { if (open) setFormData(buildInitial()); }, [open, contact?.id]);
 
   const mutation = useMutation({
     mutationFn: async (data: typeof formData) => {
@@ -565,13 +580,6 @@ function RequirementPicker({
   );
 }
 
-interface InteractionData {
-  interactions: CrmInteraction[];
-  nextMeeting: CrmInteraction | null;
-  lastInteraction: CrmInteraction | null;
-  total: number;
-}
-
 function formatInteractionDate(dateStr: string) {
   const d = new Date(dateStr);
   const now = new Date();
@@ -587,232 +595,68 @@ function formatInteractionDate(dateStr: string) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined });
 }
 
-function InteractionTimeline({ contactId }: { contactId: string }) {
-  const [typeFilter, setTypeFilter] = useState<string>("all");
-
-  const { data, isLoading } = useQuery<InteractionData>({
-    queryKey: ["/api/interactions/contact", contactId],
-  });
-
-  const syncMutation = useMutation({
+// Provenance + AI verification for a contact (staff only). Shows where the
+// record came from, and runs the multi-source check (RocketReach + O365
+// footprint + web news → Claude verdict) on demand. Verdicts land in the
+// data-health review queue; nothing is auto-applied.
+function ContactSourcePanel({ contact }: { contact: any }) {
+  const { toast } = useToast();
+  const [result, setResult] = useState<any>(null);
+  const verify = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/interactions/sync?daysBack=90&daysForward=60");
+      const r = await apiRequest("POST", `/api/crm/contacts/${contact.id}/verify`);
+      return r.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/interactions/contact", contactId] });
+    onSuccess: (v: any) => {
+      setResult(v);
+      if (v.status === "mismatch") {
+        toast({ title: "Possible mismatch", description: v.reasoning, variant: "destructive" });
+      } else {
+        toast({ title: v.status === "confirmed" ? "Employer confirmed" : "Inconclusive", description: v.reasoning });
+      }
     },
+    onError: (e: any) => toast({ title: "Verification failed", description: e?.message, variant: "destructive" }),
   });
-
-  const filtered = useMemo(() => {
-    if (!data?.interactions) return [];
-    if (typeFilter === "all") return data.interactions;
-    return data.interactions.filter((i) => i.type === typeFilter);
-  }, [data?.interactions, typeFilter]);
-
-  const now = new Date();
-  const upcoming = filtered.filter((i) => new Date(i.interactionDate) > now);
-  const past = filtered.filter((i) => new Date(i.interactionDate) <= now);
-
+  const src = contact.enrichmentSource || "manual entry";
+  const when = contact.lastEnrichedAt ? new Date(contact.lastEnrichedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
+  const status = result?.status;
   return (
-    <Card>
-      <CardContent className="p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-sm flex items-center gap-2">
-            <Clock className="w-4 h-4" />
-            Interactions
-            {data?.total ? <Badge variant="secondary" className="text-xs">{data.total}</Badge> : null}
-          </h3>
-          <div className="flex items-center gap-2">
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="h-7 text-xs w-[100px]" data-testid="select-interaction-type">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                <SelectItem value="email">Emails</SelectItem>
-                <SelectItem value="meeting">Meetings</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending}
-              data-testid="button-sync-interactions"
-            >
-              <RefreshCw className={`w-3 h-3 mr-1 ${syncMutation.isPending ? "animate-spin" : ""}`} />
-              Sync
-            </Button>
-          </div>
-        </div>
-
-        {data?.nextMeeting && (
-          <div className="bg-blue-50 dark:bg-blue-950/30 rounded-md p-3 border border-blue-200 dark:border-blue-800">
-            <div className="flex items-center gap-2 text-xs text-blue-600 dark:text-blue-400 font-medium mb-1">
-              <Calendar className="w-3 h-3" />
-              Next Meeting — {formatInteractionDate(data.nextMeeting.interactionDate as unknown as string)}
-            </div>
-            <p className="text-sm font-medium">{data.nextMeeting.subject}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {new Date(data.nextMeeting.interactionDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-            </p>
-          </div>
-        )}
-
-        {data?.lastInteraction && !data?.nextMeeting && (
-          <div className="bg-muted/50 rounded-md p-3 border">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium mb-1">
-              <Clock className="w-3 h-3" />
-              Last Interaction — {formatInteractionDate(data.lastInteraction.interactionDate as unknown as string)}
-            </div>
-            <p className="text-sm">{data.lastInteraction.subject}</p>
-          </div>
-        )}
-
-        {isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-12" />
-            <Skeleton className="h-12" />
-            <Skeleton className="h-12" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-6">
-            <MessageSquare className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
-            <p className="text-sm text-muted-foreground">No interactions found</p>
-            <p className="text-xs text-muted-foreground mt-1">Click Sync to scan emails & calendar</p>
-          </div>
-        ) : (
-          <div className="max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
-            {upcoming.length > 0 && (
-              <div className="mb-3">
-                <p className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-2 uppercase tracking-wider">Upcoming</p>
-                <div className="space-y-1">
-                  {upcoming.map((interaction) => (
-                    <InteractionRow key={interaction.id} interaction={interaction} />
-                  ))}
-                </div>
-              </div>
-            )}
-            {past.length > 0 && (
-              <div>
-                {upcoming.length > 0 && <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Past</p>}
-                <div className="space-y-1">
-                  {past.map((interaction) => (
-                    <InteractionRow key={interaction.id} interaction={interaction} />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function InteractionRow({ interaction }: { interaction: CrmInteraction }) {
-  const [expanded, setExpanded] = useState(false);
-  const isEmail = interaction.type === "email";
-  const isInbound = interaction.direction === "inbound";
-  const isUpcoming = interaction.direction === "upcoming";
-
-  const participants = Array.isArray(interaction.participants) ? interaction.participants as string[] : [];
-  const bgpParticipants = participants.filter(p => p.endsWith("@brucegillinghampollard.com"));
-  const externalParticipants = participants.filter(p => !p.endsWith("@brucegillinghampollard.com"));
-
-  return (
-    <div
-      className="rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
-      onClick={() => setExpanded(!expanded)}
-      data-testid={`row-interaction-${interaction.id}`}
-    >
-      <div className="flex items-start gap-2 p-2 text-sm">
-        <div className={`mt-0.5 p-1 rounded ${isEmail ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600" : "bg-blue-100 dark:bg-blue-900/30 text-blue-600"}`}>
-          {isEmail ? <Mail className="w-3 h-3" /> : <Video className="w-3 h-3" />}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            {isEmail && (isInbound ? <ArrowDownLeft className="w-3 h-3 text-green-500 shrink-0" /> : <ArrowUpRight className="w-3 h-3 text-blue-500 shrink-0" />)}
-            {!isEmail && isUpcoming && <Clock className="w-3 h-3 text-blue-500 shrink-0" />}
-            <p className="font-medium text-xs truncate">{interaction.subject}</p>
-          </div>
-          {externalParticipants.length > 0 && !expanded && (
-            <p className="text-[10px] text-muted-foreground truncate mt-0.5">
-              {externalParticipants.slice(0, 2).join(", ")}{externalParticipants.length > 2 ? ` +${externalParticipants.length - 2}` : ""}
-            </p>
+    <div className="pt-2 border-t flex items-center justify-between gap-2 flex-wrap" data-testid="contact-source-panel">
+      <div className="min-w-0">
+        <p className="text-xs text-muted-foreground">Data source</p>
+        <p className="text-sm flex items-center gap-1.5 flex-wrap">
+          <span>{src}</span>
+          {when && <span className="text-xs text-muted-foreground">· {when}</span>}
+          {status && (
+            <Badge className={`text-[10px] border-transparent ${
+              status === "confirmed" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+              : status === "mismatch" ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+              : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+            }`}>{status === "confirmed" ? "Verified ✓" : status === "mismatch" ? "Mismatch — in review queue" : "Inconclusive"}</Badge>
           )}
-          {!expanded && interaction.preview && (
-            <p className="text-xs text-muted-foreground truncate mt-0.5">{interaction.preview}</p>
-          )}
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-[10px] text-muted-foreground">
-              {formatInteractionDate(interaction.interactionDate as unknown as string)}
-            </span>
-            {interaction.bgpUser && (
-              <span className="text-[10px] text-muted-foreground">
-                via {interaction.bgpUser.split("@")[0]}
-              </span>
-            )}
-            {interaction.matchMethod && interaction.matchMethod !== "email" && (
-              <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5">
-                {interaction.matchMethod === "keyword_company" ? "keyword" : "name match"}
-              </Badge>
-            )}
-          </div>
-        </div>
+        </p>
+        {result?.reasoning && <p className="text-[11px] text-muted-foreground mt-0.5">{result.reasoning}</p>}
       </div>
-
-      {expanded && (
-        <div className="px-9 pb-3 space-y-2 text-xs border-t mx-2 pt-2" data-testid={`detail-interaction-${interaction.id}`}>
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <Calendar className="w-3 h-3 shrink-0" />
-            <span>{new Date(interaction.interactionDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
-          </div>
-
-          {externalParticipants.length > 0 && (
-            <div>
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">External</p>
-              <div className="flex flex-wrap gap-1">
-                {externalParticipants.map((p, i) => (
-                  <Badge key={i} variant="secondary" className="text-[10px] font-normal">{p}</Badge>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {bgpParticipants.length > 0 && (
-            <div>
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">BGP</p>
-              <div className="flex flex-wrap gap-1">
-                {bgpParticipants.map((p, i) => (
-                  <Badge key={i} variant="outline" className="text-[10px] font-normal">{p.split("@")[0]}</Badge>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {interaction.preview && (
-            <div>
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Preview</p>
-              <p className="text-xs text-muted-foreground whitespace-pre-wrap">{interaction.preview}</p>
-            </div>
-          )}
-        </div>
-      )}
+      <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => verify.mutate()} disabled={verify.isPending} data-testid="button-verify-contact">
+        {verify.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Sparkles className="w-3 h-3 mr-1" />}
+        {verify.isPending ? "Checking sources…" : "Verify with AI"}
+      </Button>
     </div>
   );
 }
 
 function ContactDetail({ id }: { id: string }) {
   const { toast } = useToast();
+  const { data: cdViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const cdIsClient = cdViewer?.role === "Client" || !!cdViewer?.companyScopeId;
+  const [logActivityOpen, setLogActivityOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
   const { data: contact, isLoading } = useQuery<CrmContact>({
     queryKey: ["/api/crm/contacts", id],
   });
 
-  const { data: companies } = useQuery<CrmCompany[]>({
+  const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
   });
 
@@ -916,6 +760,7 @@ function ContactDetail({ id }: { id: string }) {
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="contact-detail">
       <ContactFormDialog open={editOpen} onOpenChange={setEditOpen} contact={contact} companies={companies} />
+      <LogActivityDialog open={logActivityOpen} onOpenChange={setLogActivityOpen} contactId={contact.id} companyId={contact.companyId || undefined} />
 
       <div className="flex items-center gap-3 flex-wrap">
         <Link href="/contacts">
@@ -935,7 +780,7 @@ function ContactDetail({ id }: { id: string }) {
           <h1 className="text-xl font-bold" data-testid="text-contact-detail-name">{contact.name}</h1>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             {contact.groupName && (
-              <Badge className={`${getGroupColor(contact.groupName)} text-white text-xs`}>
+              <Badge variant="outline" className={`border-transparent ${getGroupColor(contact.groupName)} text-white text-xs`}>
                 {contact.groupName}
               </Badge>
             )}
@@ -946,7 +791,7 @@ function ContactDetail({ id }: { id: string }) {
               return <Badge className={`${colorClass} text-white text-xs`}>{derivedType}</Badge>;
             })()}
             {contact.agentSpecialty && (
-              <Badge className={`${CRM_OPTIONS.agentSpecialtyColors[contact.agentSpecialty] || "bg-gray-500"} text-white text-xs`}>{contact.agentSpecialty}</Badge>
+              <Badge variant="outline" className={`border-transparent ${CRM_OPTIONS.agentSpecialtyColors[contact.agentSpecialty] || "bg-gray-500"} text-white text-xs`}>{contact.agentSpecialty}</Badge>
             )}
             {contact.bgpClient && <Badge className="bg-black text-white dark:bg-white dark:text-black text-xs">BGP Client</Badge>}
             {parseAlloc(contact.bgpAllocation).length > 0 && parseAlloc(contact.bgpAllocation).map(alloc => (
@@ -958,6 +803,7 @@ function ContactDetail({ id }: { id: string }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {!cdIsClient && (
           <Button
             variant="outline"
             size="sm"
@@ -968,10 +814,34 @@ function ContactDetail({ id }: { id: string }) {
             {enrichMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
             Enrich
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-contact">
-            <Pencil className="w-4 h-4 mr-1" />
-            Edit
-          </Button>
+          )}
+          {!cdIsClient && (
+            <Button variant="outline" size="sm" onClick={() => setLogActivityOpen(true)} data-testid="button-log-activity">
+              <Phone className="w-4 h-4 mr-1" />
+              Log activity
+            </Button>
+          )}
+          {(() => {
+            // Clients can only write own-company + brand-slice contacts; agent
+            // contacts are readable but the PUT 403s, so don't offer Edit
+            // there (UX #33) — mirrors how Delete is already hidden.
+            const looksAgent = (company?.companyType || contact.contactType || "").toLowerCase().includes("agent") || (contact.groupName || "").toLowerCase() === "agents";
+            if (cdIsClient && looksAgent) {
+              return (
+                <Button variant="outline" size="sm" disabled title="Managed by BGP" data-testid="button-edit-contact">
+                  <Pencil className="w-4 h-4 mr-1" />
+                  Edit
+                </Button>
+              );
+            }
+            return (
+              <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-contact">
+                <Pencil className="w-4 h-4 mr-1" />
+                Edit
+              </Button>
+            );
+          })()}
+          {!cdIsClient && (
           <Button
             variant="outline"
             size="sm"
@@ -983,6 +853,7 @@ function ContactDetail({ id }: { id: string }) {
             <Trash2 className="w-4 h-4 mr-1" />
             Delete
           </Button>
+          )}
         </div>
       </div>
 
@@ -1050,6 +921,7 @@ function ContactDetail({ id }: { id: string }) {
                   <p className="text-sm whitespace-pre-wrap" data-testid="text-contact-notes">{contact.notes}</p>
                 </div>
               )}
+              {!cdIsClient && <ContactSourcePanel contact={contact} />}
             </CardContent>
           </Card>
 
@@ -1090,21 +962,21 @@ function ContactDetail({ id }: { id: string }) {
                   <Card>
                     <CardContent className="p-4 space-y-3">
                       <h3 className="font-semibold text-sm flex items-center gap-2">
-                        <Briefcase className="w-4 h-4 text-emerald-500" />
+                        <Briefcase className="w-4 h-4 text-muted-foreground" />
                         Agent — Deals
-                        <Badge variant="secondary" className="text-[10px] ml-1 bg-emerald-100 text-emerald-700">{agentDeals.length}</Badge>
+                        <Badge variant="secondary" className="text-[10px] ml-1">{agentDeals.length}</Badge>
                       </h3>
                       <p className="text-xs text-muted-foreground">Deals where this contact is an agent or key contact</p>
                       <div className="space-y-1">
                         {agentDeals.map((deal: any) => (
                           <Link key={deal.id} href={`/deals/${deal.id}`}>
                             <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-agent-deal-${deal.id}`}>
-                              <Handshake className="w-4 h-4 text-emerald-400 shrink-0" />
+                              <Handshake className="w-4 h-4 text-muted-foreground shrink-0" />
                               <div className="min-w-0 flex-1">
                                 <p className="text-sm font-medium truncate">{deal.name}</p>
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {deal.agentRoles?.map((role: string) => (
-                                    <Badge key={role} className="text-[9px] px-1 py-0 bg-emerald-100 text-emerald-700">{role}</Badge>
+                                    <Badge key={role} variant="secondary" className="text-[9px] px-1 py-0">{role}</Badge>
                                   ))}
                                   {deal.status && <Badge variant="outline" className="text-[10px] px-1 py-0">{deal.status}</Badge>}
                                   {deal.dealType && <Badge variant="outline" className="text-[10px] px-1 py-0">{deal.dealType}</Badge>}
@@ -1152,21 +1024,21 @@ function ContactDetail({ id }: { id: string }) {
             <Card>
               <CardContent className="p-4 space-y-3">
                 <h3 className="font-semibold text-sm flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-blue-500" />
+                  <TrendingUp className="w-4 h-4 text-muted-foreground" />
                   Investment Tracker
-                  <Badge variant="secondary" className="text-[10px] ml-1 bg-blue-100 text-blue-700">{contactInvestmentItems.length}</Badge>
+                  <Badge variant="secondary" className="text-[10px] ml-1">{contactInvestmentItems.length}</Badge>
                 </h3>
                 <p className="text-xs text-muted-foreground">Properties on the investment tracker linked to this contact</p>
                 <div className="space-y-1">
                   {contactInvestmentItems.map((item: any) => (
                     <Link key={item.id} href={`/investment-tracker?highlight=${item.id}`}>
                       <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-investment-${item.id}`}>
-                        <Building className="w-4 h-4 text-blue-400 shrink-0" />
+                        <Building className="w-4 h-4 text-muted-foreground shrink-0" />
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium truncate">{item.assetName}</p>
                           <div className="flex items-center gap-2 flex-wrap">
                             {item.agentRoles?.map((role: string) => (
-                              <Badge key={role} className="text-[9px] px-1 py-0 bg-blue-100 text-blue-700">{role}</Badge>
+                              <Badge key={role} variant="secondary" className="text-[9px] px-1 py-0">{role}</Badge>
                             ))}
                             {item.status && <Badge variant="outline" className="text-[10px] px-1 py-0">{item.status}</Badge>}
                             {item.guidePrice && <span className="text-[10px] text-muted-foreground">£{Number(item.guidePrice).toLocaleString()}</span>}
@@ -1189,16 +1061,16 @@ function ContactDetail({ id }: { id: string }) {
                   <Card>
                     <CardContent className="p-4 space-y-3">
                       <h3 className="font-semibold text-sm flex items-center gap-2">
-                        <Handshake className="w-4 h-4 text-purple-500" />
+                        <Handshake className="w-4 h-4 text-muted-foreground" />
                         Tenant Rep — Client Requirements
-                        <Badge variant="secondary" className="text-[10px] ml-1 bg-purple-100 text-purple-700">{agentReqs.length}</Badge>
+                        <Badge variant="secondary" className="text-[10px] ml-1">{agentReqs.length}</Badge>
                       </h3>
                       <p className="text-xs text-muted-foreground">Requirements where this contact is the tenant rep agent</p>
                       <div className="space-y-1">
                         {agentReqs.map((req: any) => (
                           <Link key={req.id} href={`/requirements?highlight=${req.id}`}>
                             <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-agent-requirement-${req.id}`}>
-                              <ClipboardList className="w-4 h-4 text-purple-400 shrink-0" />
+                              <ClipboardList className="w-4 h-4 text-muted-foreground shrink-0" />
                               <div className="min-w-0 flex-1">
                                 <p className="text-sm font-medium truncate">{req.name}</p>
                                 <div className="flex items-center gap-2 flex-wrap">
@@ -1244,7 +1116,16 @@ function ContactDetail({ id }: { id: string }) {
             );
           })()}
 
-          <InteractionTimeline contactId={id} />
+          {/* AI-curated activity — emails + calendar invites involving this
+              contact, filtered by ChatBGP across all 31 mailboxes. Same
+              engine as the deal page, brand profile, and hunter rows. */}
+          {/* Both boards read staff-only M365-derived endpoints
+              (/api/activity/contact, /api/interactions/contact) — the gateway
+              403s them for clients, so don't fire them (and don't render a
+              false "no interactions" empty state) for client viewers. */}
+          {!cdIsClient && <AIActivityCard subjectType="contact" subjectId={id} title="Contact Activity (AI curated)" />}
+
+          {!cdIsClient && <InteractionsBoard scope="contact" contextId={id} />}
         </div>
 
         <div className="space-y-6">
@@ -1287,7 +1168,7 @@ function ContactDetail({ id }: { id: string }) {
                       <div>
                         <p className="text-sm font-medium">{company?.name || contact.companyName}</p>
                         {company?.companyType && (
-                          <Badge className={`${CRM_OPTIONS.companyTypeColors[company.companyType] || "bg-gray-500"} text-white text-[10px] mt-0.5`}>
+                          <Badge variant="outline" className={`border-transparent ${CRM_OPTIONS.companyTypeColors[company.companyType] || "bg-gray-500"} text-white text-[10px] mt-0.5`}>
                             {company.companyType}
                           </Badge>
                         )}
@@ -1348,7 +1229,7 @@ export default function Contacts() {
   return <ContactList teamFilter={teamParam} />;
 }
 
-const INTERNAL_BGP_TEAMS = new Set(["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate"]);
+const INTERNAL_BGP_TEAMS = new Set<string>(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 function ContactList({ teamFilter }: { teamFilter?: string | null }) {
   const [search, setSearch] = useState("");
@@ -1382,7 +1263,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     queryKey: ["/api/crm/contacts"],
   });
 
-  const { data: companies } = useQuery<CrmCompany[]>({
+  const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
   });
 
@@ -1466,11 +1347,26 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
 
   const syncInteractions = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/interactions/sync?daysBack=90&daysForward=60");
-      return res.json();
+      // Sync now runs in the background (POST returns 202 — it used to 504
+      // after 3 min). Kick it, then poll /sync-status until it finishes so
+      // the toast can report the real counts.
+      await apiRequest("POST", "/api/interactions/sync?daysBack=90&daysForward=60");
+      const deadline = Date.now() + 5 * 60_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const sr = await fetch("/api/interactions/sync-status", { credentials: "include" });
+        if (!sr.ok) break;
+        const status = await sr.json();
+        if (!status.running) {
+          if (status.error) throw new Error(status.error);
+          return status.lastResult || {};
+        }
+      }
+      return {};
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/interactions/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       toast({
         title: "Interactions synced",
         description: `Found ${data?.synced?.emails || 0} emails and ${data?.synced?.calendar || 0} calendar events`,
@@ -1539,6 +1435,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     },
     onSuccess: (email: string) => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       setAddedEmails((prev) => new Set([...prev, email]));
       toast({ title: "Contact added to CRM" });
     },
@@ -1633,18 +1530,24 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     return Array.from(allocs).sort();
   }, [contacts]);
 
+  const isMobile = useIsMobile();
   const filteredContacts = useMemo(() => {
     if (!contacts) return [];
+    const hasSearch = !!search.trim();
     return contacts.filter((c) => {
-      if (activeGroup !== "all" && (c.groupName || "Uncategorized") !== activeGroup) return false;
-      if (allocationFilter !== "all" && !parseAlloc(c.bgpAllocation).includes(allocationFilter)) return false;
-      if (bgpClientFilter && !c.bgpClient) return false;
-      if ((columnFilters.status?.length || 0) > 0 && !columnFilters.status.includes(c.groupName || "")) return false;
-      if ((columnFilters.type?.length || 0) > 0) {
-        const derivedType = getContactType(c);
-        if (!derivedType || !columnFilters.type.includes(derivedType)) return false;
+      // When a search term is active, search is global — group / allocation /
+      // BGP-client filters are ignored so users always find anyone they type.
+      if (!hasSearch) {
+        if (activeGroup !== "all" && (c.groupName || "Uncategorized") !== activeGroup) return false;
+        if (allocationFilter !== "all" && !parseAlloc(c.bgpAllocation).includes(allocationFilter)) return false;
+        if (bgpClientFilter && !c.bgpClient) return false;
+        if ((columnFilters.status?.length || 0) > 0 && !columnFilters.status.includes(c.groupName || "")) return false;
+        if ((columnFilters.type?.length || 0) > 0) {
+          const derivedType = getContactType(c);
+          if (!derivedType || !columnFilters.type.includes(derivedType)) return false;
+        }
       }
-      if (search) {
+      if (hasSearch) {
         const s = search.toLowerCase();
         return (
           c.name.toLowerCase().includes(s) ||
@@ -1657,7 +1560,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
       }
       return true;
     });
-  }, [contacts, activeGroup, allocationFilter, bgpClientFilter, search, columnFilters]);
+  }, [contacts, activeGroup, allocationFilter, bgpClientFilter, search, columnFilters, companyTypeMap]);
 
   const selectedContacts = filteredContacts.filter(c => selectedIds.has(c.id));
   const mailRecipients: MailRecipient[] = selectedContacts
@@ -1702,8 +1605,8 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
       <div className="p-4 sm:p-6">
         <div className="flex items-center justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">People Hub</h1>
-            <p className="text-sm text-muted-foreground">CRM Contacts</p>
+            <h1 className="text-2xl font-bold tracking-tight">CRM</h1>
+            <p className="text-sm text-muted-foreground">Contacts</p>
           </div>
         </div>
         <Card>
@@ -1747,13 +1650,15 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     return counts;
   }, [contacts, companyTypeMap]);
 
-  const CONTACT_STAT_CARDS: { label: string; filter: { field: "group" | "type" | null; value: string | null }; icon: any; color: string; activeColor: string }[] = [
-    { label: "All Contacts", filter: { field: null, value: null }, icon: Users, color: "bg-blue-600", activeColor: "bg-blue-800 ring-2 ring-blue-400" },
-    { label: "Active Clients", filter: { field: "group", value: "Active Client" }, icon: CheckCircle2, color: "bg-emerald-600", activeColor: "bg-emerald-800 ring-2 ring-emerald-400" },
-    { label: "Client Targeting", filter: { field: "group", value: "Client Targeting" }, icon: UserPlus, color: "bg-sky-600", activeColor: "bg-sky-800 ring-2 ring-sky-400" },
-    { label: "Occupiers", filter: { field: "group", value: "Occupier" }, icon: Building, color: "bg-purple-600", activeColor: "bg-purple-800 ring-2 ring-purple-400" },
-    { label: "Agents", filter: { field: "type", value: "Agent" }, icon: Handshake, color: "bg-indigo-600", activeColor: "bg-indigo-800 ring-2 ring-indigo-400" },
-    { label: "Landlords", filter: { field: "type", value: "Landlord" }, icon: Crown, color: "bg-amber-600", activeColor: "bg-amber-800 ring-2 ring-amber-400" },
+  // Filter pills per the design standard (docs/DESIGN.md §5): the pills ARE
+  // the stats — no separate stat-card strip.
+  const CONTACT_STAT_PILLS: { label: string; filter: { field: "group" | "type" | null; value: string | null } }[] = [
+    { label: "All Contacts", filter: { field: null, value: null } },
+    { label: "Active Clients", filter: { field: "group", value: "Active Client" } },
+    { label: "Client Targeting", filter: { field: "group", value: "Client Targeting" } },
+    { label: "Occupiers", filter: { field: "group", value: "Occupier" } },
+    { label: "Agents", filter: { field: "type", value: "Agent" } },
+    { label: "Landlords", filter: { field: "type", value: "Landlord" } },
   ];
 
   const handleContactStatClick = (filter: { field: "group" | "type" | null; value: string | null }) => {
@@ -1795,16 +1700,11 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
       <ContactFormDialog open={!!editingContact} onOpenChange={(open) => { if (!open) setEditingContact(null); }} contact={editingContact} companies={companies} />
 
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Users className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">People Hub</h1>
-            <p className="text-sm text-muted-foreground">
-              {contacts?.length || 0} contacts in CRM{teamFilter ? ` · Filtered by ${teamFilter} team` : ""}
-            </p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">CRM</h1>
+          <p className="text-sm text-muted-foreground">
+            {contacts?.length || 0} contacts{teamFilter ? ` · Filtered by ${teamFilter} team` : ""}
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Link href="/contacts?tab=archive">
@@ -1865,9 +1765,9 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
 
       {isLoading ? (
         <div className="space-y-3">
-          <div className="flex gap-3 flex-wrap">
-            {[1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-16 flex-1 min-w-[130px]" />
+          <div className="flex gap-1.5 flex-wrap">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <Skeleton key={i} className="h-6 w-24 rounded-full" />
             ))}
           </div>
           <Skeleton className="h-10" />
@@ -1875,8 +1775,8 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            {CONTACT_STAT_CARDS.filter((card) => {
+          <div className="flex flex-wrap gap-1.5">
+            {CONTACT_STAT_PILLS.filter((card) => {
               if (isClientTeam && card.label === "Landlords") return false;
               return true;
             }).map((card) => {
@@ -1887,26 +1787,15 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                   ? (statusCounts[card.filter.value!] || 0)
                   : (contactTypeCounts[card.filter.value!] || 0);
               return (
-                <div
+                <Pill
                   key={card.label}
-                  className="cursor-pointer"
+                  active={isActive}
                   onClick={() => handleContactStatClick(card.filter)}
                   data-testid={`stat-${card.label.toLowerCase().replace(/\s+/g, "-")}`}
                 >
-                  <Card className={`overflow-hidden transition-all ${isActive ? "ring-2 ring-primary" : "hover:shadow-md"}`}>
-                    <CardContent className="p-3">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-8 h-8 rounded-lg ${isActive ? card.activeColor : card.color} flex items-center justify-center`}>
-                          <card.icon className="w-4 h-4 text-white" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-lg font-bold leading-tight">{count}</p>
-                          <p className="text-[10px] text-muted-foreground truncate leading-tight">{card.label}</p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
+                  {card.label}
+                  <span className={`font-mono normal-case ${isActive ? "opacity-80" : "opacity-60"}`}>{count}</span>
+                </Pill>
               );
             })}
           </div>
@@ -1935,16 +1824,13 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                 </SelectContent>
               </Select>
             )}
-            <Button
-              variant={bgpClientFilter ? "default" : "outline"}
-              size="sm"
+            <Pill
+              active={bgpClientFilter}
               onClick={() => setBgpClientFilter(!bgpClientFilter)}
-              className={bgpClientFilter ? "bg-black text-white hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/90" : ""}
               data-testid="button-bgp-client-filter"
             >
-              <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
               BGP Clients
-            </Button>
+            </Pill>
             {hasActiveFilters && (
               <Button variant="outline" size="sm" onClick={clearAllFilters} data-testid="button-clear-filters">
                 <X className="w-3.5 h-3.5 mr-1" />
@@ -1964,8 +1850,34 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                 <p className="text-sm text-muted-foreground">
                   {hasActiveFilters ? "Try adjusting your search or filters" : "Add your first contact to get started"}
                 </p>
+                {/* Brands don't live here — a zero-hit search that matches a
+                    company name is usually someone hunting a brand (UX-NOTES #13). */}
+                {search.trim().length > 1 && companies.some(c => c.name?.toLowerCase().includes(search.trim().toLowerCase())) && (
+                  <p className="text-sm mt-2">
+                    <Link href="/brands" className="text-primary hover:underline">
+                      Looking for a brand? Search Brand Intelligence →
+                    </Link>
+                  </p>
+                )}
               </CardContent>
             </Card>
+          ) : isMobile ? (
+            <MobileCardView
+              emptyMessage="No contacts found"
+              items={filteredContacts.map((c: any) => ({
+                id: c.id,
+                title: c.name || c.email || "Unknown",
+                subtitle: c.companyName || undefined,
+                status: c.contactType || undefined,
+                href: `/contacts/${c.id}`,
+                fields: [
+                  { label: "Role", value: c.role || c.jobTitle },
+                  { label: "Email", value: c.email },
+                  { label: "Phone", value: c.phone || c.phoneMobile },
+                  { label: "Specialty", value: c.agentSpecialty },
+                ],
+              }))}
+            />
           ) : (
             <Card>
               <ScrollableTable minWidth={2200}>
@@ -2221,24 +2133,37 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-destructive hover:text-destructive"
-                              onClick={async () => {
-                                if (!confirm("Delete this contact?")) return;
-                                try {
-                                  await apiRequest("DELETE", `/api/crm/contacts/${contact.id}`);
-                                  queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
-                                  toast({ title: "Contact deleted" });
-                                } catch {
-                                  toast({ title: "Failed to delete", variant: "destructive" });
-                                }
-                              }}
-                              data-testid={`button-delete-contact-${contact.id}`}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  data-testid={`button-more-contact-${contact.id}`}
+                                >
+                                  <MoreHorizontal className="h-3.5 w-3.5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={async () => {
+                                    if (!confirm("Delete this contact?")) return;
+                                    try {
+                                      await apiRequest("DELETE", `/api/crm/contacts/${contact.id}`);
+                                      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+                                      toast({ title: "Contact deleted" });
+                                    } catch {
+                                      toast({ title: "Failed to delete", variant: "destructive" });
+                                    }
+                                  }}
+                                  data-testid={`button-delete-contact-${contact.id}`}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                  Delete contact
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -2299,6 +2224,62 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                 </div>
               )}
               <ScrollArea className="max-h-[50vh]">
+                {/* Phone: one card per suggestion (§7) — the table never ships below md. */}
+                <div className="md:hidden divide-y divide-border">
+                  {suggestions.map((s: any) => {
+                    const isAdded = addedEmails.has(s.email);
+                    return (
+                      <div key={s.email} className={`py-3 ${isAdded ? "opacity-50" : ""}`} data-testid={`card-suggestion-${s.email}`}>
+                        <div className="flex items-start gap-2.5">
+                          <Checkbox
+                            className="mt-0.5"
+                            checked={selectedSuggestions.has(s.email)}
+                            disabled={isAdded}
+                            onCheckedChange={(checked) => {
+                              const next = new Set(selectedSuggestions);
+                              if (checked) next.add(s.email); else next.delete(s.email);
+                              setSelectedSuggestions(next);
+                            }}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-sm truncate" data-testid={`text-suggestion-card-name-${s.email}`}>{s.name}</div>
+                            <p className="text-[11px] text-muted-foreground truncate">{s.email}</p>
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {s.domain && <Badge variant="outline" className="text-[10px] whitespace-nowrap">{s.domain}</Badge>}
+                              <Badge variant="secondary" className="text-[10px] whitespace-nowrap">{s.frequency} emails</Badge>
+                              {s.bgpUsers?.slice(0, 3).map((u: string) => (
+                                <Badge key={u} variant="outline" className="text-[10px] capitalize whitespace-nowrap">{u}</Badge>
+                              ))}
+                              {s.bgpUsers?.length > 3 && (
+                                <Badge variant="outline" className="text-[10px] whitespace-nowrap">+{s.bgpUsers.length - 3}</Badge>
+                              )}
+                            </div>
+                          </div>
+                          <div className="shrink-0">
+                            {isAdded ? (
+                              <Badge variant="default" className="text-[10px] bg-green-600">
+                                <CheckCircle2 className="w-3 h-3 mr-1" />Added
+                              </Badge>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={() => addContactMutation.mutate(s)}
+                                disabled={addContactMutation.isPending}
+                                data-testid={`button-add-suggestion-card-${s.email}`}
+                              >
+                                <UserPlus className="w-3.5 h-3.5 mr-1" />
+                                Add
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="hidden md:block overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
@@ -2389,6 +2370,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                     })}
                   </TableBody>
                 </Table>
+                </div>
               </ScrollArea>
               <div className="text-xs text-muted-foreground text-center">
                 Showing top {suggestions.length} contacts with 2+ email interactions across all BGP mailboxes
@@ -2434,7 +2416,7 @@ function InteractionArchive() {
   const { data, isLoading } = useQuery<{ interactions: ArchiveInteraction[]; total: number }>({
     queryKey: ["/api/interactions/archive", queryParams],
     queryFn: async () => {
-      const res = await fetch(`/api/interactions/archive?${queryParams}`, { credentials: "include" });
+      const res = await fetch(`/api/interactions/archive?${queryParams}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load archive");
       return res.json();
     },
@@ -2650,5 +2632,95 @@ function ArchiveInteractionRow({ interaction }: { interaction: ArchiveInteractio
         </div>
       )}
     </div>
+  );
+}
+
+
+// Lightweight manual activity logger (UX #34) — call/meeting/note entries
+// land in crm_interactions via /api/interactions/log and render in the
+// contact's InteractionsBoard alongside synced emails and meetings.
+export function LogActivityDialog({ open, onOpenChange, contactId, companyId }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  contactId: string;
+  companyId?: string;
+}) {
+  const { toast } = useToast();
+  const [actType, setActType] = useState("call");
+  const [actDate, setActDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [actSummary, setActSummary] = useState("");
+  const [actDetail, setActDetail] = useState("");
+  useEffect(() => {
+    if (open) { setActType("call"); setActDate(new Date().toISOString().slice(0, 10)); setActSummary(""); setActDetail(""); }
+  }, [open]);
+  const logMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/interactions/log", {
+        contactId,
+        companyId: companyId || null,
+        type: actType,
+        subject: actSummary.trim(),
+        preview: actDetail.trim() || null,
+        interactionDate: actDate,
+        direction: "outbound",
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/interactions", "contact", contactId] });
+      toast({ title: "Activity logged" });
+      onOpenChange(false);
+    },
+    onError: (err: Error) => toast({ title: "Couldn't log activity", description: err.message, variant: "destructive" }),
+  });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[440px]">
+        <DialogHeader>
+          <DialogTitle>Log activity</DialogTitle>
+          <DialogDescription>Record a call, meeting or note against this contact</DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => { e.preventDefault(); if (actSummary.trim()) logMutation.mutate(); }}
+          className="space-y-4"
+        >
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-xs font-medium">Type</Label>
+              <Select value={actType} onValueChange={setActType}>
+                <SelectTrigger data-testid="select-activity-type"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="call">Call</SelectItem>
+                  <SelectItem value="meeting">Meeting</SelectItem>
+                  <SelectItem value="note">Note</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-medium">Date</Label>
+              <Input type="date" value={actDate} onChange={(e) => setActDate(e.target.value)} data-testid="input-activity-date" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs font-medium">Summary</Label>
+            <Input
+              value={actSummary}
+              onChange={(e) => setActSummary(e.target.value)}
+              placeholder="e.g. Call re Bluewater unit — keen, wants floorplans"
+              data-testid="input-activity-summary"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs font-medium">Detail (optional)</Label>
+            <Textarea value={actDetail} onChange={(e) => setActDetail(e.target.value)} rows={3} data-testid="input-activity-detail" />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="submit" disabled={!actSummary.trim() || logMutation.isPending} data-testid="button-save-activity">
+              {logMutation.isPending ? "Saving…" : "Log activity"}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

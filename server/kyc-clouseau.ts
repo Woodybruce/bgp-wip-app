@@ -1721,12 +1721,16 @@ async function runPropertyIntelligenceAi(investigationId: number, baseResult: an
   }
 }
 
-// Audit log helper
-export async function logKycAudit(investigationId: number, action: string, performedBy: string | null, notes?: string) {
+// Audit log helper. investigationId may be either an integer (kyc_investigations.id
+// is SERIAL in fresh deploys) or a UUID-shaped string (older prod databases
+// where the table was bootstrapped with a varchar primary key). The audit-log
+// column is widened to TEXT in the bootstrap so it tolerates both.
+export async function logKycAudit(investigationId: number | string | null | undefined, action: string, performedBy: string | null, notes?: string) {
+  if (investigationId === null || investigationId === undefined || investigationId === "") return;
   try {
     await pool.query(
       `INSERT INTO kyc_audit_log (investigation_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`,
-      [investigationId, action, performedBy, notes || null]
+      [String(investigationId), action, performedBy, notes || null]
     );
   } catch (err: any) {
     console.warn("[kyc-clouseau] Failed to write audit log:", err.message);
