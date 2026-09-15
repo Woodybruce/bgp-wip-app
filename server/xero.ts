@@ -178,7 +178,39 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
   if (!clientId || !clientSecret) return null;
 
   const run = (async (): Promise<XeroTokens | undefined> => {
-    try {
+    const sys = await import("./xero-system-session").catch(() => null);
+    const readPersisted = async () => {
+      try { return sys ? await sys.readPersistedXeroTokens() : null; } catch { return null; }
+    };
+    const adopt = (t: { accessToken: string; refreshToken: string; expiresAt: number; tenantId?: string }) => {
+      session.xeroTokens = {
+        ...session.xeroTokens,
+        accessToken: t.accessToken,
+        refreshToken: t.refreshToken,
+        expiresAt: t.expiresAt,
+        tenantId: session.xeroTokens?.tenantId ?? t.tenantId,
+      };
+      return { ...session.xeroTokens } as XeroTokens;
+    };
+
+    const doRefresh = async (depth: number): Promise<XeroTokens | undefined> => {
+      // The store is the source of truth for rotation. If another copy
+      // of this connection (a background job, or a director's browser
+      // session — 2026-09-15: Woody's Finance tab and the cashflow cron
+      // were knocking each other offline every hour or two) has already
+      // rotated the token, adopt its pair instead of burning our stale one.
+      const persisted = await readPersisted();
+      const ourRt = session.xeroTokens?.refreshToken;
+      if (persisted && ourRt && persisted.refreshToken !== ourRt) {
+        if (Date.now() < persisted.expiresAt - 60000) {
+          console.log("[Xero] Adopted rotated tokens from the system session");
+          return adopt(persisted);
+        }
+        adopt(persisted);
+      }
+      const useRt = session.xeroTokens?.refreshToken;
+      if (!useRt) return undefined;
+
       const res = await fetch(XERO_TOKEN_URL, {
         method: "POST",
         headers: {
@@ -187,22 +219,27 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
         },
         body: new URLSearchParams({
           grant_type: "refresh_token",
-          refresh_token: rt,
+          refresh_token: useRt,
         }),
       });
 
       if (!res.ok) {
         const errText = await res.text();
         console.error("[Xero] Token refresh failed:", errText);
-        // invalid_grant = the RT is dead (consumed by a parallel refresh,
-        // revoked, or expired). Clear the system session so background
-        // jobs stop hammering Xero with a known-bad token and the admin
-        // sees a clear "Reconnect" prompt on the next status check.
         if (/invalid_grant|refresh token (consumed|expired|revoked)/i.test(errText)) {
-          try {
-            const { clearSystemXeroSession } = await import("./xero-system-session");
-            await clearSystemXeroSession();
-          } catch {/* table may not exist yet on a fresh boot */}
+          // Consumed by someone who then persisted the new pair? Adopt
+          // it and go again (once) rather than declaring the connection
+          // dead. Only when the store still holds the dead token — or is
+          // empty — is the connection genuinely gone.
+          const again = await readPersisted();
+          if (again && again.refreshToken !== useRt && depth < 1) {
+            console.warn("[Xero] Refresh token was rotated elsewhere — adopting the stored pair");
+            adopt(again);
+            return doRefresh(depth + 1);
+          }
+          if (sys && (!again || again.refreshToken === useRt)) {
+            try { await sys.clearSystemXeroSession(); } catch {/* table may not exist yet on a fresh boot */}
+          }
         }
         session.xeroTokens = undefined;
         return undefined;
@@ -212,10 +249,24 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
       session.xeroTokens = {
         ...session.xeroTokens,
         accessToken: data.access_token,
-        refreshToken: data.refresh_token || session.xeroTokens.refreshToken,
+        refreshToken: data.refresh_token || useRt,
         expiresAt: Date.now() + (data.expires_in || 1800) * 1000,
       };
-      return { ...session.xeroTokens };
+      const rotated = { ...session.xeroTokens } as XeroTokens;
+      // Write the rotation back so every other holder of this connection
+      // follows it — a browser session that refreshed must update the
+      // system copy, and vice versa.
+      if (sys) {
+        try { await sys.adoptRotatedXeroTokens(useRt, rotated); } catch (e: any) {
+          console.warn("[Xero] could not persist rotated tokens:", e?.message);
+        }
+      }
+      return rotated;
+    };
+
+    try {
+      if (sys) return await sys.withXeroRefreshLock(() => doRefresh(0));
+      return await doRefresh(0);
     } catch (err) {
       console.error("[Xero] Token refresh error:", err);
       session.xeroTokens = undefined;
