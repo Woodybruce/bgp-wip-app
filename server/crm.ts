@@ -6,6 +6,7 @@ import { storage } from "./storage";
 import { requireAuth } from "./auth";
 import { db, pool } from "./db";
 import { saveFile, getFile, deleteFile as deleteStoredFile } from "./file-storage";
+import { enrichPropertyInBackground } from "./property-enrich";
 import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand, getClientExtraBrandIds, clientBrandSliceSql, NO_ACCESS_SCOPE } from "./company-scope";
 import { buildClientAgentDirectoryQuery, mapClientAgentDirectoryRows, type ClientAgentDirectoryRow } from "./client-agent-directory";
 
@@ -2420,6 +2421,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         return res.status(403).json({ error: "Access denied" });
       }
       res.json(property);
+      // Staff opening a property is the cheapest moment to fill the gaps
+      // (owner's Companies House number, asset class) — throttled per
+      // property, never overwrites a human-set value.
+      if (!scopeCompanyId) enrichPropertyInBackground(String(req.params.id));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -2428,6 +2433,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const parsed = insertCrmPropertySchema.parse(req.body);
       const property = await storage.createCrmProperty(parsed);
       res.status(201).json(property);
+      enrichPropertyInBackground(property.id, { force: true });
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
@@ -2452,6 +2458,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
       const property = await storage.updateCrmProperty(String(req.params.id), updates);
       res.json(property);
+      // A new owner (or Land Registry proprietor) is exactly when the KYC
+      // file needs its Companies House number resolved.
+      if (["freeholderId", "longLeaseholderId", "landlordId", "proprietorName", "proprietorCompanyNumber"].some(k => k in updates)) {
+        enrichPropertyInBackground(String(req.params.id), { force: true });
+      }
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
