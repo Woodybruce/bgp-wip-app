@@ -74,6 +74,8 @@ import {
   PROPERTY_STATUS_COLORS,
   ASSET_CLASS_OPTIONS,
   ASSET_CLASS_COLORS,
+  USE_CLASS_OPTIONS,
+  USE_CLASS_LABELS,
   TENURE_OPTIONS,
   TENURE_COLORS,
   TEAM_OPTIONS,
@@ -664,6 +666,10 @@ export function PropertyDetail({ id }: { id: string }) {
                     <div className="min-w-0" data-testid="property-field-asset-class">
                       <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Asset class</p>
                       <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
+                    </div>
+                    <div className="min-w-0" data-testid="property-field-use-class">
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Use class</p>
+                      <InlineLabelSelect value={(property as any).useClass} options={USE_CLASS_OPTIONS} labelMap={USE_CLASS_LABELS} onSave={(val) => inlineUpdate("useClass" as any, val)} placeholder="Set use class" />
                     </div>
                     <div className="min-w-0" data-testid="property-field-team">
                       <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">BGP team</p>

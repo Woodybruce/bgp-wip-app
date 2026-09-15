@@ -22,6 +22,7 @@
 
 import { pool } from "./db";
 import { chFetch } from "./companies-house";
+import { lookupVoaByPostcode, voaSqliteAvailable, type VoaLookupRow } from "./voa-sqlite";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 
 // Keep in step with ASSET_CLASS_OPTIONS in client/src/pages/properties.tsx.
@@ -48,7 +49,148 @@ export interface PropertyEnrichResult {
   amlStarted: boolean;
   assetClass: string | null;
   assetClassSet: boolean;
-  assetClassSource: "units" | "name" | "ai" | "existing" | null;
+  assetClassSource: "units" | "name" | "ai" | "voa" | "existing" | null;
+  useClass: string | null;
+  useClassSet: boolean;
+  useClassSource: "units" | "voa" | "existing" | null;
+  voaMatched: number;
+}
+
+// ── Use class ─────────────────────────────────────────────────────────────
+// Planning use class from whatever text we hold about a unit: a planning
+// code already typed in ("E(a)", "A3", "Sui Generis"), the tenancy
+// schedule's plain words ("Shop", "F&B"), or a VOA rating description
+// ("Shop and Premises", "Offices and Premises"). Returns the post-2020
+// England class; legacy A/B1/D codes are translated.
+export function toUseClass(raw: string | null | undefined): string | null {
+  const t = String(raw || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  // Explicit planning codes first.
+  if (/\bsui generis\b/.test(t)) return "Sui Generis";
+  const code = t.match(/\be\s*\(?\s*([a-g])\s*\)?(?:\s*\(?\s*(i{1,3})\s*\)?)?/);
+  if (code) return `E(${code[1]})`;
+  if (/^e\b|\bclass e\b|\buse class e\b/.test(t)) return "E";
+  if (/\ba1\b/.test(t)) return "E(a)";
+  if (/\ba2\b/.test(t)) return "E(c)";
+  if (/\b(a3|a4)\b/.test(t)) return /\ba4\b/.test(t) ? "Sui Generis" : "E(b)";
+  if (/\ba5\b/.test(t)) return "Sui Generis";
+  if (/\bb1\b/.test(t)) return "E(g)";
+  if (/\bb2\b/.test(t)) return "B2";
+  if (/\bb8\b/.test(t)) return "B8";
+  if (/\bc1\b/.test(t)) return "C1";
+  if (/\bc3\b/.test(t)) return "C3";
+  if (/\bd1\b/.test(t)) return "F1";
+  if (/\bd2\b/.test(t)) return "E(d)";
+  if (/\bf1\b/.test(t)) return "F1";
+  if (/\bf2\b/.test(t)) return "F2";
+  // Words — VOA descriptions and schedule shorthand. Sui Generis first so
+  // "public house" doesn't fall into food & drink.
+  if (/\b(public house|pub\b|drinking|night ?club|betting|bookmaker|amusement|casino|hot food take ?away|takeaway|car showroom|petrol|filling station|launderette|taxi|scrap|tattoo|hostel|theatre|cinema|bingo|dance hall|fuel)\b/.test(t)) return "Sui Generis";
+  if (/\b(restaurant|caf[eé]|coffee|food and drink|food & drink|f&b|f & b|eatery|bistro|dining)\b/.test(t)) return "E(b)";
+  if (/\b(bank|building society|estate agent|financial|professional services|solicitor|betting office)\b/.test(t)) return "E(c)";
+  if (/\b(gym|fitness|health club|leisure centre|leisure|sports? (hall|centre|club)|swimming|indoor sport|padel|bowling)\b/.test(t)) return "E(d)";
+  if (/\b(surgery|clinic|medical|dental|dentist|health centre|pharmacy|chemist)\b/.test(t)) return "E(e)";
+  if (/\b(nursery|cr[eè]che|day care|childcare)\b/.test(t)) return "E(f)";
+  if (/\b(office|offices|studio|light industrial|research|laboratory|workspace|coworking)\b/.test(t)) return "E(g)";
+  if (/\b(warehouse|storage|distribution|depot|self storage|logistics)\b/.test(t)) return "B8";
+  if (/\b(factory|works|workshop|industrial|manufactur)\b/.test(t)) return "B2";
+  if (/\b(hotel|guest ?house|aparthotel|serviced apartments?)\b/.test(t)) return "C1";
+  if (/\b(flat|flats|apartment|dwelling|residential|house|maisonette|btr)\b/.test(t)) return "C3";
+  if (/\b(school|college|library|museum|gallery|place of worship|church|law court|education|training)\b/.test(t)) return "F1";
+  if (/\b(community|village hall|swimming pool|skating)\b/.test(t)) return "F2";
+  if (/\b(shop|shops|store|retail|showroom|kiosk|supermarket|superstore|hairdress|salon|barber|premises)\b/.test(t)) return "E(a)";
+  return null;
+}
+
+// Collapse the per-unit classes into one property-level class.
+function combineUseClasses(classes: string[]): string | null {
+  const set = Array.from(new Set(classes.filter(Boolean)));
+  if (set.length === 0) return null;
+  if (set.length === 1) return set[0];
+  const allE = set.every(c => c === "E" || /^E\(/.test(c));
+  if (allE) return "E";
+  return "Mixed";
+}
+
+// The asset class a use class implies — used when VOA is the only signal.
+function assetFromUseClass(uc: string | null): AssetClass | null {
+  switch (uc) {
+    case "E(a)": case "E(c)": return "Retail";
+    case "E(b)": return "F&B";
+    case "E(d)": case "C1": return "Leisure";
+    case "E(g)": return "Office";
+    case "B2": case "B8": return "Industrial";
+    case "C3": return "Residential";
+    case "Mixed": return "Mixed Use";
+    default: return null;
+  }
+}
+
+// VOA rating-list rows for this building: same postcode, and the address
+// carries the building's number/name. Never the whole postcode blindly —
+// a parade shares one postcode with its neighbours.
+function voaRowsForProperty(p: any): VoaLookupRow[] {
+  if (!voaSqliteAvailable()) return [];
+  const addr = (p.address && typeof p.address === "object") ? p.address : {};
+  const postcode: string = String(p.postcode || addr.postcode || "").trim();
+  if (!postcode) return [];
+  const line: string = String(addr.address || addr.street || addr.line1 || "");
+  const street = line.replace(/^[\d\-\/a-z]*\s+/i, "").split(",")[0]?.trim();
+  const rows = lookupVoaByPostcode(postcode, undefined, 60);
+  if (rows.length === 0) return [];
+  const nameLower = String(p.name || "").toLowerCase();
+  const number = (line.match(/^\s*(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\b/i) || [])[1]?.toLowerCase();
+  const tokens = nameLower.replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(w => w.length > 3);
+  const matched = rows.filter(r => {
+    const a = (r.address || "").toLowerCase();
+    if (number && new RegExp(`(^|[^0-9])${number.replace(/\s*-\s*/, "\\s*-\\s*")}([^0-9]|$)`).test(a)) return true;
+    if (nameLower && a.includes(nameLower)) return true;
+    // Building name in the VOA address (e.g. "Hudson Yard" in "Unit 3 Hudson Yard").
+    return tokens.length >= 2 && tokens.every(w => a.includes(w));
+  });
+  if (matched.length > 0) return matched;
+  // Single-hereditament postcode — nothing to confuse it with.
+  if (rows.length === 1 && street && rows[0].address.toLowerCase().includes(street.toLowerCase())) return rows;
+  return [];
+}
+
+async function inferUseClass(p: any, out: PropertyEnrichResult, unitRows: any[]) {
+  if (p.use_class) { out.useClass = p.use_class; out.useClassSource = "existing"; return; }
+  let picked: string | null = null;
+  let source: PropertyEnrichResult["useClassSource"] = null;
+
+  const fromUnits = unitRows.map((u: any) => toUseClass(u.use_class || u.permitted_use)).filter((c): c is string => !!c);
+  if (fromUnits.length > 0) {
+    picked = combineUseClasses(fromUnits);
+    source = "units";
+  }
+  if (!picked) {
+    const voa = voaRowsForProperty(p);
+    out.voaMatched = voa.length;
+    if (voa.length > 0) {
+      picked = combineUseClasses(voa.map(r => toUseClass(r.description)).filter((c): c is string => !!c));
+      if (picked) source = "voa";
+      // Stamp the BA reference while we're here so the rates page links up.
+      if (voa.length === 1 && voa[0].baRef) {
+        await pool.query(`UPDATE crm_properties SET voa_ba_reference = $1 WHERE id = $2 AND voa_ba_reference IS NULL`, [voa[0].baRef, p.id]);
+      }
+      // VOA is also a legitimate asset-class signal when nothing else is.
+      if (!p.asset_class && !out.assetClassSet) {
+        const ac = assetFromUseClass(picked);
+        if (ac) {
+          const r = await pool.query(`UPDATE crm_properties SET asset_class = $1, updated_at = now() WHERE id = $2 AND asset_class IS NULL`, [ac, p.id]);
+          if (r.rowCount) { out.assetClass = ac; out.assetClassSet = true; out.assetClassSource = "voa"; console.log(`[property-enrich] ${p.name}: asset class → ${ac} (voa)`); }
+        }
+      }
+    }
+  }
+  if (picked) {
+    const r = await pool.query(`UPDATE crm_properties SET use_class = $1, updated_at = now() WHERE id = $2 AND use_class IS NULL`, [picked, p.id]);
+    if (r.rowCount) {
+      out.useClass = picked; out.useClassSet = true; out.useClassSource = source;
+      console.log(`[property-enrich] ${p.name}: use class → ${picked} (${source})`);
+    }
+  }
 }
 
 function normCompanyName(s: string): string {
@@ -160,20 +302,22 @@ function classFromName(name: string): AssetClass | null {
   return null;
 }
 
-async function inferAssetClass(p: any, out: PropertyEnrichResult) {
+async function loadUnitRows(propertyId: string) {
+  return pool.query(
+    `SELECT unit_name, use_class, NULL::text AS permitted_use, NULL::text AS tenant_name FROM property_units WHERE property_id = $1
+     UNION ALL
+     SELECT unit_number, NULL::text, permitted_use, tenant_name FROM tenancy_schedule_units WHERE property_id = $1
+     LIMIT 300`,
+    [propertyId],
+  );
+}
+
+async function inferAssetClass(p: any, out: PropertyEnrichResult, units: { rows: any[] }) {
   if (p.asset_class) {
     out.assetClass = p.asset_class;
     out.assetClassSource = "existing";
     return;
   }
-
-  const units = await pool.query(
-    `SELECT unit_name, use_class, NULL::text AS permitted_use, NULL::text AS tenant_name FROM property_units WHERE property_id = $1
-     UNION ALL
-     SELECT unit_number, NULL::text, permitted_use, tenant_name FROM tenancy_schedule_units WHERE property_id = $1
-     LIMIT 300`,
-    [p.id],
-  );
   const tally = new Map<AssetClass, number>();
   let signals = 0;
   for (const u of units.rows) {
@@ -244,9 +388,10 @@ export async function enrichPropertyBasics(propertyId: string): Promise<Property
   const out: PropertyEnrichResult = {
     propertyId, ownerCompanyId: null, companiesHouseNumber: null, companiesHouseSet: false,
     ukEntitySet: false, amlStarted: false, assetClass: null, assetClassSet: false, assetClassSource: null,
+    useClass: null, useClassSet: false, useClassSource: null, voaMatched: 0,
   };
   const { rows } = await pool.query(
-    `SELECT id, name, address, asset_class, freeholder_id, long_leaseholder_id, landlord_id,
+    `SELECT id, name, address, postcode, asset_class, use_class, freeholder_id, long_leaseholder_id, landlord_id,
             proprietor_name, proprietor_type, proprietor_company_number
        FROM crm_properties WHERE id = $1`,
     [propertyId],
@@ -254,6 +399,8 @@ export async function enrichPropertyBasics(propertyId: string): Promise<Property
   const p = rows[0];
   if (!p) return out;
   await resolveOwnerCompaniesHouse(p, out);
-  await inferAssetClass(p, out);
+  const units = await loadUnitRows(p.id);
+  await inferAssetClass(p, out, units);
+  await inferUseClass(p, out, units.rows);
   return out;
 }
