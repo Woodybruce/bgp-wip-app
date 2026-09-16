@@ -1,3 +1,4 @@
+import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { useState, useEffect, useRef } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
 import { Button } from "@/components/ui/button";
@@ -307,6 +308,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         </Card>
       )}
 
+      {/^tenant(?:\s|-|$)/i.test(c.company_type || "") && <BrandViewingActivity companyId={companyId} />}
       {/* Expansion — score, live requirements, Pipnet asks (phone twin of
           desktop's Expansion intelligence zone). */}
       {!isLandlord && (

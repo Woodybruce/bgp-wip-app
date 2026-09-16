@@ -37,7 +37,7 @@ import {
 } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 import { db } from "./db";
-import { eq, ilike, or, sql, and, desc, inArray } from "drizzle-orm";
+import { eq, ilike, or, sql, and, desc, inArray, isNull } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
 import { legacyToCode } from "@shared/deal-status";
 import { registerIngestRoutes } from "./ingest-routes";
@@ -61,6 +61,7 @@ import { startJob, getJobStatus } from "./brand-jobs";
 import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
+import { registerLeasingViewingRoutes, createTrackerViewing, patchLeasingViewing, deleteTrackerViewing, createTrackerOffer, patchTrackerOffer, serializeViewingForScope, ViewingError } from "./leasing-viewings";
 
 async function taskLinksInScope(scopeCompanyId: string | null, links: { linkedPropertyId?: unknown; linkedDealId?: unknown }): Promise<boolean> {
   if (!scopeCompanyId) return true;
@@ -498,6 +499,8 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  registerLeasingViewingRoutes(app);
 
   const { registerImageStudioRoutes } = await import("./image-studio");
   registerImageStudioRoutes(app);
@@ -4417,10 +4420,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         ? await db.execute(sql`SELECT v.unit_id, COUNT(*)::int as count FROM unit_viewings v
              JOIN available_units u ON u.id = v.unit_id
              LEFT JOIN crm_properties p ON p.id = u.property_id
-             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
-            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            WHERE (p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope}))
+              AND v.deleted_at IS NULL AND v.status IN ('scheduled','completed')
             GROUP BY v.unit_id`)
-        : await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_viewings GROUP BY unit_id`);
+        : await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_viewings WHERE deleted_at IS NULL AND unit_id IS NOT NULL AND status IN ('scheduled','completed') GROUP BY unit_id`);
       const counts: Record<string, number> = {};
       for (const r of rows.rows as any[]) counts[r.unit_id] = r.count;
       res.json(counts);
@@ -4436,8 +4439,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         ? await db.execute(sql`SELECT o.unit_id, COUNT(*)::int as count FROM unit_offers o
              JOIN available_units u ON u.id = o.unit_id
              LEFT JOIN crm_properties p ON p.id = u.property_id
-             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
-            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            WHERE p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope})
             GROUP BY o.unit_id`)
         : await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_offers GROUP BY unit_id`);
       const counts: Record<string, number> = {};
@@ -4457,6 +4459,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     for (const [k, v] of Object.entries(row)) out[k.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = v;
     return out;
   };
+  const viewingRowForScope = (row: Record<string, any>, scoped: boolean) => {
+    // Calendar matching evidence can include the original invitation's
+    // subject, location and body. Only the confirmed tracker fields belong
+    // in a client response, including these older tracker endpoints.
+    return serializeViewingForScope(camelRow(row), scoped);
+  };
 
   app.get("/api/available-units/all-viewings", requireAuth, async (req, res) => {
     try {
@@ -4465,13 +4473,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const rows = await db.execute(sql`SELECT v.* FROM unit_viewings v
              JOIN available_units u ON u.id = v.unit_id
              LEFT JOIN crm_properties p ON p.id = u.property_id
-             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
-            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            WHERE (p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope}))
+              AND v.deleted_at IS NULL AND v.status IN ('scheduled','completed')
             ORDER BY v.viewing_date`);
-        return res.json(rows.rows.map(camelRow));
+        return res.json(rows.rows.map(row => viewingRowForScope(row as Record<string, any>, true)));
       }
       const { unitViewings } = await import("@shared/schema");
-      const rows = await db.select().from(unitViewings).orderBy(unitViewings.viewingDate);
+      const rows = await db.select().from(unitViewings).where(and(isNull(unitViewings.deletedAt), sql`${unitViewings.unitId} IS NOT NULL`, inArray(unitViewings.status, ["scheduled", "completed"]))).orderBy(unitViewings.viewingDate);
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed" });
@@ -4485,8 +4493,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const rows = await db.execute(sql`SELECT o.* FROM unit_offers o
              JOIN available_units u ON u.id = o.unit_id
              LEFT JOIN crm_properties p ON p.id = u.property_id
-             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
-            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            WHERE p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope})
             ORDER BY o.offer_date`);
         return res.json(rows.rows.map(camelRow));
       }
@@ -6081,7 +6088,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         SELECT au.id, au.unit_name, au.property_id, au.marketing_status, au.deal_id, au.tenancy_unit_id,
                p.name AS property_name,
                d.status AS deal_status, d.tenant_id AS deal_tenant_id, d.fee AS deal_fee,
-               (SELECT COUNT(*) FROM unit_viewings v WHERE v.unit_id = au.id)::int AS viewings,
+               (SELECT COUNT(*) FROM unit_viewings v WHERE v.unit_id = au.id AND v.deleted_at IS NULL AND v.status IN ('scheduled','completed'))::int AS viewings,
                (SELECT COUNT(*) FROM unit_offers o WHERE o.unit_id = au.id)::int AS offers,
                (SELECT COUNT(*) FROM unit_marketing_files f WHERE f.unit_id = au.id)::int AS files,
                (SELECT COUNT(*) FROM unit_target_operators t JOIN unit_briefs b ON b.id = t.brief_id WHERE b.unit_id = au.id)::int AS brief_targets,
@@ -7291,62 +7298,34 @@ These terms are indicative only and do not constitute a binding agreement.`;
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       const { unitViewings } = await import("@shared/schema");
-      const rows = await db.select().from(unitViewings).where(eq(unitViewings.unitId, req.params.id as string)).orderBy(unitViewings.viewingDate);
-      res.json(rows);
+      const rows = await db.select().from(unitViewings).where(and(eq(unitViewings.unitId, req.params.id as string), isNull(unitViewings.deletedAt))).orderBy(unitViewings.viewingDate);
+      const scope = await clientUnitScopeSql(req);
+      res.json(rows.map(row => viewingRowForScope(row, !!scope)));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch viewings" });
     }
   });
 
   app.post("/api/available-units/:id/viewings", requireAuth, async (req, res) => {
-    try {
-      const vUnit = await storage.getAvailableUnit(req.params.id as string);
-      if (await assertUnitInClientScope(req, vUnit?.propertyId)) {
-        return res.status(403).json({ message: "Unit is outside your portfolio" });
-      }
-      const { unitViewings, insertUnitViewingSchema } = await import("@shared/schema");
-      const parsed = insertUnitViewingSchema.safeParse({ ...req.body, unitId: req.params.id });
-      if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
-      const [row] = await db.insert(unitViewings).values(parsed.data).returning();
-      res.json(row);
-    } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Failed to add viewing" });
-    }
+    try { res.json(await createTrackerViewing(req, String(req.params.id), req.body)); }
+    catch (err: any) { res.status(err instanceof ViewingError ? err.status : 500).json({ message: err.message }); }
   });
 
   app.patch("/api/available-units/viewings/:viewingId", requireAuth, async (req, res) => {
     try {
-      const { unitViewings, insertUnitViewingSchema } = await import("@shared/schema");
-      const [viewing] = await db.select().from(unitViewings).where(eq(unitViewings.id, req.params.viewingId as string));
-      if (!viewing) return res.status(404).json({ message: "Viewing not found" });
-      const vUnit = await storage.getAvailableUnit(viewing.unitId);
-      if (await assertUnitInClientScope(req, vUnit?.propertyId)) {
-        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      const patch: Record<string, any> = {};
+      for (const key of ["companyId", "contactId", "agentContactId", "ownerUserId", "requirementId", "viewingDate", "viewingTime", "outcome", "notes", "status", "nextAction", "followUpDate", "confirmDetails", "expectedUpdatedAt"]) {
+        if (key in req.body) patch[key] = req.body[key] === "" ? null : req.body[key];
       }
-      const parsed = insertUnitViewingSchema.partial().omit({ unitId: true }).safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
-      const [row] = await db.update(unitViewings).set(parsed.data).where(eq(unitViewings.id, req.params.viewingId as string)).returning();
-      res.json(row);
-    } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Failed to update viewing" });
-    }
+      if (patch.outcome === "No Show") { patch.status = "no_show"; patch.outcome = null; }
+      else if (patch.outcome && !patch.status) patch.status = "completed";
+      res.json(await patchLeasingViewing(req, String(req.params.viewingId), patch));
+    } catch (err: any) { res.status(err instanceof ViewingError ? err.status : 500).json({ message: err.message }); }
   });
 
   app.delete("/api/available-units/viewings/:viewingId", requireAuth, async (req, res) => {
-    try {
-      const { unitViewings } = await import("@shared/schema");
-      const [viewing] = await db.select().from(unitViewings).where(eq(unitViewings.id, req.params.viewingId as string));
-      if (viewing) {
-        const vUnit = await storage.getAvailableUnit(viewing.unitId);
-        if (await assertUnitInClientScope(req, vUnit?.propertyId)) {
-          return res.status(403).json({ message: "Unit is outside your portfolio" });
-        }
-      }
-      await db.delete(unitViewings).where(eq(unitViewings.id, req.params.viewingId as string));
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Failed to delete viewing" });
-    }
+    try { await deleteTrackerViewing(req, String(req.params.viewingId)); res.json({ success: true }); }
+    catch (err: any) { res.status(err instanceof ViewingError ? err.status : 500).json({ message: err.message }); }
   });
 
   // --- Unit Offers ---
@@ -7370,31 +7349,17 @@ These terms are indicative only and do not constitute a binding agreement.`;
       if (await assertUnitInClientScope(req, oUnit?.propertyId)) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
-      const { unitOffers, insertUnitOfferSchema } = await import("@shared/schema");
-      const parsed = insertUnitOfferSchema.safeParse({ ...req.body, unitId: req.params.id });
-      if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
-      const [row] = await db.insert(unitOffers).values(parsed.data).returning();
-      res.json(row);
+      res.json(await createTrackerOffer(req, String(req.params.id), req.body));
     } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Failed to add offer" });
+      res.status(err instanceof ViewingError ? err.status : 500).json({ message: err?.message || "Failed to add offer" });
     }
   });
 
   app.patch("/api/available-units/offers/:offerId", requireAuth, async (req, res) => {
     try {
-      const { unitOffers, insertUnitOfferSchema } = await import("@shared/schema");
-      const [offer] = await db.select().from(unitOffers).where(eq(unitOffers.id, req.params.offerId as string));
-      if (!offer) return res.status(404).json({ message: "Offer not found" });
-      const oUnit = await storage.getAvailableUnit(offer.unitId);
-      if (await assertUnitInClientScope(req, oUnit?.propertyId)) {
-        return res.status(403).json({ message: "Unit is outside your portfolio" });
-      }
-      const parsed = insertUnitOfferSchema.partial().omit({ unitId: true }).safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
-      const [row] = await db.update(unitOffers).set(parsed.data).where(eq(unitOffers.id, req.params.offerId as string)).returning();
-      res.json(row);
+      res.json(await patchTrackerOffer(req, String(req.params.offerId), req.body));
     } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Failed to update offer" });
+      res.status(err instanceof ViewingError ? err.status : 500).json({ message: err?.message || "Failed to update offer" });
     }
   });
 
@@ -10055,4 +10020,3 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
 
   return httpServer;
 }
-

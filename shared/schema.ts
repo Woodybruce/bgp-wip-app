@@ -1859,7 +1859,7 @@ export type AvailableUnit = typeof availableUnits.$inferSelect;
 
 export const unitViewings = pgTable("unit_viewings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  unitId: varchar("unit_id").notNull(),
+  unitId: varchar("unit_id"), // unresolved diary bookings stay in the needs-details queue
   companyName: text("company_name"),
   contactName: text("contact_name"),
   contactId: varchar("contact_id"),
@@ -1871,6 +1871,19 @@ export const unitViewings = pgTable("unit_viewings", {
   outcome: text("outcome"),
   source: text("source"), // 'diary' when auto-synced from an Outlook calendar event; null = manual
   calendarEventId: text("calendar_event_id"), // Graph iCalUId — idempotent upsert key for synced viewings
+  bookingId: text("booking_id"), // shared by the per-unit records of a tour
+  agentContactId: varchar("agent_contact_id"),
+  ownerUserId: varchar("owner_user_id"),
+  requirementId: varchar("requirement_id"),
+  status: text("status").notNull().default("scheduled"),
+  detailsConfirmedAt: timestamp("details_confirmed_at", { withTimezone: true }),
+  outcomeRecordedAt: timestamp("outcome_recorded_at", { withTimezone: true }),
+  outcomeByUserId: varchar("outcome_by_user_id"),
+  nextAction: text("next_action"),
+  followUpDate: text("follow_up_date"),
+  sourceDetails: jsonb("source_details"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1897,6 +1910,8 @@ export const unitOffers = pgTable("unit_offers", {
   comments: text("comments"),
   source: text("source"), // 'email' when auto-detected from a synced inbox; null = manual
   emailConversationId: text("email_conversation_id"), // Graph conversationId — dedupe key so one offer thread = one row
+  viewingId: varchar("viewing_id"),
+  confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

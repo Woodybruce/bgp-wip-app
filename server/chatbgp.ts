@@ -3525,7 +3525,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "log_viewing",
-      description: "Log a viewing for an investment tracker item or a leasing unit. Search for the item first to get the ID.",
+      description: "Log a viewing for an investment tracker item or a leasing unit. Search first for the unit and confirmed CRM IDs. For leasing, companyId must be the brand being represented, never an agent's employer; put the agent in agentContactId. Names alone save a record needing details, not a fully linked requirement. Only log an outcome the user has reported.",
       parameters: {
         type: "object",
         properties: {
@@ -3533,11 +3533,19 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           entityId: { type: "string", description: "The investment tracker ID or unit ID" },
           company: { type: "string", description: "Company/party viewing" },
           contact: { type: "string", description: "Contact name" },
+          companyId: { type: "string", description: "Confirmed viewing brand CRM ID (leasing only); never infer from an agency employer" },
+          contactId: { type: "string", description: "Confirmed contact employed by that brand (leasing only)" },
+          agentContactId: { type: "string", description: "Named representing agent CRM contact ID (leasing only)" },
+          ownerUserId: { type: "string", description: "Responsible BGP user ID; defaults to the signed-in staff member" },
+          requirementId: { type: "string", description: "Existing leasing requirement ID belonging to the viewing brand" },
           viewingDate: { type: "string", description: "Date of viewing (YYYY-MM-DD)" },
           viewingTime: { type: "string", description: "Time of viewing (HH:MM)" },
           attendees: { type: "string", description: "Who attended" },
           notes: { type: "string" },
-          outcome: { type: "string", description: "e.g. Interested, Not Interested, Follow-up, Offer Made" },
+          outcome: { type: "string", description: "Leasing: Interested, Not Interested, Follow Up, Second Viewing, Offer Expected, Offer Received, or No Show. Preserve reported investment outcomes." },
+          status: { type: "string", enum: ["scheduled", "completed", "cancelled", "no_show", "not_leasing"], description: "Leasing status; only completed when an actual outcome was reported" },
+          nextAction: { type: "string", description: "Agreed leasing follow-up action" },
+          followUpDate: { type: "string", description: "Follow-up date (YYYY-MM-DD)" },
         },
         required: ["entityType", "entityId", "viewingDate"],
       },
@@ -3548,7 +3556,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "log_offer",
-      description: "Log an offer for an investment tracker item or a leasing unit. Search first to find the record ID.",
+      description: "Record an actual offer the user explicitly asks to log, for an investment tracker item or leasing unit. Search first for its ID. For leasing, include viewingId when known: the confirmed viewing supplies the unit's brand and contact. Otherwise use a verified companyId for the offering brand, never the agent's employer. Do not use this tool to confirm a tentative offer detected in an email.",
       parameters: {
         type: "object",
         properties: {
@@ -3556,6 +3564,10 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           entityId: { type: "string", description: "The investment tracker ID or unit ID" },
           company: { type: "string", description: "Company making the offer" },
           contact: { type: "string", description: "Contact name" },
+          viewingId: { type: "string", description: "Confirmed leasing viewing ID for this unit; its brand/contact links take precedence over names in this request" },
+          companyId: { type: "string", description: "Verified offering brand CRM ID when no viewing is linked (leasing only)" },
+          contactId: { type: "string", description: "Verified contact at the offering brand (leasing only)" },
+          agentContactId: { type: "string", description: "Agent contact explicitly linked to the offering brand, when the offer came through its agent" },
           offerDate: { type: "string", description: "Date of offer (YYYY-MM-DD)" },
           offerPrice: { type: "number", description: "Offer price (for investment)" },
           niy: { type: "number", description: "Net initial yield % (for investment)" },
@@ -6198,6 +6210,76 @@ export async function extractTextFromFile(filePath: string, originalName: string
 
 const CHAT_UPLOADS_DIR = path.join(process.cwd(), "ChatBGP", "chat-files");
 
+async function executeLeasingActivity(fnName: "log_viewing" | "log_offer", fnArgs: any, req: Request): Promise<any> {
+  if (!req?.session?.userId && !req?.tokenUserId) return { success: false, error: "Sign in before recording a leasing viewing or offer." };
+  if (fnArgs.entityType !== "unit" || typeof fnArgs.entityId !== "string" || !fnArgs.entityId.trim()) {
+    return { success: false, error: "Choose the leasing tracker unit first." };
+  }
+  const { createTrackerViewing, createTrackerOffer } = await import("./leasing-viewings");
+  if (fnName === "log_viewing") {
+    const record = await createTrackerViewing(req, fnArgs.entityId, { ...fnArgs, companyName: fnArgs.company, contactName: fnArgs.contact });
+    const { viewingMissingDetails } = await import("../shared/viewing-workflow");
+    const missingDetails = viewingMissingDetails(record);
+    const needsDetails = missingDetails.length > 0 || !record.detailsConfirmedAt;
+    return { success: true, action: "logged", entity: "unit viewing", id: record.id,
+      unitId: record.unitId, companyId: record.companyId, company: record.companyName, date: record.viewingDate,
+      status: record.status, needsDetails, missingDetails,
+      instruction: needsDetails ? "The viewing is saved under Needs details. Explain what is still missing; do not claim it is fully linked to a brand or requirement."
+        : "The viewing is saved in the existing Letting Tracker and viewing calendar." };
+  }
+  const { storage } = await import("./storage");
+  const unit = await storage.getAvailableUnit(fnArgs.entityId);
+  if (!unit) return { success: false, error: "Tracker unit not found. Search for the unit before logging its offer." };
+  const scope = await resolveCompanyScope(req);
+  if (scope && !(await isPropertyInScope(scope, unit.propertyId))) return { success: false, error: "Unit is outside your portfolio." };
+  const { calendarDateValue } = await import("../shared/calendar-date");
+  if (!fnArgs.offerDate || calendarDateValue(fnArgs.offerDate) !== fnArgs.offerDate) return { success: false, error: "Set a valid offer date (YYYY-MM-DD)." };
+  const { pool } = await import("./db");
+  const { insertUnitOfferSchema } = await import("@shared/schema");
+  let identity: any;
+  if (fnArgs.viewingId) {
+    identity = { viewingId: fnArgs.viewingId };
+  } else {
+    identity = { companyId: null, companyName: fnArgs.company || null, contactId: null, contactName: fnArgs.contact || null };
+    if (fnArgs.companyId) {
+      const brand = (await pool.query(`SELECT id,name,company_type FROM crm_companies WHERE id=$1 AND merged_into_id IS NULL`, [fnArgs.companyId])).rows[0];
+      if (!brand || !/^tenant(?:\s|-|$)/i.test(brand.company_type || "")) return { success: false, error: "Choose the offering brand, rather than the agent's employer." };
+      if (scope) {
+        const { isClientVisibleBrand } = await import("./company-scope");
+        if (!(await isClientVisibleBrand(brand.id, scope))) return { success: false, error: "Brand is outside your CRM." };
+      }
+      identity.companyId = brand.id; identity.companyName = brand.name;
+    }
+    if (fnArgs.contactId) {
+      const contact = (await pool.query(`SELECT id,name,company_id FROM crm_contacts WHERE id=$1`, [fnArgs.contactId])).rows[0];
+      if (!contact || !identity.companyId || contact.company_id !== identity.companyId) return { success: false, error: "Choose a contact at the offering brand, or use its representing agent." };
+      identity.contactId = contact.id; identity.contactName = contact.name;
+    }
+    if (fnArgs.agentContactId) {
+      if (!identity.companyId) return { success: false, error: "Choose the offering brand before linking its agent." };
+      const agent = (await pool.query(`SELECT ct.id,ct.name FROM crm_contacts ct WHERE ct.id=$2 AND (
+        EXISTS (SELECT 1 FROM brand_agent_representations ar WHERE ar.brand_company_id=$1 AND ar.primary_contact_id=ct.id
+          AND ar.agent_type='tenant_rep' AND ar.end_date IS NULL AND (ar.start_date IS NULL OR ar.start_date<=now()))
+        OR EXISTS (SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id=$1 AND r.agent_contact_id=ct.id
+          AND lower(trim(COALESCE(r.status,''))) IN ('','active')))`, [identity.companyId, fnArgs.agentContactId])).rows[0];
+      if (!agent) return { success: false, error: "Choose an agent currently linked to this brand." };
+      identity.contactId = agent.id; identity.contactName = agent.name;
+    }
+  }
+  const parsed = insertUnitOfferSchema.safeParse({ unitId: fnArgs.entityId, ...identity,
+    offerDate: fnArgs.offerDate, rentPa: fnArgs.rentPa, rentFreeMonths: fnArgs.rentFreeMonths,
+    termYears: fnArgs.termYears, breakOption: fnArgs.breakOption, incentives: fnArgs.incentives,
+    premium: fnArgs.premium, fittingOutContribution: fnArgs.fittingOutContribution,
+    status: fnArgs.status || "Pending", comments: fnArgs.notes, confirmedAt: new Date() });
+  if (!parsed.success) return { success: false, error: parsed.error.issues.map(issue => issue.message).join("; ") };
+  const record = await createTrackerOffer(req, fnArgs.entityId, parsed.data);
+  return { success: true, action: "logged", entity: "leasing offer", id: record.id, unitId: record.unitId,
+    viewingId: record.viewingId || null, companyId: record.companyId, company: record.companyName,
+    needsDetails: !record.companyId, missingDetails: record.companyId ? [] : ["Link the offering brand to include it in conversion reporting"],
+    instruction: record.companyId ? "The explicitly reported offer is saved on the existing Letting Tracker."
+      : "The offer is saved, but the brand still needs linking. Do not claim it is included in brand conversion reporting." };
+}
+
 export async function executeCrmToolRaw(
   fnName: string,
   fnArgs: any,
@@ -6746,12 +6828,7 @@ export async function executeCrmToolRaw(
         attendees: fnArgs.attendees, notes: fnArgs.notes, outcome: fnArgs.outcome,
       });
     } else {
-      const { unitViewings } = await import("@shared/schema");
-      await db.insert(unitViewings).values({
-        unitId: fnArgs.entityId, companyName: fnArgs.company, contactName: fnArgs.contact,
-        viewingDate: fnArgs.viewingDate, viewingTime: fnArgs.viewingTime,
-        attendees: fnArgs.attendees, notes: fnArgs.notes, outcome: fnArgs.outcome,
-      });
+      return { data: await executeLeasingActivity("log_viewing", fnArgs, req) };
     }
     return { data: { success: true, action: "logged", entity: `${fnArgs.entityType} viewing`, company: fnArgs.company, date: fnArgs.viewingDate } };
   }
@@ -6766,14 +6843,7 @@ export async function executeCrmToolRaw(
         status: fnArgs.status || "Pending", notes: fnArgs.notes,
       });
     } else {
-      const { unitOffers } = await import("@shared/schema");
-      await db.insert(unitOffers).values({
-        unitId: fnArgs.entityId, companyName: fnArgs.company, contactName: fnArgs.contact,
-        offerDate: fnArgs.offerDate, rentPa: fnArgs.rentPa, rentFreeMonths: fnArgs.rentFreeMonths,
-        termYears: fnArgs.termYears, breakOption: fnArgs.breakOption, incentives: fnArgs.incentives,
-        premium: fnArgs.premium, fittingOutContribution: fnArgs.fittingOutContribution,
-        status: fnArgs.status || "Pending", comments: fnArgs.notes,
-      });
+      return { data: await executeLeasingActivity("log_offer", fnArgs, req) };
     }
     return { data: { success: true, action: "logged", entity: `${fnArgs.entityType} offer`, company: fnArgs.company } };
   }
@@ -12277,19 +12347,11 @@ export async function handleCrmToolCall(
       const reply = await summaryHelper({ success: true, action: "logged", entity: "investment viewing", company: fnArgs.company, date: fnArgs.viewingDate });
       return { handled: true, response: { reply: reply || `Viewing logged for ${fnArgs.company || "unknown"} on ${fnArgs.viewingDate}.` } };
     } else {
-      const { unitViewings } = await import("@shared/schema");
-      const [created] = await db.insert(unitViewings).values({
-        unitId: fnArgs.entityId,
-        companyName: fnArgs.company,
-        contactName: fnArgs.contact,
-        viewingDate: fnArgs.viewingDate,
-        viewingTime: fnArgs.viewingTime,
-        attendees: fnArgs.attendees,
-        notes: fnArgs.notes,
-        outcome: fnArgs.outcome,
-      }).returning();
-      const reply = await summaryHelper({ success: true, action: "logged", entity: "unit viewing", company: fnArgs.company, date: fnArgs.viewingDate });
-      return { handled: true, response: { reply: reply || `Viewing logged for ${fnArgs.company || "unknown"} on ${fnArgs.viewingDate}.` } };
+      const result = await executeLeasingActivity("log_viewing", fnArgs, req);
+      const reply = !result.success ? result.error : result.needsDetails
+        ? `Viewing saved in the Letting Tracker. Still needed: ${result.missingDetails.join("; ") || "confirm the viewing details"}.`
+        : `Viewing saved in the Letting Tracker and viewing calendar for ${result.company || "the confirmed brand"} on ${result.date}.`;
+      return { handled: true, response: { reply, ...(result.success ? { action: { type: "crm_updated", entityType: "unit", id: fnArgs.entityId } } : {}) } };
     }
   }
 
@@ -12310,24 +12372,11 @@ export async function handleCrmToolCall(
       const reply = await summaryHelper({ success: true, action: "logged", entity: "investment offer", company: fnArgs.company, price: fnArgs.offerPrice });
       return { handled: true, response: { reply: reply || `Offer logged from ${fnArgs.company || "unknown"} for £${fnArgs.offerPrice?.toLocaleString() || "TBC"}.` } };
     } else {
-      const { unitOffers } = await import("@shared/schema");
-      const [created] = await db.insert(unitOffers).values({
-        unitId: fnArgs.entityId,
-        companyName: fnArgs.company,
-        contactName: fnArgs.contact,
-        offerDate: fnArgs.offerDate,
-        rentPa: fnArgs.rentPa,
-        rentFreeMonths: fnArgs.rentFreeMonths,
-        termYears: fnArgs.termYears,
-        breakOption: fnArgs.breakOption,
-        incentives: fnArgs.incentives,
-        premium: fnArgs.premium,
-        fittingOutContribution: fnArgs.fittingOutContribution,
-        status: fnArgs.status || "Pending",
-        comments: fnArgs.notes,
-      }).returning();
-      const reply = await summaryHelper({ success: true, action: "logged", entity: "leasing offer", company: fnArgs.company, rent: fnArgs.rentPa });
-      return { handled: true, response: { reply: reply || `Offer logged from ${fnArgs.company || "unknown"}.` } };
+      const result = await executeLeasingActivity("log_offer", fnArgs, req);
+      const reply = !result.success ? result.error : result.needsDetails
+        ? "Offer saved in the Letting Tracker. Link the offering brand before it can be included in conversion reporting."
+        : `Offer saved in the Letting Tracker for ${result.company || "the confirmed brand"}${result.viewingId ? " and linked to its viewing" : ""}.`;
+      return { handled: true, response: { reply, ...(result.success ? { action: { type: "crm_updated", entityType: "unit", id: fnArgs.entityId } } : {}) } };
     }
   }
 

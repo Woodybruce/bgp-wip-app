@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { LeasingViewings, type LeasingViewing } from "@/components/leasing-viewings";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { SourceEmailDialog, SourceEventDialog } from "@/components/tracker-source";
 import { Card, CardContent } from "@/components/ui/card";
@@ -411,6 +412,21 @@ export default function AvailableUnitsPage() {
   // carry ?propertyId= and ?status= — honour them on first mount (they
   // were silently ignored before).
   const urlParam = (k: string) => { try { return new URLSearchParams(window.location.search).get(k) || "all"; } catch { return "all"; } };
+  const [trackerWorkspace, setTrackerWorkspace] = useState<"units" | "viewings" | "reports">(() => {
+    const value = urlParam("workspace") !== "all" ? urlParam("workspace") : urlParam("tab");
+    return value === "viewings" || value === "reports" ? value : "units";
+  });
+  const [focusedViewingId, setFocusedViewingId] = useState<string | null>(() => {
+    const value = urlParam("viewing") !== "all" ? urlParam("viewing") : urlParam("viewingId");
+    return value === "all" ? null : value;
+  });
+  const openViewingWorkspace = (id?: string) => {
+    setViewingsUnit(null);
+    setAddViewingOpen(false);
+    setFocusedViewingId(id || null);
+    setTrackerWorkspace("viewings");
+  };
+  const [focusedTrackerUnitId, setFocusedTrackerUnitId] = useState<string | null>(() => urlParam("unitId") === "all" ? null : urlParam("unitId"));
   const [statusFilter, setStatusFilter] = useState(() => urlParam("status"));
   // Compact header (team feedback: the fixed header block was so tall the
   // table barely had scroll room). Hides the FY strip and swaps the big
@@ -521,6 +537,7 @@ export default function AvailableUnitsPage() {
   const [offerForm, setOfferForm] = useState(emptyOfferForm);
   const [editingViewingId, setEditingViewingId] = useState<string | null>(null);
   const [editingOfferId, setEditingOfferId] = useState<string | null>(null);
+  const [offerViewingId, setOfferViewingId] = useState<string | null>(null);
   const [companySearchOpen, setCompanySearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [contactSearchOpen, setContactSearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [wipUnit, setWipUnit] = useState<AvailableUnit | null>(null);
@@ -727,6 +744,7 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", viewingsUnit?.id, "viewings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] });
       setAddViewingOpen(false);
       setViewingForm(emptyViewingForm());
       toast({ title: "Viewing added" });
@@ -739,6 +757,7 @@ export default function AvailableUnitsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", viewingsUnit?.id, "viewings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] });
       setAddViewingOpen(false);
       setEditingViewingId(null);
       setViewingForm(emptyViewingForm());
@@ -753,19 +772,22 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", viewingsUnit?.id, "viewings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] });
       toast({ title: "Viewing removed" });
     },
     onError: (e: any) => toast({ title: "Couldn't remove viewing", description: e.message, variant: "destructive" }),
   });
 
   const addOfferMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", `/api/available-units/${offersUnit?.id}/offers`, data),
+    mutationFn: (data: any) => apiRequest("POST", `/api/available-units/${offersUnit?.id}/offers`, { ...data, ...(offerViewingId ? { viewingId: offerViewingId } : {}) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", offersUnit?.id, "offers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] });
       setAddOfferOpen(false);
       setOfferForm(emptyOfferForm());
+      setOfferViewingId(null);
       toast({ title: "Offer added" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -776,6 +798,7 @@ export default function AvailableUnitsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", offersUnit?.id, "offers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] });
       setAddOfferOpen(false);
       setEditingOfferId(null);
       setOfferForm(emptyOfferForm());
@@ -790,6 +813,7 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", offersUnit?.id, "offers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] });
       toast({ title: "Offer removed" });
     },
     onError: (e: any) => toast({ title: "Couldn't remove offer", description: e.message, variant: "destructive" }),
@@ -1339,7 +1363,7 @@ export default function AvailableUnitsPage() {
   // set so they always mirror the toolbar; the status pill then applies
   // on top for the table.
   const toolbarFiltered = useMemo(() => {
-    let result = teamUnits;
+    let result = focusedTrackerUnitId ? units.filter(u => u.id === focusedTrackerUnitId) : teamUnits;
     if (propertyFilter !== "all") result = result.filter(u => u.propertyId === propertyFilter);
     if (assetClassFilter !== "all") result = result.filter(u => u.useClass === assetClassFilter);
     if (locationFilter !== "all") result = result.filter(u => u.location === locationFilter);
@@ -1377,9 +1401,10 @@ export default function AvailableUnitsPage() {
       });
     }
     return result;
-  }, [teamUnits, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies, activityFilter, viewingsCounts, offersCounts, interestCounts]);
+  }, [units, focusedTrackerUnitId, teamUnits, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies, activityFilter, viewingsCounts, offersCounts, interestCounts]);
 
   const filtered = useMemo(() => {
+    if (focusedTrackerUnitId) return toolbarFiltered;
     // The Letting Tracker is the marketing pipeline (REP / AVA / NEG). Once a
     // unit moves to Solicitors it lives on the Deals board; we hide SOL+ from
     // the default view here so the tracker stays focused. Users can still
@@ -1416,7 +1441,7 @@ export default function AvailableUnitsPage() {
       result = [...result].sort((a, b) => orderOf(a) - orderOf(b));
     }
     return result;
-  }, [toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies, effByUnit]);
+  }, [focusedTrackerUnitId, toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies, effByUnit]);
   const historicCount = useMemo(
     () => toolbarFiltered.filter(u => HISTORIC_PILL_STATUSES.includes((effByUnit[u.id] || "AVA") as DealStatusCode)).length,
     [toolbarFiltered, effByUnit],
@@ -1528,15 +1553,15 @@ export default function AvailableUnitsPage() {
             {/* Recount under active search/filters — the header disagreeing
                 with the chips/table was the same class as the deals-board
                 "All" chip fix (UX #63). */}
-            {filtered.length !== teamUnits.length
+            {trackerWorkspace === "viewings" ? "Calendar bookings, outcomes and next actions" : trackerWorkspace === "reports" ? "Viewing activity and confirmed offer conversion" : filtered.length !== teamUnits.length
               ? `${filtered.length} of ${teamUnits.length} units`
               : `${teamUnits.length} unit${teamUnits.length !== 1 ? "s" : ""}`}
-            {isClientTracker && (
+            {isClientTracker && trackerWorkspace === "units" && (
               <span> — live deals in progress: units being marketed, under offer and completing. Updates flow to the Leasing Schedule and back to the Tenancy Schedule.</span>
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className={trackerWorkspace === "units" ? "flex items-center gap-2" : "hidden"}>
         {auUser?.isAdmin && (
           <Button
             variant="outline"
@@ -1596,6 +1621,36 @@ export default function AvailableUnitsPage() {
         )}
         </div>
       </div>
+
+      <div className="flex flex-wrap gap-1.5" aria-label="Letting Tracker views">
+        {(["units", "viewings", "reports"] as const).map(view => (
+          <Pill key={view} active={trackerWorkspace === view} aria-pressed={trackerWorkspace === view} onClick={() => { setTrackerWorkspace(view); setFocusedViewingId(null); }} data-testid={`tracker-workspace-${view}`}>
+            {view === "units" ? "Units" : view === "viewings" ? "Viewings" : "Reports"}
+          </Pill>
+        ))}
+      </div>
+      {trackerWorkspace !== "units" && (
+        <LeasingViewings
+          mode={trackerWorkspace}
+          units={units}
+          isClient={isClientTracker} currentUserId={auUser?.id}
+          initialPropertyId={urlParam("propertyId") === "all" ? undefined : urlParam("propertyId")}
+          initialBrandId={urlParam("brandId") === "all" ? undefined : urlParam("brandId")}
+          focusedViewingId={focusedViewingId}
+          onFocusHandled={() => setFocusedViewingId(null)}
+          onRecordOffer={(viewing: LeasingViewing) => {
+            const unit = units.find(u => u.id === viewing.unitId);
+            if (!unit) return;
+            setOffersUnit(unit);
+            setOfferViewingId(viewing.id);
+            setEditingOfferId(null);
+            setOfferForm({ ...emptyOfferForm(), companyId: viewing.companyId || "", companyName: viewing.companyName || "", contactId: viewing.contactId || viewing.agentContactId || "", contactName: viewing.contactName || viewing.agentContactName || "" });
+            setAddOfferOpen(true);
+          }}
+        />
+      )}
+      {trackerWorkspace === "units" && <>
+      {focusedTrackerUnitId && <div className="flex flex-wrap justify-between items-center gap-2 rounded-lg border bg-card px-4 py-3"><p className="text-sm">Showing the unit linked to this viewing.</p><Button variant="outline" size="sm" onClick={() => { setFocusedTrackerUnitId(null); setPropertyFilter("all"); }}>Show all units</Button></div>}
 
       {/* Single thin FY activity strip — was two full cards stacked
           (~240px) with bar charts that were 16px tall and rarely
@@ -2761,6 +2816,8 @@ export default function AvailableUnitsPage() {
         );
       })()}
 
+      </>}
+
       {/* Stage 3b — unified Add-Unit dialog (behind VITE_UNIFIED_ADD_UNIT). */}
       <UnifiedAddUnitDialog
         open={unifiedAddOpen}
@@ -3269,6 +3326,7 @@ export default function AvailableUnitsPage() {
             comments: [o.comments, f.notes].filter(Boolean).join(" — "),
           });
           setEditingOfferId(o.id);
+                        setOfferViewingId(null);
           setAddOfferOpen(true);
           setSourceEmail(null);
         }}
@@ -3393,6 +3451,7 @@ export default function AvailableUnitsPage() {
             </DialogDescription>
           </DialogHeader>
 
+          <Button variant="outline" size="sm" onClick={() => openViewingWorkspace()} data-testid="unit-open-viewing-workspace">Open viewing calendar</Button>
           {viewingsForUnit.length === 0 && !addViewingOpen && (
             <div className="text-center py-6 text-muted-foreground text-sm">No viewings recorded yet</div>
           )}
@@ -3441,6 +3500,7 @@ export default function AvailableUnitsPage() {
                       (no company/contact), repeating it here read every
                       quick-logged viewing twice. */}
                   {v.attendees && (v.companyName || v.contactName) && <div className="text-xs text-muted-foreground">Attendees: {v.attendees}</div>}
+                  <Button variant="outline" size="sm" onClick={() => openViewingWorkspace(v.id)} data-testid={`viewing-report-${v.id}`}>Report outcome / details</Button>
                   {v.outcome && <div className="text-xs"><Badge variant="outline">{v.outcome}</Badge></div>}
                   {v.notes && <div className="text-xs text-muted-foreground">{v.notes}</div>}
                 </div>
@@ -3527,7 +3587,7 @@ export default function AvailableUnitsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!offersUnit} onOpenChange={v => { if (!v) { setOffersUnit(null); setAddOfferOpen(false); setEditingOfferId(null); setOfferForm(emptyOfferForm()); } }}>
+      <Dialog open={!!offersUnit} onOpenChange={v => { if (!v) { setOffersUnit(null); setAddOfferOpen(false); setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -3575,6 +3635,7 @@ export default function AvailableUnitsPage() {
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit offer" title="Edit offer" onClick={() => {
                         setOfferForm({ companyName: o.companyName || "", companyId: o.companyId || "", contactName: o.contactName || "", contactId: o.contactId || "", offerDate: o.offerDate || "", rentPa: o.rentPa != null ? String(o.rentPa) : "", rentFreeMonths: o.rentFreeMonths != null ? String(o.rentFreeMonths) : "", termYears: o.termYears != null ? String(o.termYears) : "", breakOption: o.breakOption || "", incentives: o.incentives || "", premium: o.premium != null ? String(o.premium) : "", fittingOutContribution: o.fittingOutContribution != null ? String(o.fittingOutContribution) : "", comments: o.comments || "" });
                         setEditingOfferId(o.id);
+                        setOfferViewingId(null);
                         setAddOfferOpen(true);
                       }} data-testid={`offer-edit-${o.id}`}>
                         <Pencil className="h-3.5 w-3.5" />
@@ -3671,7 +3732,7 @@ export default function AvailableUnitsPage() {
                 <Textarea value={offerForm.comments} onChange={e => setOfferForm(f => ({ ...f, comments: e.target.value }))} rows={2} data-testid="offer-comments" />
               </div>
               <div className="flex gap-2 justify-end">
-                <Button variant="outline" size="sm" onClick={() => { setAddOfferOpen(false); setEditingOfferId(null); setOfferForm(emptyOfferForm()); }}>Cancel</Button>
+                <Button variant="outline" size="sm" onClick={() => { setAddOfferOpen(false); setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); }}>Cancel</Button>
                 <Button size="sm" disabled={!offerForm.offerDate || addOfferMutation.isPending || updateOfferMutation.isPending} onClick={() => {
                   const payload: any = { ...offerForm };
                   // On add, empty numeric fields are omitted; on edit they clear the stored value.
@@ -3688,7 +3749,7 @@ export default function AvailableUnitsPage() {
               </div>
             </div>
           ) : (
-            <Button variant="outline" size="sm" className="w-full" onClick={() => { setEditingOfferId(null); setOfferForm(emptyOfferForm()); setAddOfferOpen(true); }} data-testid="offer-add">
+            <Button variant="outline" size="sm" className="w-full" onClick={() => { setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); setAddOfferOpen(true); }} data-testid="offer-add">
               <Plus className="h-3.5 w-3.5 mr-1" /> Add Offer
             </Button>
           )}

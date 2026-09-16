@@ -1,3 +1,4 @@
+import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
 import { ContactImportResults, type ContactImportResult } from "@/components/contact-import-results";
@@ -1788,6 +1789,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </div>
             )}
 
+            {isBrand && <BrandViewingActivity companyId={companyId} />}
             {/* Active requirements moved into the unified Expansion intelligence zone below. */}
 
             {/* Live tenancies — every property on the platform where

@@ -1,4 +1,6 @@
 import ReactDOM from "react-dom";
+import { calendarDateValue } from "@shared/calendar-date";
+import type { ViewingRecord } from "@shared/viewing-workflow";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { useTeam } from "@/lib/team-context";
@@ -277,6 +279,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
   const [matchItem, setMatchItem] = useState<CrmRequirementsLeasing | null>(null);
   const [pipnetSyncing, setPipnetSyncing] = useState(false);
   const [freshOnly, setFreshOnly] = useState(false);
+  const [recentViewingOnly, setRecentViewingOnly] = useState(false);
   const [fitsOnly, setFitsOnly] = useState(false);
   const [newBrandOpen, setNewBrandOpen] = useState(false);
   const [discussingId, setDiscussingId] = useState<string | null>(null);
@@ -468,6 +471,16 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
   const { data: items = [], isLoading, error } = useQuery<CrmRequirementsLeasing[]>({
     queryKey: ["/api/crm/requirements-leasing"],
   });
+
+  const recentViewingQuery = useQuery<{ viewings: ViewingRecord[] }>({ queryKey: ["/api/leasing-viewings"] });
+  const recentViewings = useMemo(() => {
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    const cutoff = new Date(`${today}T12:00:00Z`);
+    cutoff.setUTCDate(cutoff.getUTCDate() - 89);
+    const firstDate = cutoff.toISOString().slice(0, 10);
+    return (recentViewingQuery.data?.viewings || []).filter(v => calendarDateValue(v.viewingDate) === v.viewingDate && v.status === "completed" && !!v.detailsConfirmedAt && !!v.companyId && !!v.unitId && v.viewingDate >= firstDate && v.viewingDate <= today).sort((a, b) => b.viewingDate.localeCompare(a.viewingDate));
+  }, [recentViewingQuery.data]);
+  const recentlyViewingBrands = useMemo(() => new Set(recentViewings.map(v => v.companyId)), [recentViewings]);
 
   // Requirement → vacancy matches ("Fits" column). Server-scoped: staff see
   // fits across every instructed unit, a Landsec login only their portfolio.
@@ -733,6 +746,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
       if (companyFilter && item.companyId !== companyFilter) return false;
+      if (recentViewingOnly && (!item.companyId || !recentlyViewingBrands.has(item.companyId))) return false;
       if (teamUserIds) {
         const ids = item.bgpContactUserIds || (item.bgpContactUserId ? [item.bgpContactUserId] : []);
         if (ids.length > 0 && !ids.some(id => teamUserIds.has(id))) return false;
@@ -771,7 +785,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       }
       return true;
     });
-  }, [items, groupFilter, columnFilters, search, teamUserIds, companyFilter, freshOnly, fitsOnly, fitsMap]);
+  }, [items, groupFilter, columnFilters, search, teamUserIds, companyFilter, freshOnly, fitsOnly, fitsMap, recentViewingOnly, recentlyViewingBrands]);
 
   const activeItems = useMemo(() => filteredItems.filter((i) => i.status === "Active" || !i.status), [filteredItems]);
   const pastItems = useMemo(() => filteredItems.filter((i) => i.status === "Past"), [filteredItems]);
@@ -838,6 +852,23 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       </div>
       )}
 
+      <div className="flex flex-wrap items-center gap-2">
+        <Pill active={recentViewingOnly} aria-pressed={recentViewingOnly} onClick={() => setRecentViewingOnly(v => !v)} data-testid="requirements-recently-viewing">Recently viewing · 90 days <span className="font-mono tabular-nums">{items.filter(item => item.companyId && recentlyViewingBrands.has(item.companyId)).length}</span></Pill>
+        <span className="text-[11px] text-muted-foreground">Confirmed attended viewings, linked to the brand's requirements.</span>
+      </div>
+      {recentViewingOnly && <Card><CardContent className="p-4 space-y-3">
+        <h3 className="text-sm font-semibold">Recent viewing evidence</h3>
+        {recentViewingQuery.isLoading ? <Skeleton className="h-24 w-full" /> : recentViewingQuery.isError ? <div className="space-y-2"><p className="text-sm">Viewing evidence could not be loaded.</p><Button variant="outline" size="sm" onClick={() => void recentViewingQuery.refetch()}>Refresh</Button></div> : <>
+          {recentViewings.filter(v => filteredItems.some(item => item.companyId === v.companyId)).slice(0, 12).map(viewing => <div key={viewing.id} className="rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="min-w-0"><p className="text-sm font-semibold break-words">{viewing.companyName}</p><p className="text-[11px] text-muted-foreground break-words">{viewing.propertyName} · {viewing.unitName}{viewing.sqft != null ? ` · ${viewing.sqft.toLocaleString("en-GB")} sq ft` : ""}</p><p className="text-[11px] text-muted-foreground">{new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${viewing.viewingDate}T12:00:00Z`))}{viewing.outcome ? ` · ${viewing.outcome}` : ""}</p></div>
+            <Button variant="outline" size="sm" asChild><a href={`/available?workspace=viewings&viewing=${encodeURIComponent(viewing.id)}`}>Open viewing</a></Button>
+          </div>)}
+          {!filteredItems.length && <p className="text-sm text-muted-foreground">No requirements match the recent viewing evidence and current filters.</p>}
+          <p className="text-[11px] text-muted-foreground">Showing up to 12 recent viewings for these requirements. Actual viewed sizes and locations are evidence only; stated search requirements are unchanged.</p>
+          <Button variant="outline" size="sm" asChild><a href="/available?workspace=viewings">Open viewing calendar</a></Button>
+        </>}
+      </CardContent></Card>}
+
       {/* Demand read-out: what the live requirements say the market wants —
           complements the group cards (use mix) with size, geography and how
           much of that demand fits the caller's own vacancies. */}
@@ -899,11 +930,11 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
             data-testid="input-search-leasing"
           />
         </div>
-        {(search || groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly) && (
+        {(search || groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly || recentViewingOnly) && (
           <Button
             variant="outline"
             size="sm"
-            onClick={() => { setSearch(""); setGroupFilter("all"); setColumnFilters({}); setFreshOnly(false); setFitsOnly(false); }}
+            onClick={() => { setSearch(""); setGroupFilter("all"); setColumnFilters({}); setFreshOnly(false); setFitsOnly(false); setRecentViewingOnly(false); }}
             data-testid="button-clear-leasing-filters"
           >
             <X className="w-3.5 h-3.5 mr-1" />

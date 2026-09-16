@@ -24,6 +24,7 @@ interface EntityComboboxProps {
   value: string | null | undefined;
   onChange: (id: string) => void;
   placeholder?: string;
+  ariaLabel?: string;
   searchPlaceholder?: string;
   emptyText?: string;
   disabled?: boolean;
@@ -60,6 +61,7 @@ export function EntityCombobox({
   value,
   onChange,
   placeholder = "Select…",
+  ariaLabel,
   searchPlaceholder = "Type to search…",
   emptyText = "No matches.",
   disabled = false,
@@ -152,6 +154,7 @@ export function EntityCombobox({
         type="button"
         variant="outline"
         role="combobox"
+        aria-label={ariaLabel}
         aria-expanded={open}
         disabled={disabled}
         data-testid={testId}

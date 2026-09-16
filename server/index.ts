@@ -3060,6 +3060,8 @@ import { registerLegalDDRoutes } from "./legal-dd";
 import { setupSharedMailboxRoutes } from "./shared-mailbox";
 import { registerInteractionRoutes } from "./interactions";
 import { registerTaskSuggestionRoutes } from "./task-suggestions";
+import { ensureLeasingViewingSchema } from "./viewing-schema";
+import { ensureViewingFollowupSchema, runViewingFollowupSweep } from "./viewing-followups";
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
@@ -3533,7 +3535,7 @@ app.use("/api/branding/assets", express.static(
     "/api/notifications", "/api/daily-digest", "/api/activity-feed",
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
-    "/api/available-units", "/api/tasks",
+    "/api/available-units", "/api/leasing-viewings", "/api/tasks",
     // Canonical activity feed — handler scopes clients to their own
     // portfolio and returns sanitised summaries only.
     "/api/activity-summary",
@@ -3641,7 +3643,7 @@ app.use("/api/branding/assets", express.static(
     // the agent"): unit add/edit/delete, viewings, offers, marketing
     // files, deal link. Every handler scope-checks the unit's property
     // against the client's company and strips BGP fee fields.
-    "/api/available-units",
+    "/api/available-units", "/api/leasing-viewings",
     // Clients may add events to their own calendar — the POST forces
     // company_name to the caller's company and created_by to the caller,
     // so events land on their (company-scoped) calendar only; delete is
@@ -4005,8 +4007,14 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   }
   registerLegalDDRoutes(app);
   setupSharedMailboxRoutes(app);
+  await ensureLeasingViewingSchema();
+  await ensureViewingFollowupSchema();
   registerInteractionRoutes(app);
   registerTaskSuggestionRoutes(app);
+  // Reconcile the actual viewing records; external reminder delivery is opt-in.
+  const sweepViewings = () => runViewingFollowupSweep().catch(e => console.warn("[viewing-followups]", e.message));
+  setTimeout(sweepViewings, 60_000).unref();
+  setInterval(sweepViewings, 5 * 60_000).unref();
 
   registerEmailProcessorRoutes(app);
   registerHealthCheckRoutes(app);

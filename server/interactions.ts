@@ -7,6 +7,7 @@ import { eq, desc, and, gte, lte, sql, inArray } from "drizzle-orm";
 
 import { pool } from "./db";
 import { users as usersTable } from "@shared/schema";
+import { parseGraphDateTime } from "./viewing-matching";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -99,9 +100,9 @@ interface ContactMatch {
   companyName: string | null;
 }
 
-async function graphGet(token: string, url: string): Promise<any> {
+async function graphGet(token: string, url: string, headers: Record<string, string> = {}): Promise<any> {
   const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...headers },
   });
   const body = await res.text();
   if (!res.ok) {
@@ -182,16 +183,20 @@ function matchKeywordsToContacts(
   return matches;
 }
 
-async function graphGetPaged(token: string, url: string, maxPages: number = 5): Promise<any[]> {
+async function graphGetPaged(token: string, url: string, maxPages: number = 5, options: { requireComplete?: boolean; headers?: Record<string, string> } = {}): Promise<any[]> {
   const allItems: any[] = [];
   let nextUrl: string | null = url;
   let page = 0;
 
   while (nextUrl && page < maxPages) {
-    const data = await graphGet(token, nextUrl);
+    const data = await graphGet(token, nextUrl, options.headers);
     if (data.value) allItems.push(...data.value);
     nextUrl = data["@odata.nextLink"] || null;
     page++;
+  }
+
+  if (nextUrl && options.requireComplete) {
+    throw new Error(`Calendar sync exceeded ${maxPages} pages; the mailbox was not fully scanned. Retry with a shorter date range.`);
   }
 
   return allItems;
@@ -304,13 +309,6 @@ async function syncEmailsForUser(
   return count;
 }
 
-function parseGraphDateTime(start: { dateTime: string; timeZone: string }): Date {
-  if (start.timeZone === "UTC") {
-    return new Date(start.dateTime + "Z");
-  }
-  return new Date(start.dateTime);
-}
-
 async function syncCalendarForUser(
   token: string,
   userEmail: string,
@@ -325,8 +323,8 @@ async function syncCalendarForUser(
   let count = 0;
 
   try {
-    const url = `${GRAPH_BASE}/users/${userEmail}/calendarView?startDateTime=${start}&endDateTime=${end}&$select=id,iCalUId,subject,start,end,attendees,organizer,bodyPreview,location,categories,isCancelled&$top=100&$orderby=start/dateTime&Prefer=outlook.timezone="UTC"`;
-    const events = await graphGetPaged(token, url, 3);
+    const url = `${GRAPH_BASE}/users/${encodeURIComponent(userEmail)}/calendarView?startDateTime=${start}&endDateTime=${end}&$select=id,iCalUId,subject,start,end,attendees,organizer,bodyPreview,location,categories,isCancelled&$top=100&$orderby=start/dateTime`;
+    const events = await graphGetPaged(token, url, 1000, { requireComplete: true, headers: { Prefer: 'outlook.timezone="UTC"' } });
 
     // Diary → Letting Tracker viewings: events that look like a viewing and
     // anchor to a tracker unit become unit_viewings rows. Runs on every
@@ -334,12 +332,12 @@ async function syncCalendarForUser(
     // below, so date changes to an existing booking still update).
     try {
       const { syncDiaryViewings, syncDiaryInterest } = await import("./viewing-sync");
-      await syncDiaryViewings(events, userEmail);
+      await syncDiaryViewings(events, userEmail, { complete: true, start, end });
       // Non-viewing calls/meetings that anchor to a tracker unit register
       // as Interest (UX #71 — automated from diaries as well as inboxes).
       await syncDiaryInterest(events, userEmail);
     } catch (e: any) {
-      console.error(`[viewing-sync] ${userEmail}:`, e?.message);
+      throw new Error(`viewing capture failed: ${e?.message}`);
     }
 
     for (const event of events) {
@@ -428,24 +426,26 @@ async function runInteractionSync(daysBack = 30, daysForward = 60) {
   const perUserStats: { email: string; emails: number; calendar: number }[] = [];
 
   for (const userEmail of bgpEmails) {
+    let emailCount = 0;
+    let calCount = 0;
     try {
-      const emailCount = await syncEmailsForUser(
+      emailCount = await syncEmailsForUser(
         token, userEmail, contacts, companiesRaw, daysBack, existingMsIds
       );
       totalEmails += emailCount;
-
-      const calCount = await syncCalendarForUser(
-        token, userEmail, contacts, companiesRaw, daysBack, daysForward, existingMsIds
-      );
-      totalCalendar += calCount;
-
-      perUserStats.push({ email: userEmail, emails: emailCount, calendar: calCount });
-      if (emailCount > 0 || calCount > 0) {
-        trackEmailActivity(userEmail, emailCount, calCount);
-      }
     } catch (e: any) {
       errors.push(`${userEmail}: ${e.message}`);
     }
+    try {
+      calCount = await syncCalendarForUser(
+        token, userEmail, contacts, companiesRaw, daysBack, daysForward, existingMsIds
+      );
+      totalCalendar += calCount;
+    } catch (e: any) {
+      errors.push(`${userEmail}: ${e.message}`);
+    }
+    perUserStats.push({ email: userEmail, emails: emailCount, calendar: calCount });
+    if (emailCount > 0 || calCount > 0) trackEmailActivity(userEmail, emailCount, calCount);
   }
 
   return {

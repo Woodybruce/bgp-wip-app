@@ -109,7 +109,7 @@ export async function runTaskSuggestionSweep(): Promise<{ created: number; skipp
   await ensureColumns();
   const all = [
     ...(await detectStaleOffers().catch(() => [])),
-    ...(await detectViewingFollowups().catch(() => [])),
+    // Viewing follow-ups are reconciled by viewing-followups.ts against the named owner.
     ...(await detectStaleTargets().catch(() => [])),
   ];
 

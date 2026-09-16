@@ -1,0 +1,135 @@
+// The actual service and routes against an isolated schema in the disposable QA database.
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import pg from 'pg';
+const supplied = process.env.VIEWING_TEST_DATABASE_URL;
+if (!supplied) throw new Error('Provide VIEWING_TEST_DATABASE_URL for the disposable database');
+const url = new URL(supplied);
+if (url.hostname || url.pathname !== '/bgp_smoke' || url.searchParams.get('host') !== '/tmp/bgp-propertyqa-20260916/socket' || url.searchParams.get('port') !== '55446') throw new Error('Refusing non-disposable database');
+const admin = new pg.Pool({ connectionString: supplied, ssl: false });
+const schema = `qa_viewing_${Date.now()}`;
+let appPool;
+let checks = 0;
+const check = (name, fn) => { fn(); checks++; console.log(`PASS ${name}`); };
+try {
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  for (const table of ['users','user_tasks','crm_companies','crm_contacts','crm_properties','crm_company_properties','available_units','unit_viewings','unit_offers','crm_requirements_leasing','brand_agent_representations','crm_property_agents','crm_client_team_members','unit_target_operators','unit_briefs']) {
+    await admin.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES)`);
+  }
+  url.searchParams.set('options', `-c search_path=${schema},public`);
+  process.env.DATABASE_URL = url.toString();
+  process.env.PGSSLMODE = 'disable';
+  delete process.env.VIEWING_REMINDER_EMAILS_ENABLED;
+  const { pool } = await import('../../server/db.ts'); appPool = pool;
+  const { ensureLeasingViewingSchema } = await import('../../server/viewing-schema.ts');
+  const { ensureViewingFollowupSchema } = await import('../../server/viewing-followups.ts');
+  await ensureLeasingViewingSchema(); await ensureLeasingViewingSchema(); await ensureViewingFollowupSchema();
+  const { createTrackerViewing, patchLeasingViewing, deleteTrackerViewing, viewingOfferFields, listLeasingViewings, registerLeasingViewingRoutes } = await import('../../server/leasing-viewings.ts');
+  const ids = Object.fromEntries(['owner','client','landlord','otherLandlord','property','privateProperty','unit','unit2','foreignUnit','brand','brand2','agency','contact','agent','requirement','otherRequirement','unmatched','legacy'].map(k => [k,randomUUID()]));
+  await pool.query(`INSERT INTO users(id,username,password,name,email,team,role) VALUES
+    ($1,'viewing-owner','unused','QA Viewing Owner','qa-viewing@brucegillinghampollard.com','National Leasing','Agent'),
+    ($2,'viewing-client','unused','QA Viewing Client','client@example.test','QA Landlord','Client')`, [ids.owner,ids.client]);
+  await pool.query(`INSERT INTO crm_companies(id,name,company_type) VALUES ($1,'QA Landlord','Landlord'),($2,'Other Landlord','Landlord'),($3,'QA Viewing Brand','Tenant - Café'),($4,'Other Brand','Tenant - Café'),($5,'Agency','Agent')`, [ids.landlord,ids.otherLandlord,ids.brand,ids.brand2,ids.agency]);
+  await pool.query(`INSERT INTO crm_contacts(id,name,email,company_id) VALUES ($1,'Brand Person','brand@example.test',$2),($3,'Named Agent','agent@example.test',$4)`, [ids.contact,ids.brand,ids.agent,ids.agency]);
+  await pool.query(`INSERT INTO crm_properties(id,name,landlord_id) VALUES ($1,'QA Viewing Property',$2),($3,'Private Property',$4)`, [ids.property,ids.landlord,ids.privateProperty,ids.otherLandlord]);
+  await pool.query(`INSERT INTO available_units(id,property_id,unit_name,sqft) VALUES ($1,$2,'Unit 1',2000),($3,$2,'Unit 2',3000),($4,$5,'Private Unit',4000)`, [ids.unit,ids.property,ids.unit2,ids.foreignUnit,ids.privateProperty]);
+  await pool.query(`INSERT INTO crm_property_agents(property_id,user_id) VALUES ($1,$2)`, [ids.property,ids.owner]);
+  await pool.query(`INSERT INTO brand_agent_representations(brand_company_id,agent_company_id,agent_type,primary_contact_id) VALUES ($1,$2,'tenant_rep',$3)`, [ids.brand,ids.agency,ids.agent]);
+  await pool.query(`INSERT INTO crm_requirements_leasing(id,name,company_id,status,size,requirement_locations) VALUES ($1,'Original requirement',$2,'Active',ARRAY['1000–5000'],ARRAY['London']),($3,'Other requirement',$4,'Active',ARRAY['Keep'],ARRAY['Keep'])`, [ids.requirement,ids.brand,ids.otherRequirement,ids.brand2]);
+  const staff = { session:{userId:ids.owner}, _companyScopeResolved:true, _companyScope:null };
+  const client = { session:{userId:ids.client}, _companyScopeResolved:true, _companyScope:ids.landlord };
+  const handlers = new Map();
+  const app = Object.fromEntries(['get','post','patch'].map(method => [method,(path,...callbacks) => handlers.set(`${method}:${path}`,callbacks.at(-1))]));
+  registerLeasingViewingRoutes(app);
+  const route = async (method,path,req,body={},params={},query={}) => {
+    const res = { code:200,body:null,status(n){this.code=n;return this;},json(v){this.body=v;return this;} };
+    await handlers.get(`${method}:${path}`)({...req,body,params,query},res);
+    return res;
+  };
+  const complete = { companyId:ids.brand,contactId:ids.contact,agentContactId:ids.agent,ownerUserId:ids.owner,
+    viewingDate:'2026-08-01',viewingTime:'10:30',status:'completed',outcome:'Interested',notes:'Original note',nextAction:'Send terms',followUpDate:'2026-09-20' };
+  const v = await createTrackerViewing(staff,ids.unit,complete);
+  check('manual tracker create persists owner, distinct agent, outcome and follow-up fields',()=>{
+    assert.equal(v.companyId,ids.brand);assert.equal(v.agentContactId,ids.agent);assert.equal(v.status,'completed');assert.equal(v.nextAction,'Send terms');assert.equal(v.followUpDate,'2026-09-20');assert.ok(v.detailsConfirmedAt);
+  });
+  await assert.rejects(createTrackerViewing(client,ids.foreignUnit,complete),e=>e.status===403);
+  check('client cannot create a viewing on another portfolio',()=>{});
+  await assert.rejects(patchLeasingViewing(client,v.id,{unitId:ids.foreignUnit}),e=>e.status===403);
+  await assert.rejects(patchLeasingViewing(staff,v.id,{companyId:ids.agency}),e=>e.status===400);
+  await assert.rejects(patchLeasingViewing(staff,v.id,{contactId:ids.agent}),e=>e.status===400);
+  check('cross-portfolio moves, employer-as-brand and agent-as-brand-contact are rejected',()=>{});
+  await assert.rejects(patchLeasingViewing(staff,v.id,{requirementId:ids.otherRequirement}),e=>e.status===400);
+  await pool.query(`UPDATE unit_viewings SET source_details='{"subject":"Private diary metadata","issues":[]}' WHERE id=$1`,[v.id]);
+  const linked = await patchLeasingViewing(client,v.id,{requirementId:ids.requirement,notes:'Client can edit',expectedUpdatedAt:v.updatedAt});
+  check('client retains legitimate edits without receiving raw diary metadata',()=>{assert.equal(linked.notes,'Client can edit');assert.ok(!('sourceDetails' in linked));});
+  await pool.query(`UPDATE crm_companies SET company_type='Tenant - Fashion' WHERE id=$1`,[ids.brand2]);
+  const legacySlice = await createTrackerViewing(staff,ids.unit2,{companyId:ids.brand2,viewingDate:'2026-08-01',viewingTime:'10:30'});
+  const preserved = await patchLeasingViewing(client,legacySlice.id,{notes:'Client can update its own property record'});
+  assert.equal(preserved.companyId,ids.brand2);
+  await assert.rejects(createTrackerViewing(client,ids.unit2,{companyId:ids.brand2,viewingDate:'2026-08-01'}),e=>e.status===403);
+  await assert.rejects(patchLeasingViewing(client,v.id,{companyId:ids.brand2,contactId:null,agentContactId:null,requirementId:null}),e=>e.status===403);
+  check('existing portfolio links remain editable without opening new brands outside the CRM slice',()=>{});
+  await assert.rejects(patchLeasingViewing(staff,v.id,{notes:'Stale edit',expectedUpdatedAt:v.updatedAt}),e=>e.status===409);
+  check('concurrent stale edits do not overwrite newer changes',()=>{});
+  const requirement = (await pool.query('SELECT size,requirement_locations FROM crm_requirements_leasing WHERE id=$1',[ids.requirement])).rows[0];
+  check('linking viewing evidence preserves the stated size/location requirement',()=>assert.deepEqual(requirement,{size:['1000–5000'],requirement_locations:['London']}));
+  await pool.query(`INSERT INTO unit_viewings(id,unit_id,viewing_date,company_id,outcome,source_details) VALUES ($1,NULL,'',NULL,NULL,'{"subject":"Unmatched viewing","issues":["Choose a unit"]}'),($2,$3,'2026-08-01',$4,'No Show',NULL)`, [ids.unmatched,ids.legacy,ids.unit,ids.agency]);
+  await ensureLeasingViewingSchema();
+  check('legacy No Show is normalized without reclassifying its old company',()=>{});
+  const legacy = (await pool.query('SELECT status,outcome,company_id FROM unit_viewings WHERE id=$1',[ids.legacy])).rows[0];
+  assert.deepEqual(legacy,{status:'no_show',outcome:null,company_id:ids.agency});
+  const dismissed = await patchLeasingViewing(staff,ids.legacy,{status:'not_leasing'});
+  check('legacy bad brand links cannot trap users from excluding a non-leasing event',()=>assert.equal(dismissed.status,'not_leasing'));
+  assert.ok((await listLeasingViewings(null)).some(x=>x.id===ids.unmatched));
+  assert.ok(!(await listLeasingViewings(ids.landlord)).some(x=>x.id===ids.unmatched));
+  await assert.rejects(patchLeasingViewing(client,ids.unmatched,{unitId:ids.unit}),e=>e.status===403);
+  check('unmatched diary details stay staff-only',()=>{});
+  const options = await route('get','/api/leasing-viewings/options',client);
+  assert.equal(options.code,200,JSON.stringify(options.body));
+  check('scoped option lists contain own units and named agent representation metadata',()=>{
+    assert.ok(options.body.units.some(x=>x.id===ids.unit));assert.ok(!options.body.units.some(x=>x.id===ids.foreignUnit));
+    assert.deepEqual(options.body.contacts.find(c=>c.id===ids.agent).representedBrandIds,[ids.brand]);
+    assert.deepEqual(options.body.owners.map(o=>o.id),[ids.owner]);
+  });
+  const tour = await route('post','/api/leasing-viewings/:id/units',client,{unitIds:[ids.unit2,ids.unit2]},{id:v.id});
+  assert.equal(tour.code,200,JSON.stringify(tour.body));
+  const again = await route('post','/api/leasing-viewings/:id/units',client,{unitIds:[ids.unit2]},{id:v.id});
+  check('adding tour units is scoped, idempotent and hides copied diary metadata',()=>{assert.equal(tour.body.created.length,1);assert.equal(again.body.created.length,0);assert.ok(!('sourceDetails' in tour.body.created[0]));});
+  const attempted = await route('post','/api/leasing-viewings/:id/units',client,{unitIds:[ids.foreignUnit]},{id:v.id});
+  assert.equal(attempted.code,403);
+  const offerData = await viewingOfferFields(client,ids.unit,v.id);
+  const agentVisit = await createTrackerViewing(staff,ids.unit2,{companyId:ids.brand,agentContactId:ids.agent,viewingDate:'2026-09-01',viewingTime:'11:00'});
+  const agentOfferData = await viewingOfferFields(client,ids.unit2,agentVisit.id);
+  check('agent-led viewings carry the representing contact name into the offer',()=>{assert.equal(agentOfferData.contactId,ids.agent);assert.equal(agentOfferData.contactName,'Named Agent');});
+  const offer = (await pool.query(`INSERT INTO unit_offers(unit_id,company_id,offer_date,source) VALUES ($1,$2,'2026-08-03','email') RETURNING id`,[ids.unit,ids.brand])).rows[0];
+  let report = await route('get','/api/leasing-viewings/report',client,{}, {},{from:'2026-08-01',to:'2026-08-31'});
+  assert.equal(report.code,200,JSON.stringify(report.body));
+  check('unconfirmed detected offer does not count as a conversion',()=>{assert.equal(report.body.totals.completedOpportunities,1);assert.equal(report.body.totals.confirmedOfferOpportunities,0);});
+  const confirmed = await route('post','/api/leasing-viewings/:id/offers/:offerId/confirm',client,{}, {id:v.id,offerId:offer.id});
+  assert.equal(confirmed.code,200,JSON.stringify(confirmed.body));
+  report = await route('get','/api/leasing-viewings/report',client,{}, {},{from:'2026-08-01',to:'2026-08-31'});
+  check('explicit offer confirmation updates the canonical conversion report',()=>{assert.equal(offerData.companyId,ids.brand);assert.equal(report.body.totals.confirmedOfferOpportunities,1);assert.equal(report.body.totals.conversionRate,100);});
+  await assert.rejects(patchLeasingViewing(client,v.id,{unitId:ids.unit2}),e=>e.status===409);
+  check('linked offer prevents moving its viewing to a different unit',()=>{});
+  const duplicateRequirement = await route('post','/api/leasing-viewings/:id/requirement',staff,{create:true},{id:tour.body.created[0].id});
+  assert.equal(duplicateRequirement.code,200);
+  assert.equal(duplicateRequirement.body.requirementId,ids.requirement);
+  await patchLeasingViewing(staff,tour.body.created[0].id,{requirementId:null});
+  const proposedDuplicate = await route('post','/api/leasing-viewings/:id/requirement',staff,{create:true},{id:tour.body.created[0].id});
+  assert.equal(proposedDuplicate.code,409);
+  check('draft creation does not duplicate an existing brand requirement',()=>{});
+  const list = await route('get','/api/leasing-viewings',client,{}, {},{companyId:ids.brand});
+  check('filtered canonical list sanitizes diary source details and reflects offer links',()=>{assert.equal(list.code,200);assert.ok(list.body.viewings.every(x=>x.companyId===ids.brand&&!('sourceDetails'in x)));assert.ok(list.body.viewings.find(x=>x.id===v.id).offers.some(o=>o.id===offer.id&&o.confirmedAt));});
+  const candidate = await createTrackerViewing(staff,ids.unit,{viewingDate:'2026-08-01',notes:'Missing brand'});
+  await assert.rejects(patchLeasingViewing(staff,candidate.id,{confirmDetails:true}),e=>e.status===400);
+  await deleteTrackerViewing(client,candidate.id);
+  check('incomplete bookings cannot be certified; deletion leaves a tombstone and removes the list row',()=>{});
+  assert.ok((await pool.query('SELECT deleted_at FROM unit_viewings WHERE id=$1',[candidate.id])).rows[0].deleted_at);
+  assert.ok(!(await listLeasingViewings(null)).some(x=>x.id===candidate.id));
+  console.log(`${checks} isolated PostgreSQL workflow checks passed.`);
+} finally {
+  await appPool?.end();
+  await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+  await admin.end();
+}
