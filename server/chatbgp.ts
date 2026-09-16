@@ -1079,6 +1079,9 @@ export async function callClaude(params: any): Promise<any> {
 export async function callClaudeStreaming(
   params: any,
   onDelta: (token: string) => void,
+  // Polled on every token — when it flips true (user pressed Stop) the
+  // stream is aborted so the run can wind down instead of composing on.
+  shouldAbort?: () => boolean,
 ): Promise<any> {
   const model = params.model || CHATBGP_MODEL;
   const useDirectApi = model === CHATBGP_MODEL && process.env.ANTHROPIC_API_KEY;
@@ -1136,6 +1139,9 @@ export async function callClaudeStreaming(
       stream.on("text", (text: string) => {
         fullText += text;
         onDelta(text);
+        if (shouldAbort?.()) {
+          try { stream.abort(); } catch {}
+        }
       });
 
       const finalMessage = await stream.finalMessage();
@@ -1176,6 +1182,9 @@ export async function callClaudeStreaming(
     } catch (err: any) {
       lastErr = err;
       const errStatus = err?.status;
+
+      // A user-initiated abort is final — never retry or fall back.
+      if (shouldAbort?.()) throw err;
 
       if (attempt === 0 && useDirectApi) {
         console.log("[ChatBGP] Streaming: Direct API key failed (status " + errStatus + "), falling back");
@@ -14574,7 +14583,7 @@ export function setupChatBGPRoutes(app: Express) {
   // see the run still composing: the thread view polls the active-run
   // endpoint and shows live progress until the saved reply lands. In-memory
   // is fine — the app runs a single replica.
-  const activeChatRuns = new Map<string, { startedAt: number; userId: string; progress: string; partial: string }>();
+  const activeChatRuns = new Map<string, { startedAt: number; userId: string; progress: string; partial: string; cancelled: boolean }>();
 
   app.get("/api/chatbgp/threads/:threadId/active-run", requireAuth, async (req: Request, res: Response) => {
     const threadId = String(req.params.threadId);
@@ -14606,6 +14615,34 @@ export function setupChatBGPRoutes(app: Express) {
       progress: run.progress,
       partial: run.partial.length > 2000 ? run.partial.slice(-2000) : run.partial,
     });
+  });
+
+  // Stop button. Flags the thread's in-flight run as cancelled; the chat
+  // loop checks the flag at every loop boundary and on every streamed token,
+  // ends the run and sends back whatever partial text existed. Responds
+  // { active: false } when there's nothing to cancel (run already finished,
+  // or a leaked indicator) so the client knows to just unstick its own UI.
+  app.post("/api/chatbgp/threads/:threadId/cancel-run", requireAuth, async (req: Request, res: Response) => {
+    const threadId = String(req.params.threadId);
+    const run = activeChatRuns.get(threadId);
+    if (!run) return res.json({ active: false });
+    try {
+      // Same visibility rule as the chat itself: thread creator or member.
+      const thread = await storage.getChatThread(threadId);
+      let allowed = !!thread && thread.createdBy === req.session.userId;
+      if (!allowed && thread) {
+        const m = await pool.query(
+          `SELECT 1 FROM chat_thread_members WHERE thread_id = $1 AND user_id = $2 LIMIT 1`,
+          [threadId, req.session.userId],
+        );
+        allowed = !!m.rows[0];
+      }
+      if (!allowed) return res.json({ active: false });
+    } catch {
+      return res.json({ active: false });
+    }
+    run.cancelled = true;
+    res.json({ active: true, cancelled: true });
   });
 
   app.post("/api/chatbgp/chat", requireAuth, async (req: Request, res: Response) => {
@@ -14693,6 +14730,7 @@ export function setupChatBGPRoutes(app: Express) {
         userId: req.session.userId!,
         progress: "Thinking...",
         partial: "",
+        cancelled: false,
       });
     }
 
@@ -14798,6 +14836,18 @@ export function setupChatBGPRoutes(app: Express) {
     // nowhere to save, so finishing would waste the tokens.
     const isOverDeadline = () =>
       (clientDisconnected && !verifiedThreadId) || Date.now() - requestStart > REQUEST_DEADLINE_MS;
+
+    // User pressed Stop — the cancel-run endpoint flips the flag on this
+    // thread's registry entry. Checked at every loop boundary and streamed
+    // token so the run winds down promptly instead of composing to nobody.
+    const isCancelled = () => !!(runRef.id && activeChatRuns.get(runRef.id)?.cancelled);
+    const sendStopped = async () => {
+      const partial = runRef.id ? activeChatRuns.get(runRef.id)?.partial || "" : "";
+      await sendResult({
+        reply: partial ? `${partial}\n\n*[Stopped]*` : "*[Stopped — response cancelled]*",
+        stopped: true,
+      });
+    };
 
     req.on("close", () => {
       clientDisconnected = true;
@@ -15058,6 +15108,11 @@ export function setupChatBGPRoutes(app: Express) {
       const maxLoops = 100;
 
       while (loopCount < maxLoops) {
+        if (isCancelled()) {
+          console.log(`[ChatBGP] Run cancelled by user after ${loopCount} loops`);
+          await sendStopped();
+          return;
+        }
         if (isOverDeadline()) {
           console.log(`[ChatBGP] Deadline reached after ${loopCount} loops`);
           const timeoutMsg = clientDisconnected && !verifiedThreadId
@@ -15097,8 +15152,15 @@ export function setupChatBGPRoutes(app: Express) {
           try {
             completion = await callClaudeStreaming(loopOpts, (token) => {
               sendDelta(token);
-            });
+            }, isCancelled);
           } catch (streamErr: any) {
+            // User pressed Stop mid-stream — the aborted stream lands here.
+            // Deliver whatever partial text was composed and end the run.
+            if (isCancelled()) {
+              console.log(`[ChatBGP] Run cancelled by user mid-stream (loop ${loopCount})`);
+              await sendStopped();
+              return;
+            }
             // Context-length error mid-loop: trim oldest non-system messages and retry once
             const errStr = JSON.stringify(streamErr?.error || streamErr?.body || streamErr?.message || "").toLowerCase();
             const isContextErr = streamErr?.status === 400 && (errStr.includes("too long") || errStr.includes("context_length") || errStr.includes("prompt is too long"));
@@ -15109,7 +15171,7 @@ export function setupChatBGPRoutes(app: Express) {
               const rest = conversationMessages.filter((m: any) => m.role !== "system");
               conversationMessages = [...sys, ...rest.slice(0, 2), ...rest.slice(-12)];
               loopOpts.messages = conversationMessages;
-              completion = await callClaudeStreaming(loopOpts, (token) => { sendDelta(token); });
+              completion = await callClaudeStreaming(loopOpts, (token) => { sendDelta(token); }, isCancelled);
             } else {
               throw streamErr;
             }
@@ -15150,8 +15212,8 @@ export function setupChatBGPRoutes(app: Express) {
           sendProgress(progressLabel);
 
           for (const tc of message.tool_calls as unknown as ToolCall[]) {
-            if (isOverDeadline()) {
-              conversationMessages.push({ role: "tool" as const, tool_call_id: tc.id, content: JSON.stringify({ error: "Ran out of time" }) });
+            if (isOverDeadline() || isCancelled()) {
+              conversationMessages.push({ role: "tool" as const, tool_call_id: tc.id, content: JSON.stringify({ error: isCancelled() ? "Stopped by user" : "Ran out of time" }) });
               continue;
             }
             const tcName = tc.function.name;

@@ -41,6 +41,7 @@ import {
   Mic,
   Square,
   MessageSquare,
+  Loader2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -1381,6 +1382,13 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unmountedRef = useRef(false);
   const messageQueueRef = useRef<{ content: string; files: File[] }[]>([]);
+  // Stop button plumbing — the in-flight fetch's controller, the thread the
+  // current run belongs to (set inside mutationFn once the thread exists),
+  // and whether the user asked to stop (suppresses the error bubble).
+  const sendAbortRef = useRef<AbortController | null>(null);
+  const runThreadIdRef = useRef<string | null>(null);
+  const stopRequestedRef = useRef(false);
+  const [isStopping, setIsStopping] = useState(false);
 
   const { data: currentUser } = useQuery<UserType>({
     queryKey: ["/api/auth/me"],
@@ -1788,6 +1796,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
 
   const aiSendMutation = useMutation({
     mutationFn: async ({ newMessages, files, threadId }: { newMessages: LocalChatMessage[]; files: File[]; threadId: string | null }) => {
+      stopRequestedRef.current = false;
       const plainMessages = newMessages.map((m) => {
         let content = m.content;
         if (m.attachments && m.attachments.length > 0) {
@@ -1811,6 +1820,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
 
       let currentThreadId = threadId;
       if (!currentThreadId) currentThreadId = await createFreshThread();
+      runThreadIdRef.current = currentThreadId;
 
       const lastUserMsg = newMessages[newMessages.length - 1];
       try {
@@ -1879,11 +1889,14 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
         const token = localStorage.getItem("bgp_auth_token");
         const fetchHeaders: Record<string, string> = {};
         if (token) fetchHeaders["Authorization"] = `Bearer ${token}`;
+        const controller = new AbortController();
+        sendAbortRef.current = controller;
         const res = await fetch("/api/chatbgp/chat-with-files", {
           method: "POST",
           body: formData,
           credentials: "include",
           headers: fetchHeaders,
+          signal: controller.signal,
         });
 
         if (!res.ok) {
@@ -1899,6 +1912,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           const fetchHeaders: Record<string, string> = { "Content-Type": "application/json" };
           if (token) fetchHeaders["Authorization"] = `Bearer ${token}`;
           const controller = new AbortController();
+          sendAbortRef.current = controller;
           const timeoutId = setTimeout(() => controller.abort(), 600000);
           try {
             const res = await fetch("/api/chatbgp/chat", {
@@ -1991,6 +2005,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     onError: (err: any) => {
       setPanelProgressLabel("");
       setStreamingText("");
+      // The user pressed Stop and we cut the fetch locally (no live server
+      // run to cancel) — that's not an error, so no apology bubble.
+      if (stopRequestedRef.current) return;
       let msg = "Something went wrong — please try again.";
       try {
         const raw = err?.message || "";
@@ -2016,7 +2033,34 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       const threadId = activeThreadId;
       if (threadId) saveMessageMutation.mutate({ threadId, role: "assistant", content: errorContent });
     },
+    onSettled: () => {
+      stopRequestedRef.current = false;
+      setIsStopping(false);
+      sendAbortRef.current = null;
+    },
   });
+
+  // Stop generating — flag the server-side run as cancelled so it winds down
+  // and returns the partial text. Only if the server reports no live run
+  // (finished already, or a leaked "composing" indicator) do we cut the
+  // local fetch, so the stopped partial isn't lost in the normal case.
+  const handleStopGenerating = useCallback(async () => {
+    stopRequestedRef.current = true;
+    setIsStopping(true);
+    const tid = runThreadIdRef.current || activeThreadId;
+    let serverRunActive = false;
+    if (tid) {
+      try {
+        const res = await fetch(`/api/chatbgp/threads/${tid}/cancel-run`, {
+          method: "POST",
+          credentials: "include",
+          headers: { ...getAuthHeaders() },
+        });
+        if (res.ok) serverRunActive = !!(await res.json()).active;
+      } catch {}
+    }
+    if (!serverRunActive) sendAbortRef.current?.abort();
+  }, [activeThreadId]);
 
   const teamSendMutation = useMutation({
     mutationFn: async ({ content, threadId, attachments }: { content: string; threadId: string; attachments?: string[] }) => {
@@ -3311,15 +3355,30 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                     />
                   </div>
                   {!input.trim() && attachedFiles.length === 0 ? (
-                    <Button
-                      size="icon"
-                      className="shrink-0 h-10 w-10 rounded-full bg-gray-900 text-white hover:bg-gray-800"
-                      onClick={toggleRecording}
-                      disabled={isSending}
-                      data-testid="button-start-recording"
-                    >
-                      <Mic className="w-4 h-4" />
-                    </Button>
+                    // Stop replaces the mic (dead during a send anyway) so
+                    // typing still brings back Send — queuing keeps working.
+                    aiSendMutation.isPending && isActiveThreadAi ? (
+                      <Button
+                        size="icon"
+                        className="shrink-0 h-10 w-10 rounded-full bg-red-600 text-white hover:bg-red-700"
+                        onClick={handleStopGenerating}
+                        disabled={isStopping}
+                        title="Stop generating"
+                        data-testid="button-stop-generating"
+                      >
+                        {isStopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4 fill-current" />}
+                      </Button>
+                    ) : (
+                      <Button
+                        size="icon"
+                        className="shrink-0 h-10 w-10 rounded-full bg-gray-900 text-white hover:bg-gray-800"
+                        onClick={toggleRecording}
+                        disabled={isSending}
+                        data-testid="button-start-recording"
+                      >
+                        <Mic className="w-4 h-4" />
+                      </Button>
+                    )
                   ) : (
                     <Button
                       size="icon"

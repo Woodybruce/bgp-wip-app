@@ -22,7 +22,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  Sparkles, Send, Bot, User, X, Trash2,
+  Sparkles, Send, Bot, User, X, Trash2, Loader2,
   ArrowLeft, Users, Check, Building2, Archive,
   Link as LinkIcon, Search, Pencil, MoreVertical,
   MessageCircle, CheckCheck, Plus, BarChart3,
@@ -1592,6 +1592,12 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const chatEpochRef = useRef(0);
   const inFlightEpochRef = useRef(0);
   const sendAbortRef = useRef<AbortController | null>(null);
+  // Stop button plumbing — the thread the in-flight run belongs to (set in
+  // mutationFn once the thread exists) and whether the user asked to stop
+  // (suppresses the error bubble + late-reply recovery polling).
+  const runThreadIdRef = useRef<string | null>(null);
+  const stopRequestedRef = useRef(false);
+  const [isStopping, setIsStopping] = useState(false);
 
   useEffect(() => {
     if (threadId) emitMarkSeen(threadId);
@@ -1659,6 +1665,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const aiSendMutation = useMutation({
     mutationFn: async ({ newMessages, files, tid, mentionedUserIds }: { newMessages: LocalChatMessage[]; files: File[]; tid: string | null; mentionedUserIds?: string[] }) => {
       inFlightEpochRef.current = chatEpochRef.current;
+      stopRequestedRef.current = false;
       const plainMessages = newMessages.map(m => {
         let content = m.content;
         if (m.attachments && m.attachments.length > 0) {
@@ -1687,6 +1694,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
       }
 
+      runThreadIdRef.current = currentThreadId;
+
       const lastUserMsg = newMessages[newMessages.length - 1];
       await saveMessageMutation.mutateAsync({
         threadId: currentThreadId!,
@@ -1703,7 +1712,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         const token = localStorage.getItem("bgp_auth_token");
         const headers: Record<string, string> = {};
         if (token) headers["Authorization"] = `Bearer ${token}`;
-        const res = await fetch("/api/chatbgp/chat-with-files", { method: "POST", body: formData, credentials: "include", headers });
+        const controller = new AbortController();
+        sendAbortRef.current = controller;
+        const res = await fetch("/api/chatbgp/chat-with-files", { method: "POST", body: formData, credentials: "include", headers, signal: controller.signal });
         if (!res.ok) throw new Error("Request failed");
         // chat-with-files streams SSE now (progress + deltas + final reply) —
         // parse it like the /chat path instead of expecting one JSON body.
@@ -1876,6 +1887,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       // Send belonged to a conversation the user has already left via
       // "new chat" — don't recover into or apologise in the fresh one.
       if (inFlightEpochRef.current !== chatEpochRef.current) return;
+      // The user pressed Stop and we cut the fetch locally (no live server
+      // run to cancel) — that's not an error: no apology bubble, and no
+      // late-reply recovery polling for an answer they didn't want.
+      if (stopRequestedRef.current) {
+        setStreamingProgress(null);
+        setStreamingText("");
+        return;
+      }
       // err.status set = the server answered with an HTTP error (503 no
       // key, 400 validation, …) before composing anything — there is no
       // late reply to recover, so fall through to the message right away
@@ -1941,7 +1960,42 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       }
       setMessages(prev => [...prev, { role: "assistant", content: msg }]);
     },
+    onSettled: () => {
+      stopRequestedRef.current = false;
+      setIsStopping(false);
+      sendAbortRef.current = null;
+    },
   });
+
+  // Stop generating — flag the server-side run as cancelled so it winds down
+  // and returns the partial text. Only if the server reports no live run
+  // (finished already, or a leaked "composing" indicator) do we cut the
+  // local fetch. Also covers the re-attached case (activeRun indicator with
+  // no in-flight fetch): the cancel ends the run and the poll clears it.
+  const handleStopGenerating = useCallback(async () => {
+    stopRequestedRef.current = true;
+    setIsStopping(true);
+    const tid = runThreadIdRef.current || threadId;
+    let serverRunActive = false;
+    if (tid) {
+      try {
+        const res = await fetch(`/api/chatbgp/threads/${tid}/cancel-run`, {
+          method: "POST",
+          credentials: "include",
+          headers: { ...getAuthHeaders() },
+        });
+        if (res.ok) serverRunActive = !!(await res.json()).active;
+        queryClient.invalidateQueries({ queryKey: ["/api/chatbgp/threads", tid, "active-run"] });
+      } catch {}
+    }
+    if (!serverRunActive) sendAbortRef.current?.abort();
+    // No in-flight mutation to settle (re-attached indicator case) — reset
+    // here so a later send's real error isn't swallowed by a stale flag.
+    if (!aiSendMutation.isPending) {
+      stopRequestedRef.current = false;
+      setIsStopping(false);
+    }
+  }, [threadId, aiSendMutation.isPending]);
 
   const teamSendMutation = useMutation({
     mutationFn: async ({ content, tid, attachments, mentionedUserIds }: { content: string; tid: string; attachments?: string[]; mentionedUserIds?: string[] }) => {
@@ -3116,7 +3170,13 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               />
             </div>
             {!input.trim() && attachedFiles.length === 0 ? (
-              canRecord && (
+              // Stop replaces the mic (dead during a send anyway) so typing
+              // still brings back Send — queuing a follow-up keeps working.
+              (aiSendMutation.isPending && !staleAiSend) || activeRun?.active ? (
+                <button onClick={handleStopGenerating} disabled={isStopping} className="w-11 h-11 rounded-full bg-red-500 flex items-center justify-center disabled:opacity-50 active:bg-red-600 shrink-0" data-testid="button-mobile-stop-generating" aria-label="Stop generating">
+                  {isStopping ? <Loader2 className="w-5 h-5 text-white animate-spin" /> : <Square className="w-4 h-4 text-white fill-white" />}
+                </button>
+              ) : canRecord && (
                 <button onClick={startRecording} disabled={isSending} className="w-11 h-11 rounded-full bg-[#F5F5F4] border border-[#E7E5E4] flex items-center justify-center disabled:opacity-30 active:bg-[#E7E5E4] shrink-0" data-testid="button-mobile-voice-record" aria-label="Record voice note">
                   <Mic className="w-5 h-5 text-[#44403C]" />
                 </button>

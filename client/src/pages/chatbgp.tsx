@@ -1981,6 +1981,10 @@ export default function ChatBGP() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Stop button plumbing — whether the user asked to stop (suppresses the
+  // timeout/error bubble) and a "stopping…" state for the button itself.
+  const stopRequestedRef = useRef(false);
+  const [isStopping, setIsStopping] = useState(false);
   const userScrolledUpRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
@@ -2331,6 +2335,7 @@ export default function ChatBGP() {
 
   const sendMutation = useMutation({
     mutationFn: async (newMessages: LocalMessage[]) => {
+      stopRequestedRef.current = false;
       const attemptSend = async (attempt: number): Promise<any> => {
         const controller = new AbortController();
         abortControllerRef.current = controller;
@@ -2408,6 +2413,11 @@ export default function ChatBGP() {
           clearTimeout(timeoutId);
           if (err.name === "AbortError") {
             if (streamedText) return { reply: streamedText };
+            if (stopRequestedRef.current) {
+              const stoppedErr: any = new Error("Stopped by user");
+              stoppedErr.userStopped = true;
+              throw stoppedErr;
+            }
             throw new Error("Request timed out after 5 minutes. Please try again.");
           }
           const isNetworkError = err.message === "Failed to fetch" || err.message === "Load failed" || err.message?.includes("NetworkError") || err.message?.includes("network");
@@ -2443,6 +2453,13 @@ export default function ChatBGP() {
     },
     onError: (err: any) => {
       setStreamingContent("");
+      // The user pressed Stop — not an error, no apology bubble to append
+      // or save to the thread.
+      if (err?.userStopped || stopRequestedRef.current) {
+        setProgressLabel("");
+        setTimeout(() => processQueue(), 300);
+        return;
+      }
       let msg = "Failed to get a response. Please try again.";
       try {
         const raw = err?.message || "";
@@ -2469,6 +2486,10 @@ export default function ChatBGP() {
       const threadId = activeThreadIdRef.current;
       if (threadId) saveMessageMutation.mutate({ threadId, role: "assistant", content: errorContent });
       setTimeout(() => processQueue(), 500);
+    },
+    onSettled: () => {
+      stopRequestedRef.current = false;
+      setIsStopping(false);
     },
   });
 
@@ -2732,9 +2753,32 @@ export default function ChatBGP() {
     };
   }, []);
 
-  const handleStop = useCallback(() => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
+  // Stop generating — flag the server-side run as cancelled so it winds down
+  // and returns the partial text (aborting only the fetch left the server
+  // composing to nobody and the reply landed in the thread anyway). Only if
+  // the server reports no live run do we cut the local fetch.
+  const handleStop = useCallback(async () => {
+    stopRequestedRef.current = true;
+    setIsStopping(true);
+    const tid = activeThreadIdRef.current;
+    let serverRunActive = false;
+    if (tid) {
+      try {
+        const headers: Record<string, string> = {};
+        const token = localStorage.getItem("bgp_auth_token");
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`/api/chatbgp/threads/${tid}/cancel-run`, {
+          method: "POST",
+          credentials: "include",
+          headers,
+        });
+        if (res.ok) serverRunActive = !!(await res.json()).active;
+      } catch {}
+    }
+    if (!serverRunActive) {
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+    }
   }, []);
 
   const handleSend = async () => {
@@ -4109,11 +4153,12 @@ export default function ChatBGP() {
                 {sendMutation.isPending ? (
                   <button
                     onClick={handleStop}
-                    className="p-2.5 rounded-full shrink-0 mb-0.5 bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors"
+                    disabled={isStopping}
+                    className="p-2.5 rounded-full shrink-0 mb-0.5 bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors disabled:opacity-60"
                     title="Stop generating"
                     data-testid="button-stop-generating"
                   >
-                    <Square className="w-5 h-5" />
+                    {isStopping ? <Loader2 className="w-5 h-5 animate-spin" /> : <Square className="w-5 h-5" />}
                   </button>
                 ) : isRecording ? (
                   <button
