@@ -2406,6 +2406,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // snake_case keys).
       const r: any = rows[0];
       r.unifiedSchedule = r.unified_schedule;
+      r.propertyView = r.property_view;
       res.json(r);
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "Lookup failed" });
@@ -2444,6 +2445,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         return res.status(403).json({ error: "Access denied" });
       }
       const updates = { ...req.body };
+      const viewPreference = insertCrmPropertySchema.pick({ propertyView: true }).safeParse(updates);
+      if (!viewPreference.success) {
+        return res.status(400).json({ error: "Property view must be building, multi_let, centre or null (automatic)" });
+      }
       if (scopeCompanyId) {
         // Client edits must not overwrite identity, access or staff attestations.
         for (const field of ["id", "createdAt", "landlordId", "leasingPrivacyEnabled", "proprietorKycStatus", "proprietorKycData", "kycCheckedAt"]) {
@@ -2458,9 +2463,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
       const property = await storage.updateCrmProperty(String(req.params.id), updates);
       res.json(property);
-      // A new owner (or Land Registry proprietor) is exactly when the KYC
-      // file needs its Companies House number resolved.
-      if (["freeholderId", "longLeaseholderId", "landlordId", "proprietorName", "proprietorCompanyNumber"].some(k => k in updates)) {
+      // Staff owner changes can refresh shared company/KYC metadata, as on
+      // staff reads above. Scoped clients retain their ordinary property edits.
+      if (!scopeCompanyId && ["freeholderId", "longLeaseholderId", "landlordId", "proprietorName", "proprietorCompanyNumber"].some(k => k in updates)) {
         enrichPropertyInBackground(String(req.params.id), { force: true });
       }
     } catch (e: any) { res.status(500).json({ error: e.message }); }

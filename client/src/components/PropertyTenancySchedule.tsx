@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { calendarDateValue, formatCalendarDate } from "@shared/calendar-date";
 import { useToast } from "@/hooks/use-toast";
 import { UnifiedAddUnitDialog, UNIFIED_ADD_UNIT_ENABLED } from "@/components/unified-add-unit-dialog";
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,6 +28,17 @@ import {
 // short labels. Free-text legacy values still display verbatim; picking a
 // value from the dropdown writes the canonical label back.
 const USE_CLASSES = ["Shop", "F&B", "Leisure", "Office", "Storage", "Other"] as const;
+
+function viewTenancyOnPlan(unit: { id: string | number; property_id: string }) {
+  const hash = `#plan-tenancy-${encodeURIComponent(String(unit.id))}`;
+  if (window.location.pathname !== `/properties/${unit.property_id}`) {
+    window.location.assign(`/properties/${encodeURIComponent(unit.property_id)}${hash}`);
+    return;
+  }
+  window.location.hash = hash;
+  // Also reopen the panel when selecting the same row a second time.
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+}
 
 interface TenancyUnit {
   id: number | string;
@@ -185,11 +197,7 @@ function fmtNum(v: number | string | null | undefined, dp = 0) {
 
 function fmtDate(v: string) {
   if (!v) return "—";
-  try {
-    const d = new Date(v);
-    if (isNaN(d.getTime())) return v;
-    return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
-  } catch { return v; }
+  return formatCalendarDate(v, "2-digit") ?? v;
 }
 
 // Full set of data columns rendered in the table — mirrors the Landsec
@@ -576,10 +584,23 @@ const KEY_COLUMN_FIELDS = new Set([
   "lease_expiry",
 ]);
 
-export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { propertyId: string; lens?: "lettings" | "tenancy"; readOnly?: boolean }) {
+const COMPACT_COLUMN_FIELDS = new Set([
+  "unit_number", "floor_level", "tenant_name", "status", "nia_sqft",
+  "passing_rent_pa", "lease_expiry", "next_review_date", "permitted_use",
+]);
+
+export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentation = "full" }: {
+  propertyId: string;
+  lens?: "lettings" | "tenancy";
+  readOnly?: boolean;
+  presentation?: "compact" | "full";
+}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [location] = useLocation();
+  const urlSearch = useSearch();
+  const [focusedUnitId, setFocusedUnitId] = useState<string | null>(() => new URLSearchParams(urlSearch).get("unitId"));
+  useEffect(() => { setFocusedUnitId(new URLSearchParams(urlSearch).get("unitId")); }, [urlSearch, propertyId]);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<{ field: string; dir: 1 | -1 } | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -596,14 +617,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   // viewers so the controls don't 403.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
-  // Clients get the read view: every write on this board 403s server-side,
-  // so the edit affordances (Add, status dropdown, deletes, inline cells)
-  // are staff-only. Read affordances (search, export, Full Board) stay.
-  const canEdit = !readOnly && !isClientViewer;
+  // Row writes are already scoped to the caller’s property on the server.
+  // Keep client edits available; imports and cross-row tools remain staff-only.
+  const canEdit = !readOnly && !!currentUser;
 
   // When already on the dedicated full-board route the "Full Board" link is
   // redundant — hide it. The route is /tenancy-schedule/:propertyId.
   const onFullBoard = location === `/tenancy-schedule/${propertyId}`;
+  const compact = presentation === "compact" && !onFullBoard;
 
   // Column visibility — Set of hidden field names, persisted per property
   // AND per lens. Two lenses on the same data: "lettings" pre-hides
@@ -613,26 +634,45 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   // localStorage so toggling individual cols in one doesn't disturb
   // the other.
   const lensKey = lens || "tenancy";
-  const hiddenStorageKey = `tenancy-hidden-cols:${propertyId}:${lensKey}`;
-  const [hiddenFields, setHiddenFields] = useState<Set<string>>(() => {
+  // The shorter embedded schedule has its own preferences. Switching a
+  // property layout must never overwrite someone's detailed board setup.
+  const hiddenStorageKey = `tenancy-hidden-cols:${propertyId}:${lensKey}${compact ? ":compact" : ""}`;
+  const initialHiddenFields = useMemo(() => {
     try {
       const raw = localStorage.getItem(hiddenStorageKey);
-      if (raw) return new Set(JSON.parse(raw));
-      // First visit on a phone — start from the key-columns preset so the
-      // board is readable without sideways scrolling (UX #28). Any manual
-      // toggle persists per device from then on.
-      if (typeof window !== "undefined" && window.innerWidth < 640) {
-        return new Set(COLUMNS.filter(c => !KEY_COLUMN_FIELDS.has(c.field as string)).map(c => c.field as string));
+      if (raw) {
+        const saved: unknown = JSON.parse(raw);
+        if (Array.isArray(saved) && saved.every(field => typeof field === "string")) return new Set<string>(saved);
       }
-      // First-time load for this property+lens — apply the lens defaults.
-      if (lensKey === "lettings") {
-        const def = new Set<string>(LETTINGS_HIDDEN_FIELDS);
-        for (const c of COLUMNS) if (LETTINGS_HIDDEN_BANDS.has(c.band)) def.add(c.field as string);
-        return def;
-      }
-      return new Set();
-    } catch { return new Set(); }
-  });
+    } catch { /* A malformed saved setting falls back to this view's defaults. */ }
+    if (compact) {
+      return new Set(COLUMNS.filter(c => !COMPACT_COLUMN_FIELDS.has(c.field as string)).map(c => c.field as string));
+    }
+    // First visit on a phone — start from the key-columns preset so the
+    // board is readable without sideways scrolling (UX #28). Any manual
+    // toggle persists per device from then on.
+    if (typeof window !== "undefined" && window.innerWidth < 640) {
+      return new Set(COLUMNS.filter(c => !KEY_COLUMN_FIELDS.has(c.field as string)).map(c => c.field as string));
+    }
+    // First-time load for this property+lens — apply the lens defaults.
+    if (lensKey === "lettings") {
+      const def = new Set<string>(LETTINGS_HIDDEN_FIELDS);
+      for (const c of COLUMNS) if (LETTINGS_HIDDEN_BANDS.has(c.band)) def.add(c.field as string);
+      return def;
+    }
+    return new Set<string>();
+  }, [hiddenStorageKey, lensKey, compact]);
+  const [columnState, setColumnState] = useState(() => ({ key: hiddenStorageKey, hidden: initialHiddenFields }));
+  // Resolve by key during render, before the persistence effect. This also
+  // handles a layout/lens/property change without writing the previous
+  // view's columns into the newly selected view's storage key.
+  const hiddenFields = columnState.key === hiddenStorageKey ? columnState.hidden : initialHiddenFields;
+  const setHiddenFields = (next: Set<string> | ((previous: Set<string>) => Set<string>)) => {
+    setColumnState(previous => ({
+      key: hiddenStorageKey,
+      hidden: typeof next === "function" ? next(previous.key === hiddenStorageKey ? previous.hidden : initialHiddenFields) : next,
+    }));
+  };
   useEffect(() => {
     try { localStorage.setItem(hiddenStorageKey, JSON.stringify([...hiddenFields])); } catch {}
   }, [hiddenStorageKey, hiddenFields]);
@@ -644,8 +684,16 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     });
   };
   const visibleColumns = COLUMNS.filter(c => !hiddenFields.has(c.field as string));
+  if (compact) {
+    const order = [...COMPACT_COLUMN_FIELDS];
+    const rank = (field: string) => { const index = order.indexOf(field); return index < 0 ? order.length : index; };
+    visibleColumns.sort((a, b) => rank(a.field as string) - rank(b.field as string));
+  }
   const applyKeyColumns = () => {
     setHiddenFields(new Set(COLUMNS.filter(c => !KEY_COLUMN_FIELDS.has(c.field as string)).map(c => c.field as string)));
+  };
+  const applyCompactColumns = () => {
+    setHiddenFields(new Set(COLUMNS.filter(c => !COMPACT_COLUMN_FIELDS.has(c.field as string)).map(c => c.field as string)));
   };
   const keyColumnsActive = visibleColumns.length === KEY_COLUMN_FIELDS.size && visibleColumns.every(c => KEY_COLUMN_FIELDS.has(c.field as string));
 
@@ -661,7 +709,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
       return next;
     });
   };
-  const clearAllFilters = () => { setColFilters({}); setSearch(""); setStatusFilter(null); };
+  const clearAllFilters = () => { setColFilters({}); setSearch(""); setStatusFilter(null); setFocusedUnitId(null); };
 
   const { data: units = [], isLoading, error: unitsError } = useQuery<TenancyUnit[]>({
     queryKey: ["/api/tenancy-schedule/property", propertyId],
@@ -689,7 +737,12 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
 
   const updateMutation = useMutation({
     mutationFn: (data: any) => apiRequest("PUT", `/api/tenancy-schedule/unit/${data.id}`, data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] }); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
+    },
     onError: (err: any) => { toast({ title: "Update failed", description: err.message, variant: "destructive" }); },
   });
 
@@ -697,6 +750,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     mutationFn: (data: any) => apiRequest("POST", "/api/tenancy-schedule/unit", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
       setShowAddUnit(false);
       toast({ title: "Unit added" });
     },
@@ -707,6 +763,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     mutationFn: (id: string | number) => apiRequest("DELETE", `/api/tenancy-schedule/unit/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
       toast({ title: "Unit removed" });
     },
     onError: (err: any) => { toast({ title: "Failed to delete unit", description: err.message, variant: "destructive" }); },
@@ -720,6 +779,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     mutationFn: (availableUnitId: string) => apiRequest("DELETE", `/api/available-units/${availableUnitId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       toast({ title: "Tracker unit deleted" });
     },
@@ -734,6 +796,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     onSuccess: (_d, ids) => {
       setSelectedForDelete(new Set());
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
       toast({ title: `${ids.length} row${ids.length === 1 ? "" : "s"} deleted` });
     },
     onError: (err: any) => { toast({ title: "Bulk delete failed", description: err.message, variant: "destructive" }); },
@@ -745,6 +810,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     mutationFn: () => apiRequest("POST", `/api/properties/${propertyId}/promote-orphans-to-tenancy`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
       toast({ title: "Added to schedule", description: "Vacant units are now editable rows." });
     },
     onError: (err: any) => { toast({ title: "Couldn't add to schedule", description: err.message, variant: "destructive" }); },
@@ -776,9 +844,15 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   // the current canonical status onto each projection. Heals drift in one
   // tap (the Bluewater "no linkage" fix).
   const resyncMutation = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/admin/resync-mirror-all`, {}),
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/admin/resync-mirror-all`, {});
+      return response.json();
+    },
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule"] });
       const byProp = res?.byProperty || {};
@@ -796,19 +870,19 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   });
 
   const inlineUpdate = useCallback((unitId: string | number, field: string, value: string) => {
-    updateMutation.mutate({ id: unitId, [field]: value });
-    // Converting a unit to an Opportunity puts it straight onto the
-    // Letting Tracker (Woody, 2026-08-04) — skipped when the row is
-    // already linked to a tracker listing.
-    if (field === "status" && value === "Opportunity") {
-      const unit = units.find(u => String(u.id) === String(unitId));
-      const uname = unit?.unit_number?.toLowerCase() || "";
-      const linked = !!unit && (
-        !!unit.letting_tracker_unit_id ||
-        (!!uname && !!links?.lettingUnits.some(l => l.unit_name?.toLowerCase().includes(uname)))
-      );
-      if (unit && !linked) sendToTrackerMutation.mutate(unit);
-    }
+    updateMutation.mutate({ id: unitId, [field]: value }, {
+      onSuccess: () => {
+        // Create the linked listing only after the status change succeeds.
+        if (field !== "status" || value !== "Opportunity") return;
+        const unit = units.find(u => String(u.id) === String(unitId));
+        const uname = unit?.unit_number?.toLowerCase() || "";
+        const linked = !!unit && (
+          !!unit.letting_tracker_unit_id ||
+          (!!uname && !!links?.lettingUnits.some(l => l.unit_name?.toLowerCase() === uname))
+        );
+        if (unit && !linked) sendToTrackerMutation.mutate(unit);
+      },
+    });
   }, [updateMutation, units, links, sendToTrackerMutation]);
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -830,6 +904,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
       setImportReviewRows(result.reviewRows || []);
       toast({ title: result.needsReview ? "Import needs review" : "Import complete", description: result.message });
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
     } catch (err: any) {
       toast({ title: "Import failed", description: err.message, variant: "destructive" });
     } finally {
@@ -878,6 +955,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   }
 
   const filtered = units.filter(u => {
+    if (focusedUnitId && String(u.id) !== focusedUnitId) return false;
     if (statusFilter && u.status !== statusFilter) return false;
     if (search) {
       const s = search.toLowerCase();
@@ -977,24 +1055,26 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     return links?.matters?.find(m => normRefKey(m.unit_name) === n);
   };
 
-  if (units.length === 0 && !showAddUnit) {
+  if (units.length === 0 && !showAddUnit && !unifiedAddOpen) {
     return (
-      <div className="space-y-3" data-testid="property-tenancy-schedule">
+      <div className="space-y-3" data-testid="property-tenancy-schedule" data-presentation={compact ? "compact" : "full"}>
         <div className="flex items-center justify-end">
           <div className="flex gap-2">
             <input type="file" ref={fileInputRef} accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
-            {!isClientViewer && (
+            {canEdit && !isClientViewer && (
             <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
               {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import Excel
             </Button>
             )}
+            {canEdit && (
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
               <Plus className="w-3 h-3 mr-1" />Add Unit
             </Button>
+            )}
             {!onFullBoard && (
               <Link href={`/tenancy-schedule/${propertyId}`}>
                 <span className="text-[10px] text-primary hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-tenancy-full-board">
-                  <ExternalLink className="w-3 h-3" />Full Board
+                  <ExternalLink className="w-3 h-3" />{compact ? "Full schedule" : "Full Board"}
                 </span>
               </Link>
             )}
@@ -1010,7 +1090,12 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   }
 
   return (
-    <div className="space-y-3" data-testid="property-tenancy-schedule">
+    <div className="space-y-3" data-testid="property-tenancy-schedule" data-presentation={compact ? "compact" : "full"}>
+      {compact && (
+        <p className="text-xs text-muted-foreground" data-testid="tenancy-compact-help">
+          Everyday tenancy details. Use Columns for more fields or open the full schedule.
+        </p>
+      )}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           {/* Tracker link leads the whole schedule header (Woody, 2026-08-03) —
@@ -1021,7 +1106,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
             </a>
           </Button>
           <Badge variant="secondary" className="text-[10px]">{units.length} units</Badge>
-          {(Object.keys(colFilters).length > 0 || search || statusFilter) && (
+          {(Object.keys(colFilters).length > 0 || search || statusFilter || focusedUnitId) && (
             <Badge
               variant="outline"
               className="text-[10px] cursor-pointer hover:bg-muted"
@@ -1105,6 +1190,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   <Eye className="w-3 h-3" /> Key columns
                 </button>
               )}
+              {compact && (
+                <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={applyCompactColumns} data-testid="btn-tenancy-compact-columns">
+                  <Eye className="w-3 h-3" /> Everyday columns
+                </button>
+              )}
             </PopoverContent>
           </Popover>
           <Popover>
@@ -1120,6 +1210,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold">Show / hide columns</span>
                 <span className="flex items-center gap-2">
+                  {compact && (
+                    <button className="text-[10px] text-primary hover:underline" onClick={applyCompactColumns} data-testid="btn-tenancy-columns-compact">
+                      Everyday
+                    </button>
+                  )}
                   {!keyColumnsActive && (
                     <button
                       className="text-[10px] text-primary hover:underline"
@@ -1135,7 +1230,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                       onClick={() => setHiddenFields(new Set())}
                       data-testid="btn-tenancy-columns-reset"
                     >
-                      Reset
+                      Show all
                     </button>
                   )}
                 </span>
@@ -1169,10 +1264,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
               })()}
             </PopoverContent>
           </Popover>
-          {!onFullBoard && !readOnly && (
+          {!onFullBoard && (!readOnly || compact) && (
             <Link href={`/tenancy-schedule/${propertyId}`}>
-              <span className="text-[10px] text-primary hover:underline flex items-center gap-1 cursor-pointer ml-1" data-testid="link-tenancy-full-board">
-                <ExternalLink className="w-3 h-3" />Full Board
+              <span className={`${compact ? "text-xs font-medium" : "text-[10px]"} text-primary hover:underline flex items-center gap-1 cursor-pointer ml-1`} data-testid="link-tenancy-full-board">
+                <ExternalLink className="w-3 h-3" />{compact ? "Full schedule" : "Full Board"}
               </span>
             </Link>
           )}
@@ -1181,7 +1276,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
 
       {/* Live lettings pulse — canonical tracker strip; each lozenge opens
           the Letting Tracker pre-filtered (Woody, 2026-08-03). */}
-      <TrackerSummary variant="strip" propertyId={propertyId} />
+      {!compact && <TrackerSummary variant="strip" propertyId={propertyId} />}
 
       <TenancyImportReview rows={importReviewRows} onSelectCandidate={candidate => {
         setSearch(candidate.unitNumber || candidate.premises || "");
@@ -1189,7 +1284,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
         setExpandedZones(new Set(["__all__"]));
       }} />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
+      <div className={`grid grid-cols-2 md:grid-cols-4 ${compact ? "" : "lg:grid-cols-7"} gap-2`}>
         {[
           { label: "Total NIA", value: fmtNum(totalNIA) + " sq ft", filter: null },
           { label: "Passing Rent", value: fmtCurrencyCompact(totalRent), filter: null, full: fmtCurrency(totalRent) },
@@ -1206,7 +1301,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           ...(underOffer > 0 ? [{ label: "Under Offer", value: String(underOffer), filter: "Under Offer" }] : []),
           ...(leaseEvent > 0 ? [{ label: "Lease Event", value: String(leaseEvent), filter: "Lease Event" }] : []),
           { label: "Service Charge", value: fmtCurrencyCompact(totalSC), filter: null, full: fmtCurrency(totalSC) },
-        ].map(s => (
+        ].filter(s => !compact || ["Total NIA", "Passing Rent", "Occupied", "Vacant"].includes(s.label)).map(s => (
           <div
             key={s.label}
             // The active-ring test was `statusFilter === s.filter`, which is
@@ -1279,7 +1374,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   <p className="text-[11px] text-muted-foreground mt-0.5">{fmtNum(unit.nia_sqft)} sq ft</p>
                 ) : null}
                 <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                  {canEdit && (
+                  {canEdit && !isClientViewer && (
                     <button
                       onClick={() => promoteMutation.mutate()}
                       disabled={promoteMutation.isPending}
@@ -1338,6 +1433,13 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
               <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
                 {[unit.floor_level, unit.permitted_use].filter(Boolean).join(" · ") || "—"}
               </p>
+              {compact && (
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground mt-1">
+                  <span>NIA {canEdit ? <InlineEdit value={String(unit.nia_sqft ?? "")} field="nia_sqft" unitId={unit.id} onSave={inlineUpdate} type="number" /> : fmtNum(unit.nia_sqft)} sq ft</span>
+                  {canEdit && <span>Rent <InlineEdit value={String(unit.passing_rent_pa ?? "")} field="passing_rent_pa" unitId={unit.id} onSave={inlineUpdate} type="number" /></span>}
+                  {unit.next_review_date && <span>Review {fmtDate(unit.next_review_date)}</span>}
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                 {!canEdit ? (
                   <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}>
@@ -1399,14 +1501,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                 ))}
                 <button
                   type="button"
-                  onClick={() => {
-                    const label = unit.unit_number || unit.premises || "";
-                    if (!label) return;
-                    window.location.hash = `plan-unit-${encodeURIComponent(label)}`;
-                    const target = document.querySelector('[data-testid="toggle-plans"]')
-                      || document.querySelector('[data-testid="property-plans-panel"]');
-                    target?.scrollIntoView({ behavior: "smooth", block: "start" });
-                  }}
+                  onClick={() => viewTenancyOnPlan(unit)}
                   className="inline-flex items-center"
                   title="Highlight this unit on the property plan"
                   data-testid={`tenancy-plan-link-card-${unit.id}`}
@@ -1454,11 +1549,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
             <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setSelectedForDelete(new Set())}>Clear</button>
           </div>
         )}
-        <table className="text-xs" style={{ minWidth: 100 + visibleColumns.reduce((s, c) => s + c.width, 0) + 200 }}>
+        <table className="text-xs" style={{ minWidth: (compact ? 120 : 300) + visibleColumns.reduce((s, c) => s + c.width, 0) }}>
           <thead>
             {/* Category-band row — one cell per contiguous band, merged via
                 colSpan so the bands mirror the Landsec sheet layout. */}
-            <tr>
+            {!compact && <tr>
               {(() => {
                 const bands: Array<{ name: string; span: number }> = [];
                 for (const c of visibleColumns) {
@@ -1473,7 +1568,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                 ));
               })()}
               <th colSpan={2} className="bg-slate-800 text-white p-1.5 font-semibold text-[10px] uppercase tracking-wider text-center">Actions</th>
-            </tr>
+            </tr>}
             {/* Column labels — text-style columns get an inline filter pill
                 so the team can narrow by Use, Zone, Tenant, etc without
                 leaving the table. Numeric / currency columns skip the
@@ -1570,7 +1665,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                     if (next.has(unit.id)) next.delete(unit.id); else next.add(unit.id);
                     return next;
                   })}
-                  onPromote={!canEdit ? undefined : () => promoteMutation.mutate()}
+                  onPromote={!canEdit || isClientViewer ? undefined : () => promoteMutation.mutate()}
                   promoting={promoteMutation.isPending}
                   onSendToTracker={!canEdit ? undefined : () => sendToTrackerMutation.mutate(unit)}
                   sendingToTracker={sendToTrackerMutation.isPending}
@@ -1751,14 +1846,12 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
         // solid background so the moving columns slide underneath it.
         const stickyCls = ci === 0 ? " sticky left-0 bg-background border-r z-[5] max-md:max-w-[120px] max-md:overflow-hidden max-md:text-ellipsis" : "";
         const raw = (unit as any)[c.field];
-        // Date fields arrive as ISO strings from the API (or as timestamptz
-        // strings with the T00:00 suffix). Format for display, hand the
-        // canonical ISO date to the edit input.
+        // The API returns lease dates as SQL calendar days. Use that same
+        // day for both the label and input, with no conversion through UTC.
         const isDateField = c.type === "date";
         let displayVal: string;
         if (isDateField && raw) {
-          const dt = new Date(raw);
-          displayVal = isNaN(dt.getTime()) ? String(raw) : dt.toISOString().slice(0, 10);
+          displayVal = calendarDateValue(raw) ?? String(raw);
         } else {
           displayVal = raw == null ? "" : String(raw);
         }
@@ -2038,14 +2131,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               into view. Falls back gracefully when no polygon exists. */}
           <button
             type="button"
-            onClick={() => {
-              const label = unit.unit_number || unit.premises || "";
-              if (!label) return;
-              window.location.hash = `plan-unit-${encodeURIComponent(label)}`;
-              const target = document.querySelector('[data-testid="toggle-plans"]')
-                || document.querySelector('[data-testid="property-plans-panel"]');
-              target?.scrollIntoView({ behavior: "smooth", block: "start" });
-            }}
+            onClick={() => viewTenancyOnPlan(unit)}
             className="inline-flex items-center"
             title="Highlight this unit on the property plan"
             data-testid={`tenancy-plan-link-${unit.id}`}

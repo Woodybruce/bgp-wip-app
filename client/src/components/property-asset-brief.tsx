@@ -50,10 +50,12 @@ interface AssetBrief {
   }>;
   risks: Array<{ kind: string; severity: "high" | "med"; message: string; unit_id?: string; unit_name?: string }>;
   performance: {
-    total_units: number; occupied_units: number; vacancy_rate: number; wault_years: number | null;
+    total_units: number | null; occupied_units: number | null; vacant_units: number | null; unknown_units: number | null; vacancy_rate: number | null; wault_years: number | null;
     top_psqft: Array<{ unit_name: string; tenant_name: string | null; mat_psqft: number | null; lfl_percent: string | null }>;
     bottom_psqft: Array<{ unit_name: string; tenant_name: string | null; mat_psqft: number | null; lfl_percent: string | null }>;
   };
+  data_quality?: Record<string, "ready" | "partial" | "missing" | "error">;
+  data_warnings?: Array<{ section: string; message: string }>;
   commentary: string;
   bgp_commentary: string | null;
   bgp_commentary_at: string | null;
@@ -109,7 +111,7 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
   const { data: audit } = useQuery<any>({
     queryKey: ["/api/properties", propertyId, "linkage-audit"],
     queryFn: async () => {
-      const r = await fetch(`/api/properties/${propertyId}/linkage-audit`, { credentials: "include" });
+      const r = await fetch(`/api/properties/${propertyId}/linkage-audit`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return null;
       return r.json();
     },
@@ -224,25 +226,32 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
 // asset lead a single 'how's the building doing' tile without
 // scrolling into the lower brief.
 export function PipelinePerformanceBoard({ propertyId }: { propertyId: string }) {
-  const { data, isLoading, isError } = useAssetBrief(propertyId);
+  const { data, isLoading, isError, refetch } = useAssetBrief(propertyId);
   // Lozenges drill down — tap a stage to see who's in it (Woody,
   // 2026-08-05: pills that look like filters must do something).
   const [openStage, setOpenStage] = useState<string | null>(null);
   if (isError) {
-    return <Card><CardContent className="p-3"><p className="text-xs text-rose-600 italic">Couldn't load — refresh to retry.</p></CardContent></Card>;
+    return <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground">Couldn't load pipeline and performance.</p><Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button></CardContent></Card>;
   }
   if (isLoading || !data) {
     return <Card><CardContent className="p-3"><Skeleton className="h-24 w-full" /></CardContent></Card>;
   }
+  const pipelineReady = data.data_quality?.deals !== "error" && data.data_quality?.lettings !== "error";
+  const dealsReady = data.data_quality?.deals !== "error";
+  const vacancyKnown = typeof data.performance.vacancy_rate === "number" && Number.isFinite(data.performance.vacancy_rate);
   return (
     <Card>
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <BarChart3 className="w-3.5 h-3.5" /> Pipeline &amp; performance
-          <Badge variant="secondary" className="text-[10px]">{data.active_deals.length} active</Badge>
+          <Badge variant="secondary" className="text-[10px]">{dealsReady ? `${data.active_deals.length} active` : "Deals unavailable"}</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-3">
+        {!!data.data_warnings?.length && <div className="rounded border border-border bg-muted/40 p-2 text-xs text-muted-foreground" role="status">
+          {data.data_warnings.map(warning => <p key={warning.section}>{warning.message}</p>)}
+          {Object.values(data.data_quality || {}).includes("error") && <Button variant="outline" size="sm" onClick={() => refetch()}>Retry unavailable data</Button>}
+        </div>}
         {/* Pipeline funnel — tap a stage with members to expand them */}
         <div className="grid grid-cols-6 gap-1.5">
           {STAGE_BUCKETS.map(b => {
@@ -251,17 +260,18 @@ export function PipelinePerformanceBoard({ propertyId }: { propertyId: string })
             return (
               <button
                 key={b.key}
-                onClick={() => count > 0 && setOpenStage(isOpen ? null : b.key)}
+                onClick={() => pipelineReady && count > 0 && setOpenStage(isOpen ? null : b.key)}
+                disabled={!pipelineReady}
                 className={`rounded border ${b.colour} px-1.5 py-1 text-center transition-shadow ${count > 0 ? "cursor-pointer hover:shadow-sm" : "cursor-default opacity-70"} ${isOpen ? "ring-2 ring-foreground/30" : ""}`}
                 data-testid={`funnel-stage-${b.key}`}
               >
-                <div className="text-lg font-bold leading-none">{count}</div>
+                <div className="text-lg font-bold leading-none">{pipelineReady ? count : "—"}</div>
                 <div className="text-[9px] uppercase tracking-wider mt-0.5">{b.label}</div>
               </button>
             );
           })}
         </div>
-        {openStage && ((data as any).pipeline_items?.[openStage]?.length || 0) > 0 && (
+        {pipelineReady && openStage && ((data as any).pipeline_items?.[openStage]?.length || 0) > 0 && (
           <div className="rounded border bg-muted/30 p-2 space-y-0.5" data-testid="funnel-stage-items">
             {((data as any).pipeline_items[openStage] as Array<{ label: string; sub: string | null }>).map((it, i) => (
               <div key={i} className="flex items-center justify-between text-[11px]">
@@ -276,17 +286,19 @@ export function PipelinePerformanceBoard({ propertyId }: { propertyId: string })
         <div className="grid grid-cols-3 gap-2 pt-1 border-t">
           <div className="rounded border p-2">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Vacancy</div>
-            <div className="text-base font-bold">{(data.performance.vacancy_rate * 100).toFixed(1)}%</div>
-            <div className="text-[10px] text-muted-foreground">{data.performance.total_units - data.performance.occupied_units} of {data.performance.total_units} units</div>
+            <div className="text-base font-bold">{vacancyKnown ? `${(data.performance.vacancy_rate! * 100).toFixed(1)}%` : "—"}</div>
+            <div className="text-[10px] text-muted-foreground">{vacancyKnown
+              ? `${data.performance.vacant_units} of ${data.performance.total_units} units`
+              : data.performance.unknown_units ? `${data.performance.unknown_units} occupancy statuses to confirm` : "Schedule unavailable or incomplete"}</div>
           </div>
           <div className="rounded border p-2">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">WAULT</div>
             <div className="text-base font-bold">{data.performance.wault_years != null ? `${data.performance.wault_years.toFixed(1)} yrs` : "—"}</div>
-            <div className="text-[10px] text-muted-foreground">average unexpired</div>
+            <div className="text-[10px] text-muted-foreground">rent-weighted to expiry</div>
           </div>
           <div className="rounded border p-2">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Active deals</div>
-            <div className="text-base font-bold">{data.active_deals.length}</div>
+            <div className="text-base font-bold">{dealsReady ? data.active_deals.length : "—"}</div>
             <div className="text-[10px] text-muted-foreground">in pipeline</div>
           </div>
         </div>
@@ -375,15 +387,16 @@ export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) 
 // panel via useAssetBrief (react-query dedupes). Renders compactly
 // for the top-strip 2-col row beside Weekly Focus.
 export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
-  const { data, isLoading, isError } = useAssetBrief(propertyId);
+  const { data, isLoading, isError, refetch } = useAssetBrief(propertyId);
   if (isError) {
-    return <Card><CardContent className="p-3"><p className="text-xs text-rose-600 italic">Couldn't load — refresh.</p></CardContent></Card>;
+    return <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground">Risk checks could not be loaded.</p><Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button></CardContent></Card>;
   }
   if (isLoading || !data) {
     return <Card><CardContent className="p-3"><Skeleton className="h-16 w-full" /></CardContent></Card>;
   }
   const high = data.risks.filter(r => r.severity === "high");
   const med = data.risks.filter(r => r.severity !== "high");
+  const complete = data.data_quality?.risks === "ready";
   return (
     <Card className="overflow-hidden">
       <CardHeader className="p-3 pb-2 bg-gradient-to-r from-rose-500/[0.06] to-transparent">
@@ -401,8 +414,9 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-2">
+        {!complete && <p className="text-xs text-muted-foreground mb-2" role="status">{data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}</p>}
         {data.risks.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic">No flagged risks. All long-expiry tenants have live deals.</p>
+          complete ? <p className="text-xs text-muted-foreground italic">No risks flagged in the recorded lease and covenant data.</p> : null
         ) : (
           <div className="space-y-1 max-h-[260px] overflow-y-auto pr-1">
             {[...high, ...med].map((r, i) => (
@@ -442,7 +456,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
   const { data, isLoading, isError } = useQuery<any>({
     queryKey: ["/api/properties", propertyId, "linkage-audit"],
     queryFn: async () => {
-      const res = await fetch(`/api/properties/${propertyId}/linkage-audit`, { credentials: "include" });
+      const res = await fetch(`/api/properties/${propertyId}/linkage-audit`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -452,7 +466,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
     setResolving(true);
     try {
       const res = await fetch(`/api/properties/${propertyId}/resolve-tenants`, {
-        method: "POST", credentials: "include",
+        method: "POST", credentials: "include", headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = await res.json();
@@ -479,7 +493,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
     setRepointing(true);
     try {
       const res = await fetch(`/api/properties/${propertyId}/repoint-merged-brands`, {
-        method: "POST", credentials: "include",
+        method: "POST", credentials: "include", headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = await res.json();
@@ -497,7 +511,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
     setPromoting(true);
     try {
       const res = await fetch(`/api/properties/${propertyId}/promote-orphans-to-tenancy`, {
-        method: "POST", credentials: "include",
+        method: "POST", credentials: "include", headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = await res.json();
@@ -680,7 +694,7 @@ function UnresolvedTenantsDialog({ propertyId, onClose }: { propertyId: string; 
   const { data: unresolved = [], isLoading } = useQuery<Array<{ name: string; units: number }>>({
     queryKey: ["/api/properties", propertyId, "unresolved-tenants"],
     queryFn: async () => {
-      const res = await fetch(`/api/properties/${propertyId}/unresolved-tenants`, { credentials: "include" });
+      const res = await fetch(`/api/properties/${propertyId}/unresolved-tenants`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status} — couldn't load unresolved tenants`);
       return res.json();
     },
@@ -738,7 +752,7 @@ function DuplicateUnitsDialog({ propertyId, onClose }: { propertyId: string; onC
   const { data, isLoading } = useQuery<{ clusters: Record<string, any[]> }>({
     queryKey: ["/api/properties", propertyId, "duplicate-units"],
     queryFn: async () => {
-      const r = await fetch(`/api/properties/${propertyId}/duplicate-units`, { credentials: "include" });
+      const r = await fetch(`/api/properties/${propertyId}/duplicate-units`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) throw new Error(`HTTP ${r.status} — couldn't load duplicate units`);
       return r.json();
     },
@@ -750,7 +764,7 @@ function DuplicateUnitsDialog({ propertyId, onClose }: { propertyId: string; onC
     try {
       const r = await fetch(`/api/properties/${propertyId}/merge-tenancy-units`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ primaryId, secondaryId, force }),
       });
@@ -886,7 +900,7 @@ function OrphanDealsList({ propertyId }: { propertyId: string }) {
   const { data = [] } = useQuery<Array<{ id: string; name: string; status: string; tenant_name: string | null; deal_ref: string | null; rent_pa: number | null }>>({
     queryKey: ["/api/properties", propertyId, "orphan-deals"],
     queryFn: async () => {
-      const r = await fetch(`/api/properties/${propertyId}/orphan-deals`, { credentials: "include" });
+      const r = await fetch(`/api/properties/${propertyId}/orphan-deals`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return [];
       return r.json();
     },
@@ -898,7 +912,7 @@ function OrphanDealsList({ propertyId }: { propertyId: string }) {
     try {
       const r = await fetch(`/api/properties/${propertyId}/adopt-deal`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ dealId }),
       });
@@ -962,7 +976,7 @@ function UnresolvedTenantRow({
     queryKey: ["/api/crm/companies/search", debouncedQuery],
     queryFn: async () => {
       if (!debouncedQuery || debouncedQuery.length < 2) return [];
-      const r = await fetch(`/api/crm/companies?q=${encodeURIComponent(debouncedQuery)}&limit=8`, { credentials: "include" });
+      const r = await fetch(`/api/crm/companies?q=${encodeURIComponent(debouncedQuery)}&limit=8`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return [];
       const d = await r.json();
       const arr = Array.isArray(d) ? d : (d.companies || []);
@@ -977,7 +991,7 @@ function UnresolvedTenantRow({
     try {
       const r = await fetch(`/api/properties/${propertyId}/assign-tenant-brand`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ tenantName, brandCompanyId, addAsTradingEntity: saveAsAlias }),
       });
@@ -1040,9 +1054,9 @@ function UnresolvedTenantRow({
 // only, no email body content (per the access rules for client
 // users like Mark at Landsec).
 export function PropertyRecentActivityCard({ propertyId }: { propertyId: string }) {
-  const { data, isLoading, isError } = useAssetBrief(propertyId);
-  if (isError) {
-    return <p className="text-xs text-rose-600 italic">Couldn't load asset brief — refresh to retry.</p>;
+  const { data, isLoading, isError, refetch } = useAssetBrief(propertyId);
+  if (isError || data?.data_quality?.activity === "error") {
+    return <div><p className="text-xs text-muted-foreground">Recent activity could not be loaded.</p><Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button></div>;
   }
   if (isLoading || !data) {
     return <Skeleton className="h-24 w-full" />;
@@ -1160,6 +1174,7 @@ interface PropertyTask {
   owner_name: string | null;
   profile_pic_url: string | null;
   deal_name: string | null;
+  can_complete: boolean;
 }
 
 const PRIORITY_DOT: Record<string, string> = {
@@ -1190,7 +1205,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
   const { data: allUsersRaw } = useQuery<{ id: string; name: string }[]>({ queryKey: ["/api/users"] });
   const allUsers = Array.isArray(allUsersRaw) ? allUsersRaw : [];
 
-  const { data: tasksRes } = useQuery<{ tasks: PropertyTask[] }>({
+  const { data: tasksRes, isLoading: tasksLoading, isError: tasksError, refetch: retryTasks } = useQuery<{ tasks: PropertyTask[] }>({
     queryKey: ["/api/properties", propertyId, "tasks"],
     queryFn: async () => {
       // Bearer header too, not just cookies — token-auth contexts (the
@@ -1228,7 +1243,10 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
       const res = await apiRequest("PATCH", `/api/tasks/${id}`, { status: "done" });
       return res.json();
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "tasks"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+    },
     onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
   });
 
@@ -1238,7 +1256,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Target className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           This week's focus
-          <Badge variant="secondary" className="text-[10px]">{tasks.length}</Badge>
+          <Badge variant="secondary" className="text-[10px]">{tasksLoading || tasksError ? "—" : tasks.length}</Badge>
         </CardTitle>
         <Link href="/tasks">
           <Button size="sm" variant="ghost" className="h-6 text-[10px]">
@@ -1247,7 +1265,9 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
         </Link>
       </CardHeader>
       <CardContent className="p-3 pt-2 space-y-1.5">
-        {tasks.length === 0 && (
+        {tasksLoading && <p className="text-[11px] text-muted-foreground">Loading property tasks…</p>}
+        {tasksError && <div role="status"><p className="text-[11px] text-muted-foreground">Property tasks could not be loaded.</p><Button variant="outline" size="sm" onClick={() => retryTasks()}>Retry tasks</Button></div>}
+        {!tasksLoading && !tasksError && tasks.length === 0 && (
           <p className="text-[11px] text-muted-foreground italic">No open tasks on this property. Add the things being pushed this week below — they'll appear on My Tasks too.</p>
         )}
         <div className="space-y-0.5 max-h-[220px] overflow-y-auto pr-1">
@@ -1261,7 +1281,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
                     ? "border-l-slate-300 dark:border-l-slate-700 hover:bg-muted/40"
                     : "border-l-violet-300 dark:border-l-violet-800 bg-violet-50/30 dark:bg-violet-950/10 hover:bg-violet-50/60 dark:hover:bg-violet-950/20"
               }`}>
-                <button
+                {t.can_complete === true ? <button
                   onClick={() => completeTask.mutate(t.id)}
                   disabled={completeTask.isPending}
                   className="w-3.5 h-3.5 rounded border border-muted-foreground/40 hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950 mt-0.5 shrink-0 flex items-center justify-center transition-colors"
@@ -1269,7 +1289,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
                   data-testid={`task-complete-${t.id}`}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-transparent group-hover:bg-emerald-500" />
-                </button>
+                </button> : <span className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />}
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${PRIORITY_DOT[t.priority || "medium"]}`} title={`Priority: ${t.priority || "medium"}`} />
                 <div className="flex-1 min-w-0">
                   <div className="leading-snug truncate">{t.title}</div>
@@ -1303,7 +1323,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
           <Input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) addTask.mutate(draft.trim()); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && draft.trim() && !addTask.isPending) addTask.mutate(draft.trim()); }}
             placeholder="Add a task — e.g. Chase Q3 leasing update"
             className="text-xs h-7 flex-1 min-w-[180px]"
           />

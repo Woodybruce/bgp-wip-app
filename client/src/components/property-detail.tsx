@@ -40,6 +40,8 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
+import { PropertySimpleOverview } from "@/components/property-simple-overview";
+import { PROPERTY_VIEW_LABELS, suggestPropertyView, type PropertyOverviewUnit } from "@shared/property-view";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { NotesPanel } from "@/components/notes-panel";
 import { TrackerSummary } from "@/components/tracker-summary";
@@ -68,7 +70,7 @@ import { buildUserColorMap } from "@/lib/agent-colors";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Breadcrumbs } from "@/components/breadcrumbs";
-import type { CrmProperty, CrmCompany, User } from "@shared/schema";
+import type { CrmProperty, CrmCompany, User, PropertyView } from "@shared/schema";
 import {
   STATUS_OPTIONS,
   PROPERTY_STATUS_COLORS,
@@ -136,7 +138,7 @@ function PropertyComplianceBoardWrapper({
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/api/brand", ownerId, "profile"],
     queryFn: async () => {
-      const res = await fetch(`/api/brand/${ownerId}/profile`, { credentials: "include" });
+      const res = await fetch(`/api/brand/${ownerId}/profile`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -201,7 +203,7 @@ function BgpCommentaryWrapper({ propertyId }: { propertyId: string }) {
   const { data } = useQuery<any>({
     queryKey: ["/api/properties", propertyId, "asset-brief"],
     queryFn: async () => {
-      const res = await fetch(`/api/properties/${propertyId}/asset-brief`, { credentials: "include" });
+      const res = await fetch(`/api/properties/${propertyId}/asset-brief`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -232,6 +234,7 @@ function CollapsibleCard({
       <button
         type="button"
         onClick={onToggle}
+        aria-expanded={open}
         className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/50 transition-colors text-left"
         data-testid={testId}
       >
@@ -269,6 +272,20 @@ function ReferenceSection(props: {
   );
 }
 
+export function propertyAssetClasses(value: string | string[] | null | undefined): string[] {
+  return [...new Set((Array.isArray(value) ? value : [value || ""])
+    .flatMap(item => item.split(",")).map(item => item.trim()).filter(Boolean))];
+}
+
+// Keep a visited section mounted so switching tabs does not discard a draft.
+// Research and integrations are first mounted when the user opens their tab.
+function PropertySection({ name, active, simple, children }: { name: string; active: string; simple: boolean; children: React.ReactNode }) {
+  const [visited, setVisited] = useState(!simple || name === active);
+  useEffect(() => { if (!simple || name === active) setVisited(true); }, [name, active, simple]);
+  if (simple && !visited && name !== active) return null;
+  return <div className={name === active ? "space-y-3" : simple ? "hidden" : "hidden lg:block lg:space-y-3"}>{children}</div>;
+}
+
 export function PropertyDetail({ id }: { id: string }) {
   const [, navigate] = useLocation();
   // Clients can edit scoped business fields; internal tools and ownership
@@ -282,6 +299,8 @@ export function PropertyDetail({ id }: { id: string }) {
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
     refetchInterval: (query) => {
+      // A short refresh window picks up background data changes. Property
+      // age and missing fields do not prove that an enrichment job is running.
       const p = query.state.data;
       if (!p?.createdAt) return false;
       const ageMs = Date.now() - new Date(p.createdAt).getTime();
@@ -294,6 +313,16 @@ export function PropertyDetail({ id }: { id: string }) {
   const { data: allUsers = [] } = useQuery<User[]>({
     queryKey: ["/api/users"],
   });
+  const overviewSchedule = useQuery<PropertyOverviewUnit[]>({
+    queryKey: ["/api/tenancy-schedule/property", id],
+    queryFn: async () => (await apiRequest("GET", `/api/tenancy-schedule/property/${id}`)).json(),
+    enabled: Boolean(property),
+  });
+  const suggestedView = suggestPropertyView(property?.assetClass, overviewSchedule.isError ? undefined : overviewSchedule.data);
+  const propertyView = property?.propertyView || suggestedView;
+  const [showFullPage, setShowFullPage] = useState(false);
+  const simpleLayout = !showFullPage && (propertyView === "building" || propertyView === "multi_let");
+  useEffect(() => { setShowFullPage(false); }, [id]);
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
   const { data: agentLinks = [] } = useQuery<Array<{ propertyId: string; userId: string; role?: string | null }>>({
     queryKey: ["/api/crm/property-agents"],
@@ -308,7 +337,7 @@ export function PropertyDetail({ id }: { id: string }) {
   const { data: allCompanies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
     queryFn: async () => {
-      const res = await fetch("/api/crm/companies?includeBillingEntities=true");
+      const res = await fetch("/api/crm/companies?includeBillingEntities=true", { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load companies");
       return res.json();
     },
@@ -346,8 +375,11 @@ export function PropertyDetail({ id }: { id: string }) {
   // Phone section switcher (docs/DESIGN.md §9) — below lg the aside stacks
   // under the main column and the page ran 20 boards deep in one scroll.
   // One section at a time on the phone; lg+ layout unchanged.
-  const [phoneSection, setPhoneSection] = useState<"overview" | "boards" | "deals" | "files" | "kyc" | "activity">("overview");
-  const sec = (k: typeof phoneSection) => (phoneSection === k ? "space-y-3" : "hidden lg:block lg:space-y-3");
+  const [phoneSection, setPhoneSection] = useState<"overview" | "boards" | "tenancy" | "plans" | "research" | "deals" | "files" | "kyc" | "activity">("overview");
+  const sec = (k: typeof phoneSection) => (phoneSection === k ? "space-y-3" : simpleLayout ? "hidden" : "hidden lg:block lg:space-y-3");
+  useEffect(() => {
+    setPhoneSection(previous => simpleLayout && previous === "boards" ? "tenancy" : !simpleLayout && ["tenancy", "plans", "research"].includes(previous) ? "boards" : previous);
+  }, [simpleLayout]);
 
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
     plans: true,
@@ -362,6 +394,19 @@ export function PropertyDetail({ id }: { id: string }) {
     contacts: true,
   });
   const toggleMain = (key: string) => setMainSections(prev => ({ ...prev, [key]: !prev[key] }));
+  useEffect(() => {
+    let frame: number;
+    const openLinkedPlan = () => {
+      if (!/^#plan-(tenancy|unit)-/.test(window.location.hash)) return;
+      setMainSections(previous => ({ ...previous, plans: true }));
+      setPhoneSection(simpleLayout ? "plans" : "boards");
+      frame = requestAnimationFrame(() => document.querySelector('[data-testid="toggle-plans"]')?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    };
+    openLinkedPlan();
+    window.addEventListener("hashchange", openLinkedPlan);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", openLinkedPlan); };
+  }, [id, property?.id, simpleLayout]);
+
   const { toast } = useToast();
 
   const updateMutation = useMutation({
@@ -407,7 +452,7 @@ export function PropertyDetail({ id }: { id: string }) {
     },
   });
 
-  if (isLoading) {
+  if (isLoading || (property && !property.propertyView && overviewSchedule.isPending)) {
     return (
       <div className="p-4 sm:p-6 space-y-4">
         <Skeleton className="h-8 w-48" />
@@ -465,7 +510,7 @@ export function PropertyDetail({ id }: { id: string }) {
             BIG windows — Landsec's window hit it, BGP's didn't, and the two
             looked like different apps (Woody, 2026-08-03). Single ~340px
             aside always. */}
-        <div className="p-4 sm:p-6 grid grid-cols-1 [@container(min-width:1000px)]:grid-cols-[minmax(0,1fr)_340px] gap-4 lg:gap-6 items-start">
+        <div className={`p-4 sm:p-6 grid grid-cols-1 ${simpleLayout ? "max-w-7xl mx-auto" : "[@container(min-width:1000px)]:grid-cols-[minmax(0,1fr)_340px]"} gap-4 lg:gap-6 items-start`} data-property-view={simpleLayout ? propertyView : "full"}>
           <div className="min-w-0 space-y-3 [container-type:inline-size]">
             <div className="flex items-center gap-3 flex-wrap">
               {/* Hidden on phones — the mobile top bar + breadcrumb already
@@ -537,21 +582,6 @@ export function PropertyDetail({ id }: { id: string }) {
                   {property.groupName && (
                     <Badge variant="outline" className="text-[10px]" data-testid="badge-property-group">{property.groupName}</Badge>
                   )}
-                  {(() => {
-                    if (!property.createdAt) return null;
-                    const ageMs = Date.now() - new Date(property.createdAt).getTime();
-                    const isRecent = ageMs < 5 * 60 * 1000;
-                    const hasEnrichmentData = !!(property.proprietorName || property.landlordId || property.titleNumber);
-                    if (isRecent && !hasEnrichmentData && property.address && !isClientViewer) {
-                      return (
-                        <Badge variant="outline" className="text-[10px] text-muted-foreground animate-pulse gap-1" data-testid="badge-enriching">
-                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                          Auto-enriching...
-                        </Badge>
-                      );
-                    }
-                    return null;
-                  })()}
                 </div>
               )}
               <div className="flex items-center gap-2 flex-wrap gap-y-1.5 ml-auto">
@@ -606,16 +636,35 @@ export function PropertyDetail({ id }: { id: string }) {
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-1.5 lg:hidden" data-testid="property-phone-sections">
+            <p className="text-sm text-muted-foreground">{formatAddress(property.address) || "Address not recorded"}</p>
+            <div className="rounded-lg border bg-card p-3 flex flex-wrap items-center gap-3" data-testid="property-view-controls">
+              <label className="flex items-center gap-2 text-sm min-w-0">Property layout
+                <select aria-label="Property layout" value={property.propertyView || "auto"} disabled={updateMutation.isPending || !pdViewer} className="rounded border bg-background px-2 py-1.5 text-sm min-w-0 w-full sm:w-auto" onChange={event => {
+                  const value = event.target.value;
+                  updateMutation.mutate({ propertyView: value === "auto" ? null : value as PropertyView }, { onSuccess: () => { setShowFullPage(false); setPhoneSection("overview"); } });
+                }}>
+                  <option value="auto">Automatic{suggestedView ? ` · ${PROPERTY_VIEW_LABELS[suggestedView]}` : " · choose a layout"}</option>
+                  {Object.entries(PROPERTY_VIEW_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </label>
+              {(propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="ml-auto" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
+              <p className="w-full text-[11px] text-muted-foreground">{property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and tenancy rows. Choose a layout to keep it fixed." : "No reliable layout suggestion yet. Choose one above; an empty schedule does not establish the number of units."}</p>
+            </div>
+
+            <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">
               <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-section-overview">Overview</Pill>
-              <Pill active={phoneSection === "boards"} onClick={() => setPhoneSection("boards")} data-testid="property-section-boards">Boards</Pill>
+              {simpleLayout ? <>
+                <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-section-tenancy">Tenancy</Pill>
+                <Pill active={phoneSection === "plans"} onClick={() => setPhoneSection("plans")} data-testid="property-section-plans">Plans</Pill>
+              </> : <Pill active={phoneSection === "boards"} onClick={() => setPhoneSection("boards")} data-testid="property-section-boards">Boards</Pill>}
               <Pill active={phoneSection === "deals"} onClick={() => setPhoneSection("deals")} data-testid="property-section-deals">Deals &amp; units</Pill>
               <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Files &amp; contacts</Pill>
               <Pill active={phoneSection === "kyc"} onClick={() => setPhoneSection("kyc")} data-testid="property-section-kyc">KYC</Pill>
               <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="property-section-activity">Activity</Pill>
+              {simpleLayout && <Pill active={phoneSection === "research"} onClick={() => setPhoneSection("research")} data-testid="property-section-research">Research</Pill>}
             </div>
 
-            <div className={sec("overview")}>
+            <PropertySection name={"overview"} active={phoneSection} simple={simpleLayout}>
             {/* Top-row strip: property summary card on the left,
                 latest property news on the right (lg+). News gets
                 more breathing room than 50/50 — typical news
@@ -628,7 +677,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 inside (Status/Asset/Team/Website at 4-col) overflowed
                 their cells. Single column at lg means each card gets
                 full main-col width before the side-by-side kicks in. */}
-            <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-3">
+            <div className={`grid grid-cols-1 ${simpleLayout ? "[@container(min-width:760px)]:grid-cols-2" : "[@container(min-width:760px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"} gap-3`}>
               {/* Left column stack: Asset Owner card + Weekly Focus
                   beneath. h-full lets the grid cell stretch and the
                   inner flex-1 on Weekly Focus compute properly. */}
@@ -665,7 +714,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     </div>
                     <div className="min-w-0" data-testid="property-field-asset-class">
                       <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Asset class</p>
-                      <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
+                      <InlineEngagement value={propertyAssetClasses(property.assetClass)} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(values) => inlineUpdate("assetClass", values.join(", ") || null)} placeholder="Set class" />
                     </div>
                     <div className="min-w-0" data-testid="property-field-use-class">
                       <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Use class</p>
@@ -812,6 +861,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   is visible at a glance alongside the news ticker.
                   Brochures moved down to share a row with Brand Gap. */}
               <div className="flex flex-col gap-3 h-full min-h-0">
+                {simpleLayout ? <PropertySimpleOverview propertyId={id} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /> : <>
                 {/* PropertyNewsPanel renders its own card + "News Feed"
                     header — the old outer Card double-framed it. */}
                 <ErrorBoundary compact name="Property news (top-strip preview)">
@@ -822,19 +872,22 @@ export function PropertyDetail({ id }: { id: string }) {
                     <RiskRegisterCard propertyId={property.id} />
                   </div>
                 </ErrorBoundary>
+                </>}
               </div>
             </div>
 
-            </div>
+            </PropertySection>
 
-            <div className={sec("boards")}>
+            <PropertySection name={simpleLayout ? "files" : "boards"} active={phoneSection} simple={simpleLayout}>
             {/* Brochures row. Property Decks panel hidden for the Monday
                 demo — feature not yet ready for the firm. See
                 PRESENTATION_BACKLOG.md. */}
             <ErrorBoundary compact name="Property brochures">
               <PropertyBrochuresPanel propertyId={property.id} />
             </ErrorBoundary>
+            </PropertySection>
 
+            <PropertySection name={simpleLayout ? "activity" : "boards"} active={phoneSection} simple={simpleLayout}>
             {/* Brand Gap — full-width board (Woody, 2026-08-04: "gap
                 analysis display needs a proper rework, full width to
                 start"). Renders for clients too — the server slices the
@@ -845,12 +898,20 @@ export function PropertyDetail({ id }: { id: string }) {
                 <NotesPanel propertyId={property.id} />
               </ErrorBoundary>
             )}
+            </PropertySection>
+            <PropertySection name={simpleLayout ? "research" : "boards"} active={phoneSection} simple={simpleLayout}>
+            {simpleLayout && <>
+              <ErrorBoundary compact name="Property news"><PropertyNewsPanel propertyId={property.id} propertyName={property.name} /></ErrorBoundary>
+              <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>
+            </>}
             <ErrorBoundary compact name="Brand gap">
               <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
                 <BrandGapPanel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
+            </PropertySection>
 
+            <PropertySection name={simpleLayout ? "deals" : "boards"} active={phoneSection} simple={simpleLayout}>
             {/* Pipeline + Performance combined — single 'how's the
                 building doing' tile that sits above Plans, giving
                 the asset lead a snapshot before they scroll into
@@ -882,11 +943,13 @@ export function PropertyDetail({ id }: { id: string }) {
                 + last-generated timestamp from the asset-brief
                 payload and renders the same purple treatment used
                 on the brand profile's brand_analysis. */}
-            </div>
+            </PropertySection>
 
-            <div className={sec("overview")}>
+            <PropertySection name={simpleLayout ? "activity" : "overview"} active={phoneSection} simple={simpleLayout}>
             <BgpCommentaryWrapper propertyId={property.id} />
+            </PropertySection>
 
+            <PropertySection name={simpleLayout ? "files" : "overview"} active={phoneSection} simple={simpleLayout}>
             {isClientViewer ? null : streetViewExpanded ? (
               <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-3 items-stretch">
                 <StreetViewSection
@@ -914,9 +977,9 @@ export function PropertyDetail({ id }: { id: string }) {
               </Button>
             )}
 
-            </div>
+            </PropertySection>
 
-            <div className={sec("boards")}>
+            <PropertySection name={simpleLayout ? "plans" : "boards"} active={phoneSection} simple={simpleLayout}>
             {/* LeasingTrackerSummary removed — its counts (available /
                 under-offer / let / viewings / offers) duplicate what's
                 already visible per unit on the Leasing Schedule below.
@@ -930,7 +993,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 <PropertyPlansPanel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
+            </PropertySection>
 
+            <div className={simpleLayout && propertyView === "multi_let" && phoneSection === "overview" ? "space-y-3" : sec(simpleLayout ? "tenancy" : "boards")}>
             {/* Schedule — unified view (Lettings / Tenancy lens toggle)
                 rendered for every property. Bluewater was the rollout
                 test; verified, so the firm-wide flip is in. The
@@ -945,11 +1010,13 @@ export function PropertyDetail({ id }: { id: string }) {
             <ErrorBoundary compact name="Schedule">
               <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Tenancy Schedule" testId="toggle-schedule">
                 <div className="max-h-[640px] overflow-y-auto pr-1">
-                  <PropertyUnifiedSchedule propertyId={property.id} />
+                  <PropertyUnifiedSchedule propertyId={property.id} presentation={simpleLayout ? "compact" : "full"} />
                 </div>
               </CollapsibleCard>
             </ErrorBoundary>
+            </div>
 
+            <PropertySection name={simpleLayout ? "research" : "boards"} active={phoneSection} simple={simpleLayout}>
             {!isClientViewer && (
             <ErrorBoundary compact name="Pathway intel strip">
               <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-pathway">
@@ -989,7 +1056,7 @@ export function PropertyDetail({ id }: { id: string }) {
             {/* Linked Contacts moved into the right sidebar under
                 Client Board so the main column reads property → deals
                 → marketing rather than "client people" twice. */}
-            </div>
+            </PropertySection>
           </div>
 
           {/* Right column = reference stack. Single-column on the right
@@ -1003,11 +1070,11 @@ export function PropertyDetail({ id }: { id: string }) {
               side by side half-width instead of one long strip —
               Files+Contacts, Compliance+Activity, BGP Contacts+Client
               Board, Deals+Units (Woody, 2026-07-30). */}
-          <aside className="space-y-3 lg:sticky lg:top-4 self-start">
+          <aside className={simpleLayout ? ["files", "deals", "kyc", "activity"].includes(phoneSection) ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
               {/* Clients get the read-only jailed browser (their own
                   SharePoint area, no internal team names) instead of the
                   staff panel — restored per Woody, 2026-08-03. */}
-              <div className={sec("files")}>
+              <PropertySection name={"files"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
                 title="Files"
                 icon={FolderOpen}
@@ -1028,9 +1095,9 @@ export function PropertyDetail({ id }: { id: string }) {
                   </>
                 )}
               </ReferenceSection>
-              </div>
+              </PropertySection>
 
-              <div className={sec("files")}>
+              <PropertySection name={"files"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
                 title="Linked Contacts"
                 icon={UserCheck}
@@ -1040,11 +1107,11 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <LinkedContactsPanel propertyId={property.id} />
               </ReferenceSection>
-              </div>
+              </PropertySection>
 
               {/* Visible to clients — same decision as the brand-profile
                   KYC panel (landlords need tenant AML/financial standing). */}
-              <div className={sec("kyc")}>
+              <PropertySection name={"kyc"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
                 title="Compliance & KYC"
                 icon={ShieldCheck}
@@ -1056,9 +1123,9 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} embedded />
                 </ErrorBoundary>
               </ReferenceSection>
-              </div>
+              </PropertySection>
 
-              <div className={sec("activity")}>
+              <PropertySection name={"activity"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
                 title="Activity"
                 icon={Activity}
@@ -1072,9 +1139,9 @@ export function PropertyDetail({ id }: { id: string }) {
                   <ActivitySummary propertyId={property.id} />
                 </ErrorBoundary>
               </ReferenceSection>
-              </div>
+              </PropertySection>
 
-              <div className={sec("files")}>
+              <PropertySection name={"files"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
                 title="BGP Contacts"
                 icon={UserCheck}
@@ -1084,12 +1151,12 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
               </ReferenceSection>
-              </div>
+              </PropertySection>
 
               {/* Client Board retired (Woody, 2026-08-05) — Linked Contacts'
                   Internal team group now carries the client-side people. */}
 
-              <div className={sec("deals")}>
+              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
                 title="Deals"
                 icon={Handshake}
@@ -1100,9 +1167,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 <LinkedDealsPanel propertyId={property.id} />
                 <TaggedConversationsPanel entityType="property" entityId={property.id} />
               </ReferenceSection>
-              </div>
+              </PropertySection>
 
-              <div className={sec("deals")}>
+              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
                 title="Available Units"
                 icon={Store}
@@ -1112,14 +1179,14 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <AvailableUnitsPanel propertyId={property.id} />
               </ReferenceSection>
-              </div>
+              </PropertySection>
 
               {/* Land Registry retired from the property page entirely
                   (Woody, 2026-08-03) — title data lives in Property
                   Intelligence when needed. */}
 
               {!isClientViewer && (
-              <div className={sec("activity")}>
+              <PropertySection name={"activity"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
                 title="Data linkage"
                 icon={Activity}
@@ -1131,7 +1198,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertyLinkageCard propertyId={property.id} />
                 </ErrorBoundary>
               </ReferenceSection>
-              </div>
+              </PropertySection>
               )}
           </aside>
         </div>
@@ -1246,7 +1313,7 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
   const { data: images = [], isLoading } = useQuery<EntityImageRow[]>({
     queryKey: ["/api/entity-images", entityType, entityId],
     queryFn: async () => {
-      const r = await fetch(`/api/entity-images?entityType=${entityType}&entityId=${encodeURIComponent(entityId)}`, { credentials: "include" });
+      const r = await fetch(`/api/entity-images?entityType=${entityType}&entityId=${encodeURIComponent(entityId)}`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return [];
       return r.json();
     },
@@ -1258,7 +1325,7 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
     fd.append("entityType", entityType);
     fd.append("entityId", entityId);
     fd.append("kind", "photo");
-    const r = await fetch("/api/entity-images", { method: "POST", body: fd, credentials: "include" });
+    const r = await fetch("/api/entity-images", { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
     if (!r.ok) throw new Error(await r.text());
   };
 
@@ -1276,7 +1343,7 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const r = await fetch(`/api/entity-images/${id}`, { method: "DELETE", credentials: "include" });
+      const r = await fetch(`/api/entity-images/${id}`, { method: "DELETE", credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) throw new Error(await r.text());
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/entity-images", entityType, entityId] }),
@@ -1287,7 +1354,7 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
       const r = await fetch(`/api/entity-images/${id}/ai-edit`, {
         method: "POST",
         credentials: "include",
-        headers: { "content-type": "application/json" },
+        headers: { ...getAuthHeaders(), "content-type": "application/json" },
         body: JSON.stringify({ editPrompt: prompt }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "AI edit failed");
@@ -1310,6 +1377,7 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
       const r = await fetch(`/api/entity-images/${entityImageId}/revert`, {
         method: "POST",
         credentials: "include",
+        headers: getAuthHeaders(),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Revert failed");
     },
@@ -1479,7 +1547,7 @@ function StreetViewSection({ address, propertyId, onClose }: { address: string; 
       const r = await fetch(endpoint, {
         method: "POST",
         credentials: "include",
-        headers: { "content-type": "application/json" },
+        headers: { ...getAuthHeaders(), "content-type": "application/json" },
         body: JSON.stringify({
           location,
           heading: pov.heading,

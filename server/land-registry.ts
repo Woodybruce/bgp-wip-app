@@ -228,6 +228,9 @@ export type ResolveBuildingTitlesInput = {
    * fall back to postcode-wide title lookup.
    */
   uprn?: string | null;
+  /** Confirmed-property enrichment: do not merge address-discovered or nearby
+   * UPRNs into the canonical building's exact title candidates. */
+  exactUprnOnly?: boolean;
   /** "clouseau" | "pathway" | "land-registry" — for persistence tagging */
   source?: string | null;
   pathwayRunId?: string | null;
@@ -278,6 +281,7 @@ function formatHmlrTitle(t: { titleNumber: string; tenure: string | null; proper
 
 export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): Promise<ResolveBuildingTitlesResult> {
   const { address: inputAddress, postcode: inputPostcode, lat, lng, source: callerSource, pathwayRunId: callerRunId, userId, skipPersist } = input;
+  if (input.exactUprnOnly && !/^\d{1,12}$/.test(String(input.uprn || '').trim())) return { ok: false, status: 400, error: "A valid canonical UPRN is required for exact title research" };
   const PD_KEY = process.env.PROPERTYDATA_API_KEY;
   if (!PD_KEY) return { ok: false, status: 503, error: "PropertyData API key not configured" };
 
@@ -433,7 +437,7 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
   // for title lookup and often returns a different UPRN from OS Places.
   // Merging both gives us the best coverage.
   let pdUprns: string[] = [];
-  if (cleanPc) {
+  if (cleanPc && !input.exactUprnOnly) {
     for (const candidate of cleanedAddressCandidates) {
       if (!candidate) continue;
       try {
@@ -522,7 +526,7 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
   //   - we couldn't extract a street number from the resolved address
   const uprnTitleResults: any[] = [];
   let hmlrUsed = false;
-  if (resolvedPostcode && streetNumberRaw && await isHmlrProprietorsAvailable()) {
+  if (!input.exactUprnOnly && resolvedPostcode && streetNumberRaw && await isHmlrProprietorsAvailable()) {
     try {
       const hmlrTitles = await findProprietorsByAddress(resolvedPostcode, streetNumberRaw);
       if (hmlrTitles.length > 0) {
@@ -585,7 +589,7 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
   // postcode list omits, so the title-picker can show address + owner per
   // candidate to help narrow down the right title. Falls back to PropertyData
   // context only when our local data has nothing for the postcode.
-  if (resolvedPostcode) {
+  if (resolvedPostcode && !input.exactUprnOnly) {
     try {
       const pcFreeholds = await findFreeholdsByPostcode(resolvedPostcode, Array.from(matchedTitleNumbers));
       if (pcFreeholds.length > 0) {
@@ -664,7 +668,7 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
     },
     // hmlrUsed implies UPRN-equivalent precision (we matched the exact title
     // by postcode + street number against CCOD/OCOD), so report it as "uprn".
-    source: (hmlrUsed || matchedFreeholds.length > 0) ? "uprn" : fallbackFreeholds.length > 0 ? "street_number" : "postcode_only",
+    source: (hmlrUsed || matchedFreeholds.length > 0 || (input.exactUprnOnly && matchedLeaseholds.length > 0)) ? "uprn" : fallbackFreeholds.length > 0 ? "street_number" : "postcode_only",
   };
 }
 
@@ -844,7 +848,7 @@ export function registerLandRegistryRoutes(app: Express) {
 
   app.get("/api/property-lookup", requireAuth, async (req, res) => {
     try {
-      const { postcode, street, buildingNameOrNumber, address, layers, propertyDataLayers } = req.query;
+      const { postcode, street, buildingNameOrNumber, address, uprn, streetNumber, layers, propertyDataLayers } = req.query;
       if (!postcode) return res.status(400).json({ error: "Postcode is required" });
 
       const parsedLayers = layers ? String(layers).split(",") : undefined;
@@ -853,6 +857,8 @@ export function registerLandRegistryRoutes(app: Express) {
       const { performPropertyLookup, formatPropertyReport } = await import("./property-lookup");
       const result = await performPropertyLookup({
         postcode: String(postcode),
+        uprn: uprn && /^\d{1,12}$/.test(String(uprn)) ? String(uprn) : undefined,
+        streetNumber: streetNumber ? String(streetNumber) : undefined,
         street: street ? String(street) : undefined,
         buildingNameOrNumber: buildingNameOrNumber ? String(buildingNameOrNumber) : undefined,
         address: address ? String(address) : undefined,

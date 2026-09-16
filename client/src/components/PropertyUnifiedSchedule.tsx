@@ -8,7 +8,7 @@
 import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
 import { useQuery } from "@tanstack/react-query";
 
-export function PropertyUnifiedSchedule({ propertyId }: { propertyId: string }) {
+export function PropertyUnifiedSchedule({ propertyId, presentation = "full" }: { propertyId: string; presentation?: "compact" | "full" }) {
   const { data: schedUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientSched = !schedUser || schedUser.role === "Client" || !!schedUser.companyScopeId;
 
@@ -16,12 +16,12 @@ export function PropertyUnifiedSchedule({ propertyId }: { propertyId: string }) 
     <div className="space-y-2">
       <div className="flex items-center gap-1 text-[11px] flex-wrap">
         <span className="text-[10px] text-muted-foreground">
-          {isClientSched
+          {presentation === "compact" ? "The essentials from your tenancy schedule. Edit here, choose extra columns, or open the full board for every financial detail." : isClientSched
             ? "The master rent roll — every unit with tenant, rent and lease dates. Live lettings are worked on the Letting Tracker; changes here flow through automatically."
             : "Full rent roll — every column. Toggle off what you don't need. Live lettings live on the Letting Tracker."}
         </span>
       </div>
-      <PropertyTenancySchedule propertyId={propertyId} lens="tenancy" />
+      <PropertyTenancySchedule propertyId={propertyId} lens="tenancy" presentation={presentation} />
     </div>
   );
 }

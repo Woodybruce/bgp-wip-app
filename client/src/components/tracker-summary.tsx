@@ -15,12 +15,13 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Store, ChevronRight } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { DEAL_STATUS_BADGE_COLORS, DEAL_STATUS_DOT_COLORS } from "@/lib/deal-status-colors";
 
-const LIVE_CODES = new Set<DealStatusCode>(["OPP", "REP", "AVA", "NEG", "SOL", "EXC"]);
+const LIVE_CODES = new Set<DealStatusCode>(["OPP", "REP", "AVA", "NEG", "HOT", "SOL", "EXC"]);
 
 type Unit = {
   id: string; propertyId: string; unitName: string | null; sqft: number | null;
@@ -28,19 +29,19 @@ type Unit = {
 };
 
 function useTrackerUnits(propertyId?: string, propertyIds?: string[]) {
-  const { data: units = [], isLoading } = useQuery<Unit[]>({
+  const { data: units = [], isLoading, isError, refetch } = useQuery<Unit[]>({
     queryKey: propertyId ? ["/api/available-units", { propertyId }] : ["/api/available-units"],
     queryFn: async () => {
       const qs = propertyId ? `?propertyId=${encodeURIComponent(propertyId)}` : "";
       const r = await fetch(`/api/available-units${qs}`, { credentials: "include", headers: getAuthHeaders() });
-      if (!r.ok) return [];
+      if (!r.ok) throw new Error(`Tracker lookup failed (${r.status})`);
       return r.json();
     },
   });
   // The linked deal's status wins over the unit's own marketing status —
   // same rule as the Letting Tracker page (effByUnit), so the summary
   // never disagrees with the board it deep-links to.
-  const { data: deals = [] } = useQuery<{ id: string; status: string | null }[]>({
+  const { data: deals = [], isLoading: dealsLoading, isError: dealsError, refetch: retryDeals } = useQuery<{ id: string; status: string | null }[]>({
     queryKey: ["/api/crm/deals"],
   });
   const effOf = useMemo(() => {
@@ -63,7 +64,8 @@ function useTrackerUnits(propertyId?: string, propertyIds?: string[]) {
     return c;
   }, [scoped, effOf]);
   const live = useMemo(() => scoped.filter(u => LIVE_CODES.has(effOf(u))), [scoped, effOf]);
-  return { units: scoped, live, counts, effOf, isLoading };
+  return { units: scoped, live, counts, effOf, isLoading: isLoading || dealsLoading, isError: isError || dealsError,
+    retry: () => Promise.all([refetch(), retryDeals()]) };
 }
 
 function trackerHref(propertyId?: string, status?: DealStatusCode) {
@@ -82,7 +84,9 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
   // stretch so the two columns match (Woody, 2026-08-19).
   tall?: boolean;
 }) {
-  const { live, counts, effOf, isLoading } = useTrackerUnits(propertyId, propertyIds);
+  const { live, counts, effOf, isLoading, isError, retry } = useTrackerUnits(propertyId, propertyIds);
+  if (isError) return <div className="space-y-2" role="status"><p className="text-xs text-muted-foreground">Letting Tracker data could not be loaded.</p><Button variant="outline" size="sm" onClick={() => retry()}>Retry tracker</Button><Link href={trackerHref(propertyId)} className="text-xs hover:underline">Open Letting Tracker</Link></div>;
+  if (isLoading) return <p className="text-xs text-muted-foreground">Loading tracker…</p>;
 
   if (variant === "strip") {
     return (

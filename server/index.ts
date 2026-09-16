@@ -941,6 +941,25 @@ installGoogleBudgetGuard();
      )`,
     `CREATE INDEX IF NOT EXISTS idx_property_plan_units_plan ON property_plan_units (plan_id)`,
     `CREATE INDEX IF NOT EXISTS idx_property_plan_units_unit ON property_plan_units (unit_id) WHERE unit_id IS NOT NULL`,
+    // Property plan outlines can link directly to the canonical tenancy row.
+    `ALTER TABLE property_plan_units ADD COLUMN IF NOT EXISTS tenancy_unit_id VARCHAR REFERENCES tenancy_schedule_units(id) ON DELETE SET NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_property_plan_units_tenancy ON property_plan_units(tenancy_unit_id) WHERE tenancy_unit_id IS NOT NULL`,
+    `CREATE TABLE IF NOT EXISTS property_plan_scans (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       plan_id UUID NOT NULL REFERENCES property_plans(id) ON DELETE CASCADE,
+       image_key TEXT NOT NULL,
+       status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','ready','failed','applied')),
+       total INT NOT NULL DEFAULT 0,
+       completed INT NOT NULL DEFAULT 0,
+       message TEXT NOT NULL DEFAULT '',
+       candidates JSONB NOT NULL DEFAULT '[]'::jsonb,
+       applied_request JSONB,
+       applied_count INT NOT NULL DEFAULT 0,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_property_plan_scans_plan ON property_plan_scans(plan_id, created_at DESC)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_property_plan_scans_running ON property_plan_scans(plan_id) WHERE status = 'running'`,
     // Type-mismatch cleanup (may already be correct — that's fine)
     `ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text`,
     // Indexes for compliance-board counterparty joins (otherwise /api/kyc/board
@@ -1202,6 +1221,14 @@ installGoogleBudgetGuard();
     // Tenancy). Bluewater is the first test property; once verified we'll
     // flip the firm-wide default to true and retire the two old panels.
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS unified_schedule BOOLEAN DEFAULT false`,
+    // Additive presentation preference; existing properties retain automatic layout.
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS property_view TEXT`,
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'crm_properties_property_view_check' AND conrelid = 'crm_properties'::regclass) THEN
+         ALTER TABLE crm_properties ADD CONSTRAINT crm_properties_property_view_check
+           CHECK (property_view IS NULL OR property_view IN ('building', 'multi_let', 'centre'));
+       END IF;
+     END $$`,
     // Backfill: existing landlord_id → freeholder_id (best default; user can correct)
     `UPDATE crm_properties SET freeholder_id = landlord_id WHERE freeholder_id IS NULL AND landlord_id IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_crm_properties_freeholder ON crm_properties(freeholder_id) WHERE freeholder_id IS NOT NULL`,
@@ -3698,6 +3725,12 @@ app.use("/api/branding/assets", express.static(
         // Property edits use the same ownership/shared-access checks as deals.
         if ((req.method === "PUT" && /^\/api\/crm\/properties\/[^/]+$/.test(p)) ||
             (req.method === "POST" && p === "/api/crm/properties/bulk-update")) return next();
+        // Manual plan editing is property-scoped in the handlers. Paid scan
+        // starts remain staff-only; clients can review already scanned outlines.
+        if (((req.method === "PATCH" || req.method === "DELETE") && /^\/api\/plans\/[^/]+$/.test(p)) ||
+            (req.method === "POST" && /^\/api\/plans\/[^/]+\/(units|trace-unit)$/.test(p)) ||
+            (req.method === "POST" && /^\/api\/plans\/[^/]+\/scans\/[^/]+\/apply$/.test(p)) ||
+            ((req.method === "PATCH" || req.method === "DELETE") && /^\/api\/plan-units\/[^/]+$/.test(p))) return next();
         // Contact-graph link writes ride under the allowed /api/crm/contacts
         // prefix but have no scope check — a client could wire ANY contact
         // onto ANY deal / property / requirement (including other tenants').

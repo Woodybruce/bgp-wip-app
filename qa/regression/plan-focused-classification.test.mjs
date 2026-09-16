@@ -7,7 +7,7 @@ import { mapDetectedPlanUnits } from '../../server/plan-unit-detection.ts';
 const require = createRequire(import.meta.url);
 const { evaluate, find, ts } = require('./source-harness.cjs');
 const source = ['DETECT_PROMPT', 'extractJsonObject', 'detectTile'].map(name =>
-  find('server/evidence-plan.ts', node => (ts.isFunctionDeclaration(node) && node.name?.text === name)
+  find('server/plan-scan-vision.ts', node => (ts.isFunctionDeclaration(node) && node.name?.text === name)
     || (ts.isVariableStatement(node) && node.declarationList.declarations.some(item => item.name.getText() === name)))
 ).join('\n');
 const W = 400, H = 300;

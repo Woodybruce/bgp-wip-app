@@ -33,9 +33,58 @@ interface FocusItem {
   deal_id?: string | null;
 }
 
+export function briefOccupancy(status: unknown): "occupied" | "vacant" | "unknown" {
+  const value = String(status || "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  if (["vacant", "available", "void", "ava"].includes(value)) return "vacant";
+  if (["occupied", "trading", "let", "not vacant", "holding over", "taw", "lease event", "lease event pending"].includes(value)) return "occupied";
+  // Marketing/deal stages alone cannot establish whether the occupier has left.
+  return "unknown";
+}
+
+export function summariseBriefSchedule(rows: any[], failed = false, now = Date.now()) {
+  const occupied = rows.filter(row => briefOccupancy(row.status) === "occupied");
+  const vacant = rows.filter(row => briefOccupancy(row.status) === "vacant");
+  const unknown = rows.length - occupied.length - vacant.length;
+  const legacy = rows.some(row => row.schedule_source !== "tenancy");
+  const missingExpiry = occupied.some(row => !row.lease_expiry || !Number.isFinite(new Date(row.lease_expiry).getTime()));
+  const status: "ready" | "partial" | "missing" | "error" = failed ? "error" : !rows.length ? "missing" : legacy || unknown > 0 ? "partial" : "ready";
+  const risksStatus = status === "ready" && missingExpiry ? "partial" : status;
+  const message = failed ? null : !rows.length ? "No tenancy schedule is recorded. Vacancy and lease risk checks are unavailable."
+    : legacy ? "Only a legacy leasing schedule is recorded. Confirm the full tenancy schedule before relying on property totals."
+      : unknown ? `${unknown} unit${unknown === 1 ? " has" : "s have"} no confirmed occupancy status. Vacancy is unavailable.`
+        : missingExpiry ? "Some occupied units have no valid lease expiry. Lease risk checks are incomplete." : null;
+  const rentComplete = occupied.length > 0 && occupied.every(row => row.rent_pa != null && Number.isFinite(Number(row.rent_pa)) && Number(row.rent_pa) > 0);
+  const totalRent = rentComplete ? occupied.reduce((sum, row) => sum + Number(row.rent_pa), 0) : 0;
+  const weightedTerm = status === "ready" && !missingExpiry && totalRent > 0
+    ? occupied.reduce((sum, row) => sum + Number(row.rent_pa) * Math.max(0, new Date(row.lease_expiry).getTime() - now) / 31557600000, 0) / totalRent
+    : null;
+  return {
+    status, risksStatus, message,
+    performance: {
+      total_units: failed ? null : rows.length,
+      occupied_units: failed ? null : occupied.length,
+      vacant_units: failed ? null : vacant.length,
+      unknown_units: failed ? null : unknown,
+      vacancy_rate: status === "ready" ? vacant.length / rows.length : null,
+      wault_years: weightedTerm,
+      source: failed || !rows.length ? null : legacy ? "leasing" : "tenancy",
+    },
+  };
+}
+
 router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, res: Response) => {
   try {
     const propertyId = req.params.id;
+    const dataQuality: Record<string, "ready" | "partial" | "missing" | "error"> = {
+      deals: "ready", lettings: "ready", activity: "ready", schedule: "ready", risks: "ready", trading: "ready",
+    };
+    const dataWarnings: Array<{ section: string; message: string }> = [];
+    const unavailable = (section: string, message: string) => (error: any) => {
+      console.error(`[asset-brief] ${section} query failed:`, error?.message);
+      if (dataQuality[section] !== "error") dataWarnings.push({ section, message });
+      dataQuality[section] = "error";
+      return { rows: [] as any[] };
+    };
 
     // Clients only read briefs for their own properties, and never BGP's
     // fee figures. (Landsec audit.)
@@ -122,10 +171,9 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
          LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
         WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
           AND COALESCE(d.status, '') NOT IN ('WIT', 'COM', 'INV')
-        ORDER BY d.updated_at DESC NULLS LAST
-        LIMIT 60`,
+        ORDER BY d.updated_at DESC NULLS LAST`,
       [propertyId]
-    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
+    ).catch(unavailable("deals", "Active deals could not be loaded. Pipeline counts are unavailable."));
     const activeDeals = dealsQ.rows.map(d => ({
       id: d.id,
       name: d.name,
@@ -164,10 +212,9 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
                    WHEN 'solicitors' THEN 1 WHEN 'sol' THEN 1
                    WHEN 'negotiating' THEN 2 WHEN 'neg' THEN 2
                    WHEN 'under_offer' THEN 3 ELSE 4 END,
-                 au.unit_name
-        LIMIT 40`,
+                 au.unit_name`,
       [propertyId]
-    ).catch((e: any) => { console.error("[asset-brief] lettings sub-query failed:", e?.message); return { rows: [] as any[] }; });
+    ).catch(unavailable("lettings", "Letting Tracker could not be loaded. Pipeline counts are unavailable."));
     const lettings = lettingsQ.rows.map(u => ({
       id: u.id,
       unit_name: u.unit_name,
@@ -204,7 +251,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     for (const u of lettingsQ.rows as any[]) {
       if (u.deal_id) continue;
       const s = (u.marketing_status || "").toLowerCase();
-      if (s === "neg" || s === "negotiating" || s === "under_offer" || s === "und") {
+      if (s === "hot" || s === "hots" || s === "neg" || s === "negotiating" || s === "under_offer" || s === "und") {
         pipeline.hots++;
         pipelineItems.hots.push({ label: u.operator_name || u.unit_name, sub: u.operator_name ? u.unit_name : u.marketing_status });
       } else if (s === "sol" || s === "solicitors" || s === "exc" || s === "exchanged") {
@@ -260,7 +307,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
         ORDER BY i.interaction_date DESC
         LIMIT 30`,
       [propertyId]
-    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
+    ).catch(unavailable("activity", "Recent activity could not be loaded."));
     const activity = activityQ.rows.map(a => ({
       id: a.id,
       kind: a.type,                                  // email / call / meeting / note
@@ -284,57 +331,60 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     //    c) Tenants whose covenants flag admin / arrears.
     const risks: Array<{ kind: string; severity: "high" | "med"; message: string; unit_id?: string; unit_name?: string; deal_id?: string }> = [];
 
+    // Read the same master rent roll as the visible tenancy board. Some
+    // older properties only have a leasing projection; retain it explicitly
+    // as partial coverage rather than presenting it as the full rent roll.
     const lsuQ = await pool.query<any>(
-      `SELECT u.id, u.unit_name, u.tenant_name, u.status, u.lease_expiry, u.lease_break,
-              c.aml_pep_status, c.kyc_status,
+      `WITH schedule_source AS (
+         SELECT id, COALESCE(unit_number, premises) AS unit_name, tenant_name,
+                COALESCE(NULLIF(trim(occupancy_status), ''), status) AS status,
+                lease_expiry, break_date AS lease_break, tenant_company_id,
+                id AS tenancy_unit_id, passing_rent_pa AS rent_pa, 'tenancy' AS schedule_source
+           FROM tenancy_schedule_units WHERE property_id = $1
+             AND lower(COALESCE(NULLIF(trim(occupancy_status), ''), status, '')) <> 'archived'
+         UNION ALL
+         SELECT id, unit_name, tenant_name, status, lease_expiry, lease_break,
+                tenant_company_id, tenancy_unit_id, rent_pa, 'leasing' AS schedule_source
+           FROM leasing_schedule_units WHERE property_id = $1
+             AND lower(COALESCE(status, '')) <> 'archived'
+             AND NOT EXISTS (SELECT 1 FROM tenancy_schedule_units WHERE property_id = $1)
+       )
+       SELECT u.*, c.aml_pep_status, c.kyc_status,
               (EXISTS (
                 SELECT 1 FROM crm_deals d2
                  LEFT JOIN property_units pu2 ON pu2.id = d2.unit_id
-                 WHERE (d2.property_id = $1 OR pu2.property_id = $1)
+                 LEFT JOIN tenancy_schedule_units ts2 ON ts2.id = d2.tenancy_unit_id
+                 WHERE (d2.property_id = $1 OR pu2.property_id = $1 OR ts2.property_id = $1)
                    AND COALESCE(d2.status, '') NOT IN ('WIT', 'COM', 'INV')
                    AND (
-                     pu2.unit_name = u.unit_name
-                     OR (u.tenancy_unit_id IS NOT NULL AND d2.tenancy_unit_id = u.tenancy_unit_id)
+                     (u.tenancy_unit_id IS NOT NULL AND d2.tenancy_unit_id = u.tenancy_unit_id)
+                     OR (d2.tenancy_unit_id IS NULL AND pu2.unit_name = u.unit_name)
                    )
               ) OR EXISTS (
-                -- Deals reached via the Letting Tracker listing rather than a
-                -- unit FK — the common case for lettings promoted from AVA.
                 SELECT 1 FROM available_units au2
+                 JOIN crm_deals d3 ON d3.id = au2.deal_id
                  WHERE au2.property_id = $1
-                   AND au2.deal_id IS NOT NULL
+                   AND COALESCE(d3.status, '') NOT IN ('WIT', 'COM', 'INV')
                    AND (
-                     lower(trim(au2.unit_name)) = lower(trim(coalesce(u.unit_name, '')))
-                     OR (u.tenancy_unit_id IS NOT NULL AND au2.tenancy_unit_id = u.tenancy_unit_id)
+                     (u.tenancy_unit_id IS NOT NULL AND au2.tenancy_unit_id = u.tenancy_unit_id)
+                     OR (au2.tenancy_unit_id IS NULL AND
+                       lower(trim(au2.unit_name)) = lower(trim(coalesce(u.unit_name, ''))))
                    )
               )) AS has_live_deal
-         FROM leasing_schedule_units u
-         -- Prefer the canonical FK; fall back to a normalised name
-         -- match that strips legal-entity suffixes (Ltd/Plc/Group/UK
-         -- etc.) so legacy rows without an FK still resolve.
-         LEFT JOIN crm_companies c
-           ON c.merged_into_id IS NULL
-          AND (
-            c.id = u.tenant_company_id
-            OR (u.tenant_company_id IS NULL AND
-                regexp_replace(
-                  regexp_replace(lower(trim(c.name)),
-                    '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$', '', 'g'),
-                  '[^a-z0-9]+', ' ', 'g')
-                =
-                regexp_replace(
-                  regexp_replace(lower(trim(coalesce(u.tenant_name, ''))),
-                    '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$', '', 'g'),
-                  '[^a-z0-9]+', ' ', 'g'))
-          )
-        WHERE u.property_id = $1`,
+         FROM schedule_source u
+         LEFT JOIN crm_companies c ON c.id = u.tenant_company_id AND c.merged_into_id IS NULL`,
       [propertyId]
-    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
+    ).catch(unavailable("schedule", "The tenancy schedule could not be loaded. Vacancy and lease risk checks are unavailable."));
+    const scheduleSummary = summariseBriefSchedule(lsuQ.rows, dataQuality.schedule === "error");
+    dataQuality.schedule = scheduleSummary.status;
+    dataQuality.risks = scheduleSummary.risksStatus;
+    if (scheduleSummary.message) dataWarnings.push({ section: "schedule", message: scheduleSummary.message });
     const horizonMs = 18 * 30 * 24 * 60 * 60 * 1000;
     const now = Date.now();
     // Vacancies: one summary row, not one per unit — 20 identical amber
     // rows drown the genuine expiry/covenant risks. Only units with NO
     // live deal count as at-risk; vacant-but-under-offer is progress.
-    const vacantRows = lsuQ.rows.filter((u: any) => /vacant|available/.test(String(u.status || "").toLowerCase()));
+    const vacantRows = lsuQ.rows.filter((u: any) => briefOccupancy(u.status) === "vacant");
     const vacantNoDeal = vacantRows.filter((u: any) => !u.has_live_deal);
     if (vacantNoDeal.length > 0) {
       const names = vacantNoDeal.slice(0, 5).map((u: any) => u.unit_name || "Unit").join(", ");
@@ -359,37 +409,24 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       }
     }
 
-    // 6. Performance scorecard — light first cut, derived from the
-    //    leasing schedule (top + bottom MAT psqft, vacancy rate,
-    //    weighted-average unexpired lease term).
-    const perfQ = await pool.query<any>(
-      `SELECT
-         COUNT(*) FILTER (WHERE COALESCE(LOWER(status), '') !~ 'vacant|available') AS occupied_units,
-         COUNT(*) AS total_units,
-         AVG(EXTRACT(EPOCH FROM (lease_expiry - NOW())) / 31557600.0) FILTER (WHERE lease_expiry > NOW()) AS wault_years
-         FROM leasing_schedule_units WHERE property_id = $1`,
-      [propertyId]
-    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
-    const perfRow = perfQ.rows[0] || {};
+    // Trading performance remains an optional leasing-schedule measure.
+    // Occupancy and lease term come from the master schedule above.
     const topPsqftQ = await pool.query<any>(
       `SELECT unit_name, tenant_name, mat_psqft, lfl_percent
          FROM leasing_schedule_units
         WHERE property_id = $1 AND mat_psqft IS NOT NULL
         ORDER BY mat_psqft DESC NULLS LAST LIMIT 5`,
       [propertyId]
-    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
+    ).catch(unavailable("trading", "Trading performance could not be loaded."));
     const bottomPsqftQ = await pool.query<any>(
       `SELECT unit_name, tenant_name, mat_psqft, lfl_percent
          FROM leasing_schedule_units
         WHERE property_id = $1 AND mat_psqft IS NOT NULL
         ORDER BY mat_psqft ASC NULLS LAST LIMIT 5`,
       [propertyId]
-    ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
+    ).catch(unavailable("trading", "Trading performance could not be loaded."));
     const performance = {
-      total_units: Number(perfRow.total_units || 0),
-      occupied_units: Number(perfRow.occupied_units || 0),
-      vacancy_rate: perfRow.total_units ? 1 - Number(perfRow.occupied_units || 0) / Number(perfRow.total_units) : 0,
-      wault_years: perfRow.wault_years ? Number(perfRow.wault_years) : null,
+      ...scheduleSummary.performance,
       top_psqft: topPsqftQ.rows,
       bottom_psqft: bottomPsqftQ.rows,
     };
@@ -401,7 +438,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       p.updated_at,
       ...activeDeals.map(d => d.last_touch_at),
       ...activity.map(a => a.date),
-    ].filter(Boolean).map(d => new Date(d as any).getTime());
+    ].filter(Boolean).map(d => new Date(d as any).getTime()).filter(Number.isFinite);
     const lastUpdatedAt = allDates.length > 0 ? new Date(Math.max(...allDates)).toISOString() : p.updated_at;
 
     // BGP Commentary — Claude-generated narrative paragraph,
@@ -432,6 +469,8 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       activity,
       risks,
       performance,
+      data_quality: dataQuality,
+      data_warnings: dataWarnings,
       commentary: briefScope ? "" : (p.notes || ""),
       bgp_commentary: commentaryText,
       bgp_commentary_at: commentaryAt,
@@ -482,6 +521,7 @@ function stageBucket(status: string | null | undefined): string {
   if (s === "EXC") return "legals";
   if (s === "SOL") return "legals";
   if (s === "AGT") return "hots";
+  if (s === "HOT") return "hots";
   if (s === "NEG") return "hots";
   if (s === "PIT") return "pitch_out";
   if (s === "REP") return "engaged";
@@ -499,6 +539,7 @@ function stageLabel(status: string | null | undefined): string {
     PIT: "Pitch out",
     NEG: "Negotiating",
     AGT: "HoTs agreed",
+    HOT: "HoTs agreed",
     SOL: "In legals",
     EXC: "In legals",
     SIG: "Signed",
@@ -555,6 +596,19 @@ router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async 
     });
     if (!briefRes.ok) return res.status(briefRes.status).json({ error: "Couldn't load asset brief" });
     const brief = await briefRes.json();
+    const required = ["deals", "lettings", "activity", "schedule", "risks"];
+    if (required.some(section => brief.data_quality?.[section] !== "ready")) {
+      return res.status(409).json({ error: "Commentary was kept unchanged. Complete or reload the property data before regenerating it.", data_warnings: brief.data_warnings || [] });
+    }
+
+    // The property board's focus now comes from My Tasks, not the old
+    // weekly_focus JSON. Read the same scoped list the user can see.
+    const tasksRes = await fetch(`${baseUrl}/api/properties/${propertyId}/tasks?status=active`, {
+      headers: { ...(cookie ? { Cookie: cookie } : {}), ...(auth ? { Authorization: auth } : {}) },
+    });
+    if (!tasksRes.ok) return res.status(409).json({ error: "Commentary was kept unchanged because this week's tasks could not be loaded." });
+    const currentTasks = (await tasksRes.json()).tasks;
+    if (!Array.isArray(currentTasks)) return res.status(409).json({ error: "Commentary was kept unchanged because the task response was incomplete." });
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -572,7 +626,7 @@ router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async 
     ).join("\n") || "(none on the tracker)";
     const activityLines = (brief.activity as any[]).slice(0, 12).map(a => `- ${a.summary} (${new Date(a.date).toLocaleDateString("en-GB")})`).join("\n") || "(none in last 14 days)";
     const riskLines = (brief.risks as any[]).map(r => `- ${r.severity.toUpperCase()}: ${r.message}`).join("\n") || "(none flagged)";
-    const focusLines = (brief.weekly_focus as any[]).map(f => `- ${f.text}`).join("\n") || "(none set)";
+    const focusLines = currentTasks.slice(0, 15).map((task: any) => `- ${task.title}${task.owner_name ? ` (${task.owner_name})` : ""}${task.due_date ? ` — due ${new Date(task.due_date).toLocaleDateString("en-GB")}` : ""}`).join("\n") || "(no open property tasks recorded)";
     const ownerName = brief.owner?.name || "the asset owner";
     const propertyName = brief.property?.name || "this property";
 
@@ -593,12 +647,12 @@ ${riskLines}
 Asset lead's stated focus this week:
 ${focusLines}
 
-Performance: ${(brief.performance.vacancy_rate * 100).toFixed(1)}% vacancy${brief.performance.wault_years != null ? `, WAULT ${brief.performance.wault_years.toFixed(1)} yrs` : ""}.
+Performance: ${brief.performance.vacancy_rate == null ? "Vacancy unavailable" : `${(brief.performance.vacancy_rate * 100).toFixed(1)}% recorded vacancy`}${brief.performance.wault_years != null ? `, rent-weighted lease term ${brief.performance.wault_years.toFixed(1)} yrs` : "; weighted lease term unavailable"}.
 
 Write the operational commentary for the asset owner reading this, as FOUR SHORT paragraphs separated by blank lines, each opening with a bold lead-in exactly like this: **Live activity.** / **Momentum.** / **Risks.** / **BGP focus.** Cover in order:
 1. What's actively moving right now — live deals AND Letting Tracker units in play; only say nothing is transacting if BOTH lists are empty.
 2. What the recent email/meeting activity shows about momentum.
-3. The risks worth flagging (vacancies / expiries / covenant).
+3. The risks worth flagging (vacancies / expiries / covenant). No flagged risks only means none were found in the recorded data; it is not a complete covenant or lease review.
 4. Where BGP's focus is this week + a forward-looking line.
 
 Rules: British English, partner-tone, no hype, no "I'm pleased to". Keep each paragraph to 1-3 sentences. Bold the key tenant and unit names with **double asterisks**. Reference the actual tenants / units / figures above — don't generalise. Never state BGP fees or commissions. No headings beyond the bold lead-ins, no lists. No preamble or "here is".`;
@@ -1254,7 +1308,9 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
 router.get("/api/properties/:id/tasks", requireAuth, async (req: Request, res: Response) => {
   try {
     const propertyId = req.params.id;
-    const { clientBlockedForProperty } = await import("./company-scope");
+    const userId = req.session?.userId || (req as any).tokenUserId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const { clientBlockedForProperty, resolveCompanyScope, isPropertyInScope, isDealInScope } = await import("./company-scope");
     if (await clientBlockedForProperty(req, String(req.params.id))) {
       return res.status(403).json({ error: "Read-only access for client accounts" });
     }
@@ -1268,7 +1324,7 @@ router.get("/api/properties/:id/tasks", requireAuth, async (req: Request, res: R
     const safeSelect = `t.user_id, COALESCE(u.name, u.username, u.email) AS owner_name, NULL::text AS profile_pic_url`;
     const buildSql = (sel: string) => `SELECT t.id, t.title, t.description, t.due_date, t.priority, t.status, t.is_pinned,
               t.linked_deal_id, t.linked_property_id, t.linked_contact_id, t.created_at,
-              ${sel},
+              t.assigned_by_user_id, ${sel},
               d.name AS deal_name
          FROM user_tasks t
          LEFT JOIN users u ON u.id = t.user_id
@@ -1292,7 +1348,18 @@ router.get("/api/properties/:id/tasks", requireAuth, async (req: Request, res: R
         throw e;
       }
     }
-    res.json({ tasks: rows });
+    const scope = await resolveCompanyScope(req);
+    const tasks = await Promise.all(rows.map(async task => {
+      let canComplete = task.user_id === userId || task.assigned_by_user_id === userId;
+      // Match task PATCH permissions; seeing a colleague's task is not
+      // permission to complete it or modify links outside the portfolio.
+      if (canComplete && scope) {
+        if (task.linked_property_id && !(await isPropertyInScope(scope, task.linked_property_id))) canComplete = false;
+        if (canComplete && task.linked_deal_id && !(await isDealInScope(scope, task.linked_deal_id))) canComplete = false;
+      }
+      return { ...task, can_complete: canComplete };
+    }));
+    res.json({ tasks });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || "tasks fetch failed" });
   }

@@ -6801,30 +6801,9 @@ export async function executeCrmToolRaw(
     }).returning();
 
     const propertyId = created[0].id;
-    const postcode = fnArgs.address?.postcode || fnArgs.postcode;
-    const willEnrich = !!(postcode && fnArgs.autoEnrich !== false);
-    if (willEnrich) {
-      const baseUrl = process.env.INTERNAL_API_URL || `http://localhost:${process.env.PORT || 5000}`;
-      fetch(`${baseUrl}/api/title-search/auto-fill-from-postcode/${propertyId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postcode }),
-        signal: AbortSignal.timeout(120000),
-      }).then(async (enrichRes) => {
-        if (!enrichRes.ok) {
-          console.log(`[chatbgp] Auto-enrich HTTP ${enrichRes.status} for ${created[0].name}`);
-          return;
-        }
-        try {
-          const enrichResult = await enrichRes.json();
-          console.log(`[chatbgp] Auto-enrich for ${created[0].name}:`, JSON.stringify(enrichResult).substring(0, 300));
-        } catch (parseErr: any) {
-          console.log(`[chatbgp] Auto-enrich parse error for ${created[0].name}: ${parseErr.message}`);
-        }
-      }).catch((err: any) => {
-        console.log(`[chatbgp] Auto-enrich failed for ${created[0].name}: ${err.message}`);
-      });
-    }
+    // Creation does not start an authenticated provider lookup. The user must
+    // confirm the property and explicitly request chargeable research.
+    const needsEnrichment = fnArgs.autoEnrich !== false;
 
     return {
       data: {
@@ -6833,7 +6812,7 @@ export async function executeCrmToolRaw(
         entity: "property",
         id: propertyId,
         name: created[0].name,
-        enrichment: willEnrich ? { status: "running_in_background", message: "Land Registry lookup and owner identification is running in the background. The property page will update automatically when complete." } : null,
+        enrichment: needsEnrichment ? { status: "needs_enrichment", message: "Property saved. Confirm its address in Property Intelligence and choose Enrich to research titles and ownership. No lookup has started." } : null,
       },
       action: { type: "crm_created", entityType: "property", id: propertyId },
     };

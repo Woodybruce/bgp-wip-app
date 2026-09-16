@@ -1,3 +1,4 @@
+import { postcodeFromPropertyAddress, propertyLookupIdentity } from "@shared/property-lookup-identity";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
@@ -473,7 +474,7 @@ export function formatAddress(address: any): string {
   if (address.address) return address.address;
   if (address.formatted) return address.formatted;
   if (address.text) return address.text;
-  const parts = [address.street, address.city, address.country].filter(Boolean);
+  const parts = [address.street || address.line1, address.line2, address.city || address.town, address.postcode, address.country].filter(Boolean);
   return parts.join(", ");
 }
 
@@ -3200,19 +3201,7 @@ function newsTimeAgo(date: string | Date | null): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
-function extractPostcode(address: any): string | null {
-  if (!address) return null;
-  if (typeof address === "object" && address.postcode) return address.postcode;
-  const str = typeof address === "string" ? address : formatAddress(address);
-  const match = str.match(/[A-Z]{1,2}\d[\dA-Z]?\s*\d?[A-Z]{0,2}/i);
-  return match ? match[0].trim() : null;
-}
-
-function extractStreet(address: any): string | undefined {
-  if (!address) return undefined;
-  if (typeof address === "object" && address.street) return address.street;
-  return undefined;
-}
+const extractPostcode = postcodeFromPropertyAddress;
 
 function IntelligenceSection({ icon: Icon, title, children, defaultOpen = false }: {
   icon: any;
@@ -4104,19 +4093,20 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
 
 export function PropertyIntelligencePanel({ property }: { property: CrmProperty }) {
   const { toast } = useToast();
-  const postcode = extractPostcode(property.address);
-  const street = extractStreet(property.address);
+  const { postcode, street, uprn, streetNumber } = propertyLookupIdentity(property);
   const [showFullReport, setShowFullReport] = useState(false);
 
   const fullAddress = formatAddress(property.address);
-  const { data, isLoading, refetch, isFetching } = useQuery<any>({
-    queryKey: ["/api/property-lookup", postcode, street || "", fullAddress],
+  const { data, isLoading, refetch, isFetching, error: lookupError } = useQuery<any>({
+    queryKey: ["/api/property-lookup", postcode, street || "", fullAddress, uprn || "", streetNumber || ""],
     queryFn: async () => {
       if (!postcode) return null;
       const params = new URLSearchParams({ postcode, layers: "core,extended" });
       if (street) params.set("street", street);
+      if (uprn) params.set("uprn", uprn);
+      if (streetNumber) params.set("streetNumber", streetNumber);
       params.set("address", fullAddress);
-      const res = await fetch(`/api/property-lookup?${params}`, { credentials: "include" });
+      const res = await fetch(`/api/property-lookup?${params}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load intelligence data");
       return res.json();
     },
@@ -4139,7 +4129,6 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
   const [fetchingTitle, setFetchingTitle] = useState<string | null>(null);
   const [aiMatch, setAiMatch] = useState<{ matchIndex: number | null; titleNumber: string | null; confidence: string; reason: string } | null>(null);
   const [aiMatchLoading, setAiMatchLoading] = useState(false);
-  const [aiMatchRan, setAiMatchRan] = useState(false);
   const [expandedLeaseholds, setExpandedLeaseholds] = useState<Record<string, boolean>>({});
   const [leaseholdsData, setLeaseholdsData] = useState<Record<string, { titles: string[]; details: any[]; loading: boolean; page: number }>>({});
   const [downloadingDoc, setDownloadingDoc] = useState<string | null>(null);
@@ -4147,41 +4136,37 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
   const freeholds = data?.propertyDataCoUk?.freeholds?.data || [];
   const hasFreeholds = freeholds.length > 0;
 
-  // Hooks must run on every render — these lived below the early
-  // no-postcode return, which crashed the panel with "Rendered more
-  // hooks" the moment a postcode arrived on a mounted instance.
+  // Title suggestions are advisory. Ownership changes require the existing
+  // explicit “Use for KYC” action, even for a confident AI recommendation.
   useEffect(() => {
     setAiMatch(null);
-    setAiMatchRan(false);
-    setAiMatchLoading(false);
-  }, [property.id]);
+    setExpandedLeaseholds({});
+    setLeaseholdsData({});
+  }, [property.id, postcode, uprn, fullAddress]);
 
   useEffect(() => {
-    if (hasFreeholds && !aiMatchRan && !property.titleNumber && fullAddress) {
-      setAiMatchRan(true);
-      setAiMatchLoading(true);
-      fetch("/api/title-search/ai-match", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ propertyAddress: fullAddress, freeholds }),
-      })
-        .then(r => {
-          if (!r.ok) throw new Error("AI match failed");
-          return r.json();
-        })
-        .then(d => {
-          if (d.match) {
-            setAiMatch(d.match);
-            if (d.match.titleNumber && (d.match.confidence === "high" || d.match.confidence === "medium")) {
-              fillTitleFromIntelligence(d.match.titleNumber);
-            }
-          }
-        })
-        .catch(() => setAiMatch(null))
-        .finally(() => setAiMatchLoading(false));
+    if (!hasFreeholds || property.titleNumber || !fullAddress) {
+      setAiMatchLoading(false);
+      return;
     }
-  }, [hasFreeholds, aiMatchRan, property.titleNumber, fullAddress]);
+    const controller = new AbortController();
+    setAiMatchLoading(true);
+    fetch("/api/title-search/ai-match", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      credentials: "include",
+      signal: controller.signal,
+      body: JSON.stringify({ propertyAddress: fullAddress, freeholds }),
+    })
+      .then(r => {
+        if (!r.ok) throw new Error("AI match failed");
+        return r.json();
+      })
+      .then(d => { if (!controller.signal.aborted) setAiMatch(d.match || null); })
+      .catch(() => { if (!controller.signal.aborted) setAiMatch(null); })
+      .finally(() => { if (!controller.signal.aborted) setAiMatchLoading(false); });
+    return () => controller.abort();
+  }, [hasFreeholds, data, property.id, property.titleNumber, fullAddress, postcode, uprn]);
 
   if (!postcode) {
     return (
@@ -4293,7 +4278,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
     try {
       const res = await fetch(`/api/title-search/auto-fill/${property.id}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         credentials: "include",
         body: JSON.stringify({ title: selectedTitle }),
       });
@@ -4356,6 +4341,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               className="h-7 text-xs gap-1"
               onClick={() => refetch()}
               disabled={isFetching}
+              aria-label="Refresh property intelligence"
               data-testid="button-refresh-intelligence"
             >
               <RefreshCw className={`w-3 h-3 ${isFetching ? "animate-spin" : ""}`} />
@@ -4370,10 +4356,11 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
           </div>
-        ) : !data ? (
-          <div className="text-center py-6 text-muted-foreground">
+        ) : lookupError || !data ? (
+          <div className="text-center py-6 text-muted-foreground" role="status">
             <AlertCircle className="w-6 h-6 mx-auto mb-2 opacity-30" />
-            <p className="text-xs">Could not load intelligence data</p>
+            <p className="text-xs">Could not load property intelligence. Your saved property details are unchanged.</p>
+            <Button variant="outline" size="sm" className="mt-2" onClick={() => refetch()} disabled={isFetching}>Try again</Button>
           </div>
         ) : showFullReport ? (
           <ScrollArea className="max-h-[600px]">
@@ -5176,12 +5163,12 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
   const liveLettings = useMemo(() => units.filter(u => {
     if (!u.propertyId || !ids.has(u.propertyId)) return false;
     const code = legacyToCode(u.marketingStatus) || "AVA";
-    return ["OPP", "REP", "AVA", "NEG", "SOL", "EXC"].includes(code);
+    return ["OPP", "REP", "AVA", "NEG", "HOT", "SOL", "EXC"].includes(code);
   }).length, [units, ids]);
   const liveDeals = useMemo(() => deals.filter(d => {
     if (!d.propertyId || !ids.has(d.propertyId)) return false;
     const code = legacyToCode(d.status);
-    return !!code && ["REP", "AVA", "NEG", "SOL", "EXC"].includes(code);
+    return !!code && ["REP", "AVA", "NEG", "HOT", "SOL", "EXC"].includes(code);
   }).length, [deals, ids]);
 
   const stores = useMemo(() => items.map(p => {

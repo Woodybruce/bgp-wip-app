@@ -1503,7 +1503,19 @@ router.post("/api/title-search/auto-fill/:propertyId", requireAuth, async (req, 
       titleInfo = await pdFetch("title", { title: titleNumber });
       console.log(`[title-search] Title info for ${titleNumber}: ownership=${JSON.stringify(titleInfo.data?.ownership || {}).substring(0, 200)}, uprns=${titleInfo.data?.uprns?.length || 0}`);
     } catch (titleErr: any) {
-      console.log(`[title-search] Title lookup failed for ${titleNumber}:`, titleErr.message);
+      return res.status(titleErr.message?.includes("not configured") ? 503 : 502).json({
+        success: false, error: "Title lookup could not finish. No property details were changed.",
+      });
+    }
+
+    const titleData = titleInfo?.data;
+    const returnedTitle = titleData?.title_number || titleData?.titleNumber || titleData?.title;
+    const nonemptyText = (value: unknown) => typeof value === "string" && value.trim().length > 0;
+    const hasTitleData = titleData && typeof titleData === "object" && !Array.isArray(titleData)
+      && ([titleData.ownership?.type, titleData.ownership?.details?.owner, titleData.class, titleData.tenure, returnedTitle].some(nonemptyText)
+        || (Array.isArray(titleData.uprns) && titleData.uprns.some((value: unknown) => /^\d{1,12}$/.test(String(value)))));
+    if (!hasTitleData || (returnedTitle && String(returnedTitle).trim().toUpperCase() !== titleNumber.toUpperCase())) {
+      return res.status(422).json({ success: false, error: "No confirmed result for this title. No property details were changed." });
     }
 
     const ownership = titleInfo?.data?.ownership;

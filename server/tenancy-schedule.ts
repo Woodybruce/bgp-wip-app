@@ -4,6 +4,7 @@ import multer from "multer";
 import { backfillPropertyTenants, backfillPropertyUnitFks, normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import { fanOutTenancyStatus } from "./unit-mirror";
 import { importTenancyRows, TenancyImportError, type ParsedTenancyImportRow } from "./tenancy-import";
+import { tenancyCalendarDatesSql } from "./tenancy-calendar-dates";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -47,7 +48,7 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     // that haven't been backfilled yet — once the team clicks Resolve
     // on the linkage card, this fallback is rarely hit.
     const occupied = await pool.query(
-      `SELECT t.*,
+      `SELECT t.*, ${tenancyCalendarDatesSql("t")},
               COALESCE(tc_fk.id, tc_soft.id) AS resolved_tenant_company_id,
               COALESCE(tc_fk.name, tc_soft.name) AS resolved_tenant_company_name
          FROM tenancy_schedule_units t
@@ -63,25 +64,31 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
       [propertyId]
     );
 
-    // Vacant units — anything on the Letting Tracker that isn't already
-    // represented by a matching tenancy row (matched by unit_name). Treats
-    // the Tenancy Schedule as the source of truth — every unit on the
-    // property appears, occupied or not. The vacant rows carry the
-    // linked available_unit_id so the UI can deep-link into the tracker.
+    // Stable tenancy/physical/tracker links take precedence over labels.
+    // Name matching is only a legacy fallback when physical IDs do not
+    // contradict it; renaming a tenancy must not create a second vacancy.
+    const vacancyIdentity = `coalesce('physical:' || au.unit_id, 'name:' || nullif(${normUnitSql("au.unit_name")}, ''), 'tracker:' || au.id)`;
     const vacant = await pool.query(
-      `SELECT DISTINCT ON (lower(trim(coalesce(au.unit_name, ''))))
+      `SELECT DISTINCT ON (${vacancyIdentity})
               au.id AS available_unit_id, au.unit_name, au.sqft, au.asking_rent,
               au.marketing_status, au.deal_id, d.deal_ref
        FROM available_units au
        LEFT JOIN crm_deals d ON d.id = au.deal_id
        WHERE au.property_id = $1
-         AND au.tenancy_unit_id IS NULL
          AND NOT EXISTS (
            SELECT 1 FROM tenancy_schedule_units ts
            WHERE ts.property_id = au.property_id
-             AND ${normUnitSql("coalesce(nullif(trim(ts.unit_number), ''), ts.premises)")} = ${normUnitSql("au.unit_name")}
+             AND (
+               ts.id::text = au.tenancy_unit_id::text
+               OR ts.letting_tracker_unit_id = au.id
+               OR (au.tenancy_unit_id IS NULL AND au.unit_id IS NOT NULL AND ts.property_unit_id = au.unit_id)
+               OR (au.tenancy_unit_id IS NULL
+                   AND (au.unit_id IS NULL OR ts.property_unit_id IS NULL)
+                   AND ${normUnitSql("au.unit_name")} <> ''
+                   AND ${normUnitSql("coalesce(nullif(trim(ts.unit_number), ''), ts.premises)")} = ${normUnitSql("au.unit_name")})
+             )
          )
-       ORDER BY lower(trim(coalesce(au.unit_name, ''))), au.created_at DESC`,
+       ORDER BY ${vacancyIdentity}, au.created_at DESC, au.id`,
       [propertyId]
     );
 
@@ -283,7 +290,7 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
       values.push(d.tenant_name && d.tenant_name !== "Vacant" ? "Occupied" : "Vacant");
     }
     const result = await pool.query(
-      `INSERT INTO tenancy_schedule_units (${cols.join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING *`,
+      `INSERT INTO tenancy_schedule_units (${cols.join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING *, ${tenancyCalendarDatesSql()}`,
       values
     );
 
@@ -357,6 +364,8 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
 });
 
 router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
+  let client: any = null;
+  let inTransaction = false;
   try {
     const pool = await getPool();
     const id = req.params.id as string;
@@ -387,65 +396,73 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
       values.push(v);
     }
     if (fields.length === 0) return res.json({ ok: true });
+    client = await pool.connect();
+    await client.query("BEGIN");
+    inTransaction = true;
+    const previous = (await client.query(
+      "SELECT property_id, property_unit_id, unit_number, premises FROM tenancy_schedule_units WHERE id = $1 FOR UPDATE", [id]
+    )).rows[0];
     fields.push(`updated_at = NOW()`);
     values.push(id);
-    const result = await pool.query(
-      `UPDATE tenancy_schedule_units SET ${fields.join(", ")} WHERE id = $${idx} RETURNING *`,
+    const result = await client.query(
+      `UPDATE tenancy_schedule_units SET ${fields.join(", ")} WHERE id = $${idx} RETURNING *, ${tenancyCalendarDatesSql()}`,
       values
     );
+    if (!result.rows[0]) {
+      await client.query("ROLLBACK");
+      inTransaction = false;
+      return res.status(404).json({ error: "Tenancy unit not found" });
+    }
 
     // If the edit touched the tenant name or trading name, re-resolve
     // the brand FK so the row immediately points at the right brand
     // board (or NULL if no match). Cheap single-row update.
     if ("tenant_name" in d || "trading_name" in d) {
-      await pool.query(
+      await client.query(
         `UPDATE tenancy_schedule_units
             SET tenant_company_id = ${resolveBrandIdSubquery("coalesce(trading_name, tenant_name, '')")}
           WHERE id = $1`,
         [id]
-      ).catch((e: any) => console.warn("[tenancy] re-resolve failed:", e?.message));
+      );
     }
 
-    // If the unit_number was renamed, re-knit downstream projections:
-    // detach rows still pointing at the old name, attach rows whose
-    // unit_name matches the new one. Keeps the spine ↔ projection
-    // joins coherent without a manual re-resolve.
-    if ("unit_number" in d) {
+    // A rename changes the label, never the identity. Keep every linked
+    // tracker/leasing row (and its viewings, offers and deals) attached.
+    if ("unit_number" in d || "premises" in d) {
       const newRow = result.rows[0];
       const propId = newRow?.property_id;
-      const newUnit = (newRow?.unit_number || "").trim().toLowerCase();
-      if (propId) {
-        await Promise.all([
-          // Detach rows whose unit_name no longer matches the spine row.
-          pool.query(
-            `UPDATE leasing_schedule_units SET tenancy_unit_id = NULL
-              WHERE tenancy_unit_id = $1
-                AND lower(trim(coalesce(unit_name, ''))) <> $2`,
-            [id, newUnit]
-          ),
-          pool.query(
-            `UPDATE available_units SET tenancy_unit_id = NULL
-              WHERE tenancy_unit_id = $1
-                AND lower(trim(coalesce(unit_name, ''))) <> $2`,
-            [id, newUnit]
-          ),
-          // Attach rows on the same property whose unit_name matches
-          // the new value and that don't yet have a tenancy_unit_id.
-          newUnit ? pool.query(
-            `UPDATE leasing_schedule_units SET tenancy_unit_id = $1
-              WHERE property_id = $2 AND tenancy_unit_id IS NULL
-                AND lower(trim(coalesce(unit_name, ''))) = $3`,
-            [id, propId, newUnit]
-          ) : Promise.resolve(),
-          newUnit ? pool.query(
-            `UPDATE available_units SET tenancy_unit_id = $1
-              WHERE property_id = $2 AND tenancy_unit_id IS NULL
-                AND lower(trim(coalesce(unit_name, ''))) = $3`,
-            [id, propId, newUnit]
-          ) : Promise.resolve(),
-        ]).catch((e: any) => console.warn("[tenancy] rename re-knit failed:", e?.message));
+      const newUnit = String(newRow?.unit_number || "").trim() || String(newRow?.premises || "").trim();
+      if (propId && newUnit) {
+        const previousUnit = String(previous?.unit_number || "").trim() || String(previous?.premises || "").trim();
+        if (newRow.property_unit_id && previousUnit) {
+          // Shared physical spaces and separately edited master labels need
+          // human review; never rename them by a mutable name association.
+          await client.query(
+            `UPDATE property_units pu SET unit_name = $1, updated_at = NOW()
+              WHERE pu.id = $2 AND pu.property_id = $3 AND trim(pu.unit_name) = $4
+                AND NOT EXISTS (
+                  SELECT 1 FROM tenancy_schedule_units other
+                  WHERE other.property_id = $3 AND other.property_unit_id = pu.id AND other.id <> $5
+                )`,
+            [newUnit, newRow.property_unit_id, propId, previousUnit, id]
+          );
+        }
+        await client.query(
+          `UPDATE leasing_schedule_units SET unit_name = $1, updated_at = NOW()
+            WHERE property_id = $2 AND tenancy_unit_id = $3`,
+          [newUnit, propId, id]
+        );
+        await client.query(
+          `UPDATE available_units SET unit_name = $1, updated_at = NOW()
+            WHERE property_id = $2 AND tenancy_unit_id = $3`,
+          [newUnit, propId, id]
+        );
       }
     }
+    await client.query("COMMIT");
+    inTransaction = false;
+    client.release();
+    client = null;
 
     // Status changes drive the projection boards. Marketing / Vacant
     // populates the Letting Tracker + client board; Under Offer keeps
@@ -456,8 +473,11 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (e: any) {
+    if (inTransaction) await client.query("ROLLBACK").catch(() => {});
     console.error("[tenancy] update unit failed:", e?.message);
     res.status(500).json({ error: e.message });
+  } finally {
+    client?.release();
   }
 });
 

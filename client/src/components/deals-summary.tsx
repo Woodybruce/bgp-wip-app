@@ -17,6 +17,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Handshake, ChevronRight } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { WIP_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
@@ -24,7 +25,7 @@ import { DEAL_STATUS_BADGE_COLORS, DEAL_STATUS_DOT_COLORS } from "@/lib/deal-sta
 
 // The Deals schedule (/deals/list) shows WIP_STATUSES; "live" = still being
 // worked (COM/INV are done, they stay visible as chips but not in the list).
-const LIVE_CODES = new Set<DealStatusCode>(["REP", "AVA", "NEG", "SOL", "EXC"]);
+const LIVE_CODES = new Set<DealStatusCode>(["REP", "AVA", "NEG", "HOT", "SOL", "EXC"]);
 
 type Deal = {
   id: string; propertyId: string | null; name: string; status: string | null;
@@ -32,11 +33,11 @@ type Deal = {
 };
 
 function useBoardDeals(propertyId?: string, propertyIds?: string[]) {
-  const { data: deals = [], isLoading } = useQuery<Deal[]>({
+  const { data: deals = [], isLoading, isError, refetch } = useQuery<Deal[]>({
     queryKey: ["/api/crm/deals", { excludeTracker: true }],
     queryFn: async () => {
       const r = await fetch("/api/crm/deals?excludeTrackerDeals=true", { credentials: "include", headers: getAuthHeaders() });
-      if (!r.ok) return [];
+      if (!r.ok) throw new Error(`Deals lookup failed (${r.status})`);
       return r.json();
     },
   });
@@ -58,7 +59,7 @@ function useBoardDeals(propertyId?: string, propertyIds?: string[]) {
     () => scoped.filter(d => { const code = legacyToCode(d.status); return code !== null && LIVE_CODES.has(code); }),
     [scoped],
   );
-  return { deals: scoped, live, counts, isLoading };
+  return { deals: scoped, live, counts, isLoading, isError, refetch };
 }
 
 function boardHref(propertyId?: string, status?: DealStatusCode) {
@@ -74,7 +75,9 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
   propertyIds?: string[];
   variant: "strip" | "card";
 }) {
-  const { live, counts, isLoading } = useBoardDeals(propertyId, propertyIds);
+  const { live, counts, isLoading, isError, refetch } = useBoardDeals(propertyId, propertyIds);
+  if (isError) return <div className="space-y-2" role="status"><p className="text-xs text-muted-foreground">Deals data could not be loaded.</p><Button variant="outline" size="sm" onClick={() => refetch()}>Retry deals</Button><Link href={boardHref(propertyId)} className="text-xs hover:underline">Open Deals board</Link></div>;
+  if (isLoading) return <p className="text-xs text-muted-foreground">Loading deals…</p>;
 
   if (variant === "strip") {
     return (

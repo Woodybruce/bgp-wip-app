@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { containedMarker, isValidPolygon, moveMarkerInside } from "@shared/plan-geometry";
 import { planOutlineDisplay, planOutlinePoints, type OutlinePlacement } from "@shared/plan-outline-display";
+import { layoutPlanMarkers, parsePlanMarkerMode, type PlanMarkerMode } from "@shared/plan-marker-layout";
 import type { ScanReviewResponse } from "@shared/plan-scan-review";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -234,6 +235,7 @@ function PlanList() {
 function PlanView({ planId }: { planId: string }) {
   const { toast } = useToast();
   const isMobile = useIsMobile();
+  const { data: viewer } = useQuery<{ id: string }>({ queryKey: ["/api/auth/me"] });
   const [, navigate] = useLocation();
   const { data, isLoading } = useQuery<{ plan: any; levels: PlanLevel[]; units: PlanUnit[]; entries: Entry[]; matters: Matter[]; jobs: any[]; schedule_rows?: any[] }>({
     queryKey: ["/api/evidence-plans", planId],
@@ -268,6 +270,20 @@ function PlanView({ planId }: { planId: string }) {
   const [strongLines, setStrongLines] = useState(false);
   const [hideRedInk, setHideRedInk] = useState(false);
   const [numberLabels, setNumberLabels] = useState(false);
+  const [markerPreference, setMarkerPreference] = useState<{ userId: string; mode: PlanMarkerMode }>({ userId: "", mode: "compact" });
+  const markerMode = markerPreference.userId === viewer?.id ? markerPreference.mode : "compact";
+  const [compareRents, setCompareRents] = useState(false);
+  useEffect(() => {
+    if (!viewer?.id) return;
+    let mode: PlanMarkerMode = "compact";
+    try { mode = parsePlanMarkerMode(localStorage.getItem(`bgp-ep-label-mode:${viewer.id}`)); } catch { /* Storage can be unavailable in private browsers. */ }
+    setMarkerPreference({ userId: viewer.id, mode });
+  }, [viewer?.id]);
+  const chooseMarkerMode = (mode: PlanMarkerMode) => {
+    if (!viewer?.id) return;
+    setMarkerPreference({ userId: viewer.id, mode });
+    try { localStorage.setItem(`bgp-ep-label-mode:${viewer.id}`, mode); } catch { /* Keep the current choice usable without persistence. */ }
+  };
   const [cropping, setCropping] = useState(false);
   const [cropRect, setCropRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const cropStart = useRef<Pt | null>(null);
@@ -376,7 +392,7 @@ function PlanView({ planId }: { planId: string }) {
   const latestZaByUnit = useMemo(() => {
     const m = new Map<string, number>();
     for (const e of entries) {
-      if (!e.unit_id || e.zone_a == null) continue;
+      if (!e.unit_id || e.zone_a == null || String(e.zone_a).trim() === "" || !Number.isFinite(Number(e.zone_a))) continue;
       if (!m.has(e.unit_id)) m.set(e.unit_id, Number(e.zone_a)); // entries arrive newest-first
     }
     return m;
@@ -430,6 +446,12 @@ function PlanView({ planId }: { planId: string }) {
   };
   const [showZa, setShowZa] = useState<boolean>(() => { try { return localStorage.getItem("bgp-ep-za") !== "0"; } catch { return true; } });
 
+  const hasBg = !!activeLevel?.background_key;
+  const aspect = hasBg && activeLevel?.background_width ? (activeLevel.background_height || 1) / activeLevel.background_width : 0.7;
+  const fitWidth = canvasSize.width && canvasSize.height ? Math.min(canvasSize.width * .94, canvasSize.height * .94 / Math.max(.1, aspect)) : null;
+  const screenWidth = Math.max(1, (fitWidth || canvasSize.width * .9 || 1000) * zoom);
+  const markerPixelScale = 100 / screenWidth;
+
   // Each label belongs to its own demise. Never nudge it into another
   // shop to resolve overlap; fit the disc to the available interior space.
   const markerLayout = useMemo(() => {
@@ -439,6 +461,16 @@ function PlanView({ planId }: { planId: string }) {
       return [u.id, containedMarker(u.polygon!, desired, 0.019 / Math.sqrt(zoom), aspect)];
     }));
   }, [outlineDisplay, dotDraft, zoom, activeLevel]);
+  const markerPresentation = useMemo(() => layoutPlanMarkers(outlineDisplay.placed.map(u => {
+    const za = latestZaByUnit.get(u.id);
+    return {
+      id: u.id, label: String(u.unit_ref || "Unit"), polygon: u.polygon!, anchor: markerLayout.get(u.id)!,
+      hasEvidence: latestEntryByUnit.has(u.id),
+      price: showZa && Number.isFinite(za) && (markerMode === "circles" || compareRents || selectedId === u.id)
+        ? `£${za!.toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null,
+    };
+  }), { mode: markerMode, screenWidth, aspect, selectedId, showPrices: showZa, numberOnly: numberLabels }),
+  [outlineDisplay, markerLayout, latestZaByUnit, latestEntryByUnit, showZa, markerMode, compareRents, selectedId, screenWidth, aspect, numberLabels]);
 
   const toPlanCoords = (clientX: number, clientY: number): Pt | null => {
     const el = surfaceRef.current;
@@ -603,9 +635,6 @@ function PlanView({ planId }: { planId: string }) {
   if (isLoading) return <div className="p-6"><Skeleton className="h-[70vh] rounded-2xl" /></div>;
   if (!plan) return <div className="p-6 text-sm text-muted-foreground">Plan not found.</div>;
 
-  const hasBg = !!activeLevel?.background_key;
-  const aspect = hasBg && activeLevel?.background_width ? (activeLevel.background_height || 0) / activeLevel.background_width : 0.7;
-  const fitWidth = canvasSize.width && canvasSize.height ? Math.min(canvasSize.width * .94, canvasSize.height * .94 / Math.max(.1, aspect)) : null;
   const actualSizeZoom = fitWidth ? (activeLevel?.background_width || fitWidth) / fitWidth : 1;
   const maxZoom = Math.max(24, actualSizeZoom);
   const overlaysVisible = !cleanPlan || drawing || tracing;
@@ -765,6 +794,22 @@ function PlanView({ planId }: { planId: string }) {
         </div>
       )}
 
+      {!cleanPlan && !numberLabels && <div className="px-4 py-2 border-b border-border flex items-center gap-x-4 gap-y-2 flex-wrap" data-testid="plan-label-controls">
+        <div role="group" aria-label="Plan label style" className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[11px] text-muted-foreground mr-1">Labels</span>
+          {([['compact', 'Compact labels'], ['circles', 'Circles'], ['dots', 'Dots only']] as const).map(([mode, label]) =>
+            <Pill key={mode} active={markerMode === mode} aria-pressed={markerMode === mode} disabled={!viewer?.id}
+              onClick={() => chooseMarkerMode(mode)} data-testid={`plan-label-mode-${mode}`}>{label}</Pill>)}
+        </div>
+        {markerMode === "compact" && <Pill active={compareRents && showZa} aria-pressed={compareRents && showZa}
+          onClick={() => {
+            const next = !(compareRents && showZa);
+            setCompareRents(next);
+            if (next) { setShowZa(true); try { localStorage.setItem("bgp-ep-za", "1"); } catch {} }
+          }} data-testid="plan-compare-rents">Compare rents</Pill>}
+        <span className="text-[11px] text-muted-foreground">Zoom in for more labels. Select any unit for its details.</span>
+      </div>}
+
       {/* Key — mock-up style, its own row under the levels. Click a swatch
           to change that type's colour for this plan. */}
       {typesOnPlan.size > 0 && (
@@ -777,7 +822,7 @@ function PlanView({ planId }: { planId: string }) {
                 value={colourOf(k)} onChange={e => saveColour(k, e.target.value)} data-testid={`key-colour-${k}`} />
             </label>
           ))}
-          <Pill active={showZa}
+          <Pill active={showZa} aria-pressed={showZa}
             onClick={() => setShowZa(s => { try { localStorage.setItem("bgp-ep-za", s ? "0" : "1"); } catch {} return !s; })}
             data-testid="button-toggle-za">
             £ ZA
@@ -917,20 +962,28 @@ function PlanView({ planId }: { planId: string }) {
                   {/* Labels stay in their own demise, including units awaiting evidence. */}
                   {overlaysVisible && outlineDisplay.placed.map(u => {
                     const layout = markerLayout.get(u.id)!;
+                    const presentation = markerPresentation.get(u.id)!;
                     const isSel = u.id === selectedId;
                     const latest = latestEntryByUnit.get(u.id);
                     const za = latestZaByUnit.get(u.id);
                     const label = String(u.unit_ref || "Unit");
-                    const zaStr = showZa && za != null ? `£${za.toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
-                    const R = layout.radius * 100;
+                    const zaStr = Number.isFinite(za) ? `£${za!.toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
+                    const { kind, width, height, displayLabel, showPrice } = presentation;
                     const cx = layout.x * 100, cy = layout.y * 100 * aspect;
                     const typeColour = latest ? colourOf(evidenceTypeKey(latest.transaction_type)) : "hsl(var(--muted-foreground))";
                     return (
-                      <g key={`marker-${u.id}`} role="button" tabIndex={drawing || tracing || cropping ? -1 : 0}
+                      <g key={`marker-${u.id}`} role="button" tabIndex={drawing || tracing || cropping || !width ? -1 : 0}
+                        aria-pressed={isSel} aria-hidden={!width || undefined} visibility={width ? "visible" : "hidden"} transform={`translate(${cx} ${cy}) scale(${markerPixelScale})`}
                         aria-label={`Unit ${label}${zaStr ? `, ${zaStr} Zone A` : ", no Zone A evidence"}. Select to edit; drag or use arrow keys to move its label.`}
-                        data-testid={`unit-marker-${u.id}`}
-                        style={{ pointerEvents: drawing || tracing || cropping ? "none" : "auto", cursor: dotSaving ? "wait" : "grab" }}
+                        data-testid={`unit-marker-${u.id}`} data-marker-kind={kind}
+                        style={{ pointerEvents: drawing || tracing || cropping ? "none" : "auto", cursor: dotSaving ? "wait" : "grab", fontFamily: "Arial, Helvetica, sans-serif", letterSpacing: 0 }}
                         onClick={e => { e.stopPropagation(); if (!suppressClick.current) selectUnit(u.id); }}
+                        onMouseMove={e => {
+                          if (dotGesture.current) return;
+                          const rect = canvasRef.current?.getBoundingClientRect();
+                          if (rect) setHover({ unitId: u.id, x: e.clientX - rect.left, y: e.clientY - rect.top });
+                        }}
+                        onMouseLeave={() => setHover(h => h?.unitId === u.id ? null : h)}
                         onKeyDown={e => {
                           if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectUnit(u.id); return; }
                           if (!e.key.startsWith("Arrow") || dotSaving) return;
@@ -967,11 +1020,22 @@ function PlanView({ planId }: { planId: string }) {
                         }}
                         onPointerCancel={() => { dotGesture.current = null; setDotDraft(null); }}>
                         <title>{label}{u.tenant_name ? ` · ${u.tenant_name}` : ""}{zaStr ? ` · ${zaStr} ZA` : " · Add evidence"}</title>
-                        <circle cx={cx} cy={cy} r={R} fill={numberLabels ? "transparent" : typeColour} stroke={numberLabels ? "none" : isSel ? "hsl(var(--foreground))" : "#FFFFFF"} strokeWidth={R * 0.09} />
-                        <text x={cx} y={cy - (!numberLabels && zaStr ? R * 0.29 : 0)} textAnchor="middle" dominantBaseline="middle"
-                          style={{ fontSize: Math.min(R * (numberLabels ? .75 : .5), R * 2.7 / Math.max(3, label.length)), fontWeight: 700, fill: numberLabels ? "hsl(var(--foreground))" : "#FFFFFF", stroke: numberLabels ? "hsl(var(--background))" : "none", strokeWidth: numberLabels ? R * .12 : 0, paintOrder: "stroke", pointerEvents: "none" }}>{label}</text>
-                        {!numberLabels && zaStr && <text x={cx} y={cy + R * 0.37} textAnchor="middle" dominantBaseline="middle"
-                          style={{ fontSize: Math.min(R * 0.48, R * 2.7 / zaStr.length), fontWeight: 700, fill: "#FFFFFF", pointerEvents: "none" }}>{zaStr}</text>}
+                        {width > 0 && <>
+                          {(kind === "circle" || kind === "dot") && <circle r={width / 2} fill={typeColour}
+                            stroke={isSel ? "hsl(var(--primary))" : "#FFFFFF"} strokeWidth={kind === "dot" ? 1.5 : 2} />}
+                          {kind === "compact" && <>
+                            <rect x={-width / 2} y={-height / 2} width={width} height={height} rx={5}
+                              fill="hsl(var(--card))" stroke={isSel ? "hsl(var(--primary))" : "hsl(var(--border))"} strokeWidth={isSel ? 2 : 1} />
+                            <circle cx={-width / 2 + 8} r={3} fill={typeColour} />
+                          </>}
+                          {kind === "number" && <rect x={-width / 2} y={-height / 2} width={width} height={height} fill="transparent" />}
+                          {kind !== "dot" && <text x={kind === "compact" ? 4 : 0} y={showPrice ? -8 : 0} textAnchor="middle" dominantBaseline="central"
+                            style={{ fontSize: 12, fontWeight: 600, fill: kind === "circle" ? "#FFFFFF" : "hsl(var(--foreground))",
+                              stroke: kind === "number" ? "hsl(var(--background))" : "none", strokeWidth: kind === "number" ? 3 : 0, paintOrder: "stroke", pointerEvents: "none" }}>{displayLabel}</text>}
+                          {showPrice && zaStr && <text x={kind === "compact" ? 4 : 0} y={9} textAnchor="middle" dominantBaseline="central"
+                            style={{ fontSize: 11, fontWeight: 500, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontVariantNumeric: "tabular-nums",
+                              fill: kind === "circle" ? "#FFFFFF" : "hsl(var(--foreground))", pointerEvents: "none" }}>{zaStr}</text>}
+                        </>}
                       </g>
                     );
                   })}
