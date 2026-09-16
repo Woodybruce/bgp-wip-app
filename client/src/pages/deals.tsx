@@ -1904,7 +1904,7 @@ function SimplifiedCreateBody({
       {counterpartyKind === "leasing" && (
         <div className={`grid grid-cols-1 ${isSecondment ? "" : "sm:grid-cols-2"} gap-3`}>
           <div className="space-y-1.5">
-            <Label>Landlord{clientRole === "landlord" ? " * (client)" : " *"}</Label>
+            <Label>Landlord{clientRole === "landlord" ? " * (client)" : form.dealType === "Lease Acquisition" ? " (optional)" : " *"}</Label>
             <EntityCombobox
               testId="select-deal-landlord"
               placeholder="Link landlord"
@@ -2470,13 +2470,20 @@ export function DealFormDialog({
         // can fire on the client + counterparty. Consultancy is advisory work
         // that often has no tenant yet, so tenant is optional there.
         // Secondment is landlord-only — no tenant (or property) on the form.
+        // Lease Acquisition is tenant-rep: the tenant is our client and the
+        // one we invoice, and the landlord is often unknown until late in
+        // the search — so only the tenant is required (Woody, 2026-09-16,
+        // deal 3461). AML runs on whichever parties are linked.
         const tenantRequired = form.dealType !== "Consultancy" && form.dealType !== "Secondment";
-        if (!form.landlordId || (tenantRequired && !form.tenantId)) {
+        const landlordRequired = form.dealType !== "Lease Acquisition";
+        if ((landlordRequired && !form.landlordId) || (tenantRequired && !form.tenantId)) {
           toast({
-            title: tenantRequired ? "Landlord and Tenant required" : "Landlord required",
-            description: tenantRequired
-              ? "Both parties needed so AML can fire on the client + counterparty."
-              : "Link or create the landlord so AML can run on the client.",
+            title: !landlordRequired ? "Tenant required" : tenantRequired ? "Landlord and Tenant required" : "Landlord required",
+            description: !landlordRequired
+              ? "Link or create the tenant — they're the client being invoiced on a lease acquisition."
+              : tenantRequired
+                ? "Both parties needed so AML can fire on the client + counterparty."
+                : "Link or create the landlord so AML can run on the client.",
             variant: "destructive",
           });
           return;
