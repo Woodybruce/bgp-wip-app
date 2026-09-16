@@ -750,7 +750,18 @@ function PropertyProjectView({
   };
 
   const handleProjectKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && (e.shiftKey || e.altKey)) {
+      // Shift+Enter / Option+Enter = new line on every device (see the main
+      // composer's handleKeyDown for why it's inserted manually).
+      e.preventDefault();
+      const ta = e.currentTarget as HTMLTextAreaElement;
+      const start = ta.selectionStart ?? projectInput.length;
+      const end = ta.selectionEnd ?? projectInput.length;
+      setProjectInput(projectInput.slice(0, start) + "\n" + projectInput.slice(end));
+      requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = start + 1; });
+      return;
+    }
+    if (e.key === "Enter") {
       e.preventDefault();
       handleProjectSend();
     }
@@ -2844,7 +2855,34 @@ export default function ChatBGP() {
   }, [initialMessage, status?.connected, statusLoading]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Tab" && !e.shiftKey) {
+      // Tab writes a tab character instead of throwing focus out of the box
+      // (Shift+Tab still moves focus for keyboard navigation).
+      e.preventDefault();
+      const ta = e.currentTarget as HTMLTextAreaElement;
+      const start = ta.selectionStart ?? input.length;
+      const end = ta.selectionEnd ?? input.length;
+      setInput(input.slice(0, start) + "\t" + input.slice(end));
+      requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = start + 1; });
+      return;
+    }
+    if (e.key === "Enter" && (e.shiftKey || e.altKey)) {
+      // Shift+Enter / Option+Enter = new line on every device. Insert it
+      // ourselves rather than trusting the browser default — iOS/iPadOS
+      // keyboards don't reliably apply it, and Option+Enter has no default.
+      e.preventDefault();
+      const ta = e.currentTarget as HTMLTextAreaElement;
+      const start = ta.selectionStart ?? input.length;
+      const end = ta.selectionEnd ?? input.length;
+      setInput(input.slice(0, start) + "\n" + input.slice(end));
+      requestAnimationFrame(() => {
+        ta.selectionStart = ta.selectionEnd = start + 1;
+        ta.style.height = "auto";
+        ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+      });
+      return;
+    }
+    if (e.key === "Enter") {
       e.preventDefault();
       handleSend();
     }
