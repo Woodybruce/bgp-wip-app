@@ -1200,11 +1200,12 @@ function GroupPicCropper({ file, onCancel, onSave, onFallback }: { file: File; o
   );
 }
 
-function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
+function MobileGroupEdit({ thread, currentUser, allUsers, onBack, focusAdd }: {
   thread: ThreadData;
   currentUser: UserType | null;
   allUsers: Array<{ id: string; name: string; username: string; team?: string | null }>;
   onBack: () => void;
+  focusAdd?: boolean;
 }) {
   const isAiThread = !!thread.isAiChat;
   const [groupName, setGroupName] = useState(thread.title || thread.linkedName || "");
@@ -1360,13 +1361,19 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
         })}
 
         <div className="px-5 pt-5 pb-3">
-          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Add Members</label>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{isAiThread ? "Add People" : "Add Members"}</label>
+          {isAiThread && (
+            <p className="text-xs text-muted-foreground/70 mt-1">
+              Anyone you add sees this conversation, gets a notification, and can carry it on with ChatBGP from their own Messages list.
+            </p>
+          )}
           <div className="relative mt-2">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search people..."
+              autoFocus={focusAdd}
               className="h-10 pl-9 text-sm rounded-xl bg-[#F5F5F4] border-0"
               data-testid="input-mobile-add-member-search"
             />
@@ -1442,6 +1449,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     && typeof window.MediaRecorder !== "undefined";
   const unmountedRef = useRef(false);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
+  const [groupEditFocusAdd, setGroupEditFocusAdd] = useState(false);
   // WhatsApp-style Media/Links/Docs sheet for the open conversation.
   const [showThreadMedia, setShowThreadMedia] = useState(false);
   const [showLinkMenu, setShowLinkMenu] = useState(false);
@@ -2352,6 +2360,26 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   };
 
+  // "Add people" in the ChatBGP header. Woody, 2026-09-15: the three header
+  // icons (team chats / search / new chat) gave no way in, and tapping the
+  // title did nothing before the first message because no thread existed
+  // yet — so create the thread on demand and open Chat Settings on the
+  // Add People list.
+  const openAddPeople = async () => {
+    try {
+      if (!threadId) {
+        const res = await apiRequest("POST", "/api/chat/threads", { title: "New conversation", isAiChat: true });
+        const thread = await res.json();
+        setLocalThreadId(thread.id);
+        queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+      }
+      setGroupEditFocusAdd(true);
+      setShowGroupEdit(true);
+    } catch {
+      toast({ title: "Couldn't open Add People", description: "Check your connection and try again.", variant: "destructive" });
+    }
+  };
+
   // Fresh conversation from inside the chat view. Previously the + button
   // only nulled the parent's activeThreadId — which did nothing when the
   // thread lived in localThreadId, and never cleared the on-screen messages.
@@ -2418,6 +2446,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   };
 
   const threadMembers = activeThread?.members || [];
+  const aiHeaderOthers = threadMembers.filter(m => m.id !== currentUser?.id).map(m => m.name.split(" ")[0]);
   const otherMembers = threadMembers.filter(m => m.id !== currentUser?.id);
   const isDm = !isActiveThreadAi && otherMembers.length === 1;
   const dmName = isDm ? otherMembers[0].name : null;
@@ -2547,7 +2576,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           thread={activeThread}
           currentUser={currentUser}
           allUsers={allUsers}
-          onBack={() => setShowGroupEdit(false)}
+          focusAdd={groupEditFocusAdd}
+          onBack={() => { setShowGroupEdit(false); setGroupEditFocusAdd(false); }}
         />
       </>
     );
@@ -2588,10 +2618,20 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               </div>
               <div className="text-left">
                 <span className="text-[15px] font-semibold text-foreground block leading-tight">ChatBGP</span>
-                <span className="text-[11px] text-muted-foreground/70 leading-tight">AI Assistant</span>
+                <span className="text-[11px] text-muted-foreground/70 leading-tight block truncate max-w-[150px]">
+                  {aiHeaderOthers.length > 0 ? `with ${aiHeaderOthers.join(", ")}` : "AI Assistant"}
+                </span>
               </div>
             </button>
             <div className="flex items-center gap-0.5">
+              <button
+                onClick={openAddPeople}
+                className="w-9 h-9 rounded-full flex items-center justify-center active:bg-muted"
+                data-testid="button-mobile-add-people"
+                aria-label="Add people to this chat"
+              >
+                <UserPlus className="w-[18px] h-[18px] text-muted-foreground/70" />
+              </button>
               {onTeamChats && (
                 <button
                   onClick={onTeamChats}

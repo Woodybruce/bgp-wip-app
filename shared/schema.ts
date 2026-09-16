@@ -773,6 +773,7 @@ export const crmProperties = pgTable("crm_properties", {
   tags: text("tags"),
   bgpEngagement: text("bgp_engagement").array(),
   assetClass: text("asset_class"),
+  useClass: text("use_class"),           // planning use class, e.g. E(a), E(b), E(g), B8, Sui Generis, E, Mixed
   // Presentation preference only; null selects a layout from the property's data.
   propertyView: text("property_view").$type<PropertyView>(),
   tenure: text("tenure"),

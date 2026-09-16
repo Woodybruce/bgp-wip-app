@@ -1994,14 +1994,38 @@ export function setupNewsFeedRoutes(app: Express) {
       // distinctive tokens (e.g. "bluewater", "trafford").
       const GENERIC_PROP_WORDS = new Set(["shopping", "centre", "center", "retail", "park", "house",
         "estate", "street", "road", "square", "place", "court", "mall", "plaza", "tower", "building",
-        "the", "and", "london", "quarter", "gardens", "wharf"]);
-      const distinctiveWords = nameLower.split(/\s+/).filter((w: string) => w.length > 3 && !GENERIC_PROP_WORDS.has(w));
+        "the", "and", "london", "quarter", "gardens", "wharf", "yard", "unit", "units"]);
+      const tokenise = (str: string) => str.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+      const distinctiveWords = tokenise(propertyName).filter((w: string) => w.length > 3 && !GENERIC_PROP_WORDS.has(w));
+      // Location tokens — the bit after the comma in the name ("…, Vauxhall")
+      // plus the address town — let a single-word match count when it's
+      // anchored to the place.
+      const locationTokens = Array.from(new Set([
+        ...tokenise(propertyName.includes(",") ? propertyName.slice(propertyName.indexOf(",") + 1) : ""),
+        ...tokenise(String(addr?.city || addr?.town || "")),
+      ].filter((w: string) => w.length > 3 && !GENERIC_PROP_WORDS.has(w))));
+      // The owner's name is a legitimate second hook (a sale or refinancing
+      // is reported under the landlord, not the building).
+      const ownerId = (property as any).freeholderId || (property as any).longLeaseholderId || property.landlordId || null;
+      let ownerName = "";
+      if (ownerId) {
+        const [{ crmCompanies }, { eq: eqOp }] = await Promise.all([import("@shared/schema"), import("drizzle-orm")]);
+        const [owner] = await db.select({ name: crmCompanies.name }).from(crmCompanies).where(eqOp(crmCompanies.id, ownerId)).limit(1);
+        ownerName = (owner?.name || "").toLowerCase().replace(/\b(ltd|limited|plc|llp|holdings|group|properties|property|investments|estates)\b\.?/g, "").trim();
+      }
+      const hasWord = (text: string, w: string) => new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text);
+      // One distinctive word on its own is how "Hudson Yard" matched a
+      // Thames & Hudson book review (Woody, 2026-09-15). Now: the full name,
+      // OR two distinctive words, OR one distinctive word plus the place,
+      // OR the owner's name.
       const matchedArticles = dbArticles.filter(a => {
         const text = `${a.title} ${a.summary || ""} ${a.aiSummary || ""}`.toLowerCase();
         if (text.includes(nameLower)) return true;
-        // Require at least one *distinctive* property word (not just two
-        // generic ones like shopping + centre).
-        return distinctiveWords.length > 0 && distinctiveWords.some((w: string) => text.includes(w));
+        const hits = distinctiveWords.filter((w: string) => hasWord(text, w)).length;
+        if (hits >= 2) return true;
+        if (hits === 1 && locationTokens.some((t: string) => hasWord(text, t))) return true;
+        if (ownerName.length > 5 && text.includes(ownerName)) return true;
+        return false;
       }).slice(0, 10);
 
       // Thumbnail the matched slice — DB pipeline articles often land with
@@ -2029,7 +2053,11 @@ export function setupNewsFeedRoutes(app: Express) {
           } catch { /* panel still renders without a thumbnail */ }
         }));
 
-      const searchQuery = `"${propertyName}"`;
+      // Quote the building, add the place unquoted — "Hudson Yard" Vauxhall —
+      // so Google News anchors on the building rather than any Hudson.
+      const searchQuery = propertyName.includes(",")
+        ? `"${propertyName.slice(0, propertyName.indexOf(",")).trim()}" ${propertyName.slice(propertyName.indexOf(",") + 1).trim()}`
+        : `"${propertyName}"${locationTokens.length ? " " + locationTokens[0] : ""}`;
 
       // Live search via Google News RSS — a stable XML feed, unlike the old
       // DuckDuckGo HTML scrape which silently returned 0 when DDG changed

@@ -418,8 +418,14 @@ export default function MobileHome() {
           return <div className="rounded-2xl bg-[hsl(var(--mobile-chrome))] h-[104px] animate-pulse" data-testid="mobile-home-finance-loading" />;
         }
         const equityOk = isEquity && equityFin && !equityFin.notConnected && !equityFin.needsReconnect;
-        if (!commission && !equityOk) return null;
-        const showTabs = !!commission && equityOk;
+        // Xero dropped (expired/consumed token): keep the Company tab and
+        // show a reconnect prompt rather than silently collapsing the tile
+        // to Personal — Woody, 2026-09-15: "Finance page has gone, just
+        // says my deals".
+        const equityNeedsXero = isEquity && !!equityFin && (equityFin.notConnected || equityFin.needsReconnect);
+        const showCompany = equityOk || equityNeedsXero;
+        if (!commission && !showCompany) return null;
+        const showTabs = !!commission && showCompany;
         const tab = showTabs ? finTab : (commission ? "personal" : "company");
         const target = tab === "personal" ? "/deals" : "/finance";
         return (
@@ -494,6 +500,21 @@ export default function MobileHome() {
                     </div>
                   )}
                 </>
+              ) : equityNeedsXero ? (
+                <div className="flex items-center gap-3" data-testid="mobile-home-finance-reconnect">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold leading-tight">Xero needs reconnecting</p>
+                    <p className="text-[11px] opacity-70 mt-0.5">The connection expired. One reconnect restores the company figures for everyone.</p>
+                  </div>
+                  <span
+                    role="link"
+                    onClick={(e) => { e.stopPropagation(); window.location.href = "/api/xero/connect"; }}
+                    className="shrink-0 rounded-full bg-white/90 text-[hsl(var(--mobile-chrome))] px-3 py-1.5 text-xs font-semibold"
+                    data-testid="button-mobile-reconnect-xero"
+                  >
+                    Reconnect Xero
+                  </span>
+                </div>
               ) : (
                 <div className="grid grid-cols-3 gap-2">
                   <div>

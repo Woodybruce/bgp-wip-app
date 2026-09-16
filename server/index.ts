@@ -2082,6 +2082,7 @@ installGoogleBudgetGuard();
        ADD COLUMN IF NOT EXISTS os_ngd_feature_id text,
        ADD COLUMN IF NOT EXISTS inspire_polygon_id text,
        ADD COLUMN IF NOT EXISTS voa_ba_reference text,
+       ADD COLUMN IF NOT EXISTS use_class text,
        ADD COLUMN IF NOT EXISTS fhrs_id text,
        ADD COLUMN IF NOT EXISTS ward text,
        ADD COLUMN IF NOT EXISTS lpa text,

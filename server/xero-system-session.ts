@@ -13,7 +13,7 @@
  *   - Background jobs call getSystemXeroSession() to get a session-shaped
  *     object compatible with xeroApi() and refreshXeroToken().
  */
-import { db } from "./db";
+import { db, pool } from "./db";
 import { sql } from "drizzle-orm";
 
 const SYSTEM_KEY = "xero_system_session";
@@ -83,6 +83,59 @@ export async function getSystemXeroSession(): Promise<{ xeroTokens: PersistedTok
       `);
     },
   };
+}
+
+/** Latest persisted tokens, or null when nothing is stored. */
+export async function readPersistedXeroTokens(): Promise<PersistedTokens | null> {
+  await ensureTable();
+  const result = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${SYSTEM_KEY} LIMIT 1`);
+  const row = (result as any).rows?.[0];
+  if (!row?.value) return null;
+  const tokens: PersistedTokens = typeof row.value === "string" ? JSON.parse(row.value) : row.value;
+  return tokens.refreshToken ? tokens : null;
+}
+
+/**
+ * Xero rotates the refresh token on every refresh. Whoever performs a
+ * rotation — a background job on the system copy OR a director's browser
+ * session holding the same token — must write the new pair back here, or
+ * the other copy goes stale and its next refresh dies with "refresh token
+ * has been consumed". Only updates when the stored token is the one that
+ * was just consumed, so an unrelated lineage is never overwritten.
+ */
+export async function adoptRotatedXeroTokens(consumedRefreshToken: string, tokens: PersistedTokens): Promise<boolean> {
+  await ensureTable();
+  const result = await db.execute(sql`
+    UPDATE system_settings SET value = ${JSON.stringify(tokens)}::jsonb, updated_at = NOW()
+    WHERE key = ${SYSTEM_KEY} AND value->>'refreshToken' = ${consumedRefreshToken}
+  `);
+  return ((result as any).rowCount || 0) > 0;
+}
+
+/**
+ * Serialises token refreshes across processes (two Railway containers
+ * overlap on every deploy) with a Postgres advisory lock. Falls back to
+ * running unlocked if the lock can't be taken, so a DB hiccup never
+ * blocks a refresh outright.
+ */
+export async function withXeroRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
+  let client: any = null;
+  try {
+    client = await pool.connect();
+    await client.query("SELECT pg_advisory_lock(hashtext('xero_token_refresh'))");
+  } catch (e: any) {
+    console.warn("[xero-system] refresh lock unavailable, continuing unlocked:", e?.message);
+    if (client) { try { client.release(); } catch {} }
+    client = null;
+  }
+  try {
+    return await fn();
+  } finally {
+    if (client) {
+      try { await client.query("SELECT pg_advisory_unlock(hashtext('xero_token_refresh'))"); } catch {}
+      try { client.release(); } catch {}
+    }
+  }
 }
 
 /**

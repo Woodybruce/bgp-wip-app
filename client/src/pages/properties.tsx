@@ -244,6 +244,16 @@ export const ASSET_CLASS_COLORS: Record<string, string> = {
   "Leisure": "bg-emerald-500",
   "Residential": "bg-sky-500",
 };
+// Planning use classes (England, post-2020 Class E) plus the legacy codes
+// still on older leases. "E" = several Class E uses in one building;
+// "Mixed" = genuinely different classes (e.g. shops under flats).
+export const USE_CLASS_OPTIONS = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "E(f)", "E(g)", "F1", "F2", "B2", "B8", "C1", "C3", "Sui Generis", "Mixed"];
+export const USE_CLASS_LABELS: Record<string, string> = {
+  "E": "E · Commercial (mixed)", "E(a)": "E(a) · Shop", "E(b)": "E(b) · Food & drink", "E(c)": "E(c) · Financial / professional",
+  "E(d)": "E(d) · Indoor sport & leisure", "E(e)": "E(e) · Medical", "E(f)": "E(f) · Nursery / crèche", "E(g)": "E(g) · Office / light industrial",
+  "F1": "F1 · Learning & non-residential institutions", "F2": "F2 · Local community", "B2": "B2 · General industrial", "B8": "B8 · Storage / distribution",
+  "C1": "C1 · Hotel", "C3": "C3 · Residential", "Sui Generis": "Sui Generis", "Mixed": "Mixed",
+};
 export const TENURE_OPTIONS = ["Freehold", "Leasehold", "Virtual Freehold"];
 
 export const TENURE_COLORS: Record<string, string> = {

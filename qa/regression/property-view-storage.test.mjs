@@ -8,7 +8,7 @@ const { route, evaluate } = require('./source-harness.cjs');
 const response = () => ({ code: 200, body: null, status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } });
 
 function fixture({ client = true, propertyId = 'own', initial = {} } = {}) {
-  const handlers = {}, writes = [];
+  const handlers = {}, writes = [], enrichments = [];
   let stored = { id: propertyId, name: 'Test building', assetClass: 'Mixed Use', propertyView: null, ...initial };
   const capture = method => (_path, ...callbacks) => { handlers[method] = callbacks.at(-1); };
   evaluate([
@@ -17,6 +17,7 @@ function fixture({ client = true, propertyId = 'own', initial = {} } = {}) {
     route('server/crm.ts', 'get', '/api/crm/properties/:id'),
   ].join('\n'), {
     insertCrmPropertySchema,
+    enrichPropertyInBackground: (id, options) => enrichments.push({ id, options: options && { ...options } }),
     requireAuth() {},
     resolveCompanyScope: async () => client ? 'portfolio' : null,
     isPropertyInScope: async (_company, id) => id === 'own',
@@ -29,6 +30,7 @@ function fixture({ client = true, propertyId = 'own', initial = {} } = {}) {
   });
   return {
     writes,
+    enrichments,
     async run(method, body) {
       const res = response();
       await handlers[method]({ body, params: { id: propertyId } }, res);
@@ -44,6 +46,7 @@ test('property creation accepts all layouts and automatic without changing asset
     assert.equal(result.code, 201);
     assert.equal(result.body.assetClass, 'Mixed Use');
     assert.equal(result.body.propertyView, propertyView ?? null);
+    assert.deepEqual(f.enrichments, [{ id: 'own', options: { force: true } }]);
   }
 });
 
@@ -90,4 +93,18 @@ test('property view changes retain existing property access checks', async () =>
   const staff = fixture({ client: false, propertyId: 'foreign' });
   assert.equal((await staff.run('put', { propertyView: 'centre' })).code, 200);
   assert.equal(staff.writes.length, 1);
+});
+
+test('owner edits remain available to clients while shared company enrichment only runs for staff', async () => {
+  for (const client of [true, false]) {
+    const f = fixture({ client });
+    const result = await f.run('put', { proprietorName: 'New owner', useClass: 'E(a)', propertyView: 'building' });
+    assert.equal(result.code, 200);
+    assert.equal(result.body.proprietorName, 'New owner');
+    assert.equal(result.body.useClass, 'E(a)');
+    assert.equal(result.body.propertyView, 'building');
+    assert.deepEqual(f.enrichments, client ? [] : [{ id: 'own', options: { force: true } }]);
+    assert.equal((await f.run('get')).code, 200);
+    assert.equal(f.enrichments.length, client ? 0 : 2);
+  }
 });
