@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const express = require('express');
+const { insertCrmPropertySchema } = require('../../shared/schema.ts');
 const { source, route, evaluate, find, ts } = require('./source-harness.cjs');
 let gate;
 let crmGate;
@@ -35,6 +36,7 @@ function makeHandler(method, url, staff = false) {
     writes.push([name, ...args]); return {};
   }});
   evaluate(route('server/crm.ts', method, url), {
+    insertCrmPropertySchema,
     app: { [method]: (_, ...handlers) => handler = handlers.at(-1) }, requireAuth() {},
     resolveCompanyScope: async () => staff ? null : 'client-a',
     isClientVisibleBrand: async id => id === 'visible-brand',

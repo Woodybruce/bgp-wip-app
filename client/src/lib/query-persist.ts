@@ -62,6 +62,7 @@ export const persistOptions: Omit<PersistQueryClientOptions, "queryClient"> | nu
       dehydrateOptions: {
         shouldDehydrateQuery: (query) =>
           defaultShouldDehydrateQuery(query) &&
+          query.meta?.persist !== false &&
           !(query.queryKey[0] === "/api/auth/me" && !query.state.data),
       },
     }

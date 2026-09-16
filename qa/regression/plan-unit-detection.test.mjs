@@ -138,7 +138,7 @@ test('vision receives an unmarked original alongside the geometry aid, with iden
   rect(image, 30, 40, 120, 140, teal);
   const png = await sharp(image.data, { raw: { width: image.width, height: image.height, channels: 3 } }).png().toBuffer();
   const names = ['DETECT_PROMPT', 'extractJsonObject', 'detectTile'];
-  const source = names.map(name => find('server/evidence-plan.ts', node => (ts.isFunctionDeclaration(node) && node.name?.text === name)
+  const source = names.map(name => find('server/plan-scan-vision.ts', node => (ts.isFunctionDeclaration(node) && node.name?.text === name)
     || (ts.isVariableStatement(node) && node.declarationList.declarations.some(item => item.name.getText() === name)))).join('\n');
   let request;
   const { tile } = evaluate(source + '\nexports.tile = detectTile;', {
@@ -226,7 +226,7 @@ test('focused classification receives whole-page context and retains uncertainty
   const png = await sharp(image.data, { raw: { width: image.width, height: image.height, channels: 3 } }).png().toBuffer();
   const regions = findPlanUnitRegions(image).slice(0, 1);
   assert.equal(regions.length, 1);
-  const declarations = ['DETECT_PROMPT', 'extractJsonObject', 'detectTile'].map(name => find('server/evidence-plan.ts', node =>
+  const declarations = ['DETECT_PROMPT', 'extractJsonObject', 'detectTile'].map(name => find('server/plan-scan-vision.ts', node =>
     ts.isFunctionDeclaration(node) && node.name?.text === name || ts.isVariableStatement(node) && node.declarationList.declarations.some(d => d.name.getText() === name))).join('\n');
   let request;
   const { tile } = evaluate(declarations + '\nexports.tile = detectTile;', {
@@ -438,8 +438,8 @@ test('a worker whose lease expired cannot write or relink when its provider even
 });
 
 test('the vision SDK gets an explicit timeout with hidden retries disabled', async () => {
-  const detect = find('server/evidence-plan.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'detectTile');
-  const extract = find('server/evidence-plan.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'extractJsonObject');
+  const detect = find('server/plan-scan-vision.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'detectTile');
+  const extract = find('server/plan-scan-vision.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'extractJsonObject');
   let options;
   const { run } = evaluate(extract + '\n' + detect + '\nexports.run = detectTile;', {
     DETECT_PROMPT: () => 'Identify labelled shops',

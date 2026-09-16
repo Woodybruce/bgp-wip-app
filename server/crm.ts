@@ -2405,6 +2405,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // snake_case keys).
       const r: any = rows[0];
       r.unifiedSchedule = r.unified_schedule;
+      r.propertyView = r.property_view;
       res.json(r);
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "Lookup failed" });
@@ -2438,6 +2439,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         return res.status(403).json({ error: "Access denied" });
       }
       const updates = { ...req.body };
+      const viewPreference = insertCrmPropertySchema.pick({ propertyView: true }).safeParse(updates);
+      if (!viewPreference.success) {
+        return res.status(400).json({ error: "Property view must be building, multi_let, centre or null (automatic)" });
+      }
       if (scopeCompanyId) {
         // Client edits must not overwrite identity, access or staff attestations.
         for (const field of ["id", "createdAt", "landlordId", "leasingPrivacyEnabled", "proprietorKycStatus", "proprietorKycData", "kycCheckedAt"]) {

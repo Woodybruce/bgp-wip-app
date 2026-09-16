@@ -62,6 +62,15 @@ import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
 
+async function taskLinksInScope(scopeCompanyId: string | null, links: { linkedPropertyId?: unknown; linkedDealId?: unknown }): Promise<boolean> {
+  if (!scopeCompanyId) return true;
+  for (const [value, canAccess] of [[links.linkedPropertyId, isPropertyInScope], [links.linkedDealId, isDealInScope]] as const) {
+    if (value == null || value === "") continue;
+    if (typeof value !== "string" || !(await canAccess(scopeCompanyId, value))) return false;
+  }
+  return true;
+}
+
 const CHAT_MEDIA_DIR = path.join(process.cwd(), "ChatBGP", "chat-media");
 if (!fs.existsSync(CHAT_MEDIA_DIR)) {
   fs.mkdirSync(CHAT_MEDIA_DIR, { recursive: true });
@@ -4949,6 +4958,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           if (!(await isPropertyInScope(auScope, existing.propertyId))) {
             return res.status(403).json({ message: "Unit is outside your portfolio" });
           }
+          if (partial.propertyId !== undefined && partial.propertyId !== existing.propertyId
+              && !(await isPropertyInScope(auScope, partial.propertyId))) {
+            return res.status(403).json({ message: "Destination property is outside your portfolio" });
+          }
           delete (partial as any).fee;
         }
       }
@@ -8928,6 +8941,9 @@ These terms are indicative only and do not constitute a binding agreement.`;
               linkedOnenotePageId, linkedOnenotePageUrl, linkedEvernoteNoteId, linkedEvernoteNoteUrl,
               parentTaskId, isPinned, tags, assigneeUserId } = req.body;
       if (!title || !title.trim()) return res.status(400).json({ error: "Title is required" });
+      if (!(await taskLinksInScope(await resolveCompanyScope(req), { linkedPropertyId, linkedDealId }))) {
+        return res.status(403).json({ error: "Linked property or deal is outside your portfolio" });
+      }
 
       // Assignment: the task lands on the ASSIGNEE's list; assigned_by
       // records who set it. Clients may only assign within the people
@@ -8984,6 +9000,12 @@ These terms are indicative only and do not constitute a binding agreement.`;
       // needs to chase, amend or close their own delegated tasks).
       const existing = await pool.query("SELECT * FROM user_tasks WHERE id = $1 AND (user_id = $2 OR assigned_by_user_id = $2)", [taskId, userId]);
       if (existing.rows.length === 0) return res.status(404).json({ error: "Task not found" });
+      if (!(await taskLinksInScope(await resolveCompanyScope(req), {
+        linkedPropertyId: req.body.linkedPropertyId !== undefined ? req.body.linkedPropertyId : existing.rows[0].linked_property_id,
+        linkedDealId: req.body.linkedDealId !== undefined ? req.body.linkedDealId : existing.rows[0].linked_deal_id,
+      }))) {
+        return res.status(403).json({ error: "Linked property or deal is outside your portfolio" });
+      }
 
       const fields: string[] = [];
       const values: any[] = [];

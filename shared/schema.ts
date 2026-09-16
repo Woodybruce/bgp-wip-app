@@ -755,6 +755,9 @@ export const insertCrmContactSchema = createInsertSchema(crmContacts).omit({ id:
 export type InsertCrmContact = z.infer<typeof insertCrmContactSchema>;
 export type CrmContact = typeof crmContacts.$inferSelect;
 
+export const propertyViewSchema = z.enum(["building", "multi_let", "centre"]);
+export type PropertyView = z.infer<typeof propertyViewSchema>;
+
 export const crmProperties = pgTable("crm_properties", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -770,6 +773,8 @@ export const crmProperties = pgTable("crm_properties", {
   tags: text("tags"),
   bgpEngagement: text("bgp_engagement").array(),
   assetClass: text("asset_class"),
+  // Presentation preference only; null selects a layout from the property's data.
+  propertyView: text("property_view").$type<PropertyView>(),
   tenure: text("tenure"),
   sqft: real("sqft"),
   notes: text("notes"),
@@ -822,7 +827,9 @@ export const crmProperties = pgTable("crm_properties", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertCrmPropertySchema = createInsertSchema(crmProperties).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertCrmPropertySchema = createInsertSchema(crmProperties, {
+  propertyView: propertyViewSchema.nullable().optional(),
+}).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertCrmProperty = z.infer<typeof insertCrmPropertySchema>;
 export type CrmProperty = typeof crmProperties.$inferSelect;
 

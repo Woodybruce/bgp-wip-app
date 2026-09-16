@@ -18,7 +18,7 @@
  * polygon fetches it, every later feature reads it for free.
  */
 
-import { db } from "./db";
+import { db, pool } from "./db";
 import { crmProperties, type CrmProperty } from "@shared/schema";
 import { eq, sql, inArray } from "drizzle-orm";
 import {
@@ -638,74 +638,20 @@ async function createFromDpa(dpa: OsPlacesResult, source: ResolveSource): Promis
   return { kind: "resolved", property: created, source };
 }
 
-/**
- * Explicit enrichment endpoint — called by an "Enrich now" button on the
- * resolver UI / property detail page after the user has CONFIRMED the
- * property is the right one. Reuses the existing land-registry cascade.
- *
- * Best-effort throughout. Logs warnings, never throws.
- */
-export async function enrichResolvedPropertyAsync(propertyId: string): Promise<{ ok: boolean; error?: string }> {
-  const [prop] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
-  if (!prop) return { ok: false, error: "property not found" };
-  // Skip if already enriched recently
-  if (prop.titleSearchDate && (Date.now() - new Date(prop.titleSearchDate).getTime()) < 24 * 60 * 60 * 1000) {
-    return { ok: true };
-  }
-  try {
-    const { resolveBuildingTitles } = await import("./land-registry");
-    const lat = prop.latitude ? Number(prop.latitude) : undefined;
-    const lng = prop.longitude ? Number(prop.longitude) : undefined;
-    const addrField = prop.address as any;
-    const addressStr = typeof addrField === "string" ? addrField : addrField?.formatted || addrField?.line1 || prop.name;
-    await resolveBuildingTitles({
-      address: addressStr,
-      postcode: prop.postcode || undefined,
-      lat,
-      lng,
-      // Critical: pass the resolver-canonical UPRN so PropertyData looks
-      // up THIS exact building's title — not every title in the postcode.
-      uprn: prop.uprn || undefined,
-      source: "resolver",
-      pathwayRunId: null,
-      userId: null,
-      skipPersist: false,
-    } as any);
-
-    // VOA enrichment — if the local VOA SQLite snapshot has a row that
-    // looks like this property, stamp the BA reference. Free data, the
-    // crm_properties.voa_ba_reference field already exists.
-    if (prop.postcode && !prop.voaBaReference) {
-      try {
-        const { lookupVoaByPostcode, voaSqliteAvailable } = await import("./voa-sqlite");
-        if (voaSqliteAvailable()) {
-          const street = (addressStr || "").split(",")[0]?.trim();
-          const candidates = lookupVoaByPostcode(prop.postcode, street, 5);
-          // Best-match heuristic: candidate whose address starts with the
-          // property name (e.g. "12 Hanover Square" matches "12 Hanover Sq").
-          const propLower = (prop.name || "").toLowerCase();
-          const best = candidates.find((c) => {
-            if (!c.address) return false;
-            const addrLower = c.address.toLowerCase();
-            return addrLower.includes(propLower) || propLower.includes(addrLower.split(",")[0] || "");
-          }) || candidates[0];
-          if (best?.baRef) {
-            await db
-              .update(crmProperties)
-              .set({ voaBaReference: best.baRef })
-              .where(eq(crmProperties.id, propertyId));
-          }
-        }
-      } catch (err: any) {
-        console.warn(`[property-resolver] VOA enrichment failed for ${propertyId}:`, err?.message);
-      }
-    }
-
-    return { ok: true };
-  } catch (err: any) {
-    console.warn(`[property-resolver] enrichment failed for ${propertyId}:`, err?.message);
-    return { ok: false, error: err?.message || "enrichment failed" };
-  }
+/** Awaited, explicit research. The service saves exact candidates and safe
+ * missing facts against this property; ambiguous ownership stays for review. */
+export async function enrichResolvedPropertyAsync(propertyId: string, actorId: string) {
+  const { runPropertyEnrichment } = await import("./property-resolver-enrichment");
+  const { resolveBuildingTitles } = await import("./land-registry");
+  return runPropertyEnrichment({
+    pool,
+    lookupTitles: resolveBuildingTitles,
+    lookupVoa: async (postcode) => {
+      const { lookupVoaByPostcode, voaSqliteAvailable } = await import("./voa-sqlite");
+      const available = voaSqliteAvailable();
+      return { available, rows: available ? lookupVoaByPostcode(postcode, undefined, 200) : [] };
+    },
+  }, propertyId, actorId);
 }
 
 async function annotateCandidates(results: OsPlacesResult[]): Promise<ResolverCandidate[]> {
@@ -721,38 +667,8 @@ async function annotateCandidates(results: OsPlacesResult[]): Promise<ResolverCa
       .from(crmProperties)
       .where(inArray(crmProperties.uprn, uprns));
 
-    // Auto-heal stale business-name properties at the candidates stage.
-    // The bug we keep hitting: an earlier wrong run stamped a business
-    // tenant name (e.g. "The Pantry Cafe") onto a property at 108
-    // Chiswick. The resolver returns candidates, the client adopts the
-    // existing property directly (bypassing the establishment-name
-    // override that's applied to fully-resolved results), so the wrong
-    // name persists forever.
-    //
-    // Fix: when we discover an existing property at one of these UPRNs
-    // and its name looks like a stale business string, refresh from
-    // the candidate's DPA address before stamping the existingPropertyId.
-    for (const e of existing) {
-      if (!e.uprn) continue;
-      byUprn.set(e.uprn, e.id);
-      const currentName = String(e.name || "").trim();
-      const looksBusinessy = /[A-Za-z]/.test(currentName)
-        && !/\d/.test(currentName)
-        && !currentName.includes(",")
-        && currentName.length < 50;
-      if (!looksBusinessy) continue;
-      const candidate = results.find((r) => r.uprn === e.uprn);
-      if (!candidate?.address) continue;
-      const newName = derivePropertyNameFromDpa(candidate);
-      if (newName && newName !== currentName) {
-        try {
-          console.log(`[resolver] refreshing stale business-name in candidates: "${currentName}" → "${newName}" (UPRN ${e.uprn})`);
-          await db.update(crmProperties).set({ name: newName }).where(eq(crmProperties.id, e.id));
-        } catch (err: any) {
-          console.warn(`[resolver] couldn't refresh candidate name for ${e.id}:`, err?.message);
-        }
-      }
-    }
+    // Candidate discovery must not rename an existing, human-maintained property.
+    for (const e of existing) if (e.uprn) byUprn.set(e.uprn, e.id);
   }
   return results.map((r) => ({
     uprn: r.uprn ?? "",
@@ -901,21 +817,22 @@ export function registerPropertyResolverRoutes(app: Express): void {
     }
   });
 
-  /**
-   * Explicit enrichment trigger — called by "Enrich now" UI button after
-   * the user confirms the property is the right one. Runs HMLR title +
-   * proprietor lookup (PropertyData API), which auto-cascades to Companies
-   * House + AML via the existing land-registry persistence flow.
-   *
-   * 24-hour cooldown built into the helper to avoid burning credits on
-   * rapid re-clicks.
-   */
+  // Preserve the existing staff-only chargeable action. Staff in a scoped
+  // client view must also stay inside that property's existing access boundary.
   app.post("/api/property-resolver/enrich/:propertyId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const result = await enrichResolvedPropertyAsync(String(req.params.propertyId));
-      return res.json(result);
-    } catch (err: any) {
-      return res.status(500).json({ error: err?.message || "enrich failed" });
+      const actorId = req.session?.userId || req.tokenUserId;
+      if (!actorId) return res.status(401).json({ error: "Not authenticated" });
+      const { isClientRequestUser, resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Property research is a staff action." });
+      const propertyId = String(req.params.propertyId);
+      const scope = await resolveCompanyScope(req);
+      if (scope && !(await isPropertyInScope(scope, propertyId))) return res.status(403).json({ error: "Not available for this account" });
+      const result = await enrichResolvedPropertyAsync(propertyId, actorId);
+      const { httpStatus, ...body } = result;
+      return res.status(httpStatus || 200).json(body);
+    } catch {
+      return res.status(500).json({ error: "Property research could not finish. Please retry." });
     }
   });
 }
