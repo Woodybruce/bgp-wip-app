@@ -2,7 +2,7 @@ import sharp from "sharp";
 import { isValidPolygon, pointInPolygon, type PlanPoint } from "@shared/plan-geometry";
 import type { PropertyPlanCandidate, PropertyPlanPolygon } from "@shared/property-plan-scan";
 import { findPlanUnitRegions, traceDetectedPlanUnit, planPolygonsOverlap, type DetectedPlanUnit } from "./plan-unit-detection";
-import { detectTile } from "./plan-scan-vision";
+import { detectTile, type PlanScanContext } from "./plan-scan-vision";
 import { normalizeEvidenceTenantName, normalizeEvidenceUnitRef } from "./evidence-plan-schedule";
 
 export function planPoints(polygon: PropertyPlanPolygon | null | undefined): PlanPoint[] {
@@ -19,7 +19,7 @@ export async function propertyPlanRaster(image: Buffer) {
   return { data, width: info.width, height: info.height };
 }
 
-type ScheduleOption = { tenancy_unit_id: string | null; unit_id: string | null; unit_name: string; tenant_name: string | null };
+type ScheduleOption = { tenancy_unit_id: string | null; unit_id: string | null; unit_name: string; tenant_name: string | null; floor?: string | null; permitted_use?: string | null; lease_status?: string | null };
 
 export function suggestPropertyPlanLink(label: string | null, tenant: string | null, options: ScheduleOption[]) {
   const canonical = options.filter(option => option.tenancy_unit_id);
@@ -36,6 +36,7 @@ export function suggestPropertyPlanLink(label: string | null, tenant: string | n
 
 export async function scanPropertyPlanImage(image: Buffer, options: ScheduleOption[], existing: { polygon: PropertyPlanPolygon }[],
   checkpoint: (message: string, completed: number, total: number) => Promise<void>, readTile: typeof detectTile = detectTile,
+  context: Omit<PlanScanContext, "kind" | "tenancyUnits"> = {},
 ): Promise<{ candidates: PropertyPlanCandidate[]; message: string }> {
   await checkpoint("Tracing enclosed boundaries", 0, 1);
   const originalMeta = await sharp(image, { limitInputPixels: 100_000_000 }).metadata();
@@ -45,6 +46,9 @@ export async function scanPropertyPlanImage(image: Buffer, options: ScheduleOpti
   const raster = await propertyPlanRaster(image);
   const regions = findPlanUnitRegions(raster);
   const known = options.map(row => row.unit_name).filter(Boolean).slice(0, 500);
+  const scanContext: PlanScanContext = { ...context, kind: "property", tenancyUnits: options
+    .filter(row => row.lease_status?.trim().toLowerCase() !== "archived")
+    .map(row => ({ unitRef: row.unit_name, floor: row.floor, permittedUse: row.permitted_use })) };
   const found: DetectedPlanUnit[] = [];
   let failures = 0;
   const batchSize = Math.max(12, Math.ceil(regions.length / 20));
@@ -58,7 +62,7 @@ export async function scanPropertyPlanImage(image: Buffer, options: ScheduleOpti
     let success = false;
     for (let attempt = 0; attempt < 2 && !success; attempt++) {
       try {
-        found.push(...await readTile(sharp, image, meta.width, meta.height, frame.x, frame.y, frame.w, frame.h, known, frame.overview, frame.regions, frame.focused));
+        found.push(...await readTile(sharp, image, meta.width, meta.height, frame.x, frame.y, frame.w, frame.h, known, frame.overview, frame.regions, frame.focused, scanContext));
         success = true;
       } catch { if (attempt === 1) failures++; }
       // Renew/check the job lease before retrying or processing an AI result.

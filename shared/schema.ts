@@ -580,7 +580,7 @@ export type CrmCompany = typeof crmCompanies.$inferSelect;
 export const brandAgentRepresentations = pgTable("brand_agent_representations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   brandCompanyId: varchar("brand_company_id").notNull(),
-  agentCompanyId: varchar("agent_company_id").notNull(),
+  agentCompanyId: varchar("agent_company_id"),
   agentType: text("agent_type").notNull(), // tenant_rep | landlord_rep | investment
   region: text("region"), // central_london | uk_regions | europe | global | null
   primaryContactId: varchar("primary_contact_id"), // → crm_contacts

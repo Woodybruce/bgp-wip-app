@@ -1055,7 +1055,7 @@ installGoogleBudgetGuard();
     `CREATE TABLE IF NOT EXISTS brand_agent_representations (
        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
        brand_company_id VARCHAR NOT NULL,
-       agent_company_id VARCHAR NOT NULL,
+       agent_company_id VARCHAR,
        agent_type TEXT NOT NULL,
        region TEXT,
        primary_contact_id VARCHAR,
@@ -1065,6 +1065,7 @@ installGoogleBudgetGuard();
        created_at TIMESTAMP DEFAULT now(),
        updated_at TIMESTAMP DEFAULT now()
      )`,
+    `ALTER TABLE brand_agent_representations ALTER COLUMN agent_company_id DROP NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_brand ON brand_agent_representations(brand_company_id)`,
     `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_agent ON brand_agent_representations(agent_company_id)`,
     `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_active ON brand_agent_representations(brand_company_id) WHERE end_date IS NULL`,

@@ -85,7 +85,8 @@ try {
   assert.equal(rows.find(row=>row.id===id(12)).link_state,'ambiguous');assert.equal(rows.find(row=>row.id===id(12)).tenant_name,null);assert.equal(rows.find(row=>row.id===id(13)).tenant_name,'Legacy Shop');
   pass('ambiguous physical tenancy stays unassigned; unique genuine legacy data remains visible');
   const countsBefore=await Promise.all(['property_units','tenancy_schedule_units','leasing_schedule_units'].map(count));
-  const options=await links.queryPickableUnits(db,'property');assert.equal(options.length,6);assert.ok(options.some(row=>row.tenancy_unit_id==='t2'&&row.unit_id===null));assert.ok(options.some(row=>row.unit_id==='physical-only'&&!row.tenancy_unit_id));assert.ok(!options.some(row=>row.id==='foreign-tenancy'));
+  await db.query("UPDATE tenancy_schedule_units SET permitted_use='Office' WHERE id='t2'; UPDATE property_units SET use_class='Storage' WHERE id='physical-only'");
+  const options=await links.queryPickableUnits(db,'property');assert.equal(options.length,6);assert.ok(options.some(row=>row.tenancy_unit_id==='t2'&&row.unit_id===null&&row.permitted_use==='Office'));assert.ok(options.some(row=>row.unit_id==='physical-only'&&!row.tenancy_unit_id&&row.permitted_use==='Storage'));assert.ok(!options.some(row=>row.id==='foreign-tenancy'));
   assert.deepEqual(await Promise.all(['property_units','tenancy_schedule_units','leasing_schedule_units'].map(count)),countsBefore);
   assert.equal(suggestPropertyPlanLink('Shared',null,options),null);assert.equal(suggestPropertyPlanLink('Not A1','Canonical Shop',options),null);
   pass('picker is read-only, includes schedule-only and physical-only units, isolates property and refuses ambiguous suggestions');

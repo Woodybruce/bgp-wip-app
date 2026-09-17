@@ -341,12 +341,13 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
                 lease_expiry, break_date AS lease_break, tenant_company_id,
                 id AS tenancy_unit_id, passing_rent_pa AS rent_pa, 'tenancy' AS schedule_source
            FROM tenancy_schedule_units WHERE property_id = $1
-             AND lower(COALESCE(NULLIF(trim(occupancy_status), ''), status, '')) <> 'archived'
+             AND lower(trim(COALESCE(status, ''))) <> 'archived'
+             AND lower(trim(COALESCE(occupancy_status, ''))) <> 'archived'
          UNION ALL
          SELECT id, unit_name, tenant_name, status, lease_expiry, lease_break,
                 tenant_company_id, tenancy_unit_id, rent_pa, 'leasing' AS schedule_source
            FROM leasing_schedule_units WHERE property_id = $1
-             AND lower(COALESCE(status, '')) <> 'archived'
+             AND lower(trim(COALESCE(status, ''))) <> 'archived'
              AND NOT EXISTS (SELECT 1 FROM tenancy_schedule_units WHERE property_id = $1)
        )
        SELECT u.*, c.aml_pep_status, c.kyc_status,
@@ -774,7 +775,8 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
       [propertyId]
     ).then(r => r.rows[0]?.n || 0);
     const leasingScheduleUnits = await pool.query<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM leasing_schedule_units WHERE property_id = $1`,
+      `SELECT COUNT(*)::int AS n FROM leasing_schedule_units WHERE property_id = $1
+         AND lower(trim(coalesce(status, ''))) <> 'archived'`,
       [propertyId]
     ).then(r => r.rows[0]?.n || 0);
     const availableUnits = await pool.query<{ n: number }>(
@@ -786,6 +788,7 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
     const scheduleUnitsMissingFromPropertyUnits = await pool.query<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM leasing_schedule_units lsu
         WHERE lsu.property_id = $1
+          AND lower(trim(coalesce(lsu.status, ''))) <> 'archived'
           AND lsu.unit_name IS NOT NULL AND lsu.unit_name <> ''
           AND NOT EXISTS (
             SELECT 1 FROM property_units pu
@@ -802,6 +805,7 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
       `SELECT COUNT(DISTINCT lsu.tenant_name)::int AS n
          FROM leasing_schedule_units lsu
         WHERE lsu.property_id = $1
+          AND lower(trim(coalesce(lsu.status, ''))) <> 'archived'
           AND lsu.tenant_name IS NOT NULL AND lsu.tenant_name <> ''
           AND NOT EXISTS (
             SELECT 1 FROM crm_companies c
@@ -818,14 +822,15 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
     // tenants resolved" and offer a one-click backfill.
     const tenancyResolution = await pool.query<{ total: number; resolved: number; unresolved: number }>(
       `SELECT
-         COUNT(*) FILTER (WHERE coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '') <> ''
-                            AND lower(coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '')) NOT IN ('vacant', 'void', '—', '-'))::int AS total,
+         COUNT(*)::int AS total,
          COUNT(*) FILTER (WHERE tenant_company_id IS NOT NULL)::int AS resolved,
-         COUNT(*) FILTER (WHERE tenant_company_id IS NULL
-                            AND coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '') <> ''
-                            AND lower(coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '')) NOT IN ('vacant', 'void', '—', '-'))::int AS unresolved
+         COUNT(*) FILTER (WHERE tenant_company_id IS NULL)::int AS unresolved
          FROM tenancy_schedule_units
-        WHERE property_id = $1`,
+        WHERE property_id = $1
+          AND lower(trim(coalesce(status, ''))) <> 'archived'
+          AND lower(trim(coalesce(occupancy_status, ''))) <> 'archived'
+          AND coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '') <> ''
+          AND lower(coalesce(NULLIF(trim(trading_name), ''), trim(tenant_name), '')) NOT IN ('vacant', 'void', '—', '-')`,
       [propertyId]
     ).then(r => r.rows[0] || { total: 0, resolved: 0, unresolved: 0 });
 
@@ -858,13 +863,17 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
          SELECT lower(trim(unit_number)) AS key, COUNT(*) AS n
            FROM tenancy_schedule_units
           WHERE property_id = $1 AND coalesce(trim(unit_number), '') <> ''
+            AND lower(trim(coalesce(status, ''))) <> 'archived'
+            AND lower(trim(coalesce(occupancy_status, ''))) <> 'archived'
           GROUP BY 1 HAVING COUNT(*) > 1
        )
        SELECT
          (SELECT COUNT(*)::int FROM dups) AS duplicate_unit_numbers,
          (SELECT COUNT(*)::int FROM tenancy_schedule_units t
             JOIN crm_companies c ON c.id = t.tenant_company_id
-           WHERE t.property_id = $1 AND c.merged_into_id IS NOT NULL) AS tenants_pointing_at_merged_brand,
+           WHERE t.property_id = $1 AND c.merged_into_id IS NOT NULL
+             AND lower(trim(coalesce(t.status, ''))) <> 'archived'
+             AND lower(trim(coalesce(t.occupancy_status, ''))) <> 'archived') AS tenants_pointing_at_merged_brand,
          (SELECT COUNT(*)::int FROM crm_deals d
             JOIN property_units pu ON pu.id = d.unit_id
            WHERE d.property_id IS NOT NULL
@@ -877,7 +886,8 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
              AND d.property_id IS NOT NULL
              AND d.property_id <> au.property_id) AS available_units_deal_on_other_property,
          (SELECT COUNT(*)::int FROM available_units WHERE property_id = $1 AND tenancy_unit_id IS NULL) AS available_units_no_unit_fk,
-         (SELECT COUNT(*)::int FROM leasing_schedule_units WHERE property_id = $1 AND tenancy_unit_id IS NULL) AS leasing_units_no_unit_fk,
+         (SELECT COUNT(*)::int FROM leasing_schedule_units WHERE property_id = $1 AND tenancy_unit_id IS NULL
+            AND lower(trim(coalesce(status, ''))) <> 'archived') AS leasing_units_no_unit_fk,
          (SELECT COUNT(*)::int FROM crm_deals
            WHERE (property_id = $1 OR EXISTS (SELECT 1 FROM property_units pu WHERE pu.id = unit_id AND pu.property_id = $1))
              AND COALESCE(status, '') NOT IN ('WIT', 'COM', 'INV')

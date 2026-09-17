@@ -677,7 +677,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
   // All companies — used by the representation picker AND the backer linkifier
   // so any mentioned company name gets a link to its profile.
-  const { data: allCompaniesForPicker = [] } = useQuery<Array<{ id: string; name: string; agent_type: string | null; domain: string | null; domainUrl: string | null }>>({
+  const { data: allCompaniesForPicker = [] } = useQuery<Array<{ id: string; name: string; companyType?: string | null; company_type?: string | null; agent_type: string | null; domain: string | null; domainUrl: string | null }>>({
     queryKey: ["/api/crm/companies"],
   });
 
@@ -693,7 +693,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       if (!r.ok) return [];
       return r.json();
     },
-    enabled: addRep === "agent" && repSearch.trim().length >= 2 && !repForm.otherCompanyId,
+    enabled: addRep === "agent" && repSearch.trim().length >= 2 && !repForm.otherCompanyId && !repForm.contactId,
     staleTime: 30_000,
   });
 
@@ -2188,26 +2188,28 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             {/* Represented by (agents repping this brand) */}
             {(data.representedBy.length > 0 || isBrand) && (
               <div>
-                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center justify-between">
                   <span className="flex items-center gap-1"><Handshake className="w-3 h-3" /> Represented by</span>
                   {!isClientViewer && (
-                  <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" }); }} data-testid="button-add-agent">
+                  <Button size="sm" variant="outline" onClick={() => { setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" }); }} data-testid="button-add-agent">
                     <Plus className="w-3 h-3 mr-0.5" /> Add agent
                   </Button>
                   )}
                 </div>
                 <div className="space-y-1">
                   {data.representedBy.map((r: any) => (
-                    <div key={r.id} className="text-xs flex items-center gap-2 group">
-                      <Badge variant="outline" className="text-[10px]">{r.agent_type.replace(/_/g, " ")}</Badge>
-                      <Link href={`/companies/${r.agent_company_id}`} className="text-primary hover:underline font-medium">{r.agent_name}</Link>
-                      {r.region && <span className="text-muted-foreground">({r.region.replace(/_/g, " ")})</span>}
-                      {r.contact_name && <span className="text-muted-foreground">· {r.contact_name}</span>}
+                    <div key={r.id} className="text-sm flex flex-wrap items-center gap-2 group rounded-lg border border-border p-2">
+                      <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>
+                      {r.agent_company_id && r.agent_name
+                        ? <Link href={`/companies/${r.agent_company_id}`} className="text-primary hover:underline font-medium">{r.agent_name}</Link>
+                        : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
+                      {r.region && <span className="text-[11px] text-muted-foreground">({r.region.replace(/_/g, " ")})</span>}
+                      {r.contact_name && <Link href={`/contacts/${r.primary_contact_id}`} className="text-primary hover:underline">{r.contact_name}</Link>}
                       {!isClientViewer && (
                       <button
                         type="button"
-                        onClick={() => { if (confirm(`End representation by ${r.agent_name}?`)) endRepMutation.mutate(r.id); }}
-                        className="ml-auto opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+                        onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) endRepMutation.mutate(r.id); }}
+                        className="ml-auto p-2 text-muted-foreground hover:text-destructive transition-opacity"
                         aria-label="End representation"
                       >
                         <X className="w-3 h-3" />
@@ -2260,10 +2262,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             {/* Add-representation inline picker */}
             {addRep && (
-              <div className="border rounded-md p-2 space-y-2 bg-muted/40" data-testid="add-representation-form">
-                <div className="text-xs font-medium flex items-center justify-between">
+              <div className="border border-border rounded-lg p-3 space-y-3 bg-muted/40" data-testid="add-representation-form">
+                <div className="text-sm font-semibold flex items-center justify-between">
                   <span>{addRep === "agent" ? "Add an agent representing this brand" : "Add a brand this agent represents"}</span>
-                  <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => { setAddRep(null); setRepForm(EMPTY_REP_FORM); setRepSearch(""); }}>
+                  <Button size="sm" variant="ghost" aria-label="Close representation form" onClick={() => { setAddRep(null); setRepForm(EMPTY_REP_FORM); setRepSearch(""); }}>
                     <X className="w-3 h-3" />
                   </Button>
                 </div>
@@ -2276,9 +2278,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                         : (repForm.otherCompanyName || repSearch)
                     }
                     onChange={(e) => { setRepSearch(e.target.value); setRepForm({ ...repForm, otherCompanyId: "", otherCompanyName: "", contactId: undefined, contactName: undefined }); }}
-                    className="h-8 text-xs"
+                    className="text-sm"
                   />
-                  {repSearch && !repForm.otherCompanyId && (
+                  {repSearch && !repForm.otherCompanyId && !repForm.contactId && (
                     <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto">
                       {/* Agent flow: search CONTACTS (people) by name and show
                           the agency company alongside. Picks both at once. */}
@@ -2288,20 +2290,20 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                             <button
                               type="button"
                               key={ct.id}
-                              onClick={() => setRepForm({
+                              onClick={() => { setRepForm({
                                 ...repForm,
                                 contactId: ct.id,
                                 contactName: ct.name,
-                                otherCompanyId: ct.companyId || "",
+                                otherCompanyId: "",
                                 otherCompanyName: ct.companyName || "",
-                              })}
-                              className="w-full text-left px-2 py-1.5 hover:bg-accent text-xs flex items-start gap-2"
+                              }); setRepSearch(""); }}
+                              className="w-full text-left px-2 py-2 hover:bg-accent text-sm flex items-start gap-2"
                             >
                               <User className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
                               <div className="min-w-0 flex-1">
                                 <div className="font-medium truncate">{ct.name}</div>
-                                <div className="text-[10px] text-muted-foreground truncate">
-                                  {[ct.role, ct.companyName].filter(Boolean).join(" · ")}
+                                <div className="text-[11px] text-muted-foreground truncate">
+                                  {[ct.role, ct.companyName || "Firm unconfirmed"].filter(Boolean).join(" · ")}
                                 </div>
                               </div>
                             </button>
@@ -2312,32 +2314,32 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       {/* Fall-through: company picker. Used for the brand-search
                           case, AND as a fallback when the agent search returns
                           nothing (so user can still pick by company name). */}
-                      {/* Any company can be the agent firm — previously gated on
-                          agent_type being set, which hid every agent firm whose
-                          sub-type was blank (the common case). The server
-                          self-heals agent_type on save. */}
+                      {/* Firm picks must be agent companies; selecting a person
+                          does not change their recorded employer. */}
                       {allCompaniesForPicker
                         .filter(co => co.id !== companyId && co.name.toLowerCase().includes(repSearch.toLowerCase()))
+                        .filter(co => addRep !== "agent" || /^agent(?:\s|-|$)/i.test(co.companyType || co.company_type || ""))
                         .slice(0, 10)
                         .map(co => (
                           <button
                             type="button"
                             key={co.id}
                             onClick={() => { setRepForm({ ...repForm, otherCompanyId: co.id, otherCompanyName: co.name, contactId: undefined, contactName: undefined }); setRepSearch(""); }}
-                            className="w-full text-left px-2 py-1.5 hover:bg-accent text-xs flex items-center gap-2"
+                            className="w-full text-left px-2 py-2 hover:bg-accent text-sm flex items-center gap-2"
                           >
                             {addRep === "agent" && <Handshake className="w-3 h-3 text-muted-foreground" />}
                             {addRep === "brand" && <Sparkles className="w-3 h-3 text-primary" />}
                             <span className="truncate">{co.name}</span>
-                            {co.agent_type && <Badge variant="outline" className="text-[10px] ml-auto">{co.agent_type.replace(/_/g, " ")}</Badge>}
+                            {co.agent_type && <Pill className="ml-auto">{co.agent_type.replace(/_/g, " ")}</Pill>}
                           </button>
                         ))}
                     </div>
                   )}
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                {addRep === "agent" && <p className="text-[11px] text-muted-foreground">A named agent can be added with their firm unconfirmed. Adding a representation keeps their recorded employer unchanged.</p>}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <Select value={repForm.agent_type} onValueChange={(v) => setRepForm({ ...repForm, agent_type: v })}>
-                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectTrigger aria-label="Representation type" className="text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="tenant_rep">Tenant rep</SelectItem>
                       <SelectItem value="landlord_rep">Landlord rep</SelectItem>
@@ -2348,13 +2350,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     placeholder="Region (optional)"
                     value={repForm.region}
                     onChange={(e) => setRepForm({ ...repForm, region: e.target.value })}
-                    className="h-8 text-xs"
+                    aria-label="Representation region"
+                    className="text-sm"
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* Enable when an agent firm OR an agent contact is chosen —
-                      the server resolves the firm from the contact (creating a
-                      lightweight Agent company if the person has none). */}
+                  {/* Named people do not require a confirmed employer. */}
                   <Button
                     size="sm"
                     disabled={(!repForm.otherCompanyId && !(addRep === "agent" && repForm.contactId)) || addRepMutation.isPending}
@@ -2365,7 +2366,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       addRepMutation.mutate(vars);
                     }}
                   >
-                    <Check className="w-3 h-3 mr-1" /> Add
+                    <Check className="w-3 h-3 mr-1" /> Add representation
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => { setAddRep(null); setRepForm(EMPTY_REP_FORM); setRepSearch(""); }}>Cancel</Button>
                 </div>

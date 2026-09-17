@@ -23,27 +23,28 @@ function content(node) {
   if (React.isValidElement(node)) return content(node.props.children);
   return node == null || typeof node === 'boolean' ? '' : String(node);
 }
-function fixture(name, { file = 'client/src/components/property-plans-panel.tsx', data = {}, props = {} } = {}) {
+function fixture(name, { file = 'client/src/components/property-plans-panel.tsx', data = {}, props = {}, effects: runEffects = false, hash = '' } = {}) {
   const ast = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const keptFunctions = new Set([name, 'formatMoney', 'formatDate']);
   const declarations = ast.statements.filter(node => ts.isFunctionDeclaration(node) && keptFunctions.has(node.name?.text)
     || ts.isVariableStatement(node) && node.declarationList.declarations.some(d => d.name.getText(ast) === 'STATUS_COLOURS'));
   const compiled = ts.transpileModule(declarations.map(node => node.getText(ast)).join('\n') + `\nexports.fixture = ${name};`, { fileName: 'test.tsx', compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
-  const slots = [], refs = [], calls = [], pending = [], errors = [], invalidations = [], exports = {};
-  let cursor = 0, refCursor = 0;
+  const slots = [], refs = [], calls = [], pending = [], errors = [], invalidations = [], exports = {}, effectSlots = [], effects = [], handlers = {};
+  let cursor = 0, refCursor = 0, effectCursor = 0, changed = false;
   const bindings = {};
   const noop = () => null;
+  const queryClient = { invalidateQueries: value => invalidations.push(value), setQueryData: noop };
   for (const node of ast.statements) {
     if (ts.isImportDeclaration(node)) for (const member of node.importClause?.namedBindings?.elements || []) bindings[member.name.text] = function Leaf() { return null; };
     if (ts.isFunctionDeclaration(node) && !keptFunctions.has(node.name?.text)) bindings[node.name.text] = function Leaf() { return null; };
   }
   Object.assign(bindings, {
-    React, exports, console, URLSearchParams, planUnitChoiceKey, window: { location: { hash: '' } },
-    useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], next => slots[index] = typeof next === 'function' ? next(slots[index]) : next]; },
-    useMemo: fn => fn(), useEffect: noop,
+    React, exports, console, URLSearchParams, planUnitChoiceKey, window: { location: { hash }, addEventListener: (name, handler) => { handlers[name] = handler; }, removeEventListener: noop },
+    useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], next => { const value = typeof next === 'function' ? next(slots[index]) : next; changed ||= !Object.is(value, slots[index]); slots[index] = value; }]; },
+    useMemo: fn => fn(), useEffect(fn, deps) { const index = effectCursor++; if (!runEffects) return; if (!effectSlots[index] || deps.some((dep, i) => !Object.is(dep, effectSlots[index][i]))) { effectSlots[index] = deps; effects.push(fn); } },
     useRef(value) { const index = refCursor++; refs[index] ||= { current: value }; return refs[index]; },
-    useQuery({ queryKey }) { return { data: data[queryKey.at(-1)] ?? data[queryKey[0]], refetch: noop, isPending: false, isError: false }; },
-    useQueryClient: () => ({ invalidateQueries: value => invalidations.push(value), setQueryData: noop }),
+    useQuery({ queryKey }) { return { data: data[queryKey[1] === 'property-links' ? 'property-links' : queryKey.at(-1)] ?? data[queryKey[0]], refetch: noop, isPending: false, isError: false, isFetching: queryKey[1] === 'property-links' && Boolean(data.linksFetching) }; },
+    useQueryClient: () => queryClient,
     useToast: () => ({ toast: noop }),
     usePropertyPlanImage: () => ({ src: 'blob:fixture', isPending: false, isError: false }),
     useMutation(options) { return { isPending: false, reset: noop, mutate(value) { pending.push(Promise.resolve().then(() => options.mutationFn(value)).then(result => options.onSuccess?.(result), error => { errors.push(error); options.onError?.(error); })); } }; },
@@ -51,8 +52,8 @@ function fixture(name, { file = 'client/src/components/property-plans-panel.tsx'
     confirm: () => true,
   });
   vm.runInNewContext(compiled, bindings);
-  return { data, refs, calls, errors, invalidations, bindings,
-    render() { cursor = 0; refCursor = 0; return exports.fixture(props); },
+  return { data, refs, calls, errors, invalidations, bindings, handlers,
+    render() { let tree, count = 0; do { cursor = 0; refCursor = 0; effectCursor = 0; changed = false; tree = exports.fixture(props); while (effects.length) effects.shift()(); assert.ok(++count < 20, 'effects must settle'); } while (runEffects && changed); return tree; },
     leaf(tree, component) { return descendants(tree).find(node => node.type === bindings[component]); },
     async settle() { while (pending.length) await pending.shift(); },
   };
@@ -105,6 +106,38 @@ test('scan review saves only explicitly chosen outlines with stable tenancy link
   assert.equal(app.errors.length, 0);
   assert.equal(app.calls[0].url, '/api/plans/plan-1/scans/job-1/apply');
   assert.deepEqual(JSON.parse(JSON.stringify(app.calls[0].body.assignments)), [{ candidateId: 'candidate-1', tenancy_unit_id: 'tenancy-1', unit_id: 'physical-1', label: 'Shop 1' }]);
+  assert.ok(app.invalidations.some(value => JSON.stringify(value.queryKey) === JSON.stringify(['/api/plans', 'property-links', propertyId])));
+});
+
+test('repeating View on plan returns to the linked floor after manual floor browsing', () => {
+  const first = { ...plan, id: 'first', floor: 'First' };
+  const app = fixture('PropertyPlansPanel', { effects: true, hash: '#plan-tenancy-tenancy-1', props: { propertyId }, data: {
+    '/api/auth/me': { role: 'Admin' }, plans: { plans: [plan, first] }, units: { units: [] },
+    'property-links': [{ planId: plan.id, units: [tenancy] }, { planId: first.id, units: [] }],
+  } });
+  let tree = app.render();
+  assert.equal(app.leaf(tree, 'PlanCanvas').props.plan.id, plan.id);
+  descendants(tree).find(node => node.props['data-testid'] === 'button-floor-First').props.onClick();
+  assert.equal(app.leaf(app.render(), 'PlanCanvas').props.plan.id, first.id, 'browsing another floor must remain possible');
+  app.handlers.hashchange();
+  assert.equal(app.leaf(app.render(), 'PlanCanvas').props.plan.id, plan.id);
+});
+
+test('View on plan waits for refreshed floor links and rechecks them after outline edits', () => {
+  const first = { ...plan, id: 'first', floor: 'First' };
+  const data = { '/api/auth/me': { role: 'Admin' }, plans: { plans: [plan, first] }, units: { units: [{ ...tenancy, id: 'outline-1', polygon }] },
+    'property-links': [{ planId: plan.id, units: [tenancy] }, { planId: first.id, units: [] }], linksFetching: false };
+  const app = fixture('PropertyPlansPanel', { effects: true, hash: '#plan-tenancy-tenancy-1', props: { propertyId }, data });
+  let tree = app.render();
+  app.leaf(tree, 'PlanCanvas').props.onSelectUnit(data.units.units[0]);
+  app.leaf(app.render(), 'UnitDetailDrawer').props.onUpdated();
+  assert.ok(app.invalidations.some(value => JSON.stringify(value.queryKey) === JSON.stringify(['/api/plans', 'property-links', propertyId])));
+  data.linksFetching = true;
+  app.handlers.hashchange();
+  assert.equal(app.leaf(app.render(), 'PlanCanvas').props.plan.id, plan.id);
+  data['property-links'] = [{ planId: plan.id, units: [] }, { planId: first.id, units: [tenancy] }];
+  data.linksFetching = false;
+  assert.equal(app.leaf(app.render(), 'PlanCanvas').props.plan.id, first.id, 'fresh mapping must win over the old cached location');
 });
 
 test('clients retain manual trace, draw and upload; paid scanning stays with staff', () => {

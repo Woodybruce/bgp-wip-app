@@ -3,6 +3,7 @@
 // local market lenses; sector coverage with missing-sector callouts;
 // AI gap read; international watchlist). Retail is excluded throughout —
 // the server slices to hospitality/F&B/wellness/café/leisure.
+import type { PropertyResearchContext } from "@shared/property-research";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -37,6 +38,9 @@ type GapBrand = {
 };
 
 interface BrandGapResult {
+  applicable?: boolean;
+  researchContext?: PropertyResearchContext;
+  reason?: string;
   property: { id: string; name: string; postcode: string | null; lat: number; lng: number };
   onScheme: GapBrand[];
   wider: GapBrand[];
@@ -74,21 +78,21 @@ function BrandRow({ b, context, intel }: { b: GapBrand; context?: string; intel?
       <span className="flex items-center gap-1.5 min-w-0">
         <span className="font-medium truncate min-w-0" title={b.brand_name}>{b.brand_name}</span>
         {b.has_live_requirement && (
-          <Badge className="text-[9px] bg-violet-100 text-violet-700 border-violet-200 shrink-0">live req</Badge>
+          <Badge className="text-[11px] bg-muted text-foreground border-border shrink-0">live req</Badge>
         )}
         {intel?.expanding && (
-          <Badge className="text-[9px] bg-sky-100 text-sky-700 border-sky-200 shrink-0" title={intel.note}>
+          <Badge className="text-[11px] bg-muted text-foreground border-border shrink-0" title={intel.note}>
             <Radar className="w-2 h-2 mr-0.5" />expanding
           </Badge>
         )}
         {(b.rollout_status === "scaling" || b.rollout_status === "entering_uk") && (
-          <Badge className="text-[9px] bg-emerald-100 text-emerald-700 border-emerald-200 shrink-0">
+          <Badge className="text-[11px] bg-muted text-foreground border-border shrink-0">
             <TrendingUp className="w-2 h-2 mr-0.5" />{b.rollout_status === "scaling" ? "scaling" : "entering UK"}
           </Badge>
         )}
       </span>
       {context && (
-        <span className="block text-[10px] text-muted-foreground truncate mt-0.5" title={context}>
+        <span className="block text-[11px] text-muted-foreground truncate mt-0.5" title={context}>
           {context}
         </span>
       )}
@@ -106,9 +110,9 @@ function GapColumn({ icon: Icon, tint, title, sub, brands, contextFor, emptyText
       <div className="text-[11px] font-semibold mb-0.5 flex items-center gap-1.5">
         <Icon className={`w-3.5 h-3.5 ${tint}`} />
         {title}
-        <Badge variant="secondary" className="text-[10px]">{brands.length}</Badge>
+        <Badge variant="secondary" className="text-[11px]">{brands.length}</Badge>
       </div>
-      {sub && <div className="text-[10px] text-muted-foreground mb-1.5">{sub}</div>}
+      {sub && <div className="text-[11px] text-muted-foreground mb-1.5">{sub}</div>}
       {brands.length === 0 ? (
         <p className="text-[11px] text-muted-foreground italic py-2">{emptyText}</p>
       ) : (
@@ -116,7 +120,7 @@ function GapColumn({ icon: Icon, tint, title, sub, brands, contextFor, emptyText
           {brands.slice(0, 20).map(b => (
             <BrandRow key={b.brand_company_id} b={b} context={contextFor(b)} intel={intelByBrand?.[b.brand_name.toLowerCase()]} />
           ))}
-          {brands.length > 20 && <p className="text-[10px] text-muted-foreground pl-1">+{brands.length - 20} more</p>}
+          {brands.length > 20 && <p className="text-[11px] text-muted-foreground pl-1">+{brands.length - 20} more</p>}
         </div>
       )}
     </div>
@@ -211,7 +215,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
     <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="gap-live-intel">
       <div className="flex items-center gap-1.5 mb-1 text-[11px] font-semibold">
         <Radar className="w-3.5 h-3.5 text-primary" /> Live expansion intel
-        <span className="text-[10px] font-normal text-muted-foreground">web-researched, cited · verify before pitching</span>
+        <span className="text-[11px] font-normal text-muted-foreground">web-researched, cited · verify before pitching</span>
         {data?.generatedAt && (
           <span className="font-normal text-muted-foreground">
             — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
@@ -236,7 +240,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
               {expanding.map((b, i) => (
                 <div key={i} className="text-xs rounded border bg-white/60 dark:bg-white/5 px-2 py-1 min-w-0">
                   <span className="font-semibold">{b.name}</span>
-                  {b.confidence && <span className="text-[10px] text-muted-foreground ml-1">({b.confidence})</span>}
+                  {b.confidence && <span className="text-[11px] text-muted-foreground ml-1">({b.confidence})</span>}
                   {b.source_url && (
                     <a href={b.source_url} target="_blank" rel="noreferrer" className="inline-flex align-middle ml-1 text-primary hover:underline" title={b.source_url}>
                       <ExternalLink className="w-2.5 h-2.5" />
@@ -270,7 +274,7 @@ function InternationalWatchlist({ propertyId }: { propertyId: string }) {
         <ChevronRight className="w-3 h-3 transition-transform group-open/intl:rotate-90" />
         <Globe2 className="w-3.5 h-3.5 text-muted-foreground" />
         International watchlist — concepts not yet in the UK
-        <span className="text-[10px] font-normal text-muted-foreground">AI-researched · verify before pitching</span>
+        <span className="text-[11px] font-normal text-muted-foreground">AI-researched · verify before pitching</span>
       </summary>
       <div className="mt-2">
         {isLoading ? (
@@ -283,10 +287,10 @@ function InternationalWatchlist({ propertyId }: { propertyId: string }) {
               <div key={i} className="text-xs rounded border px-2 py-1.5">
                 <div className="flex items-center gap-1.5">
                   <span className="font-semibold truncate">{it.name}</span>
-                  <Badge variant="outline" className="text-[9px] shrink-0">{it.sector}</Badge>
-                  <span className="text-[10px] text-muted-foreground ml-auto shrink-0">{it.origin}</span>
+                  <Badge variant="outline" className="text-[11px] shrink-0">{it.sector}</Badge>
+                  <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{it.origin}</span>
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">
+                <div className="text-[11px] text-muted-foreground mt-0.5">
                   Trades in {it.trades_in} · UK: {it.uk_status}
                 </div>
                 <div className="text-[11px] mt-0.5">{it.why}</div>
@@ -350,6 +354,12 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
     );
   }
 
+  if (data.applicable === false) return (
+    <Card data-testid="brand-gap-not-applicable"><CardContent className="pt-4 space-y-2">
+      <p className="text-sm font-semibold">Occupier research</p>
+      <p className="text-sm text-muted-foreground">{data.reason}</p>
+    </CardContent></Card>
+  );
   const sectors = data.sectors || [];
   const missing = sectors.filter(s => s.missing);
   const present = sectors.filter(s => !s.missing);
@@ -369,26 +379,28 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
 }) {
   // Minimise everything below the AI read (Woody, 2026-08-04: "create a
   // minimise after the commentary so can reduce if need to").
-  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const centre = data.researchContext?.mode !== "local";
 
   return (
     <Card data-testid="brand-gap-panel">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
           <Target className="w-4 h-4 text-muted-foreground" />
-          Brand gap analysis
+          {centre ? "Brand gap analysis" : "Local occupier opportunities"}
           <span className="text-[11px] font-normal text-muted-foreground">hospitality, F&B, wellness &amp; leisure</span>
-          <Badge variant="secondary" className="text-[10px]">
+          <Badge variant="secondary" className="text-[11px]">
             {data.stats.brandsWithStores} store locations
           </Badge>
           {competing.length > 0 && (
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-[11px] text-muted-foreground">
               vs {competing.map(c => `${c.name} (${c.distance_km}km)`).join(" · ")}
             </span>
           )}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {data.researchContext && <p className="text-sm text-muted-foreground">{data.researchContext.reason}</p>}
         {/* AI gap read */}
         <GapCommentary propertyId={propertyId} />
 
@@ -419,18 +431,18 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                 <Link
                   key={r.id}
                   href={r.company_id ? `/companies/${r.company_id}` : `/requirements/${r.id}`}
-                  className="text-xs flex items-center gap-1.5 hover:bg-white/60 dark:hover:bg-white/5 rounded px-1 py-0.5 min-w-0 overflow-hidden"
+                  className="text-xs flex items-center gap-1.5 hover:bg-muted/60 rounded px-1 py-0.5 min-w-0 overflow-hidden"
                 >
                   <span className="font-medium truncate flex-1 min-w-0">
                     {r.company_name || r.name || "Unnamed"}
                   </span>
                   {r.use && r.use.length > 0 && (
-                    <Badge variant="outline" className="text-[9px] shrink-0 bg-white dark:bg-transparent">
+                    <Badge variant="outline" className="text-[11px] shrink-0 bg-background">
                       {r.use.slice(0, 2).join(", ")}{r.use.length > 2 ? "…" : ""}
                     </Badge>
                   )}
                   {r.size && (
-                    <span className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={r.size}>{r.size}</span>
+                    <span className="text-[11px] text-muted-foreground truncate max-w-[150px]" title={r.size}>{r.size}</span>
                   )}
                 </Link>
               ))}
@@ -439,10 +451,10 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         )}
 
         {/* Three lenses — competing centres, national peers, local market */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <GapColumn
+        <div className={`grid grid-cols-1 ${centre ? "md:grid-cols-3" : ""} gap-3`}>
+          {centre && <><GapColumn
             icon={Swords}
-            tint="text-red-500"
+            tint="text-muted-foreground"
             title="At competing centres, not here"
             sub={competing.length ? `Trading at ${competing.map(c => c.name).join(" / ")}` : undefined}
             brands={data.competitorGaps || []}
@@ -462,12 +474,12 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
             }}
             emptyText="No national peer-scheme gaps."
             intelByBrand={data.liveIntel?.byBrand}
-          />
+          /></>}
           <GapColumn
             icon={MapPin}
             tint="text-muted-foreground"
-            title="In the local market, not on scheme"
-            sub="Trading within 5km — operators the scheme could capture"
+            title={centre ? "In the local market, not on scheme" : "Nearby occupiers"}
+            sub={centre ? "Trading within 5km — potential operators to investigate" : "Trading within 5km — verify interest and fit for the actual available unit"}
             brands={data.localMarket || []}
             contextFor={(b) => `${b.nearest_distance_km.toFixed(1)}km away`}
             emptyText="Nothing nearby that isn't already on scheme."
@@ -476,13 +488,13 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         </div>
 
         {/* Sector coverage — missing sectors first, loud */}
-        {sectors.length > 0 && (
+        {centre && sectors.length > 0 && (
           <div>
             <div className="text-[11px] font-semibold mb-1.5 flex items-center gap-1.5">
               <Store className="w-3.5 h-3.5 text-muted-foreground" />
               Sector coverage
               {missing.length > 0 && (
-                <Badge className="text-[10px] bg-amber-100 text-amber-700 border-amber-200">
+                <Badge className="text-[11px] bg-muted text-foreground border-border">
                   {missing.length} missing sector{missing.length === 1 ? "" : "s"}
                 </Badge>
               )}
@@ -491,16 +503,16 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
               {[...missing, ...present].map(s => (
                 <div
                   key={s.key}
-                  className={`rounded-lg border p-2 min-w-0 ${s.missing ? "border-amber-300 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-800" : ""}`}
+                  className={`rounded-lg border p-2 min-w-0 ${s.missing ? "border-border bg-muted/40" : ""}`}
                   data-testid={`sector-${s.key}`}
                 >
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-[11px] font-semibold truncate">{s.label}</span>
                     {s.missing
-                      ? <Badge className="text-[9px] bg-amber-200/70 text-amber-800 border-amber-300 shrink-0">missing</Badge>
-                      : <span className="text-[10px] text-muted-foreground shrink-0">{s.on_scheme} here</span>}
+                      ? <Badge className="text-[11px] bg-muted text-foreground border-border shrink-0">missing</Badge>
+                      : <span className="text-[11px] text-muted-foreground shrink-0">{s.on_scheme} here</span>}
                   </div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                  <div className="text-[11px] text-muted-foreground mt-0.5">
                     {s.missing
                       ? `0 on scheme · at ${s.at_peers} peer scheme${s.at_peers === 1 ? "" : "s"}${s.at_competing ? ` · ${s.at_competing} at competitors` : ""}`
                       : s.on_scheme_names.slice(0, 3).join(", ") + (s.on_scheme > 3 ? ` +${s.on_scheme - 3}` : "")}
@@ -511,7 +523,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                         <Link key={e.id} href={`/companies/${e.id}`}>
                           <Badge
                             variant="outline"
-                            className={`text-[9px] cursor-pointer hover:bg-muted ${e.live_req ? "border-violet-300 text-violet-700" : ""}`}
+                            className={`text-[11px] cursor-pointer hover:bg-muted ${e.live_req ? "border-border text-foreground" : ""}`}
                             title={`At ${e.peers} peer scheme${e.peers === 1 ? "" : "s"}${e.live_req ? " · live requirement" : ""}`}
                           >
                             {e.name}
@@ -527,20 +539,20 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         )}
 
         {/* International watchlist — larger-scheme play, collapsed by default */}
-        <InternationalWatchlist propertyId={propertyId} />
+        {centre && <InternationalWatchlist propertyId={propertyId} />}
 
         {/* On-scheme / wider chips — reference detail, tucked away */}
         <details className="group/os">
           <summary className="text-[11px] text-muted-foreground cursor-pointer list-none flex items-center gap-1 hover:text-foreground">
             <ChevronRight className="w-3 h-3 transition-transform group-open/os:rotate-90" />
-            On-scheme &amp; nearby detail ({data.onScheme.length} on scheme · {data.wider.length} within 2km)
+            {centre ? "On-scheme & nearby detail" : "Recorded tenants & nearby detail"} ({data.onScheme.length} {centre ? "on scheme" : "recorded tenants"} · {data.wider.length} within 2km)
           </summary>
           <div className="mt-2 space-y-2">
             {data.onScheme.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {data.onScheme.slice(0, 30).map(b => (
                   <Link key={b.brand_company_id} href={`/companies/${b.brand_company_id}`}>
-                    <Badge variant="outline" className="text-[10px] bg-emerald-50 hover:bg-emerald-100 border-emerald-200 cursor-pointer dark:bg-emerald-950/30">
+                    <Badge variant="outline" className="text-[11px] bg-muted hover:bg-muted/80 border-border cursor-pointer">
                       {b.brand_name}
                       <span className="ml-1 text-muted-foreground">
                         {b.nearest_distance_km < 0.1 ? "here" : `${(b.nearest_distance_km * 1000).toFixed(0)}m`}
@@ -554,7 +566,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
               <div className="flex flex-wrap gap-1">
                 {data.wider.slice(0, 30).map(b => (
                   <Link key={b.brand_company_id} href={`/companies/${b.brand_company_id}`}>
-                    <Badge variant="outline" className="text-[10px] bg-blue-50 hover:bg-blue-100 border-blue-200 cursor-pointer dark:bg-blue-950/30">
+                    <Badge variant="outline" className="text-[11px] bg-muted hover:bg-muted/80 border-border cursor-pointer">
                       {b.brand_name}
                       <span className="ml-1 text-muted-foreground">{b.nearest_distance_km.toFixed(1)}km</span>
                     </Badge>

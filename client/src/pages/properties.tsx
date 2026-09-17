@@ -5287,6 +5287,8 @@ function PropertiesList({
   const { toast } = useToast();
   const isMobile = useIsMobile();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
+  const resultsStartRef = useRef<HTMLDivElement>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [activeView, setActiveView] = useState<"list" | "landlordHealth">("list");
@@ -5643,9 +5645,47 @@ function PropertiesList({
       })
     : filteredItems;
 
+  const pageSize = 50;
+  const pageCount = Math.max(1, Math.ceil(sortedItems.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageItems = sortedItems.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const selectedOutsidePage = selectedIds.size - pageItems.filter(item => selectedIds.has(item.id)).length;
+  useEffect(() => setPage(1), [activeGroup, search, columnFilters, teamFilter, activeTeam, propSort.sortKey, propSort.direction]);
+  useEffect(() => setPage(previous => Math.min(previous, pageCount)), [pageCount]);
+
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [activeGroup, search, columnFilters]);
+    setBulkDeleteOpen(false);
+  }, [activeGroup, search, columnFilters, teamFilter, activeTeam]);
+  useEffect(() => {
+    const matchingIds = new Set(filteredItems.map(item => item.id));
+    setSelectedIds(previous => {
+      const next = new Set([...previous].filter(id => matchingIds.has(id)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [filteredItems]);
+
+  const changePage = (next: number) => {
+    setPage(Math.max(1, Math.min(next, pageCount)));
+    resultsStartRef.current?.scrollIntoView({ block: "start" });
+  };
+  const paginationControls = (position: "top" | "bottom") => sortedItems.length > 0 && (
+    <nav aria-label={`Property result pages (${position})`} className="flex flex-wrap items-center justify-between gap-3" data-testid={`property-pagination-${position}`}>
+      <p className="text-[11px] text-muted-foreground" aria-live="polite">
+        <span className="font-mono tabular-nums">{(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, sortedItems.length)}</span> of <span className="font-mono tabular-nums">{sortedItems.length}</span> properties
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => changePage(currentPage - 1)} data-testid={`property-page-prev-${position}`}>Previous</Button>
+        <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">Page
+          <select aria-label={`Property results page (${position})`} className="rounded border border-border bg-background px-2 py-1.5 font-mono tabular-nums text-sm" value={currentPage} onChange={event => changePage(Number(event.target.value))} data-testid={`property-page-select-${position}`}>
+            {Array.from({ length: pageCount }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}
+          </select>
+          of <span className="font-mono tabular-nums">{pageCount}</span>
+        </label>
+        <Button variant="outline" size="sm" disabled={currentPage === pageCount} onClick={() => changePage(currentPage + 1)} data-testid={`property-page-next-${position}`}>Next</Button>
+      </div>
+    </nav>
+  );
 
   // Team tabs replace the old group-name tabs (Pipeline / Archived /
   // Development / Investment Comps), which read 0 for nearly every
@@ -5884,6 +5924,14 @@ function PropertiesList({
         </>)}
       </div>
 
+      <div ref={resultsStartRef} className="space-y-2 scroll-mt-4">
+        {paginationControls("top")}
+        {selectedIds.size > 0 && <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="property-selection-options">
+          {selectedIds.size < filteredItems.length && <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set(filteredItems.map(item => item.id)))} data-testid="select-all-matching-properties">Select all {filteredItems.length} matching properties</Button>}
+          <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())} data-testid="clear-selected-properties">Clear selection</Button>
+        </div>}
+      </div>
+
       {viewMode === "card" ? (
         <Card>
           <CardContent className="p-0">
@@ -5895,7 +5943,7 @@ function PropertiesList({
               </div>
             ) : (
               <MobileCardView
-                items={sortedItems.map((item): MobileCardItem => {
+                items={pageItems.map((item): MobileCardItem => {
                   const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
                   const agentNames = allUsers.filter(u => assignedIds.includes(String(u.id))).map(u => u.name || "").join(", ");
                   const teams = Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "");
@@ -5932,7 +5980,7 @@ function PropertiesList({
               ))}
             </div>
           ) : (
-            <ScrollableTable minWidth={2200}>
+            <ScrollableTable key={currentPage} minWidth={2200}>
               <Table>
                 <TableHeader>
                   {/* §6 header spec — 11px semibold uppercase muted; the
@@ -5941,19 +5989,20 @@ function PropertiesList({
                     <TableHead className="w-[40px] px-2">
                       <Checkbox
                         data-testid="checkbox-select-all-properties"
+                        aria-label="Select properties on this page"
                         checked={
-                          filteredItems.length > 0 && filteredItems.every(i => selectedIds.has(i.id))
+                          pageItems.length > 0 && pageItems.every(i => selectedIds.has(i.id))
                             ? true
-                            : filteredItems.some(i => selectedIds.has(i.id))
+                            : pageItems.some(i => selectedIds.has(i.id))
                               ? "indeterminate"
                               : false
                         }
                         onCheckedChange={(checked) => {
-                          if (checked) {
-                            setSelectedIds(new Set(filteredItems.map(i => i.id)));
-                          } else {
-                            setSelectedIds(new Set());
-                          }
+                          setSelectedIds(previous => {
+                            const next = new Set(previous);
+                            for (const item of pageItems) { if (checked) next.add(item.id); else next.delete(item.id); }
+                            return next;
+                          });
                         }}
                       />
                     </TableHead>
@@ -5997,7 +6046,7 @@ function PropertiesList({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedItems.map((item) => (
+                  {pageItems.map((item) => (
                     <TableRow
                       key={item.id}
                       className="text-xs hover:bg-muted/50"
@@ -6226,14 +6275,15 @@ function PropertiesList({
         </CardContent>
       </Card>
       )}
+      {paginationControls("bottom")}
 
       {selectedIds.size > 0 && (
         <div
-          className="fixed bottom-20 md:bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-md border bg-background px-4 py-2 shadow-lg"
+          className="fixed bottom-20 md:bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center justify-center gap-3 w-max max-w-[calc(100vw-2rem)] rounded-lg border bg-background px-4 py-2 shadow-lg"
           data-testid="bulk-action-bar-properties"
         >
           <span className="text-sm font-medium" data-testid="text-selected-count-properties">
-            {selectedIds.size} selected
+            <span className="font-mono tabular-nums">{selectedIds.size}</span> selected{selectedOutsidePage > 0 && <> · <span className="font-mono tabular-nums">{selectedOutsidePage}</span> on other pages</>}
           </span>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

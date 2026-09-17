@@ -209,7 +209,7 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
             data-testid="chip-spine-health"
           >
             <span className={`w-1.5 h-1.5 rounded-full ${gapTotal === 0 && pct >= 95 ? "bg-emerald-500" : pct >= 60 ? "bg-amber-500" : "bg-rose-500"}`} />
-            Spine {pct}%{gapTotal > 0 ? ` · ${gapTotal}` : ""}
+            Tenants linked {tr.resolved}/{tr.total}{gapTotal > 0 ? ` · ${gapTotal} to review` : ""}
           </span>
         </>
       )}

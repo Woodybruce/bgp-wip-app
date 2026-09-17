@@ -3,9 +3,22 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { Router } from 'express';
 import { getBrandIdentity } from '../../server/brand-identity.ts';
-import { nextPreparationState } from '../../server/brand-preparation-jobs.ts';
+import { BRAND_PREPARATION_STAGES, nextPreparationState, summarizeBrandPreparation } from '../../server/brand-preparation-jobs.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
+
+test('prepared factual profile is usable while contact review remains explicit', () => {
+  const stages = BRAND_PREPARATION_STAGES.map(stage => ({stage,fingerprint:'verified',status:stage==='contacts'?'needs_review':'ready'}));
+  const result=summarizeBrandPreparation('verified',stages);
+  assert.deepEqual(result,{ready:true,preparedSections:8,totalSections:8,contactReviewRequired:true});
+  assert.equal(stages.at(-1).status,'needs_review');
+});
+test('optional no-match or unavailable sources do not mislabel prepared core facts', () => {
+  const stages=BRAND_PREPARATION_STAGES.map(stage=>({stage,fingerprint:'verified',status:['identity','profile'].includes(stage)?'ready':stage==='contacts'?'needs_review':'unavailable'}));
+  const result=summarizeBrandPreparation('verified',stages);assert.equal(result.ready,true);assert.equal(result.preparedSections,2);assert.equal(result.totalSections,8);
+  stages.find(s=>s.stage==='profile').status='no_match';assert.equal(summarizeBrandPreparation('verified',stages).ready,false);
+  stages.find(s=>s.stage==='profile').status='ready';assert.equal(summarizeBrandPreparation('review',stages).ready,false);
+});
 
 test('batch endpoint resolves the literal route instead of enriching company "batch"', async () => {
   const ast = ts.createSourceFile('brand-enrichment.ts', source('server/brand-enrichment.ts'), ts.ScriptTarget.Latest, true);

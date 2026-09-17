@@ -5,6 +5,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { createBrandRepresentation, updateBrandRepresentation } from "./brand-representations";
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
 
@@ -1130,71 +1131,18 @@ router.post("/api/brand/:companyId/identity", requireAuth, async (req: Request, 
 // ─── Agent representations CRUD ─────────────────────────────────────────
 router.post("/api/brand/representations", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { brandCompanyId, agentType, region, primaryContactId, startDate, notes } = req.body || {};
-    let { agentCompanyId } = req.body || {};
-    if (!brandCompanyId || !agentType) {
-      return res.status(400).json({ error: "brandCompanyId and agentType required" });
-    }
-    // Resolve the agent FIRM from the picked agent CONTACT when no company was
-    // chosen — the representation table is keyed on the agent company, but the
-    // user often just picks the agent person. Use the contact's own company;
-    // if they have none, mint a lightweight Agent company from their name and
-    // link it, so "add this agent to the brand" always lands.
-    if (!agentCompanyId && primaryContactId) {
-      const ct = await pool.query(`SELECT company_id, name FROM crm_contacts WHERE id = $1`, [primaryContactId]);
-      agentCompanyId = ct.rows[0]?.company_id || null;
-      if (!agentCompanyId && ct.rows[0]?.name) {
-        const created = await pool.query(
-          `INSERT INTO crm_companies (name, company_type, agent_type) VALUES ($1, 'Agent', $2) RETURNING id`,
-          [`${ct.rows[0].name} (Agent)`, agentType]
-        );
-        agentCompanyId = created.rows[0].id;
-        await pool.query(`UPDATE crm_contacts SET company_id = $1 WHERE id = $2 AND company_id IS NULL`, [agentCompanyId, primaryContactId]);
-      }
-    }
-    if (!agentCompanyId) {
-      return res.status(400).json({ error: "Pick an agent firm or an agent contact." });
-    }
-    const r = await pool.query(
-      `INSERT INTO brand_agent_representations (brand_company_id, agent_company_id, agent_type, region, primary_contact_id, start_date, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [brandCompanyId, agentCompanyId, agentType, region || null, primaryContactId || null, startDate || null, notes || null]
-    );
-    // Self-heal: stamp the sub-type on the agent company so it shows in the
-    // agent pickers next time (the blank agent_type is what hid it before).
-    await pool.query(
-      `UPDATE crm_companies SET agent_type = $1 WHERE id = $2 AND (agent_type IS NULL OR agent_type = '')`,
-      [agentType, agentCompanyId]
-    );
-    res.json(r.rows[0]);
+    res.json(await createBrandRepresentation(pool, req.body));
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 router.patch("/api/brand/representations/:id", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
-    const body = req.body || {};
-    const allowed = ["agent_type", "region", "primary_contact_id", "start_date", "end_date", "notes"];
-    const sets: string[] = [];
-    const vals: any[] = [];
-    let i = 1;
-    for (const key of allowed) {
-      const camel = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-      const v = key in body ? body[key] : (camel in body ? body[camel] : undefined);
-      if (v !== undefined) {
-        sets.push(`${key} = $${i++}`);
-        vals.push(v);
-      }
-    }
-    if (!sets.length) return res.status(400).json({ error: "no fields" });
-    sets.push(`updated_at = now()`);
-    vals.push(id);
-    await pool.query(`UPDATE brand_agent_representations SET ${sets.join(", ")} WHERE id = $${i}`, vals);
+    await updateBrandRepresentation(pool, String(req.params.id), req.body);
     res.json({ ok: true });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 

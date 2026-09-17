@@ -15,6 +15,9 @@ const db = new pg.Pool({ connectionString: supplied, ssl: false, max: 2, options
 const file = 'server/property-asset-brief.ts';
 const statement = find(file, node => ts.isNoSubstitutionTemplateLiteral(node) && node.text.startsWith('WITH schedule_source'));
 const { query } = evaluate(`export const query = ${statement};`);
+const linkageResolutionSql = find(file, node => ts.isNoSubstitutionTemplateLiteral(node) && node.text.includes('AS unresolved') && node.text.includes('FROM tenancy_schedule_units'));
+const linkageIntegritySql = find(file, node => ts.isNoSubstitutionTemplateLiteral(node) && node.text.startsWith('WITH dups AS'));
+const { resolutionQuery, integrityQuery } = evaluate(`export const resolutionQuery = ${linkageResolutionSql}; export const integrityQuery = ${linkageIntegritySql};`);
 const helpers = evaluate(['briefOccupancy', 'summariseBriefSchedule'].map(name => find(file, node => ts.isFunctionDeclaration(node) && node.name?.text === name)).join('\n'));
 let created = false, checks = 0;
 const check = (name, fn) => { fn(); checks++; console.log(`PASS ${name}`); };
@@ -35,14 +38,29 @@ try {
       ('t2','master','2',NULL,NULL,'HOT','Vacant',NULL,NULL,NULL,NULL),
       ('t3','master','3',NULL,NULL,'Vacant',NULL,NULL,NULL,NULL,NULL),
       ('archived','master','old',NULL,'Former tenant','Occupied','Archived','2020-01-01',NULL,NULL,5000),
+      ('archived-status','master','old-status',NULL,'Former tenant','Archived','Occupied','2020-01-01',NULL,NULL,5000),
+      ('archived-spaced','master','old-spaced',NULL,'Former tenant',' aRchIved ',NULL,'2020-01-01',NULL,NULL,5000),
+      ('archived-occ-spaced','master','old-occ',NULL,'Former tenant','Occupied',' aRchIved ','2020-01-01',NULL,NULL,5000),
       ('other','other-property','1',NULL,'Unrelated','Occupied',NULL,'2040-01-01',NULL,NULL,99999),
       ('history','archived-only','old',NULL,'Former','Archived',NULL,'2020-01-01',NULL,NULL,5000);
     INSERT INTO leasing_schedule_units VALUES
       ('stale','master','wrong duplicate','Other','Occupied','2040-01-01',NULL,'other-brand',NULL,90000),
       ('legacy-row','legacy','L1','Legacy tenant','Occupied','2040-01-01',NULL,NULL,NULL,10000),
+      ('legacy-old','legacy','L0','Former tenant',' aRchIved ','2020-01-01',NULL,NULL,NULL,80000),
       ('historic-projection','archived-only','old','Former','Occupied','2040-01-01',NULL,NULL,NULL,5000);
     INSERT INTO crm_deals VALUES ('live',NULL,NULL,'t2','HOT'), ('completed','master',NULL,NULL,'COM');
     INSERT INTO available_units VALUES ('completed-listing','master','3','t3','completed');
+    ALTER TABLE tenancy_schedule_units ADD COLUMN trading_name text;
+    INSERT INTO crm_companies VALUES ('merged-brand','Former brand','confirmed-brand',NULL,NULL);
+    INSERT INTO tenancy_schedule_units(id,property_id,unit_number,tenant_name,status,occupancy_status,tenant_company_id) VALUES
+      ('link-current','linkage','1','Current tenant','Occupied',NULL,'confirmed-brand'),
+      ('link-missing','linkage','2','Unlinked current tenant','Occupied',NULL,NULL),
+      ('link-history','linkage','1','Previous tenant',' aRchIved ','Occupied','merged-brand'),
+      ('link-occ-history','linkage','2','Previous unlinked tenant','Occupied',' ARChived ',NULL),
+      ('link-blank','linkage','3','  ','Vacant',NULL,'confirmed-brand'),
+      ('link-placeholder','linkage','4','VACANT','Vacant',NULL,'confirmed-brand');
+    INSERT INTO leasing_schedule_units(id,property_id,unit_name,tenant_name,status) VALUES
+      ('legacy-link-history','linkage','Historic','Previous tenant',' ArChIvEd ');
   `);
   const master = (await db.query(query, ['master'])).rows;
   check('canonical tenancy rows take priority over stale leasing projection without duplicate counts', () => {
@@ -54,7 +72,7 @@ try {
     assert.equal(summary.performance.vacant_units, 2);
     assert.equal(summary.performance.vacancy_rate, 2 / 3);
   });
-  check('confirmed occupancy wins over marketing stage and archived occupancy is excluded', () => {
+  check('confirmed occupancy wins over marketing stage; either archived status excludes the row regardless of case or spaces', () => {
     assert.equal(master.find(row => row.id === 't2').status, 'Vacant');
     assert.ok(!master.some(row => row.id === 'archived'));
   });
@@ -78,6 +96,23 @@ try {
   check('property with no records remains missing rather than fully occupied', () => {
     assert.equal(helpers.summariseBriefSchedule(empty).status, 'missing');
     assert.equal(helpers.summariseBriefSchedule(empty).performance.vacancy_rate, null);
+  });
+  const resolution = (await db.query(resolutionQuery, ['linkage'])).rows[0];
+  check('header tenant linkage counts only current named tenants with one shared numerator and denominator', () => {
+    assert.deepEqual(resolution, { total: 2, resolved: 1, unresolved: 1 });
+    assert.equal(resolution.resolved + resolution.unresolved, resolution.total);
+  });
+  const integrity = (await db.query(integrityQuery, ['linkage'])).rows[0];
+  check('archived leases cannot create current duplicate-unit, merged-brand or missing-spine warnings', () => {
+    assert.equal(integrity.duplicate_unit_numbers, 0);
+    assert.equal(integrity.tenants_pointing_at_merged_brand, 0);
+    assert.equal(integrity.leasing_units_no_unit_fk, 0);
+  });
+  await db.query("UPDATE tenancy_schedule_units SET status='Occupied',occupancy_status=NULL WHERE id='link-history'");
+  const currentIntegrity = (await db.query(integrityQuery, ['linkage'])).rows[0];
+  check('genuine current duplicate-unit and merged-brand warnings remain visible', () => {
+    assert.equal(currentIntegrity.duplicate_unit_numbers, 1);
+    assert.equal(currentIntegrity.tenants_pointing_at_merged_brand, 1);
   });
   console.log(`${checks} isolated PostgreSQL checks passed.`);
 } finally {

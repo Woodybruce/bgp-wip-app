@@ -14,8 +14,36 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { isClientCrmCategory } from "../shared/tenant-categories";
+import { propertyResearchContext, type PropertyResearchContext } from "../shared/property-research";
 
 const router = Router();
+
+async function readPropertyResearchContext(propertyId: string): Promise<PropertyResearchContext | null> {
+  const property = (await pool.query("SELECT asset_class, property_view FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
+  if (!property) return null;
+  const units = (await pool.query("SELECT permitted_use, status FROM tenancy_schedule_units WHERE property_id = $1", [propertyId])).rows;
+  return propertyResearchContext({ assetClass: property.asset_class, propertyView: property.property_view }, units);
+}
+
+async function researchCacheMatches(propertyId: string, section: string, context: PropertyResearchContext): Promise<boolean> {
+  const row = (await pool.query("SELECT value FROM system_settings WHERE key = $1", [`property-gap-context:${propertyId}:${section}`])).rows[0];
+  return row?.value?.context === context.cacheKey;
+}
+
+async function saveResearchResult(propertyId: string, section: "commentary" | "international" | "live-intel", context: PropertyResearchContext, value: unknown) {
+  const column = { commentary: "gap_commentary", international: "gap_intl", "live-intel": "gap_live_intel" }[section];
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`UPDATE crm_properties SET ${column} = $1, ${column}_at = NOW() WHERE id = $2`,
+      [section === "commentary" ? value : JSON.stringify(value), propertyId]);
+    await client.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, NOW())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [`property-gap-context:${propertyId}:${section}`, JSON.stringify({ context: context.cacheKey })]);
+    await client.query("COMMIT");
+  } catch (error) { await client.query("ROLLBACK"); throw error; }
+  finally { client.release(); }
+}
 
 // ── Hospitality sector taxonomy ──────────────────────────────────────────
 // The gap analysis speaks Landsec's language: hospitality / F&B / wellness /
@@ -237,6 +265,9 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       return res.status(403).json({ error: "Access denied" });
     }
     const propertyId = req.params.propertyId as string;
+    const researchContext = await readPropertyResearchContext(propertyId);
+    if (!researchContext) return res.status(404).json({ error: "Property not found" });
+    if (researchContext.mode === "not_applicable") return res.json({ applicable: false, researchContext, reason: researchContext.reason });
     const onSchemeRadiusKm = Number(req.query.onSchemeKm) || 0.5;
     const widerRadiusKm = Number(req.query.widerKm) || 2.0;
     const limit = Number(req.query.limit) || 30;
@@ -282,7 +313,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     // Peer schemes for the "at other shopping centres, not here" comparison —
     // drop any that ARE this property (or share its site) so the subject
     // never counts as its own peer.
-    const peerSchemes = PEER_SCHEMES.filter(
+    const peerSchemes = (researchContext.mode === "centre" ? PEER_SCHEMES : []).filter(
       ps => haversineKm(location.lat, location.lng, ps.lat, ps.lng) > 1.5
     );
 
@@ -351,25 +382,36 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       `SELECT DISTINCT tenant_company_id::text AS id,
               lower(replace(coalesce(tenant_name, ''), '''', '')) AS name
          FROM leasing_schedule_units
-        WHERE property_id = $1 AND (tenant_company_id IS NOT NULL OR tenant_name IS NOT NULL)`,
+        WHERE property_id = $1 AND (tenant_company_id IS NOT NULL OR tenant_name IS NOT NULL)
+          AND lower(trim(coalesce(status, ''))) <> 'archived'
+       UNION
+       SELECT DISTINCT tenant_company_id::text AS id, lower(replace(coalesce(tenant_name, ''), '''', '')) AS name
+         FROM tenancy_schedule_units
+        WHERE property_id = $1 AND lower(trim(coalesce(status, ''))) <> 'archived'
+          AND (tenant_company_id IS NOT NULL OR tenant_name IS NOT NULL)`,
       [propertyId]
     ).then(r => r.rows).catch(() => [] as any[]);
     const occIds = new Set(occ.map((r: any) => r.id).filter(Boolean));
     const occNames = occ.map((r: any) => r.name).filter(Boolean);
+    const knownOccupation = new Set<string>();
     for (const b of hospitality) {
-      if (b.nearest_distance_km <= onSchemeRadiusKm) continue;
       const bn = b.brand_name.toLowerCase().replace(/'/g, "");
       const inOccupation = occIds.has(String(b.brand_company_id))
         || occNames.some((n: string) => n === bn || n.startsWith(bn + " "));
-      if (inOccupation) b.nearest_distance_km = 0.01;
+      if (inOccupation) {
+        knownOccupation.add(String(b.brand_company_id));
+        if (researchContext.mode === "centre") b.nearest_distance_km = 0.01;
+      }
     }
 
+    const isOnScheme = (brand: { brand_company_id: string; nearest_distance_km: number }) => researchContext.mode === "local"
+      ? knownOccupation.has(String(brand.brand_company_id)) : brand.nearest_distance_km <= onSchemeRadiusKm;
     const onScheme = hospitality
-      .filter(b => b.nearest_distance_km <= onSchemeRadiusKm)
+      .filter(b => isOnScheme(b))
       .sort((a, b) => a.nearest_distance_km - b.nearest_distance_km);
 
     const wider = hospitality
-      .filter(b => b.nearest_distance_km > onSchemeRadiusKm && b.nearest_distance_km <= widerRadiusKm)
+      .filter(b => !isOnScheme(b) && b.nearest_distance_km <= widerRadiusKm)
       .sort((a, b) => a.nearest_distance_km - b.nearest_distance_km);
 
     // Gap: peer brands with >= 3 stores but nearest is > widerRadiusKm from subject.
@@ -423,7 +465,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       matchingRequirements.map((r: any) => String(r.company_id || "")).filter(Boolean)
     );
     const peerGaps = hospitality
-      .filter(b => b.peer_scheme_set.size > 0 && b.nearest_distance_km > onSchemeRadiusKm)
+      .filter(b => b.peer_scheme_set.size > 0 && !isOnScheme(b))
       .map(b => ({
         ...b,
         peer_schemes: Array.from(b.peer_scheme_set).sort(),
@@ -447,7 +489,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       .slice(0, 4);
     const competingNames = new Set(competingCentres.map(c => c.name));
     const competitorGaps = hospitality
-      .filter(b => b.nearest_distance_km > onSchemeRadiusKm && Array.from(b.peer_scheme_set).some(n => competingNames.has(n)))
+      .filter(b => !isOnScheme(b) && Array.from(b.peer_scheme_set).some(n => competingNames.has(n)))
       .map(b => ({
         ...b,
         peer_schemes: Array.from(b.peer_scheme_set).sort(),
@@ -460,7 +502,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     // ── Local market — trading in the surrounding town/city (0.5–5km)
     //    but not on scheme: the in-town operators a scheme could poach.
     const localMarket = hospitality
-      .filter(b => b.nearest_distance_km > onSchemeRadiusKm && b.nearest_distance_km <= 5)
+      .filter(b => !isOnScheme(b) && b.nearest_distance_km <= 5)
       .map(b => ({ ...b, peer_schemes: Array.from(b.peer_scheme_set).sort(), has_live_requirement: reqCompanyIds.has(String(b.brand_company_id)) }))
       .sort((a, b) => a.nearest_distance_km - b.nearest_distance_km)
       .slice(0, limit);
@@ -470,11 +512,11 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     //    dining" — Landsec, 2026-08-04).
     const sectors = FNB_SECTORS.map(def => {
       const inSector = hospitality.filter(b => b.sector === def.key);
-      const here = inSector.filter(b => b.nearest_distance_km <= onSchemeRadiusKm);
+      const here = inSector.filter(b => isOnScheme(b));
       const atCompeting = inSector.filter(b => Array.from(b.peer_scheme_set).some(n => competingNames.has(n)));
       const atPeers = inSector.filter(b => b.peer_scheme_set.size > 0);
       const examples = inSector
-        .filter(b => b.nearest_distance_km > onSchemeRadiusKm && b.peer_scheme_set.size > 0)
+        .filter(b => !isOnScheme(b) && b.peer_scheme_set.size > 0)
         .sort((a, b) => b.peer_scheme_set.size - a.peer_scheme_set.size)
         .slice(0, 4)
         .map(b => ({ id: b.brand_company_id, name: b.brand_name, peers: b.peer_scheme_set.size, live_req: reqCompanyIds.has(String(b.brand_company_id)) }));
@@ -524,7 +566,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const intelRow = await pool.query(
       `SELECT gap_live_intel, gap_live_intel_at FROM crm_properties WHERE id = $1`, [propertyId]
     ).then(r => r.rows[0]).catch(() => null);
-    const liveIntel = intelRow?.gap_live_intel?.brands
+    const liveIntel = intelRow?.gap_live_intel?.brands && await researchCacheMatches(propertyId, "live-intel", researchContext)
       ? {
           byBrand: Object.fromEntries(
             (intelRow.gap_live_intel.brands as any[]).map((b: any) => [String(b.name || "").toLowerCase(), b])
@@ -539,6 +581,8 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       return { ...rest, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) };
     };
     res.json({
+      applicable: true,
+      researchContext,
       liveIntel,
       property: { id: propertyId, name: location.name, postcode: location.postcode, lat: location.lat, lng: location.lng },
       onScheme: sliced(onScheme).map(publish),
@@ -582,12 +626,17 @@ router.get("/api/property/:propertyId/brand-gaps/commentary", requireAuth, async
         return res.status(403).json({ error: "Access denied" });
       }
     }
+    const researchContext = await readPropertyResearchContext(propertyId);
+    if (!researchContext) return res.status(404).json({ error: "Property not found" });
+    if (researchContext.mode === "not_applicable") return res.json({ applicable: false, text: "", reason: researchContext.reason });
+    const contextMatches = await researchCacheMatches(propertyId, "commentary", researchContext);
     const force = req.query.refresh === "1";
     const cached = await pool.query(
       `SELECT name, gap_commentary, gap_commentary_at, gap_live_intel FROM crm_properties WHERE id = $1`, [propertyId]
     );
     if (!cached.rows[0]) return res.status(404).json({ error: "Property not found" });
     const row = cached.rows[0];
+    if (!contextMatches) row.gap_commentary = null;
     const ageMs = row.gap_commentary_at ? Date.now() - new Date(row.gap_commentary_at).getTime() : null;
     if (row.gap_commentary && !force && ageMs !== null && ageMs < 7 * 24 * 60 * 60 * 1000) {
       return res.json({ text: row.gap_commentary, generatedAt: row.gap_commentary_at, cached: true });
@@ -615,7 +664,7 @@ router.get("/api/property/:propertyId/brand-gaps/commentary", requireAuth, async
       `${s.label}: ${s.on_scheme} on scheme${s.on_scheme ? ` (${s.on_scheme_names.slice(0, 3).join(", ")})` : ""}, at ${s.at_peers} peer schemes${s.missing ? " — MISSING HERE" : ""}${s.examples?.length ? ` [targets: ${s.examples.map((e: any) => e.name).join(", ")}]` : ""}`
     ).join("\n");
 
-    const prompt = `You are a BGP leasing analyst writing the hospitality & leisure gap read for ${row.name}, for the asset owner (Landsec-grade client). British English, no hype, no fees. Data:
+    const prompt = `You are a BGP leasing analyst writing the hospitality & leisure gap read for ${row.name}, for the asset owner. Property type: ${researchContext.assetClass || "not recorded"}. Recorded unit uses: ${researchContext.uses.join(", ") || "not recorded"}. ${researchContext.mode === "local" ? "This is a building/local occupier review, NOT a shopping-centre mix exercise. Confine advice to the recorded retail/leisure space; do not propose anchors for an office building or invent missing sectors. Nearby stores are market context, not tenants in this building. No shopping-centre peer comparisons are supplied." : "This is a shopping-centre occupier-mix review."} British English, no hype, no fees. Data:
 
 Competing centres nearby: ${(g.competingCentres || []).map((c: any) => `${c.name} (${c.distance_km}km)`).join(", ") || "none within range"}
 
@@ -636,13 +685,12 @@ ${(() => {
   // Cached Perplexity expansion sweep (live-intel route) — fold confirmed
   // expanders into the read so "actionable now" reflects live market intent,
   // not just CRM state.
-  const li = row.gap_live_intel;
-  if (!li?.brands?.length) return "";
-  const expanding = (li.brands as any[]).filter((b: any) => b.expanding).slice(0, 10);
+  const brands = Object.values(g.liveIntel?.byBrand || {}) as any[];
+  const expanding = brands.filter((b: any) => b.expanding).slice(0, 10);
   if (!expanding.length) return "";
   return `\nLive web intel — brands with cited evidence of ACTIVE EXPANSION in the last year:\n${expanding.map((b: any) => `${b.name}: ${b.note}`).join("\n")}\n`;
 })()}
-Write FOUR SHORT paragraphs separated by blank lines, each opening with a bold lead-in exactly like: **Competitive gaps.** / **Missing sectors.** / **Actionable now.** / **Mix strategy.** — covering (1) the sharpest competitive gaps, naming brands and which competing centre they trade at; (2) whole sectors missing versus the peer set with the obvious target brands; (3) what's actionable NOW because a live requirement fits an available unit; (4) one forward-looking line on mix strategy. Keep each paragraph to 1-3 sentences; bold key brand names with **double asterisks**. No headings beyond the lead-ins, no lists, no preamble.`;
+Write FOUR SHORT paragraphs separated by blank lines, each opening with a bold lead-in exactly like: ${researchContext.mode === "centre" ? "**Competitive gaps.** / **Missing sectors.** / **Actionable now.** / **Mix strategy.**" : "**Local market.** / **Relevant uses.** / **Actionable now.** / **Next step.**"} — where centre data is supplied, cover (1) the sharpest competitive gaps, naming brands and which competing centre they trade at; (2) whole sectors missing versus the peer set with the obvious target brands; (3) what's actionable NOW because a live requirement fits an available unit; (4) one forward-looking line on mix strategy. For a local building, cover the local demand evidence, the explicitly recorded uses, any matched unit requirements, and the next verification step instead. Keep each paragraph to 1-3 sentences; bold key brand names with **double asterisks**. No headings beyond the lead-ins, no lists, no preamble.`;
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -665,10 +713,7 @@ Write FOUR SHORT paragraphs separated by blank lines, each opening with a bold l
       if (row.gap_commentary) return res.json({ text: row.gap_commentary, generatedAt: row.gap_commentary_at, cached: true });
       return res.status(502).json({ error: "Empty commentary" });
     }
-    await pool.query(
-      `UPDATE crm_properties SET gap_commentary = $1, gap_commentary_at = NOW() WHERE id = $2`,
-      [text, propertyId]
-    ).catch(() => {});
+    await saveResearchResult(propertyId, "commentary", researchContext, text);
     res.json({ text, generatedAt: new Date().toISOString(), cached: false });
   } catch (err: any) {
     console.error("[gap-commentary]", err?.message);
@@ -693,10 +738,15 @@ router.get("/api/property/:propertyId/brand-gaps/international", requireAuth, as
         return res.status(403).json({ error: "Access denied" });
       }
     }
+    const researchContext = await readPropertyResearchContext(propertyId);
+    if (!researchContext) return res.status(404).json({ error: "Property not found" });
+    if (researchContext.mode === "not_applicable" || researchContext.mode !== "centre") return res.json({ applicable: false, items: [], reason: researchContext.reason });
+    const contextMatches = await researchCacheMatches(propertyId, "international", researchContext);
     const force = req.query.refresh === "1";
     const { rows } = await pool.query(`SELECT name, gap_intl, gap_intl_at FROM crm_properties WHERE id = $1`, [propertyId]);
     if (!rows[0]) return res.status(404).json({ error: "Property not found" });
     const row = rows[0];
+    if (!contextMatches) row.gap_intl = null;
     const ageMs = row.gap_intl_at ? Date.now() - new Date(row.gap_intl_at).getTime() : null;
     if (row.gap_intl && !force && ageMs !== null && ageMs < 30 * 24 * 60 * 60 * 1000) {
       return res.json({ items: row.gap_intl, generatedAt: row.gap_intl_at, cached: true });
@@ -729,7 +779,7 @@ Reply as strict JSON array only: [{"name": "...", "sector": "...", "origin": "..
       if (row.gap_intl) return res.json({ items: row.gap_intl, generatedAt: row.gap_intl_at, cached: true });
       return res.status(502).json({ error: "No watchlist generated" });
     }
-    await pool.query(`UPDATE crm_properties SET gap_intl = $1, gap_intl_at = NOW() WHERE id = $2`, [JSON.stringify(items), propertyId]).catch(() => {});
+    await saveResearchResult(propertyId, "international", researchContext, items);
     res.json({ items, generatedAt: new Date().toISOString(), cached: false });
   } catch (err: any) {
     console.error("[gap-international]", err?.message);
@@ -754,12 +804,17 @@ router.get("/api/property/:propertyId/brand-gaps/live-intel", requireAuth, async
         return res.status(403).json({ error: "Access denied" });
       }
     }
+    const researchContext = await readPropertyResearchContext(propertyId);
+    if (!researchContext) return res.status(404).json({ error: "Property not found" });
+    if (researchContext.mode === "not_applicable") return res.json({ applicable: false, brands: [], reason: researchContext.reason });
+    const contextMatches = await researchCacheMatches(propertyId, "live-intel", researchContext);
     const force = req.query.refresh === "1";
     const { rows } = await pool.query(
       `SELECT name, postcode, gap_live_intel, gap_live_intel_at FROM crm_properties WHERE id = $1`, [propertyId]
     );
     if (!rows[0]) return res.status(404).json({ error: "Property not found" });
     const row = rows[0];
+    if (!contextMatches) row.gap_live_intel = null;
     const serveCache = () =>
       res.json({ ...row.gap_live_intel, generatedAt: row.gap_live_intel_at, cached: true });
     const ageMs = row.gap_live_intel_at ? Date.now() - new Date(row.gap_live_intel_at).getTime() : null;
@@ -804,7 +859,7 @@ router.get("/api/property/:propertyId/brand-gaps/live-intel", requireAuth, async
     let px;
     try {
       px = await askPerplexity(
-        `These UK hospitality/F&B/leisure brands trade elsewhere but NOT at ${row.name}${row.postcode ? ` (${row.postcode})` : ""}. For EACH brand, is there evidence from roughly the last 12 months that it is ACTIVELY EXPANDING — new site openings, announced pipeline, publicly stated site requirements, or funding raised for rollout? Prefer evidence relevant to this area: ${region}. Be factual; where there is no evidence, return expanding=false with a short note. Also give 2-3 sentences of market_notes on hospitality leasing momentum relevant to schemes like this. Brands:\n${candidates.map((n, i) => `${i + 1}. ${n}`).join("\n")}`,
+        `These UK hospitality/F&B/leisure brands trade elsewhere but NOT at ${row.name}${row.postcode ? ` (${row.postcode})` : ""}. For EACH brand, is there evidence from roughly the last 12 months that it is ACTIVELY EXPANDING — new site openings, announced pipeline, publicly stated site requirements, or funding raised for rollout? Prefer evidence relevant to this area: ${region}. Be factual; where there is no evidence, return expanding=false with a short note. Property type: ${researchContext.assetClass || "not recorded"}; recorded unit uses: ${researchContext.uses.join(", ") || "not recorded"}. Also give 2-3 sentences of market_notes relevant to ${researchContext.mode === "centre" ? "this shopping destination" : "the recorded retail/leisure space in this building; do not treat the whole building as a shopping centre or recommend leisure anchors for offices"}. Brands:\n${candidates.map((n, i) => `${i + 1}. ${n}`).join("\n")}`,
         {
           searchRecency: "year",
           maxTokens: 2200,
@@ -850,10 +905,7 @@ router.get("/api/property/:propertyId/brand-gaps/live-intel", requireAuth, async
       citations: px.citations || [],
       model: px.model,
     };
-    await pool.query(
-      `UPDATE crm_properties SET gap_live_intel = $1, gap_live_intel_at = NOW() WHERE id = $2`,
-      [JSON.stringify(payload), propertyId]
-    ).catch(() => {});
+    await saveResearchResult(propertyId, "live-intel", researchContext, payload);
     res.json({ ...payload, generatedAt: new Date().toISOString(), cached: false });
   } catch (err: any) {
     console.error("[gap-live-intel]", err?.message);
@@ -875,11 +927,15 @@ export async function runNightlyGapLiveIntelSweep(): Promise<{ swept: number; er
   await ensureGapColumns();
   const props = await pool.query(
     `SELECT p.id FROM crm_properties p
-      WHERE (EXISTS (SELECT 1 FROM leasing_schedule_units l WHERE l.property_id = p.id)
+      WHERE (p.asset_class ILIKE ANY($1::text[]) OR EXISTS (
+          SELECT 1 FROM tenancy_schedule_units t WHERE t.property_id = p.id
+            AND lower(trim(coalesce(t.status, ''))) <> 'archived' AND t.permitted_use ILIKE ANY($1::text[])))
+        AND (EXISTS (SELECT 1 FROM leasing_schedule_units l WHERE l.property_id = p.id)
              OR p.gap_commentary IS NOT NULL)
         AND (p.gap_live_intel_at IS NULL OR p.gap_live_intel_at < NOW() - INTERVAL '6 days')
       ORDER BY p.gap_live_intel_at ASC NULLS FIRST
-      LIMIT 10`
+      LIMIT 10`,
+    [["%retail%", "%shop%", "%restaurant%", "%cafe%", "%café%", "%coffee%", "%food%", "%f&b%", "%leisure%", "%fitness%", "%gym%", "%wellness%", "%bar%", "%pub%", "%kiosk%", "%takeaway%", "%takeout%", "A1", "A3", "A4", "A5"]]
   );
   if (!props.rows.length) return out;
   const staff = await pool.query(
@@ -902,7 +958,7 @@ export async function runNightlyGapLiveIntelSweep(): Promise<{ swept: number; er
         const res = await fetch(`${baseUrl}/api/property/${r.id}/brand-gaps/live-intel?refresh=1`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (res.ok) out.swept++; else out.errors++;
+        if (res.ok) { if ((await res.json() as any).applicable !== false) out.swept++; } else out.errors++;
       } catch {
         out.errors++;
       }

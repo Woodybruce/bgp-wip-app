@@ -3,12 +3,14 @@ import { Link, useLocation, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { calendarDateValue, formatCalendarDate } from "@shared/calendar-date";
+import { findTenancyUnitLink, isArchivedTenancy, normaliseTenancyUnitReference, recordedTenancyTotal, tenancyStatusMatches } from "@shared/tenancy-schedule-display";
 import { useToast } from "@/hooks/use-toast";
 import { UnifiedAddUnitDialog, UNIFIED_ADD_UNIT_ENABLED } from "@/components/unified-add-unit-dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { CovenantBadgeByCompany } from "@/components/covenant-badge";
 import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
 import { TrackerSummary } from "@/components/tracker-summary";
@@ -50,6 +52,7 @@ interface TenancyUnit {
   unit_number: string;
   permitted_use: string;
   status: string;
+  occupancy_status?: string | null;
   am_initiative: string | null;
   // Covenant
   credit_rating: string | null;
@@ -162,28 +165,22 @@ interface MatterLink {
 // Same canonical unit-ref form the server matches on (normaliseUnitRef /
 // normUnitSql) — "Unit A01", "UNIT A1" and "A1" all meet.
 function normRefKey(raw: any): string {
-  return String(raw || "")
-    .toUpperCase()
-    .replace(/\b(UNIT|STORE|SHOP)\b/g, " ")
-    .replace(/[^A-Z0-9/&-]+/g, " ")
-    .trim()
-    .split(/\s+/)
-    .map(tok => tok.replace(/([A-Z]+)0+(\d)/g, "$1$2"))
-    .join(" ")
-    .trim();
+  return normaliseTenancyUnitReference(String(raw || ""));
 }
 
-function fmtCurrency(v: number | string) {
+function fmtCurrency(v: number | string | null | undefined) {
+  if (v === null || v === undefined || String(v).trim() === "") return "—";
   const n = Number(v);
-  if (!n) return "—";
+  if (!Number.isFinite(n)) return "—";
   return "£" + n.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
 // UX #153 — the embedded 7-column strip can't fit "£11,370,076" on one
 // line; 7-figure sums compact to "£11.37m" (full figure in the tooltip).
-function fmtCurrencyCompact(v: number | string) {
+function fmtCurrencyCompact(v: number | string | null | undefined) {
+  if (v === null || v === undefined || String(v).trim() === "") return "—";
   const n = Number(v);
-  if (!n) return "—";
+  if (!Number.isFinite(n)) return "—";
   if (Math.abs(n) >= 1_000_000) return "£" + (n / 1_000_000).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "m";
   return fmtCurrency(n);
 }
@@ -604,6 +601,8 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<{ field: string; dir: 1 | -1 } | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  useEffect(() => setShowArchived(false), [propertyId]);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set(["__all__"]));
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [unifiedAddOpen, setUnifiedAddOpen] = useState(false);
@@ -703,6 +702,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   // from the full units list so options stay stable when filters narrow it.
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
   const setColFilter = (field: string, values: Set<string>) => {
+    if (field === "status" && [...values].some(value => tenancyStatusMatches(value, "Archived"))) setShowArchived(true);
     setColFilters(prev => {
       const next = { ...prev };
       if (values.size === 0) delete next[field]; else next[field] = values;
@@ -722,6 +722,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     enabled: !!propertyId,
     retry: false,
   });
+  useEffect(() => {
+    if (focusedUnitId && units.some(unit => String(unit.id) === focusedUnitId && isArchivedTenancy(unit))) setShowArchived(true);
+  }, [focusedUnitId, units]);
 
   const { data: links } = useQuery<{ deals: DealLink[]; lettingUnits: LettingLink[]; matters?: MatterLink[] }>({
     queryKey: ["/api/tenancy-schedule/property", propertyId, "links"],
@@ -875,10 +878,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
         // Create the linked listing only after the status change succeeds.
         if (field !== "status" || value !== "Opportunity") return;
         const unit = units.find(u => String(u.id) === String(unitId));
-        const uname = unit?.unit_number?.toLowerCase() || "";
+        const uname = normRefKey(unit?.unit_number || unit?.premises);
         const linked = !!unit && (
-          !!unit.letting_tracker_unit_id ||
-          (!!uname && !!links?.lettingUnits.some(l => l.unit_name?.toLowerCase() === uname))
+          !!unit.letting_tracker_unit_id || !!unit.available_unit_id ||
+          (!!uname && !!links?.lettingUnits.some(l => normRefKey(l.unit_name) === uname))
         );
         if (unit && !linked) sendToTrackerMutation.mutate(unit);
       },
@@ -955,8 +958,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   }
 
   const filtered = units.filter(u => {
+    if (!showArchived && isArchivedTenancy(u)) return false;
     if (focusedUnitId && String(u.id) !== focusedUnitId) return false;
-    if (statusFilter && u.status !== statusFilter) return false;
+    if (statusFilter && !tenancyStatusMatches(u.status, statusFilter)) return false;
     if (search) {
       const s = search.toLowerCase();
       const matchesSearch = [u.unit_number, u.tenant_name, u.trading_name, u.premises, u.permitted_use].some(f => f?.toLowerCase().includes(s));
@@ -995,20 +999,18 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     : filtered;
 
   const zones = [...new Set(filtered.map(u => u.premises || "Unassigned"))];
-  // Occupied + Trading both count as "in possession" for the headline
-  // KPI. Vacant + In Negotiation + Under Offer + Lease Event all count
-  // as "actionable" — surfaced as their own buckets below if non-zero.
-  const occupied = units.filter(u => u.status === "Occupied" || u.status === "Trading" || u.status === "Let" || u.status === "Not Vacant").length;
-  // Void/Available/AVA are vacancy statuses too (dashboard counts them as
-  // vacant; synthetic tracker rows arrive as their marketing status).
-  const vacant = units.filter(u => ["Vacant", "Void", "Available", "AVA"].includes(u.status || "")).length;
-  const inNeg = units.filter(u => u.status === "In Negotiation").length;
-  const underOffer = units.filter(u => u.status === "Under Offer").length;
-  const leaseEvent = units.filter(u => u.status === "Lease Event").length;
-  const totalNIA = units.reduce((s, u) => s + Number(u.nia_sqft || 0), 0);
-  const totalRent = units.reduce((s, u) => s + Number(u.passing_rent_pa || 0), 0);
-  const totalSC = units.reduce((s, u) => s + Number(u.service_charge || 0), 0);
-  const avgERV = units.length ? units.reduce((s, u) => s + Number(u.blended_erv || 0), 0) / units.length : 0;
+  const currentUnits = units.filter(unit => !isArchivedTenancy(unit));
+  const archivedCount = units.length - currentUnits.length;
+  const statusCount = (status: string) => currentUnits.filter(unit => tenancyStatusMatches(unit.status, status)).length;
+  const occupied = statusCount("Occupied"), vacant = statusCount("Vacant");
+  const inNeg = statusCount("In Negotiation"), underOffer = statusCount("Under Offer"), leaseEvent = statusCount("Lease Event");
+  const nia = recordedTenancyTotal(currentUnits.map(unit => unit.nia_sqft));
+  const rent = recordedTenancyTotal(currentUnits.map(unit => unit.passing_rent_pa));
+  const serviceCharge = recordedTenancyTotal(currentUnits.map(unit => unit.service_charge));
+  const erv = recordedTenancyTotal(currentUnits.map(unit => unit.blended_erv));
+  const avgERV = erv.total === null ? null : erv.total / erv.known;
+  const coverage = (value: { known: number; rows: number }, kind = "total") =>
+    value.rows === 0 ? "No current rows" : value.known < value.rows ? `Incomplete ${kind} · ${value.known} of ${value.rows} current rows recorded` : "Current rows";
   // WAULT is rent-weighted (Σ rent × term ÷ Σ rent), not a simple mean —
   // otherwise one 999-year ground lease at a peppercorn drags the figure
   // to absurdity. Falls back to the unweighted mean when no rents exist.
@@ -1027,8 +1029,8 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   // rent-weighted figure (seen: 128.4 yrs), so they're excluded and the
   // KPI badges how many were dropped (UX #64).
   const WAULT_MAX_TERM_YEARS = 60;
-  const waultUnits = units.filter(u => yearsToExpiry(u) > 0 && yearsToExpiry(u) <= WAULT_MAX_TERM_YEARS);
-  const waultExcluded = units.filter(u => yearsToExpiry(u) > WAULT_MAX_TERM_YEARS).length;
+  const waultUnits = currentUnits.filter(u => yearsToExpiry(u) > 0 && yearsToExpiry(u) <= WAULT_MAX_TERM_YEARS);
+  const waultExcluded = currentUnits.filter(u => yearsToExpiry(u) > WAULT_MAX_TERM_YEARS).length;
   const waultRentedUnits = waultUnits.filter(u => Number(u.passing_rent_pa) > 0);
   const waultRentTotal = waultRentedUnits.reduce((s, u) => s + Number(u.passing_rent_pa), 0);
   const avgWAULT = waultRentTotal > 0
@@ -1037,14 +1039,15 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       ? waultUnits.reduce((s, u) => s + yearsToExpiry(u), 0) / waultUnits.length
       : 0;
 
-  const matchDeal = (unit: TenancyUnit): DealLink | undefined => {
-    if (unit.deal_id) return links?.deals.find(d => d.id === unit.deal_id);
-    return links?.deals.find(d => d.name?.toLowerCase().includes(unit.unit_number?.toLowerCase()) || d.name?.toLowerCase().includes(unit.trading_name?.toLowerCase()));
+  const matchLetting = (unit: TenancyUnit): LettingLink | undefined => {
+    return findTenancyUnitLink(unit.letting_tracker_unit_id || unit.available_unit_id, unit.unit_number || unit.premises, links?.lettingUnits, link => link.unit_name);
   };
 
-  const matchLetting = (unit: TenancyUnit): LettingLink | undefined => {
-    if (unit.letting_tracker_unit_id) return links?.lettingUnits.find(l => l.id === unit.letting_tracker_unit_id);
-    return links?.lettingUnits.find(l => l.unit_name?.toLowerCase().includes(unit.unit_number?.toLowerCase()));
+  const matchDeal = (unit: TenancyUnit): DealLink | undefined => {
+    if (unit.deal_id) return links?.deals.find(deal => deal.id === unit.deal_id);
+    const letting = matchLetting(unit);
+    if (letting?.dealId) return links?.deals.find(deal => deal.id === letting.dealId);
+    return findTenancyUnitLink(null, unit.unit_number || unit.premises, links?.deals, deal => deal.name);
   };
 
   // Lease advisory job on this unit — matched on the canonical unit ref.
@@ -1105,16 +1108,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               <ExternalLink className="w-3 h-3 mr-1" />Letting Tracker
             </a>
           </Button>
-          <Badge variant="secondary" className="text-[10px]">{units.length} units</Badge>
+          <span className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{currentUnits.length}</span> current rows</span>
           {(Object.keys(colFilters).length > 0 || search || statusFilter || focusedUnitId) && (
-            <Badge
-              variant="outline"
-              className="text-[10px] cursor-pointer hover:bg-muted"
+            <Pill
               onClick={clearAllFilters}
               data-testid="tenancy-clear-filters"
             >
-              {filtered.length} of {units.length} · clear
-            </Badge>
+              <span className="font-mono tabular-nums">{filtered.length}</span> matches · Clear filters
+            </Pill>
           )}
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -1128,7 +1129,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 count right under the box. Desktop sees the table move. */}
             {search && (
               <div className="text-[10px] text-muted-foreground mt-0.5 sm:hidden" data-testid="tenancy-search-count">
-                {filtered.length} of {units.length} units match
+                {filtered.length} of {showArchived ? units.length : currentUnits.length} rows match
               </div>
             )}
           </div>
@@ -1284,44 +1285,45 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
         setExpandedZones(new Set(["__all__"]));
       }} />
 
-      <div className={`grid grid-cols-2 md:grid-cols-4 ${compact ? "" : "lg:grid-cols-7"} gap-2`}>
+      <div className="flex flex-wrap items-center gap-1.5" aria-label="Tenancy status filters">
         {[
-          { label: "Total NIA", value: fmtNum(totalNIA) + " sq ft", filter: null },
-          { label: "Passing Rent", value: fmtCurrencyCompact(totalRent), filter: null, full: fmtCurrency(totalRent) },
-          // UX #133 — a literal 0 read as "the ERV is £0" rather than
-          // "no ERV data"; match Passing Rent's em-dash empty state.
-          { label: "Avg ERV £psf", value: avgERV ? fmtNum(avgERV, 0) : "—", filter: null },
-          { label: "WAULT", value: fmtNum(avgWAULT, 1) + " yrs", filter: null, sub: waultExcluded > 0 ? `${waultExcluded} excluded — placeholder expiry` : undefined },
-          { label: "Occupied", value: String(occupied), filter: "Occupied" },
-          { label: "Vacant", value: String(vacant), filter: "Vacant" },
-          // Click-filterable buckets only show when there's actually rows
-          // in that state — keeps the strip uncluttered on properties
-          // where everything is occupied.
-          ...(inNeg > 0 ? [{ label: "In Negotiation", value: String(inNeg), filter: "In Negotiation" }] : []),
-          ...(underOffer > 0 ? [{ label: "Under Offer", value: String(underOffer), filter: "Under Offer" }] : []),
-          ...(leaseEvent > 0 ? [{ label: "Lease Event", value: String(leaseEvent), filter: "Lease Event" }] : []),
-          { label: "Service Charge", value: fmtCurrencyCompact(totalSC), filter: null, full: fmtCurrency(totalSC) },
-        ].filter(s => !compact || ["Total NIA", "Passing Rent", "Occupied", "Vacant"].includes(s.label)).map(s => (
+          { label: "Occupied", count: occupied },
+          { label: "Vacant", count: vacant },
+          ...(inNeg ? [{ label: "In Negotiation", count: inNeg }] : []),
+          ...(underOffer ? [{ label: "Under Offer", count: underOffer }] : []),
+          ...(leaseEvent ? [{ label: "Lease Event", count: leaseEvent }] : []),
+        ].map(status => <Pill key={status.label} active={statusFilter === status.label}
+          onClick={() => setStatusFilter(statusFilter === status.label ? null : status.label)}
+          data-testid={`tenancy-stat-${status.label.toLowerCase().replace(/\s/g, "-")}`}>
+          {status.label} <span className="font-mono tabular-nums">{status.count}</span>
+        </Pill>)}
+        {archivedCount > 0 && <Pill active={showArchived} data-testid="tenancy-show-history" onClick={() => {
+          setShowArchived(previous => !previous);
+          setSelectedForDelete(new Set());
+          if (showArchived) {
+            setFocusedUnitId(null);
+            setColFilters(previous => { const next = { ...previous }; delete next.status; return next; });
+          }
+        }}>Show history <span className="font-mono tabular-nums">{archivedCount}</span></Pill>}
+      </div>
+      {showArchived && <p className="text-[11px] text-muted-foreground" data-testid="tenancy-history-note">Archived rows are included below. Headline figures cover current rows only.</p>}
+
+      <div className={`grid grid-cols-2 ${compact ? "" : "lg:grid-cols-5"} gap-2`}>
+        {[
+          { label: "Total NIA", value: nia.total === null ? "Not recorded" : fmtNum(nia.total) + " sq ft", sub: coverage(nia) },
+          { label: "Passing Rent", value: rent.total === null ? "Not recorded" : fmtCurrencyCompact(rent.total), full: fmtCurrency(rent.total), sub: coverage(rent) },
+          { label: "Avg ERV £psf", value: avgERV === null ? "Not recorded" : fmtNum(avgERV, 0), sub: coverage(erv, "average") },
+          { label: "WAULT", value: waultUnits.length ? fmtNum(avgWAULT, 1) + " yrs" : "Not recorded", sub: waultExcluded > 0 ? `${waultExcluded} excluded — placeholder expiry` : "Current recorded lease dates" },
+          { label: "Service Charge", value: serviceCharge.total === null ? "Not recorded" : fmtCurrencyCompact(serviceCharge.total), full: fmtCurrency(serviceCharge.total), sub: coverage(serviceCharge) },
+        ].filter(s => !compact || ["Total NIA", "Passing Rent"].includes(s.label)).map(s => (
           <div
             key={s.label}
-            // The active-ring test was `statusFilter === s.filter`, which is
-            // true for every NON-filterable tile whenever no filter is set
-            // (null === null) — so Total NIA / Passing Rent / Service Charge
-            // all rendered with a permanent bright-blue ring. Filterable
-            // tiles only.
-            className={`bg-gray-50 dark:bg-gray-800 rounded-lg p-2 text-center min-w-0 ${s.filter ? "cursor-pointer hover:ring-1 ring-primary/60" : ""} ${s.filter && statusFilter === s.filter ? "ring-2 ring-primary" : ""}`}
-            onClick={() => s.filter && setStatusFilter(statusFilter === s.filter ? null : s.filter)}
+            className="bg-card border border-border rounded-lg p-3 min-w-0"
             data-testid={`tenancy-stat-${s.label.toLowerCase().replace(/\s/g, "-")}`}
           >
-            <div className="text-[10px] text-gray-500 uppercase">{s.label}</div>
-            {/* break-words so long single tokens (£11,370,076) wrap inside
-                the tile instead of clipping at its edge. */}
-            <div className="text-sm font-semibold tabular-nums leading-tight break-words" title={(s as any).full && (s as any).full !== s.value ? (s as any).full : undefined}>{s.value}</div>
-            {(s as any).sub && (
-              <div className="text-[9px] text-amber-600 dark:text-amber-400 leading-tight" title="Leases with terms beyond 60 years are treated as placeholder expiry dates and excluded from WAULT">
-                {(s as any).sub}
-              </div>
-            )}
+            <div className="text-[11px] text-muted-foreground uppercase">{s.label}</div>
+            <div className="text-sm font-semibold font-mono tabular-nums leading-tight break-words mt-1" title={s.full && s.full !== s.value ? s.full : undefined}>{s.value}</div>
+            <div className="text-[11px] text-muted-foreground mt-1">{s.sub}</div>
           </div>
         ))}
       </div>

@@ -54,6 +54,7 @@ export function PropertyPlanScanReview({ plan, canStart = false }: { plan: Prope
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.id, "units"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans", "property-links", plan.property_id] });
       queryClient.invalidateQueries({ queryKey: jobKey });
       setOpen(false);
     },

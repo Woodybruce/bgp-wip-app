@@ -1,5 +1,6 @@
 import { calendarDateValue } from "./calendar-date";
 import type { PropertyView } from "./schema";
+import { isArchivedTenancy } from "./tenancy-schedule-display";
 
 export interface PropertyOverviewUnit {
   id: string | number;
@@ -11,6 +12,7 @@ export interface PropertyOverviewUnit {
   tenant_name?: string | null;
   trading_name?: string | null;
   status?: string | null;
+  occupancy_status?: string | null;
   is_vacant?: boolean;
   passing_rent_pa?: number | string | null;
   lease_expiry?: string | null;
@@ -24,17 +26,18 @@ export const PROPERTY_VIEW_LABELS: Record<PropertyView, string> = {
 };
 
 export function currentPropertyUnits(rows: PropertyOverviewUnit[]): PropertyOverviewUnit[] {
-  return rows.filter(row => row.status?.trim().toLowerCase() !== "archived");
+  return rows.filter(row => !isArchivedTenancy(row));
 }
 
-// A use such as Retail, a property name, or an absent schedule does not prove
-// a building's format. Physical IDs avoid counting separate leases as units.
+// Presentation can be simple for a known office without asserting a unit
+// count. Physical IDs avoid counting separate leases as units.
 export function suggestPropertyView(assetClass: string | null | undefined, rows: PropertyOverviewUnit[] | undefined): PropertyView | null {
   if (/\bshopping cent(?:re|er)\b|\bretail park\b|\bindustrial estate\b/i.test(assetClass || "")) return "centre";
-  if (!rows) return null;
+  const fallback = /\bmixed[ -]use\b/i.test(assetClass || "") ? "multi_let" : /\boffices?\b|\bresidential\b/i.test(assetClass || "") ? "building" : null;
+  if (!rows) return fallback;
   const current = currentPropertyUnits(rows);
   const canonical = current.filter(row => !row.is_vacant);
-  if (!canonical.length) return null;
+  if (!canonical.length) return fallback;
   const count = new Set(current.map(row => row.property_unit_id || `row:${row.id}`)).size;
   if (count > 1 || /\bmixed[ -]use\b/i.test(assetClass || "")) return "multi_let";
   return "building";

@@ -45,9 +45,13 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [highlightedLabel, setHighlightedLabel] = useState<string | null>(null);
   const [highlightedTenancyId, setHighlightedTenancyId] = useState<string | null>(null);
+  const [highlightRequest, setHighlightRequest] = useState(0);
   const resolvedHighlight = useRef<string | null>(null);
   useEffect(() => {
     const read = () => {
+      resolvedHighlight.current = null;
+      setHighlightRequest(value => value + 1);
+      void queryClient.invalidateQueries({ queryKey: ["/api/plans", "property-links", propertyId] });
       const match = window.location.hash.match(/^#plan-unit-(.+)$/);
       const tenancyMatch = window.location.hash.match(/^#plan-tenancy-(.+)$/);
       try {
@@ -57,7 +61,7 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
     };
     read(); window.addEventListener("hashchange", read);
     return () => window.removeEventListener("hashchange", read);
-  }, []);
+  }, [propertyId, queryClient]);
   const plansQ = useQuery<{ plans: Plan[] }>({
     queryKey: ["/api/properties", propertyId, "plans"],
     queryFn: async () => (await apiRequest("GET", `/api/properties/${propertyId}/plans`)).json(),
@@ -79,13 +83,13 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
   useEffect(() => {
     const target = highlightedTenancyId ? `tenancy:${highlightedTenancyId}` : highlightedLabel ? `label:${highlightedLabel}` : null;
     if (!target) { resolvedHighlight.current = null; return; }
-    if (resolvedHighlight.current === target || !highlightPlansQ.data) return;
+    if (resolvedHighlight.current === target || !highlightPlansQ.data || highlightPlansQ.isFetching || highlightPlansQ.isError) return;
     const matches = highlightPlansQ.data.filter(plan => plan.units.some(unit => highlightedTenancyId
       ? unit.tenancy_unit_id === highlightedTenancyId
       : [unit.label, unit.unit_name].some(value => value?.trim().toLowerCase() === highlightedLabel?.trim().toLowerCase())));
     // Old name-based links may be ambiguous across floors. Never guess between them.
     if (matches.length === 1) { setActivePlanId(matches[0].planId); resolvedHighlight.current = target; }
-  }, [highlightPlansQ.data, highlightedLabel, highlightedTenancyId]);
+  }, [highlightPlansQ.data, highlightPlansQ.isFetching, highlightPlansQ.isError, highlightedLabel, highlightedTenancyId, highlightRequest]);
   const units = unitsQ.data?.units || [];
   const selectedUnit = units.find(unit => unit.id === selectedUnitId);
   useEffect(() => {
@@ -102,7 +106,10 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
     },
     onError: error => toast({ title: "Could not trace this unit", description: `${error.message} Try another clear point inside the unit, or use Draw unit.`, variant: "destructive" }),
   });
-  const refreshUnits = () => queryClient.invalidateQueries({ queryKey: ["/api/plans", activePlan?.id, "units"] });
+  const refreshUnits = () => {
+    void queryClient.invalidateQueries({ queryKey: ["/api/plans", "property-links", propertyId] });
+    return queryClient.invalidateQueries({ queryKey: ["/api/plans", activePlan?.id, "units"] });
+  };
   function changeMode(next: EditorMode) { setMode(previous => previous === next ? "select" : next); setPendingPoints([]); }
   return <Card data-testid="property-plans-panel">
     <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 p-4 pb-2 space-y-0">

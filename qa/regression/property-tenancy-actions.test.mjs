@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import * as tenancyDisplay from '../../shared/tenancy-schedule-display.ts';
 const require = createRequire(import.meta.url);
 const { source, ts } = require('./source-harness.cjs');
 
@@ -42,7 +43,7 @@ function fixture({ units = [], user = staff, readOnly = false, links = { deals: 
     } else if (ts.isFunctionDeclaration(node) && !functions.has(node.name?.text)) bindings[node.name.text] = empty;
   }
   Object.assign(bindings, {
-    React, exports, console, URLSearchParams,
+    React, exports, console, URLSearchParams, ...tenancyDisplay,
     localStorage: { getItem: () => null, setItem: () => {} }, window: { innerWidth: 1280 },
     useState(initial) {
       const index = cursor++;
@@ -175,11 +176,11 @@ test('failed Opportunity update reports the error and never creates a Letting Tr
 });
 
 test('Opportunity creates a tracker listing only after a successful save, never when already linked', async () => {
-  for (const existing of ['none', 'foreign-key', 'links']) {
+  for (const existing of ['none', 'foreign-key', 'links', 'normalised', 'ambiguous']) {
     let resolve;
     const updateResult = new Promise(done => { resolve = done; });
-    const savedUnit = { ...unit, letting_tracker_unit_id: existing === 'foreign-key' ? 'tracker-1' : null };
-    const links = { deals: [], lettingUnits: existing === 'links' ? [{ id: 'tracker-1', unit_name: 'SHOP 1' }] : [] };
+    const savedUnit = { ...unit, unit_number: existing === 'normalised' ? 'Shop A01' : unit.unit_number, letting_tracker_unit_id: existing === 'foreign-key' ? 'tracker-1' : null };
+    const links = { deals: [], lettingUnits: existing === 'links' ? [{ id: 'tracker-1', unit_name: 'SHOP 1' }] : existing === 'normalised' ? [{ id: 'tracker-1', unit_name: 'A1' }] : existing === 'ambiguous' ? [{ id: 'tracker-1', unit_name: '1' }, { id: 'tracker-2', unit_name: 'Unit 1' }] : [] };
     const app = fixture({ units: [savedUnit], links, updateResult });
     app.row(app.render()).props.onUpdate(unit.id, 'status', 'Opportunity');
     await Promise.resolve();

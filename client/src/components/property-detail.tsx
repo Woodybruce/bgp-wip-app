@@ -648,7 +648,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 </select>
               </label>
               {(propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="ml-auto" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
-              <p className="w-full text-[11px] text-muted-foreground">{property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and tenancy rows. Choose a layout to keep it fixed." : "No reliable layout suggestion yet. Choose one above; an empty schedule does not establish the number of units."}</p>
+              <p className="w-full text-[11px] text-muted-foreground">{property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and available tenancy information. This layout does not establish a unit count. Choose a layout to keep it fixed." : "No reliable layout suggestion yet. Choose one above; an empty schedule does not establish the number of units."}</p>
             </div>
 
             <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">

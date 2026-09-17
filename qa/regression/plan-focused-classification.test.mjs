@@ -24,7 +24,7 @@ const image = await sharp(Buffer.from(`<svg width="${W}" height="${H}">
 
 function harness({ selectedRegions = regions, imageBytes = image, width = W, height = H,
   rows = selectedRegions.map(region => ({ regionId: region.id, isUnit: true, unitRef: null, tenant: null })),
-  stopReason = 'end_turn', rawText, providerError } = {}) {
+  stopReason = 'end_turn', rawText, providerError, context, focused = true } = {}) {
   const calls = [], composites = [], crops = [];
   const instrument = pipeline => {
     const clone = pipeline.clone.bind(pipeline), composite = pipeline.composite.bind(pipeline), extract = pipeline.extract.bind(pipeline);
@@ -41,8 +41,49 @@ function harness({ selectedRegions = regions, imageBytes = image, width = W, hei
     } } },
     require: name => { assert.equal(name, './plan-unit-detection'); return { mapDetectedPlanUnits }; },
   });
-  return { calls, composites, crops, run: () => run((...args) => instrument(sharp(...args)), imageBytes, width, height, 0, 0, 1, 1, [], false, selectedRegions, true) };
+  return { calls, composites, crops, run: () => run((...args) => instrument(sharp(...args)), imageBytes, width, height, 0, 0, 1, 1, [], false, selectedRegions, focused, context) };
 }
+
+for (const focused of [true, false]) test(`property classification uses mixed-use context without turning internal rooms into units (${focused ? 'focused' : 'fallback'})`, async () => {
+  const fixture = harness({ focused, context: { kind: 'property', propertyName: 'Market House', assetClass: 'Mixed use', floor: 'First',
+    tenancyUnits: [{ unitRef: 'Office 1', floor: 'First', permittedUse: 'Office' }, { unitRef: 'S1', floor: 'Basement', permittedUse: 'Storage' }] },
+    rows: focused ? [{ regionId: 101, isUnit: true, confidence: 'certain', unitRef: 'Office 1', tenant: 'Office tenant' }, { regionId: 203, isUnit: false, confidence: 'certain', unitRef: null, tenant: null }]
+      : [{ regionId: 101, unitRef: 'Office 1', tenant: 'Office tenant' }] });
+  const result = await fixture.run();
+  const prompt = fixture.calls[0].body.messages[0].content.filter(block => block.type === 'text').map(block => block.text).join('\n');
+  assert.match(prompt, /office suites, industrial\/warehouse or separately let storage units, and residential flats/);
+  assert.match(prompt, /A room within a larger shop, office suite, warehouse or flat is NOT a separate unit/);
+  assert.match(prompt, /room-use label alone is insufficient/);
+  assert.match(prompt, /"assetClass":"Mixed use"/);
+  assert.match(prompt, /"planFloor":"First"/);
+  assert.match(prompt, /"unitRef":"S1","floor":"Basement","permittedUse":"Storage"/);
+  assert.doesNotMatch(prompt, /one complete lettable shop, restaurant or kiosk|Reject.*surrounding non-retail buildings/);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].unitRef, 'Office 1');
+  assert.deepEqual(result[0].polygon, regions[0].polygon, 'the provider still cannot replace the server boundary');
+});
+
+test('evidence classification retains retail defaults when no property context is supplied', async () => {
+  const fixture = harness();
+  await fixture.run();
+  const prompt = fixture.calls[0].body.messages[0].content.filter(block => block.type === 'text').map(block => block.text).join('\n');
+  assert.match(prompt, /one complete lettable shop, restaurant or kiosk/);
+  assert.match(prompt, /surrounding non-retail buildings/);
+  assert.doesNotMatch(prompt, /This is a PROPERTY plan/);
+});
+
+test('property reference context is bounded data and omits unrelated lease information', async () => {
+  const fixture = harness({ context: { kind: 'property', propertyName: 'X'.repeat(500), assetClass: 'Office\nStorage',
+    tenancyUnits: Array.from({ length: 210 }, (_, index) => ({ unitRef: `Suite ${index}`, permittedUse: 'Office', rent: 999999, tenantEmail: 'private@example.test' })) } });
+  await fixture.run();
+  const block = fixture.calls[0].body.messages[0].content[0].text;
+  const records = JSON.parse(block.slice(block.indexOf('\n') + 1));
+  assert.equal(records.propertyName.length, 160);
+  assert.equal(records.assetClass, 'Office Storage');
+  assert.equal(records.tenancyUnits.length, 200);
+  assert.equal(block.includes('999999'), false);
+  assert.equal(block.includes('private@example.test'), false);
+});
 
 test('focused classification sends matching original and single-boundary crops for every candidate', async () => {
   const fixture = harness();

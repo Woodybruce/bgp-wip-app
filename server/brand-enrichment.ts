@@ -21,7 +21,7 @@ import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import { getBrandIdentity } from "./brand-identity";
 import { knownBrandLegalIdentity, verifyBrandIdentityFromOfficialSite } from "./brand-identity-verification";
 import { CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
-import { BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
+import { BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -290,7 +290,7 @@ export async function prepareBrandStage(companyId: string, stage: BrandPreparati
     // Existing linked people are usable immediately; a missing contact needs a
     // real discovery/review workflow, never a guessed name or job title.
     const linked = (await pool.query("SELECT COUNT(*)::int AS count FROM crm_contacts WHERE company_id=$1", [companyId])).rows[0]?.count || 0;
-    return { status: "needs_review", reason: linked ? `${linked} linked contacts are available; confirm the current property contact before marking this section complete` : "Add or verify a property contact for this brand" };
+    return { status: "needs_review", reason: linked ? `${linked} linked contacts are available. Check who currently handles property matters before contacting them; linked contacts have not been automatically verified.` : "No contacts are linked yet. Add the known property contact, then check their current role before contacting them." };
   }, { dailyLimit: DAILY_LIMITS[stage], force, charge: usable && stage !== "contacts", readyTtlMs: (stage === "brief" || stage === "contacts" ? 7 : 30) * 86400000 });
   return { ...run, result };
 }
@@ -364,7 +364,7 @@ router.get("/api/brand/:companyId/preparation", requireAuth, async (req: Request
     if (!company) return res.status(404).json({ error: "Company not found" });
     const identity = getBrandIdentity(company);
     const stages = await readPreparationStates(pool, companyId, identity.fingerprint);
-    res.json({ identity, stages, ready: identity.status === "verified" && stages.every(stage => stage.status === "ready") });
+    res.json({ identity, stages, ...summarizeBrandPreparation(identity.status, stages) });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 

@@ -82,8 +82,10 @@ async function runPropertyPlanScan(job: any, plan: any) {
     const file = await getFile(plan.storage_key);
     if (!file) throw new Error("The plan image is missing");
     const options = await queryPickableUnits(pool, plan.property_id);
+    const property = (await pool.query("SELECT name, asset_class FROM crm_properties WHERE id=$1", [plan.property_id])).rows[0];
     const existing = (await pool.query("SELECT polygon FROM property_plan_units WHERE plan_id=$1", [plan.id])).rows;
-    const result = await scanPropertyPlanImage(file.data, options, existing, checkpoint);
+    const result = await scanPropertyPlanImage(file.data, options, existing, checkpoint, undefined,
+      { propertyName: property?.name, assetClass: property?.asset_class, floor: plan.floor });
     // No outline writes here. The apply transaction re-checks the current plan,
     // links and overlaps, including drawings added while the scan was running.
     if (inactive) throw new Error("This scan has stopped. Start a new scan.");

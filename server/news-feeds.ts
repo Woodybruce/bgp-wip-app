@@ -3,8 +3,9 @@ import { requireAuth } from "./auth";
 import { db } from "./db";
 import { newsSources, newsArticles, newsEngagement, teamNewsPreferences, crmProperties, crmComps, newsTags } from "@shared/schema";
 import { DEFAULT_NEWS_TAGS } from "@shared/news-tags";
+import { isNewsErrorTitle, NEWS_ERROR_TITLES } from "@shared/news-title";
 import { authHeadersForUrl, authCookieStatus, loadPaywallCookies, setPaywallCookie, clearPaywallCookie } from "./auth-cookies";
-import { eq, desc, sql, and, inArray, gte, isNull } from "drizzle-orm";
+import { eq, desc, sql, and, inArray, notInArray, gte, isNull } from "drizzle-orm";
 import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
 import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications, previewBrandSocialFeeds, ensureBrandSocialFeeds, previewCuratedInstagramFeeds, ensureCuratedInstagramFeeds, type SocialPlatform } from "./news-brand-linking";
 import { users } from "@shared/schema";
@@ -15,6 +16,10 @@ import { extractTextFromFile } from "./utils/file-extractor";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+
+function newsArticleTitleFilter() {
+  return notInArray(sql<string>`lower(btrim(regexp_replace(regexp_replace(${newsArticles.title}, '[[:space:]]+', ' ', 'g'), '[.!…]+[[:space:]]*$', '', 'g')))`, [...NEWS_ERROR_TITLES]);
+}
 
 const DEFAULT_SOURCES = [
   // Green Street News — their native /feed/ returns an empty channel even for
@@ -167,7 +172,7 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
       const items = feed.items?.slice(0, 20) || [];
 
       for (const item of items) {
-        if (!item.title || !item.link) continue;
+        if (!item.title || !item.link || isNewsErrorTitle(item.title)) continue;
 
         // Unwrap Google News redirect URLs to the real publisher URL. Done up
         // front so the stored URL is clickable and so og:image extraction has
@@ -789,7 +794,7 @@ async function getActiveTagVocabulary(): Promise<string[]> {
 async function scoreArticlesWithAI(): Promise<number> {
   const unprocessed = await db.select()
     .from(newsArticles)
-    .where(eq(newsArticles.processed, false))
+    .where(and(eq(newsArticles.processed, false), newsArticleTitleFilter()))
     .limit(20);
 
   if (unprocessed.length === 0) return 0;
@@ -894,6 +899,7 @@ async function extractCompsFromArticles(): Promise<{ extracted: number; created:
     .where(and(
       eq(newsArticles.processed, true),
       gte(newsArticles.publishedAt, threeDaysAgo),
+      newsArticleTitleFilter(),
     ))
     .orderBy(desc(newsArticles.publishedAt))
     .limit(30);
@@ -1337,6 +1343,7 @@ async function fetchGreenStreetArticles(): Promise<number> {
     }
 
     for (const article of articles.slice(0, 30)) {
+      if (isNewsErrorTitle(article.title)) continue;
       const articleUrl = article.gsNewsUrl || article.gsApiUrl || `${GSN_BASE}/articles/${article.id}`;
       const existingArr = await db.select({ id: newsArticles.id }).from(newsArticles).where(eq(newsArticles.url, articleUrl)).limit(1);
       if (existingArr.length > 0) continue;
@@ -1379,7 +1386,7 @@ export async function searchGreenStreet(query: string, limit: number = 10): Prom
       return { error: `Green Street API returned ${res.status}: ${res.statusText}` };
     }
     const data = await res.json() as any;
-    const articles = (Array.isArray(data) ? data : data.data || data.articles || []).slice(0, limit);
+    const articles = (Array.isArray(data) ? data : data.data || data.articles || []).filter((article: any) => !isNewsErrorTitle(article.title)).slice(0, limit);
 
     return {
       success: true,
@@ -1828,7 +1835,7 @@ export function setupNewsFeedRoutes(app: Express) {
       // now driven by direct RSS + RSS.app sources only.
       let articles = await db.select()
         .from(newsArticles)
-        .where(sql`${newsArticles.sourceId} IS NULL OR ${newsArticles.sourceId} NOT IN (SELECT id FROM news_sources WHERE type = 'google_news')`)
+        .where(and(newsArticleTitleFilter(), sql`(${newsArticles.sourceId} IS NULL OR ${newsArticles.sourceId} NOT IN (SELECT id FROM news_sources WHERE type = 'google_news'))`))
         .orderBy(desc(newsArticles.publishedAt))
         .limit(pool);
 
@@ -1933,7 +1940,7 @@ export function setupNewsFeedRoutes(app: Express) {
 
       const articles = await db.select()
         .from(newsArticles)
-        .where(inArray(newsArticles.id, filteredIds));
+        .where(and(inArray(newsArticles.id, filteredIds), newsArticleTitleFilter()));
 
       const orderMap = new Map(filteredIds.map((id, idx) => [id, idx]));
       articles.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
@@ -1985,6 +1992,7 @@ export function setupNewsFeedRoutes(app: Express) {
 
       const dbArticles = await db.select()
         .from(newsArticles)
+        .where(newsArticleTitleFilter())
         .orderBy(desc(newsArticles.publishedAt))
         .limit(200);
 
@@ -2125,7 +2133,7 @@ export function setupNewsFeedRoutes(app: Express) {
         })),
       ];
 
-      res.json({ articles: combined, propertyName, searchQuery });
+      res.json({ articles: combined.filter(article => !isNewsErrorTitle(article.title)), propertyName, searchQuery });
     } catch (err: any) {
       console.error("[Property News] Error:", err);
       res.status(500).json({ message: "Failed to fetch property news" });

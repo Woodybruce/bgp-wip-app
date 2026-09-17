@@ -36,6 +36,42 @@ test('an unavailable provider produces an explicit failure, not a successful emp
   assert.equal(calls, 20, 'ten bounded sections, at most two attempts each');
 });
 
+test('property scans pass property type, floor and current tenancy uses to every identity read', async () => {
+  const image = await sharp({ create: { width: 100, height: 100, channels: 3, background: '#fff' } }).png().toBuffer();
+  const contexts = [];
+  const options = [{ ...option('office', 'Office 1', null), floor: 'First', permitted_use: 'Office', lease_status: 'Occupied' },
+    { ...option('storage', 'S1', null), floor: 'Basement', permitted_use: 'Storage', lease_status: 'Vacant' },
+    { ...option('old', 'Old retail', null), permitted_use: 'Shop', lease_status: 'Archived' }];
+  await scanPropertyPlanImage(image, options, [], async () => {}, async (...args) => { contexts.push(args[12]); return []; },
+    { propertyName: 'Market House', assetClass: 'Mixed use', floor: 'First' });
+  assert.ok(contexts.length > 0);
+  for (const context of contexts) assert.deepEqual(context, { kind: 'property', propertyName: 'Market House', assetClass: 'Mixed use', floor: 'First', tenancyUnits: [
+    { unitRef: 'Office 1', floor: 'First', permittedUse: 'Office' }, { unitRef: 'S1', floor: 'Basement', permittedUse: 'Storage' },
+  ] });
+});
+
+test('property scan worker loads property context without changing access or saved outlines', async () => {
+  const require = createRequire(import.meta.url);
+  const { find, evaluate, ts } = require('./source-harness.cjs');
+  const worker = find('server/property-plan-scanning.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'runPropertyPlanScan');
+  const calls = [], updates = [];
+  const { run } = evaluate(worker + '\nexports.run = runPropertyPlanScan;', {
+    setInterval, clearInterval, getFile: async () => ({ data: Buffer.from('image') }),
+    queryPickableUnits: async (_db, propertyId) => { assert.equal(propertyId, 'own-property'); return [{ unit_name: 'Suite 1', permitted_use: 'Office' }]; },
+    scanPropertyPlanImage: async (...args) => { calls.push(args); return { candidates: [], message: 'No proposals' }; },
+    pool: { query: async (sql, values) => {
+      if (sql.startsWith('SELECT name, asset_class')) { assert.deepEqual(Array.from(values), ['own-property']); return { rows: [{ name: 'Market House', asset_class: 'Mixed use' }] }; }
+      if (sql.startsWith('SELECT polygon')) return { rows: [{ polygon: { points: [[0, 0], [.2, 0], [.2, .2]] } }] };
+      assert.match(sql, /^UPDATE property_plan_scans/); updates.push(sql); return { rows: [{ id: 'job' }] };
+    } },
+  });
+  await run({ id: 'job' }, { id: 'plan', property_id: 'own-property', storage_key: 'image', floor: 'First' });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0][5])), { propertyName: 'Market House', assetClass: 'Mixed use', floor: 'First' });
+  assert.equal(calls[0][2].length, 1, 'saved outlines remain protected inputs');
+  assert.ok(updates.some(sql => sql.includes("status='ready'")));
+});
+
 test('non-serialisable plan images stay out of the persistent query cache', () => {
   const require = createRequire(import.meta.url);
   const { source, evaluate } = require('./source-harness.cjs');

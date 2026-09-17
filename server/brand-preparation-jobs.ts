@@ -16,6 +16,16 @@ const DAY = 86400000;
 const LEASE_MS = 15 * 60000;
 export const preparationKey = (companyId: string, stage: BrandPreparationStage) => `brand-preparation:${companyId}:${stage}`;
 
+export function summarizeBrandPreparation(identityStatus: string, stages: PreparationState[]) {
+  const automatic = stages.filter(stage => stage.stage !== "contacts");
+  return {
+    ready: identityStatus === "verified" && stages.some(stage => stage.stage === "profile" && stage.status === "ready"),
+    preparedSections: automatic.filter(stage => stage.status === "ready").length,
+    totalSections: BRAND_PREPARATION_STAGES.length - 1,
+    contactReviewRequired: stages.find(stage => stage.stage === "contacts")?.status !== "ready",
+  };
+}
+
 export function nextPreparationState(previous: Partial<PreparationState>, outcome: PreparationOutcome | { status: "error"; reason: string }, now: Date): Partial<PreparationState> {
   const failures = outcome.status === "error" ? (previous.failures || 0) + 1 : 0;
   const delay = outcome.status === "ready" ? 30 * DAY

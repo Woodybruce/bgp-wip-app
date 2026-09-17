@@ -47,13 +47,13 @@ export async function queryPickableUnits(db: PlanDatabase, propertyId: string): 
            COALESCE(t.floor_level, pu.floor) AS floor,
            COALESCE(t.nia_sqft, t.gia_sqft, pu.sqft) AS sqft,
            COALESCE(NULLIF(btrim(t.trading_name), ''), t.tenant_name) AS tenant_name,
-           t.status AS lease_status
+           t.status AS lease_status, t.permitted_use
       FROM tenancy_schedule_units t
       LEFT JOIN property_units pu ON pu.id = t.property_unit_id AND pu.property_id = t.property_id
      WHERE t.property_id = $1
     UNION ALL
     SELECT pu.id, NULL AS tenancy_unit_id, pu.id AS unit_id, pu.unit_name, pu.floor, pu.sqft,
-           NULL AS tenant_name, NULL AS lease_status
+           NULL AS tenant_name, NULL AS lease_status, pu.use_class AS permitted_use
       FROM property_units pu
      WHERE pu.property_id = $1
        AND NOT EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.property_id = pu.property_id AND t.property_unit_id = pu.id)

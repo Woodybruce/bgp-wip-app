@@ -8,7 +8,7 @@ test('an absent, empty, archived-only or tracker-only schedule cannot establish 
   for (const rows of [undefined, [], [unit('old', { status: ' Archived ' })], [unit('vacant-1', { status: 'AVA', is_vacant: true })]]) {
     assert.equal(suggestPropertyView('Retail', rows), null);
   }
-  assert.equal(suggestPropertyView('Mixed Use', undefined), null, 'wait for tenancy evidence before suggesting a compact format');
+  assert.equal(suggestPropertyView('Mixed Use', undefined), 'multi_let', 'known use chooses presentation without claiming a unit count');
 });
 
 test('explicit shopping-centre, retail-park and industrial-estate classes retain the full page without waiting for a schedule', () => {
@@ -16,7 +16,10 @@ test('explicit shopping-centre, retail-park and industrial-estate classes retain
     assert.equal(suggestPropertyView(assetClass, undefined), 'centre', assetClass);
   }
   assert.equal(suggestPropertyView('Retail', undefined), null);
-  assert.equal(suggestPropertyView('Office', undefined), null);
+  assert.equal(suggestPropertyView('Office', undefined), 'building');
+  assert.equal(suggestPropertyView('Office', []), 'building');
+  assert.equal(suggestPropertyView('Residential', undefined), 'building');
+  assert.equal(suggestPropertyView('Office', [unit('1'), unit('2')]), 'multi_let', 'actual multiple units override the simpler empty-state default');
 });
 
 test('a single current physical unit suggests building while multiple leases on it do not inflate the count', () => {
@@ -29,6 +32,23 @@ test('multiple physical units and explicit mixed use suggest a multi-let layout'
   assert.equal(suggestPropertyView('Retail', [unit('1'), unit('2')]), 'multi_let', 'unlinked rows remain distinct');
   assert.equal(suggestPropertyView('Retail', [unit('1'), unit('vacant-2', { is_vacant: true, status: 'AVA' })]), 'multi_let', 'an additional tracker unit remains visible');
   for (const assetClass of ['Mixed Use', 'Mixed-use']) assert.equal(suggestPropertyView(assetClass, [unit('1')]), 'multi_let');
+});
+
+test('either archive flag excludes a tenancy from layout counts, overview rent and lease events without removing history', () => {
+  const rows = [
+    unit('current', { property_unit_id: 'physical-1', passing_rent_pa: 24000, lease_expiry: '2027-09-17' }),
+    unit('old-status', { status: ' Archived ', occupancy_status: 'Occupied', property_unit_id: 'physical-2', passing_rent_pa: 100000, lease_expiry: '2026-09-18' }),
+    unit('old-occupancy', { status: 'Occupied', occupancy_status: ' aRcHiVeD ', property_unit_id: 'physical-3', passing_rent_pa: 200000, lease_expiry: '2026-09-19' }),
+  ];
+  const original = structuredClone(rows);
+  assert.deepEqual(currentPropertyUnits(rows).map(row => row.id), ['current']);
+  assert.equal(suggestPropertyView('Retail', rows), 'building');
+  assert.equal(suggestPropertyView('Retail', rows.slice(1)), null, 'archive-only history cannot establish a unit count');
+  const facts = propertyOverviewFacts(rows, '2026-09-17');
+  assert.equal(facts.knownRent, 24000);
+  assert.equal(facts.rentRows, 1);
+  assert.deepEqual(facts.nextEvents.map(event => event.unit.id), ['current']);
+  assert.deepEqual(rows, original, 'historical source records remain available');
 });
 
 test('overview rent distinguishes a recorded zero from missing or invalid amounts', () => {

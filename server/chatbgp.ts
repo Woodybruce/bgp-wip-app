@@ -6434,7 +6434,7 @@ export async function executeCrmToolRaw(
             type: s.signal_type, magnitude: s.magnitude, sentiment: s.sentiment,
             headline: s.headline, date: s.signal_date, source: s.source,
           })),
-          representedBy: full.representedBy?.map((r: any) => ({ agent: r.agent_name, type: r.agent_type, region: r.region })),
+          representedBy: full.representedBy?.map((r: any) => ({ agent: r.agent_name || "Firm unconfirmed", contact: r.contact_name, type: r.agent_type, region: r.region })),
         },
       };
     } catch (err: any) {

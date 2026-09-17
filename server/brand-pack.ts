@@ -380,7 +380,7 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
       for (const r of reps) {
         if (y > BOTTOM - 24) break;
         doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
-          .text(r.agent_name || "Unknown", LEFT, y, { continued: true })
+          .text(r.agent_name || "Firm unconfirmed", LEFT, y, { continued: true })
           .font("Helvetica").fillColor(MUTED)
           .text(`  —  ${String(r.agent_type || "").replace(/_/g, " ")}${r.region ? `  (${r.region})` : ""}${r.contact_name ? `  ·  ${r.contact_name}` : ""}`);
         y = doc.y + 4;
